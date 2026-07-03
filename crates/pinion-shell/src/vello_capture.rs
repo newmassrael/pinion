@@ -18,7 +18,7 @@
 //!
 //! The texture → RGBA8 copy (staging buffer + 256-byte row-alignment
 //! strip + BGRA↔RGBA swizzle) is byte-for-byte the same operation in
-//! both, so it lives here once as [`texture_to_rgba8`] — the single
+//! both, so it lives here once as `texture_to_rgba8` — the single
 //! source of truth both call.
 //!
 //! The capture additionally re-runs the Vello present cycle

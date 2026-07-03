@@ -14,14 +14,14 @@
 //! ```
 //!
 //! The shell owns the [`AppShell`] struct (scene, cached state,
-//! [`IntentQueue`](pinion_runtime::IntentQueue), [`PreviewLedger`],
+//! [`IntentQueue`](pinion_runtime::IntentQueue), [`PreviewLedger`](pinion_rpc::PreviewLedger),
 //! [`SceneRevision`](pinion_core::SceneRevision),
-//! [`InputRouter`](pinion_runtime::InputRouter), [`LayoutCache`],
+//! [`InputRouter`](pinion_runtime::InputRouter), [`LayoutCache`](pinion_text::LayoutCache),
 //! reusable [`vello::Scene`] buffer, last-paint-layout snapshot), the
 //! [`RenderState`] suspend/resume ADT (R46.3.4), the JSON-RPC stdin
 //! reader thread, and the [`winit::application::ApplicationHandler`]
 //! impl that wires pointer events through the input router and routes
-//! `scene/layout` / `scene/resize` through [`DispatchContext`] —
+//! `scene/layout` / `scene/resize` through [`DispatchContext`](pinion_rpc::DispatchContext) —
 //! every step then flows through the `§6.3` view-fn → paint → vello
 //! submission loop. The application supplies only the widget-specific
 //! diff via [`WidgetView`] (state shape, event enum, view fn,
@@ -86,7 +86,7 @@ pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 
 /// Winit user-event variants that reach the UI thread out-of-band.
 ///
-/// The shell's [`AppShell::user_event`] handler is the sole consumer. Each
+/// The shell's [`AppShell::user_event`](winit::application::ApplicationHandler::user_event) handler is the sole consumer. Each
 /// variant's own doc below names its producer — those per-variant docs are the
 /// SSOT. An enum-level producer enumeration is intentionally NOT kept here: it
 /// twice went stale as variants were added (`WindowsDirty` R683,
@@ -110,14 +110,14 @@ pub enum AppEvent {
     AccessKit(accesskit_winit::Event),
     /// R51.159 §5.23 — [`Intent`] produced by a resolved
     /// [`Command`](pinion_core::Command) future and delivered through
-    /// [`ProxyIntentSink`]. The [`AppShell::user_event`] arm routes
+    /// [`ProxyIntentSink`]. The [`AppShell::user_event`](winit::application::ApplicationHandler::user_event) arm routes
     /// the intent into [`ShellCore`] for re-feeding into the SCXML
     /// `send` channel (R51.160 carry — this round logs it).
     IntentArrived(Intent),
     /// R683 §5.16 §5.41 — emitted by the
-    /// [`AppShell::reconcile_windows`] Effect closure whenever the
+    /// `AppShell::reconcile_windows` Effect closure whenever the
     /// binding's [`WidgetView::windows_signal`] `Signal<Vec<WindowSpec>>`
-    /// changes. The [`AppShell::user_event`] arm reads the latest
+    /// changes. The [`AppShell::user_event`](winit::application::ApplicationHandler::user_event) arm reads the latest
     /// signal snapshot, diffs against the cached last-known spec list,
     /// resumes added specs via the existing `resume_spec` helper, and
     /// drops removed specs (closes the winit Window + cleans the
@@ -135,8 +135,8 @@ pub enum AppEvent {
     /// R999 §5.23 — an off-thread producer (PTY reader, network/process
     /// monitor) wrote fresh data into the shared handle a binding's `view`
     /// reads and is requesting a repaint, delivered through
-    /// [`ProxyRepaintSink`](crate::ProxyRepaintSink) /
-    /// [`pinion_core::RepaintSink`]. The [`AppShell::user_event`] arm arms a
+    /// [`ProxyRepaintSink`] /
+    /// [`pinion_core::RepaintSink`]. The [`AppShell::user_event`](winit::application::ApplicationHandler::user_event) arm arms a
     /// binding-wide redraw; the next frame re-runs `view`, which re-reads the
     /// shared handle. Distinct from [`AppEvent::WindowsDirty`] (window
     /// topology) and [`AppEvent::IntentArrived`] (a reducer event) — a
@@ -711,7 +711,7 @@ impl WindowSpec {
     /// shape [`WidgetView::windows`]'s default impl returns so the
     /// 15+ existing single-window bindings keep their pre-R670
     /// behaviour bit-identical (one window, `id = "main"`, title +
-    /// strategy from the binding's own [`WidgetView::title`] +
+    /// strategy from the binding's own [`WidgetView::title`](pinion_core::WidgetCore::title) +
     /// [`WidgetView::initial_size_strategy`]).
     #[must_use]
     pub fn main(title: impl Into<String>, strategy: SizeStrategy) -> Self {
@@ -854,7 +854,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// R668 §5.16 — window-creation size policy. `winit` applies the
     /// per-monitor DPI scale, so logical pixels are "what the user
     /// sees" on a 1.0× display. The shell honours this on the first
-    /// [`resumed`](AppShell::resumed); subsequent resizes flow
+    /// [`resumed`](winit::application::ApplicationHandler::resumed); subsequent resizes flow
     /// through `WindowEvent::Resized` and do not consult the strategy
     /// again.
     ///
@@ -1017,7 +1017,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// then look up the target panel's window-absolute `panel_rect`) and hands the
     /// dock-specific RENDERING to the binding here: `source_panel` is the dragged
     /// panel (so the binding resolves through the SAME
-    /// [`resolve_drop`](pinion_widget_paint::dock::resolve_drop) SSOT the release
+    /// `resolve_drop` SSOT the release
     /// applies — R1163b unified the cross-window path, so preview == result by
     /// construction), `target_tag` is the resolved dock target, `x_rel`/`y_rel` the
     /// normalised cursor over it. The binding returns the overlay [`Scene`] (e.g.
@@ -1152,7 +1152,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// R770 §5.15 — OS file-drag cancel hook. The shell calls this when a
     /// drag leaves the window without dropping (winit
     /// `WindowEvent::HoveredFileCancelled`, or `scene/hover_file_cancel`):
-    /// the drop-zone clears the affordance [`on_file_hover`] raised.
+    /// the drop-zone clears the affordance [`on_file_hover`](Self::on_file_hover) raised.
     /// Positionless + path-less. Return `true` to request a redraw;
     /// default `false`.
     fn on_file_hover_cancel(_state: &<Self as WidgetCore>::State) -> bool {
@@ -1182,7 +1182,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// Multi-window bindings override this to enumerate every window
     /// they want. The order is significant: the **first** spec is
     /// the primary window — the first to receive
-    /// [`AppShell::resumed`] focus + the default scope for RPC
+    /// [`AppShell::resumed`](winit::application::ApplicationHandler::resumed) focus + the default scope for RPC
     /// frames that omit `{window: "..."}`. Secondary windows follow
     /// in declaration order.
     ///
@@ -1216,7 +1216,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// for every single + multi-window binding).
     ///
     /// Bindings that need to add or remove windows at runtime
-    /// (canonically: a [`DockSurface`](pinion_widget_paint::dock)
+    /// (canonically: a `DockSurface`
     /// with tear-off ergonomics minting a new window per torn-off
     /// panel) override this method to return
     /// `Some(Rc<Signal<Vec<WindowSpec>>>)`. The shell's R683 atomic 1
@@ -1249,7 +1249,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
 
     /// R670.B §5.16 — per-window paint scene hook. Returns the
     /// painted scene for the given `window_id`; default forwards to
-    /// [`Self::view`] so every existing single-window binding (R670
+    /// [`Self::view`](pinion_core::WidgetCore::view) so every existing single-window binding (R670
     /// has 15+ in the example gallery) keeps its lifecycle
     /// bit-identical.
     ///
@@ -1260,11 +1260,11 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// in the binding's [`Self::windows`] list — typically a
     /// 2-or-3-arm match.
     ///
-    /// Identical signature to [`Self::view`] modulo the
+    /// Identical signature to [`Self::view`](pinion_core::WidgetCore::view) modulo the
     /// `window_id` lead: pure sync per §6.3, same `&Frame`
     /// contract, same `dry_run` purity guarantee per binding
     /// state slot. The substrate runs the function inside the
-    /// same `root_owner.run(|| ...)` wrap [`Self::view`] uses
+    /// same `root_owner.run(|| ...)` wrap [`Self::view`](pinion_core::WidgetCore::view) uses
     /// so `Owner::current()` resolves to the shell's reactive
     /// scope from inside the per-window body.
     #[allow(

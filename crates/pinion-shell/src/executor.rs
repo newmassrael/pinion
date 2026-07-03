@@ -6,22 +6,22 @@
 //!
 //! Per §6.3 (view-fn sync, IO async at the boundary), pinion-runtime
 //! stays async-runtime-agnostic — the [`Executor`] /
-//! [`IntentSink`](pinion_runtime::IntentSink) traits define the
+//! [`IntentSink`] traits define the
 //! abstract surface, and backends supply concrete impls at the
 //! window-system / runtime boundary. This module is the Vello shell's
 //! boundary impl:
 //!
 //! - [`TokioExecutor`] wraps a `tokio::runtime::Runtime` (multi-thread,
 //!   1 worker thread by default) and spawns
-//!   [`BoxFuture`](pinion_runtime::BoxFuture)s through it. The
+//!   [`BoxFuture`]s through it. The
 //!   [`tokio::task::AbortHandle`] returned by `spawn` powers the
-//!   [`CommandTaskHandle`](pinion_runtime::CommandTaskHandle) cancel
+//!   [`CommandTaskHandle`] cancel
 //!   callback so R51.158's per-scope cancellation actually aborts the
 //!   running future.
 //! - [`ProxyIntentSink`] wraps a winit
 //!   [`EventLoopProxy<AppEvent>`](winit::event_loop::EventLoopProxy)
 //!   and forwards resolved [`Intent`]s through
-//!   [`AppEvent::IntentArrived`](crate::AppEvent::IntentArrived). The
+//!   [`AppEvent::IntentArrived`]. The
 //!   user-event arm on the UI thread re-feeds them into
 //!   [`ShellCore::dispatch_intent`](crate::ShellCore) (R51.160 carry —
 //!   for now the arm logs them; integrating into the SCXML `send`
@@ -34,7 +34,7 @@
 //! worker thread shuts down. The shell's
 //! `Arc<CommandExecutor>` aliases through both backends; on
 //! application shutdown the final
-//! [`Arc`](std::sync::Arc) drop cascades through
+//! [`Arc`] drop cascades through
 //! `CommandExecutor` → `TokioExecutor::drop` → `Runtime::drop` which
 //! awaits in-flight tasks (or aborts them after a grace period).
 
@@ -52,7 +52,7 @@ use crate::AppEvent;
 /// Builds a private `tokio::runtime::Runtime` at construction time
 /// (single worker thread, all features enabled). Subsequent
 /// [`Executor::spawn`] calls dispatch the
-/// [`BoxFuture`](pinion_runtime::BoxFuture) onto the runtime via
+/// [`BoxFuture`] onto the runtime via
 /// `Runtime::spawn`; the returned [`tokio::task::AbortHandle`] backs
 /// the [`CommandTaskHandle`]'s cancel callback so R51.158's per-scope
 /// cancellation actually aborts the future at its next `.await` point.
@@ -178,24 +178,24 @@ pub fn build_executor_and_sink(
     Ok((executor, sink))
 }
 
-/// R999 §5.23 — winit-[`EventLoopProxy`]-backed [`RepaintSink`] impl.
+/// R999 §5.23 — winit-[`EventLoopProxy`]-backed [`RepaintSink`](pinion_core::RepaintSink) impl.
 ///
 /// The single winit-aware part of the external-async-data → repaint seam: an
 /// off-thread producer (e.g. a PTY reader) obtains this through
 /// [`use_repaint_sink`](pinion_core::use_repaint_sink) and calls
-/// [`request_repaint`](RepaintSink::request_repaint) after writing fresh data
+/// [`request_repaint`](pinion_core::RepaintSink::request_repaint) after writing fresh data
 /// into the shared handle the binding's `view` reads. It forwards through
 /// [`AppEvent::ExternalRepaint`], whose `user_event` arm arms a redraw; winit
 /// coalesces multiple requests into one `RedrawRequested` per frame.
 ///
 /// Sibling of [`ProxyIntentSink`] — the §6.3 boundary-trait pattern: the
-/// runtime-agnostic [`RepaintSink`] lives in `pinion-core`, this concrete
+/// runtime-agnostic [`RepaintSink`](pinion_core::RepaintSink) lives in `pinion-core`, this concrete
 /// `EventLoopProxy` impl lives at the window-system boundary.
 ///
 /// ## `Send + Sync`
 ///
 /// `EventLoopProxy<AppEvent>` is `Send + Sync` per winit's contract, so the
-/// [`RepaintSink`] supertrait bound holds and the handle clones into the
+/// [`RepaintSink`](pinion_core::RepaintSink) supertrait bound holds and the handle clones into the
 /// producer thread.
 ///
 /// ## Error absorption

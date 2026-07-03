@@ -29,7 +29,7 @@
 //!
 //! The item role follows [`MenuItemCell::checked`]: `Some(_)` is a
 //! `menuitemcheckbox` carrying `aria-checked`; `None` is a plain
-//! `menuitem`. R985 — a submenu parent ([`MenuItemCell::has_popup`]) is a
+//! `menuitem`. R985 — a submenu parent (`MenuItemCell::has_popup`) is a
 //! plain `menuitem` that additionally carries `aria-haspopup="menu"`,
 //! `aria-expanded`, and (when open) a child reference to the nested
 //! [`AriaRole::Menu`] it owns. The binding builds each *open* level by

@@ -126,7 +126,7 @@ pub trait WidgetA11y: WidgetCore {
     /// to the atomic-widget chain (`focus_set` + `apply_key("Enter")`).
     ///
     /// Default returns `false` — atomic widgets receive no
-    /// composite-child requests because their [`access_node`] impls
+    /// composite-child requests because their [`access_node`](crate::WidgetA11y::access_node) impls
     /// never expose `#`-suffixed tags.
     ///
     /// WAI-ARIA / WCAG 4.1.2 (Name, Role, **Value**) coverage:

@@ -5,7 +5,7 @@
 //! tree consumer: the `hello-dock-panels` `DevTools` inspector tree, which
 //! (together with `hello-multi-window`'s inspector) previously emitted zero
 //! tree AT nodes despite painting the very same
-//! [`view_tree`](pinion_widget_paint::tree_view) row sequence. The tree was
+//! `view_tree` row sequence. The tree was
 //! the only interactive widget family without a lifted a11y node builder —
 //! [`navigation_link_nodes`](crate::navigation_link_nodes),
 //! [`toggle_button_group_nodes`](crate::toggle_button_group_nodes),
@@ -154,13 +154,13 @@ pub fn tree_access_nodes(
 /// (`hello-virtual-tree` R819 + `hello-tree-filter`), which had hand-rolled the
 /// same `&rows[window.first..window.first + window.count]` slice → [`tree_access_nodes`]
 /// wiring — the R866 precedent that lifted the symmetric *keyboard* windowed
-/// pipeline ([`apply_windowed_tree_key`](pinion_shell::typeahead::apply_windowed_tree_key))
+/// pipeline (`apply_windowed_tree_key`)
 /// at its 2nd consumer, here applied to the windowed *a11y* pipeline (the
 /// project's `[[abstraction-needs-second-consumer]]` rule; an a11y-topology
 /// divergence between the two would be a bug, not a style choice — R758/R759).
 ///
 /// The binding still computes `window` itself (via `compute_visible_range*`
-/// against its own scroll state), exactly as [`windowed_list_nodes`] takes a
+/// against its own scroll state), exactly as [`windowed_list_nodes`](crate::windowed_list_nodes) takes a
 /// caller-computed [`VisibleWindow`] — so the a11y tree and the painted tree
 /// window the same flattening by the same math. A virtualized tree whose
 /// **rows are not a uniform `&[VisibleRow]`** (e.g. `hello-lazy-tree`, whose
@@ -217,7 +217,7 @@ pub struct TreeGridSelection<'a> {
 
 /// R863 §5.40 §5.27 §5.50 — WAI-ARIA `treegrid` + `row` + `rowheader` /
 /// `gridcell` `AccessNode` builder: the columned analogue of
-/// [`tree_access_nodes`] for [`view_virtual_treegrid`](pinion_widget_paint::tree_view::view_virtual_treegrid).
+/// [`tree_access_nodes`] for `view_virtual_treegrid`.
 ///
 /// A `tree` / `treeitem` topology cannot expose the metadata columns — a
 /// `treeitem` has no `gridcell` children in WAI-ARIA — so a hierarchical

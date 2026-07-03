@@ -205,7 +205,7 @@ pub fn char_match_ci(a: char, b: char) -> bool {
 /// the *cursor storage* is caller-choice; the surrounding flatten → index →
 /// step → set glue is not, so it is the SSOT here). `rows` is the already
 /// flattened visible sequence
-/// ([`flat_visible`](pinion_core::widgets::tree_nav::flat_visible)), which
+/// ([`flat_visible`]), which
 /// keeps this crate-direction clean: [`VisibleRow`] / [`Signal`] are
 /// `pinion-core`, [`TypeaheadCursor`] is local to `pinion-shell`.
 ///

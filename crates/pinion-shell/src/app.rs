@@ -542,7 +542,7 @@ impl<V: WidgetView> AppShell<V> {
     /// `accesskit`) which lives on `AppShell` itself.
     ///
     /// `proxy` is the same `EventLoopProxy<AppEvent>` the
-    /// [`spawn_stdin_rpc_reader`] background thread holds; the shell
+    /// `spawn_stdin_rpc_reader` background thread holds; the shell
     /// retains a clone so it can hand a fresh copy to the
     /// `accesskit_winit::Adapter` on `resumed` (R51.62 §5.40).
     #[must_use]
@@ -1170,7 +1170,7 @@ impl<V: WidgetView> AppShell<V> {
     /// R1060 §5.12 §5.16 — capture the addressed window's live presented
     /// surface for a `scene/screenshot` RPC. Resolves the request's
     /// `{window: "<id>"}` scope (absent → the primary window) to a slot,
-    /// flags it for capture, drives ONE [`Self::render_window`] pass (which
+    /// flags it for capture, drives ONE `Self::render_window` pass (which
     /// then submits through [`VelloRenderer::capture_rgba8`], reading back
     /// the swapchain texture instead of presenting blind), then drains +
     /// converts the frame to the wire [`pinion_rpc::Screenshot`].
@@ -1599,7 +1599,7 @@ impl<V: WidgetView> AppShell<V> {
     }
 
     /// R668 §5.16 / R1072.1 — the `IntrinsicAfterFirstPaint` post-first-paint
-    /// resize hook, extracted from [`Self::render_window`] (the same discipline
+    /// resize hook, extracted from `Self::render_window` (the same discipline
     /// `publish_ime_for_window` / `emit_accesskit_for_window` follow to keep the
     /// parent under the `clippy::too_many_lines = 100` ceiling — preferred over a
     /// lint suppression).
@@ -3043,7 +3043,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
     ///   — winit has a single global control-flow setting per loop
     ///   iteration, so the tightest deadline determines when winit
     ///   wakes up; the per-window paint clock survives because each
-    ///   window's [`Self::render_window`] still reads its own
+    ///   window's `Self::render_window` still reads its own
     ///   `last_paint_instants` slot for `dt`, and the
     ///   `redraw_requested_for_window` flag fires only the affected
     ///   window's redraw.
@@ -3053,10 +3053,10 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
     ///
     /// Each immediate-mode slot also re-arms its per-window redraw
     /// flag here so the next event-loop iteration's
-    /// [`Self::drain_redraw_to_winit`] dispatches one
+    /// `Self::drain_redraw_to_winit` dispatches one
     /// `Window::request_redraw` per slot — that delivers the
     /// `WindowEvent::RedrawRequested` event the slot's
-    /// [`Self::render_window`] consumes to drive frame N+1. Without
+    /// `Self::render_window` consumes to drive frame N+1. Without
     /// this re-arm the §2 #4 game-loop would stall after the first
     /// paint (the substrate's compute-paint-scene wire arms the flag
     /// on first paint, but only one drain consumes it; subsequent

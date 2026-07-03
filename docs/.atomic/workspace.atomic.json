@@ -21654,6 +21654,52 @@
         "When delegating bulk doc fixes: give the subagent the reachability facts up front (crate's real deps) so it doesn't guess link-vs-span; and re-grep for `` `X`(path) `` botches + run clippy (not just cargo doc) -- doc_markdown fires only in clippy."
       ]
     },
+    "R1209": {
+      "decision_summary": "R1209 doc-hygiene campaign round 3: pinion-a11y (16) and pinion-shell (86) cargo-doc made clean.",
+      "changes_bullets": [
+        "pinion-a11y: 16 unresolved links -> 0 (7 files), fixed by hand. Reachable items -> working links (AccessNode/grid_table_nodes/windowed_list_nodes -> crate::*, TextNode -> pinion_core::scene::TextNode, access_node -> crate::WidgetA11y::access_node); struct fields (has_popup/aria_label) + unreachable cross-crate (pinion_shell/pinion_widget_paint/ShellCore) -> code spans.",
+        "pinion-shell: 86 errors -> 0 (6 files), bulk delegated to a subagent with shell's real deps up front. Reachable -> working links at true defining path (WidgetView::apply_key etc. resolve on supertrait WidgetCore; winit ApplicationHandler methods; CoreShell::held_key_names -- SEED hint 'held_names' was stale); pub(crate)/private items -> code spans; redundant -> shortcuts.",
+        "Doc comments only; no code/signature/Cargo.toml/lints changes."
+      ],
+      "verification_bullets": [
+        "cargo doc -p pinion-a11y and -p pinion-shell --no-deps = exit 0, 0 errors, 0 warnings each.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0.",
+        "cargo test -p pinion-a11y -p pinion-shell = pass, 0 fail.",
+        "PROCESS: my a11y `replace_all` on shortcut `[`X`]` clobbered 2 pre-existing full links into `[`X`](p)(p)` doubled-targets (shortcut is a substring of the full link); the shell subagent's workspace-clippy caught it, I fixed both. Re-grepped both crates for doubled-target + dangling-target artifacts = NONE; confirmed doc-comment-only diff."
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.16",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "LESSON (added to [[doc-hygiene-campaign]]): NEVER `replace_all` a shortcut link `[`X`]` when full links `[`X`](path)` may exist in the same file -- the shortcut is a substring, so replace_all doubles the target. Use targeted per-site edits or a pattern that includes the trailing char. Always re-grep `\\]\\([^)]*\\)\\(` after replace_all.",
+        "DOC-HYGIENE CAMPAIGN cont: R1207 forge+derive, R1208 core, R1209 a11y+shell done. Next: R1210 rpc (117) + runtime (90); R1211 widget-paint (105); R1212 examples (~150: ThemeProvider ~46 + InputRouter); R1213 add cargo-doc to .githooks + CI gate once workspace-green.",
+        "Delegation recipe validated again (shell): give subagent the crate's real deps + prefer-working-links + botch-grep + clippy self-check; verify the gate yourself. Subagent even caught MY botch via workspace-clippy."
+      ],
+      "publishable_decision_summary": "R1209 doc-hygiene campaign round 3: pinion-a11y (16) and pinion-shell (86) cargo-doc made clean.",
+      "publishable_changes_bullets": [
+        "pinion-a11y: 16 unresolved links -> 0 (7 files), fixed by hand. Reachable items -> working links (AccessNode/grid_table_nodes/windowed_list_nodes -> crate::*, TextNode -> pinion_core::scene::TextNode, access_node -> crate::WidgetA11y::access_node); struct fields (has_popup/aria_label) + unreachable cross-crate (pinion_shell/pinion_widget_paint/ShellCore) -> code spans.",
+        "pinion-shell: 86 errors -> 0 (6 files), bulk delegated to a subagent with shell's real deps up front. Reachable -> working links at true defining path (WidgetView::apply_key etc. resolve on supertrait WidgetCore; winit ApplicationHandler methods; CoreShell::held_key_names -- SEED hint 'held_names' was stale); pub(crate)/private items -> code spans; redundant -> shortcuts.",
+        "Doc comments only; no code/signature/Cargo.toml/lints changes."
+      ],
+      "publishable_verification_bullets": [
+        "cargo doc -p pinion-a11y and -p pinion-shell --no-deps = exit 0, 0 errors, 0 warnings each.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0.",
+        "cargo test -p pinion-a11y -p pinion-shell = pass, 0 fail.",
+        "PROCESS: my a11y `replace_all` on shortcut `[`X`]` clobbered 2 pre-existing full links into `[`X`](p)(p)` doubled-targets (shortcut is a substring of the full link); the shell subagent's workspace-clippy caught it, I fixed both. Re-grepped both crates for doubled-target + dangling-target artifacts = NONE; confirmed doc-comment-only diff."
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "LESSON (added to [[doc-hygiene-campaign]]): NEVER `replace_all` a shortcut link `[`X`]` when full links `[`X`](path)` may exist in the same file -- the shortcut is a substring, so replace_all doubles the target. Use targeted per-site edits or a pattern that includes the trailing char. Always re-grep `\\]\\([^)]*\\)\\(` after replace_all.",
+        "DOC-HYGIENE CAMPAIGN cont: R1207 forge+derive, R1208 core, R1209 a11y+shell done. Next: R1210 rpc (117) + runtime (90); R1211 widget-paint (105); R1212 examples (~150: ThemeProvider ~46 + InputRouter); R1213 add cargo-doc to .githooks + CI gate once workspace-green.",
+        "Delegation recipe validated again (shell): give subagent the crate's real deps + prefer-working-links + botch-grep + clippy self-check; verify the gate yourself. Subagent even caught MY botch via workspace-clippy."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

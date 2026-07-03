@@ -617,7 +617,7 @@ impl AutoComplete {
 }
 
 /// R730 §5.40 — WAI-ARIA 1.2 §6.6.2 `aria-sort` direction for a sortable
-/// [`AriaRole::ColumnHeader`]. The wrapper keeps [`AccessNode`] free of a
+/// [`AriaRole::ColumnHeader`]. The wrapper keeps [`AccessNode`](crate::AccessNode) free of a
 /// direct `accesskit` dependency, exactly as [`AutoComplete`] does.
 ///
 /// `aria-sort="none"` (the column is sortable but not currently the sort
@@ -672,7 +672,7 @@ impl SortDirection {
 
 /// R731 §5.40 — WAI-ARIA 1.2 §6.6.3 `aria-current`: which element in a set
 /// of related elements is the *current* one. The wrapper keeps
-/// [`AccessNode`] free of a direct `accesskit` dependency, exactly as
+/// [`AccessNode`](crate::AccessNode) free of a direct `accesskit` dependency, exactly as
 /// [`SortDirection`] does.
 ///
 /// `aria-current="false"` (not the current element) is modelled by the
@@ -728,7 +728,7 @@ impl AriaCurrent {
 }
 
 /// R985 §5.40 — WAI-ARIA 1.2 §6.6.5 `aria-haspopup`: declares that a control
-/// owns a popup the activation opens. The wrapper keeps [`AccessNode`] free of
+/// owns a popup the activation opens. The wrapper keeps [`AccessNode`](crate::AccessNode) free of
 /// a direct `accesskit` dependency, exactly as [`AutoComplete`] / [`SortDirection`]
 /// do.
 ///

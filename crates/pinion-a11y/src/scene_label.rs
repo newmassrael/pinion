@@ -9,7 +9,7 @@
 //! 1. `ContainerNode::aria_label` override (the `aria-label`
 //!    analogue), set declaratively on the widget's outer tagged
 //!    container in the view-fn.
-//! 2. First-descendant [`TextNode`] content (the "name from content"
+//! 2. First-descendant [`TextNode`](pinion_core::scene::TextNode) content (the "name from content"
 //!    rung — what `<button>Save</button>` does in HTML).
 //!
 //! The widget's `access_node` impl returns its semantic descriptor
@@ -34,9 +34,9 @@ use crate::AccessNode;
 /// looking for the [`Scene::Container`] whose `tag` matches the node's
 /// `tag`. When found, applies the WAI-ARIA name-computation precedence:
 ///
-/// 1. If the matched container has [`ContainerNode::aria_label`]
+/// 1. If the matched container has `ContainerNode::aria_label`
 ///    (`Some(…)`), use it — that mirrors `<button aria-label="…">`.
-/// 2. Otherwise, find the first descendant [`TextNode`] in DFS
+/// 2. Otherwise, find the first descendant [`TextNode`](pinion_core::scene::TextNode) in DFS
 ///    pre-order and use its `content` — that mirrors "name from
 ///    contents" for `<button>Click me!</button>`.
 /// 3. Otherwise, leave `name` as `None` — AT clients then receive an

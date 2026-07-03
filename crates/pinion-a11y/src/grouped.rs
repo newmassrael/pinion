@@ -14,7 +14,7 @@
 //! these belong here as one source of truth. The grid pair had **already**
 //! diverged by hand (one carried `aria-sort` + a different header-tag scheme,
 //! the other did not); expressing the per-column tag/label/`aria-sort` as a
-//! [`GridColumn`] slice (the [`grid_table_nodes`] convention) turns that
+//! [`GridColumn`] slice (the [`grid_table_nodes`](crate::grid_table_nodes) convention) turns that
 //! divergence into *data* the consumer supplies, while the builder owns the
 //! load-bearing topology decision.
 //!
@@ -199,7 +199,7 @@ pub enum GroupedGridSelection {
 
 /// The addressing config of a grouped **grid** a11y tree (a `treegrid`, R874).
 /// Columns are a [`GridColumn`] slice (tag + label + optional `aria-sort`) — the
-/// same caller-owned-columns convention as [`grid_table_nodes`], so a *sortable*
+/// same caller-owned-columns convention as [`grid_table_nodes`](crate::grid_table_nodes), so a *sortable*
 /// grid and a static one differ only in the slice they pass, not in code.
 pub struct GroupedGridSpec<'a> {
     /// The `role=treegrid` container tag.

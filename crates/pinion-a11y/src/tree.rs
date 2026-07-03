@@ -101,7 +101,7 @@ impl AccessTreeBuilder {
     /// R51.79 §5.40 — signature takes `&AccessNode` (not by-value)
     /// so callers can keep ownership of their `Vec<AccessNode>` past
     /// the builder build, hand the same Vec by-value to
-    /// [`crate::ShellCore::commit_access_emit`], and move it
+    /// `ShellCore::commit_access_emit`, and move it
     /// straight into the per-tag cache without re-cloning. The
     /// builder still clones internally (`self.nodes` consumes the
     /// node) — moving the clone from caller to callee centralises
