@@ -22048,6 +22048,48 @@
         "Code SPANS remain permanently ungateable (rustdoc never checks them) -> re-run the Type::member vs code audit periodically. The audit method: extract `A::b` code-span paths from doc comments where A is an internal type, flag members with no fn/const/variant/field def; filter external roots + pub fields + enum variants to cut false positives."
       ]
     },
+    "R1218": {
+      "decision_summary": "R1218 closes the doc-truth campaign: upgraded the doc gate to --document-private-items so broken links in PRIVATE-item docs (the blind spot found this session) are gated forever.",
+      "changes_bullets": [
+        "Added `--document-private-items` to the R1214 cargo-doc gate in all three enforcement points: .githooks/pre-commit, .githooks/pre-push, and .github/workflows/ci.yml. The gate command is now `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items`.",
+        "Root-cause close: the R1214 gate checked only PUBLIC-item doc links; rustdoc skips private items without this flag, so ~150 broken private-item links (fixed R1216) were an ungated blind spot that would have rotted again.",
+        "Header comment blocks in both hooks updated to document the private-items extension."
+      ],
+      "verification_bullets": [
+        "NEGATIVE CONTROL proving the blind-spot closure: injected a broken link on a PRIVATE fn -> old gate (public-only) = 0 errors (missed it), new gate (--document-private-items) = 2 errors (caught it); reverted -> clean.",
+        "bash -n on both hooks = valid; upgraded gate on the real tree = exit 0.",
+        "Pushing R1218 exercises the new unconditional pre-push --document-private-items gate live."
+      ],
+      "impact_refs": [
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "DOC-TRUTH CAMPAIGN COMPLETE (R1207-R1218, all PUSHED). Full state: (a) public-item links 0 + gated since R1214; (b) private-item links 0 (R1216) + now gated (R1218); (c) code-span wrong-names audited + fixed (R1215, R1217). `cargo doc --workspace --no-deps --document-private-items` = 0 and enforced at pre-commit/pre-push/CI.",
+        "PERMANENT residual (honest): code SPANS (`` `Type::method` ``) are NOT intra-doc links, so rustdoc can NEVER gate them -> doc-span truth is a periodic manual audit, not a gate. Audit recipe recorded in [[doc-hygiene-campaign]]. Everything gateable is now gated.",
+        "Next session: roadmap resumes at a Phase-B value-order slice ([[phase-b-substrate-roadmap]]) unless the user redirects. Doc-hygiene/truth debt is fully cleared."
+      ],
+      "publishable_decision_summary": "R1218 closes the doc-truth campaign: upgraded the doc gate to --document-private-items so broken links in PRIVATE-item docs (the blind spot found this session) are gated forever.",
+      "publishable_changes_bullets": [
+        "Added `--document-private-items` to the R1214 cargo-doc gate in all three enforcement points: .githooks/pre-commit, .githooks/pre-push, and .github/workflows/ci.yml. The gate command is now `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items`.",
+        "Root-cause close: the R1214 gate checked only PUBLIC-item doc links; rustdoc skips private items without this flag, so ~150 broken private-item links (fixed R1216) were an ungated blind spot that would have rotted again.",
+        "Header comment blocks in both hooks updated to document the private-items extension."
+      ],
+      "publishable_verification_bullets": [
+        "NEGATIVE CONTROL proving the blind-spot closure: injected a broken link on a PRIVATE fn -> old gate (public-only) = 0 errors (missed it), new gate (--document-private-items) = 2 errors (caught it); reverted -> clean.",
+        "bash -n on both hooks = valid; upgraded gate on the real tree = exit 0.",
+        "Pushing R1218 exercises the new unconditional pre-push --document-private-items gate live."
+      ],
+      "publishable_impact_refs": [
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-TRUTH CAMPAIGN COMPLETE (R1207-R1218, all PUSHED). Full state: (a) public-item links 0 + gated since R1214; (b) private-item links 0 (R1216) + now gated (R1218); (c) code-span wrong-names audited + fixed (R1215, R1217). `cargo doc --workspace --no-deps --document-private-items` = 0 and enforced at pre-commit/pre-push/CI.",
+        "PERMANENT residual (honest): code SPANS (`` `Type::method` ``) are NOT intra-doc links, so rustdoc can NEVER gate them -> doc-span truth is a periodic manual audit, not a gate. Audit recipe recorded in [[doc-hygiene-campaign]]. Everything gateable is now gated.",
+        "Next session: roadmap resumes at a Phase-B value-order slice ([[phase-b-substrate-roadmap]]) unless the user redirects. Doc-hygiene/truth debt is fully cleared."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

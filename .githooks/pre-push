@@ -22,11 +22,14 @@
 #        clippy budget is paid once per push regardless of which files
 #        changed)
 #
-#   2b. `cargo doc --workspace --no-deps` (R1214) — broken intra-doc link
-#      gate (unconditional). `warnings = "deny"` makes rustdoc lints errors,
-#      so this fails on any broken / redundant / private intra-doc link.
-#      Absent before R1214, which let ~1000 links accrete from ~R683 unseen
-#      (the gate ran clippy, never rustdoc).
+#   2b. `cargo doc --workspace --no-deps --document-private-items` (R1214,
+#      R1218) — broken intra-doc link gate (unconditional). `warnings =
+#      "deny"` makes rustdoc lints errors, so this fails on any broken /
+#      redundant / private intra-doc link. `--document-private-items`
+#      (R1218) extends the check to PRIVATE items' docs (~150 broken links
+#      that public-items-only rustdoc never saw). Absent before R1214,
+#      which let ~1000 links accrete from ~R683 unseen (ran clippy, never
+#      rustdoc).
 #
 # Install via `git config core.hooksPath .githooks` (one-time per clone).
 set -euo pipefail
@@ -66,8 +69,8 @@ fi
 # intra-doc link. Absent until R1214 — the reason ~1000 links accreted from
 # ~R683 unseen (the gate ran clippy, never rustdoc). Near-free once clippy has
 # warmed the build.
-echo "pre-push: cargo doc --workspace --no-deps (broken intra-doc link gate) ..." >&2
-if ! cargo doc --workspace --no-deps --features pinion-runtime/vello; then
+echo "pre-push: cargo doc --workspace --no-deps --document-private-items ..." >&2
+if ! cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items; then
     echo "pre-push: cargo doc failed — fix broken intra-doc links before push" >&2
     exit 1
 fi
