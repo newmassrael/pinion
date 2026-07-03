@@ -21876,6 +21876,48 @@
         "SEMANTIC flags for a maintainer (out of doc-hygiene scope, left as spans): ThemeProvider::set_theme (prose may mean set_mode); runtime SpringState::tick (lives on Tween); rpc ExternalHandle::introspect (type doesn't exist, real trait External)."
       ]
     },
+    "R1214": {
+      "decision_summary": "R1214 caps the doc-hygiene campaign: cargo doc --workspace added to .githooks pre-commit + pre-push + CI so the now-green doc build can never regress.",
+      "changes_bullets": [
+        "Added `cargo doc --workspace --no-deps --features pinion-runtime/vello` as a gate in three places: .githooks/pre-commit (after clippy, gated on staged *.rs), .githooks/pre-push (after clippy, unconditional), and .github/workflows/ci.yml lint-and-test (after clippy). warnings=deny (workspace.lints) already makes rustdoc lints errors, so a plain cargo doc fails on any broken/redundant/private intra-doc link -- no extra flags needed.",
+        "Root-cause fix: this gate's ABSENCE (commit/CI ran clippy, never rustdoc) is exactly why ~1000 broken links accreted invisibly from ~R683 to R1206. Now closed.",
+        "Header comment blocks in both hooks updated to document gate 2b."
+      ],
+      "verification_bullets": [
+        "NEGATIVE CONTROL (proves the gate catches regressions, not just passes now): injected a broken intra-doc link into pinion-core -> cargo doc exit 101; reverted -> exit 0.",
+        "bash -n on both hooks = valid syntax; warm incremental cargo doc = 0.35s (near-free after clippy warms the build, so pre-commit stays cheap).",
+        "cargo doc --workspace --no-deps --features pinion-runtime/vello = exit 0 on the current tree; pushing R1214 exercises the new unconditional pre-push doc gate live."
+      ],
+      "impact_refs": [
+        "6.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN COMPLETE ([[doc-hygiene-campaign]], R1207-R1214, all PUSHED): whole-workspace `cargo doc --workspace --no-deps` exit 0 (was 101 since ~R683; ~1000 broken links across 22 lib crates + 136 example bins fixed) AND now gated at pre-commit/pre-push/CI so it can't regress. This closes the R1206 carry (which under-counted it as '26 links').",
+        "Campaign lessons durably recorded in [[doc-hygiene-campaign]]: abort-at-first-crate hides scope (use per-crate -p or --keep-going); warnings=deny promotes rustdoc lints; replace_all-on-shortcut doubles targets; span-drop must remove the whole [..](..); subagent existence-judgment unreliable (verify with the gate, not self-report); fn/mod ambiguity -> fn@.",
+        "SEMANTIC flags left for a maintainer (spans, not links -- prose names nonexistent API): ThemeProvider::set_theme (real set_mode/set_*_palette), runtime SpringState::tick (on Tween), rpc ExternalHandle::introspect (real trait External), shell/widget-paint WidgetView::initial_size vs initial_size_strategy. Next session: back to Phase-B value-order slice ([[phase-b-substrate-roadmap]]) unless user redirects."
+      ],
+      "publishable_decision_summary": "R1214 caps the doc-hygiene campaign: cargo doc --workspace added to .githooks pre-commit + pre-push + CI so the now-green doc build can never regress.",
+      "publishable_changes_bullets": [
+        "Added `cargo doc --workspace --no-deps --features pinion-runtime/vello` as a gate in three places: .githooks/pre-commit (after clippy, gated on staged *.rs), .githooks/pre-push (after clippy, unconditional), and .github/workflows/ci.yml lint-and-test (after clippy). warnings=deny (workspace.lints) already makes rustdoc lints errors, so a plain cargo doc fails on any broken/redundant/private intra-doc link -- no extra flags needed.",
+        "Root-cause fix: this gate's ABSENCE (commit/CI ran clippy, never rustdoc) is exactly why ~1000 broken links accreted invisibly from ~R683 to R1206. Now closed.",
+        "Header comment blocks in both hooks updated to document gate 2b."
+      ],
+      "publishable_verification_bullets": [
+        "NEGATIVE CONTROL (proves the gate catches regressions, not just passes now): injected a broken intra-doc link into pinion-core -> cargo doc exit 101; reverted -> exit 0.",
+        "bash -n on both hooks = valid syntax; warm incremental cargo doc = 0.35s (near-free after clippy warms the build, so pre-commit stays cheap).",
+        "cargo doc --workspace --no-deps --features pinion-runtime/vello = exit 0 on the current tree; pushing R1214 exercises the new unconditional pre-push doc gate live."
+      ],
+      "publishable_impact_refs": [
+        "6.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN COMPLETE ([[doc-hygiene-campaign]], R1207-R1214, all PUSHED): whole-workspace `cargo doc --workspace --no-deps` exit 0 (was 101 since ~R683; ~1000 broken links across 22 lib crates + 136 example bins fixed) AND now gated at pre-commit/pre-push/CI so it can't regress. This closes the R1206 carry (which under-counted it as '26 links').",
+        "Campaign lessons durably recorded in [[doc-hygiene-campaign]]: abort-at-first-crate hides scope (use per-crate -p or --keep-going); warnings=deny promotes rustdoc lints; replace_all-on-shortcut doubles targets; span-drop must remove the whole [..](..); subagent existence-judgment unreliable (verify with the gate, not self-report); fn/mod ambiguity -> fn@.",
+        "SEMANTIC flags left for a maintainer (spans, not links -- prose names nonexistent API): ThemeProvider::set_theme (real set_mode/set_*_palette), runtime SpringState::tick (on Tween), rpc ExternalHandle::introspect (real trait External), shell/widget-paint WidgetView::initial_size vs initial_size_strategy. Next session: back to Phase-B value-order slice ([[phase-b-substrate-roadmap]]) unless user redirects."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

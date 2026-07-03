@@ -56,6 +56,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: clippy (-D pedantic via workspace.lints)
         run: cargo clippy --workspace --all-targets --features pinion-runtime/vello
+      - name: cargo doc (broken intra-doc link gate)
+        # R1214 — `warnings = "deny"` (workspace.lints) promotes rustdoc lints
+        # (broken_intra_doc_links / redundant_explicit_links /
+        # private_intra_doc_links) to errors, so a plain `cargo doc` fails on
+        # any regression. This gate was absent until R1214, which is why ~1000
+        # broken links accreted invisibly from ~R683 (CI ran clippy, never
+        # rustdoc). Mirrors the .githooks pre-commit + pre-push doc gate.
+        run: cargo doc --workspace --no-deps --features pinion-runtime/vello
       - name: workspace tests
         run: cargo test --workspace
 

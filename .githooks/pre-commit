@@ -16,6 +16,13 @@
 #        Rust-touching commits fast once the workspace has been linted
 #        once.
 #
+#   2b. `cargo doc --workspace --no-deps` (R1214) — broken intra-doc link
+#      gate. `warnings = "deny"` promotes rustdoc lints to errors, so this
+#      fails on any broken / redundant / private intra-doc link. Rides the
+#      same `*.rs` gate as clippy and is near-free once clippy has warmed
+#      the build. Absent before R1214, which let ~1000 links accrete from
+#      ~R683 unseen.
+#
 #   3. `mnemosyne-cli validate-code-refs`
 #      - hallucination-class citation gate: a source comment citing a
 #        dead `§<id>` section or an unknown `Round NNN` entry fails the
@@ -49,6 +56,15 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     cargo fmt --all --check
     echo "pre-commit: cargo clippy --workspace --all-targets --features pinion-runtime/vello ..." >&2
     cargo clippy --workspace --all-targets --features pinion-runtime/vello
+    # R1214 — broken intra-doc link gate. `warnings = "deny"` (workspace.lints)
+    # already promotes every rustdoc lint (broken_intra_doc_links /
+    # redundant_explicit_links / private_intra_doc_links) to an error, so a
+    # plain `cargo doc` fails on regression. This gate was absent until R1214,
+    # which is why ~1000 broken links accreted invisibly from ~R683 (the
+    # commit gate ran clippy, never rustdoc). Nearly free once clippy has
+    # warmed the build (rustdoc reuses the compiled artifacts).
+    echo "pre-commit: cargo doc --workspace --no-deps (broken intra-doc link gate) ..." >&2
+    cargo doc --workspace --no-deps --features pinion-runtime/vello
 fi
 
 # 3. mnemosyne-cli validate-code-refs — hallucination-class citation gate
