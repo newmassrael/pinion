@@ -318,7 +318,7 @@ impl SettingsPersistedState {
 
 /// Owns the persistence save [`Effect`] for the app's lifetime.
 /// Returned through [`Owner::cache`] so the Effect handle is
-/// retained inside the cached slot (the `Owner::cleanup` queue holds
+/// retained inside the cached slot (`Owner`'s cleanup queue holds
 /// only `Weak` — dropping the handle would silently GC the Effect,
 /// per [[effect-driven-driver-monotonic-counter]] / [[r665-storage-substrate]]).
 struct PersistenceBootMarker {

@@ -352,7 +352,7 @@ impl<'a> ParseCtx<'a> {
     /// `Some((kind, backend_raw, name))` only when xmlns / kind / name
     /// all pass; `backend_raw` is the unvalidated author literal (or
     /// `None` when the attribute is absent) and is interpreted by the
-    /// caller in `Self::build_spec` per the kind. Even one core
+    /// caller in `Self::parse_root_open` per the kind. Even one core
     /// failure makes the doc unrenderable, so we don't construct a
     /// partial AST.
     fn parse_root_attrs(

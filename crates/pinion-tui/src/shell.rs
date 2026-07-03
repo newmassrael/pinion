@@ -27,7 +27,7 @@
 //! 4. On handled input, `walk_scene_and_drain` pulls §5.20 intents
 //!    out of the SCXML widget; cached state refresh via
 //!    `V::read_state(&scene)` triggers a repaint when the visible
-//!    state changes (mirrors `ShellCore::refresh_state` in
+//!    state changes (mirrors the state-refresh step in
 //!    `pinion-shell`).
 //!
 //! Focus is implicit at this cut — the shell passes

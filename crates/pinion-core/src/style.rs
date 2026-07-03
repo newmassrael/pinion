@@ -1448,7 +1448,7 @@ fn hash_gradient<H: core::hash::Hasher>(gradient: &Gradient, state: &mut H) {
 /// `(offset_x, offset_y)`, inflated by `spread` (negative shrinks),
 /// blurred by a gaussian of radius `blur`, and painted in `color`
 /// *behind* the box fill. The Vello `paint_adapter` lowers it to the
-/// native `Scene::draw_blurred_rounded_rect` primitive (CSS convention:
+/// native blurred-rounded-rect primitive (CSS convention:
 /// the gaussian std-dev is `blur / 2`).
 ///
 /// All fields are POD (`Color` is `Copy`, the rest `f32`), so

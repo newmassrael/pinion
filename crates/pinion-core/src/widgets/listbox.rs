@@ -2,7 +2,7 @@
 //! across N [`ListBoxItem`] instances, mirroring
 //! [`RadioGroup`](crate::widgets::radio_group::RadioGroup) but exposed at the composite layer
 //! with WAI-ARIA Listbox semantics (`AriaRole::Listbox` parent +
-//! `AriaRole::Option` children, Arrow-keys-focus-only + Space/Enter-
+//! `AriaRole::ListBoxOption` children, Arrow-keys-focus-only + Space/Enter-
 //! commits keyboard model).
 //!
 //! Pinion's atomic widgets (`ListBoxItem`) own the per-item state

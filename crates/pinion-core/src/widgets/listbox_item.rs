@@ -14,7 +14,7 @@
 //!   composite uses indexed dispatch and does not depend on this
 //!   distinction.
 //! * **ARIA role at the composite** — `ListBox` exposes
-//!   `AriaRole::Listbox` + `AriaRole::Option` per item;
+//!   `AriaRole::Listbox` + `AriaRole::ListBoxOption` per item;
 //!   [`RadioGroup`](crate::widgets::radio_group::RadioGroup) exposes `AriaRole::RadioGroup` +
 //!   `AriaRole::RadioButton`. The application's `access_node` impl
 //!   chooses which role per the composite's identity.

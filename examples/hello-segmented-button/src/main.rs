@@ -21,7 +21,7 @@
 //! glyph, the iOS / M3-expressive lineage; todomvc = M3-outlined
 //! gapped buttons, high-emphasis Accent) — so per the R703 rule the
 //! *opinionated* segmented paint stays an honest deferred carry until a
-//! 3rd **identical** consumer triggers a `pinion_widget_paint::segmented`
+//! 3rd **identical** consumer triggers a shared segmented-paint
 //! lift. What is genuinely shared (and reused, not duplicated) is the
 //! `RadioGroupExternal` coordinator.
 //!

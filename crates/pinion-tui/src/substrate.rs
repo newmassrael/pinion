@@ -32,7 +32,7 @@
 //! (the TUI shell repaints on `true` because terminals do not
 //! `VSync`)".
 //!
-//! Result: the explicit `refresh_state()` two-call pattern goes
+//! Result: the explicit two-call refresh pattern goes
 //! away. `dispatch_key`, `cursor_moved`, `pointer_down`,
 //! `pointer_up` all return `bool` directly — `true` when the
 //! visible state transitioned, so the caller's `if … { repaint(); }`
@@ -354,7 +354,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// substrate signals the frame is out of date). Replaces the
     /// pre-R51.124 two-call pattern (`dispatch_key` returned "was
     /// the key handled?", caller chained an explicit
-    /// `refresh_state` for "did state change?"); the single-call
+    /// state-refresh call for "did state change?"); the single-call
     /// shape mirrors the post-lift Vello side where dispatch
     /// methods auto-tail.
     ///

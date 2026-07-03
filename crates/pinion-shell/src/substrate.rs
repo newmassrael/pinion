@@ -511,7 +511,7 @@ pub use pinion_runtime::FragmentCacheStats;
 ///
 /// R51.77 split: pre-R51.77 `AccessEmitPlan` bundled the decision
 /// AND the consumed nodes / focus AND mutated the `ShellCore` cache
-/// inside a single `compute_access_emit` call (silent surprise —
+/// inside a single combined emit call (silent surprise —
 /// pure-looking name but mutating). The textbook canonical shape
 /// separates pure planning from the cache-update commit step. See
 /// [`ShellCore::commit_access_emit`].
@@ -2394,7 +2394,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// `AppShell` converts a `winit::event::Touch` to [`Touch`] at
     /// the window-system boundary; future TUI / mobile / RPC paths
     /// construct the same abstract event directly. Delegates to
-    /// `Self::handle_touch` (which calls [`CoreShell::touch_event`]
+    /// `Self::handle_touch_for_window` (which calls [`CoreShell::touch_event`]
     /// plus the Vello-only `click_to_focus` follow-up on the press
     /// phase) then routes the dispatch tail.
     ///
@@ -3862,7 +3862,7 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// R1186 §5.16 §5.39 — DECOUPLED from chrome via
     /// [`WindowPolicy::resizable`](crate::WindowPolicy::resizable) (R1190 folded
-    /// the former `window_resizable` getter into the policy). Pre-R1186 the border
+    /// the former resizable getter into the policy). Pre-R1186 the border
     /// rode the chrome gate ("resize travels with chrome"), which could not express
     /// a **controls-in-header** floating window: a torn-off dock panel whose title
     /// bar is its own dock header (R1171) has `chrome: None` (ONE strip, no separate
@@ -5670,8 +5670,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// in a separate step.
     ///
     /// Two-step rationale (R51.77 split): pre-R51.77
-    /// `compute_access_emit` bundled the decision AND the cache
-    /// update into one `&mut self` call named like a pure function.
+    /// a single combined call bundled the decision AND the cache
+    /// update into one `&mut self` method named like a pure function.
     /// Reading the name without reading the body suggested
     /// idempotence; two back-to-back calls actually yielded different
     /// answers (the second saw the first's cache update). The

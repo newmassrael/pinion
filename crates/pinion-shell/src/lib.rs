@@ -225,7 +225,7 @@ pub use pinion_overlay::{WindowControl, window_control_for_tag};
 
 /// (R1190 §5.16 §5.39) The declarative per-window chrome / frame policy a binding
 /// returns from [`WidgetView::window_policy`] — the cohesive value-type that
-/// supersedes the separate `window_chrome` + `window_resizable` getters.
+/// supersedes the separate `window_chrome` and resizable getters.
 ///
 /// The R1186 rustdoc noting that `resizable` could NOT fold into
 /// [`WindowChromeStyle`] (a chrome-less window has no style struct to carry the
@@ -246,7 +246,7 @@ pub struct WindowPolicy {
     /// Client-side resize border: `None` derives from chrome presence (resize iff
     /// chrome — the pre-R1186 coupling), `Some(true)` forces it on a chrome-less
     /// controls-in-header floater, `Some(false)` off. (Superseded
-    /// `WidgetView::window_resizable`.)
+    /// the `WidgetView` resizable getter.)
     pub resizable: Option<bool>,
 }
 
@@ -936,7 +936,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// R1190 §5.16 §5.39 — binding-controlled declarative per-window chrome /
     /// frame policy: the client-side chrome strip style and the resize-border
     /// decision, as one cohesive [`WindowPolicy`] value. Supersedes the R1121.1
-    /// `window_chrome` + R1186 `window_resizable` getters (folded here so future
+    /// `window_chrome` and R1186 resizable getters (folded here so future
     /// per-window frame axes add a `WindowPolicy` field, not a `WidgetView`
     /// method). [`WindowPolicy::default`] (both fields `None`) is the OS-decorated,
     /// non-client-resizable default — every pre-R1190 binding that overrode
@@ -1216,7 +1216,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// for every single + multi-window binding).
     ///
     /// Bindings that need to add or remove windows at runtime
-    /// (canonically: a `DockSurface`
+    /// (canonically: a dock surface
     /// with tear-off ergonomics minting a new window per torn-off
     /// panel) override this method to return
     /// `Some(Rc<Signal<Vec<WindowSpec>>>)`. The shell's R683 atomic 1
@@ -1234,8 +1234,8 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// on the same binding handle should return the **same**
     /// `Rc<Signal<..>>` (identity-stable), otherwise the reconcile
     /// Effect would re-subscribe to a fresh signal each call and
-    /// drop the prior subscription cleanly via
-    /// `Owner::cleanup_subscription`.
+    /// drop the prior subscription cleanly through the owner's
+    /// [`on_cleanup`](pinion_core::Owner::on_cleanup) hook.
     ///
     /// Returning `Some(signal)` overrides the compile-time list:
     /// the shell calls `signal.get()` for the initial topology and

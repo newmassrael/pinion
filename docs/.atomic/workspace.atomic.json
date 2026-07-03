@@ -22006,6 +22006,48 @@
         "KEY STRUCTURAL FINDING: the R1214 gate checked PUBLIC items only; private-item links were an ungated blind spot. R1219 closes it. Code SPANS remain permanently ungateable (rustdoc never checks them) -> doc-span truth is a periodic manual audit, not a gate."
       ]
     },
+    "R1217": {
+      "decision_summary": "R1217 doc-truth phase 2: corrected 17 code-span references naming nonexistent APIs (rustdoc can never gate spans, so a mechanical audit + manual fix).",
+      "changes_bullets": [
+        "Fixed code spans naming APIs that do not exist (found by a Type::member audit cross-checked against the actual code; false positives from external types / pub fields / enum variants filtered out). 22 files, doc comments only.",
+        "RENAMED to the real API (link where reachable): handle_touch->handle_touch_for_window, AriaRole::Option->AriaRole::ListBoxOption, compute_access_emit->plan_access_emit (the diff half of the split), Self::build_spec->parse_root_open, Self::Preedit->winit Ime::Preedit.",
+        "REWORDED (no same-role real target -> removed the false Type::method, kept meaning): Scene::VirtualList / Scene::draw_blurred_rounded_rect (never-implemented), Owner::cleanup queue / cleanup_subscription->on_cleanup, MpscIntentSink::try_recv (send-only sink -> mpsc Receiver drain), refresh_state / with_last_paint_layout / dispatch_pointer_move_to / resolve_preview (no target), window_resizable (getter removed; with_resizable is a setter, not substitutable), widget_paint::combobox/segmented/dock::DockSurface (nonexistent modules/type). Kept an explicit PRE-R51.117 historical helper list (forward_event etc.) as truthful history.",
+        "Judgment (rename vs reword) done by me; mechanical application delegated + independently verified."
+      ],
+      "verification_bullets": [
+        "All 17 wrong names removed: per-name grep of doc comments = 0 (except the intentional historical-narrative list).",
+        "cargo doc --workspace --no-deps --document-private-items = 0 (new links resolve); public cargo doc = still 0 (no regression); cargo clippy --workspace --all-targets = 0.",
+        "Independently verified: botch-grep (doubled + dangling) NONE; only doc-comment lines changed (22 files); spot-checked rewrite prose reads cleanly and truthfully."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "DOC-TRUTH: public links (R1207-1215) + private links (R1216) + code-span names (R1217) all clean; whole workspace cargo doc --document-private-items = 0. ONE round left: R1218 = upgrade the R1214 gate from `cargo doc --workspace --no-deps` to `... --document-private-items` in .githooks pre-commit/pre-push + CI, closing the private-item blind spot permanently. Everything is green under it now, so the gate can be enabled.",
+        "Code SPANS remain permanently ungateable (rustdoc never checks them) -> re-run the Type::member vs code audit periodically. The audit method: extract `A::b` code-span paths from doc comments where A is an internal type, flag members with no fn/const/variant/field def; filter external roots + pub fields + enum variants to cut false positives."
+      ],
+      "publishable_decision_summary": "R1217 doc-truth phase 2: corrected 17 code-span references naming nonexistent APIs (rustdoc can never gate spans, so a mechanical audit + manual fix).",
+      "publishable_changes_bullets": [
+        "Fixed code spans naming APIs that do not exist (found by a Type::member audit cross-checked against the actual code; false positives from external types / pub fields / enum variants filtered out). 22 files, doc comments only.",
+        "RENAMED to the real API (link where reachable): handle_touch->handle_touch_for_window, AriaRole::Option->AriaRole::ListBoxOption, compute_access_emit->plan_access_emit (the diff half of the split), Self::build_spec->parse_root_open, Self::Preedit->winit Ime::Preedit.",
+        "REWORDED (no same-role real target -> removed the false Type::method, kept meaning): Scene::VirtualList / Scene::draw_blurred_rounded_rect (never-implemented), Owner::cleanup queue / cleanup_subscription->on_cleanup, MpscIntentSink::try_recv (send-only sink -> mpsc Receiver drain), refresh_state / with_last_paint_layout / dispatch_pointer_move_to / resolve_preview (no target), window_resizable (getter removed; with_resizable is a setter, not substitutable), widget_paint::combobox/segmented/dock::DockSurface (nonexistent modules/type). Kept an explicit PRE-R51.117 historical helper list (forward_event etc.) as truthful history.",
+        "Judgment (rename vs reword) done by me; mechanical application delegated + independently verified."
+      ],
+      "publishable_verification_bullets": [
+        "All 17 wrong names removed: per-name grep of doc comments = 0 (except the intentional historical-narrative list).",
+        "cargo doc --workspace --no-deps --document-private-items = 0 (new links resolve); public cargo doc = still 0 (no regression); cargo clippy --workspace --all-targets = 0.",
+        "Independently verified: botch-grep (doubled + dangling) NONE; only doc-comment lines changed (22 files); spot-checked rewrite prose reads cleanly and truthfully."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-TRUTH: public links (R1207-1215) + private links (R1216) + code-span names (R1217) all clean; whole workspace cargo doc --document-private-items = 0. ONE round left: R1218 = upgrade the R1214 gate from `cargo doc --workspace --no-deps` to `... --document-private-items` in .githooks pre-commit/pre-push + CI, closing the private-item blind spot permanently. Everything is green under it now, so the gate can be enabled.",
+        "Code SPANS remain permanently ungateable (rustdoc never checks them) -> re-run the Type::member vs code audit periodically. The audit method: extract `A::b` code-span paths from doc comments where A is an internal type, flag members with no fn/const/variant/field def; filter external roots + pub fields + enum variants to cut false positives."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

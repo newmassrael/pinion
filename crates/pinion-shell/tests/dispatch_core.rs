@@ -12,7 +12,7 @@
 //! surface is reachable without a winit `EventLoop` or wgpu device;
 //! these tests exercise that surface and assert against
 //! [`ShellCore::take_redraw_request`], [`ShellCore::focus`],
-//! [`ShellCore::compute_access_emit`], and a [`TestView`] whose
+//! [`ShellCore::plan_access_emit`], and a [`TestView`] whose
 //! `apply_key` / `access_child_invoke` impls record calls into
 //! per-test static mocks.
 //!
@@ -459,7 +459,7 @@ impl WidgetView for TestView {
 /// Build an atomic `AccessNode` snapshot. `value` is a `bool` so two
 /// snapshots with different values differ via
 /// `AccessValue::Bool` — the simplest type that exercises the
-/// `PartialEq` diff `compute_access_emit` runs.
+/// `PartialEq` diff `plan_access_emit` runs.
 fn atomic_node(tag: &str, value: bool) -> AccessNode {
     AccessNode::new(tag, AriaRole::CheckBox)
         .with_name("snapshot")

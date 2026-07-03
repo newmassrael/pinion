@@ -72,7 +72,7 @@
 //! ## Relationship to the §5.27 ratified design
 //!
 //! §5.27 (ratified R32) originally specced virtualization as a dedicated
-//! `Scene::VirtualList` IR variant whose visible window is materialized at
+//! `Scene` IR variant whose visible window is materialized at
 //! the *layout pass* (the view-fn returns a template + `item_fn`). R690.A
 //! recorded that variant as never implemented, removed the stale 8th-
 //! variant numbering, judged the windowed-re-materialize design valid, and

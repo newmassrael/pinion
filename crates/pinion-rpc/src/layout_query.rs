@@ -135,7 +135,7 @@ pub enum LayoutQueryError {
     /// R47.7.5 — `viewport=None` was supplied but the application has
     /// not yet produced a `last_paint_layout` snapshot (winit has not
     /// rendered a frame yet, or the application skipped registering
-    /// the snapshot via `DispatchContext::with_last_paint_layout`).
+    /// the snapshot).
     NoLastPaintLayout,
 }
 

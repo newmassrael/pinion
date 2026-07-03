@@ -2902,8 +2902,7 @@ pub struct DockReorganizer {
     /// panes as tabs is meaningless). Owned by the coordinator — NOT per-panel
     /// — because the policy is only meaningful when a reorganize can happen (a
     /// reorganizer exists) and must apply UNIFORMLY to every classifier
-    /// consumer of this surface: the pointer path
-    /// (`DockPanelExternal::resolve_preview`), the `drop` RPC
+    /// consumer of this surface: the pointer path, the `drop` RPC
     /// ([`resolve_dock_drop`]), and cross-window redock
     /// ([`DockReorganizer::dock_panel_at_resolved_zone`]). A split-only surface never offers
     /// `Center` from any path — a centre cursor resolves to the nearest split

@@ -36,7 +36,7 @@
 //!   methods forward to `core` + log + bookkeep.
 //! - **R51.124** — `pinion_tui::ShellCoreTui` reduces to
 //!   `core: CoreShell<V>` + the TUI-specific `log_sink`.
-//!   `refresh_state` becomes a thin wrapper over `core.tail()` +
+//!   the state-refresh step becomes a thin wrapper over `core.tail()` +
 //!   `log_sink` routing.
 //! - **R51.125** — `dispatch_rpc` lifts to a `ShellDispatch` trait
 //!   (declared here in `pinion-runtime`, impl'd in `pinion-shell`)
@@ -747,7 +747,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// either widget-side input (the §5.20 SCXML drain that
     /// `walk_scene_and_drain` surfaces during `tick_intents`) or the
     /// async re-feed path
-    /// (`AppEvent::IntentArrived` on Vello / `MpscIntentSink::try_recv`
+    /// (`AppEvent::IntentArrived` on Vello / an mpsc `Receiver` drain
     /// on TUI) flows through this method before reaching the SCXML
     /// `invoke("send", …)` channel.
     ///
@@ -1842,7 +1842,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// tail.
     ///
     /// Mirrors the pre-lift `pinion_shell::ShellCore::forward` +
-    /// `pinion_tui::ShellCoreTui::forward_event` shape. The OCC
+    /// `pinion_tui::ShellCoreTui` event-forward shape. The OCC
     /// revision bump that the Vello shell applied after `forward`
     /// stays in the Vello wrapper because the revision token is
     /// Shell-specific.
@@ -2469,7 +2469,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// [`PointerId::touch(touch.id)`] (so two simultaneous touches
     /// drive two widgets without aliasing the capture lock). Phase
     /// routing matches the pre-lift
-    /// `pinion_shell::ShellCore::handle_touch`:
+    /// `pinion_shell::ShellCore::handle_touch_for_window`:
     ///
     /// - [`TouchPhase::Started`] — synthetic
     ///   [`InputRouter::cursor_moved`] to resolve the hover target

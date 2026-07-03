@@ -44,7 +44,7 @@
 //! check glyph while pressed, transparent otherwise, with the shared hover /
 //! pressed `state_layer` overlay). The segmented pill paint stays an honest
 //! deferred carry (the R703 opinionated-paint rule) until a 3rd *identical*
-//! consumer triggers a `pinion_widget_paint::segmented` lift — the chip's
+//! consumer triggers a shared segmented-paint lift — the chip's
 //! detached-pill paint is *not* identical, so it does not count.
 //!
 //! Hit-target: each segment is tagged `seg_multi_{i}` (a *whole* tag, not
@@ -199,7 +199,7 @@ fn view(state: GroupState, _frame: &Frame) -> Scene {
 ///
 /// R733 carry: this is the 2nd *identical* consumer of the R728 segmented
 /// paint (typed over `ToggleState` rather than `RadioState`); a 3rd
-/// identical consumer triggers the `pinion_widget_paint::segmented` lift.
+/// identical consumer triggers the shared segmented-paint lift.
 fn segment(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
     let label_color = segment_label_color(theme, on, state);
     let mut children: Vec<Scene> = Vec::with_capacity(2);

@@ -68,7 +68,7 @@
 //! note); focus is real + RPC-observable (`focus/get`, the a11y
 //! `aria-activedescendant`). A 2nd combobox-class consumer (an editable
 //! combobox, a menu-button) would trigger lifting a `ComboBoxExternal`
-//! coordinator + a `pinion_widget_paint::combobox` chrome helper.
+//! coordinator + a shared combobox chrome helper.
 
 use pinion_a11y::{
     AccessFocus, AccessNode, AccessState, AriaRole, ListOption, WidgetA11y, listbox_option_nodes,

@@ -12,7 +12,7 @@
 //!
 //! The Splitter is the canonical foundation of multi-pane DCC / IDE
 //! / CAD professional GUI tooling (the Phase B north star). R683.B
-//! atomic 3 (`pinion_widget_paint::dock::DockSurface`) consumes this
+//! atomic 3 (the `pinion_widget_paint::dock` surface) consumes this
 //! widget as the resizable boundary between dock slots; binding-
 //! level applications (R683.B atomic 4 `examples/hello-dock-panels`,
 //! future settings / editor layouts) consume directly via
@@ -68,7 +68,7 @@
 //! to [`view_splitter`] should carry their own `tag` to opt out of
 //! splitter-side pointer interception. Untagged children fall under
 //! the splitter's "deepest-tagged" hit and trigger the drag wire on
-//! any click. `DockSurface` (atomic 3) panels are always tagged so
+//! any click. Dock-surface (atomic 3) panels are always tagged so
 //! the contract is satisfied automatically.
 
 use std::borrow::Cow;

@@ -45,8 +45,8 @@ const _: () = assert!(DIALOG_LEVEL > MENU_LEVEL && MENU_LEVEL > DRAWER_LEVEL);
 /// ambient is softer and wider. Both offset and blur scale linearly
 /// with the level, so a higher surface casts a larger, darker shadow.
 ///
-/// Lowered by the Vello `paint_adapter` to the native
-/// `Scene::draw_blurred_rounded_rect` (R710 §5.50).
+/// Lowered by the Vello `paint_adapter` to a native
+/// blurred-rounded-rect primitive (R710 §5.50).
 #[must_use]
 pub fn elevation(level: u8) -> Vec<BoxShadow> {
     if level == 0 {

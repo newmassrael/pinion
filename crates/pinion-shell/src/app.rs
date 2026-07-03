@@ -1309,7 +1309,7 @@ impl<V: WidgetView> AppShell<V> {
     /// suspended (R46.3.4 lifecycle).
     ///
     /// R51.76 §5.40 — the AccessKit emit decision is delegated to
-    /// `ShellCore::compute_access_emit` so the same diff logic is
+    /// [`ShellCore::plan_access_emit`](crate::ShellCore::plan_access_emit) so the same diff logic is
     /// exercised by headless tests; the AppShell-side responsibility
     /// is just to feed the plan to `Adapter::update_if_active`.
     /// R670.B §5.16 §5.41 — render one window's paint scene.
@@ -3488,7 +3488,7 @@ fn winit_theme_to_pinion_scheme(theme: winit::window::Theme) -> pinion_core::Sys
 ///
 /// 1. **Empty `Preedit` is `Update("")`, not `Cancel`** — winit
 ///    documents "Right before `Commit` event winit will send empty
-///    `Self::Preedit` event" as a synthetic clear. Treating empty
+///    `Ime::Preedit` event" as a synthetic clear. Treating empty
 ///    preedit as cancel would fire a spurious `Cancel + Commit` pair
 ///    on every pinyin / Hangul commit. Instead the visual clears and
 ///    the substrate stays composing; on the immediately-following

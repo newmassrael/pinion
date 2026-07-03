@@ -2052,7 +2052,7 @@ impl InputRouter {
     /// not a same-window reorganize target; [`resolve_drag_targets`] lets such a
     /// hit yield to a cross-window redock (but only when one is available, so a
     /// plain same-window self-release still snaps back). This lifts
-    /// `resolve_preview`'s `target == panel_id` self-drop rejection to the whole
+    /// the prior `target == panel_id` self-drop rejection to the whole
     /// source subtree, so a floating single-panel window's own header / content
     /// drop targets (a property-grid row's intra-panel drag) do not block dragging
     /// the floater onto another window's dock zone. A genuine same-window
@@ -2536,7 +2536,7 @@ fn find_node_with_tag<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
 /// R51.62 §5.40 — `pub` so `pinion-shell` can resolve post-layout widget
 /// bounds when lowering `pinion_a11y::AccessNode` into
 /// `accesskit::TreeUpdate`; also used by the router's pointer-capture
-/// move (`InputRouter::dispatch_pointer_move_to`).
+/// move.
 ///
 /// R705.1 §5.45 §2 #7 — delegates to the single coordinate-translation
 /// authority [`Scene::rect_for_tag_absolute`]. Pre-R705.1 this was a
