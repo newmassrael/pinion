@@ -206,11 +206,15 @@ def body() -> None:
         assert _panel_set(tf) == _ALL_PANELS, "D.7 still a move — no panel lost"
 
         # ── (E) interior contrast — the override is edge-band only ───
+        # (R1201) Drag CONSOLE, a movable panel: the toolbar was locked
+        # non-movable at R1172 (`with_movable(false)`), so `toolbar#header` no
+        # longer emits a drag handle — the pre-R1201 source here could not start a
+        # drag at all. Any movable panel exercises the same edge-only override.
         _section("E: a held drag to a panel CENTRE previews an INNER dock, not outer")
         vp = _rect(tf, _VIEWPORT)
         cx, cy = vp["x"] + vp["w"] * 0.5, vp["y"] + vp["h"] * 0.5
-        tf.drag(from_path=f"{_TOOLBAR}#header", to_at=(cx, cy), phase="begin")
-        inner = _drop_preview(tf, _TOOLBAR)
+        tf.drag(from_path=f"{_CONSOLE}#header", to_at=(cx, cy), phase="begin")
+        inner = _drop_preview(tf, _CONSOLE)
         assert isinstance(inner, dict), f"E.1 an interior held drag has a preview ({inner!r})"
         assert not _is_outer(inner.get("target")), (
             f"E.2 ★the interior preview is NOT the outer sentinel — the override is edge-only "
@@ -218,7 +222,7 @@ def body() -> None:
         )
         assert inner.get("target") == _VIEWPORT, f"E.3 the inner target is the panel under the cursor ({inner!r})"
         assert inner.get("zone") == "Center", f"E.4 a panel-centre drop is a Center (tabify) zone ({inner!r})"
-        tf.drag(from_path=f"{_TOOLBAR}#header", to_at=(cx, cy), phase="end")
+        tf.drag(from_path=f"{_CONSOLE}#header", to_at=(cx, cy), phase="end")
 
         # ── (F) integrity + determinism ──────────────────────────────
         _section("F: integrity — panels survive, reads deterministic")

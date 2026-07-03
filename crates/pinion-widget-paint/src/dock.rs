@@ -419,6 +419,53 @@ impl DockNode {
         }
     }
 
+    /// (R1201 §5.51) Structural equality IGNORING the fields a re-dock always
+    /// re-mints — a [`Self::Split`]'s stable `id` + `ratio` and a [`Self::Tabs`]
+    /// well's `id`. Two nodes have the same shape when they nest the same panels
+    /// the same way (same orientations, same left/right — top/bottom order, same
+    /// tab stacks + active). This is the redundancy metric for outer-dock
+    /// suppression ([`DockTopology::outer_dock_is_redundant`]): a dock whose
+    /// resulting tree has the SAME shape as the current one changes nothing —
+    /// only its split id + ratio would differ, both cosmetic — so it must be a
+    /// no-op (no misleading full-span preview, no resize). Ratio is excluded
+    /// because an outer dock always re-seeds the divider at
+    /// [`OUTER_DOCK_NEW_FRAC`]; the split/well ids because a reorganize always
+    /// mints fresh `reorg-*` ids. The VS Code / Qt ADS rule — a drop indicator
+    /// is offered only when the outcome differs from the current layout.
+    #[must_use]
+    pub fn same_shape(&self, other: &DockNode) -> bool {
+        match (self, other) {
+            (Self::Leaf { panel_id: a }, Self::Leaf { panel_id: b }) => a == b,
+            (
+                Self::Split {
+                    orientation: oa,
+                    first: fa,
+                    second: sa,
+                    ..
+                },
+                Self::Split {
+                    orientation: ob,
+                    first: fb,
+                    second: sb,
+                    ..
+                },
+            ) => oa == ob && fa.same_shape(fb) && sa.same_shape(sb),
+            (
+                Self::Tabs {
+                    panels: pa,
+                    active: aa,
+                    ..
+                },
+                Self::Tabs {
+                    panels: pb,
+                    active: ab,
+                    ..
+                },
+            ) => pa == pb && aa == ab,
+            _ => false,
+        }
+    }
+
     /// (R685 §5.16) Walk all leaf panel ids in depth-first order
     /// (first child before second). Order is stable across
     /// serialization round-trips so `panel_views` callback indices
@@ -1136,6 +1183,75 @@ impl DockTopology {
             // The recursion returns `None` only when the root node *is*
             // the target leaf — i.e. the topology has a single pane.
             None => Err(TopologyError::RootRemoval),
+        }
+    }
+
+    /// (R1201 §5.51) The PURE topology-transform core of
+    /// [`DockReorganizer::dock_panel_outer`]: the tree that results from docking
+    /// `panel` as a full-span accessory band at outer `zone`, its new divider
+    /// carrying `split_id` at ratio [`OUTER_DOCK_NEW_FRAC`]. Removes `panel` from
+    /// its current slot (if present) then splits the whole root perpendicular to
+    /// `zone`, the dragged panel taking the thin near-edge slice. A non-edge
+    /// `zone` ([`DockDropZone::Center`] / [`DockDropZone::None`]) is not an outer
+    /// dock → the unchanged tree. No commit / no id sequencing / no anchor
+    /// bookkeeping (the reorganizer wrapper owns those), so the live mutation AND
+    /// the redundancy probe ([`Self::outer_dock_is_redundant`]) share ONE
+    /// geometry — they cannot drift.
+    ///
+    /// # Errors
+    ///
+    /// * [`TopologyError::RootRemoval`] if `panel` is the sole pane (an outer
+    ///   dock is only meaningful while other panels remain).
+    /// * the [`Self::split_root`] id-collision / non-finite-ratio errors.
+    pub fn outer_dock_next(
+        &self,
+        panel: &str,
+        zone: DockDropZone,
+        split_id: impl Into<Cow<'static, str>>,
+    ) -> Result<DockTopology, TopologyError> {
+        let Some((orientation, position)) = zone_split_geometry(zone) else {
+            // Not an edge → not an outer dock; the tree is unchanged (route
+            // through `try_new` to keep the single-construction-path invariant).
+            return Self::try_new(self.root.clone());
+        };
+        // Normalise to absence (a present panel leaves its slot; an absent one —
+        // a cross-window floater — is simply added). Mirrors `dock_panel_outer`.
+        let base = if self.root.panel_ids().contains(&panel) {
+            self.remove_leaf(panel)?
+        } else {
+            self.clone()
+        };
+        // An outer dock is an ACCESSORY band, so the new panel takes the thin
+        // OUTER_DOCK_NEW_FRAC slice; `split_root`'s ratio is the FIRST child's
+        // fraction, so a Second-edge panel takes the complement.
+        let ratio = match position {
+            DockSplitPosition::First => OUTER_DOCK_NEW_FRAC,
+            DockSplitPosition::Second => 1.0 - OUTER_DOCK_NEW_FRAC,
+        };
+        base.split_root(panel.to_string(), split_id, orientation, ratio, position)
+    }
+
+    /// (R1201 §5.51) Would an OUTER full-span dock of `panel` at `zone` leave the
+    /// arrangement structurally unchanged? `true` = **redundant**: `panel`
+    /// already occupies that full-span edge (drag the right column to the right
+    /// edge, or pick an edge-flush panel up and drop it back), so the dock would
+    /// only re-seed the divider's id + ratio with no real layout change. The
+    /// resolver ([`resolve_drop_checked`]) maps such a drop to a stay-put
+    /// [`DropResolution::SnapBack`] (no misleading full-span preview) and
+    /// [`DockReorganizer::dock_panel_outer`] no-ops it (RPC / §2 #2 parity).
+    /// Compares the candidate tree ([`Self::outer_dock_next`]) to the current one
+    /// via [`DockNode::same_shape`] (ignoring the always-re-minted split id +
+    /// ratio). A sole-pane `panel` (removal would empty the tree) is likewise
+    /// redundant — it already fills the whole area. This is the VS Code / Qt ADS
+    /// invariant: an outer drop indicator is offered only when the outcome
+    /// differs from the current layout.
+    #[must_use]
+    pub fn outer_dock_is_redundant(&self, panel: &str, zone: DockDropZone) -> bool {
+        match self.outer_dock_next(panel, zone, REDUNDANCY_PROBE_SPLIT_ID) {
+            Ok(next) => next.root.same_shape(&self.root),
+            // A sole-pane removal (RootRemoval) — the panel already fills the
+            // area, so an outer dock changes nothing.
+            Err(_) => true,
         }
     }
 
@@ -2149,6 +2265,14 @@ const OUTER_DOCK_NEW_FRAC: f32 = 0.22;
 /// fraction by `dock_outer_new_pct_matches_frac`.
 const OUTER_DOCK_NEW_PCT: u8 = 22;
 
+/// (R1201 §5.51) Placeholder split id the redundancy probe hands
+/// [`DockTopology::outer_dock_next`]. NUL-prefixed (like [`OUTER_DOCK_ZONE_TAG`](pinion_core::external::OUTER_DOCK_ZONE_TAG))
+/// so it can never collide with a boot-topology or `reorg-*` split id — the probe
+/// tree is discarded and its id never painted ([`DockNode::same_shape`] ignores
+/// it), but a colliding id would make `split_root`'s [`DockTopology::try_new`]
+/// gate error and spuriously report "redundant".
+const REDUNDANCY_PROBE_SPLIT_ID: &str = "\u{0}outer-dock-probe";
+
 /// (R686 §5.16 §5.45) Prefix for the stable split ids the
 /// [`DockReorganizeExternal`] mints when a `SplitInsert` gesture
 /// creates a new divider (`reorg-split-{seq}`). Distinct from any
@@ -2341,6 +2465,32 @@ pub fn resolve_drop(
     is_panel: impl Fn(&str) -> bool,
     tabbing: bool,
 ) -> DropResolution {
+    // The cross-window path (a floater docking into ANOTHER window) is never
+    // redundant — the panel is absent from that window's topology — so it keeps
+    // the always-offer predicate; the same-window sources use
+    // `resolve_drop_checked` with the live redundancy probe.
+    resolve_drop_checked(over, source, is_panel, tabbing, |_| false)
+}
+
+/// (R1201 §5.51) [`resolve_drop`] with an OUTER-dock REDUNDANCY predicate — the
+/// SAME-window SSOT. `outer_redundant(edge)` answers "does the dragged `source`
+/// already occupy that full-span `edge`?" (the caller wires it to
+/// [`DockReorganizer::outer_dock_is_redundant`] against the live topology). When
+/// it does, a perimeter drop is a stay-put [`DropResolution::SnapBack`] instead
+/// of an [`DropResolution::OuterDock`]: dragging the right column to the right
+/// edge (or picking an edge-flush panel up and dropping it back) previews +
+/// resolves as no-move, not a resize to the thin [`OUTER_DOCK_NEW_FRAC`] band —
+/// the VS Code / Qt ADS rule that a drop indicator is offered only when the
+/// outcome differs. [`resolve_drop`] delegates here with an always-`false`
+/// predicate (the cross-window / test path), so preview == result still holds by
+/// construction on every path. See `docs/dock-drop-resolution.md`.
+pub fn resolve_drop_checked(
+    over: Option<&DropPoint>,
+    source: &str,
+    is_panel: impl Fn(&str) -> bool,
+    tabbing: bool,
+    outer_redundant: impl Fn(DockDropZone) -> bool,
+) -> DropResolution {
     // Off every drop target → float (outside the window, or a gap with no tag).
     let Some(point) = over else {
         return DropResolution::Float;
@@ -2348,6 +2498,16 @@ pub fn resolve_drop(
     // The reserved OUTER perimeter sentinel → full-span outer dock (R1156).
     if let Some(edge) = outer_drop_zone(&point.tag, f64::from(point.x_rel), f64::from(point.y_rel))
     {
+        // (R1201) …unless docking `source` at that edge is a redundant no-op (it
+        // already spans it): snap back, so no misleading full-span band previews
+        // and the release does not resize the column. `DockDropZone::None` = pure
+        // stay-put (never the R1163 self-edge undock-split, which is a distinct
+        // self-slot gesture, not an outer-perimeter drop).
+        if outer_redundant(edge) {
+            return DropResolution::SnapBack {
+                zone: DockDropZone::None,
+            };
+        }
         return DropResolution::OuterDock { edge };
     }
     // The drop target is the panel ROOT (split a composite `{well}#{i}` at `#`).
@@ -3117,37 +3277,54 @@ impl DockReorganizer {
             self.note_outcome(&outcome);
             return Ok(outcome);
         };
-        let Some((orientation, position)) = zone_split_geometry(zone) else {
+        if zone_split_geometry(zone).is_none() {
             let outcome = format!("{panel}: outer dock needs an edge zone — no move");
             self.note_outcome(&outcome);
             return Ok(outcome);
-        };
-        // Normalise to absence (placeholder policy removes the leaf; a collapsed /
-        // floating source is already absent). `remove_leaf` cannot empty the tree
-        // here: an outer dock is only meaningful while other panels remain.
-        let base = if current.panel_ids().contains(&panel) {
-            current.remove_leaf(panel)?
-        } else {
-            current
-        };
+        }
+        // (R1201 §5.51) A redundant outer dock — `panel` already occupies that
+        // full-span edge (the RPC / §2 #2 peer of the pointer suppression the
+        // resolver applies) — changes nothing but the split id + ratio, so no-op
+        // it. Without this an AI `dock_panel_outer(right_column, Right)` would
+        // silently resize the column to the OUTER_DOCK_NEW_FRAC slice; the pointer
+        // path already stays put via `resolve_drop_checked`, so this keeps the two
+        // input paths in lockstep.
+        if current.outer_dock_is_redundant(panel, zone) {
+            let outcome = format!(
+                "{panel}: already the outer {} band — no move",
+                zone_wire_name(zone)
+            );
+            self.note_outcome(&outcome);
+            return Ok(outcome);
+        }
+        // (R1156.1 §5.51) Delegate the tree transform to the pure
+        // `DockTopology::outer_dock_next` core (removes a present leaf, splits the
+        // root perpendicular to `zone` with the dragged panel taking the thin
+        // OUTER_DOCK_NEW_FRAC near-edge slice) so the live mutation and the
+        // redundancy probe above share ONE geometry and cannot drift.
         let id = format!("{REORG_SPLIT_ID_PREFIX}{}", self.split_seq.get());
-        // (R1156.1) An outer dock is an ACCESSORY band (toolbar / status / sidebar),
-        // not an equal split — give the new panel a thin OUTER_DOCK_NEW_FRAC of the
-        // span (the inner `reorganize_ratio` 0.5 made a HALF-window row, the
-        // user-found "반쪽"). `split_root`'s ratio is the FIRST child's fraction, so a
-        // First edge (top/left) new panel sets it directly; a Second edge
-        // (bottom/right) new panel takes the complement.
-        let ratio = match position {
-            DockSplitPosition::First => OUTER_DOCK_NEW_FRAC,
-            DockSplitPosition::Second => 1.0 - OUTER_DOCK_NEW_FRAC,
-        };
-        let next = base.split_root(panel.to_string(), id, orientation, ratio, position)?;
+        let next = current.outer_dock_next(panel, zone, id)?;
         self.split_seq.set(self.split_seq.get() + 1);
         // (R1134 §5.51.1) Landed at an outer edge, not its captured home — drop any
         // stale collapse home anchor so a later home-restore does not resurrect the
         // old slot.
         self.home_anchors.borrow_mut().remove(panel);
         Ok(self.commit(next, format!("{panel} -> outer {}", zone_wire_name(zone))))
+    }
+
+    /// (R1201 §5.51) Whether an OUTER full-span dock of `panel` at `zone` would be
+    /// a redundant no-op against the LIVE topology — `panel` already occupies that
+    /// full-span edge. The reorganizer-level accessor over
+    /// [`DockTopology::outer_dock_is_redundant`], the predicate
+    /// [`resolve_drop_checked`] threads so a same-window drag whose release edge
+    /// the dragged panel already spans previews + resolves as a stay-put
+    /// [`DropResolution::SnapBack`] instead of a resize. An empty surface has
+    /// nothing to dock against → redundant.
+    #[must_use]
+    pub fn outer_dock_is_redundant(&self, panel: &str, zone: DockDropZone) -> bool {
+        self.topology
+            .get()
+            .is_none_or(|t| t.outer_dock_is_redundant(panel, zone))
     }
 
     /// (R1145 §5.51) UNDOCK a tabbed `panel` — pull it OUT of its tab well and
@@ -3981,11 +4158,12 @@ impl External for TabWellExternal {
         // `Float` (dead-zone / non-panel / off-target) paints nothing — the
         // dead-zone reads as "will float", not a stale dock hint.
         let preview = payload.value.as_str().and_then(|panel| {
-            match resolve_drop(
+            match resolve_drop_checked(
                 same_window_over,
                 panel,
                 |t| self.reorganizer.is_panel(t),
                 self.reorganizer.tabbing(),
+                |zone| self.reorganizer.outer_dock_is_redundant(panel, zone),
             ) {
                 DropResolution::Dock { target, zone } => Some(DockDropPreview {
                     source: panel.to_string(),
@@ -4074,11 +4252,12 @@ impl External for TabWellExternal {
         // incl. a panel's dead-zone ring or a non-panel like a splitter). The R1159
         // fix: float is reachable INSIDE the window (a maximized window can tear a
         // tab off), and a release over a splitter floats instead of no-op'ing.
-        match resolve_drop(
+        match resolve_drop_checked(
             update.over.as_ref(),
             panel,
             |t| self.reorganizer.is_panel(t),
             self.reorganizer.tabbing(),
+            |zone| self.reorganizer.outer_dock_is_redundant(panel, zone),
         ) {
             DropResolution::Dock { target, zone } => {
                 let _ = self
@@ -6362,11 +6541,12 @@ impl External for DockPanelExternal {
         // `Dock` paints a same-window highlight; OuterDock (cross-window) / Float /
         // SnapBack paint nothing (the blank area reads as "will float / no-op").
         let preview = self.reorganizer.as_ref().and_then(|reorg| {
-            match resolve_drop(
+            match resolve_drop_checked(
                 over.as_ref(),
                 &self.panel_id,
                 |t| reorg.is_panel(t),
                 reorg.tabbing(),
+                |zone| reorg.outer_dock_is_redundant(&self.panel_id, zone),
             ) {
                 DropResolution::Dock { target, zone } => Some(DockDropPreview {
                     source: self.panel_id.to_string(),
@@ -6415,11 +6595,12 @@ impl External for DockPanelExternal {
         // has no topology to resolve against, so it keeps the bare escape/snap
         // split (`over` None → float, else → snap back).
         let resolution = match self.reorganizer.as_ref() {
-            Some(reorg) => resolve_drop(
+            Some(reorg) => resolve_drop_checked(
                 over.as_ref(),
                 &self.panel_id,
                 |t| reorg.is_panel(t),
                 reorg.tabbing(),
+                |zone| reorg.outer_dock_is_redundant(&self.panel_id, zone),
             ),
             None if over.is_none() => DropResolution::Float,
             // A coordinator-less (tear-off-only) panel has no topology to classify
@@ -11061,7 +11242,7 @@ mod reorganize_tests {
         DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
         DockReorganizer, DockSplitPosition, DockTopology, DropResolution, FloatPolicy,
         TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TabWellExternal, TopologyError,
-        outer_zone_for, resolve_dock_drop, resolve_drop,
+        outer_zone_for, resolve_dock_drop, resolve_drop, resolve_drop_checked,
     };
     use crate::splitter::SplitterOrientation as Orient;
     use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -11298,6 +11479,202 @@ mod reorganize_tests {
             topology.get().unwrap().panel_ids().len(),
             3,
             "tree unchanged"
+        );
+    }
+
+    #[test]
+    fn r1201_same_shape_ignores_split_id_and_ratio() {
+        // Two trees that nest the same panels the same way are the SAME SHAPE even
+        // when their split id + ratio differ (the fields a reorganize always
+        // re-mints) — the redundancy metric the outer-dock suppression rests on.
+        let a = DockNode::split_horizontal("root_h", 0.5, DockNode::leaf("x"), DockNode::leaf("y"));
+        let b = DockNode::split_horizontal(
+            "reorg-split-7",
+            0.22,
+            DockNode::leaf("x"),
+            DockNode::leaf("y"),
+        );
+        assert!(
+            a.same_shape(&b),
+            "same nesting, differing id+ratio → same shape"
+        );
+        // Order matters: [x|y] is NOT [y|x] (a reorder is a real change).
+        let swapped =
+            DockNode::split_horizontal("root_h", 0.5, DockNode::leaf("y"), DockNode::leaf("x"));
+        assert!(!a.same_shape(&swapped), "child order is structural");
+        // Orientation matters: a horizontal split is not a vertical one.
+        let vertical =
+            DockNode::split_vertical("root_h", 0.5, DockNode::leaf("x"), DockNode::leaf("y"));
+        assert!(!a.same_shape(&vertical), "orientation is structural");
+        // Leaf vs Split never match.
+        assert!(!DockNode::leaf("x").same_shape(&a));
+    }
+
+    #[test]
+    fn r1201_outer_dock_is_redundant_only_at_the_occupied_edge() {
+        // Two panels side by side (the user's "가로로 두개") — Horizontal[a | b].
+        let ab = DockTopology::new(DockNode::split_horizontal(
+            "h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        ));
+        // b is the right column → docking it at the RIGHT edge is redundant (it
+        // already spans that full-height edge: the exact "두번째 창을 오른쪽 끝에" bug).
+        assert!(
+            ab.outer_dock_is_redundant("b", DockDropZone::Right),
+            "b already IS the right column"
+        );
+        // …but the OTHER edges move it (a real change) — non-tautological.
+        assert!(
+            !ab.outer_dock_is_redundant("b", DockDropZone::Left),
+            "b → left is a reorder"
+        );
+        assert!(
+            !ab.outer_dock_is_redundant("b", DockDropZone::Top),
+            "b → full-width top row is a change"
+        );
+        assert!(
+            !ab.outer_dock_is_redundant("b", DockDropZone::Bottom),
+            "b → full-width bottom row is a change"
+        );
+        // Symmetrically, a is the left column → left is redundant, right is a move.
+        assert!(
+            ab.outer_dock_is_redundant("a", DockDropZone::Left),
+            "a already IS the left column"
+        );
+        assert!(
+            !ab.outer_dock_is_redundant("a", DockDropZone::Right),
+            "a → right is a reorder"
+        );
+        // A NESTED leaf is not the full-span edge column: abc = H[a | H[b | c]].
+        // c is the innermost right leaf but NOT the root's full-height right column,
+        // so docking it right IS a change (it lifts to a full-span column).
+        let abc = abc_topology();
+        assert!(
+            !abc.outer_dock_is_redundant("c", DockDropZone::Right),
+            "c is nested, not the full-span right"
+        );
+        assert!(
+            abc.outer_dock_is_redundant("a", DockDropZone::Left),
+            "a is the full-span left column"
+        );
+        // A sole pane already fills the whole area → every outer dock is redundant.
+        let solo = DockTopology::new(DockNode::leaf("only"));
+        assert!(solo.outer_dock_is_redundant("only", DockDropZone::Right));
+        assert!(solo.outer_dock_is_redundant("only", DockDropZone::Top));
+    }
+
+    #[test]
+    fn r1201_redundant_matches_editor_boot_after_bottom_dock() {
+        // The exact hello-dock-panels-editor boot shape, then the R1167 gesture
+        // (outer-dock outliner to the bottom) — the live demo's failing case. After
+        // it, re-docking outliner to the bottom it now spans MUST read redundant.
+        let boot = DockTopology::new(DockNode::split_vertical(
+            "editor_split_outer",
+            0.06,
+            DockNode::leaf("toolbar"),
+            DockNode::split_vertical(
+                "editor_split_inner_v",
+                0.78,
+                DockNode::split_horizontal(
+                    "editor_split_inner_h",
+                    0.78,
+                    DockNode::leaf("viewport"),
+                    DockNode::leaf("properties"),
+                ),
+                DockNode::leaf("console"),
+            ),
+        ));
+        let topology = Rc::new(Signal::new(Some(boot)));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        assert_eq!(
+            reorganizer
+                .dock_panel_outer("outliner", DockDropZone::Bottom)
+                .unwrap(),
+            "outliner -> outer Bottom",
+            "the first outer dock is a real move (outliner was nested, not the bottom row)",
+        );
+        // Now outliner IS the full-width bottom row → the same dock is redundant.
+        assert!(
+            reorganizer.outer_dock_is_redundant("outliner", DockDropZone::Bottom),
+            "re-docking the panel to the edge it now spans is redundant",
+        );
+        assert!(
+            !reorganizer.outer_dock_is_redundant("outliner", DockDropZone::Right),
+            "the RIGHT edge it does NOT occupy is still a real move",
+        );
+    }
+
+    #[test]
+    fn r1201_resolve_drop_snaps_back_a_redundant_outer_dock() {
+        use pinion_core::external::{DropPoint, OUTER_DOCK_ZONE_TAG};
+        let pt = |x: f32, y: f32| DropPoint {
+            tag: OUTER_DOCK_ZONE_TAG.to_string(),
+            x_rel: x,
+            y_rel: y,
+        };
+        let is_panel = |t: &str| t == "a" || t == "b";
+        // The RIGHT outer band, dragging "b". With the redundancy predicate saying
+        // "b already spans the right edge" → a stay-put SnapBack (no full-span
+        // preview, no resize) instead of an OuterDock.
+        assert_eq!(
+            resolve_drop_checked(Some(&pt(0.98, 0.5)), "b", is_panel, true, |z| z
+                == DockDropZone::Right),
+            DropResolution::SnapBack {
+                zone: DockDropZone::None
+            },
+            "a redundant outer dock is a no-move snap-back",
+        );
+        // Non-tautological: the SAME sentinel + edge, but the predicate says "not
+        // redundant" → the real OuterDock (the R1167 path is untouched for a
+        // meaningful dock).
+        assert_eq!(
+            resolve_drop_checked(Some(&pt(0.98, 0.5)), "b", is_panel, true, |_| false),
+            DropResolution::OuterDock {
+                edge: DockDropZone::Right
+            },
+            "a meaningful outer dock still resolves to OuterDock",
+        );
+        // The back-compat `resolve_drop` delegates with an always-offer predicate
+        // (the cross-window / test path is never redundant).
+        assert_eq!(
+            resolve_drop(Some(&pt(0.98, 0.5)), "b", is_panel, true),
+            DropResolution::OuterDock {
+                edge: DockDropZone::Right
+            },
+        );
+    }
+
+    #[test]
+    fn r1201_dock_panel_outer_noops_a_redundant_edge() {
+        // The RPC / §2 #2 peer of the pointer suppression: an AI
+        // `dock_panel_outer(right_column, Right)` must not silently resize it.
+        let topology = Rc::new(Signal::new(Some(DockTopology::new(
+            DockNode::split_horizontal("h", 0.5, DockNode::leaf("a"), DockNode::leaf("b")),
+        ))));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let before = topology.get().unwrap();
+        let outcome = reorganizer
+            .dock_panel_outer("b", DockDropZone::Right)
+            .unwrap();
+        assert!(
+            outcome.contains("already the outer"),
+            "redundant outer dock no-ops: {outcome}"
+        );
+        assert!(
+            topology.get().unwrap().root().same_shape(before.root()),
+            "the topology shape is unchanged (no resize, no re-minted split)",
+        );
+        // A MEANINGFUL outer dock still mutates — b → the full-height LEFT column.
+        let outcome = reorganizer
+            .dock_panel_outer("b", DockDropZone::Left)
+            .unwrap();
+        assert_eq!(outcome, "b -> outer Left");
+        assert_eq!(
+            topology.get().unwrap().root().panel_ids().first(),
+            Some(&"b"),
+            "b is now the left column (a real move)",
         );
     }
 

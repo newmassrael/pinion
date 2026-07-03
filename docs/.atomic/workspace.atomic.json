@@ -21142,6 +21142,62 @@
         "inject_resize_border_below_titlebar is retained (no current consumer) as the deliberate \"no top-edge resize\" design-space variant; a future round may retire it under strict YAGNI if it is confirmed it will never have a consumer (cross-repo usage in sprag could not be checked from a pinion session)."
       ]
     },
+    "R1201": {
+      "decision_summary": "Suppress a redundant same-window OUTER dock: when the dragged panel already spans that full-span edge, preview + release resolve to a stay-put SnapBack instead of a resizing OuterDock (VS Code / Qt ADS: an indicator is offered only when the outcome differs). Detected by a ratio/id-agnostic structural compare of the would-be tree vs the current one, reused by dock_panel_outer for RPC parity.",
+      "changes_bullets": [
+        "suppress a REDUNDANT same-window OUTER dock (VS Code / Qt ADS parity)",
+        "the dragged panel already spanning that edge no longer previews or resizes",
+        "DockNode::same_shape: structural compare ignoring split id + ratio + tab id",
+        "DockTopology::outer_dock_next pure core + outer_dock_is_redundant probe",
+        "resolve_drop_checked threads the predicate; a redundant OuterDock -> SnapBack",
+        "resolve_drop kept as a back-compat delegate (always-offer) so sprag builds",
+        "dock_panel_outer no-ops a redundant edge (RPC / section 2 #2 input parity)",
+        "cleared pre-existing r1167 E: drag movable console, not the locked toolbar"
+      ],
+      "verification_bullets": [
+        "5 new unit tests: same_shape, redundant-edge, editor-shape, resolver, no-op",
+        "all 284 dock tests + workspace cargo test -j2 green",
+        "clippy --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "forcing consumer hello-dock-panels-editor r1201 demo PASS (>=30 assertions)",
+        "r1167 + r1159 regression demos PASS",
+        "live decision observable via PINION_LOG=pinion::dock=trace (no eprintln)"
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "symptom B (outer band + preview span the CSD title bar) deferred to R1202",
+        "R1202 = thread the dock-area rect, not window.rect (R1156.1 now has a 2nd consumer)",
+        "proportional band (fixed 32px OUTER_DOCK_MARGIN) deferred to R1203"
+      ],
+      "publishable_decision_summary": "Suppress a redundant same-window OUTER dock: when the dragged panel already spans that full-span edge, preview + release resolve to a stay-put SnapBack instead of a resizing OuterDock (VS Code / Qt ADS: an indicator is offered only when the outcome differs). Detected by a ratio/id-agnostic structural compare of the would-be tree vs the current one, reused by dock_panel_outer for RPC parity.",
+      "publishable_changes_bullets": [
+        "suppress a REDUNDANT same-window OUTER dock (VS Code / Qt ADS parity)",
+        "the dragged panel already spanning that edge no longer previews or resizes",
+        "DockNode::same_shape: structural compare ignoring split id + ratio + tab id",
+        "DockTopology::outer_dock_next pure core + outer_dock_is_redundant probe",
+        "resolve_drop_checked threads the predicate; a redundant OuterDock -> SnapBack",
+        "resolve_drop kept as a back-compat delegate (always-offer) so sprag builds",
+        "dock_panel_outer no-ops a redundant edge (RPC / section 2 #2 input parity)",
+        "cleared pre-existing r1167 E: drag movable console, not the locked toolbar"
+      ],
+      "publishable_verification_bullets": [
+        "5 new unit tests: same_shape, redundant-edge, editor-shape, resolver, no-op",
+        "all 284 dock tests + workspace cargo test -j2 green",
+        "clippy --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "forcing consumer hello-dock-panels-editor r1201 demo PASS (>=30 assertions)",
+        "r1167 + r1159 regression demos PASS",
+        "live decision observable via PINION_LOG=pinion::dock=trace (no eprintln)"
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "symptom B (outer band + preview span the CSD title bar) deferred to R1202",
+        "R1202 = thread the dock-area rect, not window.rect (R1156.1 now has a 2nd consumer)",
+        "proportional band (fixed 32px OUTER_DOCK_MARGIN) deferred to R1203"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
