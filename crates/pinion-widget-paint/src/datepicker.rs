@@ -18,13 +18,13 @@
 //! ## Structure (tags)
 //!
 //! - The header nav buttons are tagged `"<tag>_prev"` / `"<tag>_next"`
-//!   (real [`ButtonExternal`] composite siblings the binding registers).
+//!   (real [`ButtonExternal`](pinion_core::widgets::button::ButtonExternal) composite siblings the binding registers).
 //! - Each weekday header is a presentational `TextNode` tagged
 //!   `"<tag>_wh<col>"` (column 0..=6) so the binding's `access_node`
 //!   walker can attach the `columnheader` accessible name.
 //! - Each real day cell is a hit-test target tagged `"<tag>#<day>"`
 //!   (the R51.41 composite paint convention → the
-//!   [`InputRouter`](pinion_runtime::InputRouter) `'#'`-split routes a
+//!   `InputRouter` `'#'`-split routes a
 //!   click on day `d` to the picker's `"<d>:<EventName>"` send). Blank
 //!   cells are untagged, non-interactive spacers.
 

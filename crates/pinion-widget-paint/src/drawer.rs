@@ -9,7 +9,7 @@
 //! ## Relationship to [`crate::dialog`]
 //!
 //! A modal drawer is the **2nd consumer** of the R693 modal substrate:
-//! the same full-window scrim + [`pinion_runtime::FocusManager`]
+//! the same full-window scrim + `pinion_runtime::FocusManager`
 //! focus-trap (`push_modal_scope` / `pop_modal_scope`, driven through
 //! [`pinion_core::modal_scope_request`]) the [`crate::dialog`] uses.
 //! The only paint difference is geometry: where [`crate::dialog`]

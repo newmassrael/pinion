@@ -37,7 +37,7 @@ use pinion_core::{Scene, WidgetStateName};
 /// (R728), radio-group (R51.44), stepper (R750), and nav-rail (R751) all
 /// carried this exact mechanical shell — only `resolve` (the key→index map)
 /// and the widget's `tag` differed. (R750's self-grep lifted the
-/// [`state_layer`] overlay but missed this shell; R751 clears it — the
+/// [`state_layer`](crate::state_layer::state_layer) overlay but missed this shell; R751 clears it — the
 /// incomplete-self-grep failure mode the 3rd-consumer mandate warns of.)
 #[must_use]
 pub fn roving_key(

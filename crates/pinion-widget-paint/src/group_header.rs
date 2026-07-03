@@ -47,9 +47,9 @@ const HEADER_PAD_X: u32 = 10;
 /// collection.
 ///
 /// Renders `"{twisty}  {label}  ({detail})"` (the twisty resolving from
-/// `collapsed`) as an [`OnSurface`](ColorRole::OnSurface) [`HEADER_FONT_PX`]
+/// `collapsed`) as an [`OnSurface`](ColorRole::OnSurface) `HEADER_FONT_PX`
 /// label in a [`SurfaceContainerHigh`](ColorRole::SurfaceContainerHigh) flex row
-/// of `(width, height)`, padded [`HEADER_PAD_X`] each side and tagged `tag` (the
+/// of `(width, height)`, padded `HEADER_PAD_X` each side and tagged `tag` (the
 /// group's composite tag, e.g. `"{group_prefix}#{group}"`, so a click routes to
 /// the collapse coordinator). An empty `detail` omits the parenthesized suffix
 /// (just `"{twisty}  {label}"`).

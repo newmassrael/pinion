@@ -23,8 +23,8 @@
 //! The seed-prompt's first design pass placed the helper in
 //! `pinion-core/src/widgets/text_field.rs`. That route is blocked by
 //! the crate dep graph: the lift needs
-//! [`pinion_text::cache::LayoutCache`] +
-//! [`pinion_text::caret::caret_rect_for_byte_offset`] (parley-backed
+//! [`pinion_text::LayoutCache`] +
+//! [`pinion_text::caret_rect_for_byte_offset`] (parley-backed
 //! text shaping), and `pinion-text` depends on `pinion-core` rather
 //! than the reverse. Pulling parley/swash/fontique into pinion-core
 //! would pollute the foundational layer with text-shaping deps,

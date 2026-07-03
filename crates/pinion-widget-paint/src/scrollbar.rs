@@ -24,7 +24,7 @@
 //! local sizing constants (viewport height, gutter width, thumb
 //! floor, paint-side tag for input-router routing). Returns a single
 //! [`Scene::Container`] tagged with the supplied tag so the
-//! [`InputRouter`](pinion_runtime::InputRouter) hit-test routes
+//! `InputRouter` hit-test routes
 //! pointer events to the matching
 //! [`ScrollBarExternal`](pinion_core::widgets::scrollbar::ScrollBarExternal)
 //! registered through
@@ -58,7 +58,7 @@
 //!
 //! `ScrollState::max` returns `0` on the first paint (the layout pass
 //! writes the real max *after* the first view runs). The
-//! [`scrollbar_thumb_rect`](pinion_core::widgets::scrollbar::scrollbar_thumb_rect)
+//! [`scrollbar_thumb_rect`]
 //! helper's `content_extent <= viewport_extent` branch then fills
 //! the thumb to the full track — the textbook "nothing to scroll"
 //! rendering. R55.G.24 [[signal-batch-atomic-multi-axis-update]] /
@@ -130,7 +130,7 @@ pub struct VerticalScrollbarStyle {
     pub min_thumb: u32,
     /// Paint-side tag attached to the outer track
     /// [`Scene::Container`] so the
-    /// [`InputRouter`](pinion_runtime::InputRouter) hit-test routes
+    /// `InputRouter` hit-test routes
     /// pointer events on the track / thumb to the matching
     /// [`ScrollBarExternal`](pinion_core::widgets::scrollbar::ScrollBarExternal)
     /// registered through
@@ -143,7 +143,7 @@ pub struct VerticalScrollbarStyle {
     /// dragging states still lerp *from* this base toward
     /// [`ColorRole::OnSurface`], and Disabled fades toward
     /// [`ColorRole::SurfaceContainerHighest`] — see
-    /// [`thumb_fill_for_state`].
+    /// `thumb_fill_for_state`.
     ///
     /// Override (via [`Self::with_thumb_role`]) when the default
     /// `Outline` does not carry enough contrast against the
@@ -281,9 +281,9 @@ fn thumb_fill_for_state(
 /// scrollbar peer composition.
 ///
 /// Reads `(offset_y, max_y)` off the shared
-/// [`ScrollState`](pinion_core::widgets::scroll::ScrollState),
+/// [`ScrollState`],
 /// derives the thumb rectangle via
-/// [`scrollbar_thumb_rect`](pinion_core::widgets::scrollbar::scrollbar_thumb_rect)
+/// [`scrollbar_thumb_rect`]
 /// (R55.D.1 closed-form helper), and composites the result as a
 /// single absolute-positioned thumb [`Scene::Container`] inside an
 /// outer track [`Scene::Container`] filled with
@@ -299,7 +299,7 @@ fn thumb_fill_for_state(
 /// the application gets back from
 /// [`use_scrollbar_interaction`](pinion_core::widgets::scrollbar::use_scrollbar_interaction).
 /// Drives the Material 3 thumb state-layer overlay (see
-/// [`thumb_fill_for_state`] for the role table). Callers wire the
+/// `thumb_fill_for_state` for the role table). Callers wire the
 /// paired `ScrollBarExternal::attach_interaction(handle.clone())` so
 /// the framework writes hover / drag transitions back into the same
 /// signal — auto-subscription on the read side repaints the next
@@ -327,7 +327,7 @@ fn thumb_fill_for_state(
 /// through [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
 /// tagged with the same [`VerticalScrollbarStyle::tag`]. The shared
 /// [`ScrollState`] handle threads the
-/// [`InputRouter`](pinion_runtime::InputRouter)'s
+/// `InputRouter`'s
 /// `ScrollBarExternal::pointer_move` → `ScrollState::scroll_to` →
 /// next-paint cycle.
 ///

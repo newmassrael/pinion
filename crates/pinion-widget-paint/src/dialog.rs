@@ -12,7 +12,7 @@
 //! (backdrop) with a centred elevated panel carrying a title, a message,
 //! and an action-button row. The modal *behaviour* — the focus trap,
 //! auto-focus on open, restore on close, Escape-to-dismiss — lives in
-//! the [`pinion_runtime::FocusManager`] modal-scope substrate
+//! the `pinion_runtime::FocusManager` modal-scope substrate
 //! (`push_modal_scope` / `pop_modal_scope`) the binding drives through
 //! [`pinion_core::modal_scope_request`]. This mirrors the HTML
 //! `<dialog>` split: the element provides chrome + modality, the author

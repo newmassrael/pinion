@@ -36,7 +36,7 @@
 //! reducer matches against the dotted wire form
 //! `{panel_tag}.tear_off` (per
 //! [[intent-tag-dotted-wire-form]]) and on a successful match
-//! pushes a new [`WindowSpec`](pinion_shell::WindowSpec) onto its
+//! pushes a new `WindowSpec` onto its
 //! reactive `Signal<Vec<WindowSpec>>` (R683.A reconcile Effect
 //! picks it up and a 2nd window appears with the torn-off panel's
 //! content).
@@ -57,7 +57,7 @@
 //! Sits beside [`splitter`](crate::splitter) (one tier above
 //! [`text_field`](crate::text_field) / [`tree_view`](crate::tree_view)
 //! since it composes via Splitter). Pure
-//! [`Scene`](pinion_core::Scene) composition, no `pinion-text`
+//! [`Scene`] composition, no `pinion-text`
 //! dependency, no Vello / winit coupling.
 
 use std::borrow::Cow;
@@ -150,10 +150,10 @@ use pinion_a11y::{AccessNode, TabCell, tablist_tab_nodes};
 
 /// (R685 §5.16 §5.49) Recursive node of a dock topology tree.
 ///
-/// Either a binary [`Split`] (geometric divider between two
+/// Either a binary [`Split`](DockNode::Split) (geometric divider between two
 /// child sub-trees, oriented Horizontal or Vertical, with a
 /// `ratio ∈ [0.0, 1.0]` controlling the divider position) or a
-/// [`Leaf`] (a single docked panel addressable by `panel_id`).
+/// [`Leaf`](DockNode::Leaf) (a single docked panel addressable by `panel_id`).
 ///
 /// The tree's structure encodes the editor's pane layout; the
 /// per-Split `ratio` lives as plain data here, but the runtime
@@ -274,7 +274,7 @@ pub enum DockNode {
     /// * `panels.len() >= 2` — a single-panel well is a [`Self::Leaf`],
     ///   not a degenerate `Tabs`. The mutation primitives keep this
     ///   canonical: a well that loses a panel down to one collapses back
-    ///   to a `Leaf` ([`remove_leaf_rec`]). There is therefore exactly
+    ///   to a `Leaf` (`remove_leaf_rec`). There is therefore exactly
     ///   one representation for each panel count — no `Leaf` vs
     ///   `Tabs[1]` ambiguity.
     /// * `active < panels.len()` — the visible tab index is always in
@@ -429,7 +429,7 @@ impl DockNode {
     /// only its split id + ratio would differ, both cosmetic — so it must be a
     /// no-op (no misleading full-span preview, no resize). Ratio is excluded
     /// because an outer dock always re-seeds the divider at
-    /// [`OUTER_DOCK_NEW_FRAC`]; the split/well ids because a reorganize always
+    /// `OUTER_DOCK_NEW_FRAC`; the split/well ids because a reorganize always
     /// mints fresh `reorg-*` ids. The VS Code / Qt ADS rule — a drop indicator
     /// is offered only when the outcome differs from the current layout.
     #[must_use]
@@ -526,7 +526,7 @@ impl DockNode {
     ///
     /// Pre-R685.C `hello-dock-panels-editor` carried a binding-local
     /// `for_each_split` copy of this exact walk (DRY violation — the
-    /// substrate's [`view_dock_surface_node`] already traverses the
+    /// substrate's `view_dock_surface_node` already traverses the
     /// same tree shape). R685.C lifts the walk to the substrate so
     /// every dock consumer shares one traversal implementation.
     pub fn for_each_split<F>(&self, f: &mut F)
@@ -584,7 +584,7 @@ impl DockNode {
     /// (R1096 §5.51) The visible-tab index of the [`DockNode::Tabs`] well
     /// whose `id == well_id` in the sub-tree, or `None` when no such well
     /// exists (the id is absent, or names a [`DockNode::Leaf`] /
-    /// [`DockNode::Split`]). The read peer of [`set_active_in_well_rec`]
+    /// [`DockNode::Split`]). The read peer of `set_active_in_well_rec`
     /// (the [`DockTopology::set_active_tab`] writer) — used to skip an
     /// already-active click without minting an undo edit.
     #[must_use]
@@ -671,7 +671,7 @@ pub enum TopologyError {
     /// as an explicit error.
     IdCollision(String),
     /// A [`DockNode::Split`] carries a non-finite (NaN / Inf) or
-    /// out-of-[0,1] `ratio`. Initial ratios outside `[0.0, 1.0]`
+    /// out-of-`[0,1]` `ratio`. Initial ratios outside `[0.0, 1.0]`
     /// produce undefined visual layouts; NaN would corrupt the
     /// `Rc<Signal<f32>>` seed value and propagate through every
     /// taffy flex computation.
@@ -1189,7 +1189,7 @@ impl DockTopology {
     /// (R1201 §5.51) The PURE topology-transform core of
     /// [`DockReorganizer::dock_panel_outer`]: the tree that results from docking
     /// `panel` as a full-span accessory band at outer `zone`, its new divider
-    /// carrying `split_id` at ratio [`OUTER_DOCK_NEW_FRAC`]. Removes `panel` from
+    /// carrying `split_id` at ratio `OUTER_DOCK_NEW_FRAC`. Removes `panel` from
     /// its current slot (if present) then splits the whole root perpendicular to
     /// `zone`, the dragged panel taking the thin near-edge slice. A non-edge
     /// `zone` ([`DockDropZone::Center`] / [`DockDropZone::None`]) is not an outer
@@ -2056,7 +2056,7 @@ pub const DOCK_EDGE_ZONE_FRAC: f64 = 0.25;
 /// This enum names **where the cursor is** over the target panel — a
 /// pure spatial classification. It deliberately does **not** name what
 /// dropping there *does* (swap / reparent / tab-merge); that mapping is
-/// the binding's reducer + the [`DockDragOverExternal`] intent layer's
+/// the binding's reducer + the `DockDragOverExternal` intent layer's
 /// responsibility (R686 atomic 2+). Keeping geometry and gesture
 /// semantics separate mirrors every real docking framework: the drop
 /// overlay highlights a *direction*, and the host decides the topology
@@ -2431,7 +2431,7 @@ pub enum DropResolution {
     Float,
     /// Release is over the dragged panel's OWN slot (the cursor never left it).
     /// `zone` is the banded classification at that self-slot, carried so the caller
-    /// does not re-run [`dock_drop_zone_banded`] (R1164 — the resolver already
+    /// does not re-run `dock_drop_zone_banded` (R1164 — the resolver already
     /// classified it once): a TAB uses an edge `zone` to undock-split out of its own
     /// well (the R1163 gesture), while the centre / dead-zone — and EVERY
     /// panel-header drag — is a true no-move snap-back (you cannot dock a panel onto
@@ -2454,7 +2454,7 @@ pub enum DropResolution {
 /// its OWN slot is a [`DropResolution::SnapBack`] no-op (you cannot dock a panel onto
 /// itself, and a self-release must not show a dock preview nor float); `tabbing` is
 /// the surface's [`DockReorganizer::tabbing`] policy (a split-only surface never
-/// tabifies the centre). The discrete-target geometry ([`dock_drop_zone_banded`])
+/// tabifies the centre). The discrete-target geometry (`dock_drop_zone_banded`)
 /// gives a FLOAT dead-zone, so this resolver — not `over.is_none()` — owns the
 /// float-vs-dock decision. A torn-slot placeholder target (tag `{p}_placeholder`,
 /// R1163b) fills FULL ([`DockDropZone::Center`] over panel `p`), so a floater
@@ -2479,7 +2479,7 @@ pub fn resolve_drop(
 /// it does, a perimeter drop is a stay-put [`DropResolution::SnapBack`] instead
 /// of an [`DropResolution::OuterDock`]: dragging the right column to the right
 /// edge (or picking an edge-flush panel up and dropping it back) previews +
-/// resolves as no-move, not a resize to the thin [`OUTER_DOCK_NEW_FRAC`] band —
+/// resolves as no-move, not a resize to the thin `OUTER_DOCK_NEW_FRAC` band —
 /// the VS Code / Qt ADS rule that a drop indicator is offered only when the
 /// outcome differs. [`resolve_drop`] delegates here with an always-`false`
 /// predicate (the cross-window / test path), so preview == result still holds by
@@ -2606,7 +2606,7 @@ fn parse_json_rect(v: &serde_json::Value) -> Option<Rect> {
 /// The three drop outcomes:
 /// * `Tabify` — the cursor landed in a panel's **centre**; the dragged
 ///   panel stacks onto the target as a tab well ([`DockTopology::tabify`]).
-///   (R1083) This is what a centre drop produces; [`intent_for_zone`] is
+///   (R1083) This is what a centre drop produces; `intent_for_zone` is
 ///   the single source of that mapping.
 /// * `SplitInsert` — the cursor landed near a panel's **edge**; the
 ///   dragged panel docks to that side, splitting the target. The
@@ -3190,7 +3190,7 @@ impl DockReorganizer {
     /// # Panics
     ///
     /// Never in practice: the edge branch is reached only for a non-`None`,
-    /// non-`Center` zone, every such zone has [`zone_split_geometry`].
+    /// non-`Center` zone, every such zone has `zone_split_geometry`.
     pub fn dock_panel_at_resolved_zone(
         &self,
         panel: &str,
@@ -3484,7 +3484,7 @@ impl DockReorganizer {
     /// [`Self::apply_intent`]: that funnels the drag-produced
     /// [`DockReorganizeIntent`]s (moves that mint ids); this only changes
     /// which tab is visible, so it touches no `split_seq` / `tabs_seq`. It
-    /// shares the *same* [`Self::commit`] funnel, so the `last_outcome` +
+    /// shares the *same* `Self::commit` funnel, so the `last_outcome` +
     /// undo-or-set bookkeeping has one writer regardless of gesture.
     ///
     /// (R1084 §5.51) Total over the empty surface: `None` (empty dock) has
@@ -4463,7 +4463,7 @@ pub const TEAR_OFF_REDOCK_EVENT: &str = "tear_off_redock";
 /// emits when a drag tears a panel out of its floating window and releases it
 /// over **another window's** dock zone (the cross-window drag-back redock the
 /// per-window router cannot resolve, composed by the shell —
-/// [`pinion_runtime::resolve_cross_window_drop`]). Distinct from
+/// `pinion_runtime::resolve_cross_window_drop`). Distinct from
 /// [`TEAR_OFF_REDOCK_EVENT`]: that is **remove-only** "restore to where it
 /// came from"; this is **dock-at** "re-insert into window `window` at the drop
 /// zone under the cursor". The two semantics are two intents — never a
@@ -4521,7 +4521,7 @@ pub struct DockPanelStyle {
     /// **Load-bearing effect (R1118-corrected): cross-window-drop REJECTION.**
     /// The floating window's only drop-target candidate is this panel root; with
     /// `false` the floater exposes NO drop target, so
-    /// [`pinion_runtime::resolve_cross_window_drop`] resolves nothing there and
+    /// `pinion_runtime::resolve_cross_window_drop` resolves nothing there and
     /// another panel cannot be docked INTO the single-panel floater (a panel
     /// cannot dock into its own / a sole floater). The window MOVE itself is
     /// **NOT** driven by this flag — that is the dedicated
@@ -4899,7 +4899,7 @@ const DOCK_REDOCK_PREVIEW_ALPHA: u8 = 0xCC;
 const DOCK_REDOCK_PREVIEW_BORDER_PX: u32 = 3;
 
 /// (R1139 §5.51) The cross-window redock preview FILL tint — theme Accent at the
-/// bolder [`DOCK_REDOCK_PREVIEW_ALPHA`]. A dock binding's
+/// bolder `DOCK_REDOCK_PREVIEW_ALPHA`. A dock binding's
 /// [`dock_drop_preview`](crate) hook supplies this to
 /// [`dock_drop_preview_overlay`] so the on-floater redock hint AND the
 /// target-window preview read clearly over opaque content, distinct from the
@@ -4981,7 +4981,7 @@ pub fn dock_drop_preview_overlay(
 /// overlay a dock panel paints while it is the live drop target of an
 /// in-flight R742 drag — an absolutely-positioned, pointer-transparent layer
 /// covering the whole panel, tinting the region the drop would OCCUPY:
-/// `Left`/`Right`/`Top`/`Bottom` = the [`DOCK_SPLIT_RESULT_PCT`] split half on
+/// `Left`/`Right`/`Top`/`Bottom` = the `DOCK_SPLIT_RESULT_PCT` split half on
 /// that side (the region the source lands in, ratio [`DEFAULT_REORGANIZE_RATIO`]),
 /// `Center` = the whole target (a tabify stacks the source into a tab well that
 /// covers the pane). R1111 widened the strip from the narrow 25% classification
@@ -5077,7 +5077,7 @@ pub fn dock_drop_zone_highlight(zone: DockDropZone, theme: &Theme) -> Scene {
 
 /// (R1167 §5.51) The SAME-window OUTER full-span dock preview — a Percent-sized,
 /// absolutely-positioned, pointer-transparent band spanning the WHOLE dock surface
-/// cross-axis at `edge`, of thickness [`OUTER_DOCK_NEW_PCT`] (what
+/// cross-axis at `edge`, of thickness `OUTER_DOCK_NEW_PCT` (what
 /// [`DockReorganizer::dock_panel_outer`] docks at, so the previewed band == the
 /// landed band — preview == result). The outer-perimeter peer of
 /// [`dock_drop_zone_highlight`] (which previews an inner panel split): a dock
@@ -5133,7 +5133,7 @@ pub fn dock_outer_zone_highlight(edge: DockDropZone, theme: &Theme) -> Scene {
 /// (R1167 §5.51) The OUTER full-span dock preview as an absolutely-positioned
 /// (post-layout pixel-rect) [`Scene::Box`], for the CROSS-window path (the shell
 /// injects it over the target window after layout). Spans the whole `window_rect`
-/// cross-axis at `edge`, of thickness [`OUTER_DOCK_NEW_PCT`] (== the
+/// cross-axis at `edge`, of thickness `OUTER_DOCK_NEW_PCT` (== the
 /// [`DockReorganizer::dock_panel_outer`] ratio, so preview == result — replacing
 /// the pre-R1167 reuse of [`dock_drop_preview_overlay`], which drew the inner
 /// 50% split band for an outer dock that lands at 22%). The pixel-rect peer of
@@ -5295,7 +5295,7 @@ pub fn view_floating_placeholder(
 
 /// (R685 §5.16 §5.49) Floating-window id convention — the canonical
 /// `"{prefix}{panel_id}"` form both dock consumers use when minting
-/// a [`WindowSpec`](pinion_shell::WindowSpec)-like id for a
+/// a `WindowSpec`-like id for a
 /// torn-off panel. Pulled into substrate as a string-only helper
 /// (no `WindowSpec` dependency) so the prefix convention is
 /// consistent across consumers + AI clients reading the topology
@@ -5348,7 +5348,7 @@ pub const DEFAULT_FLOATING_WINDOW_PREFIX: &str = "torn-";
 /// topology, keyed by the Split's stable [`DockNode::Split::id`].
 ///
 /// `ratio_signal` is the live `Rc<Signal<f32>>` the
-/// [`SplitterExternal`] mutates on drag. The Signal is the run-time
+/// [`SplitterExternal`](crate::splitter::SplitterExternal) mutates on drag. The Signal is the run-time
 /// source-of-truth for the current split position; the topology's
 /// [`DockNode::Split::ratio`] field is the **initial** value (boot /
 /// persistence default). `dragging` is the boolean the view fn reads
@@ -5356,13 +5356,13 @@ pub const DEFAULT_FLOATING_WINDOW_PREFIX: &str = "torn-";
 /// [`SplitterExternal::is_dragging`](crate::splitter::SplitterExternal::is_dragging)
 /// so the M3 dragged-overlay tint paints correctly mid-drag.
 ///
-/// (R685.B atomic 1 simplification) Pre-R685.B [`DockSplitHandle`]
+/// (R685.B atomic 1 simplification) Pre-R685.B `DockSplitHandle`
 /// also carried the `style: SplitterStyle` field — the walker now
 /// builds the splitter style from the topology's
 /// [`DockNode::Split::id`] + `orientation` automatically (single
 /// source of truth — the topology IS the splitter shape), so the
 /// binding hands only the live reactive state through this struct.
-/// Pre-R685.B [`DockPanelHandle`] is fully removed for the same
+/// Pre-R685.B `DockPanelHandle` is fully removed for the same
 /// reason — the walker builds [`DockPanelStyle`] from
 /// [`DockNode::Leaf::panel_id`] automatically.
 pub struct DockSplitState {
@@ -5389,7 +5389,7 @@ pub struct DockSplitState {
 ///   the inner content `Scene` the panel hosts (toolbar text /
 ///   outliner tree / viewport viewport / property table / etc.).
 ///   The walker wraps the returned content in
-///   [`view_dock_panel`](crate::dock::view_dock_panel) with a
+///   [`view_dock_panel`] with a
 ///   [`DockPanelStyle::m3_default(panel_id)`] automatically — the
 ///   panel tag is the leaf's stable `panel_id`, single source of
 ///   truth.
@@ -5421,8 +5421,8 @@ pub struct DockSplitState {
 /// The walker is pure — no `Owner::cache`, no `Effect`, no
 /// `Signal::set`. The application owns the reactive substrate;
 /// this function just stitches the supplied state through the
-/// [`view_splitter`](crate::splitter::view_splitter) /
-/// [`view_dock_panel`](crate::dock::view_dock_panel) composition.
+/// [`view_splitter`] /
+/// [`view_dock_panel`] composition.
 /// (R1081 §5.51) `drop_zone` maps a leaf `panel_id` to the live
 /// [`DockDropZone`] the in-flight R742 drag is over that panel, or `None`
 /// when it is not the drop target — the binding's closure reads the
@@ -5777,7 +5777,7 @@ pub struct DockDropPreview {
 
 impl DockDropPreview {
     /// (R1082.1 §5.51) Project to the introspection JSON
-    /// (`{source, target, zone}`, the `zone` as its [`zone_wire_name`]) —
+    /// (`{source, target, zone}`, the `zone` as its `zone_wire_name`) —
     /// the SSOT both `query("drop_preview")` surfaces share
     /// ([`DockPanelExternal`] and the canonical [`DockReorganizeExternal`])
     /// so the wire shape cannot drift between the two AI surfaces.
@@ -5913,12 +5913,12 @@ pub use pinion_core::external::DOCK_PANEL_DRAG_KIND;
 ///
 /// 1. **`PointerDown`** dispatches `"header:PointerDown"` /
 ///    `"content:PointerDown"` through `invoke("send", …)`, which arms
-///    ([`is_drag_armed`](Self::is_drag_armed)) only for a header press.
+///    (`is_drag_armed`) only for a header press.
 /// 2. **[`begin_drag`](External::begin_drag)** (called right after) opens
-///    a session iff armed, returning a [`DragPayload`](pinion_core::external::DragPayload)
+///    a session iff armed, returning a [`DragPayload`]
 ///    of kind [`DOCK_PANEL_DRAG_KIND`] carrying the panel id.
 /// 3. **[`drag_to`](External::drag_to)** (every cursor move) resolves the
-///    [`DropPoint`](pinion_core::external::DropPoint) over the nearest
+///    [`DropPoint`] over the nearest
 ///    opted-in drop-target panel (R1080) and writes the shared
 ///    [`DockDropPreview`] so the target panel's view highlights the zone.
 /// 4. **[`drag_release`](External::drag_release)** classifies the drop:
@@ -6532,12 +6532,12 @@ impl External for DockPanelExternal {
 
     /// (R1081 §5.51) R742 drag-source arm. The `InputRouter` calls this
     /// right after the `PointerDown` dispatch (which set
-    /// [`is_drag_armed`](Self::is_drag_armed) via `invoke("send", …)`),
+    /// `is_drag_armed` via `invoke("send", …)`),
     /// so a press on the header opens a session and a press on the
     /// content body does not. Returns a [`DragPayload`] of kind
     /// [`DOCK_PANEL_DRAG_KIND`] carrying the panel id. Called on `&self`
     /// (arming is observation of the press the send-arm already recorded)
-    /// — the [`dragging`](Self::dragging) / [`tear_off_fired`](Self::tear_off_fired)
+    /// — the `dragging` / [`tear_off_fired`](Self::tear_off_fired)
     /// diagnostics are interior-mutable.
     fn begin_drag(&self) -> Option<DragPayload> {
         // R1172 §5.16 — a LOCKED panel (a fixed toolbar / status bar) starts no

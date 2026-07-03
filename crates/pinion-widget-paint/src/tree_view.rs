@@ -240,10 +240,10 @@ impl TreeItem {
     }
 }
 
-/// R811 §5.50 §5.27 — `TreeItem` is the shipped [`TreeNode`] for the
+/// R811 §5.50 §5.27 — `TreeItem` is the shipped [`TreeNode`](pinion_core::widgets::tree_nav::TreeNode) for the
 /// keyboard-navigation substrate: both inspector/tree consumers paint
 /// through `TreeItem`, so flattening the painted tree
-/// ([`flat_visible`](pinion_core::widgets::tree_nav::flat_visible)) and
+/// ([`flat_visible`]) and
 /// resolving keys against it
 /// ([`resolve_tree_key`](pinion_core::widgets::tree_nav::resolve_tree_key))
 /// navigate exactly the row sequence
@@ -374,12 +374,12 @@ pub fn view_tree_focused(
 /// This is a pure composition of the two substrates that already exist:
 /// the windowing geometry from [`crate::virtual_list`]
 /// ([`compute_visible_range`] + [`content_height`] + the shared
-/// [`uniform_slots`] / [`assemble_windowed_flex`] assembly) and the
-/// per-row visual [`build_row`] SSOT that [`view_tree_focused`] also
+/// `uniform_slots` / `assemble_windowed_flex` assembly) and the
+/// per-row visual `build_row` SSOT that [`view_tree_focused`] also
 /// renders — so a windowed row is byte-identical to the same row in the
 /// non-virtual path, and only the slot count differs. The caller passes
 /// the full [`flat_visible`] sequence; `view_virtual_tree` resolves the
-/// window over its length and invokes [`build_row`] once per visible
+/// window over its length and invokes `build_row` once per visible
 /// index. Off-window rows never become scene nodes, so `scene/snapshot`
 /// reports only the windowed `{tag}#{id}` rows (the §2 #7 witness that the
 /// tree is virtualized, not merely clipped).
@@ -550,7 +550,7 @@ fn build_row(
 /// `pinion_widget_paint::table::VirtualTableData` for the data-grid.
 pub struct TreeGridData<'a> {
     /// The flattened visible tree rows (from
-    /// [`flat_visible`](pinion_core::widgets::tree_nav::flat_visible)); the
+    /// [`flat_visible`]); the
     /// binding owns the tree + expand state, so collapsing a branch shortens
     /// this slice and the grid re-windows.
     pub rows: &'a [VisibleRow],
@@ -565,7 +565,7 @@ pub struct TreeGridData<'a> {
     /// Rows built beyond the strict visible window on each side.
     pub overscan: usize,
     /// R902 — the keyboard cursor (active) row id, painted with the deeper /
-    /// focus-tint emphasis (see [`treegrid_row_bg`]) so the roving cursor is
+    /// focus-tint emphasis (see `treegrid_row_bg`) so the roving cursor is
     /// distinguishable from the rest of the selection; `None` for none. A
     /// per-frame render input like [`rows`](Self::rows), so it rides the data
     /// struct rather than a separate argument (the selection *predicate* stays
@@ -578,7 +578,7 @@ pub struct TreeGridData<'a> {
 /// else transparent. Shared so every tree's focused row reads the same: the
 /// name cell + metadata strip of a tree-grid row (both panes), and — across
 /// the crate boundary — `hello-lazy-tree`, whose skeleton-interleaved rows
-/// are hand-rolled (they cannot reuse [`build_row`]) yet must not pick their
+/// are hand-rolled (they cannot reuse `build_row`) yet must not pick their
 /// own focus colour. The fill *decision* is the shared SSOT; a tree painting
 /// a different focus tint than its peers would be a bug
 /// ([[use-substrate-not-hand-rolled-equivalent]]).
@@ -792,7 +792,7 @@ fn treegrid_data_header(
 /// the generalization mirrors [`view_virtual_table`](crate::table::view_virtual_table)'s
 /// `is_selected` row predicate), so several visible rows can be highlighted at
 /// once. The keyboard cursor (`data.cursor`) is painted with the deeper /
-/// focus-tint emphasis (see [`treegrid_row_bg`]) so the roving active row is
+/// focus-tint emphasis (see `treegrid_row_bg`) so the roving active row is
 /// distinguishable from the rest of the selection. Argument order mirrors
 /// `view_virtual_table` (the selection predicate is the lone closure before the
 /// cell-data closure; the cursor rides `data`).
@@ -997,7 +997,7 @@ pub const TREE_ROW_HOVER_EVENT: &str = "hover";
 ///
 /// ## Why intent + reducer instead of direct Signal mutation
 ///
-/// The [`pinion_core::widgets::TodoDeleteExternal`]-class fast path
+/// The `pinion_core::widgets::TodoDeleteExternal`-class fast path
 /// owns a `Rc<Signal<T>>` and mutates inside its invoke handler.
 /// `TreeRowClickExternal` instead funnels through the §5.23 R27
 /// reducer because tree consumers vary in their state model (one
@@ -1016,7 +1016,7 @@ pub const TREE_ROW_HOVER_EVENT: &str = "hover";
 ///   `NotHovered`); read-only mirror, mid-hover AI query is safe.
 /// * `send` — R51.42 §5.35 composite-tag wire format
 ///   (`"<id>:<EventName>"`); the canonical input path the
-///   [`InputRouter`] composite walker forwards through. Handles
+///   `InputRouter` composite walker forwards through. Handles
 ///   `PointerDown` / `PointerUp` / `PointerLeave` / `PointerCancel`
 ///   (press axis) and `PointerEnter` / `PointerLeave` /
 ///   `PointerCancel` (hover axis) — `PointerLeave` /
@@ -1024,7 +1024,7 @@ pub const TREE_ROW_HOVER_EVENT: &str = "hover";
 /// * `click` — typed shortcut for AI-driven single-shot commit
 ///   (`invoke("click", Text(<id>))` synthesises a full Down + Up
 ///   cycle on the same id and emits the intent in one call); mirrors
-///   [`pinion_core::widgets::TodoDeleteExternal`]'s `"delete"`
+///   `pinion_core::widgets::TodoDeleteExternal`'s `"delete"`
 ///   shortcut.
 /// * `hover` — typed shortcut for AI-driven hover synthesis
 ///   (`invoke("hover", Text(<id>))` enters row `id`,
@@ -1053,7 +1053,7 @@ impl TreeRowClickExternal {
     /// R902.1 §5.35 §5.40 — opt in to **modifier-aware clicks**: the `click`
     /// intent then carries the held modifiers via the R781 composite wire form
     /// `"{id}:click[:{token}]"` (decode with
-    /// [`parse_send_payload`](pinion_core::composite_tag::parse_send_payload) /
+    /// [`parse_send_payload`] /
     /// [`split_send_payload`](pinion_core::composite_tag::split_send_payload)),
     /// so a binding can drive a [`SelectionChord`](pinion_core::SelectionChord)
     /// off `Ctrl`/`Shift`-click exactly as the keyboard does. **Default off** —

@@ -21746,6 +21746,50 @@
         "SEMANTIC-flag (revisitable, NOT fixed -- out of doc-hygiene scope): runtime `SpringState::tick` doc names a method that lives on Tween not SpringState (prose may intend `step`); rpc resolve.rs `ExternalHandle::introspect` names a type that exists nowhere (real trait is External). Left as spans to avoid prose edits; a maintainer should confirm the intended text."
       ]
     },
+    "R1211": {
+      "decision_summary": "R1211 doc-hygiene campaign round 5: pinion-widget-paint (105 broken intra-doc links -> 0).",
+      "changes_bullets": [
+        "pinion-widget-paint: 105 errors -> 0 (16 files): 44 public-doc-to-private -> code spans, 43 unresolved (reachable pinion_core/text/a11y + crate-own -> working links at real paths; pinion_runtime/pinion_shell not deps -> spans), 17 redundant-explicit -> shortcuts.",
+        "Notable: pinion_text cache/caret modules are private -> linked via the public re-exports (pinion_text::LayoutCache / caret_rect_for_byte_offset); genuinely-removed refs (TodoDeleteExternal, DockDragOverExternal, ButtonColors::state_layer) -> spans; prose `[0,1]` was mis-parsed as a link -> code span.",
+        "Delegated to a subagent with real deps + botch rules; doc comments only, no code/Cargo.toml/lints."
+      ],
+      "verification_bullets": [
+        "cargo doc -p pinion-widget-paint --no-deps = exit 0, 0 errors, 0 warnings.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0.",
+        "cargo test -p pinion-widget-paint = 678 pass, 0 fail.",
+        "Independently verified: botch-grep (doubled-target + dangling) NONE; only doc-comment lines changed (16 files)."
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.38",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN ([[doc-hygiene-campaign]]): all 8 LIBRARY crates now cargo-doc-clean (R1207 forge+derive, R1208 core, R1209 a11y+shell, R1210 rpc+runtime, R1211 widget-paint). Remaining: R1212 examples (~150: ThemeProvider ~46 sites + InputRouter, redundant-explicit, cross-crate); R1213 add cargo-doc to .githooks pre-commit/pre-push + CI once workspace-doc fully green.",
+        "R1212 examples are bins depending on pinion-core/shell/widget-paint etc.; ThemeProvider is reachable at pinion_core::theme::ThemeProvider (make working links or code spans -- examples are internal, spans acceptable). InputRouter unreachable from most examples (no pinion-runtime dep) -> spans. Watch the many heterogeneous forms + reference-definition lines."
+      ],
+      "publishable_decision_summary": "R1211 doc-hygiene campaign round 5: pinion-widget-paint (105 broken intra-doc links -> 0).",
+      "publishable_changes_bullets": [
+        "pinion-widget-paint: 105 errors -> 0 (16 files): 44 public-doc-to-private -> code spans, 43 unresolved (reachable pinion_core/text/a11y + crate-own -> working links at real paths; pinion_runtime/pinion_shell not deps -> spans), 17 redundant-explicit -> shortcuts.",
+        "Notable: pinion_text cache/caret modules are private -> linked via the public re-exports (pinion_text::LayoutCache / caret_rect_for_byte_offset); genuinely-removed refs (TodoDeleteExternal, DockDragOverExternal, ButtonColors::state_layer) -> spans; prose `[0,1]` was mis-parsed as a link -> code span.",
+        "Delegated to a subagent with real deps + botch rules; doc comments only, no code/Cargo.toml/lints."
+      ],
+      "publishable_verification_bullets": [
+        "cargo doc -p pinion-widget-paint --no-deps = exit 0, 0 errors, 0 warnings.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0.",
+        "cargo test -p pinion-widget-paint = 678 pass, 0 fail.",
+        "Independently verified: botch-grep (doubled-target + dangling) NONE; only doc-comment lines changed (16 files)."
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.38",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN ([[doc-hygiene-campaign]]): all 8 LIBRARY crates now cargo-doc-clean (R1207 forge+derive, R1208 core, R1209 a11y+shell, R1210 rpc+runtime, R1211 widget-paint). Remaining: R1212 examples (~150: ThemeProvider ~46 sites + InputRouter, redundant-explicit, cross-crate); R1213 add cargo-doc to .githooks pre-commit/pre-push + CI once workspace-doc fully green.",
+        "R1212 examples are bins depending on pinion-core/shell/widget-paint etc.; ThemeProvider is reachable at pinion_core::theme::ThemeProvider (make working links or code spans -- examples are internal, spans acceptable). InputRouter unreachable from most examples (no pinion-runtime dep) -> spans. Watch the many heterogeneous forms + reference-definition lines."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

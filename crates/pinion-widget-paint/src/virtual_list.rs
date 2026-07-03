@@ -56,8 +56,8 @@
 //! `row_pitch`, R744) and [`view_variable_virtual_list`] (explicit
 //! per-row heights via a prefix-sum [`RowOffsets`] table, R745). They
 //! differ only in how each slot's top + height is derived; the slot
-//! wrapper ([`positioned_slot`]) and the sizer / content-root / scroll
-//! assembly ([`assemble_windowed`]) are shared. See the
+//! wrapper (`positioned_slot`) and the sizer / content-root / scroll
+//! assembly (`assemble_windowed`) are shared. See the
 //! [`virtual_list`](pinion_core::widgets::virtual_list) module's scope
 //! notes for the *measured*-height boundary still deferred.
 
@@ -169,7 +169,7 @@ pub fn view_variable_virtual_list(
 /// sized asset thumbnails). Where the variable-pitch path takes a
 /// caller-supplied [`RowOffsets`], this reads the progressively-measured
 /// heights from `measured`
-/// ([`MeasuredRowState`](pinion_core::widgets::measured_rows::MeasuredRowState)):
+/// ([`MeasuredRowState`]):
 /// the estimate on the first frame, refined as the runtime layout pass
 /// harvests each rendered row's laid-out height back into `measured` (the
 /// "measurement round-trip" — see the

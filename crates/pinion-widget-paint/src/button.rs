@@ -7,7 +7,7 @@
 //! [`pinion_core::widgets::button`] (`ButtonState` / `ButtonExternal`
 //! / `ButtonEvent`). What this module adds is the **paint side**: the
 //! Material 3 state-layer fill matrix + the
-//! [`Scene`](pinion_core::Scene) composition every button consumer
+//! [`Scene`] composition every button consumer
 //! re-implemented inline before R686.B.
 //!
 //! Pre-R686.B `hello-button`, `figma-button-m3`, and
@@ -46,7 +46,7 @@
 //!
 //! ## Dep graph
 //!
-//! Pure [`Scene`](pinion_core::Scene) composition over
+//! Pure [`Scene`] composition over
 //! [`pinion_core::widgets::button::ButtonState`]; no `pinion-text`,
 //! no Vello / winit coupling. Sits beside [`crate::splitter`] /
 //! [`crate::checkbox`].
@@ -80,7 +80,7 @@ pub use crate::state_layer::{
 /// (R694 §5.16 §5.39) Keyboard-focus indicator ring width in logical
 /// pixels. Material 3's focus indicator is a 3-dp outline; pinion paints
 /// it as a [`Border`] on the button's outer container (drawn only while
-/// the widget holds the shell [`FocusManager`](pinion_runtime::FocusManager)
+/// the widget holds the shell `FocusManager`
 /// focus). M3's 2-dp *offset gap* between the component edge and the ring
 /// needs a border-offset primitive pinion does not have yet, so the ring
 /// sits on the edge — a visible keyboard-focus affordance, with the
@@ -227,7 +227,7 @@ pub fn m3_button_fill(colors: &ButtonColors, state: ButtonState, hover_progress:
 #[derive(Debug, Clone)]
 pub struct ButtonStyle {
     /// Paint-side tag on the button's outer [`Scene::Container`] so
-    /// the [`InputRouter`](pinion_runtime::InputRouter) deepest-tagged
+    /// the `InputRouter` deepest-tagged
     /// hit-test routes pointer events to the paired
     /// [`ButtonExternal`](pinion_core::widgets::button::ButtonExternal).
     pub tag: Cow<'static, str>,
@@ -344,7 +344,7 @@ impl ButtonStyle {
 /// (R694 §5.16 §5.39) `focused` paints the keyboard-focus indicator: a
 /// [`FOCUS_RING_WIDTH`]-pixel [`Border`] in [`ButtonColors::focus_ring`]
 /// while the button holds the shell
-/// [`FocusManager`](pinion_runtime::FocusManager) focus (sourced by the
+/// `FocusManager` focus (sourced by the
 /// binding from the external's focus posture, the same channel hover
 /// flows through). `false` leaves the container border-free — the
 /// pre-R694 fill-only appearance.

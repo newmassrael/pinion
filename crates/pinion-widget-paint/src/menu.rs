@@ -107,7 +107,7 @@ pub struct MenuItemView<'a> {
     pub separator: bool,
     /// A disabled row paints its label muted and never takes a state-layer.
     pub enabled: bool,
-    /// R985 — a submenu parent row: paints a trailing [`SUBMENU_CHEVRON`]
+    /// R985 — a submenu parent row: paints a trailing `SUBMENU_CHEVRON`
     /// and (like a command) takes a state-layer when active. Mutually
     /// exclusive with `checkmark` / `separator`.
     pub submenu: bool,

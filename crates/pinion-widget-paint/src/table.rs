@@ -25,7 +25,7 @@
 //!   carries the selected / zebra fill).
 //! - Each real cell is a hit-test target tagged `"<tag>#<row>_<col>"`
 //!   (the R51.41 composite paint convention → the
-//!   [`InputRouter`](pinion_runtime::InputRouter) `'#'`-split routes a
+//!   `InputRouter` `'#'`-split routes a
 //!   click on cell `(r, c)` to the table's `"<r>_<c>:<EventName>"` send).
 
 use std::rc::Rc;
@@ -778,7 +778,7 @@ pub struct VirtualTableData<'a> {
     /// one [`ColumnResizeExternal`](pinion_core::widgets::column_widths::ColumnResizeExternal)
     /// per column (via
     /// [`column_resize_externals`](pinion_core::widgets::column_widths::column_resize_externals))
-    /// so the grabber's capture drives the shared [`ColumnWidths`] model;
+    /// so the grabber's capture drives the shared [`ColumnWidths`](pinion_core::widgets::column_widths::ColumnWidths) model;
     /// dragging a border widens the column, growing the R784 horizontal scroll.
     /// `false` keeps the full-width R785 header (no grabber, no width reserved).
     pub resizable: bool,
@@ -858,7 +858,7 @@ pub struct GridScroll<'a> {
 /// tracks it; scroll and the band slides — exactly the list virtualization
 /// of [`view_flex_virtual_list`](crate::virtual_list::view_flex_virtual_list),
 /// but each windowed slot is a multi-column data row built by
-/// [`data_row`]. The shared windowed-sizer + flex-`ScrollNode` shape is
+/// `data_row`. The shared windowed-sizer + flex-`ScrollNode` shape is
 /// reused from `crate::virtual_list` (one source of truth, so the
 /// scroll-bound wiring cannot diverge between the list and the grid).
 ///
@@ -995,8 +995,8 @@ pub fn view_virtual_table(
 /// outer horizontal scroll. The consumer owns each row's **content** (a
 /// string data row, or the editable grid's interspersed group-header /
 /// rich-cell rows); the substrate owns the windowing geometry
-/// ([`uniform_slots`] slot-tops + the `total_h` sizer) and the nested
-/// single-axis scroll wiring ([`assemble_windowed_flex`] vertical body inside
+/// (`uniform_slots` slot-tops + the `total_h` sizer) and the nested
+/// single-axis scroll wiring (`assemble_windowed_flex` vertical body inside
 /// the outer [`h_scrolled_column`] horizontal scroll), so the two grids cannot
 /// diverge on the scroll-bound geometry (R758 divergence-is-a-bug).
 ///
@@ -1047,8 +1047,8 @@ struct GridRender<'a> {
 ///
 /// Shared by three consumers so the R784 horizontal-scroll wrapping cannot
 /// diverge between them (a divergence would mis-scroll one — R758
-/// "divergence-is-a-bug"): the read-only unsplit grid ([`render_unsplit`]),
-/// the frozen grid's scrolling pane ([`frozen_split_panes`]), and — R896 —
+/// "divergence-is-a-bug"): the read-only unsplit grid (`render_unsplit`),
+/// the frozen grid's scrolling pane (`frozen_split_panes`), and — R896 —
 /// the editable `hello-data-grid`, which wraps its eager `[header, rows]`
 /// column to scroll its widened columns sideways (the body there is the eager
 /// row column, not a windowed `ScrollNode`; the wrap is body-agnostic).

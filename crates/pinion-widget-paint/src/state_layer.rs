@@ -26,7 +26,7 @@
 //! whose tint **diverges** from the common case —
 //! the segmented button / todomvc fold `Disabled` into the resting fill
 //! (their base is the transparent track, nothing to tint); `button` tints
-//! toward a role-specific [`ButtonColors::state_layer`] rather than
+//! toward a role-specific `ButtonColors::state_layer` rather than
 //! `OnSurface` — keep their own arms but reference these shared token
 //! constants, so the magic numbers still live in exactly one place.
 

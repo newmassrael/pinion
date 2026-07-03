@@ -14,7 +14,7 @@
 //!   Material 3 `TextField` filled-variant specs the example
 //!   gallery has been using.
 //! - [`view_field`] — full `TextField` paint composition. Reads the
-//!   reactive [`TextEditState`] / [`CaretBlink`] via Owner-cache
+//!   reactive [`TextEditState`](pinion_core::widgets::text_edit::TextEditState) / [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink) via Owner-cache
 //!   hooks (so the same `(state, frame)` pure input always yields
 //!   the same `Scene` *for the same reactive state*), shapes the
 //!   text + caret + selection + preedit geometry against the
@@ -168,7 +168,7 @@ pub struct TextFieldStyle {
     /// [`Self::m3_multiline`]) bounds the parley layout so a line that
     /// exceeds the inner width breaks onto additional *visual* lines
     /// (the canonical textarea `wrap="soft"` model). The flag feeds the
-    /// [`field_shaping`] SSOT, so paint, the caret rect, the pointer
+    /// `field_shaping` SSOT, so paint, the caret rect, the pointer
     /// hit-test, and vertical caret navigation all shape against the
     /// *same* wrapped [`Layout`](pinion_text::Layout) — wrapped-line
     /// caret/selection/hit-test geometry stays consistent for free
@@ -211,7 +211,7 @@ impl TextFieldStyle {
     /// onto more visual lines than there are `\n`s; when the wrapped
     /// content is taller than the `rows`-line box it is clipped to the
     /// box and scrolled vertically to keep the caret visible
-    /// (R765 scroll-to-caret — see [`scroll_into_view`]). `rows`
+    /// (R765 scroll-to-caret — see `scroll_into_view`). `rows`
     /// is clamped to `>= 1`.
     #[must_use]
     pub const fn m3_multiline(rows: u32) -> Self {
@@ -241,7 +241,7 @@ impl Default for TextFieldStyle {
 }
 
 /// (R657 §5.16) Owner-cache hook returning the shared
-/// [`LayoutCache`](pinion_text::LayoutCache) the `TextField` helpers
+/// [`LayoutCache`] the `TextField` helpers
 /// shape against. The cache is keyed internally by
 /// `(text, style, max_width)`, so distinct `TextField` widgets on the
 /// same Owner sub-tree paint distinct entries without collision —
@@ -586,8 +586,8 @@ fn scroll_into_view(
 /// field, read back by the pointer hit-test and IME caret helpers so
 /// they project through the *same* offset the paint applied. Single-line
 /// fields never scroll (always 0), so they never touch the
-/// [`ScrollState`] cache slot. The paint view fn is the sole writer
-/// (via [`scroll_into_view`]); this is a pure read.
+/// [`ScrollState`](pinion_core::widgets::scroll::ScrollState) cache slot. The paint view fn is the sole writer
+/// (via `scroll_into_view`); this is a pure read.
 ///
 /// R956 — `pub` so a binding rendering a side affordance that must track
 /// the field's scroll (the line-number gutter, which mirrors the field's
@@ -1101,7 +1101,7 @@ pub fn view_field(
 
 /// (R657 §5.16 §5.38) Build the IME platform-bridge caret rect.
 ///
-/// Used by the binding's [`WidgetView::ime_caret_rect`] impl to
+/// Used by the binding's `WidgetView::ime_caret_rect` impl to
 /// publish the caret position so the platform IME candidate window
 /// (ibus-hangul, fcitx5-hangul, macOS Hangul, Microsoft IME)
 /// positions next to the caret rather than at the default screen
@@ -1278,7 +1278,7 @@ pub fn byte_for_field_point(
 /// R956 §5.36 §5.22 — per-**visual-line** metrics for the field's painted
 /// content, the substrate a binding's line-number gutter reads. Mirrors
 /// [`ime_caret_rect_for`] / [`byte_for_field_point`]: shapes against the
-/// *identical* [`field_shaping`] `(effective_text, style, width)` key as
+/// *identical* `field_shaping` `(effective_text, style, width)` key as
 /// [`view_field`] (a same-frame [`LayoutCache`] hit, no re-shape), so the
 /// returned line `y` / `height` are in the same layout-space frame as the
 /// painted glyphs and the caret box — a gutter built from them aligns
@@ -1293,7 +1293,7 @@ pub fn byte_for_field_point(
 /// exactly as [`view_field`] nests the painted text at `(pad, pad)` inside
 /// a `Scene::Scroll`.
 ///
-/// `caret_byte` threads through [`field_shaping`] (the IME preedit splice)
+/// `caret_byte` threads through `field_shaping` (the IME preedit splice)
 /// so the metrics describe the same `effective_text` the field paints
 /// during composition — the gutter tracks the displayed rows, not the
 /// committed buffer.
@@ -1506,7 +1506,7 @@ pub fn read_text_field_state(scene: &Scene, tag: &str) -> (TextFieldState, u32) 
 /// `text` as [`AccessValue::Text`], and an [`AccessState`] that flags
 /// `focused` and `disabled` (the latter only in
 /// [`TextFieldState::Disabled`]) — so the bindings duplicated it
-/// verbatim before this lift; the [`button_a11y_state`] helper is the
+/// verbatim before this lift; the [`button_a11y_state`](crate::button::button_a11y_state) helper is the
 /// precedent (its bindings vary the role/position, hence it returns only
 /// the `AccessState`; a text field's role + value are fixed, so this
 /// returns the whole node).

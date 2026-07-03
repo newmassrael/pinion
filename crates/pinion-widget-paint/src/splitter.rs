@@ -23,7 +23,7 @@
 //! Sits beside [`scrollbar`](crate::scrollbar) /
 //! [`tree_view`](crate::tree_view) — single-axis widget paint
 //! helper, no `pinion-text` dependency, pure
-//! [`Scene`](pinion_core::Scene) composition.
+//! [`Scene`] composition.
 //!
 //! ## API shape
 //!
@@ -41,7 +41,7 @@
 //! registers via
 //! [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
 //! tagged with the same [`SplitterStyle::tag`]. The
-//! [`InputRouter`](pinion_runtime::InputRouter)'s deepest-tagged
+//! `InputRouter`'s deepest-tagged
 //! hit-test routes `PointerDown` on the splitter Container to the
 //! external; `wants_pointer_capture = true` pins the cursor lock for
 //! the duration of the press; `pointer_move` translates the
@@ -54,7 +54,7 @@
 //! ## Why one External per Splitter Container (not per handle child)
 //!
 //! Attaching the external to the splitter Container (instead of the
-//! handle strip specifically) keeps the [`pointer_move`] coordinate
+//! handle strip specifically) keeps the [`SplitterExternal::pointer_move`] coordinate
 //! frame stable at the Container's bounding rect — `x_rel ∈ [0, 1]`
 //! covers the full extent the user expects to drag across. Pinning
 //! it to the handle strip alone would normalise `x_rel` over a 4 px
@@ -161,7 +161,7 @@ pub struct SplitterStyle {
     pub handle_extent_px: u32,
     /// Paint-side tag attached to the outer splitter
     /// [`Scene::Container`] so the
-    /// [`InputRouter`](pinion_runtime::InputRouter) deepest-tagged
+    /// `InputRouter` deepest-tagged
     /// hit-test routes pointer events to the matching
     /// [`SplitterExternal`] registered through
     /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals).
@@ -372,7 +372,7 @@ pub(crate) fn apply_flex_main(
 /// 3. `right` panel — flex-grow `1.0 - ratio`.
 ///
 /// The outer Container carries [`SplitterStyle::tag`] so the
-/// [`InputRouter`](pinion_runtime::InputRouter) routes pointer
+/// `InputRouter` routes pointer
 /// events to the paired [`SplitterExternal`]. `dragging` is the
 /// caller-resolved drag state read off the external's
 /// [`SplitterExternal::is_dragging`] mirror; v1 expects the binding
@@ -581,7 +581,7 @@ pub fn view_splitter(
 /// Registered by the binding via
 /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
 /// tagged with the same [`SplitterStyle::tag`] the view fn carried.
-/// The [`InputRouter`](pinion_runtime::InputRouter) routes
+/// The `InputRouter` routes
 /// `PointerDown` on the splitter Container to this External,
 /// [`Self::wants_pointer_capture`] returns `true` so the cursor
 /// lock survives the press, and [`Self::pointer_move`] reads the
@@ -607,7 +607,7 @@ pub fn view_splitter(
 /// owns a full `{Idle, Hover, Dragging, Disabled}` SCXML graph,
 /// `Splitter` v1 carries only the drag-in-progress boolean
 /// ([`Self::is_dragging`]) — the M3 visual table currently uses
-/// only `Idle` + `Dragging` ([`handle_fill_for_dragging`]). The
+/// only `Idle` + `Dragging` (`handle_fill_for_dragging`). The
 /// Hover / Disabled axes are deferred per
 /// [[abstraction-needs-second-consumer]]: the splitter's hover
 /// state visually overlaps with the cursor crossing the handle
@@ -745,7 +745,7 @@ impl External for SplitterExternal {
 
     /// R51.34 §5.15 + §5.35 — translate the cursor-fraction delta
     /// under capture lock into a ratio mutation via
-    /// [`Self::project_ratio`] + `Signal::set` on the attached
+    /// `Self::project_ratio` + `Signal::set` on the attached
     /// `ratio` handle.
     ///
     /// * **`Horizontal`**: `x_rel` drives, `y_rel` ignored.
@@ -855,7 +855,7 @@ impl ExternalIntrospect for SplitterExternal {
 
     /// R51.41 §5.15 §5.35 — framework synthetic event channel.
     ///
-    /// The [`InputRouter`](pinion_runtime::InputRouter) calls `invoke("send", Text("PointerUp"))` /
+    /// The `InputRouter` calls `invoke("send", Text("PointerUp"))` /
     /// `invoke("send", Text("PointerCancel"))` whenever the user
     /// releases or the OS cancels the pointer capture span the
     /// External holds. The splitter clears its drag calibration
