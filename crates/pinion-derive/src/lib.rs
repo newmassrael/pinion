@@ -3,52 +3,45 @@
 //!
 //! ## `#[derive(IntentTag)]`
 //!
-//! Lifts an enum into the [`IntentTag`] trait so
+//! Lifts an enum into the `IntentTag` trait so
 //! authors describe widget-emitted intents declaratively. Variant
 //! attributes use the `#[tag("name")]` form; the macro derives
 //! `const_tag` / `from_intent` / `schema` against the
-//! [`pinion_core::intent::Intent`] envelope.
+//! `pinion_core::intent::Intent` envelope.
 //!
 //! v0 supported variant shapes:
 //!
 //!   * **Unit variant** — payload type "void"; matches
-//!     [`IntrospectValue::Null`].
+//!     `IntrospectValue::Null`.
 //!   * **Single-field tuple variant** carrying `String`, `i64`, `f64`,
 //!     or `bool` — payload type is auto-inferred ("string" / "int" /
 //!     "float" / "bool"); matches the corresponding
-//!     [`IntrospectValue`] variant.
+//!     `IntrospectValue` variant.
 //!
 //! Multi-field tuple variants and struct variants are intentionally
 //! rejected with a clear compile error; richer payload shapes wait on
-//! the [`IntrospectValue::Object`] / `Array` expansion carry-forward
+//! the `IntrospectValue::Object` / `Array` expansion carry-forward
 //! noted in §5.20.
 //!
 //! ## `#[pinion::widget(...)]` (R641 §5.16)
 //!
 //! Attribute macro that emits the three forwarding trait impls
-//! ([`WidgetCore`] + [`WidgetA11y`] + [`WidgetView`]) every visual
+//! (`WidgetCore` + `WidgetA11y` + `WidgetView`) every visual
 //! binding declares, lifting the mechanical wiring (tag / title /
-//! associated types / [`create_external`] factory / [`initial_size`])
+//! associated types / `create_external` factory / `initial_size`)
 //! out of every example main.rs while keeping the widget-specific
-//! logic ([`view`] / [`read_state`] / [`event_name`] /
-//! [`access_node`]) as inherent methods the macro forwards into. See
-//! [`widget`] module docs for the full attribute table.
+//! logic (`view` / `read_state` / `event_name` /
+//! `access_node`) as inherent methods the macro forwards into. See
+//! the `widget` module docs for the full attribute table.
 //!
 //! The macro emits no `use` statements that would shadow caller
 //! symbols — every reference goes through the absolute
 //! `::pinion_core::…` / `::pinion_a11y::…` / `::pinion_shell::…` path.
 //!
-//! [`IntentTag`]: pinion_core::intent::IntentTag
-//! [`IntrospectValue`]: pinion_core::external::IntrospectValue
-//! [`WidgetCore`]: pinion_core::WidgetCore
-//! [`WidgetA11y`]: pinion_a11y::WidgetA11y
-//! [`WidgetView`]: pinion_shell::WidgetView
-//! [`create_external`]: pinion_core::WidgetCore::create_external
-//! [`initial_size`]: pinion_shell::WidgetView::initial_size
-//! [`view`]: pinion_core::WidgetCore::view
-//! [`read_state`]: pinion_core::WidgetCore::read_state
-//! [`event_name`]: pinion_core::WidgetCore::event_name
-//! [`access_node`]: pinion_a11y::WidgetA11y::access_node
+//! These cross-crate references are documented as plain code spans, not
+//! intra-doc links: this is a `proc-macro` crate whose only compile
+//! dependencies are `syn` / `quote` / `proc-macro2`, so the runtime
+//! crates the generated code targets are unreachable to rustdoc here.
 
 mod widget;
 
@@ -57,7 +50,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, Lit, Meta, Variant, spanned::Spanned};
 
-/// Derive [`IntentTag`](pinion_core::intent::IntentTag) on an enum.
+/// Derive `IntentTag` on an enum.
 ///
 /// See module docs for the supported variant shapes and the payload
 /// type-inference table.
@@ -71,10 +64,9 @@ pub fn derive_intent_tag(input: TokenStream) -> TokenStream {
 }
 
 /// R641 §5.16 — `#[widget(...)]` attribute macro emitting the
-/// [`WidgetCore`](pinion_core::WidgetCore) + [`WidgetA11y`](pinion_a11y::WidgetA11y)
-/// + [`WidgetView`](pinion_shell::WidgetView) forwarding trio.
+/// `WidgetCore` + `WidgetA11y` + `WidgetView` forwarding trio.
 ///
-/// See [`widget`] module docs for the full attribute reference and
+/// See the `widget` module docs for the full attribute reference and
 /// the optional-flag table.
 #[proc_macro_attribute]
 pub fn widget(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -86,7 +78,7 @@ pub fn widget(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-/// R644 §5.16 — derive [`WidgetTag`](pinion_core::WidgetTag) on a
+/// R644 §5.16 — derive `WidgetTag` on a
 /// unit-variant enum.
 ///
 /// Emits `as_tag(&self) -> &'static str` (variant ident converted

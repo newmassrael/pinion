@@ -134,8 +134,8 @@ pub enum RendererBackend {
     /// axis — would require all three modes compiled in.
     Vello {
         /// Compile-time antialiasing selector. Determines both the
-        /// emitted [`vello::AaSupport`] struct (which shaders compile)
-        /// and the [`vello::AaConfig`] passed at each
+        /// emitted `vello::AaSupport` struct (which shaders compile)
+        /// and the `vello::AaConfig` passed at each
         /// `render_to_texture` call (which shader runs per frame).
         aa: VelloAaMode,
     },
@@ -188,7 +188,7 @@ impl RendererBackend {
 }
 
 /// Vello antialiasing mode. Closed enum mapping to
-/// [`vello::AaSupport`] + [`vello::AaConfig`] pairs. R46.2.1 introduces
+/// `vello::AaSupport` + `vello::AaConfig` pairs. R46.2.1 introduces
 /// all three Vello 0.9 modes; future Vello releases adding new modes
 /// (e.g. distance-field shading) attach as additional variants.
 ///

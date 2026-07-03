@@ -21562,6 +21562,52 @@
         "ready to sit under a CSD chrome strip)"
       ]
     },
+    "R1207": {
+      "decision_summary": "R1207 starts the workspace doc-hygiene campaign: forge + derive (published-API + abort-blocker crates) made cargo-doc-clean; SEED's \"26 links\" debt corrected to ~800 workspace-wide.",
+      "changes_bullets": [
+        "pinion-forge: ast.rs `[vello::AaSupport]`/`[vello::AaConfig]` (2 sites) + codegen.rs `[LocalSpawner]` intra-doc links -> plain code spans; forge has no vello/pinion-core dep so they were unresolvable.",
+        "pinion-derive: lib.rs module-doc + item-doc cross-crate links (pinion_core::WidgetCore/IntentTag/IntrospectValue, pinion_a11y::WidgetA11y, pinion_shell::WidgetView, ...) -> code spans; dropped the reference-definition block; `[widget]` (both fn + attr-macro ambiguity) -> code span. Root cause: proc-macro crate whose only deps are syn/quote/proc-macro2 -> runtime crates are unreachable to rustdoc. Added a one-line note documenting why.",
+        "No code/signature changes -- doc comments only (the repo 'plain-text化' convention, SEED item 5)."
+      ],
+      "verification_bullets": [
+        "cargo doc -p pinion-derive -p pinion-forge --no-deps = exit 0, 0 errors together (was 6 + 22).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0 (whole workspace still compiles).",
+        "cargo test -p pinion-derive -p pinion-forge = 100 unit tests + 5 doctests pass, 0 fail.",
+        "AUDIT CORRECTION ([[verify-seed-claims-audit-first]]): R1206 SEED note claimed '26 broken intra-doc links in forge/derive'; true scope is ~669 library-crate errors (core 227 / rpc 117 / widget-paint 105 / runtime 90 / shell 86 / derive 22 / a11y 16 / forge 6) + large example surface ~= 800+ workspace-wide, hidden because `cargo doc --workspace` aborts at the first failing crate (forge) and `[workspace.lints.rust] warnings=deny` promotes every rustdoc lint to an error; cargo doc was never in the commit gate so links accreted since ~R683."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.16",
+        "5.20"
+      ],
+      "carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN (R1207 = round 1 of ~7): remaining crates in dependency order -- R1208 pinion-core (227: 130 unresolved incl. stale/renamed refs RadioGroup/Signal/Computed needing current-name lookup, 49 redundant-explicit-link, 47 private-item links), then a11y+shell (102), rpc+runtime (207), widget-paint (105), examples (~150: ThemeProvider ~46 sites + InputRouter). Per-class fix: reachable type -> working link (correct current path); cross-crate-unreachable -> code span; redundant [`X`](X) -> shortcut [`X`]; private-item link -> code span or make item pub if intended.",
+        "FINAL campaign round: add `cargo doc --workspace --no-deps` to .githooks pre-commit/pre-push + CI so the doc build can never regress -- ONLY after the workspace is green. Do NOT demote rustdoc lints to warn (that hides debt = workaround; user directive forbids workarounds).",
+        "cargo doc EXIT CODE must be checked directly, not grep 'warning:' -- these surface as `error:` under warnings=deny (the R1206 'doc clean' misgrep)."
+      ],
+      "publishable_decision_summary": "R1207 starts the workspace doc-hygiene campaign: forge + derive (published-API + abort-blocker crates) made cargo-doc-clean; SEED's \"26 links\" debt corrected to ~800 workspace-wide.",
+      "publishable_changes_bullets": [
+        "pinion-forge: ast.rs `[vello::AaSupport]`/`[vello::AaConfig]` (2 sites) + codegen.rs `[LocalSpawner]` intra-doc links -> plain code spans; forge has no vello/pinion-core dep so they were unresolvable.",
+        "pinion-derive: lib.rs module-doc + item-doc cross-crate links (pinion_core::WidgetCore/IntentTag/IntrospectValue, pinion_a11y::WidgetA11y, pinion_shell::WidgetView, ...) -> code spans; dropped the reference-definition block; `[widget]` (both fn + attr-macro ambiguity) -> code span. Root cause: proc-macro crate whose only deps are syn/quote/proc-macro2 -> runtime crates are unreachable to rustdoc. Added a one-line note documenting why.",
+        "No code/signature changes -- doc comments only (the repo 'plain-text化' convention, SEED item 5)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo doc -p pinion-derive -p pinion-forge --no-deps = exit 0, 0 errors together (was 6 + 22).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0 (whole workspace still compiles).",
+        "cargo test -p pinion-derive -p pinion-forge = 100 unit tests + 5 doctests pass, 0 fail.",
+        "AUDIT CORRECTION ([[verify-seed-claims-audit-first]]): R1206 SEED note claimed '26 broken intra-doc links in forge/derive'; true scope is ~669 library-crate errors (core 227 / rpc 117 / widget-paint 105 / runtime 90 / shell 86 / derive 22 / a11y 16 / forge 6) + large example surface ~= 800+ workspace-wide, hidden because `cargo doc --workspace` aborts at the first failing crate (forge) and `[workspace.lints.rust] warnings=deny` promotes every rustdoc lint to an error; cargo doc was never in the commit gate so links accreted since ~R683."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.16",
+        "5.20"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN (R1207 = round 1 of ~7): remaining crates in dependency order -- R1208 pinion-core (227: 130 unresolved incl. stale/renamed refs RadioGroup/Signal/Computed needing current-name lookup, 49 redundant-explicit-link, 47 private-item links), then a11y+shell (102), rpc+runtime (207), widget-paint (105), examples (~150: ThemeProvider ~46 sites + InputRouter). Per-class fix: reachable type -> working link (correct current path); cross-crate-unreachable -> code span; redundant [`X`](X) -> shortcut [`X`]; private-item link -> code span or make item pub if intended.",
+        "FINAL campaign round: add `cargo doc --workspace --no-deps` to .githooks pre-commit/pre-push + CI so the doc build can never regress -- ONLY after the workspace is green. Do NOT demote rustdoc lints to warn (that hides debt = workaround; user directive forbids workarounds).",
+        "cargo doc EXIT CODE must be checked directly, not grep 'warning:' -- these surface as `error:` under warnings=deny (the R1206 'doc clean' misgrep)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

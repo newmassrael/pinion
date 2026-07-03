@@ -26,7 +26,7 @@
 //!
 //! ## Signature policy
 //!
-//! `<resource>` requires a [`LocalSpawner`] handle at construction
+//! `<resource>` requires a `LocalSpawner` handle at construction
 //! time to drive the initial fetch future. Documents with no
 //! `<resource>` keep the simpler one-argument `new` so a downstream
 //! that only uses signals/computeds is not forced to provide a
