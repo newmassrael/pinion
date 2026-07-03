@@ -107,7 +107,7 @@ const HOVER_ANIM_KEY: &str = "hello_button::hover_progress";
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ButtonState, _frame: &Frame) -> Scene {
     // (R57.X.button §5.50) Active palette — `use_theme` auto-
-    // subscribes this view-fn so a `ThemeProvider::set_theme` from
+    // subscribes this view-fn so a `ThemeProvider::set_mode` from
     // anywhere in the application re-runs the view + repaints with
     // the new tones.
     let theme = use_theme(THEME_TAG).theme_animated();

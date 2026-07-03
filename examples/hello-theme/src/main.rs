@@ -8,7 +8,7 @@
 //!   reads [`ThemeProvider::theme`](pinion_core::theme::ThemeProvider::theme) inside the view-fn so the
 //!   reactive subscription captures palette swaps automatically.
 //! - [`WidgetCore::update`] listens for the Toggle widget's
-//!   `"toggle"` intent and calls `ThemeProvider::set_theme` with
+//!   `"toggle"` intent and calls [`ThemeProvider::set_mode`](pinion_core::theme::ThemeProvider::set_mode) with
 //!   [`Theme::dark`] when the toggle flips on, [`Theme::light`] when
 //!   it flips off. The signal write notifies the view's subscriber,
 //!   the shell schedules a repaint, and the panel re-renders against
@@ -17,7 +17,7 @@
 //! Every visible surface in the panel is sourced through a
 //! [`ColorRole`] token, never from a hard-coded RGB literal — that
 //! is the substrate exit criterion: the entire panel re-themes from
-//! one `set_theme` call without any view-fn-internal branching on
+//! one `set_mode` call without any view-fn-internal branching on
 //! the mode.
 //!
 //! Same shell entrypoint (`pinion_shell::run::<HelloThemeView>()`)
@@ -171,7 +171,7 @@ const TOGGLE_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("theme_toggle", "t
 /// 2. **Mode toggle** — the Tier-1 `Toggle` widget. Tag matches
 ///    [`TOGGLE_TAG`] so the input router resolves middle-click and
 ///    pointer events to this node and forwards `"toggle"` intents
-///    to `update` for the `ThemeProvider::set_theme` swap.
+///    to `update` for the [`ThemeProvider::set_mode`](pinion_core::theme::ThemeProvider::set_mode) swap.
 /// 3. **Status caption** — "Light mode" / "Dark mode", 12 px,
 ///    [`ColorRole::OnSurfaceMuted`].
 /// 4. **Accent banner** — 160×32 rounded rect filled with
@@ -200,7 +200,7 @@ const TOGGLE_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("theme_toggle", "t
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     // Reactive read — every paint subscribes the root owner to the
-    // ThemeProvider's `palette` signal. The next `set_theme` flips
+    // ThemeProvider's `palette` signal. The next `set_mode` flips
     // the surface for free, no view-fn branch on `on` required.
     let provider = use_theme(THEME_TAG);
     // (R586 §5.50) Animated palette — opts in to R57.X.theme-fade

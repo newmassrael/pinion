@@ -21,8 +21,8 @@
 //!   4. [`pinion_core::Scene::primary_external_mut`] (or
 //!      [`pinion_core::Scene::primary_external`]) — descend the
 //!      multi-widget wrap shape to the substrate's primary External.
-//!   5. `pinion_core::external::ExternalHandle::introspect_mut` (or
-//!      `pinion_core::external::ExternalHandle::introspect`) —
+//!   5. [`External::introspect_mut`](pinion_core::external::External::introspect_mut) (or
+//!      [`External::introspect`](pinion_core::external::External::introspect)) —
 //!      reach the §5.15 item 7/8 introspect channel.
 //!
 //! Each call site previously also defined a parallel set of error
@@ -138,7 +138,7 @@ pub fn introspect_mut_at<'s>(
 /// Same failure modes as [`introspect_mut_at`], but routed through
 /// [`pinion_core::Scene::lookup_path_ref`] /
 /// [`pinion_core::Scene::primary_external`] /
-/// `pinion_core::external::ExternalHandle::introspect`.
+/// [`External::introspect`](pinion_core::external::External::introspect).
 pub fn introspect_at<'s>(
     scene: &'s Scene,
     scene_segments: &[String],

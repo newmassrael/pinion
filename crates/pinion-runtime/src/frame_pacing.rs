@@ -12,7 +12,7 @@
 //! problems:
 //!
 //! 1. **Numerical instability** — the semi-implicit Euler integrator
-//!    inside `SpringState::tick` is stable for `dt` near the frame
+//!    inside `SpringState::step` is stable for `dt` near the frame
 //!    budget; large `dt` causes oscillation amplification. The
 //!    canonical guard in the game-engine and `SwiftUI` / Compose
 //!    literature is a single-frame-worth-of-time cap on `dt` before
@@ -34,7 +34,7 @@
 ///
 /// `1.0 / 30.0` ≈ 33.3ms. See the module doc for the
 /// rationale — this is the longest `dt` the semi-implicit Euler
-/// integrator inside `pinion_core::animation::SpringState::tick`
+/// integrator inside [`SpringState::step`](pinion_core::animation::SpringState::step)
 /// stays numerically well-behaved for.
 pub const MAX_FRAME_DT_SECS: f32 = 1.0 / 30.0;
 

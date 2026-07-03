@@ -164,7 +164,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // status line) around the lifted field substrate.
     //
     // (R57.X.textfield §5.50) Active palette — `use_theme` auto-
-    // subscribes this view-fn so a `ThemeProvider::set_theme` from
+    // subscribes this view-fn so a `ThemeProvider::set_mode` from
     // anywhere in the application re-runs the view + repaints the
     // field + caret + selection band with the new tones. R586 §5.50
     // `theme_animated` opts in to the R57.X.theme-fade cross-fade;

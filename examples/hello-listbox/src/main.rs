@@ -219,7 +219,7 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
 
     // (R57.X.listbox §5.50) Resolve the active palette via
     // [`use_theme`] so the view auto-subscribes to palette swaps —
-    // a [`ThemeProvider::set_theme`] anywhere in the application
+    // a [`ThemeProvider::set_mode`] anywhere in the application
     // re-runs `view` and the rows / scrollbar repaint with the new
     // tones. The same provider is shared with `hello-toggle` /
     // `hello-theme` (matching `THEME_TAG`) so a future cross-widget

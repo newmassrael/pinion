@@ -21918,6 +21918,50 @@
         "SEMANTIC flags left for a maintainer (spans, not links -- prose names nonexistent API): ThemeProvider::set_theme (real set_mode/set_*_palette), runtime SpringState::tick (on Tween), rpc ExternalHandle::introspect (real trait External), shell/widget-paint WidgetView::initial_size vs initial_size_strategy. Next session: back to Phase-B value-order slice ([[phase-b-substrate-roadmap]]) unless user redirects."
       ]
     },
+    "R1215": {
+      "decision_summary": "R1215 audit-clearance of the doc campaign: corrected doc comments that named nonexistent APIs (a real smell the campaign spanned instead of fixing), per the cost-no-object textbook standard.",
+      "changes_bullets": [
+        "Fixed factually-wrong API references in doc comments (9 files, doc-comments only): `ThemeProvider::set_theme` (12 sites, no such method -- code calls set_mode/set_palettes) -> `set_mode`; `pinion_core::external::ExternalHandle::introspect(_mut)` (3 sites, no such type) -> the real `External` trait method; `SpringState::tick` (2 sites -- SpringState has `step`, not `tick`; `tick` is on Animation) -> `SpringState::step`.",
+        "Upgraded the primary doc-comment mentions from code spans to working intra-doc links (matching the already-present [`ThemeProvider::set_palettes`] link style in hello-theme -- consistency the campaign had broken).",
+        "Root of the smell: these were pre-existing broken links; the R1207-R1213 campaign un-broke the LINK (spanned it) but preserved the WRONG NAME, and R1213 punted them to 'a maintainer' -- a cost-motivated deferral the user's cost-no-object textbook standard rejects."
+      ],
+      "verification_bullets": [
+        "cargo doc --workspace --no-deps --features pinion-runtime/vello = exit 0 -- the R1214 gate itself verified every new working link resolves (set_mode / External::introspect / SpringState::step all reachable).",
+        "Zero remaining wrong-name references: grep set_theme / ExternalHandle / SpringState::tick = 0 each.",
+        "cargo clippy --workspace --all-targets = exit 0; cargo test -p pinion-rpc/-runtime pass; doc-comment-only diff (9 files)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.7",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "HONEST RESIDUAL (doc-truth): R1215 fixed the KNOWN nonexistent-API references (the ones flagged during R1207-R1214). The doc gate proves no BROKEN intra-doc LINKS, but does NOT prove every code-span prose API-name is factually correct -- a fully-exhaustive doc<->code fidelity audit of all ~hundreds of spanned references was NOT done. If a later round wants max rigor, sweep every `Type::method` code span against the actual code.",
+        "Span-vs-link: the campaign left many reachable refs as code spans; that is idiomatic Rust doc style (not a smell) per API guideline C-LINK (link key mentions, span repeats). R1215 linked the primary mentions for the corrected APIs; not converting every repeat is deliberate, not debt.",
+        "Campaign lessons durable in [[doc-hygiene-campaign]]; the campaign was build-integrity HYGIENE (not Phase A-D north-star progress) -- the lasting structural value is the R1214 gate. Next = Phase-B value-order slice ([[phase-b-substrate-roadmap]])."
+      ],
+      "publishable_decision_summary": "R1215 audit-clearance of the doc campaign: corrected doc comments that named nonexistent APIs (a real smell the campaign spanned instead of fixing), per the cost-no-object textbook standard.",
+      "publishable_changes_bullets": [
+        "Fixed factually-wrong API references in doc comments (9 files, doc-comments only): `ThemeProvider::set_theme` (12 sites, no such method -- code calls set_mode/set_palettes) -> `set_mode`; `pinion_core::external::ExternalHandle::introspect(_mut)` (3 sites, no such type) -> the real `External` trait method; `SpringState::tick` (2 sites -- SpringState has `step`, not `tick`; `tick` is on Animation) -> `SpringState::step`.",
+        "Upgraded the primary doc-comment mentions from code spans to working intra-doc links (matching the already-present [`ThemeProvider::set_palettes`] link style in hello-theme -- consistency the campaign had broken).",
+        "Root of the smell: these were pre-existing broken links; the R1207-R1213 campaign un-broke the LINK (spanned it) but preserved the WRONG NAME, and R1213 punted them to 'a maintainer' -- a cost-motivated deferral the user's cost-no-object textbook standard rejects."
+      ],
+      "publishable_verification_bullets": [
+        "cargo doc --workspace --no-deps --features pinion-runtime/vello = exit 0 -- the R1214 gate itself verified every new working link resolves (set_mode / External::introspect / SpringState::step all reachable).",
+        "Zero remaining wrong-name references: grep set_theme / ExternalHandle / SpringState::tick = 0 each.",
+        "cargo clippy --workspace --all-targets = exit 0; cargo test -p pinion-rpc/-runtime pass; doc-comment-only diff (9 files)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.7",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "HONEST RESIDUAL (doc-truth): R1215 fixed the KNOWN nonexistent-API references (the ones flagged during R1207-R1214). The doc gate proves no BROKEN intra-doc LINKS, but does NOT prove every code-span prose API-name is factually correct -- a fully-exhaustive doc<->code fidelity audit of all ~hundreds of spanned references was NOT done. If a later round wants max rigor, sweep every `Type::method` code span against the actual code.",
+        "Span-vs-link: the campaign left many reachable refs as code spans; that is idiomatic Rust doc style (not a smell) per API guideline C-LINK (link key mentions, span repeats). R1215 linked the primary mentions for the corrected APIs; not converting every repeat is deliberate, not debt.",
+        "Campaign lessons durable in [[doc-hygiene-campaign]]; the campaign was build-integrity HYGIENE (not Phase A-D north-star progress) -- the lasting structural value is the R1214 gate. Next = Phase-B value-order slice ([[phase-b-substrate-roadmap]])."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

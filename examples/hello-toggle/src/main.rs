@@ -16,7 +16,7 @@
 //! [`pinion_core::theme`] substrate (R57.0 §5.50). Every visible color
 //! now resolves through a [`ColorRole`] against the active
 //! [`use_theme("app")`](pinion_core::use_theme) palette; flipping the
-//! Off/On sidecar drives a `ThemeProvider::set_theme` swap so the
+//! Off/On sidecar drives a [`ThemeProvider::set_mode`](pinion_core::theme::ThemeProvider::set_mode) swap so the
 //! demo's "Dark mode" label becomes semantically accurate — On really
 //! is dark mode. The Material 3 Switch role mapping is the canonical
 //! source:
@@ -129,7 +129,7 @@ const TOGGLE_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("main_toggle", "to
 ///
 /// Reads the active palette via [`use_theme(THEME_TAG)`] so the
 /// reactive subscription captures palette swaps automatically — the
-/// next `ThemeProvider::set_theme` re-runs the view without any
+/// next [`ThemeProvider::set_mode`](pinion_core::theme::ThemeProvider::set_mode) re-runs the view without any
 /// view-fn branch on the mode.
 ///
 /// Layout (top-to-bottom, centered):
@@ -154,7 +154,7 @@ const TOGGLE_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("main_toggle", "to
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     // Reactive read — every paint subscribes the root owner to the
-    // ThemeProvider's `palette` signal. The next `set_theme` flips
+    // ThemeProvider's `palette` signal. The next `set_mode` flips
     // the surface for free.
     let theme = use_theme(THEME_TAG).theme_animated();
     // Cache the OnSurface role once — it both renders the title /
