@@ -859,6 +859,31 @@ fn apply_chrome_inset(scene: Scene, chrome_h: Option<u32>) -> Scene {
     }
 }
 
+/// (R1202 §5.51 §5.39) Shrink a window-absolute `rect` to the DOCK-AREA rect —
+/// the region below a CSD chrome strip of height `chrome_h` — by moving its top
+/// edge down and shortening it. The rect peer of [`apply_chrome_inset`] (which
+/// insets the CONTENT scene): the cross-window OUTER dock preview
+/// ([`ShellCore::apply_cross_window_drop_preview`]) spans this so the full-span
+/// band lands below the min / max / close controls, matching where
+/// `dock_panel_outer` docks (the topology carries no chrome row). `None`
+/// (a decorated window, no chrome) returns `rect` unchanged; a `chrome_h`
+/// taller than the window clamps to an empty rect rather than underflowing.
+fn inset_below_chrome(
+    rect: pinion_core::scene::Rect,
+    chrome_h: Option<u32>,
+) -> pinion_core::scene::Rect {
+    match chrome_h {
+        // Clamp the inset to the rect's own height so the result stays IN bounds:
+        // a chrome taller than the window yields an empty band at the bottom edge,
+        // never a `y` past the window (which a bare `saturating_add` would give).
+        Some(h) => {
+            let dy = h.min(rect.h);
+            pinion_core::scene::Rect::new(rect.x, rect.y + dy, rect.w, rect.h - dy)
+        }
+        None => rect,
+    }
+}
+
 /// (R1121 §5.21) Apply the vertical flex-main idiom (`flex-basis: 0;
 /// flex-grow: 1; min-height: 0`) to a `Scene`'s own root layout so it fills
 /// — and can shrink within — a `Column` flex parent's main axis. Mirrors
@@ -3701,10 +3726,19 @@ impl<V: WidgetView> ShellCore<V> {
                 // dock-specific zone classification + strip rendering is the binding's
                 // (`V::dock_drop_preview`), so the shell stays widget-agnostic.
                 // (R1156) OUTER full-span dock: the perimeter zone has no panel rect —
-                // hand the binding the WHOLE window content rect so it renders a
-                // full-span strip (a row/column across every pane).
+                // hand the binding the DOCK-AREA rect so it renders a full-span strip
+                // (a row/column across every pane).
                 let rect = if drop.point.tag == pinion_core::external::OUTER_DOCK_ZONE_TAG {
-                    scene.rect()
+                    // (R1202) …the dock area, NOT the whole window: a CSD-chrome
+                    // window insets its dock content below the control strip
+                    // (min / max / close), so a preview spanning `scene.rect()`
+                    // painted the full-span band ACROSS the title-bar controls when
+                    // redocking a floater onto it (the user's "붙일 때 최소화/최대화/x
+                    // 영역까지 preview가 보임"). Inset the top by the chrome height so the
+                    // previewed band == where `dock_panel_outer` actually lands (the
+                    // topology has no chrome row), restoring preview == result. A
+                    // decorated window (no chrome inset) is unchanged.
+                    inset_below_chrome(scene.rect(), self.chrome_inset_height(window_id))
                 } else {
                     scene.rect_for_tag_absolute(&drop.point.tag)?
                 };
@@ -6882,9 +6916,9 @@ mod r1138_redock_hint_injection_tests {
     //! cursor to an absolute point over main's dock — the exact floater→main redock
     //! direction — so the shell stashes the cross-window drop and
     //! `apply_cross_window_drop_preview` paints it in main at the target.
-    use super::ShellCore;
+    use super::{ShellCore, inset_below_chrome};
     use crate::test_fixtures::TestRenderer;
-    use crate::{SizeStrategy, WidgetView, WindowSpec};
+    use crate::{SizeStrategy, WidgetView, WindowChromeStyle, WindowPolicy, WindowSpec};
     use pinion_a11y::WidgetA11y;
     use pinion_core::external::{
         Backend, BackendFallback, BackendSupport, DragPayload, External, IntrospectValue,
@@ -6980,6 +7014,16 @@ mod r1138_redock_hint_injection_tests {
             SizeStrategy::Fixed {
                 width: 200,
                 height: 200,
+            }
+        }
+        // (R1202) The MAIN window wears CSD chrome (a min / max / close strip);
+        // the floater is a naked borderless drag source. This is what makes an
+        // OUTER redock preview's rect matter: it must land BELOW the control strip.
+        fn window_policy(window_id: &str) -> WindowPolicy {
+            if window_id == FLOAT_WINDOW {
+                WindowPolicy::new()
+            } else {
+                WindowPolicy::new().with_chrome(WindowChromeStyle::default())
             }
         }
         fn windows_signal() -> Option<Rc<Signal<Vec<WindowSpec>>>> {
@@ -7123,6 +7167,75 @@ mod r1138_redock_hint_injection_tests {
             ),
             "after release the on-target redock preview clears",
         );
+    }
+
+    /// (R1202) The rect-inset geometry the cross-window OUTER preview uses.
+    #[test]
+    fn r1202_inset_below_chrome_geometry() {
+        let full = Rect::new(0, 0, 1000, 800);
+        // No chrome (decorated window) → unchanged.
+        assert_eq!(inset_below_chrome(full, None), full);
+        // A 32px chrome strip → the top edge drops by 32, the height shortens by 32
+        // (x / w untouched — chrome is a top strip).
+        assert_eq!(
+            inset_below_chrome(full, Some(32)),
+            Rect::new(0, 32, 1000, 768)
+        );
+        // A chrome taller than the window clamps to an empty height, never underflows.
+        assert_eq!(
+            inset_below_chrome(full, Some(900)),
+            Rect::new(0, 800, 1000, 0)
+        );
+    }
+
+    /// (R1202) Redocking a floater onto a CSD-chrome window: the OUTER full-span
+    /// preview must land in the DOCK AREA (below the min / max / close strip), not
+    /// across the whole window over the controls — the user's "붙일 때 최소화/최대화/x
+    /// 영역까지 preview가 보임". The band's rect is inset by the chrome height, so
+    /// preview == where `dock_panel_outer` docks (the topology has no chrome row).
+    #[test]
+    fn r1202_outer_redock_preview_lands_below_the_chrome() {
+        fn rect_of_tag(scene: &Scene, tag: &str) -> Option<Rect> {
+            if scene.tag() == Some(tag) {
+                return Some(scene.rect());
+            }
+            match scene {
+                Scene::Container(c) => c.children.iter().find_map(|ch| rect_of_tag(ch, tag)),
+                Scene::Scroll(s) => rect_of_tag(&s.content, tag),
+                _ => None,
+            }
+        }
+        let mut sc = ShellCore::<RedockHintFixture>::new();
+        // Main is a 1000x800 window at the desktop origin (abs == main-local); its
+        // painted dock target sits inside it.
+        sc.core.set_paint_scene_for_window(
+            "main",
+            drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100)),
+        );
+        let f = sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200);
+        sc.finalize_frame_for_window(FLOAT_WINDOW, f);
+        // Open the floater's drag session, then march to main's OUTER LEFT perimeter:
+        // abs (5, 400) = 5px inside main's left edge = the outer band. Floater-local
+        // (5 - FLOAT_X, 400 - FLOAT_Y) = (-795, 300).
+        sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, 40.0, 40.0);
+        sc.mouse_pressed_for_window(FLOAT_WINDOW, PointerId::MOUSE);
+        sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -795.0, 300.0);
+        let main_scene = || drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100));
+        let previewed = sc.apply_cross_window_drop_preview(main_scene(), Some("main"));
+        assert!(
+            has_tag(&previewed, super::CROSS_WINDOW_DROP_PREVIEW_TAG),
+            "a floater over main's outer band shows the full-span OUTER redock preview",
+        );
+        let band = rect_of_tag(&previewed, PREVIEW_TAG).expect("the OUTER band is injected");
+        // ★The band starts BELOW the 32px chrome strip (not y=0 over the controls).
+        assert_eq!(
+            band.y, 32,
+            "the OUTER band clears the min/max/close chrome strip"
+        );
+        assert_eq!(band.h, 800 - 32, "and is shortened by the chrome height");
+        // The horizontal extent still spans the whole window (a full-span dock).
+        assert_eq!(band.x, 0);
+        assert_eq!(band.w, 1000);
     }
 
     // (R1168 removed `r1142_drag_release_repaints_the_guide_host_to_strip_its_guides`
