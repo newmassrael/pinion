@@ -21258,6 +21258,68 @@
         "r1124 floater redock demo pre-existing RED locally (hidden-window / HW-gated)"
       ]
     },
+    "R1203": {
+      "decision_summary": "Complete the 'dock area, not window' principle for the OUTER dock band: the same-window band (router) now measures against the dock area (window minus the CSD chrome strip) so its top full-span band sits at the dock's top edge, not up in the min/max/close controls, agreeing with R1202's cross-window preview inset. Plus the trigger band is now proportional (10% of the smaller dim, capped at 32px) so it is not an oversized fraction of a small window.",
+      "changes_bullets": [
+        "same-window OUTER dock band now measured against the DOCK AREA",
+        "was the whole window rect, so with CSD chrome the top band sat up in",
+        "the min/max/close strip; a drag to the dock's own top edge missed it",
+        "router gains a per-window dock_area_top_inset; shell stamps it from",
+        "chrome_inset_height at both paint-publish sites (peer of R1202 preview)",
+        "OUTER trigger band is now PROPORTIONAL (10% of the smaller dim, capped",
+        "at 32px) so it is not an oversized fraction of a small window",
+        "shared outer_dock_margin used by same-window + cross-window band tests"
+      ],
+      "verification_bullets": [
+        "outer_dock_margin + dock_area_rect unit tests (proportional / inset / clamp)",
+        "resolve_own_outer_dock unit test: with a 32px inset the chrome strip is an",
+        "escape and the dock's top edge is the outer band (non-tautological vs inset 0)",
+        "shell test: a paint publish stamps main's 32px chrome onto its router; a",
+        "naked floater stays 0",
+        "394 runtime + pinion-shell lib tests green; clippy(vello,-D pedantic) clean",
+        "r1201 + r1167 dock demos PASS (editor 1200x800 no-chrome = band unchanged)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "cross-window RESOLUTION band (resolve_outer_dock_zone) still window-rect for",
+        "the vertical inset (its straddle band approaches from outside); R1202 fixed",
+        "the cross-window PREVIEW rect, so no visible cross-window symptom",
+        "both user-reported symptoms (A R1201, B R1202) + these two polish items done"
+      ],
+      "publishable_decision_summary": "Complete the 'dock area, not window' principle for the OUTER dock band: the same-window band (router) now measures against the dock area (window minus the CSD chrome strip) so its top full-span band sits at the dock's top edge, not up in the min/max/close controls, agreeing with R1202's cross-window preview inset. Plus the trigger band is now proportional (10% of the smaller dim, capped at 32px) so it is not an oversized fraction of a small window.",
+      "publishable_changes_bullets": [
+        "same-window OUTER dock band now measured against the DOCK AREA",
+        "was the whole window rect, so with CSD chrome the top band sat up in",
+        "the min/max/close strip; a drag to the dock's own top edge missed it",
+        "router gains a per-window dock_area_top_inset; shell stamps it from",
+        "chrome_inset_height at both paint-publish sites (peer of R1202 preview)",
+        "OUTER trigger band is now PROPORTIONAL (10% of the smaller dim, capped",
+        "at 32px) so it is not an oversized fraction of a small window",
+        "shared outer_dock_margin used by same-window + cross-window band tests"
+      ],
+      "publishable_verification_bullets": [
+        "outer_dock_margin + dock_area_rect unit tests (proportional / inset / clamp)",
+        "resolve_own_outer_dock unit test: with a 32px inset the chrome strip is an",
+        "escape and the dock's top edge is the outer band (non-tautological vs inset 0)",
+        "shell test: a paint publish stamps main's 32px chrome onto its router; a",
+        "naked floater stays 0",
+        "394 runtime + pinion-shell lib tests green; clippy(vello,-D pedantic) clean",
+        "r1201 + r1167 dock demos PASS (editor 1200x800 no-chrome = band unchanged)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "cross-window RESOLUTION band (resolve_outer_dock_zone) still window-rect for",
+        "the vertical inset (its straddle band approaches from outside); R1202 fixed",
+        "the cross-window PREVIEW rect, so no visible cross-window symptom",
+        "both user-reported symptoms (A R1201, B R1202) + these two polish items done"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

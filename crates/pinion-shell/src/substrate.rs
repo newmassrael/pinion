@@ -4280,8 +4280,22 @@ impl<V: WidgetView> ShellCore<V> {
         window_id: &str,
         paint_scene: Scene,
     ) {
+        self.stamp_router_dock_inset(window_id);
         self.core
             .update_paint_scene_for_window(window_id, paint_scene);
+    }
+
+    /// (R1203 §5.51 §5.39) Stamp the window's DOCK-AREA top inset (its chrome
+    /// strip height, `0` for OS-decorated) onto its router before publishing the
+    /// paint scene, so the same-window OUTER dock band is measured against the
+    /// dock area (below the chrome), not the whole window — the router-side peer
+    /// of R1202's cross-window preview inset. Called from BOTH paint-publish
+    /// primitives so the band is correct whether the frame came from a live winit
+    /// paint (hover-refresh) or an RPC dispatch (storage-only).
+    fn stamp_router_dock_inset(&mut self, window_id: &str) {
+        let inset = self.chrome_inset_height(Some(window_id)).unwrap_or(0);
+        self.core
+            .set_dock_area_top_inset_for_window(window_id, inset);
     }
 
     /// (R685.C atomic 4 §5.16 §5.41 §5.35) Paint-storage write with
@@ -4314,6 +4328,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// R685.C lifts it into this named primitive so the dispatch hook
     /// reads declaratively.
     pub fn apply_paint_for_window_storage_only(&mut self, window_id: &str, paint_scene: Scene) {
+        self.stamp_router_dock_inset(window_id);
         self.core.set_paint_scene_for_window(window_id, paint_scene);
     }
 
@@ -7236,6 +7251,40 @@ mod r1138_redock_hint_injection_tests {
         // The horizontal extent still spans the whole window (a full-span dock).
         assert_eq!(band.x, 0);
         assert_eq!(band.w, 1000);
+    }
+
+    /// (R1203) Publishing a window's paint stamps its chrome height onto that
+    /// window's router, so its SAME-window OUTER dock band measures the dock area
+    /// (below the min/max/close strip), not the whole window — the router-side
+    /// peer of R1202's cross-window preview inset. A naked window stays `0`.
+    #[test]
+    fn r1203_paint_publish_stamps_the_router_dock_inset() {
+        let mut sc = ShellCore::<RedockHintFixture>::new();
+        assert_eq!(
+            sc.core.dock_area_top_inset_for_window("main"),
+            0,
+            "no inset before the first paint publish",
+        );
+        // Main wears a 32px CSD chrome strip (RedockHintFixture window_policy).
+        sc.apply_paint_for_window_storage_only(
+            "main",
+            drop_panel_scene("main_dock", Rect::new(0, 0, 1000, 800)),
+        );
+        assert_eq!(
+            sc.core.dock_area_top_inset_for_window("main"),
+            32,
+            "★main's 32px chrome is stamped onto its router so the outer band clears it",
+        );
+        // The naked floater window (no chrome) gets no inset.
+        sc.apply_paint_for_window_storage_only(
+            FLOAT_WINDOW,
+            drop_panel_scene("f", Rect::new(0, 0, 200, 200)),
+        );
+        assert_eq!(
+            sc.core.dock_area_top_inset_for_window(FLOAT_WINDOW),
+            0,
+            "the naked floater has no chrome inset",
+        );
     }
 
     // (R1168 removed `r1142_drag_release_repaints_the_guide_host_to_strip_its_guides`

@@ -386,6 +386,18 @@ pub struct InputRouter {
     /// shell-composed `over_window`); knowing its OWN id is a different, local
     /// fact.
     window_id: Option<String>,
+    /// (R1203 §5.51 §5.39) Logical-pixel height the DOCK AREA is inset from the
+    /// window's top edge — the client-side chrome strip height, or `0` for an
+    /// OS-decorated / naked window. The shell stamps it per window
+    /// ([`crate::CoreShell::set_dock_area_top_inset_for_window`]) from its
+    /// `chrome_inset_height`. [`Self::resolve_own_outer_dock`] measures the
+    /// same-window OUTER band against `paint.rect()` shrunk by this, so the top
+    /// full-span band sits at the DOCK's top edge (below the min / max / close
+    /// controls) — not up in the chrome strip. The R1202 peer for the same-window
+    /// band: R1202 fixed the cross-window preview rect (shell-side), this fixes
+    /// the same-window band membership (router-side) so the band and the preview
+    /// agree on where the dock area is.
+    dock_area_top_inset: u32,
 }
 
 /// R881.1 §5.35 — one pointer's wheel remainder: the scroll container
@@ -755,6 +767,22 @@ impl InputRouter {
     /// stationary cursor — both want the hover arcs).
     pub fn set_paint_scene(&mut self, scene: Scene) {
         self.last_paint_scene = Some(scene);
+    }
+
+    /// (R1203 §5.51 §5.39) Stamp the DOCK-AREA top inset (the client-side chrome
+    /// strip height, `0` for OS-decorated) the shell resolves for this window, so
+    /// [`Self::resolve_own_outer_dock`] measures the same-window OUTER band
+    /// against the dock area — below the chrome — not the whole window. See
+    /// [`Self::dock_area_top_inset`].
+    pub fn set_dock_area_top_inset(&mut self, inset: u32) {
+        self.dock_area_top_inset = inset;
+    }
+
+    /// (R1203 §5.51 §5.39) The stamped DOCK-AREA top inset. `0` until the shell
+    /// stamps a chrome height (OS-decorated windows stay `0`).
+    #[must_use]
+    pub fn dock_area_top_inset(&self) -> u32 {
+        self.dock_area_top_inset
     }
 
     /// (R685 §5.16 §5.35) Refresh-hover side-effect half of the R51.39
@@ -1993,18 +2021,27 @@ impl InputRouter {
     /// reparent) near the window edge keeps the plain `resolve_drop_point` hit-test.
     fn resolve_own_outer_dock(&self, x: f64, y: f64) -> Option<DropPoint> {
         let paint = self.last_paint_scene.as_ref()?;
-        let root = paint.rect();
+        // (R1203) Measure the band against the DOCK AREA — the window shrunk from
+        // the top by the chrome strip height — so the top full-span band sits at
+        // the dock's top edge (below the client-side min/max/close controls), not
+        // up in the chrome. The same-window peer of R1202's cross-window preview
+        // inset; both now agree on where the dock area is.
+        let root = dock_area_rect(paint.rect(), self.dock_area_top_inset);
         let (rx, ry) = (f64::from(root.x), f64::from(root.y));
         let (rw, rh) = (f64::from(root.w), f64::from(root.h));
         if rw <= 0.0 || rh <= 0.0 {
             return None;
         }
-        // INSIDE-only: a cursor that has crossed the window edge is escaping (→
-        // float via the empty `resolve_drop_point`), not docking outer.
+        // INSIDE-only: a cursor that has crossed the dock-area edge is escaping (→
+        // float via the empty `resolve_drop_point`), not docking outer. Crossing
+        // UP into the chrome strip leaves the dock, consistent with the other edges.
         if x < rx || x > rx + rw || y < ry || y > ry + rh {
             return None;
         }
-        if outer_edge_distance(root, x, y) > OUTER_DOCK_MARGIN {
+        // (R1203) The band is PROPORTIONAL (capped at OUTER_DOCK_MARGIN): a fixed
+        // 32px was an oversized fraction of a small window and a sliver of a large
+        // one. See `outer_dock_margin`.
+        if outer_edge_distance(root, x, y) > outer_dock_margin(root) {
             return None;
         }
         let (x_rel, y_rel) = normalize_cursor(root, x, y);
@@ -2399,15 +2436,13 @@ fn resolve_outer_dock_zone(
         // outside it — not far off to the side. A cross-window floater approaches
         // the host edge from OUTSIDE, so the band STRADDLES the perimeter (unlike
         // the same-window inside-only band — see `resolve_own_outer_dock`).
-        if lx < rx - OUTER_DOCK_MARGIN
-            || lx > rx + rw + OUTER_DOCK_MARGIN
-            || ly < ry - OUTER_DOCK_MARGIN
-            || ly > ry + rh + OUTER_DOCK_MARGIN
-        {
+        // (R1203) The band is PROPORTIONAL per window (capped at OUTER_DOCK_MARGIN).
+        let margin = outer_dock_margin(root);
+        if lx < rx - margin || lx > rx + rw + margin || ly < ry - margin || ly > ry + rh + margin {
             continue;
         }
         let dist = outer_edge_distance(root, lx, ly);
-        if dist <= OUTER_DOCK_MARGIN && best.as_ref().is_none_or(|(d, ..)| dist < *d) {
+        if dist <= margin && best.as_ref().is_none_or(|(d, ..)| dist < *d) {
             best = Some((dist, spec_id.to_string(), (lx, ly), root));
         }
     }
@@ -2439,6 +2474,37 @@ fn outer_edge_distance(root: Rect, lx: f64, ly: f64) -> f64 {
         .min((ly - (ry + rh)).abs())
         .min((lx - rx).abs())
         .min((lx - (rx + rw)).abs())
+}
+
+/// (R1203 §5.51 §5.39) Fraction of a window's SMALLER dimension the OUTER dock
+/// trigger band spans, before the [`OUTER_DOCK_MARGIN`] cap. VS Code uses a
+/// proportional edge band (≈10% for a single editor); a fixed pixel band is an
+/// oversized fraction of a small window and a sliver of a large one. See
+/// [`outer_dock_margin`].
+const OUTER_DOCK_MARGIN_FRAC: f64 = 0.1;
+
+/// (R1203 §5.51 §5.39) The OUTER dock trigger-band width for a window of rect
+/// `root`: [`OUTER_DOCK_MARGIN_FRAC`] of the smaller dimension, CAPPED at
+/// [`OUTER_DOCK_MARGIN`]. So a normal / large window keeps the familiar ~32px
+/// edge band while a small window shrinks proportionally (a fixed 32px was a big
+/// fraction of it, swallowing inner-split gestures near the edge). Shared by the
+/// same-window ([`InputRouter::resolve_own_outer_dock`]) and cross-window
+/// ([`resolve_outer_dock_zone`]) band tests so both scale identically.
+fn outer_dock_margin(root: Rect) -> f64 {
+    let smaller = f64::from(root.w.min(root.h));
+    (OUTER_DOCK_MARGIN_FRAC * smaller).min(OUTER_DOCK_MARGIN)
+}
+
+/// (R1203 §5.51 §5.39) The DOCK-AREA rect: `root` (the window content rect)
+/// shrunk from the top by `top_inset` — the client-side chrome strip height (`0`
+/// for OS-decorated). The router-side peer of the shell's `inset_below_chrome`;
+/// clamps the inset to the height so an over-tall chrome yields an in-bounds
+/// empty rect rather than underflowing. [`InputRouter::resolve_own_outer_dock`]
+/// measures its band against this so the top band sits at the dock's top, not in
+/// the chrome.
+fn dock_area_rect(root: Rect, top_inset: u32) -> Rect {
+    let top = top_inset.min(root.h);
+    Rect::new(root.x, root.y + top, root.w, root.h - top)
 }
 
 /// R1102 §5.51 PR-33 — the own-window-first precedence mapping a per-window own
@@ -6477,6 +6543,75 @@ mod tests {
         assert!(
             router.resolve_own_outer_dock(410.0, 200.0).is_none(),
             "right of the window is an escape, not an outer dock",
+        );
+    }
+
+    #[test]
+    fn r1203_outer_dock_margin_is_proportional_capped() {
+        // A large / normal window keeps the ~32px cap; a small window shrinks
+        // proportionally (a fixed 32px was an oversized fraction of it).
+        assert!((super::outer_dock_margin(Rect::new(0, 0, 1200, 800)) - 32.0).abs() < 1e-9);
+        assert!((super::outer_dock_margin(Rect::new(0, 0, 400, 400)) - 32.0).abs() < 1e-9);
+        // 200px window: 10% of the smaller dim = 20 < the 32 cap.
+        assert!((super::outer_dock_margin(Rect::new(0, 0, 200, 200)) - 20.0).abs() < 1e-9);
+        // Sized by the SMALLER dimension (a wide-but-short window).
+        assert!((super::outer_dock_margin(Rect::new(0, 0, 1600, 100)) - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn r1203_dock_area_rect_insets_the_top() {
+        let root = Rect::new(0, 0, 400, 600);
+        assert_eq!(
+            super::dock_area_rect(root, 0),
+            root,
+            "no chrome → unchanged"
+        );
+        assert_eq!(super::dock_area_rect(root, 32), Rect::new(0, 32, 400, 568));
+        // A chrome taller than the window clamps to an in-bounds empty rect.
+        assert_eq!(super::dock_area_rect(root, 700), Rect::new(0, 600, 400, 0));
+    }
+
+    #[test]
+    fn r1203_resolve_own_outer_dock_measures_the_dock_area_below_chrome() {
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        use pinion_core::style::{Color, LayoutStyle};
+        let content = Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 400, 600), Color::default()).with_tag("panel#content"),
+        );
+        let mut panel = ContainerNode::new(vec![content])
+            .with_tag("panel")
+            .with_layout(LayoutStyle::new().with_drop_target(true));
+        panel.rect = Rect::new(0, 0, 400, 600);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        router.update_paint_scene(Scene::Container(panel), &mut state_scene);
+        // A 32px client-side chrome strip: the dock area is y ∈ [32, 600].
+        router.set_dock_area_top_inset(32);
+        // A cursor IN the chrome strip (y=10 < 32) has left the dock area upward —
+        // an escape, NOT the top outer band (it would land on the min/max/close
+        // controls, not the dock).
+        assert!(
+            router.resolve_own_outer_dock(200.0, 10.0).is_none(),
+            "the chrome strip is above the dock area, not the top outer band",
+        );
+        // The dock's TOP edge (y=40, 8px below the chrome) IS the top outer band,
+        // normalised over the DOCK area (so `outer_zone_for` derives Top).
+        let top = router
+            .resolve_own_outer_dock(200.0, 40.0)
+            .expect("the dock top edge is the outer band");
+        assert_eq!(top.tag, OUTER_DOCK_ZONE_TAG);
+        assert!(
+            top.y_rel < 0.1,
+            "normalised over the dock area → near its top (y_rel={})",
+            top.y_rel,
+        );
+        // Non-tautological: WITHOUT the inset the SAME chrome-strip cursor is the
+        // window's top band — the inset is exactly what moves the band off the
+        // controls (the R1202 preview and this band now agree on the dock area).
+        router.set_dock_area_top_inset(0);
+        assert!(
+            router.resolve_own_outer_dock(200.0, 10.0).is_some(),
+            "no chrome inset → the window's top band includes y=10",
         );
     }
 
