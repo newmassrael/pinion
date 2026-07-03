@@ -8301,17 +8301,18 @@ mod r1121_window_chrome_tests {
         let boot = sc.compute_paint_scene(400, 300);
         sc.finalize_frame(boot);
 
-        // Each probe: (x, y, expected resize tag). All four edges reach: the
-        // NORTH edge is raised back ON TOP of the chrome strip (R1195, VS Code /
-        // Win11 parity — the top `RESIZE_EDGE_PX` resize the window), and the
-        // south / west / east edges + bottom corners are reachable as before.
-        // The two TOP corners stay owned by the strip (diagonal resize off — the
-        // corner controls win there; see `top_edge_is_a_resize_band_over_strip`).
+        // Each probe: (x, y, expected resize tag). (R1204) The WHOLE outer ring is
+        // raised ON TOP of the chrome strip, so all four edges AND all four
+        // corners resolve — including the two TOP corners (diagonal resize, which
+        // R1195 left owned by the strip). The NW corner is full 12px; the NE
+        // corner is edge-sized (6px) so it grazes, not shadows, the close button.
         let probes = [
             (150.0, 3.0, pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
             (200.0, 297.0, pinion_overlay::WINDOW_RESIZE_SOUTH_TAG),
             (3.0, 150.0, pinion_overlay::WINDOW_RESIZE_WEST_TAG),
             (397.0, 150.0, pinion_overlay::WINDOW_RESIZE_EAST_TAG),
+            (3.0, 3.0, pinion_overlay::WINDOW_RESIZE_NORTH_WEST_TAG),
+            (397.0, 3.0, pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
             (3.0, 295.0, pinion_overlay::WINDOW_RESIZE_SOUTH_WEST_TAG),
             (395.0, 295.0, pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG),
         ];
@@ -8327,30 +8328,40 @@ mod r1121_window_chrome_tests {
 
     #[test]
     fn top_edge_is_a_resize_band_over_strip() {
-        // R1195 §5.16 §5.39 — VS Code / Win11 / GTK parity: the outermost
-        // `RESIZE_EDGE_PX` (6 px) of a chromed title bar is a live NORTH resize
-        // band, layered back ON TOP of the strip — even over the controls, as VS
-        // Code does. Below the band the strip owns move + controls as before.
+        // R1195/R1204 §5.16 §5.39 — VS Code / Win11 / GTK parity: a chromed title
+        // bar's outermost ring resizes. R1204 completed the ring — the NORTH edge
+        // (6 px) resizes vertically along the top, and the TOP CORNERS resize
+        // diagonally (the NE corner edge-sized so it grazes, not shadows, the
+        // close button flush to the right edge). Below the ring the strip owns
+        // move + controls.
         use pinion_runtime::PointerId;
         let mut sc = ShellCore::<Borderless>::new();
         let boot = sc.compute_paint_scene(400, 300);
         sc.finalize_frame(boot);
 
-        // Top 6 px, over the close button (x>=354): the resize band wins (the
-        // top edge resizes the window from anywhere along it, including the
-        // controls — you drop a few px to click the control).
+        // The very top-right (x>=394): the NE corner — a diagonal resize (R1204;
+        // R1195 left it owned by the strip).
         sc.cursor_moved(PointerId::MOUSE, 394.0, 3.0);
         assert_eq!(
             sc.hover_target(PointerId::MOUSE),
-            Some(pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
-            "the top edge over the close button is the north resize band",
+            Some(pinion_overlay::WINDOW_RESIZE_NORTH_EAST_TAG),
+            "the very top-right corner is a diagonal resize, not owned by the strip",
         );
-        // Just below the band, the close button is a normal target.
-        sc.cursor_moved(PointerId::MOUSE, 394.0, 16.0);
+        // Along the top edge over the close button BODY (x<394): the north band
+        // (resize from the top edge even over a control — drop a few px to click).
+        sc.cursor_moved(PointerId::MOUSE, 370.0, 3.0);
+        assert_eq!(
+            sc.hover_target(PointerId::MOUSE),
+            Some(pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
+            "the top edge over the close button body is the north resize band",
+        );
+        // Below the ring, the close button BODY is a normal target (the ring
+        // grazes only its outer 6 px, leaving the bulk clickable).
+        sc.cursor_moved(PointerId::MOUSE, 370.0, 16.0);
         assert_eq!(
             sc.hover_target(PointerId::MOUSE),
             Some(pinion_overlay::WINDOW_CHROME_CLOSE_TAG),
-            "the close button is reachable below the top resize band",
+            "the close button body is reachable below the top resize band",
         );
         // Top 6 px over the strip background is the north resize band.
         sc.cursor_moved(PointerId::MOUSE, 150.0, 3.0);

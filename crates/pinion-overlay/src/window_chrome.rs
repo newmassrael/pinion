@@ -342,16 +342,16 @@ const RESIZE_CORNER_PX: u32 = 12;
 ///
 /// ## Layering with the chrome strip
 ///
-/// The caller injects the resize border BEFORE [`inject_window_chrome`], so
-/// the chrome strip's controls and drag grip sit on top of the north edge /
-/// top corners and keep receiving clicks. The window resizes from its sides,
-/// bottom, and bottom corners; the two TOP corners stay owned by the strip
-/// (their diagonal resize yields to the corner controls). The NORTH edge,
-/// however, is lifted back ON TOP by [`raise_top_resize_edge`] (R1195) so the
-/// outermost `RESIZE_EDGE_PX` of the title bar still resize the window
-/// vertically — the VS Code / Win11 / GTK behaviour (a title bar is moved from
-/// its bulk, resized from its very top edge), NOT the "top owned by the title
-/// bar" trade-off the pre-R1195 layering left.
+/// The caller injects the resize border BEFORE [`inject_window_chrome`], so the
+/// chrome strip's controls and drag grip sit on top of the border and keep
+/// receiving clicks. [`raise_top_resize_edge`] then lifts the OUTER TOP RING —
+/// the north edge, the two side edges' top, and both top corners — back ABOVE
+/// the strip (R1195 lifted the north edge; R1204 completed the ring), so the
+/// title bar's outermost `RESIZE_EDGE_PX` + corners resize the window while its
+/// bulk still moves it — the VS Code / Win11 / GTK behaviour (a title bar is
+/// moved from its bulk, resized from its outer edges + corners), NOT the "top
+/// owned by the title bar" trade-off the pre-R1195/R1204 layering left. The NE
+/// corner is edge-sized so it grazes rather than shadows the close button.
 ///
 /// Idempotent: any pre-existing resize region (tag prefixed
 /// [`WINDOW_RESIZE_TAG_PREFIX`]) is stripped before the fresh set is appended.
@@ -556,13 +556,21 @@ pub fn raise_top_resize_edge(scene: Scene, viewport: Option<(u32, u32)>) -> Scen
     {
         return scene;
     }
-    let mut wrapped = wrap_into_container(scene);
-    strip_tag(&mut wrapped, WINDOW_RESIZE_NORTH_TAG);
-    push_top_level(
-        &mut wrapped,
-        resize_region_box(north_band_rect(w), WINDOW_RESIZE_NORTH_TAG),
-    );
-    wrapped
+    // (R1204) Re-lift the ENTIRE resize border ABOVE the chrome strip (it was
+    // injected UNDER it). R1195 lifted only the north EDGE, leaving the top
+    // CORNERS + the side edges' top under the grip — so the title-bar corners
+    // gave no diagonal resize and the top-LEFT corner (which hosts NO control)
+    // was simply not resizable. Re-inject the full 8-region border via the
+    // small-NE [`TopResize::ContentHeader`] variant so the whole outer ring lands
+    // on top with the NE corner EDGE-sized (it grazes — not shadows — the close
+    // button flush to the right edge, the R1198 trick) while the NW corner + side
+    // edges + bottom corners keep their full size. The chrome strip is NOT a
+    // resize-prefixed tag, so it is untouched and stays the layer BELOW the ring:
+    // the title bar's bulk still moves, its outer ring resizes (VS Code / Win11 /
+    // GTK). Corners are re-pushed AFTER the edges, so each corner wins the
+    // diagonal at its overlap (including the bottom corners, which a naive
+    // full-height side-edge raise would have shadowed).
+    inject_resize_regions(scene, viewport, TopResize::ContentHeader)
 }
 
 /// Build the chrome strip: a tagged container holding the background
@@ -903,6 +911,22 @@ mod tests {
         }
     }
 
+    fn top_index(scene: &Scene, tag: &str) -> Option<usize> {
+        match scene {
+            Scene::Container(c) => c.children.iter().position(|ch| ch.tag() == Some(tag)),
+            _ => None,
+        }
+    }
+
+    // (R1204) The outer top ring `raise_top_resize_edge` lifts above the strip.
+    const TOP_RING_TAGS: [&str; 5] = [
+        WINDOW_RESIZE_NORTH_TAG,
+        WINDOW_RESIZE_WEST_TAG,
+        WINDOW_RESIZE_EAST_TAG,
+        WINDOW_RESIZE_NORTH_WEST_TAG,
+        WINDOW_RESIZE_NORTH_EAST_TAG,
+    ];
+
     /// A resizable chromed window: resize border (north UNDER) then the strip
     /// (layered OVER), matching the shell's `apply_resize_border` +
     /// `apply_window_chrome` order.
@@ -917,20 +941,35 @@ mod tests {
     }
 
     #[test]
-    fn raise_lifts_the_north_band_above_the_chrome_strip() {
+    fn raise_lifts_the_outer_top_ring_above_the_chrome_strip() {
         let chromed = chromed_resizable(800, 600);
-        // Before: the strip is the topmost (last) child, shadowing the north band.
+        // Before: the strip is the topmost (last) child, shadowing the top ring.
         assert_eq!(last_top_level_tag(&chromed), Some(WINDOW_CHROME_TAG));
         let raised = raise_top_resize_edge(chromed, Some((800, 600)));
-        // After: the north band is the topmost child → it wins the top edge in
-        // `hit_test`'s last-child-wins.
-        assert_eq!(last_top_level_tag(&raised), Some(WINDOW_RESIZE_NORTH_TAG));
-        // Exactly one north band survives (moved, not duplicated).
-        assert_eq!(count_tag(&raised, WINDOW_RESIZE_NORTH_TAG), 1);
-        // It spans the full width at the very top, `RESIZE_EDGE_PX` tall.
-        let r = rect_of(find_tag(&raised, WINDOW_RESIZE_NORTH_TAG).unwrap());
-        assert_eq!((r.x, r.y, r.w, r.h), (0, 0, 800, RESIZE_EDGE_PX));
-        // The strip and every other resize region survive the raise.
+        // (R1204) After: the whole OUTER TOP RING (north edge + side edges + top
+        // corners) is ABOVE the chrome strip, so `hit_test`'s last-child-wins
+        // resolves them at the title-bar edges + corners. Each moved, not dup'd.
+        let chrome_idx = top_index(&raised, WINDOW_CHROME_TAG).expect("strip present");
+        for tag in TOP_RING_TAGS {
+            assert_eq!(count_tag(&raised, tag), 1, "{tag} moved, not duplicated");
+            assert!(
+                top_index(&raised, tag).unwrap() > chrome_idx,
+                "{tag} raised above the chrome strip",
+            );
+        }
+        // The NE corner is EDGE-sized so it grazes, not shadows, the close button.
+        let ne = rect_of(find_tag(&raised, WINDOW_RESIZE_NORTH_EAST_TAG).unwrap());
+        assert_eq!((ne.w, ne.h), (RESIZE_EDGE_PX, RESIZE_EDGE_PX));
+        // The NW corner stays FULL (no control at the top-left).
+        let nw = rect_of(find_tag(&raised, WINDOW_RESIZE_NORTH_WEST_TAG).unwrap());
+        assert_eq!(
+            (nw.x, nw.y, nw.w, nw.h),
+            (0, 0, RESIZE_CORNER_PX, RESIZE_CORNER_PX),
+        );
+        // The north band still spans the full width at the very top.
+        let n = rect_of(find_tag(&raised, WINDOW_RESIZE_NORTH_TAG).unwrap());
+        assert_eq!((n.x, n.y, n.w, n.h), (0, 0, 800, RESIZE_EDGE_PX));
+        // The strip + every resize region survive the raise.
         assert_eq!(count_tag(&raised, WINDOW_CHROME_TAG), 1);
         for tag in ALL_RESIZE_TAGS {
             assert!(find_tag(&raised, tag).is_some(), "{tag} survives the raise");
@@ -941,12 +980,21 @@ mod tests {
     fn raise_is_idempotent() {
         let once = raise_top_resize_edge(chromed_resizable(640, 480), Some((640, 480)));
         let twice = raise_top_resize_edge(once, Some((640, 480)));
+        // Each ring region survives EXACTLY once after a second raise (the strip
+        // step removes the prior raised copy before re-pushing).
+        for tag in ALL_RESIZE_TAGS {
+            assert_eq!(
+                count_tag(&twice, tag),
+                1,
+                "exactly one {tag} after a 2nd raise"
+            );
+        }
+        // The full border is re-lifted, so the last-pushed region (the SE corner)
+        // is the topmost child.
         assert_eq!(
-            count_tag(&twice, WINDOW_RESIZE_NORTH_TAG),
-            1,
-            "still exactly one north band after a second raise",
+            last_top_level_tag(&twice),
+            Some(WINDOW_RESIZE_SOUTH_EAST_TAG)
         );
-        assert_eq!(last_top_level_tag(&twice), Some(WINDOW_RESIZE_NORTH_TAG));
     }
 
     #[test]

@@ -21320,6 +21320,66 @@
         "both user-reported symptoms (A R1201, B R1202) + these two polish items done"
       ]
     },
+    "R1204": {
+      "decision_summary": "Complete the chrome-strip window's top resize ring: R1195 lifted only the north EDGE above the chrome grip, leaving the top corners (and the top-left corner, which hosts no control) not diagonally resizable. raise_top_resize_edge now re-lifts the ENTIRE resize border above the strip via the small-NE ContentHeader variant, so the title bar's outer edges + corners resize while its bulk moves (VS Code / Win11 / GTK); corners re-pushed after edges keep the bottom corners winning.",
+      "changes_bullets": [
+        "chromed windows now resize from their whole top ring, not just the edge",
+        "raise_top_resize_edge lifts the ENTIRE resize border above the chrome strip",
+        "via the small-NE ContentHeader variant, not only the north edge (R1195)",
+        "so the title-bar top corners resize diagonally (the top-left corner hosts",
+        "no control and was simply not resizable); bottom corners keep winning",
+        "(a naive full-height side raise had shadowed them); NE grazes not shadows",
+        "the close button flush to the right edge"
+      ],
+      "verification_bullets": [
+        "overlay: raise lifts the full ring above the strip; NE edge-sized, NW full;",
+        "idempotent (each region once, SE topmost)",
+        "shell hover_target probes (the router hit-test R1189 reads): all 4 edges +",
+        "all 4 corners resolve their resize tags; close button body still reachable",
+        "71 overlay + 154 shell lib tests + workspace green; clippy(vello) clean",
+        "live: paint snapshot shows the ring (north/west/east/NW/NE) above the chrome"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "the NE corner + the right side edge graze the close button's outer 6px (the",
+        "chrome close is flush right, unlike the R1198 content-header which keeps",
+        "controls 6px clear); the button bulk stays clickable - acceptable tradeoff",
+        "R1205 = make the editor main pinion-chrome+borderless permanently (this",
+        "fix is the prerequisite so the chromed editor actually resizes)"
+      ],
+      "publishable_decision_summary": "Complete the chrome-strip window's top resize ring: R1195 lifted only the north EDGE above the chrome grip, leaving the top corners (and the top-left corner, which hosts no control) not diagonally resizable. raise_top_resize_edge now re-lifts the ENTIRE resize border above the strip via the small-NE ContentHeader variant, so the title bar's outer edges + corners resize while its bulk moves (VS Code / Win11 / GTK); corners re-pushed after edges keep the bottom corners winning.",
+      "publishable_changes_bullets": [
+        "chromed windows now resize from their whole top ring, not just the edge",
+        "raise_top_resize_edge lifts the ENTIRE resize border above the chrome strip",
+        "via the small-NE ContentHeader variant, not only the north edge (R1195)",
+        "so the title-bar top corners resize diagonally (the top-left corner hosts",
+        "no control and was simply not resizable); bottom corners keep winning",
+        "(a naive full-height side raise had shadowed them); NE grazes not shadows",
+        "the close button flush to the right edge"
+      ],
+      "publishable_verification_bullets": [
+        "overlay: raise lifts the full ring above the strip; NE edge-sized, NW full;",
+        "idempotent (each region once, SE topmost)",
+        "shell hover_target probes (the router hit-test R1189 reads): all 4 edges +",
+        "all 4 corners resolve their resize tags; close button body still reachable",
+        "71 overlay + 154 shell lib tests + workspace green; clippy(vello) clean",
+        "live: paint snapshot shows the ring (north/west/east/NW/NE) above the chrome"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the NE corner + the right side edge graze the close button's outer 6px (the",
+        "chrome close is flush right, unlike the R1198 content-header which keeps",
+        "controls 6px clear); the button bulk stays clickable - acceptable tradeoff",
+        "R1205 = make the editor main pinion-chrome+borderless permanently (this",
+        "fix is the prerequisite so the chromed editor actually resizes)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
