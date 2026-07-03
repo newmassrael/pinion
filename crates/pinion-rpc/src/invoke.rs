@@ -1,7 +1,7 @@
 //! `scene/invoke` RPC method dispatch — R17 bidirectional RPC spec
 //! round, eighth typed handler extending the §5.12 set from 7 to 8.
 //!
-//! Wires the same three pieces as [`crate::query`] / [`crate::rewind`]:
+//! Wires the same three pieces as [`crate::query`](fn@crate::query) / [`crate::rewind`](fn@crate::rewind):
 //!
 //!   1. **§5.18 path resolution** — `/[window[id]/]<scene_path>`
 //!      with single-window short-circuit.
@@ -9,12 +9,12 @@
 //!      addressing: `path::split_at_external` returns scene segments +
 //!      introspect path; [`Scene::lookup_path_mut`] walks Container /
 //!      Scroll by tag/index until it reaches the addressed
-//!      [`ExternalNode`]; [`Scene::primary_external_mut`] then descends
+//!      [`ExternalNode`](pinion_core::scene::ExternalNode); [`Scene::primary_external_mut`] then descends
 //!      the R55.D.5 multi-widget container shape to the substrate's
 //!      first External.
 //!   3. **§5.15 item 8 invoke dispatch** — descend through
-//!      [`External::introspect_mut`] and consult the
-//!      [`ExternalIntrospect::invoke`] action channel.
+//!      [`External::introspect_mut`](pinion_core::external::External::introspect_mut) and consult the
+//!      [`ExternalIntrospect::invoke`](pinion_core::external::ExternalIntrospect::invoke) action channel.
 //!
 //! v1 scene-path syntax accepted:
 //!
@@ -24,12 +24,12 @@
 //!     R55.D.5 `create_extra_externals` siblings are addressable
 //!     without per-binding RPC plumbing.
 //!   * `/<seg>/.../<tag>/external/<action>` — nested Container walk
-//!     followed by tagged child match (mirror of [`crate::query`]).
+//!     followed by tagged child match (mirror of [`crate::query`](fn@crate::query)).
 //!
 //! Other shapes return [`InvokeError::UnsupportedPath`].
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) is handled by
-//! [`crate::dispatch`]; this module exposes the typed dispatcher
+//! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher
 //! only.
 
 use pinion_core::Scene;

@@ -191,7 +191,7 @@ impl TextMeasure for SelfHostedTextEngine {
     /// malformed (`units_per_em` 0) or the size non-positive; nothing shapes
     /// (empty content); or the single line would soft-wrap inside a bounded
     /// `max_width`. The soft-wrap decline shares the SSOT comparison
-    /// [`single_line_overflows`] with `paint_text_self_hosted`, so for INK-BEARING
+    /// `single_line_overflows` with `paint_text_self_hosted`, so for INK-BEARING
     /// content whenever measure picks §5.37 the paint arm also paints §5.37
     /// (advance ≤ box, no overflow) and whenever measure defers the paint arm
     /// declines too. The one asymmetry: all-whitespace content shapes to blank
@@ -201,10 +201,10 @@ impl TextMeasure for SelfHostedTextEngine {
     /// only the box width of a degenerate whitespace-only leaf differs from parley's).
     ///
     /// On the §5.37 path the box is `(advance, height)` from the SSOT
-    /// [`LineBoxMetrics`], whose `height_px` is the same `Normal` line box the paint
+    /// `LineBoxMetrics`, whose `height_px` is the same `Normal` line box the paint
     /// baseline `baseline_px` sits inside — so measure and the §5.37 *paint* arm
     /// register exactly. Since R1079 that box uses the same `OS/2` `USE_TYPO_METRICS`
-    /// selection parley applies (see [`LineBoxMetrics`]), so for a single line it also
+    /// selection parley applies (see `LineBoxMetrics`), so for a single line it also
     /// matches parley's box for the same font.
     fn measure_text(
         &self,
@@ -239,7 +239,7 @@ impl TextMeasure for SelfHostedTextEngine {
             return None;
         }
         // §5.37 line-box height from the SSOT shared with the paint baseline
-        // ([`LineBoxMetrics`]); `?` defers on a malformed font (upem 0).
+        // (`LineBoxMetrics`); `?` defers on a malformed font (upem 0).
         let metrics = LineBoxMetrics::from_font(font, px)?;
         #[allow(
             clippy::cast_possible_truncation,
@@ -263,7 +263,7 @@ impl TextMeasure for SelfHostedTextEngine {
 /// Scope: a single §5.37 line, the engine's shipping frontier
 /// ([`self_hosted_text_eligible`] excludes hard breaks and soft wrap). It is
 /// built from the same [`shape_paragraph_with_fallback`] the measure arm uses
-/// and the same [`LineBoxMetrics`] the §5.37 paint baseline sits inside, so a
+/// and the same `LineBoxMetrics` the §5.37 paint baseline sits inside, so a
 /// caret drawn over this layout registers with the §5.37 *paint* glyphs by
 /// construction. Multi-line §5.37 caret geometry arrives with multi-line
 /// §5.37 paint.
@@ -281,7 +281,7 @@ pub struct SelfHostedLayout {
     advance: f32,
     /// UTF-8 byte length of the shaped content (the end-of-text caret byte).
     content_len: usize,
-    /// `Normal` line-box height (device px) from [`LineBoxMetrics`] — the caret
+    /// `Normal` line-box height (device px) from `LineBoxMetrics` — the caret
     /// and selection-band height, the same box the §5.37 paint line occupies.
     height: f32,
 }
@@ -289,7 +289,7 @@ pub struct SelfHostedLayout {
 impl SelfHostedLayout {
     /// Shape `content` as a single §5.37 line at `px` using `engine`'s font and
     /// return the queryable layout. `None` on a malformed font (`units_per_em`
-    /// 0 — [`LineBoxMetrics::from_font`] declines), matching the measure arm's
+    /// 0 — `LineBoxMetrics::from_font` declines), matching the measure arm's
     /// defer-to-parley.
     #[must_use]
     pub fn shape(engine: &SelfHostedTextEngine, content: &str, px: f32) -> Option<Self> {
@@ -406,7 +406,7 @@ impl std::error::Error for LoadFontError {}
 
 /// Preferred default sans-serif families, matched against a font's PARSED
 /// `name`-table family (authoritative), not its filename. A best-effort "give me
-/// a reasonable default UI font"; [`select_default_sans`] falls back to the first
+/// a reasonable default UI font"; `select_default_sans` falls back to the first
 /// regular non-mono face, then the first parseable font, when none is installed.
 const PREFERRED_SANS_FAMILIES: &[&str] = &[
     "DejaVu Sans",
@@ -423,7 +423,7 @@ const PREFERRED_SANS_FAMILIES: &[&str] = &[
 /// Enumerate the OS's installed fonts and select a default regular sans, parsed
 /// into a §5.37 [`Font`].
 ///
-/// Selection ([`select_default_sans`]) is driven by each candidate's parsed
+/// Selection (`select_default_sans`) is driven by each candidate's parsed
 /// metadata, so the result does not depend on filenames. The font is not cached
 /// here — [`SelfHostedTextEngine`] owns the cached handle; a per-frame caller
 /// must cache itself.
@@ -654,7 +654,7 @@ mod tests {
                 );
             }
 
-            // The px-scaled production path ([`LineBoxMetrics::from_font`]) also
+            // The px-scaled production path (`LineBoxMetrics::from_font`) also
             // tracks parley's metrics at a real size.
             let px = 24.0_f32;
             let fr = FontRef::new(bytes).expect("skrifa parses the fixture");

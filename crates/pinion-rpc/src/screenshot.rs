@@ -1,7 +1,7 @@
 //! `scene/screenshot` RPC method types (§5.12 method 7 of 7).
 //!
 //! Carries the [`Screenshot`] response payload + [`ScreenshotError`]
-//! taxonomy + the [`validate_screenshot_path`] path-shape SSOT. The
+//! taxonomy + the `validate_screenshot_path` path-shape SSOT. The
 //! actual pixels are supplied by the embedder: the pinion-shell
 //! `AppShell` renders the addressed window through
 //! `VelloRenderer::capture_rgba8` (reading back the presented swapchain

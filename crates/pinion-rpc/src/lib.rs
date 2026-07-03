@@ -2,12 +2,12 @@
 //!
 //! Path resolution against the SCE-emitted window topology lives in
 //! [`path`] per §5.18 (optional `/window[id]/` prefix with single-window
-//! short-circuit). Per-method dispatchers ([`query`], [`click`],
-//! [`rewind`], [`snapshot`], [`dry_run`], [`wait_for`], [`screenshot`],
-//! [`invoke`], [`intents`]; §5.12 ratified 7, R17 bidirectional-RPC
+//! short-circuit). Per-method dispatchers ([`query`](fn@crate::query), `click`,
+//! [`rewind`](fn@crate::rewind), [`snapshot`](fn@crate::snapshot), [`dry_run`](fn@crate::dry_run), [`wait_for`](fn@crate::wait_for), [`screenshot`],
+//! [`invoke`](fn@crate::invoke), [`intents`]; §5.12 ratified 7, R17 bidirectional-RPC
 //! extended to 8, R18 §5.20 extended to 9) each live in their own
 //! module. The JSON-RPC 2.0 wire envelope and method routing entry
-//! point live in [`dispatch`].
+//! point live in [`dispatch`](fn@crate::dispatch).
 
 pub mod access;
 pub mod animate_control;

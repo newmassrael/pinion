@@ -1,6 +1,6 @@
 //! `scene/simulate` RPC method dispatch (R646 §2 invariant #3 + §5.12).
 //!
-//! Multi-event extension to the [`crate::dry_run`] single-write
+//! Multi-event extension to the [`crate::dry_run`](fn@crate::dry_run) single-write
 //! primitive: accepts an ordered sequence of `{path, value}` steps,
 //! applies each through `External::intervene` in declaration order,
 //! snapshots the resulting compound scene, then rolls every touched

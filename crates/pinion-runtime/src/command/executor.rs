@@ -3,14 +3,14 @@
 //! Closes the §5.23 R27 dispatch pipeline by composing the three pieces
 //! that landed in earlier rounds:
 //!
-//! - [`HandlerRegistry`](super::registry::HandlerRegistry) (R51.141) —
+//! - [`HandlerRegistry`] (R51.141) —
 //!   the `kind → Handler` lookup table.
 //! - [`Executor`] (this module) — the substrate-side async runtime
 //!   abstraction; concrete impls live at the backend boundary
 //!   (`pinion-shell` / `pinion-tui` / `pinion-rpc`) per §6.3 (view-fn
 //!   sync, IO async at the boundary).
-//! - [`IntentSink`](super::sink::IntentSink) (R51.156) — the wake
-//!   surface the resolved [`Intent`] travels through back to the UI
+//! - [`IntentSink`] (R51.156) — the wake
+//!   surface the resolved [`Intent`](pinion_core::Intent) travels through back to the UI
 //!   thread.
 //!
 //! The composite [`CommandExecutor`] dispatches one [`Command`] by:
@@ -47,7 +47,7 @@
 //!   prior in-flight handle when a new command arrives on the same
 //!   scope (R27 Solid pattern).
 //! - **R51.159** — `pinion-shell` concrete tokio current-thread
-//!   [`Executor`] + winit [`EventLoopProxy`]-based [`IntentSink`].
+//!   [`Executor`] + winit `EventLoopProxy`-based [`IntentSink`].
 //! - **carry** — `tokio` / `async-executor` / custom impls;
 //!   [`Executor`] stays sufficient because it erases the concrete
 //!   future at the spawn boundary.
@@ -70,8 +70,8 @@ use super::sink::IntentSink;
 ///
 /// - `Output = ()` because the [`CommandExecutor`] wraps the original
 ///   [`HandlerFuture`] (`Output = Intent`) into a closure that consumes
-///   the [`Intent`] by handing it to the [`IntentSink`] — the executor
-///   never sees the raw [`Intent`] value.
+///   the [`Intent`](pinion_core::Intent) by handing it to the [`IntentSink`] — the executor
+///   never sees the raw [`Intent`](pinion_core::Intent) value.
 /// - `Send` so a multi-thread runtime (tokio, async-executor, custom
 ///   thread pool) can poll the future on any worker.
 /// - `'static` so the executor stores the future as an owned value
@@ -320,7 +320,7 @@ impl CommandExecutor {
     }
 
     /// Dispatch one [`Command`] — look up the handler, wrap the
-    /// resulting [`HandlerFuture`] so the resolved [`Intent`] reaches
+    /// resulting [`HandlerFuture`] so the resolved [`Intent`](pinion_core::Intent) reaches
     /// the [`IntentSink`], and spawn via [`Executor::spawn`].
     ///
     /// Returns `None` when the registry has no handler for
@@ -338,11 +338,11 @@ impl CommandExecutor {
     /// is found, the prior [`CommandTaskHandle`] is removed and
     /// [`CommandTaskHandle::cancel`] is called on it before the new
     /// task spawns. The returned handle is also tracked in
-    /// [`Self::in_flight`] so a third dispatch on the same scope
+    /// `Self::in_flight` so a third dispatch on the same scope
     /// would abort *this* task in turn.
     ///
     /// The handle returned to the caller shares its `cancelled` flag
-    /// with the clone stored in [`Self::in_flight`] (the
+    /// with the clone stored in `Self::in_flight` (the
     /// [`CommandTaskHandle::clone`] impl shares both the cancel
     /// callback and the [`AtomicBool`]). Cancelling either alias
     /// flips the other.

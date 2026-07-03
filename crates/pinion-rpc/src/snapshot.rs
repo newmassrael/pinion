@@ -72,7 +72,7 @@ pub enum SnapshotNode {
     External(ExternalSnapshot),
     Scroll(ScrollSnapshot),
     /// R681 §2 #4 — [`Scene::ImmediateModeNode`] payload. Exposes
-    /// the §5.20 tag (so [`find_by_tag`] walks resolve), the
+    /// the §5.20 tag (so `find_by_tag` walks resolve), the
     /// post-layout `viewport`, and the per-paint `last_dt`
     /// sidecar (microseconds — `u64` for stable JSON encoding;
     /// callers convert back to a [`std::time::Duration`] /
@@ -217,7 +217,7 @@ pub struct ScrollSnapshot {
 
 /// R681 §2 #4 — `ImmediateModeNode` payload of
 /// [`SnapshotNode::ImmediateModeNode`]. Exposes the §5.20 `tag`
-/// (so [`find_by_tag`] walks resolve to the immediate-mode subtree),
+/// (so `find_by_tag` walks resolve to the immediate-mode subtree),
 /// the post-layout `viewport` (the rect the backend bridge paints
 /// into), and the substrate-published `last_dt_micros` per-paint
 /// delta sidecar — encoded as `u64` microseconds so JSON consumers
@@ -226,7 +226,7 @@ pub struct ScrollSnapshot {
 /// The driver handle itself is not exposed (`Rc<RefCell<dyn
 /// ImmediateMode>>` is non-serialisable); AI clients reach the
 /// driver state through the `scene/query` / `scene/intervene` /
-/// `scene/invoke` triad against the [`ImmediateMode::introspect`]
+/// `scene/invoke` triad against the [`ImmediateMode::introspect`](pinion_core::scene::ImmediateMode::introspect)
 /// opt-in surface (same channel `External` uses).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,10 +251,10 @@ pub struct ImmediateModeSnapshot {
 /// and `(cols, rows)` is the R969 layout-derived `(rows, cols)` SSOT.
 ///
 /// R973 §5.41 — `grid_rows` is the cell **content** projection: one
-/// [`GridRowSnapshot`] per row of the [`GridBuffer`](pinion_core::GridBuffer)
+/// [`GridRowSnapshot`] per row of the [`GridBuffer`]
 /// the grid currently shows (empty for a geometry-only grid). Cell
 /// colours are resolved through the grid's
-/// [`Palette`](pinion_core::Palette) here — the R969 "resolve at paint
+/// [`Palette`] here — the R969 "resolve at paint
 /// time" contract (a snapshot is a paint-time readback).
 ///
 /// R974.1 §5.41 — `buffer_cols` / `buffer_rows` are the projection's OWN
@@ -357,7 +357,7 @@ pub struct TermColorSnapshot {
 /// cursor; a geometry-only grid (or one whose producer has not set a
 /// cursor) reports the default: hidden, home `(0, 0)`, block.
 ///
-/// The cursor rides on the producer's [`GridBuffer`](pinion_core::GridBuffer)
+/// The cursor rides on the producer's [`GridBuffer`]
 /// projection, so its coordinates are in *that* buffer's space: compare
 /// `(col, row)` against `buffer_cols` / `buffer_rows`
 /// ([`TextGridSnapshot`]) — **not** the layout-derived `cols` / `rows`

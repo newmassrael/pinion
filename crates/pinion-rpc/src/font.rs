@@ -15,7 +15,7 @@
 //! and an `AtomicU32` counter for handle allocation — `1`-indexed,
 //! `0` reserved as an invalid sentinel.
 //!
-//! Wire envelope (JSON-RPC 2.0 per §5.7) lives in [`crate::dispatch`];
+//! Wire envelope (JSON-RPC 2.0 per §5.7) lives in [`crate::dispatch`](fn@crate::dispatch);
 //! this module holds only the typed Rust API plus the registry.
 
 use std::collections::HashMap;

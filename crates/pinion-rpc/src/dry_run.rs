@@ -8,7 +8,7 @@
 //!
 //!   1. `query(path)` → save the current value.
 //!   2. `intervene(path, value)` → apply the hypothetical write.
-//!   3. [`crate::snapshot`] the scene → capture the resulting shape.
+//!   3. [`crate::snapshot`](fn@crate::snapshot) the scene → capture the resulting shape.
 //!   4. `intervene(path, saved)` → roll back to the original state.
 //!   5. Return the snapshot from step 3.
 //!
@@ -18,8 +18,8 @@
 //! [`DryRunError::RollbackFailed`] — that path indicates an External
 //! invariant violation, not user error.
 //!
-//! R666 §5.34 — scene-path syntax mirrors [`crate::invoke`] /
-//! [`crate::rewind`]: `/external/<slot>` for the primary External
+//! R666 §5.34 — scene-path syntax mirrors [`crate::invoke`](fn@crate::invoke) /
+//! [`crate::rewind`](fn@crate::rewind): `/external/<slot>` for the primary External
 //! (v0), `/<tag>/external/<slot>` for tagged scene-tree walk (R42),
 //! composite tags (`todo_toggle#1`) pass through verbatim so R55.D.5
 //! `create_extra_externals` siblings can be dry-run-probed without

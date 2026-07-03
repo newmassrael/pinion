@@ -67,7 +67,7 @@
 //! Both methods MUTATE — they write the underlying
 //! [`Signal<T>`](pinion_core::reactive::Signal) on every visited
 //! animation. The dispatcher's
-//! [`HandlerKind::Mutate`](crate::dispatch) tag bumps
+//! [`HandlerKind::Mutate`](mod@crate::dispatch) tag bumps
 //! [`SceneRevision`](pinion_core::SceneRevision) so subsequent
 //! `If-Match`-style OCC checks pick the change up.
 
@@ -114,7 +114,7 @@ pub struct AnimateControlOutcome {
 ///
 /// Mutates the underlying [`Signal`](pinion_core::reactive::Signal)
 /// on every visited animation. The dispatch layer's
-/// [`HandlerKind::Mutate`](crate::dispatch) tag bumps
+/// [`HandlerKind::Mutate`](mod@crate::dispatch) tag bumps
 /// [`SceneRevision`](pinion_core::SceneRevision).
 pub fn animate_settle(
     runtime_owner: Option<&Owner>,
@@ -141,7 +141,7 @@ pub fn animate_settle(
 ///
 /// Mutates the underlying [`Signal`](pinion_core::reactive::Signal)
 /// on every visited animation. The dispatch layer's
-/// [`HandlerKind::Mutate`](crate::dispatch) tag bumps
+/// [`HandlerKind::Mutate`](mod@crate::dispatch) tag bumps
 /// [`SceneRevision`](pinion_core::SceneRevision).
 pub fn animate_cancel(
     runtime_owner: Option<&Owner>,

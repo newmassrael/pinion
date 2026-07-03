@@ -1,7 +1,7 @@
 //! `scene/cache_stats` RPC method dispatch — R682.B §5.16 + §5.7.
 //!
 //! Exposes
-//! [`pinion_runtime::FragmentCacheStats`](FragmentCacheStats)
+//! [`pinion_runtime::FragmentCacheStats`]
 //! (the per-window paint-fragment cache observability snapshot R682.A
 //! landed; the type lives in
 //! [`pinion_runtime::paint_cache_stats`] — a non-vello-gated
@@ -13,16 +13,16 @@
 //!
 //! ## Why a dedicated method
 //!
-//! [`scene/snapshot`](crate::snapshot) returns the structural scene
+//! [`scene/snapshot`](fn@crate::snapshot) returns the structural scene
 //! tree (one JSON object — the root node body). Tacking
 //! `cache_stats` on as a sidecar would either break the existing
 //! single-node wire shape every demo + test consumes today, or
 //! force every snapshot caller to pay the cost of stats it does
 //! not need. Splitting observability axes into separate methods
 //! (the pattern already established by
-//! [`scene/animation_state`](crate::animation_state) /
-//! [`scene/scroll_state`](crate::scroll_state) /
-//! [`scene/caret_state`](crate::caret_state)) keeps each surface
+//! [`scene/animation_state`](fn@crate::animation_state) /
+//! [`scene/scroll_state`](fn@crate::scroll_state) /
+//! [`scene/caret_state`](fn@crate::caret_state)) keeps each surface
 //! focused on a single concern and lets the AI agent pay only for
 //! what it consults.
 //!
@@ -71,7 +71,7 @@
 //! (or defaults to the primary spec), looks up the per-window
 //! [`FragmentCacheStats`] via
 //! `ShellCore::fragment_cache_stats_for_window`, and installs the
-//! result on [`DispatchContext::fragment_cache_stats`] before
+//! result on [`DispatchContext::fragment_cache_stats`](crate::dispatch::DispatchContext::fragment_cache_stats) before
 //! invoking the dispatcher. The `cache_stats` dispatcher itself just
 //! reads the slot — no window param parsing here.
 //!
@@ -152,7 +152,7 @@ pub struct CacheStatsOutcome {
 /// # Errors
 ///
 /// - [`CacheStatsError::CacheStatsUnavailable`] — the embedder did
-///   not register a snapshot on [`DispatchContext::fragment_cache_stats`].
+///   not register a snapshot on [`DispatchContext::fragment_cache_stats`](crate::dispatch::DispatchContext::fragment_cache_stats).
 pub fn cache_stats(
     stats: Option<FragmentCacheStats>,
 ) -> Result<CacheStatsOutcome, CacheStatsError> {

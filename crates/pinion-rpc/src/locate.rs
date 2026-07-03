@@ -20,7 +20,7 @@
 //! tooling to dispatch on.
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) lives in
-//! [`crate::dispatch`]; this module exposes the typed dispatcher only
+//! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher only
 //! so the same logic is reusable from non-JSON-RPC carriers (gRPC,
 //! direct in-process bindings).
 
@@ -61,7 +61,7 @@ pub struct LocateRegionOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocateError {
     /// The point `(x, y)` falls outside the scene root's outermost rect
-    /// (or hits only an [`crate::pinion_core::scene::EffectNode`] which
+    /// (or hits only an [`pinion_core::scene::EffectNode`] which
     /// is not hit-testable).
     OutOfBounds,
 }

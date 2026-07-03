@@ -1,7 +1,7 @@
 //! `scene/intents` RPC method dispatch — R18 §5.20 intent system,
 //! ninth typed handler extending the §5.12 set from 8 to 9.
 //!
-//! Mirrors the [`crate::query`] / [`crate::invoke`] pattern but
+//! Mirrors the [`crate::query`](fn@crate::query) / [`crate::invoke`](fn@crate::invoke) pattern but
 //! operates on the dual leg of the bidirectional channel: instead of
 //! consuming an action (invoke) or reading a slot (query), this method
 //! *drains* whatever intents the scene's [`External`] nodes have
@@ -16,7 +16,7 @@
 //! per §5.20.
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) is handled by
-//! [`crate::dispatch`]; this module exposes the typed dispatcher
+//! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher
 //! only.
 //!
 //! [`External`]: pinion_core::external::External
@@ -38,7 +38,7 @@ pub enum IntentsError {}
 /// order each `External` emitted them.
 ///
 /// Takes `&mut Scene` because draining mutates the underlying
-/// `External` queues (matching the [`crate::rewind`] / [`crate::invoke`]
+/// `External` queues (matching the [`crate::rewind`](fn@crate::rewind) / [`crate::invoke`](fn@crate::invoke)
 /// signatures). Successive calls against an unchanged scene return an
 /// empty `Vec`.
 ///

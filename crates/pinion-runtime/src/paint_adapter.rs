@@ -97,11 +97,11 @@ use crate::text_engine::{LineBoxMetrics, SelfHostedTextEngine, single_line_overf
 /// * [`Scene::Box`] — fill `rect` with `fill_hook(b)` or
 ///   `b.style.fill`; stroke `b.style.border` when present.
 /// * [`Scene::Text`] — shape via [`LayoutCache::layout`], walk
-///   `positioned_glyphs()` per [`parley::GlyphRun`], emit one
+///   `positioned_glyphs()` per `parley::GlyphRun`, emit one
 ///   [`vello::Scene::draw_glyphs`] call per run.
 /// * [`Scene::Path`] — lower `commands` to a Vello [`BezPath`] and
 ///   fill (`style.fill`, non-zero winding) + stroke (`style.stroke`)
-///   via [`paint_path`] (R721).
+///   via `paint_path` (R721).
 /// * [`Scene::External`] / [`Scene::Effect`] / [`Scene::Image`] —
 ///   no-op. The Image paint primitive attaches in a follow-up round.
 pub fn to_vello<F>(scene: &Scene, fill_hook: &F, text_cache: &mut LayoutCache, out: &mut VelloScene)
@@ -617,7 +617,7 @@ pub fn to_vello_cached<F>(
 /// per-window paint cycle uses the [`FragmentCache`], so wiring the engine into
 /// production needs the engine to flow through the cached walker too (R1068 added
 /// the uncached arm only; this closes the cached gap). When `engine` is `Some`,
-/// every eligible [`self_hosted_eligible`] `Scene::Text` leaf the walk reaches —
+/// every eligible `self_hosted_eligible` `Scene::Text` leaf the walk reaches —
 /// inside a freshly-encoded subtree or a cache miss — paints through §5.37;
 /// `engine = None` is byte-identical to the pre-R1072 [`to_vello_cached`].
 ///
@@ -1070,7 +1070,7 @@ fn mask_to_image_data(
 
 /// R1063 §5.37 → §5.16 — convert a self-hosted [`Coverage`] AA mask into a
 /// `peniko::ImageData` ready for [`vello::Scene::draw_image`]. A thin wrapper
-/// over the SSOT [`mask_to_image_data`]: the mask supplies per-pixel alpha,
+/// over the SSOT `mask_to_image_data`: the mask supplies per-pixel alpha,
 /// `color` the constant RGB (its own alpha modulating the mask). Returns `None`
 /// for an empty mask.
 #[must_use]
@@ -1080,7 +1080,7 @@ pub fn coverage_to_image_data(coverage: &Coverage, color: Color) -> Option<Image
 
 /// R1065 §5.37 → §5.16 — convert a whole [`GlyphAtlas`] bitmap into one tinted
 /// `peniko::ImageData`, uploaded once and sampled per glyph-quad by
-/// [`draw_atlased_glyphs`]. A thin wrapper over the SSOT [`mask_to_image_data`].
+/// [`draw_atlased_glyphs`]. A thin wrapper over the SSOT `mask_to_image_data`.
 /// Returns `None` for an atlas with no packed pixels (no glyph rasterized yet).
 #[must_use]
 pub fn atlas_to_image_data(atlas: &GlyphAtlas, color: Color) -> Option<ImageData> {

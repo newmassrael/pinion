@@ -3,9 +3,9 @@
 //! `/window[id]/<scene_segments>/external/<introspect_path>`.
 //!
 //! Lifts the inline pattern formerly repeated across
-//! [`crate::invoke`], [`crate::intervene`], [`crate::rewind`],
-//! [`crate::dry_run`] (twice — apply + rollback), [`crate::query`],
-//! and four internal [`crate::simulate`] sites
+//! [`crate::invoke`](fn@crate::invoke), [`crate::intervene`], [`crate::rewind`](fn@crate::rewind),
+//! [`crate::dry_run`](fn@crate::dry_run) (twice — apply + rollback), [`crate::query`](fn@crate::query),
+//! and four internal [`crate::simulate`](fn@crate::simulate) sites
 //! (`query_introspect_at` / Phase-2 apply / `classify_lookup_failure`
 //! / `restore_originals`). Each site previously open-coded the same
 //! four-step chain:
@@ -21,8 +21,8 @@
 //!   4. [`pinion_core::Scene::primary_external_mut`] (or
 //!      [`pinion_core::Scene::primary_external`]) — descend the
 //!      multi-widget wrap shape to the substrate's primary External.
-//!   5. [`pinion_core::external::ExternalHandle::introspect_mut`] (or
-//!      [`pinion_core::external::ExternalHandle::introspect`]) —
+//!   5. `pinion_core::external::ExternalHandle::introspect_mut` (or
+//!      `pinion_core::external::ExternalHandle::introspect`) —
 //!      reach the §5.15 item 7/8 introspect channel.
 //!
 //! Each call site previously also defined a parallel set of error
@@ -34,7 +34,7 @@
 //!
 //! [[abstraction-needs-second-consumer]] / [[r47-class-incident-prevention]]
 //! — N-of-N consumer rule is overshot (6+ inline patterns, 4 of them
-//! inside [`crate::simulate`] alone); the helper is canonical
+//! inside [`crate::simulate`](fn@crate::simulate) alone); the helper is canonical
 //! Rule-of-Three lift territory.
 
 use pinion_core::Scene;
@@ -76,7 +76,7 @@ impl From<PathError> for ResolveExternalError {
 /// Strings-only path resolution: parse the `/window[id]/` prefix and
 /// split at `/external/`.
 ///
-/// Used by [`crate::simulate`] phase 0 where every step's path is
+/// Used by [`crate::simulate`](fn@crate::simulate) phase 0 where every step's path is
 /// pre-validated before any scene walk could expose a borrow on the
 /// mutable scene reference. Returns owned strings so the caller can
 /// stash the result and re-walk the scene multiple times under
@@ -130,7 +130,7 @@ pub fn introspect_mut_at<'s>(
 }
 
 /// Read-only sibling of [`introspect_mut_at`]. Used by
-/// [`crate::query`] where the scene argument is `&Scene` and no
+/// [`crate::query`](fn@crate::query) where the scene argument is `&Scene` and no
 /// mutation occurs.
 ///
 /// # Errors
@@ -138,7 +138,7 @@ pub fn introspect_mut_at<'s>(
 /// Same failure modes as [`introspect_mut_at`], but routed through
 /// [`pinion_core::Scene::lookup_path_ref`] /
 /// [`pinion_core::Scene::primary_external`] /
-/// [`pinion_core::external::ExternalHandle::introspect`].
+/// `pinion_core::external::ExternalHandle::introspect`.
 pub fn introspect_at<'s>(
     scene: &'s Scene,
     scene_segments: &[String],
@@ -155,8 +155,8 @@ pub fn introspect_at<'s>(
 }
 
 /// Composite: string parse + scene walk in one call. Used by
-/// [`crate::invoke`], [`crate::intervene`], [`crate::rewind`], and
-/// [`crate::dry_run`] (twice — apply and rollback under separate
+/// [`crate::invoke`](fn@crate::invoke), [`crate::intervene`], [`crate::rewind`](fn@crate::rewind), and
+/// [`crate::dry_run`](fn@crate::dry_run) (twice — apply and rollback under separate
 /// `&mut Scene` borrows).
 ///
 /// The returned `String` is the per-External introspect path that
@@ -177,7 +177,7 @@ pub fn resolve_external_introspect_mut<'s>(
 }
 
 /// Read-only sibling of [`resolve_external_introspect_mut`]. Used by
-/// [`crate::query`].
+/// [`crate::query`](fn@crate::query).
 ///
 /// # Errors
 ///

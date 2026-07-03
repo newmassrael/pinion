@@ -5,7 +5,7 @@
 //! screen-reader clients, and the JSON-RPC introspect path (§5.7,
 //! §2 invariant #2 "RPC headless as AI primary path") for AI
 //! clients. The AT path already exposes
-//! [`accesskit::Action::Focus`]; this module is the RPC dual so AI
+//! `accesskit::Action::Focus`; this module is the RPC dual so AI
 //! clients can issue the same operation programmatically without
 //! synthesising a winit keyboard event.
 //!

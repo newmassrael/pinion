@@ -149,10 +149,10 @@ pub fn compute_layout(
 }
 
 /// R57.X.scrollbar §5.45 — variant of [`compute_layout`] that returns
-/// whether any [`ScrollState::set_max`] write *actually* mutated a
+/// whether any [`ScrollState::set_max`](pinion_core::widgets::scroll::ScrollState::set_max) write *actually* mutated a
 /// max-bound during this pass (post Signal equality-skip).
 ///
-/// Used by the shell's [`compute_paint_scene`](crate::ShellCore)
+/// Used by the shell's `compute_paint_scene`
 /// substrate to detect the first-paint chicken-and-egg case where
 /// `V::view` ran with the pre-layout `max = 0` snapshot and produced
 /// a scrollbar widget rendering its track full. The shell re-runs

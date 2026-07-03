@@ -1,9 +1,9 @@
 //! `scene/intervene` RPC method dispatch — R56.1.f.3 §5.22 substrate
 //! gap (Round 17 8 typed methods → 9 with this slice). Symmetric peer
-//! of [`crate::invoke`] for the read-write state-mutation side door
-//! defined by [`ExternalIntrospect::intervene`] (§5.15 item 7).
+//! of [`crate::invoke`](fn@crate::invoke) for the read-write state-mutation side door
+//! defined by [`ExternalIntrospect::intervene`](pinion_core::external::ExternalIntrospect::intervene) (§5.15 item 7).
 //!
-//! Wires the same three pieces as [`crate::query`] / [`crate::invoke`]:
+//! Wires the same three pieces as [`crate::query`](fn@crate::query) / [`crate::invoke`](fn@crate::invoke):
 //!
 //!   1. **§5.18 path resolution** — `/[window[id]/]<scene_path>`
 //!      with single-window short-circuit.
@@ -11,10 +11,10 @@
 //!      addressing via `path::split_at_external` +
 //!      [`Scene::lookup_path_mut`] + [`Scene::primary_external_mut`].
 //!   3. **§5.15 item 7 intervene dispatch** — descend through
-//!      [`External::introspect_mut`] and consult the
-//!      [`ExternalIntrospect::intervene`] write channel.
+//!      [`External::introspect_mut`](pinion_core::external::External::introspect_mut) and consult the
+//!      [`ExternalIntrospect::intervene`](pinion_core::external::ExternalIntrospect::intervene) write channel.
 //!
-//! v1 scene-path syntax accepted (mirror of [`crate::invoke`]):
+//! v1 scene-path syntax accepted (mirror of [`crate::invoke`](fn@crate::invoke)):
 //!
 //!   * `/external/<state>` — primary External at root (v0 retained).
 //!   * `/<tag>/external/<state>` — DFS lookup by `ExternalNode` tag,
@@ -23,18 +23,18 @@
 //!
 //! Other shapes return [`InterveneError::UnsupportedPath`].
 //!
-//! Where [`crate::invoke`] is the "call an action and get a value
+//! Where [`crate::invoke`](fn@crate::invoke) is the "call an action and get a value
 //! back" surface (W3C `RPC.call`-mirror), [`intervene`] is the
 //! "write a value to a state path" surface (W3C `RPC.set`-mirror).
 //! `TextField.caret = 4` flows through this path; `TextField.send
-//! Focus` flows through [`crate::invoke`]. R56.1.f.3 motivated
+//! Focus` flows through [`crate::invoke`](fn@crate::invoke). R56.1.f.3 motivated
 //! landing it: the §5.22 selection sidecar exposes both a query path
 //! (`/external/selection` → Json) and an intervene path (Json or
 //! Null) on `TextFieldExternal`, but the RPC wiring side was missing
 //! a wire-form entry point for the mutation half.
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) is handled by
-//! [`crate::dispatch`]; this module exposes the typed dispatcher only.
+//! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher only.
 
 use pinion_core::Scene;
 use pinion_core::external::{InterveneError as TraitInterveneError, IntrospectValue};

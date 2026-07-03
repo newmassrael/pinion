@@ -1,9 +1,9 @@
 //! `scene/text_state` + `scene/set_text` RPC method dispatch — R603 / R610 §5.22 + §5.7.
 //!
 //! Fourth reactive-substrate introspection method (after
-//! [`crate::theme`] R598/R599, [`crate::animation_state`] R600,
-//! [`crate::scroll_state`] R602). Projects the
-//! [`TextEditState`](pinion_core::widgets::text_edit::TextEditState)
+//! [`crate::theme`] R598/R599, [`crate::animation_state`](fn@crate::animation_state) R600,
+//! [`crate::scroll_state`](fn@crate::scroll_state) R602). Projects the
+//! [`TextEditState`]
 //! cached on the substrate's root [`Owner`] under the supplied
 //! `tag` so AI agents can verify typed text, caret position,
 //! selection range, and IME composition state without scraping
@@ -181,7 +181,7 @@ impl TextStateOutcome {
 ///
 /// None. The [`Owner::cache_contains`] gate routes the no-slot case
 /// to [`TextStateError::NotBound`]; the `Owner::run` wrap only
-/// activates [`Owner::current`] for the [`use_text_edit_state`]
+/// activates [`Owner::current`] for the [`use_text_edit_state`](pinion_core::widgets::text_edit::use_text_edit_state)
 /// hook; no reactive computation is established.
 pub fn text_state(
     runtime_owner: Option<&Owner>,
@@ -197,7 +197,7 @@ pub fn text_state(
 /// Typed request payload for [`set_text`]. Carries the new text and
 /// the cache tag the mutation applies to.
 ///
-/// Tag is **required** — per-field tagged ([`scroll_state`](crate::scroll_state)
+/// Tag is **required** — per-field tagged ([`scroll_state`](fn@crate::scroll_state)
 /// pattern; no canonical default).
 ///
 /// The substrate's

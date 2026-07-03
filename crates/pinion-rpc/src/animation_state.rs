@@ -6,10 +6,10 @@
 //!
 //! ## Why a dedicated method
 //!
-//! [`scene/waitFor`](crate::wait_for) polls
-//! [`scene/query`](crate::query) for an [`IntrospectValue`] match;
+//! [`scene/waitFor`](fn@crate::wait_for) polls
+//! [`scene/query`](fn@crate::query) for an [`IntrospectValue`](pinion_core::external::IntrospectValue) match;
 //! animations are a *spring-solver convergence* concept that does
-//! not surface through [`External::introspect`]. Agents that want
+//! not surface through [`External::introspect`](pinion_core::external::External::introspect). Agents that want
 //! "wait until the theme fade settles" or "snapshot only after the
 //! scroll animation rests" currently have to take two snapshots and
 //! diff — wasteful on the wire and brittle (anti-aliasing jitter
@@ -47,7 +47,7 @@
 //!
 //! `params.epsilon` is optional; when omitted the dispatcher uses
 //! the substrate-level
-//! [`DEFAULT_REST_EPSILON`](pinion_core::animation::DEFAULT_REST_EPSILON)
+//! [`DEFAULT_REST_EPSILON`]
 //! (`0.01`). The chosen value is echoed back in the response so the
 //! agent can record exactly which settlement threshold the framework
 //! evaluated against.
@@ -78,7 +78,7 @@ pub enum AnimationStateError {
     RuntimeOwnerUnavailable,
     /// `params.epsilon` was supplied but failed validation —
     /// negative, NaN, or +∞ (the only finite floats
-    /// [`Tickable::is_at_rest`] is documented to accept are
+    /// [`Tickable::is_at_rest`](pinion_core::animation::Tickable::is_at_rest) is documented to accept are
     /// `>= 0.0`). Carries the rejected value so the agent can adjust.
     InvalidEpsilon { value: f64 },
 }

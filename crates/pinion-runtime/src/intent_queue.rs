@@ -2,7 +2,7 @@
 //!
 //! Owns the per-frame queue the runtime walks after each event. The
 //! walk descends through the `Scene` tree, drains dirty
-//! [`External`](pinion_core::external::External) nodes, and pushes
+//! [`External`] nodes, and pushes
 //! the emitted [`Intent`]s into [`IntentQueue`]. A second pass at the
 //! `pinion-rpc` boundary (slice 4) exposes the drained queue through
 //! the `scene/intents` JSON-RPC method.
@@ -118,7 +118,7 @@ fn push_prefixed(queue: &mut IntentQueue, mut intent: Intent, prefix: Option<&st
 /// immediate-mode drivers.
 ///
 /// Walks `scene`, drains every [`Scene::ImmediateModeNode`] driver's
-/// pending intents via [`ImmediateMode::drain_intents`], and pushes the
+/// pending intents via [`ImmediateMode::drain_intents`](pinion_core::scene::ImmediateMode::drain_intents), and pushes the
 /// `<tag>.`-prefixed result into `queue`. Recurses through
 /// `Scene::Container` children (the canonical §2 #4 placement — an
 /// immediate-mode subtree opts in inside a container); other primitives

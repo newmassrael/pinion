@@ -1,7 +1,7 @@
 //! `scene/commands` RPC method dispatch — §5.23 R27 + §5.7 10th method.
 //!
 //! Sibling of [`crate::intents`] but on the outbound dispatch leg:
-//! lists every pending [`Command`](pinion_core::Command) queued on
+//! lists every pending [`Command`] queued on
 //! the framework's reactive scopes so AI agents can inspect the
 //! dispatch surface without forcing the framework pump to drain.
 //!

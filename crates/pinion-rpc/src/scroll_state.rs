@@ -9,7 +9,7 @@
 //!
 //! Third reactive-substrate introspection method, after
 //! [`crate::theme`] (R598/R599) and
-//! [`crate::animation_state`] (R600). Same shape: read-only,
+//! [`crate::animation_state`](fn@crate::animation_state) (R600). Same shape: read-only,
 //! [`Owner::cache_contains`] gate, no signal subscription, no new
 //! cache slot inserted on miss.
 //!

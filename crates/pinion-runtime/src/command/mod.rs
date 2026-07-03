@@ -1,7 +1,7 @@
 //! §5.23 [`Handler`] trait + [`HandlerRegistry`] + [`Executor`] +
 //! [`IntentSink`] + [`CommandExecutor`] — full async dispatch surface
 //! for [`pinion_core::Command`] queued by Owner-tied reactive scopes
-//! (R51.139 [`Command`] substrate) and reducer fallout (carry:
+//! (R51.139 [`Command`](pinion_core::Command) substrate) and reducer fallout (carry:
 //! `Update` signature evolution).
 //!
 //! ## What lands at R51.141 (first-cut Handler + Registry)
@@ -28,11 +28,11 @@
 //!   concrete impls (`pinion-shell` tokio current-thread, `pinion-tui`
 //!   tokio current-thread, `pinion-rpc` async dispatch) live at the
 //!   backend boundary.
-//! - [`IntentSink`] trait — the wake surface a resolved [`Intent`]
+//! - [`IntentSink`] trait — the wake surface a resolved [`Intent`](pinion_core::Intent)
 //!   travels through back to the UI thread.
 //! - [`CommandExecutor`] composite — `(registry + executor + sink)`
 //!   bundle. [`CommandExecutor::dispatch`] looks up the handler, wraps
-//!   the [`HandlerFuture`] so the resolved [`Intent`] reaches the
+//!   the [`HandlerFuture`] so the resolved [`Intent`](pinion_core::Intent) reaches the
 //!   [`IntentSink`], and spawns via [`Executor::spawn`]. Returns a
 //!   [`CommandTaskHandle`] for R51.158's per-scope cancellation.
 //! - [`BlockOnExecutor`] — reference [`Executor`] impl using
@@ -45,15 +45,15 @@
 //!
 //! - **R51.157** — `CoreShell::dispatch_pending_commands` walks
 //!   [`Owner::take_pending_commands_recursive`](pinion_core::reactive::Owner::take_pending_commands_recursive)
-//!   and feeds each [`Command`] to the [`CommandExecutor`]. `CoreShell`
+//!   and feeds each [`Command`](pinion_core::Command) to the [`CommandExecutor`]. `CoreShell`
 //!   gains an optional `executor: Option<Arc<CommandExecutor>>` field
 //!   so headless tests can omit it.
 //! - **R51.158** — per-scope cancellation: [`CommandExecutor`] gains a
 //!   `Mutex<BTreeMap<scope_id, CommandTaskHandle>>` that aborts the
-//!   prior in-flight handle when a new [`Command`] arrives on the
+//!   prior in-flight handle when a new [`Command`](pinion_core::Command) arrives on the
 //!   same scope (R27 Solid pattern).
 //! - **R51.159** — `pinion-shell` concrete tokio current-thread
-//!   [`Executor`] + winit [`EventLoopProxy<AppEvent>`]-based
+//!   [`Executor`] + winit `EventLoopProxy<AppEvent>`-based
 //!   [`IntentSink`] + `AppEvent::IntentArrived` user-event variant +
 //!   `ShellCore::dispatch_intent` re-feeding intents into the
 //!   [`Scene::External`](pinion_core::Scene::External) `invoke("send", _)`

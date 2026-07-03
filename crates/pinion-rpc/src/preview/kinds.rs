@@ -80,7 +80,7 @@ pub enum TypedProposal {
     /// [`Scene::hit_test`](pinion_core::Scene::hit_test) conventions.
     /// Non-stylable variants (`Text`, `Path`, `Image`, `Effect`,
     /// `External`) at the resolved path surface
-    /// `"UnsupportedStyleTarget"` via [`ApplyError::ApplyRejected`].
+    /// `"UnsupportedStyleTarget"` via [`ApplyError::ApplyRejected`](super::ApplyError::ApplyRejected).
     ///
     /// v0 carries a full [`BoxStyle`] — every field (`fill`, `border`,
     /// `corner_radius`) is replaced atomically. A partial-patch shape

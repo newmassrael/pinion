@@ -1,7 +1,7 @@
 //! `scene/frame_timings` RPC method dispatch — R907 §5.16 + §5.7.
 //!
 //! Exposes
-//! [`pinion_runtime::FrameTimingsSnapshot`](FrameTimingsSnapshot) — the
+//! [`pinion_runtime::FrameTimingsSnapshot`] — the
 //! per-window frame-timing profiler projection the §5.16
 //! [`pinion_runtime::frame_timing`] substrate produces — over the
 //! JSON-RPC surface, so an AI agent can answer *"how long are frames
@@ -11,13 +11,13 @@
 //! round can only be evidence-based if the frame cost is readable
 //! first.
 //!
-//! Sibling of [`scene/cache_stats`](crate::cache_stats): that method
+//! Sibling of [`scene/cache_stats`](fn@crate::cache_stats): that method
 //! reports paint-fragment cache hit-rate; this one reports the
 //! wall-clock cost of the build / encode / render phases the cache
 //! lives inside. They share the per-window-telemetry topology
 //! (embedder pre-resolves a `Copy` snapshot onto the dispatch context;
 //! the handler just projects it to the wire shape) but stay separate
-//! methods — the [`scene/cache_stats`](crate::cache_stats) module's
+//! methods — the [`scene/cache_stats`](mod@crate::cache_stats) module's
 //! "one observability axis per method" rule, so a client pays only for
 //! the axis it consults.
 //!
@@ -80,11 +80,11 @@
 //! ## Multi-window scope
 //!
 //! Pre-resolved by the embedder, exactly like
-//! [`scene/cache_stats`](crate::cache_stats):
+//! [`scene/cache_stats`](fn@crate::cache_stats):
 //! `pinion-shell::ShellCore::window_scoped_rpc_reads` looks up the
 //! per-window [`FrameTimingsSnapshot`] via
 //! `ShellCore::frame_timings_for_window` and installs it on
-//! [`DispatchContext::frame_timings`] before dispatch. The handler
+//! [`DispatchContext::frame_timings`](crate::dispatch::DispatchContext::frame_timings) before dispatch. The handler
 //! here just reads the slot.
 //!
 //! ## Side-effect contract
@@ -188,7 +188,7 @@ pub struct FrameTimingsOutcome {
 /// # Errors
 ///
 /// - [`FrameTimingsError::FrameTimingsUnavailable`] — the embedder did
-///   not register a snapshot on [`DispatchContext::frame_timings`].
+///   not register a snapshot on [`DispatchContext::frame_timings`](crate::dispatch::DispatchContext::frame_timings).
 pub fn frame_timings(
     snapshot: Option<FrameTimingsSnapshot>,
 ) -> Result<FrameTimingsOutcome, FrameTimingsError> {

@@ -33,7 +33,7 @@
 //!   `Mutex<Vec<Intent>>` so a `block_on`-driven test can assert on the
 //!   final intent sequence without standing up a real event loop.
 //!
-//! The trait is `Send + Sync + 'static` because the [`CommandExecutor`]
+//! The trait is `Send + Sync + 'static` because the [`CommandExecutor`](crate::command::CommandExecutor)
 //! (R51.156) clones an [`Arc<dyn IntentSink>`] into every dispatched
 //! future. A multi-thread executor's worker may resolve the future on
 //! any thread and call `IntentSink::send` from there, so `Send + Sync`
@@ -51,7 +51,7 @@ use pinion_core::Intent;
 /// because the futures the
 /// [`CommandExecutor`](crate::command::CommandExecutor) wraps are
 /// fire-and-forget — a closed channel or dropped event loop simply
-/// drops the intent on the floor, the same way a [`Command`] queued
+/// drops the intent on the floor, the same way a [`Command`](pinion_core::Command) queued
 /// on a dropped [`Owner`](pinion_core::Owner) evaporates.
 ///
 /// `Send + Sync + 'static` — backends share an
@@ -74,7 +74,7 @@ pub trait IntentSink: Send + Sync + 'static {
 /// tests (`pinion-shell`, `pinion-tui`) can reuse the same fixture
 /// instead of re-implementing it per crate. The
 /// [`test-fixtures pattern`](https://docs.rs/) the workspace already
-/// uses for [`pinion_core::test_fixtures::ButtonFixture`] (R51.127
+/// uses for `pinion_core::test_fixtures::ButtonFixture` (R51.127
 /// pattern) is overkill for a 30-LOC helper.
 ///
 /// Internally `Arc<Mutex<Vec<Intent>>>` so the sink can be cloned

@@ -7,7 +7,7 @@
 //!
 //! This is the AI-first surface of the [`pinion_pdf`] own-renderer
 //! pipeline. It is the read peer of `scene/layout`: both consume the
-//! same per-window [`DispatchContext::last_paint_scene`] borrow
+//! same per-window [`DispatchContext::last_paint_scene`](crate::dispatch::DispatchContext::last_paint_scene) borrow
 //! (R890.1 — the projection runs only on this arm, never eagerly), so
 //! the exported document describes the same frame `scene/layout` /
 //! `scene/snapshot from: paint` report. Where `scene/screenshot` still

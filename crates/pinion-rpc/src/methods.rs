@@ -19,7 +19,7 @@
 //! method's `SceneRevision` optimistic-concurrency class, mirroring the
 //! `HandlerKind` the routing match tags it with. **This is NOT a
 //! side-effect-freedom flag.** `occ: "read"` means only "the dispatcher
-//! does NOT bump the [`crate::SceneRevision`] OCC token after this handler"
+//! does NOT bump the [`pinion_core::SceneRevision`] OCC token after this handler"
 //! — it still includes methods that genuinely change state: deferred input
 //! (`scene/key`, `scene/wheel` — the mutation lands a frame later), async
 //! effects (`scene/resize`, `scene/window_move` — the move lands on
@@ -65,7 +65,7 @@ pub enum MethodOcc {
     /// (pure reads, but also deferred-input / async-effect / `focus/*` /
     /// self-bumping handlers).
     Read,
-    /// The dispatcher bumps the [`crate::SceneRevision`] OCC token
+    /// The dispatcher bumps the [`pinion_core::SceneRevision`] OCC token
     /// synchronously after the handler returns `Ok` (immediate
     /// revision-tracked scene mutation).
     Mutate,

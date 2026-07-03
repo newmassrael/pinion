@@ -21,7 +21,7 @@
 //!   * -32602 Invalid params   — params shape or domain failure
 //!   * -32603 Internal error   — handler panic / unexpected
 //!
-//! Domain errors from [`crate::query`] map onto -32602 with `data`
+//! Domain errors from [`crate::query`](fn@crate::query) map onto -32602 with `data`
 //! carrying the typed [`QueryError`] variant name so AI clients can
 //! pattern-match without parsing prose.
 
@@ -366,7 +366,7 @@ pub struct DispatchContext<'a> {
     /// `scene/wheel` (and future `scene/key` / `scene/cursor_move`)
     /// cannot mutate the scene from inside [`dispatch`] because the
     /// shell holds `&mut scene` for the whole call and the input
-    /// router lives on the surrounding [`ShellCore`]. The dispatcher
+    /// router lives on the surrounding `ShellCore`. The dispatcher
     /// instead **enqueues** a [`DeferredInput`] entry on this inbox
     /// per accepted request; the embedder drains the inbox after the
     /// call returns and calls the matching `ShellCore::wheel` (etc.)
@@ -468,7 +468,7 @@ pub struct DispatchContext<'a> {
     pub pacing_state: Option<PacingState>,
     /// R1087 §5.16 §5.41 §2 #7 PR-31 — the windows the binding currently
     /// DECLARES (id + title + position), resolved by the embedder before
-    /// dispatch from [`pinion_shell::WidgetView::windows_signal`] (the
+    /// dispatch from `pinion_shell::WidgetView::windows_signal` (the
     /// [`Self::input_state`] by-value pattern). Consumed by
     /// `scene/windows` — the scene-as-data READ that makes a torn-off
     /// panel's floating-window placement observable, not just its
@@ -883,7 +883,7 @@ pub enum DeferredInput {
     /// `UIEvent` `detail: 2` convention via two complete press/release
     /// cycles at `(x, y)` without an intervening cursor move so the
     /// receiving `InputRouter` arc fires identically to a real-mouse
-    /// double-click. Mirrors [`Click`] for the longer-arc axis the
+    /// double-click. Mirrors `Click` for the longer-arc axis the
     /// `TasteJS` `TodoMVC` "double-click row to edit" UX requires; the
     /// substrate-canonical entry point for any future widget that
     /// distinguishes single-click activation from double-click drill-in.
@@ -929,19 +929,19 @@ pub enum DeferredInput {
     /// dragged *over* the window (the OS reports the path, not a drop
     /// position — winit's file-DnD is window-scoped, like
     /// [`Self::PointerLeave`]). The embedder runs
-    /// [`WidgetView::on_file_hover`] so a drop-zone can light up its
+    /// `WidgetView::on_file_hover` so a drop-zone can light up its
     /// "release to drop" affordance before the user lets go.
     FileHover { path: String },
     /// R770 §5.49 §5.15 — `scene/hover_file_cancel` injection: the winit
     /// `WindowEvent::HoveredFileCancelled` peer. The drag left the window
     /// (or was cancelled) without a drop; the embedder runs
-    /// [`WidgetView::on_file_hover_cancel`] so the drop-zone clears its
+    /// `WidgetView::on_file_hover_cancel` so the drop-zone clears its
     /// affordance. Positionless + path-less, like a file-DnD
     /// [`Self::PointerLeave`].
     FileHoverCancel,
     /// R770 §5.49 §5.15 — `scene/drop_file` injection: the winit
     /// `WindowEvent::DroppedFile(PathBuf)` peer. A file was dropped on the
-    /// window; the embedder runs [`WidgetView::on_file_drop`] with the
+    /// window; the embedder runs `WidgetView::on_file_drop` with the
     /// path. winit delivers one event per file (a multi-file drop arrives
     /// as several `DroppedFile`s), so each injection carries one path —
     /// the canonical OS "drag a file from the file manager into the app"
@@ -952,7 +952,7 @@ pub enum DeferredInput {
     /// `InputRouter` re-resolves its hover target and fires the
     /// synthetic `PointerEnter` / `PointerLeave` arc on a tag
     /// transition — exactly the winit `WindowEvent::CursorMoved` flow,
-    /// minus any press. The pointer-position-only peer to [`Click`]
+    /// minus any press. The pointer-position-only peer to `Click`
     /// (which adds press/release) for the hover-driven widgets a real
     /// mouse cursor exercises incidentally on every button but which a
     /// `Tooltip` (R695) makes its **primary** trigger. Previously the
@@ -1013,7 +1013,7 @@ pub enum DeferredInput {
         meta: bool,
     },
     /// R829 §2 #4 §5.28 — `scene/set_fps` injection: the AI-facing peer
-    /// of [`pinion_shell::ShellCore::set_target_fps_for_window`]. Sets
+    /// of `pinion_shell::ShellCore::set_target_fps_for_window`. Sets
     /// the addressed window's target frame rate, the §2 #4 game-loop
     /// pacing policy: `0` *pauses* the per-window paint clock (the
     /// continuous immediate-mode loop stops auto-painting — the window
@@ -1047,7 +1047,7 @@ pub use pinion_runtime::PacingState;
 /// R1087 §5.16 §5.41 §2 #7 PR-31 — one entry in the `scene/windows`
 /// read: a window the binding currently DECLARES, projected to the wire.
 ///
-/// The shell maps each [`pinion_shell::WindowSpec`] it reconciles into one
+/// The shell maps each `pinion_shell::WindowSpec` it reconciles into one
 /// of these (`pinion-shell` depends on `pinion-rpc`, so the domain → wire
 /// map runs shell-side; this crate owns only the wire shape, the
 /// `InputStateSnapshot`/`PacingState` read-payload precedent). `position`

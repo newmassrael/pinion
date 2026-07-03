@@ -1,7 +1,7 @@
 //! `scene/rewind` RPC method dispatch (§5.12 method 5 of 7, R16 slice 12,
 //! R42 nested External addressing).
 //!
-//! Mutating counterpart to [`crate::query`]: takes the same
+//! Mutating counterpart to [`crate::query`](fn@crate::query): takes the same
 //! `/[window[id]/][<scene_segments>/]external/<introspect_path>` shape
 //! (R42 nested) and writes `value` to the addressed slot via
 //! [`ExternalIntrospect::intervene`](pinion_core::external::ExternalIntrospect::intervene).

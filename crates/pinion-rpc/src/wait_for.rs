@@ -1,6 +1,6 @@
 //! `scene/waitFor` RPC method dispatch (§5.12 method 6 of 7, R16 slice 15).
 //!
-//! v0 is **sync polling**: the loop calls [`crate::query`] up to
+//! v0 is **sync polling**: the loop calls [`crate::query`](fn@crate::query) up to
 //! `max_attempts` times and returns the first match. Because the loop
 //! does not yield between iterations and does not inject events, the
 //! polled value is deterministic across iterations — `matched=true` on

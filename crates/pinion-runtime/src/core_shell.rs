@@ -290,7 +290,7 @@ pub struct CoreShell<V: WidgetCore> {
     ///
     /// R889 §5.49 — ALSO the window-known registry SSOT:
     /// [`Self::is_window_known`] is the named predicate;
-    /// [`Self::routers`] is NOT a registry — its entries mean "has
+    /// `Self::routers` is NOT a registry — its entries mean "has
     /// painted at least once". Secondaries are registered by
     /// [`Self::register_window`] at OS-window creation and removed by
     /// [`Self::remove_window`]. Two deliberate primary asymmetries
@@ -349,7 +349,7 @@ pub struct CoreShell<V: WidgetCore> {
     /// ## Field choice rationale
     ///
     /// `HashMap<String, Owner>` mirrors the existing
-    /// [`Self::routers`] field shape — same `WindowSpec::id` key,
+    /// `Self::routers` field shape — same `WindowSpec::id` key,
     /// same `String::to_owned` allocation profile on lazy create,
     /// same hot-path `HashMap::get` lookup on every paint cycle. The
     /// alternative `HashMap<&'static str, _>` would require
@@ -697,7 +697,7 @@ impl<V: WidgetCore> CoreShell<V> {
     }
 
     /// R51.157 §5.23 — drain every pending
-    /// [`Command`](pinion_core::Command) from
+    /// [`Command`] from
     /// [`Self::root_owner`](Self::root_owner) (recursively through its
     /// child scopes) and dispatch each through the installed
     /// [`CommandExecutor`].
@@ -857,7 +857,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// majority** of bindings have a static external set frozen at boot
     /// ([`WidgetCore::external_set_is_dynamic`] defaults `false`). For
     /// those this method is a literal early `return` — no factory
-    /// re-run, no throwaway [`External`] allocation, and no
+    /// re-run, no throwaway [`External`](pinion_core::external::External) allocation, and no
     /// re-execution of the factory's boot-time seeding side effects
     /// (which already ran once in [`Self::new`]). Re-running a static
     /// factory every frame would re-`intervene` seed values and
@@ -1031,10 +1031,10 @@ impl<V: WidgetCore> CoreShell<V> {
     ///
     /// Used by the view fn (or SCE-emitted code) to attach
     /// [`Animation<T>`](pinion_core::Animation) instances and
-    /// [`Effect`](pinion_core::Effect) closures to this widget's
+    /// [`Effect`] closures to this widget's
     /// lifetime. Drop on `CoreShell` propagates through
     /// [`Owner`] drop, which cascades to children and cancels every
-    /// pending [`Command`](pinion_core::Command) (Solid pattern,
+    /// pending [`Command`] (Solid pattern,
     /// R51.139). Borrowed read-only because [`Owner`] is itself
     /// reference-counted internally — registrations on a clone reach
     /// the same scope, so callers that need an owned handle can
@@ -1097,7 +1097,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `Owner::new_child`). Subsequent calls hash-lookup the
     /// existing entry without touching the allocator beyond the Rc
     /// bump. Identical profile to the existing
-    /// [`Self::routers`] map.
+    /// `Self::routers` map.
     pub fn window_owner(&mut self, window_id: &str) -> Owner {
         if let Some(owner) = self.window_owners.get(window_id) {
             return owner.clone();
@@ -1115,13 +1115,13 @@ impl<V: WidgetCore> CoreShell<V> {
     /// R889 §5.16 §5.49 — explicit window-registration edge: a backend
     /// calls this when an OS window for `window_id` comes into
     /// existence (GUI `AppShell::resume_spec`, before the first paint),
-    /// making [`Self::window_owners`] the window-known registry SSOT
+    /// making `Self::window_owners` the window-known registry SSOT
     /// from creation — not from first paint.
     ///
     /// Pre-R889 nothing registered secondary windows at creation: the
     /// substrate could not tell "known but never painted" (R683
     /// tear-off pre-first-paint) from "no such window", so per-axis
-    /// READ gates piggybacked on [`Self::routers`] presence (= painted)
+    /// READ gates piggybacked on `Self::routers` presence (= painted)
     /// and the GUI shell silently aliased unknown ids onto the primary.
     /// Both were SSOT-by-accident; [`Self::is_window_known`] is the
     /// named predicate they now share.
@@ -1136,7 +1136,7 @@ impl<V: WidgetCore> CoreShell<V> {
     }
 
     /// R889 §5.16 §5.49 — the ONE window-known predicate: `true` when
-    /// `window_id` is registered in the [`Self::window_owners`]
+    /// `window_id` is registered in the `Self::window_owners`
     /// registry ([`DEFAULT_WINDOW`] seeded in [`Self::new`]; secondary
     /// windows registered by [`Self::register_window`] at creation,
     /// dropped by [`Self::remove_window`]).
@@ -1145,7 +1145,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `scene/input_state` / `scene/pacing_state` gating and the
     /// dispatch-entry unknown-window rejection. Distinct from
     /// [`Self::has_last_paint_scene_for_window`] ("has painted at
-    /// least once", a [`Self::routers`] fact): a known window may
+    /// least once", a `Self::routers` fact): a known window may
     /// never have painted, and per-axis data for it is answered
     /// honestly (`cursor: null`, default pacing policy) instead of
     /// `*Unavailable`.
@@ -1178,7 +1178,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// walk every active window (e.g. the R683 dock-panel
     /// `reconcile_windows` Effect's drop pass after a tear-off
     /// dock-back). Order follows
-    /// [`HashMap`](std::collections::HashMap) iteration semantics
+    /// [`HashMap`] iteration semantics
     /// (unstable across rebuilds; callers needing deterministic
     /// order sort downstream).
     pub fn window_owner_ids(&self) -> impl Iterator<Item = &str> {
@@ -1366,7 +1366,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `(width, height)` so a binding reading
     /// [`use_viewport_size`](pinion_core::use_viewport_size) re-derives
     /// `(cols, rows) = viewport / cell` and a reflow
-    /// [`Effect`](pinion_core::Effect) fires. The paint substrate calls
+    /// [`Effect`] fires. The paint substrate calls
     /// this every primary-window paint with the same `(w, h)` it feeds
     /// `compute_layout`.
     ///
@@ -1386,7 +1386,7 @@ impl<V: WidgetCore> CoreShell<V> {
 
     /// R1047 §5.23 §5.22 §6.3 — run the binding's per-paint
     /// [`WidgetCore::reconcile_frame`] reducer inside the root
-    /// [`Owner`](pinion_core::reactive::Owner) scope, so a binding can
+    /// [`Owner`] scope, so a binding can
     /// write its own reactive view-state (e.g. grow + tail-follow a
     /// [`ScrollState`](pinion_core::widgets::scroll::ScrollState) whose
     /// content extent lives in an off-thread producer) off the pure view
@@ -1437,7 +1437,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// window per frame
     ///
     /// The registry is keyed by **tag only**, not `(window, tag)` — and it must
-    /// be, because the consumer [`use_pane_viewport_size`] resolves under the
+    /// be, because the consumer [`use_pane_viewport_size`](pinion_core::use_pane_viewport_size) resolves under the
     /// binding-wide [`Self::root_owner`] (every window's view fn runs there,
     /// R680), so it has no window to disambiguate by. That makes the tag-keyed
     /// shared registry the *correct* model for a window-agnostic consumer, but it
@@ -1671,7 +1671,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `CacheStatsUnavailable` honesty parity.
     ///
     /// R889 §5.49 — gated on [`Self::is_window_known`] (the registry
-    /// predicate), NOT on [`Self::routers`] presence: pre-R889 the
+    /// predicate), NOT on `Self::routers` presence: pre-R889 the
     /// gate was the router map, so a registered-but-never-painted
     /// window (R683 tear-off pre-first-paint) read as `Unavailable`
     /// even though the axis data (held keys, modifiers) is
@@ -1685,7 +1685,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// state. The GUI shell, which owns the `os_focused_window` +
     /// `key_press_owner` gate, passes `Some`; a single-OS-window backend
     /// (the TUI) passes `None`. Kept a *parameter* rather than a
-    /// [`ShellCore`] field because the gate lives in the GUI shell, not
+    /// `ShellCore` field because the gate lives in the GUI shell, not
     /// here ([[routing-and-focus-are-separate-axes]]) — this method stays
     /// the ONE snapshot home (R886.1) while the producing state stays
     /// where R1073 placed it.
@@ -1809,7 +1809,7 @@ impl<V: WidgetCore> CoreShell<V> {
 
     /// R884 §5.41 §5.45 — invoke `send` with `name` on the *primary*
     /// External's statechart, agnostic over the two state-scene root
-    /// shapes ([`Self::compose_root`]: bare `Scene::External(primary)`
+    /// shapes (`Self::compose_root`: bare `Scene::External(primary)`
     /// vs `Scene::Container([primary, ...extras])`). One home for the
     /// "advance the primary SCXML" decision — [`Self::forward`] and
     /// both backends' `dispatch_intent` route through here.
@@ -1910,7 +1910,7 @@ impl<V: WidgetCore> CoreShell<V> {
         if handled { Some(self.tail()) } else { None }
     }
 
-    /// R56.2.a §5.13 §5.38 — route an IME [`CompositionEvent`] through
+    /// R56.2.a §5.13 §5.38 — route an IME [`CompositionEvent`](pinion_core::CompositionEvent) through
     /// [`WidgetCore::apply_composition`]. Symmetric with
     /// [`Self::apply_key`]: wraps the trait call in `root_owner.run`
     /// so [`Owner::current`](pinion_core::reactive::Owner::current)
@@ -2081,7 +2081,7 @@ impl<V: WidgetCore> CoreShell<V> {
 
     /// (R1113 §5.51 §5.33 §2 #7) The addressed window's in-flight drag label +
     /// window-logical cursor — the projection the shell injects as a drag-image
-    /// overlay ([`pinion_overlay::inject_drag_image`]), the way the focus state
+    /// overlay (`pinion_overlay::inject_drag_image`), the way the focus state
     /// drives the focus ring. `None` when the window has no router, no real
     /// drag is in flight, or the drag carries no text label
     /// ([`InputRouter::active_drag_label`]). `.get` (not `or_default`) so a
@@ -2101,7 +2101,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// addressed window's in-flight drag (or clear it with `None`). The shell —
     /// the sole holder of every window's geometry — resolves the abs cursor
     /// against the OTHER windows each move and pushes the result here, so the
-    /// cross-window-blind per-window router can fill [`DragUpdate::over_window`]
+    /// cross-window-blind per-window router can fill [`DragUpdate::over_window`](pinion_core::external::DragUpdate::over_window)
     /// ([`InputRouter::set_drag_cross_window`]). No-op when the window has no
     /// router / no active drag.
     pub fn set_drag_cross_window_for_window(
@@ -2126,7 +2126,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// source. The shell paints `target_window`'s incoming drop-zone preview from
     /// this (the symmetric peer of [`Self::set_drag_cross_window_for_window`]): the
     /// preview resolves the drop through the SAME
-    /// [`resolve_drop`](pinion_widget_paint::dock::resolve_drop) SSOT the release
+    /// `resolve_drop` SSOT the release
     /// applies, so the cross-window preview == result by construction (R1163b unified
     /// the cross-window path; before, the preview re-classified with the legacy
     /// continuous geometry). The source window itself is never a match (the shell
@@ -2533,7 +2533,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// Forwards the wheel delta through
     /// [`InputRouter::wheel`](crate::input::InputRouter::wheel) which
     /// walks the retained paint scene's deepest
-    /// [`Scene::Scroll`](pinion_core::scene::Scene::Scroll) under the
+    /// [`Scene::Scroll`] under the
     /// pointer's stored cursor and calls
     /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
     /// on the attached state. Returns a `(DispatchTail, dispatched)`
@@ -2628,7 +2628,7 @@ impl<V: WidgetCore> CoreShell<V> {
     ///
     /// Forwards a W3C `KeyboardEvent.key` string into
     /// [`InputRouter::scroll_key`](crate::input::InputRouter::scroll_key)
-    /// which walks the deepest [`Scene::Scroll`](pinion_core::scene::Scene::Scroll)
+    /// which walks the deepest [`Scene::Scroll`]
     /// under the pointer's stored cursor and translates the key
     /// into a `scroll_by` / `scroll_to` call on the attached
     /// [`ScrollState`](pinion_core::widgets::scroll::ScrollState).

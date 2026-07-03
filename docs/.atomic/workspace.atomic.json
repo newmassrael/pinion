@@ -21700,6 +21700,52 @@
         "Delegation recipe validated again (shell): give subagent the crate's real deps + prefer-working-links + botch-grep + clippy self-check; verify the gate yourself. Subagent even caught MY botch via workspace-clippy."
       ]
     },
+    "R1210": {
+      "decision_summary": "R1210 doc-hygiene campaign round 4: pinion-rpc (117) and pinion-runtime (90) cargo-doc made clean.",
+      "changes_bullets": [
+        "pinion-rpc: 117 errors -> 0 (27 files). New class handled: 63 `X is both a function and a module` (query/invoke/dispatch/rewind/simulate/dry_run/snapshot/cache_stats/... each a fn AND a mod) -> disambiguated 59 to fn@crate::X (the per-method dispatcher fns the prose names), 4 to mod@ (HandlerKind lives in the private dispatch module). Plus reachable -> working links, private/unreachable -> spans, redundant -> shortcuts.",
+        "pinion-runtime: 90 errors -> 0 (11 files). Reachable (pinion_core/text/asset/vello/taffy) -> working links (Intent/Command/External methods/CursorHint/CompositionEvent/PointerId::MOUSE); winit/pinion_shell/pinion_overlay/pinion_a11y (not deps) + private fields -> code spans.",
+        "Both delegated to subagents (sequential, disjoint crates) with real deps + botch rules; doc comments only, no code/Cargo.toml/lints."
+      ],
+      "verification_bullets": [
+        "cargo doc -p pinion-rpc and -p pinion-runtime (--features vello) = exit 0, 0 errors, 0 warnings each.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0.",
+        "cargo test -p pinion-rpc -p pinion-runtime = 886 + 397 pass, 0 fail.",
+        "Independently verified (not self-report): botch-grep (doubled-target + dangling) NONE across both crates; only doc-comment lines changed. rpc subagent self-caught + fixed one replace-all doubled-target (theme.rs use_theme) -- the warned hazard."
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN cont ([[doc-hygiene-campaign]]): R1207 forge+derive, R1208 core, R1209 a11y+shell, R1210 rpc+runtime done. Remaining: R1211 pinion-widget-paint (105); R1212 examples (~150: ThemeProvider ~46 + InputRouter); R1213 add cargo-doc to .githooks pre-commit/pre-push + CI once workspace-green.",
+        "NEW disambiguation rule for the campaign: `X is both a function and a module` -> `[`X`](fn@path)` when prose names the dispatcher/method (default), `(mod@path)` only when it means the module. rpc had 63; other crates may have a few.",
+        "SEMANTIC-flag (revisitable, NOT fixed -- out of doc-hygiene scope): runtime `SpringState::tick` doc names a method that lives on Tween not SpringState (prose may intend `step`); rpc resolve.rs `ExternalHandle::introspect` names a type that exists nowhere (real trait is External). Left as spans to avoid prose edits; a maintainer should confirm the intended text."
+      ],
+      "publishable_decision_summary": "R1210 doc-hygiene campaign round 4: pinion-rpc (117) and pinion-runtime (90) cargo-doc made clean.",
+      "publishable_changes_bullets": [
+        "pinion-rpc: 117 errors -> 0 (27 files). New class handled: 63 `X is both a function and a module` (query/invoke/dispatch/rewind/simulate/dry_run/snapshot/cache_stats/... each a fn AND a mod) -> disambiguated 59 to fn@crate::X (the per-method dispatcher fns the prose names), 4 to mod@ (HandlerKind lives in the private dispatch module). Plus reachable -> working links, private/unreachable -> spans, redundant -> shortcuts.",
+        "pinion-runtime: 90 errors -> 0 (11 files). Reachable (pinion_core/text/asset/vello/taffy) -> working links (Intent/Command/External methods/CursorHint/CompositionEvent/PointerId::MOUSE); winit/pinion_shell/pinion_overlay/pinion_a11y (not deps) + private fields -> code spans.",
+        "Both delegated to subagents (sequential, disjoint crates) with real deps + botch rules; doc comments only, no code/Cargo.toml/lints."
+      ],
+      "publishable_verification_bullets": [
+        "cargo doc -p pinion-rpc and -p pinion-runtime (--features vello) = exit 0, 0 errors, 0 warnings each.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0.",
+        "cargo test -p pinion-rpc -p pinion-runtime = 886 + 397 pass, 0 fail.",
+        "Independently verified (not self-report): botch-grep (doubled-target + dangling) NONE across both crates; only doc-comment lines changed. rpc subagent self-caught + fixed one replace-all doubled-target (theme.rs use_theme) -- the warned hazard."
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN cont ([[doc-hygiene-campaign]]): R1207 forge+derive, R1208 core, R1209 a11y+shell, R1210 rpc+runtime done. Remaining: R1211 pinion-widget-paint (105); R1212 examples (~150: ThemeProvider ~46 + InputRouter); R1213 add cargo-doc to .githooks pre-commit/pre-push + CI once workspace-green.",
+        "NEW disambiguation rule for the campaign: `X is both a function and a module` -> `[`X`](fn@path)` when prose names the dispatcher/method (default), `(mod@path)` only when it means the module. rpc had 63; other crates may have a few.",
+        "SEMANTIC-flag (revisitable, NOT fixed -- out of doc-hygiene scope): runtime `SpringState::tick` doc names a method that lives on Tween not SpringState (prose may intend `step`); rpc resolve.rs `ExternalHandle::introspect` names a type that exists nowhere (real trait is External). Left as spans to avoid prose edits; a maintainer should confirm the intended text."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

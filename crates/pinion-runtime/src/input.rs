@@ -150,7 +150,7 @@ impl PointerId {
 
     /// Touch-finger pointer id. The factory offsets by one so a
     /// `winit::event::Touch::id` of `0` maps to `PointerId(1)`,
-    /// keeping `PointerId(0)` reserved for [`MOUSE`]. Wrapping
+    /// keeping `PointerId(0)` reserved for [`MOUSE`](PointerId::MOUSE). Wrapping
     /// addition handles the (theoretical) `u64::MAX` finger id edge
     /// without panic — wrap-around lands at `PointerId(0)` which
     /// then aliases the mouse, but in practice no platform mints
@@ -163,7 +163,7 @@ impl PointerId {
     /// Raw underlying value. Exposed for diagnostic logging and for
     /// shells that mint custom synthetic pointer IDs (e.g. pen input
     /// on platforms pinion adds later). Application code that just
-    /// routes mouse + touch should prefer the [`MOUSE`] constant and
+    /// routes mouse + touch should prefer the [`MOUSE`](PointerId::MOUSE) constant and
     /// the [`touch`](Self::touch) factory.
     #[must_use]
     pub fn raw(self) -> u64 {
@@ -578,7 +578,7 @@ impl InputRouter {
         self.cursors.get(&id).copied()
     }
 
-    /// (R1196 §5.16 §5.39) The hover [`CursorHint`] the deepest hinted node
+    /// (R1196 §5.16 §5.39) The hover [`CursorHint`](pinion_core::style::CursorHint) the deepest hinted node
     /// under pointer `id` declares, resolved against the last painted scene
     /// ([`Scene::cursor_hint_at`]). `None` when the pointer is over no hinted
     /// region, no move has been reported, or nothing has been painted. The
@@ -602,12 +602,12 @@ impl InputRouter {
 
     /// (R1113 §5.51 §5.33 §2 #7) The in-flight drag's display label + the
     /// window-logical cursor it is at — the projection the shell injects as a
-    /// drag-image overlay ([`pinion_overlay::inject_drag_image`]), the way it
+    /// drag-image overlay (`pinion_overlay::inject_drag_image`), the way it
     /// reads focus state to inject the focus ring. `Some` only once the press
-    /// became a REAL drag (the [`press_became_drag`](Self::press_became_drag)
+    /// became a REAL drag (the `press_became_drag`
     /// click-vs-drag SSOT, so a pending click shows no follower) AND the
     /// payload carries a non-empty text label AND a cursor is known. A
-    /// capture-drag (a splitter resize — no [`begin_drag`] session) has no
+    /// capture-drag (a splitter resize — no [`begin_drag`](pinion_core::external::External::begin_drag) session) has no
     /// session, so it never shows a follower. No new state: a pure projection
     /// of the session the router already owns.
     #[must_use]
@@ -631,7 +631,7 @@ impl InputRouter {
     /// currently maps onto, plus the drop point in THAT window's local frame),
     /// or clear it (`None`) when the cursor maps onto no other window's drop
     /// target. No-op when no session owns `id`. The drag dispatch
-    /// ([`update_drag`](Self::update_drag) / [`pointer_up`](Self::pointer_up))
+    /// (`update_drag` / [`pointer_up`](Self::pointer_up))
     /// reads it to fill [`DragUpdate::over_window`] once this window's own drop
     /// resolution comes up empty (own-window first). The router itself stays
     /// cross-window-blind — it only *consumes* what the shell, holding every
@@ -656,7 +656,7 @@ impl InputRouter {
 
     /// R51.34 §5.35 — current capture-lock target tag for `id`, when
     /// that pointer claimed a widget via
-    /// [`External::wants_pointer_capture`] on its most recent
+    /// [`External::wants_pointer_capture`](pinion_core::external::External::wants_pointer_capture) on its most recent
     /// [`pointer_down`](Self::pointer_down). `None` when no drag is
     /// in flight for that pointer. Diagnostic / test surface only —
     /// application code never needs to inspect this directly.
@@ -1211,27 +1211,27 @@ impl InputRouter {
     /// [`External::wants_pointer_capture`](pinion_core::external::External::wants_pointer_capture),
     /// the router pins this pointer's `captured_targets` entry to
     /// that tag for the duration of the press. While pinned,
-    /// [`cursor_moved`] forwards the cursor to the widget through
+    /// [`cursor_moved`](Self::cursor_moved) forwards the cursor to the widget through
     /// [`External::pointer_move`](pinion_core::external::External::pointer_move)
     /// and suppresses hover / leave dispatch for this pointer.
     /// R741 §5.35: button-like widgets now also opt in (so a click is
     /// jitter-robust) and pair it with
-    /// [`External::cancel_on_release_off_target`] so a release off the
+    /// [`External::cancel_on_release_off_target`](pinion_core::external::External::cancel_on_release_off_target) so a release off the
     /// widget still cancels — see [`pointer_up`](Self::pointer_up).
     ///
     /// R664 §5.49 — W3C UI Events `dblclick` detection. After the
     /// standard `PointerDown` dispatch, the router compares this
-    /// press against [`last_press`](Self::last_press) for `id`: if the
+    /// press against `last_press` for `id`: if the
     /// previous press hit the same `target_tag` within
-    /// [`DOUBLE_CLICK_TIME_MS`] and the cursor moved less than
-    /// [`DOUBLE_CLICK_DIST_PX`] per axis, the router synthesises a
+    /// `DOUBLE_CLICK_TIME_MS` and the cursor moved less than
+    /// `DOUBLE_CLICK_DIST_PX` per axis, the router synthesises a
     /// second named event `DoubleClick` to the same target on top of
     /// the normal `PointerDown`. Widgets that distinguish single from
     /// double activation handle the `DoubleClick` arm in their
     /// `invoke("send", ...)` `match`; widgets that don't (the entire
     /// pre-R664 catalogue) silently ignore the extra event so the
     /// extension is fully additive. The
-    /// [`DeferredInput::DoubleClick`](pinion_rpc::dispatch::DeferredInput::DoubleClick)
+    /// `DeferredInput::DoubleClick`
     /// RPC drain reaches this same detection because its expansion
     /// fires two consecutive `pointer_down` calls with zero cursor
     /// move in between — the threshold check trivially fires for the
@@ -1356,7 +1356,7 @@ impl InputRouter {
     /// R51.34 §5.35: in capture mode the cursor may currently sit
     /// off the widget rect (the drag strayed, or a button-like press
     /// slid off). The release event then depends on the captured
-    /// widget's [`External::cancel_on_release_off_target`] policy:
+    /// widget's [`External::cancel_on_release_off_target`](pinion_core::external::External::cancel_on_release_off_target) policy:
     ///
     /// * `false` (drag widgets, e.g. Slider) — always dispatch
     ///   `PointerUp` so the drag commits its value wherever the cursor
@@ -1368,7 +1368,7 @@ impl InputRouter {
     ///   suppressing the mid-press stray leave.
     ///
     /// Capture for this pointer is then released and
-    /// [`refresh_hover`](Self::refresh_hover) re-runs to resettle the
+    /// `refresh_hover` re-runs to resettle the
     /// hover state against the release position.
     pub fn pointer_up(&mut self, id: PointerId, state_scene: &mut Scene) {
         self.pointer_up_with_modifiers(id, state_scene, Modifiers::empty());
@@ -1589,7 +1589,7 @@ impl InputRouter {
     /// W3C sign convention: positive `dy` scrolls *downward*
     /// (content shifts up visually); positive `dx` scrolls
     /// *rightward*. The convention matches
-    /// [`WheelDelta`](pinion_core::event::WheelDelta) and the
+    /// [`WheelDelta`] and the
     /// `ScrollState` offset semantics directly — no per-axis
     /// inversion at this boundary.
     ///
@@ -2280,7 +2280,7 @@ fn tag_matches(node_tag: Option<&str>, target: &str) -> bool {
 /// the drop target the absolute desktop cursor landed on, plus the
 /// [`DropPoint`] in that window's own local logical frame.
 ///
-/// The per-window [`InputRouter::resolve_drop_point`] sees only its own
+/// The per-window `InputRouter::resolve_drop_point` sees only its own
 /// `last_paint_scene`, so a drag captured by one window (a settled floating
 /// panel) can never resolve a dock zone in another window (the main dock) —
 /// the gap PR-33 closes. This is the cross-window peer: the shell, which holds
@@ -2299,12 +2299,12 @@ pub struct CrossWindowDrop {
 /// R1098 §5.51 PR-33 — resolve an absolute desktop cursor against MULTIPLE
 /// windows' painted scenes, returning the window that owns the drop target +
 /// the [`DropPoint`] in that window's local frame. The cross-window peer of
-/// [`InputRouter::resolve_drop_point`].
+/// `InputRouter::resolve_drop_point`.
 ///
 /// Each `windows` item is `(spec_id, scene, outer_position)` in **logical**
 /// pixels (the same coordinate space the router resolves in). The abs cursor
 /// is transformed into each window's local frame (`abs - outer`) and the SAME
-/// opted-in drop-target hit-test ([`resolve_drop_target_tag`]) runs against
+/// opted-in drop-target hit-test (`resolve_drop_target_tag`) runs against
 /// that window's scene. Windows are tried in iteration order; the FIRST that
 /// resolves a drop target wins. Ordering — including any source-window
 /// exclusion or topmost-first preference a live cross-window redock wants — is
@@ -2313,12 +2313,12 @@ pub struct CrossWindowDrop {
 /// declared window order and does not yet exclude the source window; that
 /// refinement lands with the live cross-window redock wiring, not here.)
 ///
-/// Unlike [`InputRouter::resolve_drop_point`], this takes NO hover-tag
+/// Unlike `InputRouter::resolve_drop_point`, this takes NO hover-tag
 /// fallback: a cross-window drop must land on a real opted-in drop region (a
 /// dock zone), never an arbitrary tagged node in another window.
 ///
 /// R1156 — resolution is two-pass: an OUTER-perimeter pass first
-/// ([`resolve_outer_dock_zone`] — a cursor in the outermost [`OUTER_DOCK_MARGIN`]
+/// (`resolve_outer_dock_zone` — a cursor in the outermost [`OUTER_DOCK_MARGIN`]
 /// band of a host window is a FULL-SPAN outer dock, tagged [`OUTER_DOCK_ZONE_TAG`]),
 /// then EXACT containment (a cursor inside an inner drop target). `None` when the
 /// cursor is neither at a perimeter nor inside a panel (the drop floats). (R1155's
@@ -2534,9 +2534,9 @@ fn find_node_with_tag<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
 }
 
 /// R51.62 §5.40 — `pub` so `pinion-shell` can resolve post-layout widget
-/// bounds when lowering [`pinion_a11y::AccessNode`] into
+/// bounds when lowering `pinion_a11y::AccessNode` into
 /// `accesskit::TreeUpdate`; also used by the router's pointer-capture
-/// move ([`InputRouter::dispatch_pointer_move_to`]).
+/// move (`InputRouter::dispatch_pointer_move_to`).
 ///
 /// R705.1 §5.45 §2 #7 — delegates to the single coordinate-translation
 /// authority [`Scene::rect_for_tag_absolute`]. Pre-R705.1 this was a

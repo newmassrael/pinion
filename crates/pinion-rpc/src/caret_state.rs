@@ -2,10 +2,10 @@
 //!
 //! Fifth and final reactive-substrate introspection method, closing
 //! the AI-first observability matrix opened by [`crate::theme`]
-//! (R598/R599), [`crate::animation_state`] (R600),
-//! [`crate::scroll_state`] (R602), [`crate::text_state`] (R603).
+//! (R598/R599), [`crate::animation_state`](fn@crate::animation_state) (R600),
+//! [`crate::scroll_state`](fn@crate::scroll_state) (R602), [`crate::text_state`](fn@crate::text_state) (R603).
 //!
-//! Projects [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink)
+//! Projects [`CaretBlink`]
 //! — the blink phase + the master gate + the canonical phase
 //! period — so AI agents can answer "is the caret on this frame?"
 //! and "is the caret driver running at all?" without snapshotting
@@ -38,7 +38,7 @@
 //! ```
 //!
 //! `params.tag` is **required** — caret blinks are per-field tagged
-//! (matching the [`TextEditState`] tag by convention so the two
+//! (matching the [`TextEditState`](pinion_core::widgets::text_edit::TextEditState) tag by convention so the two
 //! `Owner::cache` slots share a symbolic identifier).
 //!
 //! ## Why both `visible` and `enabled`
@@ -117,7 +117,7 @@ impl CaretStateOutcome {
 /// None. The [`Owner::cache_contains`] gate routes the no-slot case
 /// to [`CaretStateError::NotBound`] so the call never materializes
 /// a phantom blink driver — important because
-/// [`use_caret_blink`] registers the driver with the owner's
+/// [`use_caret_blink`](pinion_core::widgets::caret_blink::use_caret_blink) registers the driver with the owner's
 /// animation tick registry, so a lazy-init by the introspection
 /// path would silently grow the workload.
 pub fn caret_state(

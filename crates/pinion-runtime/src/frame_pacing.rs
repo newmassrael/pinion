@@ -1,8 +1,8 @@
 //! R51.145 §5.28 — per-frame `dt` clamp helper +
 //! R681 §2 #4 atomic 3 — per-window paint policy.
 //!
-//! Both backends ([`pinion_shell::ShellCore`] +
-//! [`pinion_tui::ShellCoreTui`]) measure `dt` from a wall clock
+//! Both backends (`pinion_shell::ShellCore` +
+//! `pinion_tui::ShellCoreTui`) measure `dt` from a wall clock
 //! ([`Instant::now`](std::time::Instant::now)). Wall-clock measurement
 //! is unbounded — a backgrounded app, a sleeping laptop lid, a
 //! debugger breakpoint, the very first paint after a hibernate cycle
@@ -34,7 +34,7 @@
 ///
 /// `1.0 / 30.0` ≈ 33.3ms. See the module doc for the
 /// rationale — this is the longest `dt` the semi-implicit Euler
-/// integrator inside [`pinion_core::animation::SpringState::tick`]
+/// integrator inside `pinion_core::animation::SpringState::tick`
 /// stays numerically well-behaved for.
 pub const MAX_FRAME_DT_SECS: f32 = 1.0 / 30.0;
 
@@ -76,7 +76,7 @@ pub fn clamp_frame_dt(dt: f32) -> f32 {
 const FIXED_TIMESTEP_SUBSTEP_SECS: f32 = 1.0 / 120.0;
 
 /// R830 §5.28 — advance `step_fn` over the WHOLE of `dt` in fixed
-/// [`FIXED_TIMESTEP_SUBSTEP_SECS`] sub-steps, with a partial final step
+/// `FIXED_TIMESTEP_SUBSTEP_SECS` sub-steps, with a partial final step
 /// so the entire delta is consumed and NOTHING is carried. SSOT for the
 /// §5.28 *animation-clock* sub-stepping policy — the `max(0.0)` floor,
 /// the `min` clamp, the `remaining -= step` drain, and the
@@ -91,7 +91,7 @@ const FIXED_TIMESTEP_SUBSTEP_SECS: f32 = 1.0 / 120.0;
 /// integrator stability." The §2 #4 immediate-mode game loop has the
 /// opposite requirement (path-dependent simulations, deferred to the
 /// paint cycle) and uses [`FixedTimestep`] — a true remainder-carrying
-/// accumulator — instead. The shared [`FIXED_TIMESTEP_SUBSTEP_SECS`]
+/// accumulator — instead. The shared `FIXED_TIMESTEP_SUBSTEP_SECS`
 /// constant keeps the two sub-step granularities in lockstep without
 /// conflating the two policies.
 ///
@@ -117,7 +117,7 @@ pub fn substep(dt: f32, mut step_fn: impl FnMut(f32)) {
 /// R831 §2 #4 §5.28 — fixed-timestep accumulator for the immediate-mode
 /// game loop (Glenn Fiedler, "Fix Your Timestep!"). Carries the leftover
 /// simulation time across frames and steps the simulation in EXACTLY
-/// [`FIXED_TIMESTEP_SUBSTEP_SECS`] increments — discarding nothing,
+/// `FIXED_TIMESTEP_SUBSTEP_SECS` increments — discarding nothing,
 /// adding nothing. Contrast [`substep`], which consumes a whole injected
 /// delta with a partial final step and keeps no state.
 ///
@@ -157,7 +157,7 @@ pub fn substep(dt: f32, mut step_fn: impl FnMut(f32)) {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FixedTimestep {
     /// Simulation seconds accumulated but not yet consumed by a whole
-    /// [`FIXED_TIMESTEP_SUBSTEP_SECS`] step. Always in
+    /// `FIXED_TIMESTEP_SUBSTEP_SECS` step. Always in
     /// `[0, FIXED_TIMESTEP_SUBSTEP_SECS)` once [`Self::advance`] returns.
     accumulator: f32,
 }
@@ -193,7 +193,7 @@ impl FixedTimestep {
     /// known fixed-step boundary — the deterministic-debugging contract
     /// (pause snaps to a frame edge, like a debugger breaking between
     /// frames). The discarded remainder is below
-    /// [`FIXED_TIMESTEP_SUBSTEP_SECS`] (< ~8 ms of simulation), beneath
+    /// `FIXED_TIMESTEP_SUBSTEP_SECS` (< ~8 ms of simulation), beneath
     /// any observable threshold.
     pub fn reset(&mut self) {
         self.accumulator = 0.0;
@@ -212,7 +212,7 @@ impl FixedTimestep {
 /// between input-driven (idle) and game-loop (polled) lifecycles for
 /// a window slot.
 ///
-/// `Idle` maps to [`winit::event_loop::ControlFlow::Wait`] — the
+/// `Idle` maps to `winit::event_loop::ControlFlow::Wait` — the
 /// canonical retained-tree GUI semantics every Phase A binding uses.
 /// `Polled { fps }` maps to
 /// [`winit::event_loop::ControlFlow::WaitUntil(last_paint + 1/fps)`]
@@ -311,7 +311,7 @@ pub const DEFAULT_IMMEDIATE_MODE_FPS: u32 = 60;
 
 /// R681 §2 #4 atomic 3 — derive the per-window
 /// [`WindowFramePolicy`] from the substrate signals. Used by the
-/// surface ([`pinion_shell::AppShell::about_to_wait`]) when no
+/// surface (`pinion_shell::AppShell::about_to_wait`) when no
 /// explicit per-window policy has been registered:
 ///
 /// - `has_immediate_mode_subtree = true` →
@@ -319,7 +319,7 @@ pub const DEFAULT_IMMEDIATE_MODE_FPS: u32 = 60;
 /// - `has_immediate_mode_subtree = false` → `Idle`.
 ///
 /// Explicit per-window overrides are stored on the substrate
-/// ([`pinion_shell::ShellCore::set_target_fps_for_window`]) and win
+/// (`pinion_shell::ShellCore::set_target_fps_for_window`) and win
 /// over this default — the convenience surface for binding authors
 /// to opt into 120fps (high-refresh display) or 30fps (battery
 /// saver) without rewriting `WindowFramePolicy` construction.

@@ -83,7 +83,7 @@
 //!
 //! The call neither subscribes the framework's reactive scopes nor
 //! mutates any signal. The `Owner::run` wrap is purely an
-//! `Owner::current()` resolver for [`use_theme`] — the
+//! `Owner::current()` resolver for [`use_theme`](pinion_core::theme::use_theme) — the
 //! [`Owner::cache`](pinion_core::reactive::Owner::cache) slot the
 //! application already populated is reused; no new reactive
 //! computation runs.
@@ -95,7 +95,7 @@ use pinion_core::theme::{
 };
 use serde::Serialize;
 
-/// Default cache tag the [`use_theme`] hook uses across every
+/// Default cache tag the [`use_theme`](pinion_core::theme::use_theme) hook uses across every
 /// `examples/hello-*` binary and the canonical application
 /// convention. Used when the JSON-RPC request omits `params.tag`.
 pub const DEFAULT_THEME_TAG: &str = "app";
@@ -195,12 +195,12 @@ pub struct ThemeTokensOutcome {
 ///   not registered on the dispatch context.
 /// - [`ThemeTokensError::NotBound`] — the owner has no
 ///   [`ThemeProvider`] cached under `tag`. The application typically
-///   binds it on the first view-fn run via [`use_theme`].
+///   binds it on the first view-fn run via [`use_theme`](pinion_core::theme::use_theme).
 ///
 /// # Side effects
 ///
 /// None. The call wraps an [`Owner::run`] scope only so the
-/// [`use_theme`] hook can resolve [`Owner::current`]; no new
+/// [`use_theme`](pinion_core::theme::use_theme) hook can resolve [`Owner::current`]; no new
 /// [`Owner::cache`] entry is inserted because the
 /// [`Owner::cache_contains`] gate above this call returns early
 /// when the slot is empty. No signal is read inside an active
@@ -312,7 +312,7 @@ fn color_to_hex(color: Color) -> String {
 /// surface across every R608+ setter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetThemeModeParams<'a> {
-    /// Cache tag the [`use_theme`] lookup resolves against. [`None`]
+    /// Cache tag the [`use_theme`](pinion_core::theme::use_theme) lookup resolves against. [`None`]
     /// → [`DEFAULT_THEME_TAG`] (`"app"`).
     ///
     /// R619 §5.50 — `tag` field moved to first position to match the
