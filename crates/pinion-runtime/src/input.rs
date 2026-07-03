@@ -269,7 +269,7 @@ pub struct InputRouter {
     hover_targets: HashMap<PointerId, String>,
     /// R51.34 §5.35 + R51.38 §5.35 — per-pointer capture-lock map:
     /// tag of the widget each pointer claimed on its most recent
-    /// `pointer_down` via [`External::wants_pointer_capture`]. While
+    /// `pointer_down` via [`External::wants_pointer_capture`](pinion_core::External::wants_pointer_capture). While
     /// an entry is present, every
     /// [`cursor_moved`](Self::cursor_moved) for that pointer skips
     /// [`refresh_hover`](Self::refresh_hover) and forwards the
@@ -286,15 +286,15 @@ pub struct InputRouter {
     /// capture.
     captured_targets: HashMap<PointerId, String>,
     /// R51.40 §5.35 — per-pointer cached
-    /// [`External::wants_pointer_capture`] flag for the widget under
+    /// [`External::wants_pointer_capture`](pinion_core::External::wants_pointer_capture) flag for the widget under
     /// the corresponding `hover_targets` entry. Refreshed in the
-    /// same hover walk as [`refresh_hover`], so [`pointer_down`]
+    /// same hover walk as [`refresh_hover`](InputRouter::refresh_hover), so [`pointer_down`](InputRouter::pointer_down)
     /// reads a bit instead of re-walking the scene tree. The cache
     /// stays consistent with the hover lifecycle: dropped when a
     /// pointer's hover clears, replaced when it moves between
     /// tagged widgets, never read while capture is in flight (the
     /// `captured_targets` map already pins the answer for that
-    /// pointer). Relies on [`External::wants_pointer_capture`]
+    /// pointer). Relies on [`External::wants_pointer_capture`](pinion_core::External::wants_pointer_capture)
     /// being effectively constant per widget instance — the
     /// documented industry precedent (Button=false, Slider=true)
     /// and pinion's own widget catalog all return static bools.
@@ -367,7 +367,7 @@ pub struct InputRouter {
     pan_gestures: HashMap<PointerId, PanGesture>,
     /// R881.1 §5.35 — per-pointer wheel-side sub-pixel remainder (the
     /// stage-2 carry of [`dispatch_wheel_two_stage`]). Keyed to the
-    /// scroll container it accumulated against via a [`Weak`] handle:
+    /// scroll container it accumulated against via a [`Weak`](std::rc::Weak) handle:
     /// the carry resets when the pointer's resolved scroll target
     /// changes (a remainder must never leak across containers — Qt's
     /// accumulator discipline) and drops with the cursor on
@@ -2074,9 +2074,9 @@ impl InputRouter {
     /// enter / leave streams.
     ///
     /// R51.40 §5.35: the new target's
-    /// [`External::wants_pointer_capture`] is queried in the same
+    /// [`External::wants_pointer_capture`](pinion_core::External::wants_pointer_capture) is queried in the same
     /// pass and cached in `hover_wants_capture` so the next
-    /// [`pointer_down`] reads a bit instead of re-walking the
+    /// [`pointer_down`](InputRouter::pointer_down) reads a bit instead of re-walking the
     /// state-scene tree.
     fn refresh_hover(&mut self, id: PointerId, state_scene: &mut Scene) {
         let now = match (self.cursors.get(&id), &self.last_paint_scene) {
@@ -2505,7 +2505,7 @@ fn resolve_drag_targets(
 /// (R1124 §5.51 PR-33) True when own-window drop target `own_tag` is a SELF-DROP
 /// for a drag whose source is the FULL paint tag `source_tag` — i.e. `own_tag` is
 /// that source node itself or lives inside its subtree. Used by
-/// [`InputRouter::resolve_own_drop_excluding_source`] so a floating panel's own
+/// `InputRouter::resolve_own_drop_excluding_source` so a floating panel's own
 /// header / content drop targets do not mask a cross-window redock.
 ///
 /// The discriminator is the FULL `source_tag` (e.g. `properties#header`), NOT its
@@ -2731,7 +2731,7 @@ fn widget_wants_capture(state_scene: &Scene, target_tag: &str) -> bool {
     widget_wants_capture_walk(state_scene, primary).unwrap_or(false)
 }
 
-/// R741 §5.35 — resolve [`External::cancel_on_release_off_target`] for
+/// R741 §5.35 — resolve [`External::cancel_on_release_off_target`](pinion_core::External::cancel_on_release_off_target) for
 /// the external registered at `target_tag`'s primary half. `false` when
 /// the tag is not found or the widget keeps the drag-commit default.
 fn widget_cancels_on_release_off(state_scene: &Scene, target_tag: &str) -> bool {
@@ -2815,7 +2815,7 @@ pub use pinion_core::event::LINE_HEIGHT_PX;
 const LINE_HEIGHT_PX_I32: i32 = 16;
 
 /// (R51.186 §5.45 R55.C.2, fractional since R877) Convert a unit-tagged
-/// [`WheelDelta`](pinion_core::event::WheelDelta) into a `(dx, dy)`
+/// [`WheelDelta`] into a `(dx, dy)`
 /// logical-pixel pair: `Pixels` route through verbatim, `Lines`
 /// multiply by [`LINE_HEIGHT_PX`]. Kept at `f32` so a trackpad's
 /// sub-pixel deltas reach an

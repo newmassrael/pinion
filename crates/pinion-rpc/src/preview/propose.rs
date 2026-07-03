@@ -6,7 +6,7 @@
 //! introspection.
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) lives in
-//! [`crate::dispatch`]; this module exposes the typed dispatcher only.
+//! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher only.
 
 use std::time::{Duration, Instant};
 

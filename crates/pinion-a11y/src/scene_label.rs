@@ -103,7 +103,7 @@ fn find_container_by_tag<'s>(
 }
 
 /// DFS pre-order over `scene`, returning the `content` of the first
-/// [`Scene::Text`] reached whose [`TextNode::role`] is not
+/// [`Scene::Text`] reached whose `TextNode::role` is not
 /// [`pinion_core::scene::TextRole::Presentational`].
 ///
 /// R51.81 §5.40 — pre-R51.81 the pass returned the *first* text
@@ -141,7 +141,7 @@ fn first_line(s: &str) -> &str {
 
 /// Re-entry helper that walks the children slice of a borrowed
 /// container without forcing it through `Scene::Container`.
-/// [`ContainerNode`] does not implement `Clone` (its `ExternalNode`
+/// [`ContainerNode`](pinion_core::scene::ContainerNode) does not implement `Clone` (its `ExternalNode`
 /// children carry a `Box<dyn External>` with no generic clone
 /// strategy per scene.rs), so [`first_text_leaf`] cannot be reached
 /// directly from a `&ContainerNode` borrow — this walks the

@@ -21,7 +21,7 @@
 //! The `send`-wire pointer-event vocabulary
 //! ([`PointerWireEvent`](crate::input::PointerWireEvent)) that those
 //! same command-class widgets decode lives in
-//! [`crate::input`](crate::input) — it is shared with the
+//! [`crate::input`] — it is shared with the
 //! `pinion-runtime` router (the producer) and so belongs with the other
 //! cross-crate input-event primitives, not in this widget-only module
 //! (R773 §5.35).

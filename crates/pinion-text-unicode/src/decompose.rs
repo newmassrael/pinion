@@ -52,7 +52,7 @@ fn lookup_decomp_trie(
 /// Sparse supplementary-plane fallback for [`lookup_decomp_trie`].
 ///
 /// R50.2.13 — kept `#[inline(never)]` for the same reason as
-/// [`crate::ordering::combining_class_supplementary`] (R50.2.12
+/// `combining_class_supplementary` (R50.2.12
 /// asm-driven split): folding the `binary_search_by_key` IR back
 /// into [`lookup_decomp_trie`] would inflate the hot path past the
 /// LLVM inline threshold, breaking inlining into the per-character

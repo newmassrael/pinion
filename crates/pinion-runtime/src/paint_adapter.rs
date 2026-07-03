@@ -1871,11 +1871,11 @@ fn paint_cell_synthesis(
 /// while the grid stayed paint-opaque; this arm makes it visible.
 ///
 /// Cells are placed by the node-local
-/// [`CellMetric`](pinion_core::cell_metric::CellMetric) (R968 ratify) and
+/// [`CellMetric`] (R968 ratify) and
 /// painted in **two grid-wide passes** — all backgrounds, then all glyphs:
 ///
-/// 1. **Background** — the cell's `bg` [`TermColor`](pinion_core::term_grid::TermColor),
-///    resolved through the node [`Palette`](pinion_core::term_grid::Palette)
+/// 1. **Background** — the cell's `bg` [`TermColor`],
+///    resolved through the node [`Palette`]
 ///    ([`ColorTarget::Background`]), fills the whole cell. A
 ///    [`CellWidth::Trailer`] carries the wide head's colours (R976), so
 ///    filling every cell's own `bg` paints the head background across both
@@ -2372,7 +2372,7 @@ fn to_kurbo_cap(cap: StrokeCap) -> KurboCap {
 /// stream is a no-op. Issued into the caller's fresh sub-scene before
 /// any child `append`, preserving the R706 "out receives appends only"
 /// invariant.
-/// R740 §5.16 — paint a [`Scene::Image`](pinion_core::scene::Scene::Image)
+/// R740 §5.16 — paint a [`Scene::Image`]
 /// leaf. Resolves `node.source` through the decode-once
 /// [`ImageCache`] (a missing / undecodable source paints nothing — the
 /// same graceful skip the pre-R740 no-op gave, but only for genuinely
@@ -2622,14 +2622,14 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
     );
 }
 
-/// Emit one Vello glyph run per parley [`GlyphRun`] shaped from
+/// Emit one Vello glyph run per parley [`GlyphRun`](pinion_text::parley::GlyphRun) shaped from
 /// `t.content` + `t.style` (R47.3 §5.36 + R47.6 Figma-fidelity wire).
 ///
 /// The text origin is `(t.rect.x, t.rect.y)`; `t.rect.w > 0` wraps at
 /// that pixel width, `w == 0` flows on a single unbounded line.
 ///
 /// R47.6 decoration: when [`TextStyle::decoration`] enables underline
-/// or strikethrough, parley populates each [`GlyphRun`]'s style with a
+/// or strikethrough, parley populates each [`GlyphRun`](pinion_text::parley::GlyphRun)'s style with a
 /// `Decoration<Color>`. We stroke a horizontal [`Line`] at the
 /// font-metric-derived offset spanning the run's advance.
 ///
@@ -2654,7 +2654,7 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
 ///   multiplied line height moves parley's baseline by leading the arm does not
 ///   model;
 /// - **undecorated** — underline / strikethrough are not drawn by the arm;
-/// - **not caret-bearing** — an editable [`TextField`] derives its caret /
+/// - **not caret-bearing** — an editable [`TextField`](pinion_core::widgets::text_field::TextField) derives its caret /
 ///   selection / hit-test geometry from a separate parley shaping
 ///   ([`TextNode::caret_bearing`](pinion_core::scene::TextNode::caret_bearing)),
 ///   so the arm must not re-shape it (R1072 / R1070.1 caret contract).
@@ -2853,7 +2853,7 @@ fn paint_text(
 }
 
 /// R47.6 — emit underline + strikethrough strokes for one parley
-/// [`GlyphRun`]. Each decoration is a horizontal line at the
+/// [`GlyphRun`](pinion_text::parley::GlyphRun). Each decoration is a horizontal line at the
 /// font-metric-derived offset spanning the run advance; the brush is
 /// the run's foreground colour (matching parley's `Decoration.brush`
 /// default).

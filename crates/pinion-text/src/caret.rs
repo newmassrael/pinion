@@ -227,7 +227,7 @@ pub fn selection_rects_for_range(
 ///
 /// ## Why goal-column lives here, not inside the parley `Selection`
 ///
-/// parley's [`Selection`](parley::Selection) carries its own `h_pos`
+/// parley's [`Selection`] carries its own `h_pos`
 /// and threads it through consecutive [`move_lines`](parley::Selection::move_lines)
 /// calls. pinion's caret is a geometry-free byte offset reshaped each
 /// frame, so a fresh `Selection::from_byte_index` is built every call
@@ -422,7 +422,7 @@ pub fn logical_line_span(metrics: &[VisualLineMetric], caret_y: f32) -> Option<(
 /// R1077 §5.36 §5.37 — the shaper-agnostic caret / hit-test / line-metric
 /// surface a [`TextField`](pinion_core::widgets::text_field) reads, so the
 /// editable-text geometry stops naming one concrete shaper. parley
-/// ([`Layout`](crate::Layout)) is the first implementor; the self-hosted
+/// ([`Layout`]) is the first implementor; the self-hosted
 /// §5.37 engine is the second (a `SelfHostedLayout` wrapper in
 /// `pinion-runtime`, the crate that sees both shapers). The free functions
 /// in this module ([`caret_rect_for_byte_offset`] etc.) are thin generic

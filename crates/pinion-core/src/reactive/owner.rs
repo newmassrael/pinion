@@ -1364,8 +1364,8 @@ impl Drop for OwnerStackGuard {
 
 /// R51.146 §5.22 — RAII guard for the `CURRENT_OWNER_HANDLE` stack
 /// mirroring [`OwnerStackGuard`]. Pushed only by [`Owner::run`]; the
-/// internal [`run_with_node`] path (used by [`Computed::recompute`] /
-/// [`Effect::recompute`]) leaves this stack untouched, so
+/// internal [`run_with_node`] path (used by [`Computed::recompute`](crate::reactive::Computed::recompute) /
+/// `Effect::recompute`) leaves this stack untouched, so
 /// [`Owner::current`] inside derived-node bodies still resolves to the
 /// enclosing application scope.
 struct OwnerHandleGuard;

@@ -106,7 +106,7 @@ pub struct RowSearchState {
     tag: Option<&'static str>,
     /// Row-major source cells — `cells[row][col]`. Materialized once; a row
     /// shorter than `col_count` reads `""` for the missing cells (the same
-    /// blank-cell tolerance the paint layer and [`GridSortState`] apply).
+    /// blank-cell tolerance the paint layer and [`GridSortState`](crate::widgets::grid_sort::GridSortState) apply).
     cells: Vec<Vec<String>>,
     col_count: usize,
     /// Active search query (a [`GridFilter`] predicate; `None` = no search).

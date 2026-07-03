@@ -288,7 +288,7 @@ pub fn view_flex_virtual_list(
 /// seed `viewport` is `0 × 0` — the layout pass overwrites it with the
 /// flex-computed rect via `assign_rect` — so the only thing that matters
 /// pre-layout is the `flex_grow` sidecar. The cross-axis stretches via
-/// the parent's default [`AlignItems::Stretch`], giving the list its
+/// the parent's default [`AlignItems::Stretch`](pinion_core::AlignItems::Stretch), giving the list its
 /// full width.
 /// (R775 `pub(crate)` for the flex-virtual *table* body) Wrap windowed
 /// `slots` in the sizer + content-root shape, then in a **flex-grow**
@@ -339,7 +339,7 @@ pub(crate) fn positioned_slot(row: Scene, width: u32, top: u32, height: u32) -> 
 /// the layout-pass harvest.
 ///
 /// Tagged `measured-row:<index>` (the
-/// [`measured_row_tag`](pinion_core::widgets::measured_rows::measured_row_tag)
+/// [`measured_row_tag`]
 /// SSOT) so the harvest keys the height by row. Contrast [`positioned_slot`],
 /// which fixes *both* dimensions: a fixed-height slot would clamp the row and
 /// the harvest could only ever read back the height it was handed, so a

@@ -114,7 +114,7 @@ pub struct ScrollState {
     /// `None` for states constructed via [`Self::new`] directly
     /// (test fixtures, manual wiring) — the matching `ScrollNode`
     /// then carries no tag unless the caller chains
-    /// [`ScrollNode::with_tag`] explicitly.
+    /// [`ScrollNode::with_tag`](crate::scene::ScrollNode::with_tag) explicitly.
     tag: Option<&'static str>,
 }
 

@@ -141,7 +141,7 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// the next paint.
     ///
     /// Wrapped in [`Cell`] so the accessor keeps its `&self` shape —
-    /// the surface's [`crate::shell::commit_paint`] takes the
+    /// the surface's `commit_paint` takes the
     /// substrate by shared borrow (`&ShellCoreTui<V>`) and the
     /// borrow rules of `&mut` would force every call site to re-thread
     /// a mutable reference through paths that otherwise stay sync.
@@ -722,7 +722,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// queued through [`CoreShell::dispatch_pending_commands`]. With
     /// no executor installed the drain is a no-op; with an executor
     /// installed (the `run_with_handlers` entry point) the resolved
-    /// [`Intent`]s travel back through the [`MpscIntentSink`] for
+    /// [`Intent`]s travel back through the [`MpscIntentSink`](crate::MpscIntentSink) for
     /// `try_recv` drain in the shell's event loop. Unhandled kinds
     /// route through the same [`Self::log_sink`] (so the
     /// alternate-screen safety carries — no stderr writes).
@@ -773,7 +773,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         state_changed || focus_changed || modal_changed
     }
 
-    /// R670 §5.41 §5.39 — fire [`External::on_focus_change`] on the
+    /// R670 §5.41 §5.39 — fire [`External::on_focus_change`](pinion_core::External::on_focus_change) on the
     /// blur side (old focused tag) and the focus side (new focused
     /// tag) when [`Self::focus`] just transitioned.
     ///

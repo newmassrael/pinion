@@ -73,7 +73,7 @@ use pinion_text::{
 };
 
 /// (R657 §5.16) Owner-cache key for the shared
-/// [`LayoutCache`](pinion_text::LayoutCache). The pre-lift bindings
+/// [`LayoutCache`]. The pre-lift bindings
 /// each used `"hello_textfield.layout_cache"` (todomvc copied
 /// verbatim from hello-textfield) — the lifted helper unifies on a
 /// single framework-scoped key so the `LayoutCache` instance is shared
@@ -560,9 +560,9 @@ fn push_bracket_outline(
 ///
 /// This is a pure fixpoint (after scrolling the caret to an edge it sits
 /// inside the window, so a second evaluation is a no-op), which is why
-/// the paint view fn can run it against the [`ScrollState`] offset and
+/// the paint view fn can run it against the [`ScrollState`](pinion_core::widgets::scroll::ScrollState) offset and
 /// converge in at most one extra render. The *previous* offset is the
-/// stored [`ScrollState`] Signal — the single source the hit-test and
+/// stored [`ScrollState`](pinion_core::widgets::scroll::ScrollState) Signal — the single source the hit-test and
 /// IME helpers read back, so they agree with the painted scroll without
 /// recomputation.
 fn scroll_into_view(

@@ -21962,6 +21962,50 @@
         "Campaign lessons durable in [[doc-hygiene-campaign]]; the campaign was build-integrity HYGIENE (not Phase A-D north-star progress) -- the lasting structural value is the R1214 gate. Next = Phase-B value-order slice ([[phase-b-substrate-roadmap]])."
       ]
     },
+    "R1216": {
+      "decision_summary": "R1216 doc-truth remediation phase 1: fixed the hidden layer of ~149 broken intra-doc links in PRIVATE-item docs across 11 lib crates (invisible to the public-items gate).",
+      "changes_bullets": [
+        "Fixed broken links in PRIVATE-item (`///`/`//!` on non-`pub` items) docs -- rustdoc only checks these under --document-private-items, so the normal cargo doc (and the R1214 gate) never saw them. 11 crates, 29 files: shell 39 / derive 27 / runtime 24 / rpc 19 / core 12 / widget-paint 12 / tui 6 / a11y 3 / text 3 / forge 2 / text-unicode 2 -> all 0.",
+        "Load-bearing rule: under --document-private-items a PRIVATE METHOD on a public type IS linkable by full path, but a private FREE FN or a struct FIELD is not -> those become code spans. Reachable -> working links (incl. cross-module private methods); non-dep-crate / nonexistent / fields -> code spans; redundant -> shortcuts; fn/mod ambiguity -> fn@/mod@.",
+        "Also surfaced more wrong-NAME spans en route (compute_access_emit refactored to plan_/commit_access_emit; CoreShell::mouse_*_for_window typo -> ShellCore::) -- the ones needing a rename judgment are deferred to the R1217 code-span round.",
+        "Delegated to one subagent; doc comments only, no code/Cargo.toml/lints."
+      ],
+      "verification_bullets": [
+        "Per-crate cargo doc -p <crate> --no-deps --document-private-items = 0 errors for all 11 (was ~149).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0.",
+        "PUBLIC-items cargo doc --workspace --no-deps = still 0 (no regression of the R1207-R1215 work).",
+        "Independently verified (not self-report): botch-grep (doubled-target + dangling) NONE across all crate src; only doc-comment lines changed (29 files); tests pass."
+      ],
+      "impact_refs": [
+        "5.16",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "DOC-TRUTH REMEDIATION ([[doc-hygiene-campaign]]): R1216 fixed lib-crate private-item LINKS. Remaining: R1217 = code-span WRONG NAMES (~12: compute_access_emit->commit_access_emit, handle_touch->handle_touch_for_window, AriaRole::Option->ListBoxOption, window_resizable->with_resizable confirmed; Scene::VirtualList / Scene::draw_blurred_rounded_rect / Owner::cleanup queue are CONCEPT refs to reword not rename; refresh_state/with_last_paint_layout/try_recv/forward_event/dispatch_pointer_move_to/resolve_preview/build_spec need per-site read) -- rustdoc CANNOT gate spans, so this is a one-time manual pass. R1218 = examples private-item links (--document-private-items). R1219 = FINAL: upgrade the R1214 gate to `cargo doc --workspace --no-deps --document-private-items` so the private layer is gated forever (the blind spot that let this accrete).",
+        "KEY STRUCTURAL FINDING: the R1214 gate checked PUBLIC items only; private-item links were an ungated blind spot. R1219 closes it. Code SPANS remain permanently ungateable (rustdoc never checks them) -> doc-span truth is a periodic manual audit, not a gate."
+      ],
+      "publishable_decision_summary": "R1216 doc-truth remediation phase 1: fixed the hidden layer of ~149 broken intra-doc links in PRIVATE-item docs across 11 lib crates (invisible to the public-items gate).",
+      "publishable_changes_bullets": [
+        "Fixed broken links in PRIVATE-item (`///`/`//!` on non-`pub` items) docs -- rustdoc only checks these under --document-private-items, so the normal cargo doc (and the R1214 gate) never saw them. 11 crates, 29 files: shell 39 / derive 27 / runtime 24 / rpc 19 / core 12 / widget-paint 12 / tui 6 / a11y 3 / text 3 / forge 2 / text-unicode 2 -> all 0.",
+        "Load-bearing rule: under --document-private-items a PRIVATE METHOD on a public type IS linkable by full path, but a private FREE FN or a struct FIELD is not -> those become code spans. Reachable -> working links (incl. cross-module private methods); non-dep-crate / nonexistent / fields -> code spans; redundant -> shortcuts; fn/mod ambiguity -> fn@/mod@.",
+        "Also surfaced more wrong-NAME spans en route (compute_access_emit refactored to plan_/commit_access_emit; CoreShell::mouse_*_for_window typo -> ShellCore::) -- the ones needing a rename judgment are deferred to the R1217 code-span round.",
+        "Delegated to one subagent; doc comments only, no code/Cargo.toml/lints."
+      ],
+      "publishable_verification_bullets": [
+        "Per-crate cargo doc -p <crate> --no-deps --document-private-items = 0 errors for all 11 (was ~149).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0.",
+        "PUBLIC-items cargo doc --workspace --no-deps = still 0 (no regression of the R1207-R1215 work).",
+        "Independently verified (not self-report): botch-grep (doubled-target + dangling) NONE across all crate src; only doc-comment lines changed (29 files); tests pass."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-TRUTH REMEDIATION ([[doc-hygiene-campaign]]): R1216 fixed lib-crate private-item LINKS. Remaining: R1217 = code-span WRONG NAMES (~12: compute_access_emit->commit_access_emit, handle_touch->handle_touch_for_window, AriaRole::Option->ListBoxOption, window_resizable->with_resizable confirmed; Scene::VirtualList / Scene::draw_blurred_rounded_rect / Owner::cleanup queue are CONCEPT refs to reword not rename; refresh_state/with_last_paint_layout/try_recv/forward_event/dispatch_pointer_move_to/resolve_preview/build_spec need per-site read) -- rustdoc CANNOT gate spans, so this is a one-time manual pass. R1218 = examples private-item links (--document-private-items). R1219 = FINAL: upgrade the R1214 gate to `cargo doc --workspace --no-deps --document-private-items` so the private layer is gated forever (the blind spot that let this accrete).",
+        "KEY STRUCTURAL FINDING: the R1214 gate checked PUBLIC items only; private-item links were an ungated blind spot. R1219 closes it. Code SPANS remain permanently ungateable (rustdoc never checks them) -> doc-span truth is a periodic manual audit, not a gate."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

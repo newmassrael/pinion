@@ -1,7 +1,7 @@
 //! `scene/list_previews` typed dispatcher (§5.34 R40.3).
 //!
 //! Read-only snapshot of every active preview entry. Transport
-//! (JSON-RPC 2.0 framing per §5.7) lives in [`crate::dispatch`]; this
+//! (JSON-RPC 2.0 framing per §5.7) lives in [`crate::dispatch`](fn@crate::dispatch); this
 //! module exposes the typed dispatcher only so the same logic is
 //! reusable from non-JSON-RPC carriers.
 

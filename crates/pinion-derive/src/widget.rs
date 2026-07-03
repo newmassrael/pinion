@@ -1,22 +1,22 @@
 //! R641 §5.16 — `#[pinion::widget]` attribute macro.
 //!
-//! Lifts the mechanical wiring of the [`WidgetCore`] / [`WidgetA11y`] /
-//! [`WidgetView`] supertrait chain into a single attribute attached to
+//! Lifts the mechanical wiring of the `WidgetCore` / `WidgetA11y` /
+//! `WidgetView` supertrait chain into a single attribute attached to
 //! the widget unit struct, leaving the widget-specific logic
 //! (`read_state` / `event_name` / `view`) as inherent methods the macro
 //! forwards into. R642 §5.16 added the declarative `role` +
 //! `state_flags(...)` attributes that auto-derive the single-node
-//! [`WidgetA11y::access_node`] body for the 80 % case (`Button`-shaped
-//! widgets — see [`crate::widget`] module docs for the variant table),
+//! `WidgetA11y::access_node` body for the 80 % case (`Button`-shaped
+//! widgets — see [`crate::widget`](mod@crate::widget) module docs for the variant table),
 //! leaving the inherent fn path open as the escape hatch for
 //! composite widgets (`RadioGroup`, `Listbox`).
 //!
 //! ## Why an attribute macro, not three derives
 //!
 //! The three traits are intentionally split across crates so a TUI
-//! binding can replace [`WidgetView`] (Vello-bound) with
-//! [`WidgetViewTui`] (ratatui-bound) without losing the shared
-//! [`WidgetCore`] + [`WidgetA11y`] surface. Three separate `#[derive(...)]`
+//! binding can replace `WidgetView` (Vello-bound) with
+//! `WidgetViewTui` (ratatui-bound) without losing the shared
+//! `WidgetCore` + `WidgetA11y` surface. Three separate `#[derive(...)]`
 //! macros would force the author to repeat the binding identity
 //! (`tag` / `state` / `event` / `external` / `title`) on each derive
 //! attribute. One attribute on the struct collapses that surface and
@@ -32,18 +32,18 @@
 //!
 //! ## Required attributes
 //!
-//! - `tag = "main_btn"` — paint-side dispatch tag the [`InputRouter`]
-//!   hit-tests against. Returned from [`WidgetCore::tag`].
-//! - `state = ButtonState` — [`WidgetCore::State`] associated type.
-//! - `event = ButtonEvent` — [`WidgetCore::Event`] associated type.
+//! - `tag = "main_btn"` — paint-side dispatch tag the `InputRouter`
+//!   hit-tests against. Returned from `WidgetCore::tag`.
+//! - `state = ButtonState` — `WidgetCore::State` associated type.
+//! - `event = ButtonEvent` — `WidgetCore::Event` associated type.
 //! - `title = "Hello Button"` — OS window title. Returned from
-//!   [`WidgetCore::title`].
-//! - `renderer = HelloButtonRenderer` — [`WidgetView::Renderer`]
+//!   `WidgetCore::title`.
+//! - `renderer = HelloButtonRenderer` — `WidgetView::Renderer`
 //!   associated type (pinion-forge-emitted Vello renderer struct).
 //! - `initial_size = (W, H)` — logical-pixel default window size.
-//!   Returned from [`WidgetView::initial_size`].
+//!   Returned from `WidgetView::initial_size`.
 //! - `external = ButtonExternal::new` — factory expression invoked
-//!   inside [`WidgetCore::create_external`] (`Box::new(<expr>())`).
+//!   inside `WidgetCore::create_external` (`Box::new(<expr>())`).
 //!
 //! ## Required inherent methods
 //!
@@ -69,7 +69,7 @@
 //!
 //! - **Declarative path (80 %)** — supply `role = <AriaRole>` plus an
 //!   optional `state_flags(...)` clause; the macro derives a
-//!   single-node [`WidgetA11y::access_node`] body that matches the
+//!   single-node `WidgetA11y::access_node` body that matches the
 //!   `Button`-shaped widgets surveyed in the R642 audit
 //!   (`hello-button` / `figma-button-m3` / future `Slider` /
 //!   `TextInput`). No inherent `fn access_node` is required when the
@@ -83,11 +83,11 @@
 //!
 //! ## Optional `role` / `state_flags` derive (R642)
 //!
-//! `role` selects the [`AriaRole`] variant the derived node carries
+//! `role` selects the `AriaRole` variant the derived node carries
 //! (`Button`, `Switch`, `CheckBox`, `Slider`, `TextInput`,
 //! `RadioButton` — single-node roles).
 //!
-//! `state_flags(...)` declares the state-variant → [`AccessState`]
+//! `state_flags(...)` declares the state-variant → `AccessState`
 //! bool-flag mapping. Each entry is `flag = Variant` where `flag` is
 //! one of `hovered` / `pressed` / `disabled` / `checked` / `expanded`
 //! and `Variant` is a bare unit-variant ident of `Self::State`:
@@ -147,11 +147,8 @@
 //! | -------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 //! | `apply_key`          | `false` (no key handled)              | ARIA Space/Enter activation, Arrow keys, custom keys                                                          |
 //! | `keybinding`         | `None` (no character-key mapping)     | Single-char shortcuts mapping to `Self::Event`                                                                |
-//! | `state_name_derive`  | forward to inherent `fn read_state` + `fn event_name` (R641) | Enum-shaped `Self::State` + `Self::Event` with [`WidgetStateName`] + [`WidgetEventName`] impls (R643) |
+//! | `state_name_derive`  | forward to inherent `fn read_state` + `fn event_name` (R641) | Enum-shaped `Self::State` + `Self::Event` with `WidgetStateName` + `WidgetEventName` impls (R643) |
 //! | `update`             | `Vec::new()` (no reducer side effects) | R27 reducer that turns SCXML intents into `Command`s — Toggle / Theme flip the palette here (R653)             |
-//!
-//! [`WidgetStateName`]: pinion_core::WidgetStateName
-//! [`WidgetEventName`]: pinion_core::WidgetEventName
 //!
 //! ## Example
 //!
@@ -184,15 +181,6 @@
 //!         modifiers: Modifiers) -> bool { /* ... */ }
 //! }
 //! ```
-//!
-//! [`InputRouter`]: pinion_core::scene
-//! [`WidgetCore`]: pinion_core::WidgetCore
-//! [`WidgetA11y`]: pinion_a11y::WidgetA11y
-//! [`WidgetA11y::access_node`]: pinion_a11y::WidgetA11y::access_node
-//! [`WidgetView`]: pinion_shell::WidgetView
-//! [`WidgetViewTui`]: pinion_tui::WidgetViewTui
-//! [`AriaRole`]: pinion_a11y::AriaRole
-//! [`AccessState`]: pinion_a11y::AccessState
 
 use std::collections::HashSet;
 
@@ -208,17 +196,17 @@ use syn::{
 /// R644 §5.16 — source form of the `tag = X` attribute.
 ///
 /// `LitStr` keeps the R641 literal form (`tag = "main_btn"`) so
-/// bindings that have not adopted the [`WidgetTag`](pinion_core::WidgetTag)
+/// bindings that have not adopted the `WidgetTag`
 /// derive yet compile unchanged. `Path` accepts an enum variant
 /// (`tag = Tags::MainBtn`) and emits `<Path as ::pinion_core::WidgetTag>::as_tag(&Path)`
-/// as the [`WidgetCore::tag`](pinion_core::WidgetCore::tag) body so
+/// as the `WidgetCore::tag` body so
 /// every site references the single source of truth.
 enum TagSource {
     Lit(LitStr),
     Path(ExprPath),
 }
 
-/// Entry point for [`crate::widget`]. Parses the attribute and the
+/// Entry point for [`crate::widget`](macro@crate::widget). Parses the attribute and the
 /// item, then assembles the three forwarding trait impls.
 pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
     let args: WidgetArgs = syn::parse2(attr)?;
@@ -456,24 +444,19 @@ fn emit_optional_forwards(
     out
 }
 
-/// R642 §5.16 — emit the [`WidgetA11y`] impl. Two paths:
+/// R642 §5.16 — emit the `WidgetA11y` impl. Two paths:
 ///
 /// - When `role` is supplied → emit a derived single-node body using
 ///   the declarative `state_flags(...)` mapping (80 % case). No
 ///   inherent `fn access_node` required on the unit struct. R645
 ///   extended this to tuple state types `(StateEnum, ValueT)` —
 ///   the macro auto-extracts the first tuple element as the enum
-///   to match against, so [`Slider`] / [`TextField`] / [`Toggle`]
+///   to match against, so `Slider` / `TextField` / `Toggle`
 ///   class widgets get the same declarative form without manual
 ///   tuple-destructuring boilerplate.
 /// - When `role` is absent → forward to `<#view_ident>::access_node`,
 ///   preserving R641 behaviour for composite widgets that need the
 ///   inherent escape hatch (`RadioGroup`, `Listbox`).
-///
-/// [`WidgetA11y`]: pinion_a11y::WidgetA11y
-/// [`Slider`]: pinion_a11y::AriaRole::Slider
-/// [`TextField`]: pinion_a11y::AriaRole::TextInput
-/// [`Toggle`]: pinion_a11y::AriaRole::Switch
 fn emit_a11y_impl(
     view_ident: &Ident,
     state: &Type,
@@ -646,7 +629,7 @@ struct StateFlagsConfig {
     /// `bool_field(N)`); the canonical disclosure shape is
     /// `(DisclosureState, bool)` so the usual spelling is
     /// `expanded = bool_field(1)`. Maps to
-    /// [`AccessNode::expanded`](pinion_a11y::node::AccessNode::expanded),
+    /// `AccessNode::expanded`,
     /// a distinct axis from `checked` (see that field's docs).
     expanded: Option<StateFlagSource>,
 }

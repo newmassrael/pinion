@@ -1087,7 +1087,7 @@ pub(crate) struct SplitPane {
 /// publisher would cause.
 ///
 /// Shared by the frozen-column **data-grid** ([`GridRender::render_frozen`],
-/// R859) and the **tree-grid** ([`view_virtual_treegrid`], R860): both feed
+/// R859) and the **tree-grid** ([`view_virtual_treegrid`](crate::tree_view::view_virtual_treegrid), R860): both feed
 /// pre-built slots (data rows vs tree-cell rows), so the linked-scroll
 /// follower wiring + the fixed-width/flex-grow pane geometry are one source
 /// of truth (a divergence would mis-scroll one of the two — R758

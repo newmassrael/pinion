@@ -161,7 +161,7 @@ pub struct CoreShell<V: WidgetCore> {
     /// Backends (Vello, TUI) call [`Self::tick_animations`] once per
     /// paint cycle with the measured `dt` so the spring solver advances
     /// in lockstep with the frame budget. On `CoreShell` drop the owner
-    /// drops too — every animation and pending [`Command`](pinion_core::Command)
+    /// drops too — every animation and pending [`Command`]
     /// scoped to this binding evaporates with it (Solid cancellation
     /// pattern; matches the [`Owner`] drop semantics R51.137 +
     /// R51.139 land).
@@ -259,7 +259,7 @@ pub struct CoreShell<V: WidgetCore> {
     _animation_driver: Effect,
 
     /// R51.157 §5.23 — optional [`CommandExecutor`] the substrate
-    /// drains pending [`Command`](pinion_core::Command) queue into via
+    /// drains pending [`Command`] queue into via
     /// [`Self::dispatch_pending_commands`].
     ///
     /// `Option<Arc<CommandExecutor>>` so:
@@ -304,7 +304,7 @@ pub struct CoreShell<V: WidgetCore> {
     /// torn-off panels).
     ///
     /// First atomic of the 4-axis paint-pipeline rewrite series
-    /// (R680-R683). Keyed by canonical [`WindowSpec::id`] string;
+    /// (R680-R683). Keyed by canonical `WindowSpec::id` string;
     /// each value is an [`Owner`] handle (cheap `Rc`-internal clone).
     ///
     /// ## Scope topology

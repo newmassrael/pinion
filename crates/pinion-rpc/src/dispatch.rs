@@ -4115,7 +4115,7 @@ fn text_overflow_to_json(o: pinion_core::style::TextOverflow) -> Value {
 /// can introspect every rendered typography knob without OCR
 /// (§2 #7 scene-as-data completeness).
 /// R713 §5.36 — serialize a [`StyleRun`] to wire JSON: its UTF-8 byte
-/// range plus the fully-resolved per-span [`TextStyle`]. Mirrors
+/// range plus the fully-resolved per-span [`TextStyle`](pinion_core::TextStyle). Mirrors
 /// `text_style_to_json` for the `style` field so a styled-run span is
 /// introspected with the same shape as the base style.
 ///
@@ -4212,7 +4212,7 @@ fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
 /// R646 §5.12 — `scene/simulate` handler. Accepts
 /// `{ steps: [{path, value}, ...] }` and dispatches into
 /// [`crate::simulate::simulate`] for multi-event scenario
-/// exploration. Returns the [`SnapshotNode`](crate::snapshot::SnapshotNode)
+/// exploration. Returns the [`SnapshotNode`]
 /// reflecting the compound hypothetical state; rollback is performed
 /// before return so the live scene is unchanged.
 ///
@@ -4464,7 +4464,7 @@ fn intents_error_to_rpc(err: IntentsError) -> RpcError {
 /// - `in_flight` — every command currently tracked by the
 ///   [`CommandExecutor`](pinion_runtime::CommandExecutor)
 ///   `in_flight` map (R51.158 cancellation tracker), in `scope_id`
-///   ascending order via the underlying [`BTreeMap`].
+///   ascending order via the underlying [`BTreeMap`](std::collections::BTreeMap).
 ///
 /// `runtime_owner` is required (pending source); `commands_executor`
 /// is optional — when absent, `result.in_flight` is an empty array.
@@ -4592,10 +4592,10 @@ fn set_theme_mode_error_to_rpc(err: SetThemeModeError) -> RpcError {
 
 /// R608 §5.50 — `scene/set_theme_palettes` typed handler. 23rd
 /// `scene/*` method. Replaces both palettes on the bound
-/// [`ThemeProvider`] in a single
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider) in a single
 /// [`reactive::batch`](pinion_core::reactive::batch); the dispatcher's
 /// [`HandlerKind::Mutate`] match-arm tag bumps the
-/// [`SceneRevision`](pinion_core::SceneRevision) after this call
+/// [`SceneRevision`] after this call
 /// returns `Ok`.
 ///
 /// Wire shape mirrors [`scene/theme_tokens`](handle_scene_theme_tokens)
@@ -4701,7 +4701,7 @@ fn palette_parse_error_to_rpc(err: PaletteParseError) -> RpcError {
 
 /// R600 §5.28 — `scene/animation_state` typed handler. 19th
 /// `scene/*` method, read-only. Returns
-/// `{ active: bool, epsilon: f32 }` — see [`crate::animation_state`]
+/// `{ active: bool, epsilon: f32 }` — see [`crate::animation_state`](fn@crate::animation_state)
 /// for the wire shape.
 ///
 /// `params.epsilon` is optional; when omitted the handler defers to
@@ -4760,7 +4760,7 @@ fn animation_state_error_to_rpc(err: &AnimationStateError) -> RpcError {
 }
 
 /// R682.B §5.16 — `scene/cache_stats` typed handler. Reads the
-/// per-window [`pinion_runtime::paint_adapter::FragmentCacheStats`]
+/// per-window [`FragmentCacheStats`](pinion_runtime::FragmentCacheStats)
 /// snapshot the embedder pre-resolved on
 /// [`DispatchContext::fragment_cache_stats`] and emits the wire
 /// [`CacheStatsOutcome`] shape.
@@ -5039,7 +5039,7 @@ fn animate_control_error_to_rpc(err: &crate::animate_control::AnimateControlErro
 /// R602 §5.45 — `scene/scroll_state` typed handler. 20th `scene/*`
 /// method, read-only. Returns the bound
 /// [`ScrollState`](pinion_core::widgets::scroll::ScrollState)
-/// projection — see [`crate::scroll_state`] for the wire shape.
+/// projection — see [`crate::scroll_state`](fn@crate::scroll_state) for the wire shape.
 ///
 /// `params.tag` is required (no canonical default for scroll
 /// states). Post-R605 the handler reaches the cache via
@@ -5136,7 +5136,7 @@ fn require_params(params: Option<&Value>) -> Result<&Value, RpcError> {
 ///
 /// - **Optional tag** (theme-axis RPCs like `scene/theme_tokens`,
 ///   `scene/set_theme_mode`, `scene/set_theme_palettes`) — every
-///   `examples/hello-*` binary binds the [`ThemeProvider`] under
+///   `examples/hello-*` binary binds the [`ThemeProvider`](pinion_core::theme::ThemeProvider) under
 ///   the canonical [`crate::theme::DEFAULT_THEME_TAG`] (`"app"`),
 ///   so omitting `params.tag` resolves against the default. The
 ///   typed fn signature accepts `Option<&str>` and falls back to
@@ -5262,7 +5262,7 @@ fn read_i32_field(params: &Value, field: &str) -> Result<i32, RpcError> {
 /// R603 §5.22 — `scene/text_state` typed handler. 21st `scene/*`
 /// method, read-only. Returns the bound
 /// [`TextEditState`](pinion_core::widgets::text_edit::TextEditState)
-/// projection — see [`crate::text_state`] for the wire shape.
+/// projection — see [`crate::text_state`](fn@crate::text_state) for the wire shape.
 ///
 /// `params.tag` is required (per-field tagged; no canonical
 /// default). Reaches the cache via [`Owner::cache_get_by_str`](pinion_core::reactive::Owner::cache_get_by_str)
@@ -5391,7 +5391,7 @@ fn read_usize_field(params: &Value, field: &str) -> Result<usize, RpcError> {
 /// method, read-only. Closes the AI-first observability matrix.
 /// Returns the bound
 /// [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink)
-/// projection — see [`crate::caret_state`] for the wire shape.
+/// projection — see [`crate::caret_state`](fn@crate::caret_state) for the wire shape.
 fn handle_scene_caret_state(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
@@ -5933,7 +5933,7 @@ fn parse_optional_tag(v: Option<&Value>) -> Result<Option<String>, RpcError> {
 }
 
 /// Wire→[`pinion_core::style::TextStyle`] coercion. All fields
-/// optional with [`TextStyle::new`] defaults; `fg_color` as u32 ARGB.
+/// optional with [`TextStyle::new`](pinion_core::TextStyle::new) defaults; `fg_color` as u32 ARGB.
 fn parse_text_style(v: Option<&Value>) -> Result<pinion_core::style::TextStyle, RpcError> {
     let Some(obj) = v else {
         return Ok(pinion_core::style::TextStyle::new());

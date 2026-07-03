@@ -2,13 +2,13 @@
 //!
 //! Closes the preview lifecycle: re-reads the live [`SceneRevision`]
 //! for an OCC check, extracts the proposal from the ledger, dispatches
-//! into the variant's own [`Proposal::apply`] through an
+//! into the variant's own [`Proposal::apply`](crate::preview::Proposal::apply) through an
 //! [`ApplyContext`] (R40.9: bundle pattern so future variants can
 //! gain side-effect targets beyond the scene), and bumps the revision
 //! so any *other* still-active preview becomes detectably stale.
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) lives in
-//! [`crate::dispatch`]; this module exposes the typed dispatcher only.
+//! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher only.
 
 use std::time::Instant;
 

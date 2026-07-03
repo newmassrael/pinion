@@ -214,7 +214,7 @@ pub fn run_with_handlers<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBacken
 /// [`run_with_handlers`]. When `commands` is `Some`, the
 /// [`CommandExecutor`] is injected into the substrate and the
 /// matching [`mpsc::Receiver`] is drained on every event-loop
-/// iteration so intents arriving from completed [`Handler`]
+/// iteration so intents arriving from completed [`Handler`](pinion_runtime::Handler)
 /// futures reach the SCXML `send` channel without waiting for an
 /// input event.
 fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
@@ -552,7 +552,7 @@ fn commit_and_finalize<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<
 }
 
 /// R51.160 §5.23 — drain every [`Intent`] the
-/// [`CommandExecutor`](pinion_runtime::CommandExecutor) worker thread
+/// [`CommandExecutor`] worker thread
 /// has buffered since the previous tick. Returns `true` when any
 /// drained intent flipped the substrate's cached state, so the
 /// caller knows to commit a fresh paint before the next event poll.

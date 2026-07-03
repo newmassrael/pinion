@@ -2147,7 +2147,7 @@ pub fn dock_drop_zone_for_tabbing(
 /// [`DockDropZone`] — the SSOT zone geometry shared by
 /// [`dock_drop_zone_for_tabbing`] (which normalises an absolute cursor first) and
 /// the §5.51 R742 pointer drag coordinator (which receives a pre-normalised
-/// [`DropPoint`](pinion_core::external::DropPoint) over the drop-target panel). One
+/// [`DropPoint`] over the drop-target panel). One
 /// classifier, two callers — the edge-band fraction ([`DOCK_EDGE_ZONE_FRAC`]) and
 /// the Left → Right → Top → Bottom tie order cannot drift between the absolute and
 /// pointer-normalised paths.
@@ -2158,7 +2158,7 @@ pub fn dock_drop_zone_for_tabbing(
 /// as [`DockDropZone::Center`] (→ [`DockReorganizeIntent::Tabify`]); `tabbing ==
 /// false` (a split-only consumer, e.g. a terminal multiplexer) suppresses it — the
 /// centre falls through to the nearest split edge, so a centre drop can never
-/// tabify. [`DockPanelExternal::with_tabbing`] wires the consumer's choice into the
+/// tabify. `DockPanelExternal::with_tabbing` wires the consumer's choice into the
 /// pointer path. (R1168 retired the bare `tabbing`-defaults-to-true wrapper.)
 fn dock_drop_zone_normalized_tabbing(x_rel: f64, y_rel: f64, tabbing: bool) -> DockDropZone {
     // Half-open [0.0, 1.0): outside the panel on either axis → no zone.
@@ -2903,7 +2903,7 @@ pub struct DockReorganizer {
     /// — because the policy is only meaningful when a reorganize can happen (a
     /// reorganizer exists) and must apply UNIFORMLY to every classifier
     /// consumer of this surface: the pointer path
-    /// ([`DockPanelExternal::resolve_preview`]), the `drop` RPC
+    /// (`DockPanelExternal::resolve_preview`), the `drop` RPC
     /// ([`resolve_dock_drop`]), and cross-window redock
     /// ([`DockReorganizer::dock_panel_at_resolved_zone`]). A split-only surface never offers
     /// `Center` from any path — a centre cursor resolves to the nearest split
@@ -5533,7 +5533,7 @@ where
 /// [`DockNode`] subtree. Each [`DockNode::Leaf`] paints via
 /// [`view_dock_panel`] with a [`DockPanelStyle::m3_default`] keyed
 /// on the leaf's `panel_id`. Each [`DockNode::Split`] paints via
-/// [`view_splitter`](crate::splitter::view_splitter) with a
+/// [`view_splitter`] with a
 /// [`SplitterStyle::m3_default`] keyed on the Split's `id` +
 /// `orientation`, and forwards the topology's declared `ratio` as
 /// the initial-value seed for the binding's reactive Signal
@@ -5951,7 +5951,7 @@ pub use pinion_core::external::DOCK_PANEL_DRAG_KIND;
 #[allow(clippy::doc_markdown)]
 pub struct DockPanelExternal {
     /// Stable panel identifier carried into the `tear_off` intent
-    /// payload + the R742 [`DragPayload`](pinion_core::external::DragPayload)
+    /// payload + the R742 [`DragPayload`]
     /// value. The binding's reducer + the `Signal<Vec<WindowSpec>>` push
     /// use this to decide which panel floated; the coordinator uses it as
     /// the reorganize `source`.

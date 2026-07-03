@@ -34,7 +34,7 @@
 //!     primitive (future R-axis: per-External factory registry).
 //!
 //! Wire payloads asking for `kind: "Effect"` / `kind: "External"`
-//! surface as `Invalid params` at the [`dispatch`](crate::dispatch)
+//! surface as `Invalid params` at the [`dispatch`](fn@crate::dispatch)
 //! boundary — the unsupported-kinds list is closed by design here.
 //!
 //! `#[non_exhaustive]` so every later variant addition stays a

@@ -244,7 +244,7 @@ pub struct TextEditState {
     /// run of vertical moves through a short line and back to a long
     /// one returns to the original column instead of drifting to the
     /// short line's end. Mirror of the `h_pos` parley's own
-    /// [`Selection`](parley::Selection) maintains across `move_lines`
+    /// `Selection` maintains across `move_lines`
     /// calls — but pinion's caret is a geometry-free byte offset
     /// reshaped each frame, so the goal cannot ride along inside a
     /// persisted `Selection`; it lives here instead.
@@ -269,7 +269,7 @@ pub struct TextEditState {
     /// model — each run is a fully-resolved [`TextStyle`] over a UTF-8
     /// byte range). Empty (the default) is the single-style fast path;
     /// the field's paint threads the runs into the
-    /// [`layout_with_runs`](pinion_text) shaping the visible caret /
+    /// `layout_with_runs` shaping the visible caret /
     /// hit-test share, so paint and geometry stay one layout.
     ///
     /// Maintained across edits: [`Self::insert`] shifts runs at/after
@@ -305,7 +305,7 @@ pub struct TextEditState {
     /// it mutates, not this sidecar — so no snapshot/restore is claimed
     /// here. `Signal<T>` requires `Serialize + DeserializeOwned`, which
     /// is why R767.1 derived `serde` on the
-    /// [`TextStyle`](crate::style::TextStyle) family (resolving the
+    /// [`TextStyle`] family (resolving the
     /// `Color`-is-serde-but-`TextStyle`-is-not inconsistency it surfaced).
     style_runs: Signal<Vec<StyleRun>>,
     /// R796 §5.52 — optional attached undo / redo history. `None`
@@ -1181,7 +1181,7 @@ fn match_forward(bytes: &[u8], pos: usize) -> Option<usize> {
 /// Logical, not parley *visual*, lines: code folding and the gutter number
 /// the source's own lines independent of soft wrap, and the brackets that
 /// bound a fold live at fixed byte offsets, so a pure newline scan (no
-/// shaped [`Layout`]) is both sufficient and the correct unit.
+/// shaped `Layout`) is both sufficient and the correct unit.
 fn line_starts(text: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     starts.extend(

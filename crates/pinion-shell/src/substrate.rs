@@ -293,7 +293,7 @@ pub struct ShellCore<V: WidgetView> {
     ///
     /// Threaded through BOTH arms together (the R1070.1 wire-both contract): the
     /// measure pass ([`compute_layout_with_text_measure`]) via
-    /// [`Self::text_measure_override`] and the production paint
+    /// [`text_measure_override`] and the production paint
     /// ([`pinion_runtime::paint_adapter::to_vello_cached_with_text_engine`]) via
     /// [`Self::text_engine`]. Eligible non-editable single-line text routes to
     /// §5.37; caret-bearing (editable) text stays on parley (shared eligibility
@@ -568,7 +568,7 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
     /// Shared constructor body — focus seeding + Vello-side substrate fields —
-    /// over an already-built [`CoreShell`](pinion_runtime::CoreShell), so
+    /// over an already-built [`CoreShell`], so
     /// [`Self::new`] (Null sink) and [`Self::new_with_repaint_sink`] (live
     /// sink) differ only in how `core` was constructed.
     fn with_core(core: CoreShell<V>) -> Self {
@@ -672,7 +672,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// The windowed shell calls this right after `dispatch_rpc` returns and
     /// executes each entry through the same arm the winit pointer path uses
     /// (`AppShell::apply_window_control` — `set_minimized` / `set_maximized` /
-    /// the [`WidgetView::window_close_requested`](crate::WidgetView::window_close_requested)
+    /// the [`WidgetView::window_close_requested`]
     /// close seam), so an RPC `scene/click` on a control tag and a physical
     /// left-press on the same tag take one execution path. Headless harnesses
     /// (no winit) assert the returned entries directly: the queue IS the
@@ -930,7 +930,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// The animation list registered here is exactly the one
     /// [`Self::compute_paint_scene`] ticks once per paint cycle.
     /// Drop on `ShellCore` cascades through the wrapped
-    /// [`CoreShell`](pinion_runtime::CoreShell) into the
+    /// [`CoreShell`] into the
     /// [`Owner`](pinion_core::Owner) drop semantics, cancelling every
     /// pending [`Command`](pinion_core::Command) and animation in the
     /// scope (Solid pattern, R51.137 + R51.139).
@@ -1625,7 +1625,7 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R1071 PR-27 §5.39 §5.35 — body of [`Self::apply_key`] carrying the
     /// platform auto-repeat flag through to [`CoreShell::apply_key_repeat`]
-    /// (and thence the binding's [`WidgetCore::apply_key_repeat`]). The
+    /// (and thence the binding's [`WidgetCore::apply_key_repeat`](pinion_core::WidgetCore::apply_key_repeat)). The
     /// public `apply_key` is the `repeat == false` wrapper; the GUI keyboard
     /// path ([`Self::handle_character_key_inner`]) and the per-window seam
     /// ([`Self::key_press_for_window`]) pass the real flag.
@@ -1838,7 +1838,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// ([`Self::forward`]) branch is repeat-agnostic (a `keybinding`-mapped
     /// character has no auto-repeat distinction); the raw-key branch threads
     /// `repeat` to [`Self::apply_key_inner`] so a binding that overrides
-    /// [`WidgetCore::apply_key_repeat`] sees it. The public method is the
+    /// [`WidgetCore::apply_key_repeat`](pinion_core::WidgetCore::apply_key_repeat) sees it. The public method is the
     /// `repeat == false` wrapper.
     pub(crate) fn handle_character_key_inner(&mut self, c: &str, repeat: bool) {
         if let Some(ev) = V::keybinding(c) {
@@ -1870,7 +1870,7 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R1071 PR-27 §5.39 §5.35 — body of [`Self::handle_named_key`] carrying
     /// the platform auto-repeat flag through to the widget arc
-    /// ([`Self::try_apply_key_inner`] → [`WidgetCore::apply_key_repeat`]).
+    /// ([`Self::try_apply_key_inner`] → [`WidgetCore::apply_key_repeat`](pinion_core::WidgetCore::apply_key_repeat)).
     /// The scroll-routing fallback is deliberately repeat-agnostic: a held
     /// arrow / `PageDown` over a scroll container SHOULD keep scrolling, so
     /// the flag only reaches the widget that may want to suppress it. The
@@ -1906,7 +1906,7 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R1071 PR-27 §5.39 §5.35 — body of [`Self::try_apply_key`] carrying the
     /// platform auto-repeat flag through to [`CoreShell::apply_key_repeat`]
-    /// (and the binding's [`WidgetCore::apply_key_repeat`]). The public
+    /// (and the binding's [`WidgetCore::apply_key_repeat`](pinion_core::WidgetCore::apply_key_repeat)). The public
     /// method is the `repeat == false` wrapper; the GUI named-key path
     /// ([`Self::handle_named_key_inner`]), the Escape / Tab offer-first arcs,
     /// and the per-window seam ([`Self::key_press_for_window`]) pass the real
@@ -1934,7 +1934,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// fallback path [`Self::handle_named_key`] takes when
     /// [`WidgetView::apply_key`](pinion_core::WidgetCore::apply_key) reports the key unhandled.
     /// Forwards through [`CoreShell::scroll_key`](pinion_runtime::CoreShell::scroll_key)
-    /// which walks the deepest [`Scene::Scroll`](pinion_core::scene::Scene::Scroll)
+    /// which walks the deepest [`Scene::Scroll`]
     /// under the pointer cursor and calls
     /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
     /// / [`scroll_to`](pinion_core::widgets::scroll::ScrollState::scroll_to)
@@ -2413,7 +2413,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// (R51.186 §5.45 R55.C.2) Mouse wheel dispatch — winit
     /// `WindowEvent::MouseWheel`. Forwards through
     /// [`CoreShell::wheel`](pinion_runtime::CoreShell::wheel), which
-    /// walks the deepest [`Scene::Scroll`](pinion_core::scene::Scene::Scroll)
+    /// walks the deepest [`Scene::Scroll`]
     /// under the pointer's stored cursor and calls
     /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
     /// on the attached state. winit emits `MouseWheel` without its
@@ -2876,7 +2876,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// peer — so the native and AI-driven chord can never diverge.
     /// The cache (and the routing policy it gates) lives in the
     /// backend-agnostic substrate — R882.1 moved both into
-    /// [`CoreShell`](pinion_runtime::CoreShell) so the GUI and TUI
+    /// [`CoreShell`] so the GUI and TUI
     /// shells are pure edge producers with zero policy copies (§2 #6);
     /// this is the winit-side forwarding funnel.
     pub fn note_key_state(&mut self, key: &str, pressed: bool) {
@@ -3189,7 +3189,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// path drives every redraw:
     ///
     /// 1. Measure `dt` against the previous paint timestamp
-    ///    ([`Self::last_paint_instant`]) — `0.0` on the very first
+    ///    (`Self::last_paint_instant`) — `0.0` on the very first
     ///    paint, otherwise `now - prev` as `f32` seconds.
     /// 2. Advance every animation attached to
     ///    [`CoreShell::root_owner`](pinion_runtime::CoreShell::root_owner)
@@ -3656,7 +3656,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// No-op when no REAL drag is in flight (a pending click shows none), the
     /// drag carries no text label (a capture-drag like a splitter resize, or a
     /// non-text payload), or the binding's
-    /// [`WidgetView::drag_image_style`](crate::WidgetView::drag_image_style)
+    /// [`WidgetView::drag_image_style`]
     /// hook returns `None`. The chip is `pointer_transparent` so it never
     /// shadows the drag it represents.
     fn apply_drag_image(&self, scene: Scene, w: u32, h: u32, window_id: &str) -> Scene {
@@ -3824,7 +3824,7 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// (R1121 §5.16 §5.39 §2 #7) Inject the client-side window-chrome strip
     /// (title bar + close / minimize / maximize controls) when the binding's
-    /// [`WidgetView::window_policy`](crate::WidgetView::window_policy) returns a
+    /// [`WidgetView::window_policy`] returns a
     /// [`WindowPolicy`](crate::WindowPolicy) with `chrome: Some(style)` for
     /// `window_id`. The buttons are real, introspectable
     /// [`Scene`] nodes an AI agent observes and drives via `scene/snapshot` +
@@ -3960,7 +3960,7 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// (R1121.1 §5.16 §2 #7) Resolve client-side chrome for the window being
     /// painted: `Some((spec_id, title, style))` when the binding's
-    /// [`WidgetView::window_policy`](crate::WidgetView::window_policy) returns a
+    /// [`WidgetView::window_policy`] returns a
     /// [`WindowPolicy`](crate::WindowPolicy) with `chrome: Some(style)` for this
     /// window, else `None`. `window_id == None` is the
     /// primary window (the first declared spec); `Some(id)` matches by canonical
@@ -4010,7 +4010,7 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
     /// as [`Self::compute_paint_scene`] but routes through
-    /// [`WidgetView::view_for_window`](crate::WidgetView::view_for_window)
+    /// [`WidgetView::view_for_window`]
     /// instead of `V::view` so multi-window bindings can render
     /// different scenes per window (main view in the primary;
     /// inspector tree in the secondary; …).
@@ -4308,11 +4308,11 @@ impl<V: WidgetView> ShellCore<V> {
     /// the no-op falls out naturally.
     ///
     /// R56.1.h §5.38 §5.39 — focus mutation now flows through
-    /// [`Self::notify_focus_change`] so any [`External`] whose
+    /// [`Self::notify_focus_change`] so any [`External`](pinion_core::External) whose
     /// focused state crossed the boundary receives
-    /// [`External::on_focus_change`]. The `TextField` statechart
+    /// [`External::on_focus_change`](pinion_core::External::on_focus_change). The `TextField` statechart
     /// (R56.1.a) consumes this hook to drive its Focus / Blur SCXML
-    /// events and sync the [`CaretBlink`] enabled gate (R56.1.c).
+    /// events and sync the [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink) enabled gate (R56.1.c).
     /// R672 §5.35 §5.41 — per-window click-to-focus.
     /// Reads the addressed window's `hover_target` so focus targets
     /// the right widget — pre-R672 the binding-wide
@@ -4369,7 +4369,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// R56.1.h §5.38 §5.39 — focus-change observer. Compares the
     /// pre-mutation `focus_before` snapshot to the current
     /// [`FocusManager::focused`] tag and fires
-    /// [`External::on_focus_change`] on the old and new externals
+    /// [`External::on_focus_change`](pinion_core::External::on_focus_change) on the old and new externals
     /// (if either is bound to a tagged widget in the scene tree).
     ///
     /// The two-call shape (`old.on_focus_change(false)` then
@@ -5386,7 +5386,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// R1087 §5.16 §5.41 §2 #7 PR-31 — the windows the binding currently
     /// DECLARES, projected to the `scene/windows` wire shape
     /// ([`pinion_rpc::DeclaredWindow`]: id + title + declared geometry —
-    /// position [R1087] and `declared_size` [R1092], each `null` when that
+    /// position R1087 and `declared_size` R1092, each `null` when that
     /// axis is system-determined rather than declared).
     ///
     /// Reads the reactive [`WidgetView::windows_signal`] when the binding
@@ -5540,7 +5540,7 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
-    /// side-effect-free run of [`WidgetCore::view`] over the current cached
+    /// side-effect-free run of [`WidgetCore::view`](pinion_core::WidgetCore::view) over the current cached
     /// state, feeding [`FocusManager::update_focusable_tags`]. Used by
     /// [`Self::drain_focus_request`] to enumerate a node that this dispatch
     /// just made paintable BEFORE the next paint pass runs the per-frame
@@ -5555,7 +5555,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// enumeration it produces.
     ///
     /// "No observable effect" rests on the §6.3 view-fn discipline that any
-    /// `Effect::new` a view fn creates lives inside an [`Owner::cache`](crate::reactive::Owner::cache)
+    /// `Effect::new` a view fn creates lives inside an [`Owner::cache`](pinion_core::reactive::Owner::cache)
     /// factory (run once per owner+key), not bare in the view body. A bare
     /// `Effect::new` would fire eagerly on this extra view run and double-
     /// execute — no current binding does that, but it is the invariant this
@@ -5581,7 +5581,7 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
     /// R51.159 §5.23 — install or replace the
-    /// [`CommandExecutor`](pinion_runtime::CommandExecutor) the
+    /// [`CommandExecutor`] the
     /// substrate's `Self::handle_tail` drains pending
     /// [`pinion_core::Command`]s into. Forwards to
     /// [`CoreShell::set_executor`].
@@ -5923,7 +5923,7 @@ fn build_tag_map(nodes: &[AccessNode]) -> HashMap<NodeId, String> {
 /// viewport clipping.
 /// R984 — bind the lifted [`pinion_a11y::resolve_access_bounds`] union-bounds
 /// policy (the TUI shell's 2nd consumer) to the GUI's
-/// [`rect_for_tag`](pinion_runtime::rect_for_tag) lookup. `rect_for_tag` lives
+/// [`rect_for_tag`] lookup. `rect_for_tag` lives
 /// in `pinion_runtime`, above `pinion_a11y` in the layering, so the resolver is
 /// passed in rather than depended on.
 fn resolve_access_bounds(paint_scene: &Scene, nodes: &mut [AccessNode]) {

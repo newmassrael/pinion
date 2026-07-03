@@ -250,7 +250,7 @@ struct WindowSlot<R: VelloRenderer> {
     /// 4-axis paint-pipeline rewrite series.
     ///
     /// The cache is consulted by [`paint_adapter::to_vello_cached`]
-    /// (R682 atomic 1) at every cacheable [`Scene::Container`]
+    /// (R682 atomic 1) at every cacheable [`Scene::Container`](pinion_core::Scene::Container)
     /// boundary the encoder reaches with [`Affine::IDENTITY`]
     /// accumulated transform. A cache hit appends the previously
     /// encoded fragment via [`vello::Scene::append`] without
@@ -258,7 +258,7 @@ struct WindowSlot<R: VelloRenderer> {
     /// installs the fragment, and replays from the install slot.
     ///
     /// Mark-and-sweep eviction (handled inside
-    /// [`FragmentCache::end_paint`]) keeps the cache bounded to the
+    /// [`FragmentCache::end_paint`](pinion_runtime::paint_adapter::FragmentCache::end_paint)) keeps the cache bounded to the
     /// set of cacheable Containers actually painted in the most
     /// recent frame — no fixed-cap LRU; no manual reset between
     /// frames.
@@ -1309,7 +1309,7 @@ impl<V: WidgetView> AppShell<V> {
     /// suspended (R46.3.4 lifecycle).
     ///
     /// R51.76 §5.40 — the AccessKit emit decision is delegated to
-    /// [`ShellCore::compute_access_emit`] so the same diff logic is
+    /// `ShellCore::compute_access_emit` so the same diff logic is
     /// exercised by headless tests; the AppShell-side responsibility
     /// is just to feed the plan to `Adapter::update_if_active`.
     /// R670.B §5.16 §5.41 — render one window's paint scene.
@@ -1605,7 +1605,7 @@ impl<V: WidgetView> AppShell<V> {
     /// lint suppression).
     ///
     /// The first painted scene carries layout-computed rects on every node, so
-    /// walking the tree ([`Scene::intrinsic_content_size`]) gives the tight
+    /// walking the tree ([`Scene::intrinsic_content_size`](pinion_core::Scene::intrinsic_content_size)) gives the tight
     /// `(width, height)` the content wants; clamp to `[min, max]` and forward to
     /// [`Window::request_inner_size`]. winit emits a `WindowEvent::Resized` on
     /// acceptance which re-enters the layout pass at the new viewport next paint.
@@ -1872,8 +1872,8 @@ impl<V: WidgetView> AppShell<V> {
     /// ceiling (the app.rs extract convention).
     ///
     /// - **Left Pressed / Released** — pointer down / up
-    ///   ([`CoreShell::mouse_pressed_for_window`] /
-    ///   [`CoreShell::mouse_released_for_window`]).
+    ///   ([`ShellCore::mouse_pressed_for_window`] /
+    ///   [`ShellCore::mouse_released_for_window`]).
     /// - **Middle Pressed / Released** — R881 §5.35 §5.49 middle-button
     ///   gesture pair ([`ShellCore::middle_pressed_for_window`] /
     ///   [`ShellCore::middle_released_for_window`]). The router's
@@ -2088,7 +2088,7 @@ impl<V: WidgetView> AppShell<V> {
     /// Effect the very first time `resumed()` sees a non-`None`
     /// `windows_signal()`; subsequent suspend / resume cycles reuse
     /// the existing Effect because the same signal handle is
-    /// memoised on the binding side via [`Owner::cache`].
+    /// memoised on the binding side via [`Owner::cache`](pinion_core::reactive::Owner::cache).
     ///
     /// The Effect closure captures three values by move:
     ///
@@ -2097,7 +2097,7 @@ impl<V: WidgetView> AppShell<V> {
     ///    mutations fire `rerun` again. The closure does NOT use
     ///    the snapshot — diff happens in
     ///    [`Self::reconcile_windows`] where `&mut self` +
-    ///    [`ActiveEventLoop`](winit::event_loop::ActiveEventLoop)
+    ///    [`ActiveEventLoop`]
     ///    are available.
     /// 2. `EventLoopProxy<AppEvent>` — sends
     ///    [`AppEvent::WindowsDirty`] to wake the shell from any
@@ -3408,7 +3408,7 @@ fn winit_touch_to_pinion(touch: winit::event::Touch, scale: f64) -> pinion_runti
 /// content origin, exposing what is below/right. The two
 /// conventions are opposite-signed, so the boundary flip lands
 /// here exactly once. The TUI sibling
-/// [`pinion_tui::shell::dispatch_mouse`] already emits W3C-signed
+/// `pinion_tui::shell::dispatch_mouse` already emits W3C-signed
 /// `WheelDelta` values (`ScrollUp` → `dy = -1.0`,
 /// `ScrollDown` → `dy = +1.0`), so the substrate stays
 /// crossterm + W3C agreed and only winit needs the flip.
@@ -3446,7 +3446,7 @@ fn winit_modifiers_to_pinion(
 }
 
 /// R57.1 §5.50 — translate winit's two-state
-/// [`winit::window::Theme`](winit::window::Theme) (`Light` / `Dark`)
+/// [`winit::window::Theme`] (`Light` / `Dark`)
 /// into the W3C-aligned three-state
 /// [`pinion_core::SystemColorScheme`]. winit itself never surfaces a
 /// "no preference" reading on `Window::theme()` or
@@ -3487,7 +3487,7 @@ fn winit_theme_to_pinion_scheme(theme: winit::window::Theme) -> pinion_core::Sys
 /// Key invariants behind the table:
 ///
 /// 1. **Empty `Preedit` is `Update("")`, not `Cancel`** — winit
-///    documents "Right before [`Commit`] event winit will send empty
+///    documents "Right before `Commit` event winit will send empty
 ///    `Self::Preedit` event" as a synthetic clear. Treating empty
 ///    preedit as cancel would fire a spurious `Cancel + Commit` pair
 ///    on every pinyin / Hangul commit. Instead the visual clears and
@@ -4230,7 +4230,7 @@ pub fn run<V: WidgetView>() {
 }
 
 /// R51.159 §5.23 — variant of [`run`] that installs a
-/// [`CommandExecutor`](pinion_runtime::CommandExecutor) at boot so
+/// [`CommandExecutor`] at boot so
 /// pending [`pinion_core::Command`]s queued by reducer fallout or
 /// SCXML / Update steps reach their registered
 /// [`Handler`](pinion_runtime::Handler)s asynchronously.

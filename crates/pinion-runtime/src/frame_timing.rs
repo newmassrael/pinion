@@ -141,7 +141,7 @@ pub struct FrameTimingStats {
     samples: VecDeque<FrameTiming>,
     /// Frames recorded across the window's whole lifetime — keeps
     /// counting after the ring starts evicting (the cumulative
-    /// peer of [`FragmentCacheStats::paint_count`]).
+    /// peer of `FragmentCacheStats::paint_count`).
     frame_count: u64,
 }
 

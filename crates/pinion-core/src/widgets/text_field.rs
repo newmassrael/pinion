@@ -491,7 +491,7 @@ pub struct TextField {
     /// backend renders the caret as solid). When attached, every
     /// statechart transition ([`Self::send`]) syncs the blink's
     /// enabled gate: `Focused` / `Editing` → enabled (caret blinks),
-    /// `Idle` / `Disabled` → disabled (the [`CaretBlink::tick`] no-op
+    /// `Idle` / `Disabled` → disabled (the [`CaretBlink::tick`](crate::animation::Tickable::tick) no-op
     /// holds the off frame so the caret is hidden whenever the
     /// widget is unfocused).
     blink: Option<Rc<CaretBlink>>,
@@ -2441,7 +2441,7 @@ fn parse_apply_style_json(value: &serde_json::Value) -> Option<(usize, usize, Te
 /// byte range (the mark applies to the *next* insert, not an existing span),
 /// so there is nothing to clamp. Any object decodes (missing fields default
 /// via [`json_to_text_style`], a wholesale set-with-defaults like
-/// [`TextEditState::set_pending_style`](crate::widgets::TextEditState::set_pending_style)
+/// [`TextEditState::set_pending_style`](crate::widgets::text_edit::TextEditState::set_pending_style)
 /// expects); a non-object arg is `None` (→ `TypeMismatch`).
 fn parse_mark_style_json(value: &serde_json::Value) -> Option<TextStyle> {
     let obj = value.as_object()?;
