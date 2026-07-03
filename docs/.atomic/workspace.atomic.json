@@ -21790,6 +21790,52 @@
         "R1212 examples are bins depending on pinion-core/shell/widget-paint etc.; ThemeProvider is reachable at pinion_core::theme::ThemeProvider (make working links or code spans -- examples are internal, spans acceptable). InputRouter unreachable from most examples (no pinion-runtime dep) -> spans. Watch the many heterogeneous forms + reference-definition lines."
       ]
     },
+    "R1212": {
+      "decision_summary": "R1212 doc-hygiene campaign round 6: the 9 remaining library crates made cargo-doc-clean; ALL 22 library crates now doc-error-free.",
+      "changes_bullets": [
+        "Fixed 62 broken intra-doc links -> 0 across 9 crates (23 files): pinion-tui (18), pinion-overlay (12, incl. 3 fn@ disambiguations), pinion-text-font (11, mostly private-item spans), pinion-platform-clipboard (5, arboard ext-trait working links), pinion-pdf (3), pinion-text-unicode (2), pinion-platform-tray (1), pinion-platform-fonts (1), pinion-platform-storage (1).",
+        "CORRECTION to R1207-R1211 framing: the workspace has 22 lib crates, not the 8 I first tallied; the abort-at-first-crate behavior hid the other 14 (text/asset/cli/file-dialog/print were already clean; these 9 were not). Now ALL lib crates are doc-clean -- workspace doc aborts only on example bins.",
+        "Each crate's link-vs-span decided by reading its own Cargo.toml deps; reachable -> working links (incl. via public re-exports where the module is private), unreachable/private/fields -> code spans. Delegated to one subagent; doc comments only."
+      ],
+      "verification_bullets": [
+        "Per-crate cargo doc -p <crate> --no-deps = 0 errors for all 9.",
+        "cargo doc --workspace --no-deps: NO library crate in 'could not document' (only example bins remain).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0; cargo test -p pinion-tui/-overlay/-pdf pass.",
+        "Independently verified: botch-grep (doubled-target + dangling) NONE across all 9; only doc-comment lines changed (23 files)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.10",
+        "6.4"
+      ],
+      "carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN ([[doc-hygiene-campaign]]): ALL 22 library crates now cargo-doc-clean (R1207-R1212). Remaining: R1213 examples (136 example bins; ~150 errors: ThemeProvider 42 files reachable at pinion_core::theme::ThemeProvider, InputRouter ~11 files unreachable->spans, plus redundant/cross-crate); R1214 add cargo-doc to .githooks pre-commit/pre-push + CI once ALL examples green too.",
+        "Examples are numerous (136 bins) and heterogeneous; expect reference-definition lines and `[0,1]`-style prose-mis-parsed-as-link. For examples internal docs, code spans are acceptable (low value); but ThemeProvider is cheaply linkable. Iterate cargo doc --workspace until exit 0.",
+        "R1213/R1214 renumber: prior carry said R1212 examples / R1213 gate, but R1212 became the remaining-libs round (undercount fix), so examples=R1213, gate=R1214."
+      ],
+      "publishable_decision_summary": "R1212 doc-hygiene campaign round 6: the 9 remaining library crates made cargo-doc-clean; ALL 22 library crates now doc-error-free.",
+      "publishable_changes_bullets": [
+        "Fixed 62 broken intra-doc links -> 0 across 9 crates (23 files): pinion-tui (18), pinion-overlay (12, incl. 3 fn@ disambiguations), pinion-text-font (11, mostly private-item spans), pinion-platform-clipboard (5, arboard ext-trait working links), pinion-pdf (3), pinion-text-unicode (2), pinion-platform-tray (1), pinion-platform-fonts (1), pinion-platform-storage (1).",
+        "CORRECTION to R1207-R1211 framing: the workspace has 22 lib crates, not the 8 I first tallied; the abort-at-first-crate behavior hid the other 14 (text/asset/cli/file-dialog/print were already clean; these 9 were not). Now ALL lib crates are doc-clean -- workspace doc aborts only on example bins.",
+        "Each crate's link-vs-span decided by reading its own Cargo.toml deps; reachable -> working links (incl. via public re-exports where the module is private), unreachable/private/fields -> code spans. Delegated to one subagent; doc comments only."
+      ],
+      "publishable_verification_bullets": [
+        "Per-crate cargo doc -p <crate> --no-deps = 0 errors for all 9.",
+        "cargo doc --workspace --no-deps: NO library crate in 'could not document' (only example bins remain).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0; cargo test -p pinion-tui/-overlay/-pdf pass.",
+        "Independently verified: botch-grep (doubled-target + dangling) NONE across all 9; only doc-comment lines changed (23 files)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.10",
+        "6.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DOC-HYGIENE CAMPAIGN ([[doc-hygiene-campaign]]): ALL 22 library crates now cargo-doc-clean (R1207-R1212). Remaining: R1213 examples (136 example bins; ~150 errors: ThemeProvider 42 files reachable at pinion_core::theme::ThemeProvider, InputRouter ~11 files unreachable->spans, plus redundant/cross-crate); R1214 add cargo-doc to .githooks pre-commit/pre-push + CI once ALL examples green too.",
+        "Examples are numerous (136 bins) and heterogeneous; expect reference-definition lines and `[0,1]`-style prose-mis-parsed-as-link. For examples internal docs, code spans are acceptable (low value); but ThemeProvider is cheaply linkable. Iterate cargo doc --workspace until exit 0.",
+        "R1213/R1214 renumber: prior carry said R1212 examples / R1213 gate, but R1212 became the remaining-libs round (undercount fix), so examples=R1213, gate=R1214."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

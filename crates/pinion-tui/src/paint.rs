@@ -25,12 +25,12 @@
 //! This adapter renders against [`CellMetric::DEFAULT`] — the 8×16
 //! bitmap font baseline — so behaviour is byte-unchanged from the
 //! pre-R968 `PIXEL_PER_CELL_*` constants it replaced. A
-//! [`Scene::TextGrid`](pinion_core::Scene::TextGrid) (R994) maps each of
+//! [`Scene::TextGrid`] (R994) maps each of
 //! its cells 1:1 onto a character cell — its own node-local pixel metric
 //! sizes Vello glyphs, but a character buffer has no sub-cell resolution, so
-//! only the grid's `rect` origin is mapped (through [`CELL`]).
+//! only the grid's `rect` origin is mapped (through `CELL`).
 //!
-//! The local [`pixels_to_cell_floor`] is the signed/i64 pixel→cell map
+//! The local `pixels_to_cell_floor` is the signed/i64 pixel→cell map
 //! the scroll cascade needs — content scrolled past the viewport's left
 //! or top edge lands at negative pixels, so the cell index needs
 //! `div_euclid` flooring toward `-∞` rather than a truncating `/`. That
@@ -170,7 +170,7 @@ fn cell_to_buf_xy(x: i32, y: i32, buf_area: TuiRect) -> Option<(u16, u16)> {
 /// callers reset `buf` between frames if they want a clean redraw.
 ///
 /// R51.189 §5.45 R55.E.2 — public surface unchanged. The body
-/// forwards into [`to_buffer_inner`] with a full-buffer clip and
+/// forwards into `to_buffer_inner` with a full-buffer clip and
 /// no offset; [`Scene::Scroll`] children compose both as the
 /// recursion descends.
 pub fn to_buffer(scene: &Scene, buf: &mut Buffer) {
@@ -419,7 +419,7 @@ fn color_to_tui(c: Color) -> TuiColor {
 /// surface stabilises for the TUI backend.
 ///
 /// R51.189 §5.45 R55.E.2 — public surface unchanged. The body
-/// forwards into [`paint_text_inner`] with a full-buffer clip and
+/// forwards into `paint_text_inner` with a full-buffer clip and
 /// no offset; the scroll cascade reaches text via the internal
 /// recursion path.
 pub fn paint_text(t: &TextNode, buf: &mut Buffer) {

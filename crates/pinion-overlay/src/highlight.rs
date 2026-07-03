@@ -15,7 +15,7 @@
 //!
 //! `Scene::Effect` is opaque (§3 capability boundary) — an AI agent
 //! cannot later query "which highlights are currently active" via
-//! [`scene/query`](pinion_rpc::query). A tagged `Scene::Box` is
+//! [`scene/query`](fn@pinion_rpc::query). A tagged `Scene::Box` is
 //! introspectable: a follow-up `scene/locate_region` over the whole
 //! viewport surfaces every highlight by tag, and the §5.20 intent
 //! system already drains tagged nodes through the runtime.
@@ -92,7 +92,7 @@ impl Default for HighlightStyle {
 
 /// Inject a highlight around the primitive at `path_suffix` inside
 /// `scene`. The suffix is the path component *after* the `/window[id]/`
-/// prefix — typically the same string [`pinion_rpc::locate`] returned
+/// prefix — typically the same string [`pinion_rpc::locate`](fn@pinion_rpc::locate) returned
 /// in its `path` field, with the prefix stripped, OR a raw
 /// container-relative path such as `"save_btn"` or `"0/1"`.
 ///

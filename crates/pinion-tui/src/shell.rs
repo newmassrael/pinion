@@ -51,7 +51,7 @@
 //!    `CellMetric` (same inverse the paint walker uses) so the
 //!    substrate's pixel-coord `Scene::Container.rect` hit-tests align
 //!    with the visible cells.
-//! 3. After every paint, [`InputRouter::update_paint_scene`] retains
+//! 3. After every paint, [`InputRouter::update_paint_scene`](pinion_runtime::InputRouter::update_paint_scene) retains
 //!    a fresh paint-scene snapshot so the next `MouseEvent` resolves
 //!    hover targets against the current visual state (mirrors
 //!    `ShellCore::finalize_frame` post-render handoff).
@@ -63,7 +63,7 @@
 //!    (terminal emulators own middle-paste at the terminal tier).
 //!
 //! The §5.20 intent drain + cached-state refresh + repaint cycle
-//! collapses into [`drain_and_repaint`] — the keyboard path and the
+//! collapses into `drain_and_repaint` — the keyboard path and the
 //! mouse path both call through it so the SCXML statechart's
 //! `Pressed → Hover` click intent surfaces identically whichever
 //! input source produced the transition.
@@ -171,14 +171,14 @@ const REST_EPSILON: f32 = pinion_core::DEFAULT_REST_EPSILON;
 ///
 /// # Panics
 /// Does not panic. The `expect` call on
-/// [`WidgetViewTui::read_state`] is unreachable because the scene
+/// `WidgetViewTui::read_state` is unreachable because the scene
 /// is constructed in this function and never moved.
 pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>() -> io::Result<()> {
     run_impl::<V>(None)
 }
 
 /// R51.160 §5.23 — variant of [`run`] that installs a
-/// [`CommandExecutor`](pinion_runtime::CommandExecutor) at boot so
+/// [`CommandExecutor`] at boot so
 /// pending [`pinion_core::Command`]s queued by reducer fallout or
 /// SCXML transitions reach their registered
 /// [`Handler`](pinion_runtime::Handler)s asynchronously.

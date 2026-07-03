@@ -2,7 +2,7 @@
 //!
 //! Microsoft OpenType 1.9.x spec, "GDEF — Glyph Definition Table". GDEF carries
 //! per-glyph metadata that GSUB/GPOS lean on; this slice parses its
-//! **`GlyphClassDef`** — a [`ClassDef`] mapping each glyph to one of Base,
+//! **`GlyphClassDef`** — a `ClassDef` mapping each glyph to one of Base,
 //! Ligature, Mark, or Component. The shaper uses it to recognise combining marks
 //! independently of whether a `mark`/`mkmk` lookup happened to attach them
 //! ([`crate::shape::shape_run`]), so a mark that declares no anchor is still

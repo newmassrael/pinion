@@ -10,7 +10,7 @@
 //! (`MarkMarkPos`) through the `mkmk` feature — the rest of GPOS (single /
 //! cursive / mark-to-ligature / contextual positioning) is R50.6.x, mirroring
 //! the simple→composite raster split (R50.8 → R50.8.x). The two mark lookup
-//! types share one subtable parser ([`markanchor::MarkAnchorPos`]).
+//! types share one subtable parser (`markanchor::MarkAnchorPos`).
 //!
 //! The `ScriptList` → Feature → `LookupList` navigation and the Coverage / `ClassDef`
 //! common tables live in `crate::tables::layout` (shared with GSUB since

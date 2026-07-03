@@ -8,7 +8,7 @@
 //! logic drive GUI / TUI / headless test consumers without conditional
 //! compilation.
 //!
-//! Coordinate units match §5.32 [`scene/locate`](pinion_rpc::locate):
+//! Coordinate units match §5.32 [`scene/locate`](fn@pinion_rpc::locate):
 //! viewport-relative *logical* pixels (CSS px). DPI / device-pixel
 //! conversion is the backend's responsibility before constructing an
 //! [`OverlayEvent`].

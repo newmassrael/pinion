@@ -302,7 +302,7 @@ pub fn temp_key_path(storage: &FileStorage, key: &str) -> Option<PathBuf> {
     Some(storage.temp_path_for(key))
 }
 
-/// R665 §3 §5.15 — predicate counterpart of [`is_valid_key`] for
+/// R665 §3 §5.15 — predicate counterpart of `is_valid_key` for
 /// callers that want to validate ahead of a `save` (e.g. to surface a
 /// "rename the key" message in a settings panel). Mirrors the
 /// trait's silent-no-op contract but exposes the decision.

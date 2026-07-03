@@ -35,7 +35,7 @@ use tokio::runtime::Runtime;
 ///
 /// Builds a private `tokio::runtime::Runtime` at construction time
 /// (single worker thread, all features enabled) and dispatches every
-/// [`BoxFuture`](pinion_runtime::BoxFuture) through `Runtime::spawn`.
+/// [`BoxFuture`] through `Runtime::spawn`.
 /// The returned [`tokio::task::AbortHandle`] backs the
 /// [`CommandTaskHandle`]'s cancel callback so R51.158's per-scope
 /// cancellation actually aborts the future at its next `.await` point.

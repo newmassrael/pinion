@@ -108,7 +108,7 @@ pub fn layout_paragraph(
 /// ([`crate::shape_paragraph_with_fallback`]) with the line breaker. Wrapping
 /// measures advances across the stack ([`wrap_paragraph_with_fallback`]) so a
 /// mixed-script paragraph breaks at its true widths, and each wrapped line's
-/// clipped runs are font-split ([`font_split_runs`]) before shaping, so every
+/// clipped runs are font-split (`font_split_runs`) before shaping, so every
 /// glyph carries the stack index of the font that shaped it (a renderer
 /// rasterizes it with `fonts[g.font_index]`; [`render_lines`] does exactly that).
 /// Vertical metrics come from the primary font (`fonts[0]`); a one-element stack

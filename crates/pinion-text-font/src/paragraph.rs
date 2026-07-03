@@ -38,7 +38,7 @@
 //! L3 combining-mark reordering and per-script shaper selection are deferred.
 //! Multi-line wrapping combined with fallback is
 //! [`crate::line_layout::layout_paragraph_with_fallback`], which reuses this
-//! module's [`font_split_runs`] per wrapped line.
+//! module's `font_split_runs` per wrapped line.
 //! A removed control is not treated as a shaping-cluster boundary, so two
 //! visible codepoints separated only by one may shape together (rare; an
 //! interior control within a single level+script run). This includes the

@@ -97,7 +97,7 @@ pub fn system_font_dirs() -> Vec<PathBuf> {
 /// is the consumer's parse step (`Font::from_bytes`), not this layer's job.
 /// Symlinked *files* are followed (font families commonly symlink their members),
 /// but symlinked *directories* are never recursed into — that, plus the
-/// [`MAX_SCAN_DEPTH`] bound, keeps the walk cycle-free without per-path
+/// `MAX_SCAN_DEPTH` bound, keeps the walk cycle-free without per-path
 /// bookkeeping. Unreadable directories are skipped silently (a permission error
 /// on one font dir must not abort enumeration).
 #[must_use]

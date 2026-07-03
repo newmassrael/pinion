@@ -104,7 +104,7 @@ impl Default for FocusRingStyle {
 }
 
 /// Inject a focus ring around the node tagged `focused_tag` inside
-/// `scene`. `focused_tag` is the §5.40 [`pinion_runtime::FocusManager`]
+/// `scene`. `focused_tag` is the §5.40 `pinion_runtime::FocusManager`
 /// focused tag — the same tag the input router hit-tests against,
 /// including the R51.42 composite `tag#sub` form a roving
 /// active-descendant widget (`RadioGroup`, the R704 datepicker grid)
@@ -115,7 +115,7 @@ impl Default for FocusRingStyle {
 /// — top/left near via R806, bottom/right far via R1022 using the
 /// `viewport` extent — so a flush widget keeps all four ring strokes
 /// on-screen; a widget fully off the far edge yields no ring, see
-/// [`build_focus_ring_box`]), with a border of `style.stroke` /
+/// `build_focus_ring_box`), with a border of `style.stroke` /
 /// `style.stroke_width`, a transparent fill, and a corner radius that
 /// tracks the focused node's own rounding (`node_radius + offset` when
 /// the node is rounded, `0` otherwise) so the ring stays concentric.

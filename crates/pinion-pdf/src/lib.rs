@@ -21,8 +21,8 @@
 //!
 //! ## Scope (first slice)
 //!
-//! Handled: filled / bordered / rounded [`BoxNode`] +
-//! [`ContainerNode`] backgrounds, [`TextNode`] (the standard-14
+//! Handled: filled / bordered / rounded [`BoxNode`](pinion_core::scene::BoxNode) +
+//! [`ContainerNode`](pinion_core::scene::ContainerNode) backgrounds, [`TextNode`] (the standard-14
 //! `Helvetica` family — regular / bold / oblique / bold-oblique — in
 //! `DeviceRGB` sRGB), and [`Scene::Scroll`] (a viewport clip plus the
 //! `translate(viewport - offset)` the vello adapter applies, so scrolled
@@ -56,7 +56,7 @@
 //! (rect geometry is reproduced 1:1) but a caller may request an explicit
 //! [`PageSize`]. *Rect* geometry is exact; *text* placement is
 //! approximate — glyph baselines use a fixed cap-height ratio
-//! ([`ASCENT_RATIO`]), not the real per-font metrics the on-screen paint
+//! (`ASCENT_RATIO`), not the real per-font metrics the on-screen paint
 //! path resolves, so text is structurally faithful (right string, right
 //! line, within the page box) rather than pixel-identical to the screen.
 //! Threading real font metrics in is the font-metric deferred axis.

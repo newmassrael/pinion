@@ -34,7 +34,7 @@ impl Hhea {
     ///
     /// * [`ParseError::TableTooShort`] — 36 바이트 미만.
     /// * [`ParseError::UnsupportedTableVersion`] — major != 1.
-    /// * [`ParseError::InvalidTableField`] — reserved int16[4] 가 모두 0 이 아님 /
+    /// * [`ParseError::InvalidTableField`] — reserved `int16[4]` 가 모두 0 이 아님 /
     ///   `metric_data_format` != 0.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         let mut r = Reader::new(bytes, HHEA_TAG);

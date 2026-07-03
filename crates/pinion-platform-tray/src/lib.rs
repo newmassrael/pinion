@@ -2,7 +2,7 @@
 //! the [`pinion_core::tray::TrayBackend`] trait.
 //!
 //! [`SniTrayBackend`] publishes the pinion-owned
-//! [`TrayModel`](pinion_core::tray::TrayModel) as a **`StatusNotifierItem`**
+//! [`TrayModel`] as a **`StatusNotifierItem`**
 //! over pure D-Bus via the `ksni` crate (zbus-based, **no gtk**), so it
 //! composes with pinion's winit shell where the Tauri `tray-icon` crate's gtk
 //! backend does not (`docs/cross-platform-native-strategy.md`). It is the

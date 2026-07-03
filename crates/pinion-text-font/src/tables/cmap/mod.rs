@@ -157,7 +157,7 @@ impl Cmap {
     /// Pick the best subtable for character lookup.
     ///
     /// Priority order: see module-level docs. Implementation 은
-    /// [`selection_score`] + `min_by_key` 1-pass — 4-pass duplicate 회피.
+    /// `selection_score` + `min_by_key` 1-pass — 4-pass duplicate 회피.
     #[must_use]
     pub fn best_subtable(&self) -> Option<&CmapSubtable> {
         self.encodings

@@ -11,7 +11,7 @@
 //!
 //! The textbook home is the **shell overlay layer**, exactly where the
 //! keyboard focus ring lives ([`crate::focus_ring`]): the shell already owns
-//! the live drag session (the [`pinion_runtime::InputRouter`] holds the
+//! the live drag session (the `pinion_runtime::InputRouter` holds the
 //! in-flight payload + cursor) and injects window-level overlays at paint
 //! time. So the drag image is a sibling of the focus ring — a
 //! pointer-transparent, top-level overlay the shell injects from router state,
@@ -41,7 +41,7 @@ pub const DRAG_IMAGE_TAG: &str = "ai-overlay/drag-image";
 /// Visual style of the drag image (the translucent follower chip). Mirrors
 /// [`crate::FocusRingStyle`]: hard-coded neutral defaults (the overlay layer
 /// has no [`Theme`](pinion_core::theme::Theme)), overridable by the binding
-/// through the [`WidgetView::drag_image_style`] hook so a binding can theme it
+/// through the `WidgetView::drag_image_style` hook so a binding can theme it
 /// (or suppress the follower by returning `None`).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +73,7 @@ pub struct DragImageStyle {
 impl DragImageStyle {
     /// Default chip: a semi-opaque dark surface with white label — a neutral,
     /// theme-agnostic tooltip-like follower. A binding themes it (or returns
-    /// `None` to suppress) via [`WidgetView::drag_image_style`].
+    /// `None` to suppress) via `WidgetView::drag_image_style`.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -128,7 +128,7 @@ impl Default for DragImageStyle {
 
 /// (R1147 §5.51) The chip's `(width, height)` for `label` at `style`: padding on
 /// every side + one em per character (CJK-safe over-estimate so the label never
-/// clips) by one line. Shared by [`drag_image_rect`] (the in-window R1113
+/// clips) by one line. Shared by `drag_image_rect` (the in-window R1113
 /// follower) and [`drag_chip_scene`] (the R1147 preview-window content) so the
 /// desktop chip and the in-window chip size identically. Floors at `2 * padding`
 /// (an empty label yields a padding-only box).
@@ -182,7 +182,7 @@ fn drag_image_rect(
 
 /// Inject the drag image — a translucent labelled chip — at `cursor` inside
 /// `scene`. The shell calls this at paint time (a sibling of
-/// [`crate::inject_focus_ring`]) from the [`pinion_runtime::InputRouter`]'s
+/// [`crate::inject_focus_ring`]) from the `pinion_runtime::InputRouter`'s
 /// live drag session: `label` is the dragged payload's text, `cursor` the
 /// window-logical pointer the router measured, `viewport` the layout extent
 /// `(w, h)` (so the chip stays on-screen).

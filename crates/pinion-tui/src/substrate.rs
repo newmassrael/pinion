@@ -212,7 +212,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     }
 
     /// R51.120 §5.41 — install a diagnostic sink for intent / state
-    /// trace lines. See [`Self::log_sink`] for why this is opt-in;
+    /// trace lines. See `Self::log_sink` for why this is opt-in;
     /// the default `None` keeps the substrate silent so the surface
     /// can run under `enable_raw_mode()` + `EnterAlternateScreen`
     /// without leaking trace text onto the visible terminal.
@@ -241,7 +241,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// Read-only borrow of the cached state. Tests assert against
     /// this after each dispatch to verify SCXML transitions arm
     /// expected values; the surface uses it as the
-    /// [`WidgetViewTui::view`] argument when computing the next
+    /// `WidgetViewTui::view` argument when computing the next
     /// paint frame.
     /// R51.124 §5.41 — delegates to [`CoreShell::cached_state`].
     #[must_use]
@@ -256,7 +256,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// instances here; [`Self::compute_paint_scene`] ticks the list
     /// once per paint cycle with the measured `dt`. Drop on
     /// `ShellCoreTui` cascades through the wrapped
-    /// [`CoreShell`](pinion_runtime::CoreShell) into the
+    /// [`CoreShell`] into the
     /// [`Owner`] drop semantics, cancelling every pending
     /// [`Command`](pinion_core::Command) (Solid pattern).
     #[must_use]
@@ -297,7 +297,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// progress reads, etc.) sees the matching delta. First paint:
     /// `dt = 0.0`.
     ///
-    /// `&self` (not `&mut self`) because [`crate::shell::commit_paint`]
+    /// `&self` (not `&mut self`) because `crate::shell::commit_paint`
     /// takes the substrate by shared borrow; the timing field uses
     /// [`Cell`] interior mutability so the signature stays sync.
     #[must_use]
@@ -538,8 +538,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// (R51.186 §5.45 R55.C.2) Mouse wheel dispatch — crossterm
     /// `MouseEventKind::ScrollUp` / `ScrollDown` / `ScrollLeft` /
     /// `ScrollRight`. Forwards through
-    /// [`CoreShell::wheel`](pinion_runtime::CoreShell::wheel) which
-    /// walks the deepest [`Scene::Scroll`](pinion_core::scene::Scene::Scroll)
+    /// [`CoreShell::wheel`] which
+    /// walks the deepest [`Scene::Scroll`]
     /// under the cursor and calls `scroll_by` on the attached
     /// [`ScrollState`](pinion_core::widgets::scroll::ScrollState).
     ///
@@ -1135,8 +1135,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     }
 
     /// R51.160 §5.23 — install or replace the
-    /// [`CommandExecutor`](pinion_runtime::CommandExecutor) the
-    /// substrate's [`Self::handle_tail`] drains pending
+    /// [`CommandExecutor`] the
+    /// substrate's `Self::handle_tail` drains pending
     /// [`pinion_core::Command`]s into. Forwards to
     /// [`CoreShell::set_executor`](pinion_runtime::CoreShell::set_executor).
     pub fn set_command_executor(
@@ -1178,7 +1178,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// transitions on event names only; payload-bearing side effects
     /// flow through the reducer's `Vec<Command>` return. Mirrors the
     /// Vello-side rationale on
-    /// [`ShellCore::dispatch_intent`](pinion_shell::ShellCore::dispatch_intent).
+    /// `ShellCore::dispatch_intent`.
     pub fn dispatch_intent(&mut self, intent: &Intent) -> bool {
         if let Some(sink) = &mut self.log_sink {
             let _ = writeln!(

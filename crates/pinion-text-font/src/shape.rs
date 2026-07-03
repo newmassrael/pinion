@@ -249,8 +249,8 @@ pub fn render_run(font: &Font, text: &str, px_per_em: f32) -> Result<Coverage, R
 }
 
 /// A glyph ready for compositing: its integer-snapped pen origin, the atlas that
-/// holds its pixels, and its packed sub-rect. Built by [`render_glyphs_atlased`]
-/// (the one place all renderers rasterize + place), consumed by [`composite`]
+/// holds its pixels, and its packed sub-rect. Built by `render_glyphs_atlased`
+/// (the one place all renderers rasterize + place), consumed by `composite`
 /// (whole-paragraph mask) and — public since R1065 — by a per-glyph paint path
 /// that draws one quad sampling [`Self::glyph`]'s sub-rect of `atlases[atlas]`.
 #[derive(Debug, Clone, Copy)]
@@ -267,12 +267,12 @@ pub struct PlacedGlyph {
     pub glyph: AtlasGlyph,
 }
 
-/// The pre-composite output of [`render_glyphs_atlased`]: one [`GlyphAtlas`] per
+/// The pre-composite output of `render_glyphs_atlased`: one [`GlyphAtlas`] per
 /// stack font plus every drawn glyph's placement into them.
 ///
 /// This is the §5.37.9 atlas surface a per-glyph GPU text path paints — each
 /// atlas uploaded once, each [`PlacedGlyph`] drawn as one quad sampling its
-/// sub-rect — *before* [`composite`] flattens it into a single whole-paragraph
+/// sub-rect — *before* `composite` flattens it into a single whole-paragraph
 /// [`Coverage`]. R1063 wired the flattened mask to pixels (a bring-up seam);
 /// R1065 exposes this un-flattened form so paint can keep the atlas.
 #[derive(Debug, Clone, Default)]

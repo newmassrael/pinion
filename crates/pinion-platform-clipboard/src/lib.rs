@@ -46,7 +46,7 @@
 //! [`copy_to`](pinion_core::Clipboard::copy_to) /
 //! [`paste_from`](pinion_core::Clipboard::paste_from) methods are
 //! overridden to thread `Primary` through `arboard`'s
-//! [`SetExtLinux::clipboard`] / [`GetExtLinux::clipboard`] trait
+//! [`SetExtLinux::clipboard`](arboard::SetExtLinux::clipboard) / [`GetExtLinux::clipboard`](arboard::GetExtLinux::clipboard) trait
 //! extensions, addressing the X11 PRIMARY selection atom / Wayland
 //! `zwlr_data_control_v1` PRIMARY channel. The `TextField` widget
 //! publishes selections to PRIMARY automatically (R56.2.e.2) and the
@@ -184,7 +184,7 @@ impl Clipboard for ArboardClipboard {
 
     /// R56.2.e §5.22 — selection-aware write. On Linux (X11 / Wayland)
     /// the `Primary` arm routes through `arboard`'s
-    /// [`SetExtLinux::clipboard`] trait extension to address the X11
+    /// [`SetExtLinux::clipboard`](arboard::SetExtLinux::clipboard) trait extension to address the X11
     /// PRIMARY selection / Wayland `zwlr_data_control_v1` PRIMARY
     /// channel. On other platforms the override is absent (cfg
     /// disabled) so the trait default takes over — `Primary` becomes
@@ -233,7 +233,7 @@ impl Clipboard for ArboardClipboard {
     }
 
     /// R56.2.e §5.22 — selection-aware read. On Linux the `Primary`
-    /// arm routes through `arboard`'s [`GetExtLinux::clipboard`]
+    /// arm routes through `arboard`'s [`GetExtLinux::clipboard`](arboard::GetExtLinux::clipboard)
     /// trait extension to read the X11 PRIMARY selection / Wayland
     /// PRIMARY channel. On other platforms the override is absent
     /// (cfg disabled) so the trait default returns `None` for
@@ -296,7 +296,7 @@ impl Clipboard for ArboardClipboard {
 /// the [`Clipboard`] trait **no-op default** on the wrapper instead of
 /// reaching the inner [`ArboardClipboard`]'s Linux PRIMARY override —
 /// PRIMARY was silently swallowed for every consumer. The lifted
-/// [`AppClipboard`] below forwards all four methods, so the lift both
+/// `AppClipboard` below forwards all four methods, so the lift both
 /// removes the 3-copy duplication and fixes the PRIMARY regression in
 /// one place.
 ///

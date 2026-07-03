@@ -9,7 +9,7 @@
 //!      itself never touches winit, softbuffer, or any platform layer.
 //!
 //!   2. **Highlight injection** — pure-function transforms over a
-//!      [`Scene`] tree that add or remove `Scene::Box` nodes carrying
+//!      [`Scene`](pinion_core::Scene) tree that add or remove `Scene::Box` nodes carrying
 //!      the `ai-overlay/` tag prefix. Introspect-friendly by
 //!      construction (§5.20 tags survive every existing scene walk)
 //!      and dry_run-compatible (immutable transforms, see §2 #3).

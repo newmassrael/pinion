@@ -6,7 +6,7 @@
 //! paragraph into logical lines so each line is as full as possible without
 //! exceeding the width — the classic greedy (first-fit) line breaker.
 //!
-//! Two entry points share one greedy core ([`greedy_break`]), differing only in
+//! Two entry points share one greedy core (`greedy_break`), differing only in
 //! how each segment's advance is measured: [`wrap_paragraph`] measures in a
 //! single font, [`wrap_paragraph_with_fallback`] measures across a font stack
 //! with per-codepoint fallback (§5.37.10) so a mixed-script paragraph wraps at

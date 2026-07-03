@@ -254,7 +254,7 @@ pub fn mirroring_glyph(cp: char) -> Option<char> {
 /// Panics if the codegen layer emits a bracket pair with an invalid
 /// matching codepoint or an unknown `Bidi_Paired_Bracket_Type`
 /// discriminant — both are build-time invariants asserted by
-/// [`crate::bidi::tests::bd16_round_trip_invariant`] and the
+/// `bd16_round_trip_invariant` and the
 /// `parse_bidi_brackets` codegen, so a panic here indicates a
 /// generator / UCD version skew.
 #[must_use]
@@ -1371,7 +1371,7 @@ fn apply_n2(view: &mut [BidiClass], embed_dir: BidiClass) {
 /// only `classes` may have been rewritten.
 ///
 /// `paragraph_level` is the same value passed to
-/// [`resolve_explicit_levels`] — needed by [`compute_sos_eos`] to
+/// [`resolve_explicit_levels`] — needed by `compute_sos_eos` to
 /// determine sos/eos at paragraph boundaries.
 #[must_use]
 pub fn resolve_weak_types(explicit: ExplicitLevels, paragraph_level: u8) -> ExplicitLevels {
