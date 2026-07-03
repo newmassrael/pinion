@@ -16,7 +16,7 @@ one resolver, so the previewed full-span band == where the panel lands.
 This drives the new path with a real same-window `scene/drag` on a panel header
 and observes the §2 #7 scene-as-data:
 
-  (A) Boot — 5 panels, outliner a narrow column, no reorg splits.
+  (A) Boot — 4 dock panels, outliner a narrow column, no reorg splits.
   (B) HELD drag to the BOTTOM outer band → the dragged panel's `drop_preview`
       shows the OUTER sentinel target + the Bottom edge (the same-window outer
       PREVIEW — could not exist before R1167).
@@ -27,7 +27,7 @@ and observes the §2 #7 scene-as-data:
   (E) Interior contrast — a held drag to a panel's CENTRE previews an INNER dock
       (target is a panel id, NOT the outer sentinel): the override fires ONLY in
       the edge band, so an interior drag still inner-docks.
-  (F) Integrity — all 5 panels survive every move; reads are deterministic.
+  (F) Integrity — all 4 dock panels survive every move; reads are deterministic.
 
 The live FEEL (the band width, drag smoothness) is HW-gated (a real `:0` desktop);
 this pins what is observable as scene-as-data.
@@ -47,12 +47,12 @@ _MAIN_W = 1200
 _MAIN_H = 800
 _REORG = "/dock_reorganize/external"
 
-_TOOLBAR = "toolbar"
 _OUTLINER = "outliner"
 _VIEWPORT = "viewport"
 _PROPERTIES = "properties"
 _CONSOLE = "console"
-_ALL_PANELS = {_TOOLBAR, _OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
+# (R1206) toolbar is a fixed frame, not a dock panel — workspace = 4 panels.
+_ALL_PANELS = {_OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
 
 
 # ─── helpers ─────────────────────────────────────────────────────────
@@ -144,11 +144,11 @@ def _section(label: str) -> None:
 def body() -> None:
     with RpcSubprocess("hello-dock-panels-editor", boot_grace=2.0) as tf:
         # ── (A) boot ─────────────────────────────────────────────────
-        _section("A: boot — 5 panels, outliner a narrow column")
+        _section("A: boot — 4 dock panels, outliner a narrow column")
         wins = tf.request("scene/windows", {}).result.get("windows") or []
         assert len(wins) == 1, f"A.1 one window at boot; got {wins!r}"
         assert wins[0].get("id") == _MAIN, f"A.2 the window is main ({wins[0]!r})"
-        assert _panel_set(tf) == _ALL_PANELS, f"A.3 all 5 panels present ({_panel_set(tf)})"
+        assert _panel_set(tf) == _ALL_PANELS, f"A.3 all 4 dock panels present ({_panel_set(tf)})"
         outliner0 = _rect(tf, _OUTLINER)
         assert outliner0["w"] < 400, f"A.4 outliner starts narrow (w={outliner0['w']})"
         assert outliner0["h"] > 400, f"A.5 outliner starts tall (a column, h={outliner0['h']})"
@@ -206,10 +206,10 @@ def body() -> None:
         assert _panel_set(tf) == _ALL_PANELS, "D.7 still a move — no panel lost"
 
         # ── (E) interior contrast — the override is edge-band only ───
-        # (R1201) Drag CONSOLE, a movable panel: the toolbar was locked
-        # non-movable at R1172 (`with_movable(false)`), so `toolbar#header` no
-        # longer emits a drag handle — the pre-R1201 source here could not start a
-        # drag at all. Any movable panel exercises the same edge-only override.
+        # (R1206) Drag CONSOLE, a workspace panel. (The toolbar is no longer a dock
+        # panel at all — it is a fixed app-frame strip outside the topology — so
+        # there is no `toolbar#header` drag source; any workspace panel exercises
+        # the same edge-only override.)
         _section("E: a held drag to a panel CENTRE previews an INNER dock, not outer")
         vp = _rect(tf, _VIEWPORT)
         cx, cy = vp["x"] + vp["w"] * 0.5, vp["y"] + vp["h"] * 0.5
@@ -227,7 +227,7 @@ def body() -> None:
         # ── (F) integrity + determinism ──────────────────────────────
         _section("F: integrity — panels survive, reads deterministic")
         assert _window_ids(tf) == {_MAIN}, "F.1 only main remains (no spurious floater)"
-        assert _panel_set(tf) == _ALL_PANELS, "F.2 all 5 panels intact after every move"
+        assert _panel_set(tf) == _ALL_PANELS, "F.2 all 4 dock panels intact after every move"
         a = _topology(tf)
         b = _topology(tf)
         assert a == b, "F.3 back-to-back topology reads are identical"

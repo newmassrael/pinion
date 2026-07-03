@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R686 §5.16 §5.45 — DockSurface drag-to-reorganize demo.
 
-Drives `hello-dock-panels-editor` (the R685 5-pane editor) through the
+Drives `hello-dock-panels-editor` (the R685 4-pane editor) through the
 R687 drag-to-reorganize substrate: the `DockReorganizeExternal`
 registered at `/dock_reorganize`, with its two wire forms:
 
@@ -21,7 +21,7 @@ observe the rearranged layout — the §2 #2 RPC-as-primary-path contract.
 Section roadmap (>=40 assertions across A-H):
 
   (A) Substrate sanity — the reorganize external exposes the live
-      topology as JSON; split_seq starts at 0; 5 panels in canonical
+      topology as JSON; split_seq starts at 0; 4 panels in canonical
       depth-first order.
   (B) Baseline layout — every panel root rect is present + non-
       degenerate in `scene/layout`.
@@ -33,7 +33,7 @@ Section roadmap (>=40 assertions across A-H):
   (E) Edge drop = split-insert — `drop` with a cursor near a panel's
       left edge; the substrate classifies Left + docks the dragged
       panel beside it; a `reorg-split-N` divider appears, leaf count
-      holds at 5 (a move), split_seq bumps to 1.
+      holds at 4 (a move), split_seq bumps to 1.
   (E2) Runtime registration (R688) — the `reorg-split-N` divider, which
       had no `SplitterExternal` at boot, now resolves + drags: R688's
       `CoreShell::reconcile_externals` registered it when the topology
@@ -61,12 +61,11 @@ _MAIN_W = 1200
 _MAIN_H = 800
 
 # Panel root tags (DockPanelStyle::m3_default(panel_id) → tag == id).
-_TOOLBAR = "toolbar"
 _OUTLINER = "outliner"
 _VIEWPORT = "viewport"
 _PROPERTIES = "properties"
 _CONSOLE = "console"
-_CANONICAL_PANELS = [_TOOLBAR, _OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE]
+_CANONICAL_PANELS = [_OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE]
 
 # Reorganize external + its minted-split prefix (mirror of
 # `REORG_SPLIT_ID_PREFIX` + `DOCK_REORGANIZE_TAG`).
@@ -271,7 +270,7 @@ def body() -> None:
         assert _panel_ids(topo) == _CANONICAL_PANELS, (
             f"A.3 canonical depth-first panel order, got {_panel_ids(topo)}"
         )
-        assert len(_split_ids(topo)) == 4, "A.4 four boot splits"
+        assert len(_split_ids(topo)) == 3, "A.4 three boot splits"
         assert _split_seq(tf) == 0, "A.5 split_seq starts at 0"
 
         # ─── (B) baseline layout ─────────────────────────────────────
@@ -347,7 +346,7 @@ def body() -> None:
         )
         topo = _topology(tf)
         after = _panel_ids(topo)
-        assert len(after) == 5, f"E.2 leaf count held at 5 (a move, not a spawn): {after}"
+        assert len(after) == 4, f"E.2 leaf count held at 4 (a move, not a spawn): {after}"
         assert _CONSOLE in after, "E.3 console still present"
         # Left drop → console takes the first slot beside viewport, so it
         # immediately precedes viewport in depth-first order.
@@ -421,20 +420,20 @@ def body() -> None:
 
         # ─── (G) symbolic path + rejected gestures ───────────────────
         _section("G: symbolic reorganize + rejected gestures")
-        # Symbolic path (AI-agent style, no pixels): tabify two separate
-        # top-level panels by id + zone name. Proves the second wire form is
+        # Symbolic path (AI-agent style, no pixels): tabify two docked panels
+        # by id + zone name. Proves the second wire form is
         # live and that Center → Tabify holds on the symbolic path too
         # (R1083), exactly as it does on the geometry path in section D.
         wells_before = len(_tabs_wells(_topology(tf)))
-        outcome = _reorganize(tf, _TOOLBAR, _CONSOLE, "Center")
+        outcome = _reorganize(tf, _VIEWPORT, _CONSOLE, "Center")
         assert isinstance(outcome, str), f"G.1 symbolic reorganize returns outcome ({outcome!r})"
         topo = _topology(tf)
         assert len(_tabs_wells(topo)) == wells_before + 1, (
             f"G.2 symbolic Center tabified a second well, got {len(_tabs_wells(topo))}"
         )
         new_well = next((w for w in _tabs_wells(topo) if w["id"] == "reorg-tabs-1"), None)
-        assert new_well is not None and new_well["panels"] == [_CONSOLE, _TOOLBAR], (
-            f"G.3 the symbolic tabify stacked [console, toolbar], got {new_well}"
+        assert new_well is not None and new_well["panels"] == [_CONSOLE, _VIEWPORT], (
+            f"G.3 the symbolic tabify stacked [console, viewport], got {new_well}"
         )
         before = _topology(tf)
         # Stale source via the geometry path: cursor over a real panel but

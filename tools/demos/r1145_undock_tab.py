@@ -19,7 +19,7 @@ vanishes with the tabbed state.
 
 Section roadmap (>=30 assertions across A-E):
 
-  (A) Boot — 5 panels, NO tab well, the Undock button is HIDDEN (nothing tabbed).
+  (A) Boot — 4 panels, NO tab well, the Undock button is HIDDEN (nothing tabbed).
   (B) Tabify viewport+properties (centre reorganize) — exactly one Tabs well now
       holds both panels, and the Undock button APPEARS in the toolbar.
   (C) Undock via the AI invoke — the well is gone (a Split again), both panels
@@ -43,7 +43,7 @@ REORG = "/dock_reorganize/external"
 MAIN = "main"
 MW, MH = 1200, 800
 UNDOCK_BTN = "undock_tab_btn"
-PANELS = {"toolbar", "outliner", "viewport", "properties", "console"}
+PANELS = {"outliner", "viewport", "properties", "console"}
 
 
 def _topology(tf: RpcSubprocess) -> Any:
@@ -89,7 +89,7 @@ def body() -> None:
         # ── (A) boot — nothing tabbed ───────────────────────────────
         topo = _topology(tf)
         assert_eq(_wells(topo), 0, "A.1 boot has no tab well")
-        assert_eq(_panels(topo), PANELS, "A.2 all 5 panels present")
+        assert_eq(_panels(topo), PANELS, "A.2 all 4 panels present")
         assert not _toolbar_has_undock(tf), "A.3 Undock button hidden when nothing tabbed"
 
         # ── (B) tabify viewport + properties ────────────────────────

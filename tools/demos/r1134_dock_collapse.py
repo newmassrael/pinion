@@ -21,19 +21,19 @@ placeholder.
 
 Section roadmap (>=30 assertions across A-F):
 
-  (A) Boot — one window, 5 panels docked, the DEFAULT policy is placeholder
+  (A) Boot — one window, 4 panels docked, the DEFAULT policy is placeholder
       (the coordinator + a panel both report it); viewport sits beside properties.
   (B) Toggle to collapse — set_float_policy("collapse"), read back on both the
       coordinator and the panel.
   (C) Collapse tear-off — tear off viewport: its leaf VANISHES from the topology
-      (4 panels — the headline reflow), NO placeholder is painted, a floating
-      window exists, the chart is Floating, the other 4 panels are intact.
+      (3 panels — the headline reflow), NO placeholder is painted, a floating
+      window exists, the chart is Floating, the other 3 panels are intact.
   (D) Dock back home — tear off viewport again: it returns to the topology at its
-      HOME anchor (5 panels, beside properties), the floating window is gone, the
+      HOME anchor (4 panels, beside properties), the floating window is gone, the
       chart is Docked, still no placeholder.
   (E) Contrast placeholder — set_float_policy("placeholder"), tear off outliner:
-      its leaf STAYS (5 panels, a placeholder IS painted), then dock it back.
-  (F) Integrity — all 5 panels survive; float_policy is read-only to intervene.
+      its leaf STAYS (4 panels, a placeholder IS painted), then dock it back.
+  (F) Integrity — all 4 panels survive; float_policy is read-only to intervene.
 """
 
 from __future__ import annotations
@@ -45,12 +45,11 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import RpcError, RpcSubprocess, run_demo, wait_until  # noqa: E402
 
-_TOOLBAR = "toolbar"
 _OUTLINER = "outliner"
 _VIEWPORT = "viewport"
 _PROPERTIES = "properties"
 _CONSOLE = "console"
-_ALL_PANELS = {_TOOLBAR, _OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
+_ALL_PANELS = {_OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
 _MAIN = "main"
 _MAIN_W = 1200
 _MAIN_H = 800
@@ -153,13 +152,13 @@ def _section(label: str) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-dock-panels-editor", boot_grace=2.0) as tf:
-        # ── (A) boot — 5 panels, default policy = placeholder ────────
-        _section("A: boot — 5 panels, default policy placeholder")
+        # ── (A) boot — 4 panels, default policy = placeholder ────────
+        _section("A: boot — 4 panels, default policy placeholder")
         boot = _windows(tf)
         assert len(boot) == 1, f"A.1 one window at boot; got {boot!r}"
         assert boot[0].get("id") == _MAIN, f"A.2 boot window is main ({boot[0]!r})"
         root = _root(_topology(tf))
-        assert _all_panels(root) == _ALL_PANELS, f"A.3 all 5 panels present ({_all_panels(root)})"
+        assert _all_panels(root) == _ALL_PANELS, f"A.3 all 4 panels present ({_all_panels(root)})"
         assert _float_policy(tf) == "placeholder", f"A.4 default policy is placeholder ({_float_policy(tf)!r})"
         assert _panel_policy(tf, _VIEWPORT) == "placeholder", "A.5 a panel reports the same surface policy"
         assert _siblings_in_split(root, _VIEWPORT, _PROPERTIES), "A.6 viewport|properties are siblings (home)"
@@ -178,7 +177,7 @@ def body() -> None:
         assert len(_windows(tf)) == 2, "C.2 two windows after tear-off"
         root_c = _root(_topology(tf))
         assert _VIEWPORT not in _all_panels(root_c), "C.3 ★viewport's LEAF is gone from the topology (collapse)"
-        assert _all_panels(root_c) == _ALL_PANELS - {_VIEWPORT}, f"C.4 the other 4 panels remain ({_all_panels(root_c)})"
+        assert _all_panels(root_c) == _ALL_PANELS - {_VIEWPORT}, f"C.4 the other 3 panels remain ({_all_panels(root_c)})"
         assert not _siblings_in_split(root_c, _VIEWPORT, _PROPERTIES), "C.5 viewport no longer occupies its slot"
         scene_c = _main_scene(tf)
         assert not _scene_contains_tag(scene_c, f"{_VIEWPORT}_placeholder"), (
@@ -193,7 +192,7 @@ def body() -> None:
         wait_until(lambda: len(_windows(tf)) == 1, desc="D.1 viewport docks back → one window")
         assert _torn(_VIEWPORT) not in _window_ids(tf), "D.2 the floating window is gone"
         root_d = _root(_topology(tf))
-        assert _all_panels(root_d) == _ALL_PANELS, "D.3 all 5 panels back"
+        assert _all_panels(root_d) == _ALL_PANELS, "D.3 all 4 panels back"
         assert _siblings_in_split(root_d, _VIEWPORT, _PROPERTIES), "D.4 ★viewport restored beside properties (home anchor)"
         assert _lifecycle(tf, _VIEWPORT) == "Docked", "D.5 the chart docked back"
         scene_d = _main_scene(tf)
@@ -207,7 +206,7 @@ def body() -> None:
         wait_until(lambda: _torn(_OUTLINER) in _window_ids(tf), desc="E.3 outliner floats")
         root_e = _root(_topology(tf))
         assert _OUTLINER in _all_panels(root_e), "E.4 ★placeholder KEEPS outliner's leaf in the topology"
-        assert _all_panels(root_e) == _ALL_PANELS, "E.5 still all 5 panels (no reflow)"
+        assert _all_panels(root_e) == _ALL_PANELS, "E.5 still all 4 panels (no reflow)"
         scene_e = _main_scene(tf)
         assert _scene_contains_tag(scene_e, f"{_OUTLINER}_placeholder"), "E.6 a placeholder IS painted (placeholder policy)"
         _tear_off(tf, _OUTLINER)  # dock back
@@ -217,7 +216,7 @@ def body() -> None:
         # ── (F) integrity + read-only diagnostic ─────────────────────
         _section("F: integrity — panels survive, float_policy read-only")
         assert _window_ids(tf) == {_MAIN}, "F.1 only main remains"
-        assert _all_panels(_root(_topology(tf))) == _ALL_PANELS, "F.2 all 5 panels intact"
+        assert _all_panels(_root(_topology(tf))) == _ALL_PANELS, "F.2 all 4 panels intact"
         try:
             tf.request("scene/intervene", {"path": f"{_REORG}/float_policy", "value": "collapse"})
             raise AssertionError("F.3 intervening on float_policy must error (set via invoke)")

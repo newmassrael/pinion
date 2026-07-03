@@ -21,7 +21,7 @@ because the own hit is a self-drop, redocks. The proof is an observable topology
 change — the floating window is gone and the panel is re-hosted in main — not a
 diagnostic.
 
-  (A) Boot — one window, the 5 editor panels docked.
+  (A) Boot — one window, the 4 editor panels docked.
   (B) Tear off `properties` -> two declared windows, its slot a placeholder.
   (C) Drag the floater back by its header over main, release -> the floating window
       is gone, `properties` is re-docked in main, and its `redock_at` records the

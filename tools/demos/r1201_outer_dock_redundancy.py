@@ -20,7 +20,7 @@ no-ops the same case for the RPC / §2 #2 path.
 
 This drives it with real same-window `scene/drag`s and observes §2 #7 scene-as-data:
 
-  (A) Boot — 5 panels, no reorg dividers.
+  (A) Boot — 4 dock panels, no reorg dividers.
   (B) Make the outliner a FULL-WIDTH bottom row (the R1167 outer dock — the
       non-regression baseline: a MEANINGFUL outer dock still works).
   (C) Re-drag the outliner to the BOTTOM edge it now spans → the preview is NOT
@@ -50,12 +50,12 @@ _MAIN_W = 1200
 _MAIN_H = 800
 _REORG = "/dock_reorganize/external"
 
-_TOOLBAR = "toolbar"
 _OUTLINER = "outliner"
 _VIEWPORT = "viewport"
 _PROPERTIES = "properties"
 _CONSOLE = "console"
-_ALL_PANELS = {_TOOLBAR, _OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
+# (R1206) toolbar is a fixed frame, not a dock panel — workspace = 4 panels.
+_ALL_PANELS = {_OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
 
 
 # ─── helpers ─────────────────────────────────────────────────────────
@@ -139,11 +139,11 @@ def _section(label: str) -> None:
 def body() -> None:
     with RpcSubprocess("hello-dock-panels-editor", boot_grace=2.0) as tf:
         # ── (A) boot ─────────────────────────────────────────────────
-        _section("A: boot — 5 panels, no reorg dividers")
+        _section("A: boot — 4 dock panels, no reorg dividers")
         wins = tf.request("scene/windows", {}).result.get("windows") or []
         assert len(wins) == 1, f"A.1 one window at boot; got {wins!r}"
         assert wins[0].get("id") == _MAIN, f"A.2 the window is main ({wins[0]!r})"
-        assert _panel_set(tf) == _ALL_PANELS, f"A.3 all 5 panels present ({_panel_set(tf)})"
+        assert _panel_set(tf) == _ALL_PANELS, f"A.3 all 4 dock panels present ({_panel_set(tf)})"
 
         # ── (B) make the outliner a FULL-WIDTH bottom row (R1167) ─────
         _section("B: outer-dock the outliner to a FULL-WIDTH bottom row (baseline works)")
@@ -217,7 +217,7 @@ def body() -> None:
         # ── (F) integrity + determinism ──────────────────────────────
         _section("F: integrity — panels survive, reads deterministic")
         assert _window_ids(tf) == {_MAIN}, "F.1 only main remains (no spurious floater)"
-        assert _panel_set(tf) == _ALL_PANELS, "F.2 all 5 panels intact after every move"
+        assert _panel_set(tf) == _ALL_PANELS, "F.2 all 4 dock panels intact after every move"
         a = _topology(tf)
         b = _topology(tf)
         assert a == b, "F.3 back-to-back topology reads are identical"

@@ -22,8 +22,8 @@ the demo never re-derives layout.
 
 Section roadmap (>=30 assertions across A-F):
 
-  (A) Snapshot sanity — paint root is the outer splitter Container.
-  (B) 5-pane structure — every panel root + its `#header` + `#content`
+  (A) Snapshot sanity — paint root is the app-frame Column Container.
+  (B) 4-panel workspace — every panel root + its `#header` + `#content`
       wrapper is present in the laid-out scene.
   (C) Console forcing consumer — the content wrapper fits WITHIN the
       console panel (`wrapper.h <= panel.h`, the invariant that fails
@@ -54,7 +54,9 @@ from rpc_verify import RpcSubprocess, run_demo  # noqa: E402
 _MAIN_W = 1200
 _MAIN_H = 800
 
-_PANEL_TAGS = ("toolbar", "outliner", "viewport", "properties", "console")
+# (R1206) The toolbar is a fixed frame outside the dock, not a dock panel — the
+# workspace is these 4 panels, each with a `#header` + `#content`.
+_PANEL_TAGS = ("outliner", "viewport", "properties", "console")
 _CONSOLE_PANEL_TAG = "console"
 
 # `view_dock_panel` composite tags: `<panel>#header` / `<panel>#content`
@@ -120,7 +122,7 @@ def body() -> None:
         assert isinstance(scene, dict), "A.2 snapshot is a dict"
         assert scene.get("type") == "Container", "A.3 paint root is a Container"
 
-        # ─── (B) 5-pane structure ────────────────────────────────────
+        # ─── (B) 4-panel workspace ────────────────────────────────────
         _section("B: every pane has a header + content wrapper")
         for panel in _PANEL_TAGS:
             assert _find(scene, panel) is not None, f"B.{panel}.root panel root present"

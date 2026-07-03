@@ -21460,6 +21460,108 @@
         "controls 6px clear (R1204 graze) / #4 editor pinion-chromed permanently"
       ]
     },
+    "R1206": {
+      "decision_summary": "Adopt the canonical 3-layer pro-tool app-frame: the editor toolbar leaves the dock TOPOLOGY and becomes a fixed strip ABOVE the dock workspace (view_toolbar_frame, a Column carrying the Surface fill), so the reorganizer manages only the 4-panel workspace and an OUTER dock never spans past the toolbar (the R1205 audit's structural finding). Built on R1205's surface-rect SSOT: the dock area is the workspace below the toolbar, carried by the layout engine for free. Retired the R1172 toolbar-as-locked-dock-leaf hack (topology 5->4 panels / 4->3 splits); the per-panel PAINT customizer (R1173) repointed to the PROPERTIES pinned-inspector taller header, while the per-panel INPUT lock stays unit-tested in widget-paint (locking a shared editor panel breaks its draggers).",
+      "changes_bullets": [
+        "adopt the canonical 3-layer pro-tool app-frame: the editor toolbar",
+        "leaves the dock TOPOLOGY and becomes a fixed strip ABOVE the dock",
+        "workspace (view_toolbar_frame, a Column carrying the Surface fill), so",
+        "the reorganizer manages only the 4-panel workspace and an OUTER dock",
+        "never spans past the toolbar (the R1205 audit's structural finding)",
+        "built on R1205's surface-rect SSOT: the dock area is the workspace",
+        "below the toolbar, carried by the layout engine for free",
+        "retired the R1172 \"toolbar = a locked headerless non-receiving dock",
+        "LEAF\" hack (a fixed frame is not a dock panel at all): topology 5->4",
+        "panels / 4->3 splits, and the toolbar-specific panel_content /",
+        "panel_style / with_movable / floating-window special-casing is gone",
+        "per-panel PAINT policy (the R1173 view_dock_surface_styled customizer)",
+        "repointed to the PROPERTIES \"pinned inspector\" (a taller header); the",
+        "per-panel INPUT lock (with_movable / with_floatable) stays unit-tested",
+        "in pinion-widget-paint since locking a shared editor panel would break",
+        "the many demos that drag / tear it off"
+      ],
+      "verification_bullets": [
+        "editor 63 tests green (topology 4-leaf/3-split, view root = the",
+        "app-frame Column wrapping the toolbar frame + DOCK_SURFACE workspace);",
+        "clippy(vello) + rustfmt clean",
+        "r1206 demo (35 asserts) PASS via RPC: the toolbar frame is pinned at",
+        "the window top, the dock surface sits below it, an OUTER dock (right +",
+        "bottom) stays inside the workspace below the toolbar, surface stable",
+        "r1173 demo repointed + PASS: the customizer gives properties a 40px",
+        "header while outliner/viewport/console keep the 28px default",
+        "14 editor demos reconciled to the 4-panel workspace; r1172 demo",
+        "retired (its with_movable/with_floatable capability is unit-tested);",
+        "r1205/r1201/r1167 no-regress; r1107/r1124/r1149 stay pre-existing",
+        "HW-gated (floater windows, CI-only)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.21",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "per-panel INPUT lock (with_movable/with_floatable) has no editor demo",
+        "now: locking a shared editor panel breaks the demos that drag/tear it",
+        "off, so the capability is covered only by pinion-widget-paint units - a",
+        "dedicated locked panel would need its own isolated topology",
+        "the vertical flex-fill idiom is inlined a 4th time (editor",
+        "view_main_dock wraps the workspace flex-fill) - a public pinion-core",
+        "lift of apply_flex_main is the still-deferred consolidation",
+        "R1206 follow-ups remain: #3 chrome controls 6px clear (R1204 graze) /",
+        "#4 editor pinion-chromed permanently (the fixed toolbar frame is now",
+        "ready to sit under a CSD chrome strip)"
+      ],
+      "publishable_decision_summary": "Adopt the canonical 3-layer pro-tool app-frame: the editor toolbar leaves the dock TOPOLOGY and becomes a fixed strip ABOVE the dock workspace (view_toolbar_frame, a Column carrying the Surface fill), so the reorganizer manages only the 4-panel workspace and an OUTER dock never spans past the toolbar (the R1205 audit's structural finding). Built on R1205's surface-rect SSOT: the dock area is the workspace below the toolbar, carried by the layout engine for free. Retired the R1172 toolbar-as-locked-dock-leaf hack (topology 5->4 panels / 4->3 splits); the per-panel PAINT customizer (R1173) repointed to the PROPERTIES pinned-inspector taller header, while the per-panel INPUT lock stays unit-tested in widget-paint (locking a shared editor panel breaks its draggers).",
+      "publishable_changes_bullets": [
+        "adopt the canonical 3-layer pro-tool app-frame: the editor toolbar",
+        "leaves the dock TOPOLOGY and becomes a fixed strip ABOVE the dock",
+        "workspace (view_toolbar_frame, a Column carrying the Surface fill), so",
+        "the reorganizer manages only the 4-panel workspace and an OUTER dock",
+        "never spans past the toolbar (the R1205 audit's structural finding)",
+        "built on R1205's surface-rect SSOT: the dock area is the workspace",
+        "below the toolbar, carried by the layout engine for free",
+        "retired the R1172 \"toolbar = a locked headerless non-receiving dock",
+        "LEAF\" hack (a fixed frame is not a dock panel at all): topology 5->4",
+        "panels / 4->3 splits, and the toolbar-specific panel_content /",
+        "panel_style / with_movable / floating-window special-casing is gone",
+        "per-panel PAINT policy (the R1173 view_dock_surface_styled customizer)",
+        "repointed to the PROPERTIES \"pinned inspector\" (a taller header); the",
+        "per-panel INPUT lock (with_movable / with_floatable) stays unit-tested",
+        "in pinion-widget-paint since locking a shared editor panel would break",
+        "the many demos that drag / tear it off"
+      ],
+      "publishable_verification_bullets": [
+        "editor 63 tests green (topology 4-leaf/3-split, view root = the",
+        "app-frame Column wrapping the toolbar frame + DOCK_SURFACE workspace);",
+        "clippy(vello) + rustfmt clean",
+        "r1206 demo (35 asserts) PASS via RPC: the toolbar frame is pinned at",
+        "the window top, the dock surface sits below it, an OUTER dock (right +",
+        "bottom) stays inside the workspace below the toolbar, surface stable",
+        "r1173 demo repointed + PASS: the customizer gives properties a 40px",
+        "header while outliner/viewport/console keep the 28px default",
+        "14 editor demos reconciled to the 4-panel workspace; r1172 demo",
+        "retired (its with_movable/with_floatable capability is unit-tested);",
+        "r1205/r1201/r1167 no-regress; r1107/r1124/r1149 stay pre-existing",
+        "HW-gated (floater windows, CI-only)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.21",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "per-panel INPUT lock (with_movable/with_floatable) has no editor demo",
+        "now: locking a shared editor panel breaks the demos that drag/tear it",
+        "off, so the capability is covered only by pinion-widget-paint units - a",
+        "dedicated locked panel would need its own isolated topology",
+        "the vertical flex-fill idiom is inlined a 4th time (editor",
+        "view_main_dock wraps the workspace flex-fill) - a public pinion-core",
+        "lift of apply_flex_main is the still-deferred consolidation",
+        "R1206 follow-ups remain: #3 chrome controls 6px clear (R1204 graze) /",
+        "#4 editor pinion-chromed permanently (the fixed toolbar frame is now",
+        "ready to sit under a CSD chrome strip)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

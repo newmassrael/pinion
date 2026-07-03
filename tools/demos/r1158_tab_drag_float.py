@@ -20,7 +20,7 @@ loses / relocates the dragged tab accordingly.
 
 Section roadmap (>=30 assertions across A-E):
 
-  (A) Boot — 5 panels, NO tab well, NO floating window.
+  (A) Boot — 4 panels, NO tab well, NO floating window.
   (B) Tabify viewport+properties (centre reorganize) — one Tabs well [properties,
       viewport]; find its dynamic well id from the painted tablist.
   (C) HEADLINE — drag tab 0 (properties) fully OUT of the window: a
@@ -45,7 +45,7 @@ EXAMPLE = "hello-dock-panels-editor"
 REORG = "/dock_reorganize/external"
 MAIN = "main"
 MW, MH = 1200, 800
-PANELS = {"toolbar", "outliner", "viewport", "properties", "console"}
+PANELS = {"outliner", "viewport", "properties", "console"}
 
 
 def _topology(tf: RpcSubprocess) -> Any:
@@ -135,7 +135,7 @@ def body() -> None:
         _section("A: boot — no tab well, no floating window")
         topo = _topology(tf)
         assert_eq(_wells(topo), 0, "A.1 boot has no tab well")
-        assert_eq(_docked_panels(topo), PANELS, "A.2 all 5 panels docked")
+        assert_eq(_docked_panels(topo), PANELS, "A.2 all 4 panels docked")
         assert_eq(_torn_windows(tf), set(), "A.3 no floating window at boot")
         assert_eq(_window_ids(tf), {MAIN}, "A.4 only the main window declared")
 
@@ -174,8 +174,8 @@ def body() -> None:
         wait_until(lambda: _wells(_topology(tf)) == 0, desc="C.3 the well collapsed")
         t_c = _topology(tf)
         assert "properties" not in _docked_panels(t_c), "C.4 properties left the dock (it floated)"
-        assert {"toolbar", "outliner", "viewport", "console"} <= _docked_panels(t_c), (
-            "C.5 the other four panels stay docked"
+        assert {"outliner", "viewport", "console"} <= _docked_panels(t_c), (
+            "C.5 the other three panels stay docked"
         )
         assert_eq(_wells(t_c), 0, "C.6 no tab well remains (the 2-tab well collapsed to its sibling)")
         assert_eq(_window_ids(tf), {MAIN, "torn-properties"}, "C.7 exactly main + the new floater")

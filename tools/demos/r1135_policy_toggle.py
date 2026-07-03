@@ -24,7 +24,7 @@ Section roadmap (>=30 assertions across A-E):
       drives the collapse), then dock it back home.
   (D) Click toggle -> placeholder — policy flips back, label repaints; a tear-off
       now KEEPS the slot (placeholder), then dock back.
-  (E) Integrity — all 5 panels survive; the button is read-only-introspect clean.
+  (E) Integrity — all 4 panels survive; the button is read-only-introspect clean.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from rpc_verify import RpcSubprocess, run_demo, wait_until  # noqa: E402
 _VIEWPORT = "viewport"
 _OUTLINER = "outliner"
 _PROPERTIES = "properties"
-_ALL_PANELS = {"toolbar", _OUTLINER, _VIEWPORT, _PROPERTIES, "console"}
+_ALL_PANELS = {_OUTLINER, _VIEWPORT, _PROPERTIES, "console"}
 _MAIN = "main"
 _MAIN_W = 1200
 _MAIN_H = 800
@@ -135,7 +135,7 @@ def body() -> None:
         assert _scene_has_tag(scene, _POLICY_BTN), "A.3 the toggle button is painted in the toolbar"
         assert _scene_has_text(scene, _PLACEHOLDER_LABEL), "A.4 label shows the current placeholder mode"
         assert not _scene_has_text(scene, _COLLAPSE_LABEL), "A.5 label is NOT collapse yet"
-        assert _all_panels(_topology_root(tf)) == _ALL_PANELS, "A.6 all 5 panels docked"
+        assert _all_panels(_topology_root(tf)) == _ALL_PANELS, "A.6 all 4 panels docked"
 
         # ── (B) click toggle -> collapse ─────────────────────────────
         _section("B: click the toggle -> collapse, label repaints")
@@ -151,12 +151,12 @@ def body() -> None:
         wait_until(lambda: _torn(_VIEWPORT) in _window_ids(tf), desc="C.1 viewport floats")
         root_c = _topology_root(tf)
         assert _VIEWPORT not in _all_panels(root_c), "C.2 ★viewport's slot collapsed (GUI policy drove it)"
-        assert _all_panels(root_c) == _ALL_PANELS - {_VIEWPORT}, "C.3 the other 4 reclaim the space"
+        assert _all_panels(root_c) == _ALL_PANELS - {_VIEWPORT}, "C.3 the other 3 reclaim the space"
         scene_c = _main_scene(tf)
         assert not _scene_has_tag(scene_c, f"{_VIEWPORT}_placeholder"), "C.4 no placeholder painted under collapse"
         _tear_off(tf, _VIEWPORT)  # dock back home
         wait_until(lambda: len(_windows(tf)) == 1, desc="C.5 viewport docks back")
-        assert _all_panels(_topology_root(tf)) == _ALL_PANELS, "C.6 viewport restored home (5 panels)"
+        assert _all_panels(_topology_root(tf)) == _ALL_PANELS, "C.6 viewport restored home (4 panels)"
 
         # ── (D) click toggle -> placeholder ──────────────────────────
         _section("D: click toggle -> placeholder, the slot is kept on tear-off")
@@ -176,7 +176,7 @@ def body() -> None:
         # ── (E) integrity ───────────────────────────────────────────
         _section("E: integrity — panels survive, policy back to placeholder")
         assert _window_ids(tf) == {_MAIN}, "E.1 only main remains"
-        assert _all_panels(_topology_root(tf)) == _ALL_PANELS, "E.2 all 5 panels intact"
+        assert _all_panels(_topology_root(tf)) == _ALL_PANELS, "E.2 all 4 panels intact"
         assert _float_policy(tf) == "placeholder", "E.3 policy ended at placeholder (two flips)"
 
         print("[demo] r1135_policy_toggle: all sections PASS (GUI toggle flips collapse|placeholder)")

@@ -141,8 +141,8 @@ def body() -> None:
         # outliner) yet the tab floated — impossible under the continuous model.
         assert 0 <= cx <= MW and 0 <= cy <= MH, "C.5 the release point was INSIDE the window"
         assert_eq(len(_torn(tf)), 1, "C.6 exactly one floater from the in-window tear-off")
-        assert {"toolbar", "outliner", "viewport", "console"} <= _docked(_topology(tf)), (
-            "C.7 the other four panels stayed docked"
+        assert {"outliner", "viewport", "console"} <= _docked(_topology(tf)), (
+            "C.7 the other three panels stayed docked"
         )
 
         # ── (D) CENTRE → DOCK (tabify), no new floater ──────────────

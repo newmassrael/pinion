@@ -12,12 +12,12 @@ Section roadmap (≥40 assertions across A–H):
 
   (A) Substrate sanity — view fn produces a Scene with the outer
       splitter Container at root; viewport Button slot reachable.
-  (B) 5-pane topology — every panel root tag + every splitter tag
+  (B) 4-panel workspace (+ toolbar frame) — every panel/splitter tag
       appears in the rendered scene.
-  (C) Splitter slots — each of the 4 SplitterExternals exposes its
+  (C) Splitter slots — each of the 3 SplitterExternals exposes its
       canonical schema (orientation + ratio + dragging + send) and
       reports the expected default ratio.
-  (D) Splitter orientation — outer V + inner V + middle H + inner H
+  (D) Splitter orientation — inner V (root) + middle H + inner H
       orientations match the topology declaration.
   (E) Viewport Button click — drive scene/click on the viewport
       button; the SCXML state advances to Hover (idle→press→hover);
@@ -57,7 +57,6 @@ _CONSOLE_PANEL_TAG = "console"
 
 # Splitter paint-side tags. Indexed by depth-first pre-order over
 # `build_editor_topology` per `view_dock_surface`'s threading scheme.
-_SPLIT_OUTER_TAG = "editor_split_outer"
 _SPLIT_INNER_V_TAG = "editor_split_inner_v"
 _SPLIT_MIDDLE_H_TAG = "editor_split_middle_h"
 _SPLIT_INNER_H_TAG = "editor_split_inner_h"
@@ -67,7 +66,6 @@ _VIEWPORT_BTN_TAG = "viewport_btn"
 
 # Default split ratios (matched against the substrate-clamped value
 # the SplitterExternal::ratio() query returns).
-_SPLIT_OUTER_RATIO_DEFAULT = 0.06
 _SPLIT_INNER_V_RATIO_DEFAULT = 0.78
 _SPLIT_MIDDLE_H_RATIO_DEFAULT = 0.18
 _SPLIT_INNER_H_RATIO_DEFAULT = 0.78
@@ -156,17 +154,21 @@ def body() -> None:
         assert scene is not None, "A.1 snapshot returns non-None"
         assert isinstance(scene, dict), "A.2 snapshot is a dict"
         assert scene.get("type") == "Container", "A.3 root is Container"
-        assert scene.get("tag") == _SPLIT_OUTER_TAG, (
-            f"A.4 root tag is {_SPLIT_OUTER_TAG} (the outer splitter), "
-            f"got {scene.get('tag')!r}"
+        # (R1206) The root is now the 3-layer app-frame Column (untagged): a fixed
+        # toolbar strip + the dock workspace. Both tags appear inside it (checked in
+        # B); the root itself carries no tag.
+        assert scene.get("tag") is None, (
+            f"A.4 the app-frame root Column is untagged, got {scene.get('tag')!r}"
         )
+        assert _scene_contains_tag(scene, _TOOLBAR_PANEL_TAG), "A.4b toolbar frame present"
+        assert _scene_contains_tag(scene, _SPLIT_INNER_V_TAG), "A.4c dock workspace present"
         viewport_state = _query_button_state(tf)
         assert viewport_state in {"Idle", "Hover", "Pressed", "Disabled"}, (
             f"A.5 viewport button query returns a known state ({viewport_state})"
         )
 
-        # ─── (B) 5-pane topology — every tag present ─────────────────
-        _section("B: 5-pane topology")
+        # ─── (B) 4-panel workspace + toolbar frame — every tag present ───
+        _section("B: 4-panel workspace + toolbar frame")
         for panel_tag in (
             _TOOLBAR_PANEL_TAG,
             _OUTLINER_PANEL_TAG,
@@ -178,7 +180,6 @@ def body() -> None:
                 f"B.{panel_tag} panel root tag '{panel_tag}' present"
             )
         for split_tag in (
-            _SPLIT_OUTER_TAG,
             _SPLIT_INNER_V_TAG,
             _SPLIT_MIDDLE_H_TAG,
             _SPLIT_INNER_H_TAG,
@@ -193,7 +194,6 @@ def body() -> None:
         # ─── (C) Splitter slots ──────────────────────────────────────
         _section("C: splitter schema slots")
         for split_tag, expected_ratio in (
-            (_SPLIT_OUTER_TAG, _SPLIT_OUTER_RATIO_DEFAULT),
             (_SPLIT_INNER_V_TAG, _SPLIT_INNER_V_RATIO_DEFAULT),
             (_SPLIT_MIDDLE_H_TAG, _SPLIT_MIDDLE_H_RATIO_DEFAULT),
             (_SPLIT_INNER_H_TAG, _SPLIT_INNER_H_RATIO_DEFAULT),
@@ -207,7 +207,6 @@ def body() -> None:
         # ─── (D) Splitter orientation ────────────────────────────────
         _section("D: splitter orientations")
         for split_tag, expected_orient in (
-            (_SPLIT_OUTER_TAG, "vertical"),
             (_SPLIT_INNER_V_TAG, "vertical"),
             (_SPLIT_MIDDLE_H_TAG, "horizontal"),
             (_SPLIT_INNER_H_TAG, "horizontal"),

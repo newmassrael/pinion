@@ -31,7 +31,7 @@ from rpc_verify import RpcSubprocess, run_demo, wait_until  # noqa: E402
 _MAIN = "main"
 _PROPERTIES = "properties"
 _CONSOLE = "console"
-_ALL_PANELS = {"toolbar", "outliner", "viewport", _PROPERTIES, _CONSOLE}
+_ALL_PANELS = {"outliner", "viewport", _PROPERTIES, _CONSOLE}
 _REORG = "/dock_reorganize/external"
 
 _STRIP = "ai-overlay/window-chrome"
@@ -112,7 +112,7 @@ def body() -> None:
         assert not _has(main, _CLOSE), "A.3 main has NO client close control (OS decorations)"
         assert not _has(main, _STRIP), "A.4 main has NO shell chrome strip"
         assert not _has(main, _GRIP), "A.5 main has NO client grip"
-        assert _panel_set(tf) == _ALL_PANELS, f"A.6 all 5 panels present ({_panel_set(tf)})"
+        assert _panel_set(tf) == _ALL_PANELS, f"A.6 all 4 panels present ({_panel_set(tf)})"
 
         # ── (B) tear off properties → its HEADER carries the controls ─
         _section("B: tear off properties → header has min/max/close, no overlay strip")
@@ -165,7 +165,7 @@ def body() -> None:
 
         # ── (F) integrity — every panel survives the tear-offs ───────
         _section("F: integrity — panels conserved, reads deterministic")
-        assert _panel_set(tf) == _ALL_PANELS, "F.1 all 5 panels intact after tear-offs"
+        assert _panel_set(tf) == _ALL_PANELS, "F.1 all 4 panels intact after tear-offs"
         assert _window_ids(tf) == {_MAIN, _torn(_PROPERTIES), _torn(_CONSOLE)}, (
             f"F.2 exactly main + the two torn windows ({_window_ids(tf)})"
         )

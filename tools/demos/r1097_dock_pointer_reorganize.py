@@ -21,11 +21,11 @@ this demo pins the end-to-end pointer→reorganize / pointer→tabify outcomes
 
 Section roadmap (>=30 assertions across A-F):
 
-  (A) Boot sanity — 5 panels canonical depth-first, 4 boot splits, no tab
+  (A) Boot sanity — 4 panels canonical depth-first, 3 boot splits, no tab
       wells, split_seq / tabs_seq both 0.
   (B) Pointer EDGE drag = split-insert — `scene/drag` a panel header onto a
       sibling's left-edge zone docks it there (a `reorg-split-N` divider
-      appears, panel count holds at 5, split_seq bumps).
+      appears, panel count holds at 4, split_seq bumps).
   (C) Pointer CENTER drag = tabify — `scene/drag` a header onto a sibling's
       centre stacks them into a `Tabs` well (tabs_seq bumps, panel count
       holds).
@@ -46,12 +46,11 @@ from rpc_verify import RpcSubprocess, run_demo, wait_until  # noqa: E402
 _MAIN_W = 1200
 _MAIN_H = 800
 
-_TOOLBAR = "toolbar"
 _OUTLINER = "outliner"
 _VIEWPORT = "viewport"
 _PROPERTIES = "properties"
 _CONSOLE = "console"
-_CANONICAL = [_TOOLBAR, _OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE]
+_CANONICAL = [_OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE]
 
 _REORG_TAG = "dock_reorganize"
 _REORG_SPLIT_PREFIX = "reorg-split-"
@@ -196,7 +195,7 @@ def body() -> None:
         _section("A: boot topology sanity")
         topo = _topology(tf)
         assert _panel_ids(topo) == _CANONICAL, f"A.1 canonical panel order, got {_panel_ids(topo)}"
-        assert len(_split_ids(topo)) == 4, "A.2 four boot splits"
+        assert len(_split_ids(topo)) == 3, "A.2 three boot splits"
         assert _tabs_wells(topo) == [], "A.3 no tab wells at boot"
         assert _split_seq(tf) == 0, "A.4 split_seq starts at 0"
         assert _tabs_seq(tf) == 0, "A.5 tabs_seq starts at 0"
@@ -214,7 +213,7 @@ def body() -> None:
         )
         topo = _topology(tf)
         after = _panel_ids(topo)
-        assert len(after) == 5, f"B.2 panel count held at 5 (a move): {after}"
+        assert len(after) == 4, f"B.2 panel count held at 4 (a move): {after}"
         assert _CONSOLE in after and _VIEWPORT in after, "B.3 both panels still present"
         ci, vi = after.index(_CONSOLE), after.index(_VIEWPORT)
         assert ci + 1 == vi, f"B.4 console docked immediately left of viewport ({after})"
@@ -270,7 +269,7 @@ def body() -> None:
         # ── (D) un-dragged panels intact ─────────────────────────────
         _section("D: un-dragged panels keep their identity")
         ids = _panel_ids(_topology(tf))
-        for panel in (_TOOLBAR, _VIEWPORT):
+        for panel in (_PROPERTIES, _VIEWPORT):
             assert panel in ids, f"D.{panel} the un-dragged {panel} is still present"
 
         # ── (E) reorganize is a move (no panel created/destroyed) ────

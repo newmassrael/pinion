@@ -19,7 +19,7 @@ and `query(".../last_outcome")` records the relocate (`"<source> -> <target>"`).
 
 Section roadmap (>=30 assertions across A-E):
 
-  (A) Boot — one window, the 5 panels docked; viewport sits beside properties (the
+  (A) Boot — one window, the 4 panels docked; viewport sits beside properties (the
       inner_h split), and is NOT beside console.
   (B) Tear off viewport — two windows, viewport's slot shows a placeholder.
   (C) Zone redock — redock viewport onto CONSOLE's LEFT edge. The topology now puts
@@ -28,7 +28,7 @@ Section roadmap (>=30 assertions across A-E):
       content re-docked. THE HEADLINE: it landed at the zone, not its home slot.
   (D) Centre tabify — tear off outliner, redock onto PROPERTIES' centre. A tab well
       now stacks outliner + properties; last_outcome "outliner -> properties".
-  (E) Integrity — all 5 panels survive every relocate; last_outcome is a read-only
+  (E) Integrity — all 4 panels survive every relocate; last_outcome is a read-only
       diagnostic.
 """
 
@@ -41,12 +41,11 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import RpcError, RpcSubprocess, run_demo, wait_until  # noqa: E402
 
-_TOOLBAR = "toolbar"
 _OUTLINER = "outliner"
 _VIEWPORT = "viewport"
 _PROPERTIES = "properties"
 _CONSOLE = "console"
-_ALL_PANELS = {_TOOLBAR, _OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
+_ALL_PANELS = {_OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
 _MAIN = "main"
 _MAIN_W = 1200
 _MAIN_H = 800
@@ -169,13 +168,13 @@ def _section(label: str) -> None:
 def body() -> None:
     with RpcSubprocess("hello-dock-panels-editor", boot_grace=2.0) as tf:
         # ── (A) boot — viewport beside properties, not console ───────
-        _section("A: boot — 5 panels docked, viewport|properties siblings")
+        _section("A: boot — 4 panels docked, viewport|properties siblings")
         boot = _windows(tf)
         assert len(boot) == 1, f"A.1 one window at boot; got {boot!r}"
         assert boot[0].get("id") == _MAIN, f"A.2 boot window is main ({boot[0]!r})"
         root = _root(_topology(tf))
         assert root is not None, "A.3 topology readable as scene-as-data"
-        assert _all_panels(root) == _ALL_PANELS, f"A.4 all 5 panels present ({_all_panels(root)})"
+        assert _all_panels(root) == _ALL_PANELS, f"A.4 all 4 panels present ({_all_panels(root)})"
         assert _siblings_in_split(root, _VIEWPORT, _PROPERTIES), "A.5 viewport|properties are siblings"
         assert not _siblings_in_split(root, _VIEWPORT, _CONSOLE), "A.6 viewport not beside console yet"
         scene = _main_scene(tf)
@@ -234,7 +233,7 @@ def body() -> None:
         # ── (E) integrity + read-only diagnostic ─────────────────────
         _section("E: integrity — panels survive, last_outcome read-only")
         assert _window_ids(tf) == {_MAIN}, "E.1 only main remains after every redock"
-        assert _all_panels(_root(_topology(tf))) == _ALL_PANELS, "E.2 all 5 panels intact"
+        assert _all_panels(_root(_topology(tf))) == _ALL_PANELS, "E.2 all 4 panels intact"
         try:
             tf.request("scene/intervene", {"path": f"{_REORG}/last_outcome", "value": "tamper"})
             raise AssertionError("E.3 intervening on last_outcome must error")

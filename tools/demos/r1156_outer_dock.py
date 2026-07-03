@@ -102,7 +102,10 @@ def body() -> None:
         after = _rect_of(tf, "outliner")
         assert after is not None, "C.3 outliner still present after the outer dock"
         assert after["w"] >= win_w - 8, f"C.4 outliner now spans the full width ({after!r})"
-        assert after["x"] == 0 and after["y"] == 0, f"C.5 it is the TOP row ({after!r})"
+        # (R1206) The outer-Top dock splits the WORKSPACE (below the fixed toolbar
+        # frame), so the top row sits at the workspace top (~48px), not y=0 — the
+        # outer dock no longer reaches the toolbar.
+        assert after["x"] == 0 and 40 <= after["y"] <= 56, f"C.5 it is the workspace TOP row ({after!r})"
 
         # Left: properties becomes a full-height left column.
         out = tf.invoke(f"/{_REORG}/external/dock_outer", {"source": "properties", "zone": "Left"})

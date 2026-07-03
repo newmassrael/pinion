@@ -49,7 +49,9 @@ use pinion_core::external::{DropPoint, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{AlignItems, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
+};
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::undo::{UndoStack, UndoStackExternal, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
@@ -128,11 +130,11 @@ const POLICY_BTN_TAG: &str = "float_policy_btn";
 /// `undock_tab` invoke). A third [`ButtonExternal`] registered as an extra.
 const UNDOCK_BTN_TAG: &str = "undock_tab_btn";
 
-/// Splitter paint-side tags. Four splits in depth-first pre-order
-/// per R685 [`view_dock_surface`]'s threading scheme:
-/// idx 0 → outer V (toolbar | rest), idx 1 → inner V (middle | console),
-/// idx 2 → middle H (outliner | rest), idx 3 → inner H (viewport | properties).
-const SPLIT_OUTER_TAG: &str = "editor_split_outer";
+/// Splitter paint-side tags. THREE splits in depth-first pre-order per R685
+/// [`view_dock_surface`]'s threading scheme (R1206 took the toolbar out of the
+/// topology, retiring the outer V split that used to hold `toolbar | rest`):
+/// idx 0 → inner V root (middle | console), idx 1 → middle H (outliner | rest),
+/// idx 2 → inner H (viewport | properties).
 const SPLIT_INNER_V_TAG: &str = "editor_split_inner_v";
 const SPLIT_MIDDLE_H_TAG: &str = "editor_split_middle_h";
 const SPLIT_INNER_H_TAG: &str = "editor_split_inner_h";
@@ -160,7 +162,13 @@ const UNDOCK_BTN_CLICK_INTENT_TAG: &str = intent_tag!("undock_tab_btn", "click")
 
 // ─── default split ratios ─────────────────────────────────────────────
 
-const SPLIT_OUTER_RATIO_DEFAULT: f32 = 0.06;
+/// (R1206) The fixed toolbar frame's height (logical px) — was the outer-V
+/// split's 6%-of-window ratio; now a fixed strip above the dock workspace.
+const TOOLBAR_FRAME_HEIGHT_PX: u32 = 48;
+/// (R1206) The "pinned inspector" PROPERTIES panel's taller header (logical px,
+/// vs the `DockPanelStyle::m3_default` 28) — the editor's 2nd consumer of the
+/// R1173 per-panel `view_dock_surface_styled` style customizer.
+const PINNED_INSPECTOR_HEADER_PX: u32 = 40;
 const SPLIT_INNER_V_RATIO_DEFAULT: f32 = 0.78;
 const SPLIT_MIDDLE_H_RATIO_DEFAULT: f32 = 0.18;
 const SPLIT_INNER_H_RATIO_DEFAULT: f32 = 0.78;
@@ -381,12 +389,13 @@ fn floating_window_title(panel_id: &str) -> String {
 /// exactly (the [`WindowSpec::with_position`] consumer the flat demo
 /// pioneered at R1087).
 fn floating_window_position(panel_id: &str) -> (i32, i32) {
+    // (R1206) The toolbar is a fixed frame, not a tear-off-able dock panel, so it
+    // has no cascade slot.
     let step = match panel_id {
-        TOOLBAR_PANEL_TAG => 0,
-        OUTLINER_PANEL_TAG => 1,
-        VIEWPORT_PANEL_TAG => 2,
-        PROPERTIES_PANEL_TAG => 3,
-        _ => 4,
+        OUTLINER_PANEL_TAG => 0,
+        VIEWPORT_PANEL_TAG => 1,
+        PROPERTIES_PANEL_TAG => 2,
+        _ => 3,
     };
     (160 + step * 44, 120 + step * 44)
 }
@@ -586,26 +595,29 @@ fn move_floating_window(panel_id: &str, delta: (f64, f64)) {
 /// id, so binding state stays bound to the right Split across any
 /// future topology mutation.
 fn build_editor_topology() -> DockTopology {
+    // (R1206 §5.16 §5.51) The reorganizer manages ONLY the dock WORKSPACE — the
+    // toolbar is a fixed app-frame strip OUTSIDE the topology (composed above the
+    // dock surface in `view_main_dock`), so an OUTER dock stays within the
+    // workspace and never spans past the toolbar. This is the canonical 3-layer
+    // pro-tool structure (shell chrome / fixed frame / dockable workspace); it
+    // retired the R1172 "toolbar = a locked, headerless, non-receiving dock LEAF"
+    // hack (a fixed strip is not a dock panel at all). The workspace root is the
+    // former inner-V split (middle-H | console).
     DockTopology::new(DockNode::split_vertical(
-        SPLIT_OUTER_TAG,
-        SPLIT_OUTER_RATIO_DEFAULT,
-        DockNode::leaf(TOOLBAR_PANEL_TAG),
-        DockNode::split_vertical(
-            SPLIT_INNER_V_TAG,
-            SPLIT_INNER_V_RATIO_DEFAULT,
+        SPLIT_INNER_V_TAG,
+        SPLIT_INNER_V_RATIO_DEFAULT,
+        DockNode::split_horizontal(
+            SPLIT_MIDDLE_H_TAG,
+            SPLIT_MIDDLE_H_RATIO_DEFAULT,
+            DockNode::leaf(OUTLINER_PANEL_TAG),
             DockNode::split_horizontal(
-                SPLIT_MIDDLE_H_TAG,
-                SPLIT_MIDDLE_H_RATIO_DEFAULT,
-                DockNode::leaf(OUTLINER_PANEL_TAG),
-                DockNode::split_horizontal(
-                    SPLIT_INNER_H_TAG,
-                    SPLIT_INNER_H_RATIO_DEFAULT,
-                    DockNode::leaf(VIEWPORT_PANEL_TAG),
-                    DockNode::leaf(PROPERTIES_PANEL_TAG),
-                ),
+                SPLIT_INNER_H_TAG,
+                SPLIT_INNER_H_RATIO_DEFAULT,
+                DockNode::leaf(VIEWPORT_PANEL_TAG),
+                DockNode::leaf(PROPERTIES_PANEL_TAG),
             ),
-            DockNode::leaf(CONSOLE_PANEL_TAG),
         ),
+        DockNode::leaf(CONSOLE_PANEL_TAG),
     ))
 }
 
@@ -671,6 +683,29 @@ fn view_toolbar_content(theme: &Theme) -> Scene {
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Start)
                     .with_padding(Rect::new(12, 0, 12, 0)),
+            ),
+    )
+}
+
+/// (R1206 §5.16 §5.51) The toolbar as a FIXED app-frame strip — a fixed-height
+/// band ABOVE the dock workspace, NOT a dock panel (no header, no drag, no drop
+/// target, not in the [`DockTopology`]). The middle layer of the canonical
+/// 3-layer pro-tool structure (shell chrome / fixed frame / dockable workspace);
+/// it retired the R1172 "toolbar = a locked, headerless, non-receiving dock LEAF"
+/// hack, so an OUTER dock can no longer span past it. Keeps the
+/// [`TOOLBAR_PANEL_TAG`] tag so introspection + the menu label / policy-toggle
+/// button (registered as extra externals) are unchanged.
+fn view_toolbar_frame(theme: &Theme) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![view_toolbar_content(theme)])
+            .with_tag(TOOLBAR_PANEL_TAG)
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_flex_basis(SizeValue::Px(TOOLBAR_FRAME_HEIGHT_PX))
+                    .with_flex_grow(0.0),
             ),
     )
 }
@@ -868,8 +903,10 @@ fn view_console_content(theme: &Theme) -> Scene {
 }
 
 fn panel_content_for(panel_id: &str, state: ButtonState, theme: &Theme) -> Scene {
+    // (R1206) The toolbar is no longer a dock panel — it is a fixed app-frame
+    // strip composed above the dock surface (see `view_main_dock`), so it is not
+    // dispatched here.
     match panel_id {
-        TOOLBAR_PANEL_TAG => view_toolbar_content(theme),
         OUTLINER_PANEL_TAG => view_outliner_content(theme),
         VIEWPORT_PANEL_TAG => view_viewport_content(state, theme),
         PROPERTIES_PANEL_TAG => view_properties_content(theme),
@@ -920,7 +957,7 @@ fn view_main_dock(state: ButtonState) -> Scene {
     // The editor seeds `Some` and never empties, but the view honours the
     // universal Option (the R685.B SSOT walker auto-builds DockPanelStyle /
     // SplitterStyle from the topology + threads its declared initial_ratio).
-    let surface = match topology {
+    let workspace = match topology {
         Some(topology) => view_dock_surface_styled(
             &topology,
             |panel_id| {
@@ -945,14 +982,15 @@ fn view_main_dock(state: ButtonState) -> Scene {
                     .filter(|p| p.target == panel_id)
                     .map(|p| p.zone)
             },
-            // (R1173 §5.16) LOCK the toolbar fully — HEADERLESS (no title-bar drag
-            // handle; the "File Edit View…" menu strip IS the content) + NON-RECEIVING
-            // (`drop_target=false`: no panel can dock INTO it). Composed with the
-            // factory's `with_movable(false)` (R1172): the toolbar is a fixed,
-            // immovable, headerless strip — per-panel chrome freely combined.
+            // (R1206 §5.16) Per-panel PAINT policy via the walker customizer: the
+            // PROPERTIES panel is a "pinned inspector" with a TALLER header — the
+            // 2nd consumer of the `view_dock_surface_styled` per-panel style seam
+            // (the R1173 toolbar customization moved here when the toolbar became a
+            // fixed frame). It stays a normal dockable panel (header + drop target),
+            // so no drag / dock-into gesture is affected — only its header is taller.
             |panel_id, style| {
-                if panel_id == TOOLBAR_PANEL_TAG {
-                    style.with_show_header(false).with_drop_target(false)
+                if panel_id == PROPERTIES_PANEL_TAG {
+                    style.with_header_height_px(PINNED_INSPECTOR_HEADER_PX)
                 } else {
                     style
                 }
@@ -965,14 +1003,12 @@ fn view_main_dock(state: ButtonState) -> Scene {
     // cursor entered the window's outer band resolves to a full-span outer dock —
     // the preview's `target` is the OUTER_DOCK_ZONE_TAG sentinel (no panel matches
     // the per-panel `preview_zone` callback above, so the inner panels stay
-    // un-highlighted). Overlay a full-span band across the WHOLE surface (a
-    // row/column over every pane) at the previewed edge, of the thickness
-    // `dock_panel_outer` lands at — preview == result, the same affordance the
-    // cross-window floater preview shows. Appended as an absolute (out-of-flow)
-    // child of the surface root, exactly as a panel appends its inner-zone
-    // highlight, so the dock layout is undisturbed.
-    match preview.as_ref().filter(|p| p.target == OUTER_DOCK_ZONE_TAG) {
-        Some(p) => match surface {
+    // un-highlighted). Appended as an absolute (out-of-flow) child of the
+    // DOCK_SURFACE wrapper, so the dock layout is undisturbed and the band spans
+    // the WORKSPACE (below the toolbar frame), matching where `dock_panel_outer`
+    // lands (R1206: the outer dock no longer reaches the toolbar).
+    let workspace = match preview.as_ref().filter(|p| p.target == OUTER_DOCK_ZONE_TAG) {
+        Some(p) => match workspace {
             Scene::Container(mut root) => {
                 root.children
                     .push(dock_outer_zone_highlight(p.zone, &theme));
@@ -980,8 +1016,37 @@ fn view_main_dock(state: ButtonState) -> Scene {
             }
             other => other,
         },
-        None => surface,
-    }
+        None => workspace,
+    };
+    // (R1206 §5.21) The workspace flex-fills the Column below the fixed toolbar
+    // strip (R1086 flex-main idiom: basis 0 / grow 1 / min-height 0). Inlined —
+    // the shared `apply_flex_main` (widget-paint `pub(crate)`) is not reachable
+    // from an example; a public core lift is the deferred R1205 follow-up.
+    let workspace = match workspace {
+        Scene::Container(mut c) => {
+            c.layout = c
+                .layout
+                .with_flex_basis(SizeValue::Px(0))
+                .with_flex_grow(1.0)
+                .with_min_size(Size::auto().with_height(SizeValue::Px(0)));
+            Scene::Container(c)
+        }
+        other => other,
+    };
+    // (R1206 §5.16 §5.51) The 3-layer pro-tool app-frame: a FIXED toolbar strip
+    // ABOVE the dockable workspace (shell chrome / fixed frame / dock workspace).
+    // The Column is the root paint scene, so it carries the theme Surface fill —
+    // `root_background` samples the ROOT Container's fill for the surface clear
+    // (the R683.C / R1205 black-clear leak on resize).
+    Scene::Container(
+        ContainerNode::new(vec![view_toolbar_frame(&theme), workspace])
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch),
+            ),
+    )
 }
 
 /// (R1105 §5.51 §5.16 §5.45 PR-31) A torn-off panel's floating-window paint.
@@ -1148,11 +1213,14 @@ impl WidgetCore for DockPanelsEditorView {
                     // (grab-offset), not a dock tear-off. The id is the same
                     // `floating_window_id` SSOT the tear-off reducer + view use.
                     .with_floating_window(floating_window_id(panel_id))
-                    // (R1172 §5.16) LOCK the toolbar: a fixed top strip is not
-                    // movable — its header starts no drag, so it can never be
-                    // reordered, docked elsewhere, or torn off (a pro dock's
-                    // non-movable toolbar). Every other panel stays freely movable.
-                    .with_movable(panel_id != TOOLBAR_PANEL_TAG)
+                    // (R1206) Every workspace panel keeps the full movable + floatable
+                    // set (default). The R1172 toolbar `with_movable(false)` /
+                    // `with_floatable(false)` lock is gone — the toolbar is a fixed
+                    // app-frame strip outside the topology now. Per-panel INPUT-lock
+                    // policy stays unit-tested in `pinion-widget-paint` (locking a
+                    // shared editor panel would break the demos that drag / tear it
+                    // off); the editor demonstrates the per-panel PAINT customizer
+                    // instead (the properties "pinned inspector" taller header above).
                     // (R1133 §5.51.1) Re-hydrate the lifecycle chart from the live
                     // float truth so a reconstruct (any topology change) does not
                     // reset a floating panel's chart to Docked.
@@ -1727,10 +1795,12 @@ mod tests {
     }
 
     #[test]
-    fn r685_editor_topology_has_5_leaves_and_4_splits() {
+    fn r1206_editor_topology_has_4_leaves_and_3_splits() {
+        // (R1206) The toolbar left the topology (fixed app-frame), so the dock
+        // WORKSPACE is 4 panels / 3 splits (was 5 / 4).
         let topology = build_editor_topology();
-        assert_eq!(topology.leaf_count(), 5);
-        assert_eq!(topology.split_count(), 4);
+        assert_eq!(topology.leaf_count(), 4);
+        assert_eq!(topology.split_count(), 3);
     }
 
     #[test]
@@ -1739,13 +1809,12 @@ mod tests {
         assert_eq!(
             topology.panel_ids(),
             vec![
-                TOOLBAR_PANEL_TAG,
                 OUTLINER_PANEL_TAG,
                 VIEWPORT_PANEL_TAG,
                 PROPERTIES_PANEL_TAG,
                 CONSOLE_PANEL_TAG,
             ],
-            "panel_ids walk = toolbar → outliner → viewport → properties → console",
+            "panel_ids walk = outliner → viewport → properties → console (no toolbar)",
         );
     }
 
@@ -1754,13 +1823,8 @@ mod tests {
         let topology = build_editor_topology();
         assert_eq!(
             topology.split_ids(),
-            vec![
-                SPLIT_OUTER_TAG,
-                SPLIT_INNER_V_TAG,
-                SPLIT_MIDDLE_H_TAG,
-                SPLIT_INNER_H_TAG
-            ],
-            "split_ids walk in pre-order: outer → inner_v → middle_h → inner_h",
+            vec![SPLIT_INNER_V_TAG, SPLIT_MIDDLE_H_TAG, SPLIT_INNER_H_TAG],
+            "split_ids walk in pre-order: inner_v (root) → middle_h → inner_h",
         );
     }
 
@@ -1769,13 +1833,12 @@ mod tests {
         let topology = build_editor_topology();
         let serialized = serde_json::to_string(&topology).expect("serialize");
         let parsed: DockTopology = serde_json::from_str(&serialized).expect("parse back");
-        assert_eq!(parsed, topology, "5-pane topology round-trips through JSON");
+        assert_eq!(parsed, topology, "4-pane topology round-trips through JSON");
     }
 
     #[test]
     fn r685_editor_default_split_ratios_within_unit_interval() {
         for r in [
-            SPLIT_OUTER_RATIO_DEFAULT,
             SPLIT_INNER_V_RATIO_DEFAULT,
             SPLIT_MIDDLE_H_RATIO_DEFAULT,
             SPLIT_INNER_H_RATIO_DEFAULT,
@@ -1789,7 +1852,6 @@ mod tests {
         run_in_owner(|| {
             let theme = Theme::light();
             for &panel_id in &[
-                TOOLBAR_PANEL_TAG,
                 OUTLINER_PANEL_TAG,
                 VIEWPORT_PANEL_TAG,
                 PROPERTIES_PANEL_TAG,
@@ -1862,23 +1924,32 @@ mod tests {
     }
 
     #[test]
-    fn r1205_editor_view_root_is_the_dock_surface_wrapping_the_outer_splitter() {
+    fn r1206_editor_view_root_is_the_3_layer_frame() {
         run_in_owner(|| {
             let frame = Frame::default();
             let scene = <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &frame);
-            // (R1205) The view root is now the DOCK_SURFACE wrapper — its laid-out
-            // rect is the dock-area SSOT (`Scene::dock_surface_rect`) the same-window
-            // outer band + cross-window redock preview read. The outer splitter is
-            // its sole (flex-filled) child.
-            let Scene::Container(surface) = scene else {
-                panic!("editor view root should be the dock surface Container");
+            // (R1206) The view root is now the 3-layer app-frame Column: a fixed
+            // toolbar strip ABOVE the DOCK_SURFACE workspace. child[0] = the
+            // TOOLBAR frame (not a dock panel); child[1] = the DOCK_SURFACE wrapper
+            // (whose laid-out rect is the dock-area SSOT `Scene::dock_surface_rect`),
+            // wrapping the workspace root splitter (now the inner-V, not the retired
+            // outer-V that held the toolbar).
+            let Scene::Container(root) = scene else {
+                panic!("editor view root should be the app-frame Column");
+            };
+            assert_eq!(root.children.len(), 2, "toolbar frame + dock workspace");
+            let Scene::Container(toolbar) = &root.children[0] else {
+                panic!("child[0] should be the toolbar frame Container");
+            };
+            assert_eq!(toolbar.tag.as_deref(), Some(TOOLBAR_PANEL_TAG));
+            let Scene::Container(surface) = &root.children[1] else {
+                panic!("child[1] should be the DOCK_SURFACE wrapper");
             };
             assert_eq!(surface.tag.as_deref(), Some(DOCK_SURFACE_TAG));
-            assert_eq!(surface.children.len(), 1, "the wrapper holds one workspace");
-            let Scene::Container(outer) = &surface.children[0] else {
-                panic!("the workspace root should be the outer splitter Container");
+            let Scene::Container(ws_root) = &surface.children[0] else {
+                panic!("the workspace root should be the inner-V splitter Container");
             };
-            assert_eq!(outer.tag.as_deref(), Some(SPLIT_OUTER_TAG));
+            assert_eq!(ws_root.tag.as_deref(), Some(SPLIT_INNER_V_TAG));
         });
     }
 
@@ -1888,6 +1959,8 @@ mod tests {
             let frame = Frame::default();
             let scene = <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &frame);
             let serialized = format!("{scene:?}");
+            // The toolbar tag is present as the fixed frame (R1206); the other 4 as
+            // dock panels — all 5 canonical editor regions render.
             for &panel_id in &[
                 TOOLBAR_PANEL_TAG,
                 OUTLINER_PANEL_TAG,
@@ -1897,7 +1970,7 @@ mod tests {
             ] {
                 assert!(
                     serialized.contains(panel_id),
-                    "scene should contain panel tag '{panel_id}'",
+                    "scene should contain region tag '{panel_id}'",
                 );
             }
         });
@@ -1914,17 +1987,12 @@ mod tests {
     }
 
     #[test]
-    fn r685_editor_view_renders_all_4_splitter_tags() {
+    fn r685_editor_view_renders_all_3_splitter_tags() {
         run_in_owner(|| {
             let frame = Frame::default();
             let scene = <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &frame);
             let serialized = format!("{scene:?}");
-            for &split_tag in &[
-                SPLIT_OUTER_TAG,
-                SPLIT_INNER_V_TAG,
-                SPLIT_MIDDLE_H_TAG,
-                SPLIT_INNER_H_TAG,
-            ] {
+            for &split_tag in &[SPLIT_INNER_V_TAG, SPLIT_MIDDLE_H_TAG, SPLIT_INNER_H_TAG] {
                 assert!(
                     serialized.contains(split_tag),
                     "scene should contain splitter tag '{split_tag}'",
@@ -1937,22 +2005,17 @@ mod tests {
     fn r686_editor_create_extra_externals_registers_splitters_panels_reorganize() {
         run_in_owner(|| {
             let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
-            // 4 SplitterExternals + 5 R742 DockPanelExternals (one per leaf,
-            // R1082) + 1 DockReorganizeExternal (R686) + 1 UndoStackExternal
-            // (R749 §5.52 reorganize history) + 1 float-policy toggle button
-            // (R1135 §5.51.1) + 1 undock-tab button (R1145 §5.51).
-            assert_eq!(externals.len(), 13);
+            // (R1206) 3 SplitterExternals + 4 R742 DockPanelExternals (one per leaf;
+            // the toolbar left the topology so it registers neither a split nor a
+            // panel external) + 1 DockReorganizeExternal (R686) + 1 UndoStackExternal
+            // (R749 §5.52) + 1 float-policy toggle button (R1135) + 1 undock-tab
+            // button (R1145). Was 13 (4 splits + 5 panels) pre-R1206.
+            assert_eq!(externals.len(), 11);
             let tags: Vec<&str> = externals.iter().map(|e| e.tag.as_ref()).collect();
-            for split in [
-                SPLIT_OUTER_TAG,
-                SPLIT_INNER_V_TAG,
-                SPLIT_MIDDLE_H_TAG,
-                SPLIT_INNER_H_TAG,
-            ] {
+            for split in [SPLIT_INNER_V_TAG, SPLIT_MIDDLE_H_TAG, SPLIT_INNER_H_TAG] {
                 assert!(tags.contains(&split), "splitter {split} registered");
             }
             for panel in [
-                TOOLBAR_PANEL_TAG,
                 OUTLINER_PANEL_TAG,
                 VIEWPORT_PANEL_TAG,
                 PROPERTIES_PANEL_TAG,
@@ -1963,6 +2026,10 @@ mod tests {
                     "R742 panel external {panel} registered"
                 );
             }
+            assert!(
+                !tags.contains(&TOOLBAR_PANEL_TAG),
+                "R1206 the toolbar is a fixed frame, NOT a dock-panel external",
+            );
             assert!(tags.contains(&DOCK_REORGANIZE_TAG));
             assert!(tags.contains(&DOCK_UNDO_TAG));
             assert!(
@@ -2093,17 +2160,18 @@ mod tests {
 
     #[test]
     fn r1134_editor_collapse_reflows_topology_then_restores_home() {
-        // R1134 §5.51.1 — collapse viewport in the editor's real 5-pane topology:
-        // the slot reflows (4 panels), and a dock-back restores it home (5 panels).
+        // R1134 §5.51.1 — collapse viewport in the editor's real dock workspace
+        // (R1206: 4 panels, toolbar is a fixed frame outside the topology): the
+        // slot reflows (3 panels), and a dock-back restores it home (4 panels).
         run_in_owner(|| {
             let reorg = use_editor_reorganizer();
             reorg.set_float_policy(FloatPolicy::Collapse);
-            assert_eq!(use_editor_topology().get().unwrap().panel_ids().len(), 5);
+            assert_eq!(use_editor_topology().get().unwrap().panel_ids().len(), 4);
             reorg.float_out_panel(VIEWPORT_PANEL_TAG).unwrap();
             let collapsed = use_editor_topology().get().unwrap();
             assert_eq!(
                 collapsed.panel_ids().len(),
-                4,
+                3,
                 "viewport's slot collapsed (reflow)"
             );
             assert!(!collapsed.panel_ids().contains(&VIEWPORT_PANEL_TAG));
@@ -2111,7 +2179,7 @@ mod tests {
             let restored = use_editor_topology().get().unwrap();
             assert_eq!(
                 restored.panel_ids().len(),
-                5,
+                4,
                 "viewport restored to its home anchor"
             );
             assert!(restored.panel_ids().contains(&VIEWPORT_PANEL_TAG));
@@ -2147,7 +2215,7 @@ mod tests {
             );
             assert_eq!(
                 a.get().unwrap().panel_ids(),
-                vec!["toolbar", "outliner", "viewport", "properties", "console"],
+                vec!["outliner", "viewport", "properties", "console"],
             );
         });
     }
@@ -2167,7 +2235,7 @@ mod tests {
             // Signal now holds the swapped topology.
             assert_eq!(
                 topo.get().unwrap().panel_ids(),
-                vec!["toolbar", "outliner", "console", "properties", "viewport"],
+                vec!["outliner", "console", "properties", "viewport"],
             );
             // The view fn reads the mutated topology + still renders the
             // viewport button (its content moved with the panel id).
@@ -2275,37 +2343,36 @@ mod tests {
 
     #[test]
     fn r685_editor_topology_split_orientations_match_layout_intent() {
+        // (R1206) The toolbar left the topology, so the workspace root is the
+        // inner-V split: first = middle-H (a Split), second = console (a Leaf).
         let topology = build_editor_topology();
-        let DockNode::Split {
-            orientation: outer_o,
-            first: outer_first,
-            second: outer_second,
-            ..
-        } = topology.root()
-        else {
-            panic!("root is Split");
-        };
-        assert_eq!(*outer_o, SplitterOrientation::Vertical);
-        assert!(matches!(outer_first.as_ref(), DockNode::Leaf { .. }));
         let DockNode::Split {
             orientation: inner_v_o,
             first: inner_v_first,
             second: inner_v_second,
             ..
-        } = outer_second.as_ref()
+        } = topology.root()
         else {
-            panic!("inner V is Split");
+            panic!("root is Split");
         };
         assert_eq!(*inner_v_o, SplitterOrientation::Vertical);
+        assert!(
+            matches!(inner_v_second.as_ref(), DockNode::Leaf { .. }),
+            "root's second child is the console leaf",
+        );
         let DockNode::Split {
             orientation: middle_h_o,
+            first: middle_h_first,
             ..
         } = inner_v_first.as_ref()
         else {
             panic!("middle H is Split");
         };
         assert_eq!(*middle_h_o, SplitterOrientation::Horizontal);
-        assert!(matches!(inner_v_second.as_ref(), DockNode::Leaf { .. }));
+        assert!(
+            matches!(middle_h_first.as_ref(), DockNode::Leaf { .. }),
+            "middle-H's first child is the outliner leaf",
+        );
     }
 
     #[test]
@@ -2357,8 +2424,8 @@ mod tests {
     #[test]
     fn r685_editor_use_split_ratio_returns_owner_cached_handle() {
         run_in_owner(|| {
-            let a = use_split_ratio(SPLIT_OUTER_TAG, SPLIT_OUTER_RATIO_DEFAULT);
-            let b = use_split_ratio(SPLIT_OUTER_TAG, SPLIT_OUTER_RATIO_DEFAULT);
+            let a = use_split_ratio(SPLIT_INNER_V_TAG, SPLIT_INNER_V_RATIO_DEFAULT);
+            let b = use_split_ratio(SPLIT_INNER_V_TAG, SPLIT_INNER_V_RATIO_DEFAULT);
             assert!(
                 Rc::ptr_eq(&a, &b),
                 "use_split_ratio is Owner::cache-memoised by id",
@@ -2405,9 +2472,9 @@ mod tests {
     #[test]
     fn r1105_floating_window_positions_cascade_distinctly() {
         // Each tearable panel opens at a distinct cascade offset so multiple
-        // tear-offs do not stack exactly.
+        // tear-offs do not stack exactly. (R1206: the toolbar is a fixed frame,
+        // not tearable, so it is not in this set.)
         let positions: Vec<(i32, i32)> = [
-            TOOLBAR_PANEL_TAG,
             OUTLINER_PANEL_TAG,
             VIEWPORT_PANEL_TAG,
             PROPERTIES_PANEL_TAG,
@@ -2512,7 +2579,7 @@ mod tests {
                 &frame,
             );
             assert!(
-                format!("{main:?}").contains(SPLIT_OUTER_TAG),
+                format!("{main:?}").contains(SPLIT_INNER_V_TAG),
                 "main paints the dock surface"
             );
 
@@ -2527,7 +2594,7 @@ mod tests {
                 "torn window paints the viewport panel"
             );
             assert!(
-                !torn_s.contains(SPLIT_OUTER_TAG),
+                !torn_s.contains(SPLIT_INNER_V_TAG),
                 "torn window is NOT the whole dock"
             );
 
@@ -2537,7 +2604,7 @@ mod tests {
                 ButtonState::Idle,
                 &frame,
             );
-            assert!(format!("{other:?}").contains(SPLIT_OUTER_TAG));
+            assert!(format!("{other:?}").contains(SPLIT_INNER_V_TAG));
         });
     }
 

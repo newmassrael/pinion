@@ -12,17 +12,18 @@ surface — below a client-side chrome strip, a toolbar, inside a split — the
 layout engine carries every inset for free, and the same-window OUTER band + the
 cross-window redock preview both read the ONE rect, agreeing with zero wiring.
 
-The editor main is OS-decorated (no chrome yet — that is R1205 item #4), so here
-the dock surface == the whole window; this demo pins that the surface tag is
-present, IS the dock area (encloses every panel), drives the same-window outer
-band, and stays STABLE as reorganizes happen inside it. The chrome-inset case
-(surface below a control strip) is pinned by the shell unit tests
+The editor main is OS-decorated (no chrome yet — that is R1205 item #4). Since
+R1206 the toolbar is a FIXED frame ABOVE the dock surface, so the surface is the
+window MINUS the toolbar strip; this demo pins that the surface tag is present,
+IS the dock area (encloses every panel), drives the same-window outer band, and
+stays STABLE as reorganizes happen inside it. The chrome-inset case (surface
+below a control strip) is pinned by the shell unit tests
 (`r1205_outer_redock_preview_lands_on_the_dock_surface`) since the editor floater
 path is HW-gated.
 
-  (A) Boot — 5 panels, one main window.
+  (A) Boot — 4 dock panels, one main window.
   (B) The DOCK_SURFACE node is present in scene/layout and fills the workspace
-      (== the window content rect, no chrome).
+      (the window BELOW the fixed toolbar frame — R1206).
   (C) The surface IS the dock area: every panel's rect nests inside it.
   (D) The same-window OUTER band is measured against the surface — a bottom-edge
       drag previews the outer sentinel and lands the outliner full-width.
@@ -47,12 +48,13 @@ _MAIN_W = 1200
 _MAIN_H = 800
 _REORG = "/dock_reorganize/external"
 
-_TOOLBAR = "toolbar"
 _OUTLINER = "outliner"
 _VIEWPORT = "viewport"
 _PROPERTIES = "properties"
 _CONSOLE = "console"
-_ALL_PANELS = {_TOOLBAR, _OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
+# (R1206) The toolbar left the dock topology (fixed app-frame), so the dockable
+# WORKSPACE is these 4 panels.
+_ALL_PANELS = {_OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE}
 
 
 # ─── helpers ─────────────────────────────────────────────────────────
@@ -159,21 +161,24 @@ def _section(label: str) -> None:
 def body() -> None:
     with RpcSubprocess("hello-dock-panels-editor", boot_grace=2.0) as tf:
         # ── (A) boot ─────────────────────────────────────────────────
-        _section("A: boot — 5 panels, one main window")
+        _section("A: boot — 4 dock panels, one main window")
         wins = tf.request("scene/windows", {}).result.get("windows") or []
         assert len(wins) == 1, f"A.1 one window at boot; got {wins!r}"
         assert wins[0].get("id") == _MAIN, f"A.2 the window is main ({wins[0]!r})"
-        assert _panel_set(tf) == _ALL_PANELS, f"A.3 all 5 panels present ({_panel_set(tf)})"
+        assert _panel_set(tf) == _ALL_PANELS, f"A.3 all 4 dock panels present ({_panel_set(tf)})"
 
         # ── (B) the DOCK_SURFACE node is the workspace rect ──────────
         _section("B: the DOCK_SURFACE node is present and fills the workspace")
         surf = _surface_rect(tf)
-        assert surf["x"] == 0 and surf["y"] == 0, f"B.1 ★surface origin is the window top-left ({surf!r})"
-        assert surf["w"] >= _MAIN_W - 2, f"B.2 ★surface fills the window width (w={surf['w']})"
-        assert surf["h"] >= _MAIN_H - 2, f"B.3 ★surface fills the window height (h={surf['h']})"
-        assert surf["w"] <= _MAIN_W + 2 and surf["h"] <= _MAIN_H + 2, (
-            f"B.4 and no more than the window (no chrome inset here) ({surf!r})"
-        )
+        # (R1206) The dock surface sits BELOW the fixed toolbar frame, so its top
+        # is inset by the toolbar height and its height is the remainder — the
+        # surface rect carries that inset for free (the whole point of the SSOT).
+        toolbar = _rect(tf, "toolbar")
+        assert surf["x"] == 0, f"B.1 ★surface is flush left ({surf!r})"
+        assert surf["y"] >= toolbar["h"] - 2, f"B.2 ★surface starts below the toolbar (y={surf['y']})"
+        assert surf["w"] >= _MAIN_W - 2, f"B.3 ★surface fills the window width (w={surf['w']})"
+        assert surf["y"] + surf["h"] >= _MAIN_H - 2, f"B.4 ★surface fills down to the window bottom ({surf!r})"
+        assert surf["h"] < _MAIN_H, f"B.5 and is shorter than the window (the toolbar took the top) ({surf!r})"
 
         # ── (C) the surface IS the dock area (encloses every panel) ──
         _section("C: every panel nests inside the dock surface")
@@ -230,7 +235,7 @@ def body() -> None:
         # ── (G) integrity + determinism ──────────────────────────────
         _section("G: integrity — panels survive, reads deterministic")
         assert _window_ids(tf) == {_MAIN}, "G.1 only main remains (no spurious floater)"
-        assert _panel_set(tf) == _ALL_PANELS, "G.2 all 5 panels intact after every move"
+        assert _panel_set(tf) == _ALL_PANELS, "G.2 all 4 dock panels intact after every move"
         assert _surface_rect(tf) == _surface_rect(tf), "G.3 back-to-back surface reads are identical"
         assert _topology(tf) == _topology(tf), "G.4 back-to-back topology reads are identical"
 
