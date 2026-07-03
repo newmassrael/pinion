@@ -77,7 +77,7 @@ thread_local! {
 
 /// R668 §5.38 — current text-scale multiplier as a raw f32.
 ///
-/// Non-subscribing read of the [`CURRENT_TEXT_SCALE`] thread-local.
+/// Non-subscribing read of the `CURRENT_TEXT_SCALE` thread-local.
 /// Called by [`crate::style::TextStyle::with_size_px`] on every
 /// builder invocation; the multiplier kicks in at builder time so
 /// every painted [`crate::scene::TextNode`] in the resulting scene

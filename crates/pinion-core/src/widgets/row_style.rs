@@ -10,7 +10,7 @@
 //! ## The match half REUSES the R997 [`GridFilter`]
 //!
 //! The decisive reuse: a rule's predicate **is** the R997
-//! [`GridFilter`](crate::widgets::grid_sort::GridFilter) conjunction — the same
+//! [`GridFilter`] conjunction — the same
 //! multi-facet, multi-operator filter the grid's *filter* axis carries, sharing
 //! [`GridFilter::matches`](crate::widgets::grid_sort::GridFilter::matches) and the
 //! whole wire vocab. Coloring and filtering speak the same language: a rule
@@ -77,7 +77,7 @@ impl RowTint {
 /// R998 §5.40 — one row-coloring rule: rows whose cells satisfy
 /// [`filter`](Self::filter) paint with [`tint`](Self::tint). The grid analog of
 /// a Wireshark coloring rule; the predicate is the R997
-/// [`GridFilter`](crate::widgets::grid_sort::GridFilter) conjunction (shared
+/// [`GridFilter`] conjunction (shared
 /// wire vocab with the filter axis). The wire form is
 /// `"<filter>;<bg-hex>;<fg-hex>"` (the filter half may itself contain `;` only
 /// in a value — split takes the **last two** `;`-fields as the tint, the rest

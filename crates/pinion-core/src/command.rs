@@ -19,7 +19,7 @@
 //!   / [`Owner::pending_commands`](crate::reactive::Owner::pending_commands)).
 //! - Cancellation via Owner drop — pending commands attached to a
 //!   dropped scope evaporate with it, the textbook Solid.js pattern.
-//! - `dry_run` / scenario exploration: [`Owner::pending_commands`] returns
+//! - `dry_run` / scenario exploration: [`Owner::pending_commands`](crate::reactive::Owner::pending_commands) returns
 //!   a snapshot for inspection without executing or consuming the queue.
 //!
 //! ## What carries (R51.140+)
@@ -55,7 +55,7 @@ use crate::external::IntrospectValue;
 /// Produced by reducers (R27 caveat: `Update(&mut Model, Intent) ->
 /// Vec<Command>`) or by agents through the future
 /// [`scene/commands` RPC method](crate::reactive::Owner::pending_commands).
-/// The framework (or registered [`Handler`] — carry: R51.140+) consumes
+/// The framework (or registered `Handler` — carry: R51.140+) consumes
 /// these by draining the owner's queue via
 /// [`Owner::take_pending_commands`](crate::reactive::Owner::take_pending_commands).
 ///

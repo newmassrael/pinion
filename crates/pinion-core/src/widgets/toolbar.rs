@@ -131,7 +131,7 @@ pub enum ToolItem {
 }
 
 /// R692 §5.38 — the outcome of activating a control, returned by
-/// [`Toolbar::activate`] so the [`ToolbarExternal`] adapter can emit
+/// `Toolbar::activate` so the [`ToolbarExternal`] adapter can emit
 /// the matching §5.20 intent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolActivation {
@@ -267,7 +267,7 @@ pub struct ToolbarExternal {
     em: IntentEmitter<Toolbar>,
     /// R694 §5.39 — whether the toolbar group owns the shell
     /// [`FocusManager`](crate) focus, mirrored via
-    /// [`External::on_focus_change`](crate::external::External::on_focus_change).
+    /// [`External::on_focus_change`].
     /// The roving cursor ([`Self::focus`]) is always defined, but its
     /// focus ring should paint only while the strip is the focused
     /// widget — `view_toolbar`'s `group_focused` argument. Surfaced via
@@ -313,7 +313,7 @@ impl ToolbarExternal {
 
     /// R694 §5.39 — whether the toolbar group currently owns the shell
     /// focus (set by the shell via
-    /// [`External::on_focus_change`](crate::external::External::on_focus_change)).
+    /// [`External::on_focus_change`]).
     #[must_use]
     pub fn group_focused(&self) -> bool {
         self.group_focused

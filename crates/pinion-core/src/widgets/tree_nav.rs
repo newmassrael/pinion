@@ -13,7 +13,7 @@
 //! now shared across consumers rather than re-derived per example).
 //!
 //! Vertical motion (Up / Down / Home / End / Page) delegates to the
-//! shared [`clamp_nav`](super::virtual_select::clamp_nav) SSOT — clamp,
+//! shared [`clamp_nav`] SSOT — clamp,
 //! not wrap, because a tree has ends.
 //!
 //! The resolver is **pure**: it returns a [`TreeKey`] outcome the
@@ -342,7 +342,7 @@ pub enum TreeKey {
 /// flattened sequence — no separate tree searches:
 ///
 /// - vertical (Up / Down / Home / End / Page) → the shared
-///   [`clamp_nav`](super::virtual_select::clamp_nav) SSOT (clamp, not
+///   [`clamp_nav`] SSOT (clamp, not
 ///   wrap — a tree has ends);
 /// - Arrow Right → a collapsed branch expands; an expanded branch
 ///   descends to its first child (= the very next row in preorder); a
@@ -571,7 +571,7 @@ where
 /// Lifted at R866 from the byte-identical `reveal_cursor` copies in
 /// `hello-virtual-tree` (R820) and `hello-tree-grid` (R864): the second
 /// windowed-tree-keyboard consumer is the trigger that lifts the glue, exactly
-/// as [`apply_tree_key`] / [`tree_typeahead_jump`](pinion_shell::typeahead::tree_typeahead_jump)
+/// as [`apply_tree_key`] / `tree_typeahead_jump`
 /// were lifted at their second consumers (the project's own
 /// `[[abstraction-needs-second-consumer]]` rule; R864's "no new substrate"
 /// rationalization was the smell). It composes the existing
@@ -629,7 +629,7 @@ fn row_at(
 /// **Read-only by design**: navigation and expand/collapse already mutate
 /// through the click router and `scene/key`, so this node owns no mutation
 /// path — it is the third consumer of the
-/// [`QueryOnlyIntrospect`](crate::external::QueryOnlyIntrospect) lift
+/// [`QueryOnlyIntrospect`] lift
 /// (after `ModalState` / `SnackbarTimer`). It is **node-type agnostic**
 /// like [`TreeFilterState`](super::tree_filter::TreeFilterState): it holds
 /// two closures that read the consumer's retained tree + cursor `Signal`s

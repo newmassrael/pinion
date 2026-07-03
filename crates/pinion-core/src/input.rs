@@ -533,7 +533,7 @@ pub enum CompositionEvent {
 /// command-class [`External`](crate::external::External) widgets.
 ///
 /// This is the **wire vocabulary** for the `invoke("send", "<name>")`
-/// channel: the [`InputRouter`](pinion_runtime::InputRouter) rewrites a
+/// channel: the `InputRouter` rewrites a
 /// paint hit-target into a bare event name (or a `"<sub>:<name>"`
 /// composite, see [`composite_tag`](crate::composite_tag)) and forwards
 /// it; the receiving widget decodes the `<name>` half. Lifting the five

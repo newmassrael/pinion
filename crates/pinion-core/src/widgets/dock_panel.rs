@@ -10,7 +10,7 @@
 //! exposes ONLY the statechart vocabulary — the state / event ⇄ SCXML-name
 //! mappings. The home-anchor, target panel, drop zone, dock topology, and the
 //! floating `WindowSpec` are typed Rust data the BINDING owns (the
-//! `pinion-widget-paint` `DockPanelExternal`, a [`Widget<DockPanelPolicy>`]
+//! `pinion-widget-paint` `DockPanelExternal`, a `Widget<DockPanelPolicy>`
 //! consumer), NOT this chart — the §5.51.1 review found no advanced SCXML feature
 //! (`<data>`/`cond`/`<parallel>`/`<history>`/`<invoke>`/event-data) is needed.
 //!

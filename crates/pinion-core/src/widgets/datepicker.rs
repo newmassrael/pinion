@@ -17,8 +17,8 @@
 //! [`send`](DatePicker::send) / [`step_month`](DatePicker::step_month).
 //!
 //! Visual scene placement is the application's responsibility (same
-//! contract as [`RadioGroup`]): the binding composes the header + 6×7
-//! grid via [`pinion_widget_paint::datepicker`] and queries the
+//! contract as [`RadioGroup`](crate::widgets::radio_group::RadioGroup)): the binding composes the header + 6×7
+//! grid via `pinion_widget_paint::datepicker` and queries the
 //! coordinator for per-day state.
 //!
 //! The [`DatePickerExternal`] adapter exposes the picker on the §5.12
@@ -138,7 +138,7 @@ pub fn add_months(year: i32, month: u8, delta: i32) -> (i32, u8) {
 /// module docs for the design rationale.
 ///
 /// Reuses the [`Radio`] leaf statechart per day cell (the same
-/// "select 1 of N" leaf [`RadioGroup`] composes), so day cells inherit
+/// "select 1 of N" leaf [`RadioGroup`](crate::widgets::radio_group::RadioGroup) composes), so day cells inherit
 /// the canonical `{Idle, Hover, Pressed, Disabled}` interaction model +
 /// activate edge. The grid is rebuilt on each month change, so the
 /// per-day `Radio` vector is re-sized to the displayed month's length.

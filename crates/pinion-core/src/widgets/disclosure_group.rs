@@ -4,7 +4,7 @@
 //! primitive boundary: like sibling-deselect on a radio group,
 //! "collapse the open section when another opens" is framework-owned,
 //! not application responsibility. The R697 multi-open accordion
-//! composed N independent [`DisclosureExternal`]s precisely because
+//! composed N independent [`DisclosureExternal`](crate::widgets::disclosure::DisclosureExternal)s precisely because
 //! the APG default accordion is multi-open; the single-open variant
 //! needs cross-section coordination, so it lands as a coordinator
 //! mirroring [`RadioGroup`](crate::widgets::radio_group::RadioGroup).
@@ -24,7 +24,7 @@
 //! [`set_expanded`](DisclosureGroup::set_expanded) is for persisted
 //! state restore, defaults, or programmatic open/close.
 //!
-//! Unlike [`RadioGroup`], the coordinator carries **no**
+//! Unlike [`RadioGroup`](crate::widgets::radio_group::RadioGroup), the coordinator carries **no**
 //! `focused_index` roving state: WAI-ARIA APG accordion keyboard
 //! navigation gives each header its own Tab stop (arrow keys move
 //! focus *without* expanding — distinct from radio where arrows
@@ -33,7 +33,7 @@
 //! pattern); the coordinator owns only expand-exclusion.
 //!
 //! Visual scene placement is the application's responsibility (same
-//! contract as [`RadioGroup`]): the binding composes the N section
+//! contract as [`RadioGroup`](crate::widgets::radio_group::RadioGroup)): the binding composes the N section
 //! headers + panels and queries the group for per-section state.
 //!
 //! The [`DisclosureGroupExternal`] adapter exposes the group on the
@@ -50,7 +50,7 @@
 //! `"expanded"` intent carrying the new index as
 //! [`IntrospectValue::Int`], or [`IntrospectValue::Null`] when the
 //! group collapses to none (reachable by re-activating the open
-//! section — distinct from [`RadioGroup`], where clear is only
+//! section — distinct from [`RadioGroup`](crate::widgets::radio_group::RadioGroup), where clear is only
 //! reachable via `set_selected`).
 
 use crate::external::{
@@ -182,7 +182,7 @@ impl Default for DisclosureGroup {
 /// * `None → Some(i)` — first open
 /// * `Some(a) → Some(b)` where `a != b` — switch
 /// * `Some(a) → None` — collapse the open section (reachable via
-///   `send` re-activation — distinct from [`RadioGroup`])
+///   `send` re-activation — distinct from [`RadioGroup`](crate::widgets::radio_group::RadioGroup))
 ///
 /// Transitions that stay silent (idempotent):
 ///

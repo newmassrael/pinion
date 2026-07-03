@@ -78,7 +78,7 @@ use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
 /// Disclosure widget state machine + collapsed/expanded sidecar.
-/// Statechart identical to [`crate::widgets::Checkbox`]; divergence is
+/// Statechart identical to [`Checkbox`](crate::widgets::checkbox::Checkbox); divergence is
 /// the per-widget intent name (`"expanded"`) emitted by
 /// [`DisclosureExternal`] and the surrounding accessibility role
 /// applications attach (`button` + `aria-expanded`, not `checkbox` +
@@ -188,7 +188,7 @@ impl WidgetTransition for Disclosure {
 }
 
 /// `External` adapter wrapping a [`Disclosure`]. Mirrors
-/// [`crate::widgets::CheckboxExternal`] one-to-one with the intent
+/// [`CheckboxExternal`](crate::widgets::checkbox::CheckboxExternal) one-to-one with the intent
 /// name (`"expanded"`) and schema label (`"expanded"`) adjusted so
 /// AI listeners can subscribe to show/hide state independently from
 /// form checkboxes / settings switches.

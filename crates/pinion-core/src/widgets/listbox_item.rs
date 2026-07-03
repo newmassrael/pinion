@@ -1,6 +1,6 @@
 //! R51.95 §5.38 — `ListBoxItem` widget: shared interaction statechart
 //! (button-like via `standard_button.sce-template.xml`) with the same
-//! semantic shape as [`Radio`](crate::widgets::Radio) at the binding
+//! semantic shape as [`Radio`](crate::widgets::radio::Radio) at the binding
 //! layer — activate *sets* `selected = true` unconditionally (never
 //! flips). Group exclusivity (single-select `Listbox`) is the
 //! composite's responsibility.
@@ -15,7 +15,7 @@
 //!   distinction.
 //! * **ARIA role at the composite** — `ListBox` exposes
 //!   `AriaRole::Listbox` + `AriaRole::Option` per item;
-//!   [`crate::widgets::RadioGroup`] exposes `AriaRole::RadioGroup` +
+//!   [`RadioGroup`](crate::widgets::radio_group::RadioGroup) exposes `AriaRole::RadioGroup` +
 //!   `AriaRole::RadioButton`. The application's `access_node` impl
 //!   chooses which role per the composite's identity.
 //! * **Composite keyboard model** — `ListBox` (W3C ARIA Listbox
@@ -128,7 +128,7 @@ impl ListBoxItem {
     /// Sibling deselection is the composite's responsibility (the
     /// future `ListBox::send` will call `set_selected(false)` on
     /// the previously-selected child after any new selection lands,
-    /// mirroring [`crate::widgets::RadioGroup::send`]).
+    /// mirroring [`RadioGroup::send`](crate::widgets::radio_group::RadioGroup::send)).
     pub fn send(&mut self, event: ListboxItemEvent) {
         let before = self.state();
         let is_keyboard_activate = matches!(event, ListboxItemEvent::KeyboardActivate);
@@ -170,7 +170,7 @@ impl Default for ListBoxItem {
 }
 
 /// R51.12 §5.38 — `ListBoxItem` transition contract. Same snapshot
-/// shape as [`Radio`](crate::widgets::Radio) (`(State, bool)`) — the
+/// shape as [`Radio`](crate::widgets::radio::Radio) (`(State, bool)`) — the
 /// detect rule is set-not-flip: emit `"selected"` only when the
 /// value transitions `false → true` (not on every activate).
 /// Re-activating an already-selected item is idempotent and silent

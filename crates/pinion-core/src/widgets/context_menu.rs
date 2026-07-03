@@ -10,10 +10,10 @@
 //! a context menu opens wherever the secondary-button press landed.
 //!
 //! Everything else is shared substrate, reused rather than recopied:
-//! the active-item keyboard navigation ([`super::menu_nav`], lifted at
+//! the active-item keyboard navigation (`super::menu_nav`, lifted at
 //! this second consumer), the floating-panel paint
-//! ([`pinion_widget_paint::view_menu_dropdown`]), and the R715
-//! click-outside dismiss barrier ([`pinion_widget_paint::barrier`]).
+//! (`pinion_widget_paint::view_menu_dropdown`), and the R715
+//! click-outside dismiss barrier (`pinion_widget_paint::barrier`).
 //!
 //! ## State model
 //!
@@ -167,7 +167,7 @@ impl ContextMenuExternal {
 
     /// R888.1 §5.53 — encode the `invoke("open_at", …)` wire payload
     /// for a window-space point: the inverse of
-    /// [`Self::dispatch_open_at`]'s `"<x>,<y>"` parse, kept adjacent
+    /// `Self::dispatch_open_at`'s `"<x>,<y>"` parse, kept adjacent
     /// so the separator/format decision has one home (encode/decode
     /// pair completeness — pre-R888.1 the `format!("{x},{y}")` encode
     /// was hand-rolled at two `apply_secondary_click` call sites

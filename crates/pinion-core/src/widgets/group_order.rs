@@ -63,11 +63,11 @@
 //! ## Scope (honest boundaries)
 //!
 //! - **Dense group ids.** A group id is an index into the consumer's label
-//!   table (`0..group_count`), the [`ViewOrderState`] category convention. The
+//!   table (`0..group_count`), the [`ViewOrderState`](crate::widgets::view_order::ViewOrderState) category convention. The
 //!   free function [`group_rows`] is general (any `usize` key, first-appearance
 //!   order); [`GroupOrderState`] binds the dense-id form its label table needs.
 //! - **Identity base order.** [`GroupOrderState`] groups source order; wiring a
-//!   sort/filter [`ViewOrderState`] in front (group a *sorted* view) is the
+//!   sort/filter [`ViewOrderState`](crate::widgets::view_order::ViewOrderState) in front (group a *sorted* view) is the
 //!   additive composition above, exercised at the free-function level here.
 //! - **No group aggregates.** Per-group sum/min/max footers are a later
 //!   additive axis (the first consumer groups, it does not aggregate).
@@ -293,7 +293,7 @@ pub struct GroupOrderState {
     member_counts: Vec<usize>,
     /// Collapsed group ids. Empty = every group expanded.
     collapsed: Signal<BTreeSet<usize>>,
-    /// R848 — the roving keyboard cursor: a visual position into [`rows`], or
+    /// R848 — the roving keyboard cursor: a visual position into [`rows`](Self::rows), or
     /// `None` before the first key. Orthogonal to the selection (cursor ⊥
     /// selection); read inside a view-fn it subscribes, so a cursor move
     /// repaints and the binding's focus ring tracks it.
@@ -531,7 +531,7 @@ impl GroupOrderState {
         }
     }
 
-    /// R848 — the roving keyboard cursor: the visual position (into [`rows`])
+    /// R848 — the roving keyboard cursor: the visual position (into [`rows`](Self::rows))
     /// the keyboard navigation currently addresses, or `None` before the first
     /// key. Distinct from the **selection** (a data row's source index held by
     /// the [`VirtualSelectExternal`](crate::widgets::virtual_select)): the
@@ -746,7 +746,7 @@ pub fn group_nav(
 ///
 /// `groups` is the shared [`GroupOrderState`] (the cursor + collapse SSOT,
 /// reached by the binding via `use_group_order`); `tag` is the focusable tab
-/// stop **and** the [`VirtualSelectExternal`] anchor (selection-follows-focus
+/// stop **and** the [`VirtualSelectExternal`](crate::widgets::virtual_select::VirtualSelectExternal) anchor (selection-follows-focus
 /// routes there). Keys only act when `focused == Some(tag)` (single tab stop).
 ///
 /// On a handled key it applies the [`group_nav`] policy:

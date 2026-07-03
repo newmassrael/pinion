@@ -25,7 +25,7 @@
 //! Any `Box<dyn FnOnce()>` queued through `ReactiveNode::add_subscription_cleanup`
 //! is *untrusted code* from the runtime's perspective — it captures user
 //! state (closures over `RefCell`, `Rc`, etc.) and may panic. Every drain
-//! site must route the closures through [`run_cleanups_isolated`] (which
+//! site must route the closures through `run_cleanups_isolated` (which
 //! wraps each in `catch_unwind(AssertUnwindSafe)`) so that one bad cleanup
 //! cannot:
 //!
@@ -58,7 +58,7 @@ thread_local! {
     static CURRENT_OWNER: RefCell<Vec<Weak<dyn ReactiveNode>>> = const { RefCell::new(Vec::new()) };
     static BATCH_DEPTH: Cell<u32> = const { Cell::new(0) };
     static PENDING_DIRTY: RefCell<SubscriberSet> = RefCell::new(SubscriberSet::new());
-    /// R51.146 §5.22 — Owner-only handle stack, mirrors [`CURRENT_OWNER`]
+    /// R51.146 §5.22 — Owner-only handle stack, mirrors `CURRENT_OWNER`
     /// for the subset of pushes that originate from [`Owner::run`].
     /// [`Computed::recompute`] / [`Effect::recompute`] use the internal
     /// [`run_with_node`] path which deliberately leaves this stack
@@ -441,7 +441,7 @@ impl Owner {
     /// exists.
     ///
     /// **Use case**: the
-    /// [`pinion_runtime::CoreShell::remove_window`] / R683
+    /// `pinion_runtime::CoreShell::remove_window` / R683
     /// dock-tear-off drop pass needs to release the last strong
     /// reference to a per-window child scope so the scope's
     /// cleanup queue actually fires. Without this method the
@@ -458,7 +458,7 @@ impl Owner {
     ///
     /// **Cascade**: the removal drops the parent's strong ref to
     /// the child `Owner`. If no other `Owner` clone of the same
-    /// child exists, the child's [`OwnerInner`] drops, triggering
+    /// child exists, the child's `OwnerInner` drops, triggering
     /// the cleanup queue + draining every registered animation /
     /// command. Any sibling `Owner` clones still alive keep the
     /// child scope alive — the detach is "release the parent's
@@ -476,11 +476,11 @@ impl Owner {
     /// even if `f` panics, the stack is restored before the unwind continues.
     ///
     /// R51.146 §5.22 — pushes onto the separate
-    /// [`CURRENT_OWNER_HANDLE`] stack in addition to [`CURRENT_OWNER`].
-    /// The two stacks track different things: [`CURRENT_OWNER`] is the
+    /// `CURRENT_OWNER_HANDLE` stack in addition to `CURRENT_OWNER`.
+    /// The two stacks track different things: `CURRENT_OWNER` is the
     /// subscriber stack consulted by [`Signal::get`](crate::reactive::Signal::get)
     /// and [`Computed::get`](crate::reactive::Computed::get) for
-    /// auto-subscription, while [`CURRENT_OWNER_HANDLE`] is the
+    /// auto-subscription, while `CURRENT_OWNER_HANDLE` is the
     /// pure-`Owner` stack [`Owner::current`] reads. The split is what
     /// lets a [`Computed`](crate::reactive::Computed) body or
     /// [`Effect`](crate::reactive::Effect) reactive subscriber sit
@@ -518,13 +518,13 @@ impl Owner {
     /// Stale [`Weak`] entries (an [`Owner`] dropped mid-`run` via
     /// `mem::take` or similar pathological code path) appear here as
     /// the strong-handle stack walks down to the first live entry —
-    /// the same panic-safe RAII invariant the [`OwnerHandleGuard`]
+    /// the same panic-safe RAII invariant the `OwnerHandleGuard`
     /// drop already enforces.
     ///
     /// Reactive-node nesting note: a [`Computed`](crate::reactive::Computed)
     /// or [`Effect`](crate::reactive::Effect) running its recompute
-    /// closure pushes onto [`CURRENT_OWNER`] (the subscriber stack)
-    /// but NOT onto [`CURRENT_OWNER_HANDLE`]. So inside a `Computed`
+    /// closure pushes onto `CURRENT_OWNER` (the subscriber stack)
+    /// but NOT onto `CURRENT_OWNER_HANDLE`. So inside a `Computed`
     /// body, [`Owner::current`] still returns the lexically enclosing
     /// [`Owner::run`] scope — the framework-internal derived node is
     /// invisible to applications by design (the `SolidJS` `useOwner`
@@ -1362,7 +1362,7 @@ impl Drop for OwnerStackGuard {
     }
 }
 
-/// R51.146 §5.22 — RAII guard for the [`CURRENT_OWNER_HANDLE`] stack
+/// R51.146 §5.22 — RAII guard for the `CURRENT_OWNER_HANDLE` stack
 /// mirroring [`OwnerStackGuard`]. Pushed only by [`Owner::run`]; the
 /// internal [`run_with_node`] path (used by [`Computed::recompute`] /
 /// [`Effect::recompute`]) leaves this stack untouched, so

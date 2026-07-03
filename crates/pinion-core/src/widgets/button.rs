@@ -130,7 +130,7 @@ pub struct ButtonExternal {
     em: IntentEmitter<Button>,
     /// R694 §5.39 — keyboard-focus posture, mirrored from the shell
     /// [`FocusManager`](crate) through
-    /// [`External::on_focus_change`](crate::external::External::on_focus_change).
+    /// [`External::on_focus_change`].
     /// Orthogonal to [`ButtonState`] (a focused button can be Idle /
     /// Hover / Pressed); surfaced via the `focused` introspect slot so
     /// the binding's `read_state` threads it into
@@ -169,7 +169,7 @@ impl ButtonExternal {
     }
 
     /// R694 §5.39 — current keyboard-focus posture (set by the shell via
-    /// [`External::on_focus_change`](crate::external::External::on_focus_change)).
+    /// [`External::on_focus_change`]).
     #[must_use]
     pub fn focused(&self) -> bool {
         self.focused

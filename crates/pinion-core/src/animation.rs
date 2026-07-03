@@ -11,11 +11,11 @@
 //!
 //! ## Scope (R51.133 substrate + R51.138 wrap)
 //!
-//! Pure substrate primitive plus the [`Signal`](crate::reactive::Signal)-
-//! bound wrapper. [`Animation::tick`] is the only mutating entry; it remains
+//! Pure substrate primitive plus the [`Signal`]-
+//! bound wrapper. `Animation::tick` is the only mutating entry; it remains
 //! caller-driven (driver injects `dt` from `Frame.dt`, §6.3) so the §2
 //! invariant #3 `dry_run` guarantee survives: identical `(state, config, dt)`
-//! sequences always yield identical [`Signal`](crate::reactive::Signal)
+//! sequences always yield identical [`Signal`]
 //! evolution, so a scenario explorer can fast-forward without side effects.
 //!
 //! - [`Animatable`] trait: vector-arithmetic interface
@@ -644,19 +644,19 @@ pub trait Tickable {
 /// `Compose` interrupt semantics).
 ///
 /// Reads via [`Animation::value`] — or, more usefully, subscribe to the
-/// underlying [`Signal`](crate::reactive::Signal) via [`Animation::signal`]
+/// underlying [`Signal`] via [`Animation::signal`]
 /// so a [`Computed`](crate::reactive::Computed) /
 /// [`Effect`](crate::reactive::Effect) automatically tracks frame
 /// updates.
 ///
 /// Cloning yields a shared handle — both observe the same
-/// [`Signal`](crate::reactive::Signal) and the same spring state.
+/// [`Signal`] and the same spring state.
 ///
 /// # Type bounds
 ///
 /// Mirrors [`Signal<T>`](crate::reactive::Signal): `T` must be
 /// [`Animatable`] (for the solver) and `Clone + PartialEq + Serialize +
-/// DeserializeOwned + 'static` (for the [`Signal`](crate::reactive::Signal)
+/// DeserializeOwned + 'static` (for the [`Signal`]
 /// host).
 pub struct Animation<T>
 where
@@ -717,7 +717,7 @@ where
     T: Animatable + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
 {
     /// In-impl alias for the module-level
-    /// [`DEFAULT_REST_EPSILON`](crate::animation::DEFAULT_REST_EPSILON)
+    /// [`DEFAULT_REST_EPSILON`]
     /// const (R601 §5.28 §5.7). Kept for discoverability — when the
     /// caller already has the [`Animation`] type in scope, the
     /// associated-const path is more ergonomic than the module path.
@@ -767,7 +767,7 @@ where
         self.inner.signal.get()
     }
 
-    /// Underlying [`Signal`](crate::reactive::Signal). Subscribe through
+    /// Underlying [`Signal`]. Subscribe through
     /// this when building [`Computed`](crate::reactive::Computed) /
     /// [`Effect`](crate::reactive::Effect) chains that depend on the
     /// animated value.
@@ -826,7 +826,7 @@ where
     ///   "stop AND jump" surface).
     /// - Test fixtures that need a deterministic starting state.
     ///
-    /// Writes the wrapper's [`Signal`](crate::reactive::Signal) so
+    /// Writes the wrapper's [`Signal`] so
     /// subscribers re-run on the next reactive tick (equality-skip
     /// applies if `value` already matches the current `Signal::get`).
     /// Industry analogues: Framer Motion's `set` (no-animation snap),

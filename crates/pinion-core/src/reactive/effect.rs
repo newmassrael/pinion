@@ -1,7 +1,7 @@
 //! `Effect` — eager-rerun reactive side-effect primitive (§5.23 R27).
 //!
-//! `Effect` is the [`ReactiveNode`] sibling of [`Computed`]: it subscribes to
-//! [`Signal`] / [`Computed`] reads inside its closure on first run, then re-runs
+//! `Effect` is the `ReactiveNode` sibling of [`Computed`](crate::reactive::computed::Computed): it subscribes to
+//! [`Signal`](crate::reactive::signal::Signal) / [`Computed`](crate::reactive::computed::Computed) reads inside its closure on first run, then re-runs
 //! the closure whenever any subscribed source fires `mark_dirty`. Unlike
 //! `Computed`, `Effect`:
 //!
@@ -33,15 +33,15 @@
 //! ## Structural mirror of `Computed`
 //!
 //! `EffectInner` deliberately mirrors `ComputedInner` (`id` + `in_run`
-//! reentrancy flag + `source_cleanups` drained per pass + [`ReactiveNode`]
+//! reentrancy flag + `source_cleanups` drained per pass + `ReactiveNode`
 //! impl). The only material difference is `mark_dirty` — `Computed` lazily
 //! caches and cascades, while `Effect` re-runs eagerly. Sharing the
-//! [`ReactiveNode`] surface keeps `Signal::subscribe` / `Computed::subscribe`
+//! `ReactiveNode` surface keeps `Signal::subscribe` / `Computed::subscribe`
 //! agnostic to which downstream kind they feed.
 //!
 //! ## Self-pointer (`Weak<EffectInner>`)
 //!
-//! [`ReactiveNode::mark_dirty`] receives `&self`, but [`EffectInner::rerun`]
+//! `ReactiveNode::mark_dirty` receives `&self`, but `EffectInner::rerun`
 //! needs `&Rc<Self>` (the rerun publishes a fresh `Rc<dyn ReactiveNode>`
 //! onto `CURRENT_OWNER` so source subscriptions see the effect as their
 //! subscriber). `EffectInner` therefore stores a [`OnceCell<Weak<Self>>`] that
@@ -58,8 +58,8 @@ use super::owner::{Owner, ReactiveNode, next_node_id, run_cleanups_isolated, run
 ///
 /// Constructed via [`Effect::new`] with an [`Owner`] (lifetime anchor) and a
 /// closure (side-effect body). The closure runs eagerly once at construction
-/// — capturing its dependency set — then re-runs whenever any [`Signal`] or
-/// [`Computed`] it read fires a value-changing write.
+/// — capturing its dependency set — then re-runs whenever any [`Signal`](crate::reactive::signal::Signal) or
+/// [`Computed`](crate::reactive::computed::Computed) it read fires a value-changing write.
 ///
 /// Cloning yields a handle to the same effect; both observe identical re-runs.
 /// The user typically does not need to retain the handle — the effect lives
@@ -105,7 +105,7 @@ struct EffectInner {
     source_cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
     /// Self-pointer. Set exactly once immediately after `Rc::new`. Allows
     /// `mark_dirty(&self)` to recover a strong `Rc<Self>` for `rerun` without
-    /// breaking the [`ReactiveNode`] dyn-safety contract.
+    /// breaking the `ReactiveNode` dyn-safety contract.
     weak_self: OnceCell<Weak<EffectInner>>,
 }
 
@@ -195,10 +195,10 @@ impl ReactiveNode for EffectInner {
 impl Effect {
     /// Construct an effect tied to `owner` and run the closure once eagerly.
     ///
-    /// The eager initial run captures the dependency set: every [`Signal`] /
-    /// [`Computed`] read inside the closure auto-subscribes this effect.
+    /// The eager initial run captures the dependency set: every [`Signal`](crate::reactive::signal::Signal) /
+    /// [`Computed`](crate::reactive::computed::Computed) read inside the closure auto-subscribes this effect.
     /// Subsequent value-changing writes to those sources schedule a re-run
-    /// (immediate outside a [`batch`], coalesced to one re-run at outermost
+    /// (immediate outside a [`batch`](crate::reactive::owner::batch), coalesced to one re-run at outermost
     /// `batch` exit inside).
     ///
     /// Dropping `owner` (or any of its ancestor owners) drains the effect's

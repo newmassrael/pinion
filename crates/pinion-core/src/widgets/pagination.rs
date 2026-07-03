@@ -5,7 +5,7 @@
 //! page links (exactly one page is *current*) — so the N page cells reuse
 //! the [`RadioGroupExternal`] coordinator verbatim (per-cell interaction
 //! state, 1-of-N exclusion, the §5.20 `"selected"` intent, the roving
-//! keyboard model, and the [`pinion_a11y::navigation_link_nodes`] tree),
+//! keyboard model, and the `pinion_a11y::navigation_link_nodes` tree),
 //! exactly as `hello-breadcrumb` (R731) and `hello-nav-rail` (R751) do.
 //!
 //! What pagination adds is **previous / next** stepping. Unlike the cyclic

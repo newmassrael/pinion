@@ -187,7 +187,7 @@ impl ReorderModel {
         self.pressed.set(None);
     }
 
-    /// Reorder slots for [`ExternalIntrospect::query`](crate::external::ExternalIntrospect::query):
+    /// Reorder slots for [`ExternalIntrospect::query`]:
     /// `order` / `preview` / `focused_index` / `grabbed`. Returns `None`
     /// for any other path so an embedding consumer's own slots take
     /// precedence.
@@ -219,7 +219,7 @@ impl ReorderModel {
         }
     }
 
-    /// Reorder slots for [`ExternalIntrospect::intervene`](crate::external::ExternalIntrospect::intervene):
+    /// Reorder slots for [`ExternalIntrospect::intervene`]:
     /// `focused_index` is the writable keyboard cursor; `order` is
     /// read-only (it mutates only through a drag or the `move` action).
     /// Any other path is unknown here.
@@ -245,7 +245,7 @@ impl ReorderModel {
         }
     }
 
-    /// Reorder actions for [`ExternalIntrospect::invoke`](crate::external::ExternalIntrospect::invoke):
+    /// Reorder actions for [`ExternalIntrospect::invoke`]:
     ///
     /// - `send` — composite `"{visual}:{EventName}"` wire form (parsed via
     ///   the shared [`parse_send_payload`] SSOT). A `PointerDown` records

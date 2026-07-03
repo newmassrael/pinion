@@ -9,7 +9,7 @@
 //! [`SliderExternal`](crate::widgets::slider::SliderExternal)s. The two
 //! thumbs share **one** track rect, so a single press / drag forwards
 //! exactly one widget-relative cursor position
-//! ([`External::pointer_move`]) — the framework's [`InputRouter`] has no
+//! ([`External::pointer_move`]) — the framework's `InputRouter` has no
 //! way to know which of two stacked externals the user grabbed. The
 //! coordination that *only* a single owning external can provide is:
 //!

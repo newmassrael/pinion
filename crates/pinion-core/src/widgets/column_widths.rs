@@ -7,7 +7,7 @@
 //! the user (or an AI agent) widen the one they care about. This module adds
 //! the **column-width axis**: a reactive `Vec<u32>` of per-column widths,
 //! held once in a [`ColumnWidths`] (the
-//! [`ScrollState`](crate::widgets::scroll::ScrollState) /
+//! [`ScrollState`] /
 //! [`GridSortState`](crate::widgets::grid_sort::GridSortState) reactive-holder
 //! pattern this crate shares interactive axes with), read by the paint layer
 //! and the a11y tree through [`use_column_widths`], and mutated through the

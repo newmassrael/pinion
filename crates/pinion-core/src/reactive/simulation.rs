@@ -3,8 +3,8 @@
 //!
 //! Spec R27 mandates: "`dry_run` skips Effect side-effect; subscription
 //! still tracked for memo invalidation." R641-R648 `dry_run` / `simulate`
-//! satisfied the state-rollback half (R26) via [`Owner::snapshot`] +
-//! [`Owner::restore`] but left Effect closures firing during the
+//! satisfied the state-rollback half (R26) via [`Owner::snapshot`](crate::reactive::owner::Owner::snapshot) +
+//! [`Owner::restore`](crate::reactive::owner::Owner::restore) but left Effect closures firing during the
 //! mutation + rollback cycle. Non-idempotent Effects
 //! (`counter.set(counter.get() + 1)`, network calls, telemetry
 //! sends) saw two transient state values they did not need to —

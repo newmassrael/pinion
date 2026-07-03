@@ -32,7 +32,7 @@
 //! a consumer needs it.
 //!
 //! a11y: the binding lowers `selected == index` to
-//! [`AccessNode::with_selected`](pinion_a11y::AccessNode::with_selected)
+//! `AccessNode::with_selected`
 //! (`aria-selected`) on each *rendered* `ListItem`, on a single-select
 //! `List` (no `aria-multiselectable`) — exactly the windowed-AT model the
 //! R744/R745 lists already use for `aria-setsize` / `aria-posinset`.

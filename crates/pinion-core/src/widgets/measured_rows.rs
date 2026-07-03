@@ -103,7 +103,7 @@ pub struct MeasuredRowState {
     /// equality-skip is moot because it only ever increases when something
     /// actually changed.
     generation: Signal<u64>,
-    /// (R1199) The prefix-sum table memoized by the [`generation`](Self::generation)
+    /// (R1199) The prefix-sum table memoized by the `generation`
     /// it was built at. [`Self::offsets`] rebuilds only when the generation has
     /// advanced (a harvested remeasure / a `set_count`); a plain scroll frame —
     /// which moves the *offset* Signal, not the generation — returns the cached
@@ -151,7 +151,7 @@ impl MeasuredRowState {
     /// generation, so a harvested remeasure re-runs the view against the refined
     /// table.
     ///
-    /// (R1199) Memoized by [`generation`](Self::generation): the O(n) table is
+    /// (R1199) Memoized by `generation`: the O(n) table is
     /// rebuilt only when a measurement (or a `set_count`) advanced the
     /// generation; a plain scroll frame returns the cached `Rc` in O(1). This
     /// restores the "built once, reused across frames" contract `RowOffsets`

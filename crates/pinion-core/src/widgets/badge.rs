@@ -5,20 +5,20 @@
 //! Like [`ProgressBarExternal`](super::progress_bar) and
 //! [`TooltipExternal`](super::tooltip), a badge owns **no interaction
 //! statechart**: it has no pointer states, no keyboard model, and emits
-//! no §5.20 intents. It is a plain value holder ([R718] established the
+//! no §5.20 intents. It is a plain value holder (R718 established the
 //! descriptive-widget pattern: `operable` and `interactive-state` are
 //! orthogonal axes — a badge is neither, so a hand-written [`External`]
 //! without an SCXML machine is the textbook form, not a statechart).
 //!
 //! The observable axes are:
 //!
-//! * [`count`](Self::count) — the raw number the badge reports (e.g. the
+//! * `count` — the raw number the badge reports (e.g. the
 //!   unread-message count). Always the *uncapped* value, so an AI client
 //!   reads the true magnitude even when the visible label is capped.
-//! * [`max`](Self::max) — the overflow threshold. When `count > max` the
-//!   visible [`label`](Self::label) reads `"{max}+"` (the Material 3
+//! * `max` — the overflow threshold. When `count > max` the
+//!   visible `label` reads `"{max}+"` (the Material 3
 //!   large-badge overflow form), while `count` keeps the real number.
-//! * [`dot`](Self::dot) — the *small badge* variant: a bare dot with no
+//! * `dot` — the *small badge* variant: a bare dot with no
 //!   number (M3's "there is something new" affordance). When set, the
 //!   label is empty regardless of `count`.
 //!
@@ -27,9 +27,9 @@
 //! visibility verdict (no drift between what is painted and what is
 //! announced):
 //!
-//! * [`label`](Self::label) — the visible string (`""` for a dot, the
+//! * `label` — the visible string (`""` for a dot, the
 //!   number, or `"{max}+"` on overflow);
-//! * [`visible`](Self::visible) — whether the badge renders at all (a
+//! * `visible` — whether the badge renders at all (a
 //!   count badge with `count == 0` is hidden, matching M3 / the web
 //!   platform; a dot badge is shown whenever set).
 //!
@@ -37,11 +37,11 @@
 //! channel (`intervene`), the same side door the RPC `scene/intervene`
 //! route and a host application's notification updater both use — so the
 //! AI client and the host converge on one observable state (the
-//! [`ProgressBarExternal`] / [`SliderExternal`](super::slider) contract).
+//! [`ProgressBarExternal`](crate::widgets::progress_bar::ProgressBarExternal) / [`SliderExternal`](super::slider) contract).
 //!
 //! a11y is left to the binding (no a11y state lives on the holder): the
 //! count is announced by augmenting the anchor's accessible description
-//! — a [`AriaRole::Status`](pinion_a11y::AriaRole::Status) live region
+//! — a `AriaRole::Status` live region
 //! the anchor points at via `aria-describedby`. That reuses existing a11y
 //! fields (no new primitive), the WAI-ARIA-canonical way to expose a
 //! badge to AT (a visually-hidden, polite live region rather than a bare

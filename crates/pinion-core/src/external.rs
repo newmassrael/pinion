@@ -273,7 +273,7 @@ pub(crate) fn at_index<T>(
 /// R742 §5.51 — typed drag-and-drop payload. Produced by a drag source
 /// via [`External::begin_drag`] and carried by the router's drag session
 /// until the matching drop, mirroring the
-/// [`Intent`](crate::intent::Intent) wire form (a `kind` tag plus an
+/// [`Intent`] wire form (a `kind` tag plus an
 /// [`IntrospectValue`]) so the in-flight drag is introspectable as
 /// scene-as-data (§2 #7) and a future cross-widget drop target can match
 /// on `kind` before interpreting `value`.
@@ -330,7 +330,7 @@ pub const OUTER_DOCK_ZONE_TAG: &str = "\u{0}outer-dock-zone";
 /// wherever the composing view places it (below a client-side chrome strip, below
 /// a fixed toolbar / menu, inside a split, …). The one SSOT for "where is the
 /// dock area" ([`Scene::dock_surface_rect`](crate::scene::Scene::dock_surface_rect)):
-/// the same-window OUTER dock band ([`InputRouter::resolve_own_outer_dock`]) and the
+/// the same-window OUTER dock band (`InputRouter::resolve_own_outer_dock`) and the
 /// cross-window redock preview both read this rect, so they agree on the dock area
 /// with ZERO wiring — no per-window chrome-height scalar to stamp (R1202/R1203's
 /// `dock_area_top_inset` / `inset_below_chrome`, a top-only approximation blind to a
@@ -348,7 +348,7 @@ pub const DOCK_SURFACE_TAG: &str = "\u{0}dock-surface";
 ///
 /// ★LIVE-TUNE (R1167, HW-gated): this is a fixed absolute band. The user found it
 /// "too thin" cross-window; the R1167 same-window outer dock
-/// ([`InputRouter::resolve_own_outer_dock`]) reaches it from inside, so it is now
+/// (`InputRouter::resolve_own_outer_dock`) reaches it from inside, so it is now
 /// reachable at this width, but the FEEL of the width is the user's `:0` call. A
 /// fixed widen is NOT scale-safe (a band wider than a small floater's half makes
 /// its whole area outer), so a future tune is likely a fraction-of-dimension band
@@ -948,7 +948,7 @@ pub trait External: core::fmt::Debug {
 /// `External` boilerplate, no second source of truth.
 ///
 /// The "read-only" contract is enforced by [`QueryOnlyIntrospect`], not
-/// here: any path in [`introspect_schema`](Self::introspect_schema) is
+/// here: any path in `introspect_schema` is
 /// refused on `intervene` with [`InterveneError::ReadOnly`]. This is the
 /// right shape when the state is *driver-coupled* — a modal's open flag
 /// moves with its focus-trap, a snackbar's countdown is advanced by the

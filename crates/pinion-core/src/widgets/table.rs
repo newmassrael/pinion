@@ -4,7 +4,7 @@
 //! A table presents tabular data as a grid of rows and columns (the
 //! WAI-ARIA `grid` role with `row` / `columnheader` / `gridcell`
 //! children — the **second consumer** of the R704 grid-role family,
-//! and the first to exercise the [`Row`](pinion_a11y::AriaRole::Row)
+//! and the first to exercise the `Row`
 //! role, which the date picker's flat calendar grid does not). Exactly
 //! one row may be selected at a time; activating any cell in a row
 //! selects that row (single-row exclusion — framework-owned in the
@@ -20,7 +20,7 @@
 //!
 //! Visual scene placement is the application's responsibility (same
 //! contract as `RadioGroup` / `DatePicker`): the binding composes the
-//! header row + body rows via [`pinion_widget_paint::table`] and queries
+//! header row + body rows via `pinion_widget_paint::table` and queries
 //! the coordinator for per-row state.
 //!
 //! The [`TableExternal`] adapter exposes the table on the §5.12 RPC
@@ -78,7 +78,7 @@ pub enum SelectionBehavior {
 /// module docs for the design rationale.
 ///
 /// Reuses the [`Radio`] leaf statechart per row (the same "select 1 of
-/// N" leaf [`RadioGroup`] composes), so rows inherit the canonical
+/// N" leaf [`RadioGroup`](crate::widgets::radio_group::RadioGroup) composes), so rows inherit the canonical
 /// `{Idle, Hover, Pressed, Disabled}` interaction model + activate edge.
 /// The cell text is immutable for the table's lifetime (row insert /
 /// delete / edit + virtualization are deferred axes — see the binding

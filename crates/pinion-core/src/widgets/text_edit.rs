@@ -56,15 +56,15 @@
 //! `None` is "not composing"; `Some(s)` is "active composition with
 //! `s` as the current preedit string" (`s` may be empty during the
 //! transient compositionstart → compositionupdate window). The buffer
-//! lives orthogonal to [`text`](Self::text): the canonical platform
+//! lives orthogonal to `text`: the canonical platform
 //! IME contract (Wayland text-input-v3, macOS `NSTextInputContext`,
 //! Windows TSF, GTK `IBus`) keeps preedit display in a separate
 //! channel from the committed text so the application paint code
 //! stitches the two together (`text[..caret] + preedit + text[caret..]`).
-//! Four mutators drive the lifecycle: [`preedit_start`](Self::preedit_start),
-//! [`preedit_update`](Self::preedit_update),
-//! [`preedit_commit`](Self::preedit_commit),
-//! [`preedit_cancel`](Self::preedit_cancel). The mutators batch the
+//! Four mutators drive the lifecycle: `preedit_start`,
+//! `preedit_update`,
+//! `preedit_commit`,
+//! `preedit_cancel`. The mutators batch the
 //! 2- or 3-axis writes (`text` + `caret` + `preedit_buffer`) under
 //! the R55.G.24 atomic-multi-axis reactive contract.
 //!
@@ -186,7 +186,7 @@ impl FormatField {
 /// ([`Self::set_text`], [`Self::insert`], [`Self::backspace`],
 /// [`Self::delete_forward`]) wraps the two `Signal::set` calls in
 /// [`batch`] so a subscribed `Effect` / `Owner` re-runs **once** per
-/// logical edit. Mirror of the R55.G.24 [`ScrollState`] batched
+/// logical edit. Mirror of the R55.G.24 [`ScrollState`](crate::widgets::scroll::ScrollState) batched
 /// multi-axis contract — atomic-update is the canonical reactive
 /// shape, equality-skip alone does not suffice.
 #[derive(Debug)]
@@ -265,7 +265,7 @@ pub struct TextEditState {
     goal_column: Cell<Option<f32>>,
     /// R767 §5.36 §5.22 — **styled runs** for rich-text editing: an
     /// ordered, non-overlapping list of [`StyleRun`] spans over the
-    /// current [`text`](Self::text) byte buffer (the Qt `FormatRange`
+    /// current `text` byte buffer (the Qt `FormatRange`
     /// model — each run is a fully-resolved [`TextStyle`] over a UTF-8
     /// byte range). Empty (the default) is the single-style fast path;
     /// the field's paint threads the runs into the
@@ -280,7 +280,7 @@ pub struct TextEditState {
     /// ([`Self::set_style_runs`] is the substrate seam in the meantime).
     ///
     /// A reactive [`Signal`] — the same content-state shape as
-    /// [`text`](Self::text) / [`caret_pos`](Self::caret_pos) /
+    /// `text` / [`caret_pos`](Self::caret_pos) /
     /// [`selection_anchor`](Self::selection_anchor), **not** the
     /// non-reactive scratch shape [`goal_column`](Self::goal_column)
     /// uses. Two reasons, both from being a content peer of `text`:
@@ -291,7 +291,7 @@ pub struct TextEditState {
     ///    rather than diverging to interior mutability.
     /// 2. **Reactivity** — a view-fn that reads the runs (the field
     ///    paint via `field_shaping`) subscribes, so a formatting change
-    ///    re-runs it. R767 edits also write [`text`](Self::text), so a
+    ///    re-runs it. R767 edits also write `text`, so a
     ///    `text` subscriber repaints anyway; but a *runs-only* mutation
     ///    — applying bold / colour over a selection without a text edit
     ///    (the next slice) — repaints **only** through this direct
@@ -320,7 +320,7 @@ pub struct TextEditState {
     /// R903 §5.22 — **find &amp; replace** session: the active search needle.
     /// Empty (the default) is "no search active" — [`find_matches`](Self::find_matches)
     /// yields nothing and the highlight paint draws no bands. A reactive
-    /// `Signal` (content peer of [`text`](Self::text)) so the find-highlight
+    /// `Signal` (content peer of `text`) so the find-highlight
     /// paint and the match-count status subscribe and re-derive the moment the
     /// needle changes. The session lives on the editable buffer itself (not a
     /// separate widget) so the field is **self-describing** to AI introspection:
@@ -393,7 +393,7 @@ pub struct TextEditState {
     /// A non-reactive [`Cell`] (not a [`Signal`]): the flag is wiring, not
     /// observable content — no view-fn renders "does Tab indent" — so it
     /// shares the interior-mutability shape of [`undo`](Self::undo) /
-    /// [`highlighter`](Self::highlighter), not the reactive content shape.
+    /// `highlighter`, not the reactive content shape.
     tab_indents: Cell<bool>,
     /// R939 §5.22 — opt-in: the line-comment marker `Ctrl+/` toggles on the
     /// selected lines (`Some("//")` for a C-family editor), or `None` (the
@@ -412,7 +412,7 @@ pub struct TextEditState {
     /// then type" affordance (`ProseMirror` `storedMarks` / Slate `editor.marks` /
     /// Word's pending format). `None` (the default) means a fresh insert
     /// *inherits the style of the character to its left* (which
-    /// [`shift_runs_for_insert`] already produces), so an unstyled field is
+    /// `shift_runs_for_insert` already produces), so an unstyled field is
     /// byte-unchanged. A toolbar reads [`pending_style`](Self::pending_style) to
     /// show that a mark is armed and [`style_at_caret`](Self::style_at_caret)
     /// for the next-char style; the `scene/<tag>/external` RPC mirrors both.
@@ -430,7 +430,7 @@ pub struct TextEditState {
     /// model: relocating the caret discards a pending mark), a
     /// [`clear_selection`](Self::clear_selection) drops it (collapsing a
     /// selection is a selection change), an IME composition start drops it
-    /// ([`preedit_start`](Self::preedit_start)), and a wholesale
+    /// (`preedit_start`), and a wholesale
     /// [`set_text`](Self::set_text) resets it with the rest of the transient
     /// state. **Edits preserve it** — [`insert`](Self::insert) overlays the
     /// mark onto the typed span yet leaves the signal armed, so a run of
@@ -753,7 +753,7 @@ impl UndoCommand for StyleRunCommand {
 /// lists: strip the common prefix + suffix and return `(prefix, removed,
 /// inserted)`. A range format (`apply` / `clear` / `merge`) carves and
 /// coalesces a single contiguous index span of the sorted run list, so this
-/// recovers exactly that span for [`StyleRunCommand`] — the run-vector twin of
+/// recovers exactly that span for `StyleRunCommand` — the run-vector twin of
 /// [`text_diff`]'s byte splice. R930.1 — both share the element-generic
 /// prefix / suffix scan ([`common_prefix_len`] / [`common_suffix_len`]); only
 /// `text_diff`'s `char`-boundary backtracking is text-specific (runs need
@@ -868,7 +868,7 @@ fn text_diff(before: &str, after: &str) -> (usize, String, String) {
 /// own line. The line-operation SSOT — [`TextEditState::indent_selection`] /
 /// [`dedent_selection`](TextEditState::dedent_selection) /
 /// [`toggle_line_comment`](TextEditState::toggle_line_comment) all iterate it.
-/// Built on the [`line_starts`] / [`line_of`] line-index SSOT (no second `\n`
+/// Built on the `line_starts` / [`line_of`] line-index SSOT (no second `\n`
 /// scan) — the only range-specific logic is the end-boundary rule.
 fn line_starts_in_range(text: &str, start: usize, end: usize) -> Vec<usize> {
     let len = text.len();
@@ -940,7 +940,7 @@ fn line_first_non_ws(text: &str, ls: usize) -> Option<usize> {
 /// or after an edit's removed run moves by `inserted_len - removed_len`; a
 /// position *inside* a removed run clamps into the replacement; a position
 /// before is unchanged. The edits are independent (never overlap), so order
-/// does not matter — the bare-offset peer of the [`shift_runs_for_insert`] /
+/// does not matter — the bare-offset peer of the `shift_runs_for_insert` /
 /// [`clip_runs_for_delete`] byte maintenance. Generalises the dedent-only
 /// removal shift at its 2nd consumer (the comment toggle): a pure insert is
 /// `removed_len == 0`, a pure delete is `inserted_len == 0`.
@@ -1149,7 +1149,7 @@ fn matching_bracket_in(text: &str, caret_byte: usize) -> Option<(usize, usize)> 
 /// the byte offset of its matching closer, or `None` when `pos` is not an
 /// opener or the block is unbalanced. The forward half of the R926
 /// matcher, lifted so [`matching_bracket_in`] (active-bracket highlight)
-/// and [`fold_regions_in`] (block enumeration) run the **one** scan — a
+/// and `fold_regions_in` (block enumeration) run the **one** scan — a
 /// divergence between "where the highlight says the block ends" and
 /// "where the fold collapses to" would be a bug. Same-type depth scan
 /// (counting this pair only) is correct for well-formed code and
@@ -1194,7 +1194,7 @@ fn line_starts(text: &str) -> Vec<usize> {
 }
 
 /// R958.1 §5.22 — byte offset of 1-based logical `line`'s start, given the
-/// [`line_starts`] index, clamped to `1..=starts.len()` (`starts` is never
+/// `line_starts` index, clamped to `1..=starts.len()` (`starts` is never
 /// empty — always `[0]` at minimum). The shared indexing the public
 /// [`TextEditState::line_start_byte`] and [`TextEditState::go_to_line`] both
 /// resolve through, so neither re-derives the clamp inline and each walks
@@ -1204,7 +1204,7 @@ fn line_start_byte_at(starts: &[usize], line: usize) -> usize {
 }
 
 /// R933 §5.36 — zero-based logical line containing `byte`, given the
-/// [`line_starts`] index. `partition_point` finds the first start strictly
+/// `line_starts` index. `partition_point` finds the first start strictly
 /// past `byte`; the line is the one before it.
 fn line_of(starts: &[usize], byte: usize) -> usize {
     starts.partition_point(|&s| s <= byte).saturating_sub(1)
@@ -1234,7 +1234,7 @@ pub struct FoldRegion {
     pub end_line: usize,
     /// Whether this region is currently collapsed (filled by
     /// [`TextEditState::fold_regions`] from the live fold set;
-    /// [`fold_regions_in`] leaves it `false`).
+    /// `fold_regions_in` leaves it `false`).
     pub collapsed: bool,
 }
 
@@ -1262,7 +1262,7 @@ impl FoldRegion {
 
 /// R933 §5.36 — every foldable region in `text`, in opener (byte) order:
 /// each bracket block spanning ≥ 2 logical lines. Reuses [`match_forward`]
-/// for the extent and the single-pass [`line_starts`] index for the line
+/// for the extent and the single-pass `line_starts` index for the line
 /// mapping. `collapsed` is left `false` — [`TextEditState::fold_regions`]
 /// fills it from the live set. Cost is `O(text · openers)` per call — each
 /// opener runs a forward [`match_forward`] scan — of the
@@ -1495,7 +1495,7 @@ impl TextEditState {
     /// R928 §5.52 §5.36 — the formatting peer of [`record_edit`](Self::record_edit):
     /// run a styled-run mutation `f` (an `apply` / `clear` / `merge`) and
     /// journal the run delta onto the attached [`UndoStack`] as one
-    /// [`StyleRunCommand`], so `Ctrl+Z` reverses formatting just like it
+    /// `StyleRunCommand`, so `Ctrl+Z` reverses formatting just like it
     /// reverses typing. No stack attached → `f` runs plain (unchanged
     /// behaviour for fields with no history). A format that leaves the runs
     /// untouched (empty / inverted / no-effect range) records nothing — the
@@ -1581,7 +1581,7 @@ impl TextEditState {
     /// every selection-affecting mutation.
     ///
     /// Both offsets are guaranteed `char` boundaries — the mutators
-    /// snap any anchor input through [`clamp_to_char_boundary`].
+    /// snap any anchor input through `clamp_to_char_boundary`.
     #[must_use]
     pub fn selection_range(&self) -> Option<(usize, usize)> {
         let anchor = self.selection_anchor.get()?;
@@ -1689,7 +1689,7 @@ impl TextEditState {
     /// single-style field. See the [`style_runs`](Self::style_runs)
     /// field doc for the maintenance contract.
     ///
-    /// R904 §5.36 — when a [`highlighter`](Self::highlighter) is attached
+    /// R904 §5.36 — when a `highlighter` is attached
     /// ([`attach_highlighter`](Self::attach_highlighter)), this **derives** the
     /// runs from the live text instead (subscribing to the text `Signal`, so a
     /// view-fn re-runs on every edit and re-highlights), and the manually
@@ -1747,7 +1747,7 @@ impl TextEditState {
     /// [`style_runs`](Self::style_runs) field doc anticipated.
     ///
     /// R928 §5.52 — journals onto the attached [`UndoStack`] as one
-    /// [`StyleRunCommand`], so a `Ctrl+Z` reverses the formatting (a discrete
+    /// `StyleRunCommand`, so a `Ctrl+Z` reverses the formatting (a discrete
     /// step from any surrounding typing); no-op ranges record nothing.
     pub fn apply_style_run(&self, start: usize, end: usize, style: TextStyle) {
         self.record_style_edit("Apply formatting", || {
@@ -1781,8 +1781,8 @@ impl TextEditState {
     /// is **not** a deletion — no offset shifts). `start` / `end` are
     /// clamped + `char`-snapped; an empty / inverted range is a no-op.
     ///
-    /// R928 §5.52 — undoable via [`StyleRunCommand`] (the
-    /// [`record_style_edit`](Self::record_style_edit) funnel), so clearing
+    /// R928 §5.52 — undoable via `StyleRunCommand` (the
+    /// `record_style_edit` funnel), so clearing
     /// formatting is one reversible step.
     pub fn clear_style_runs(&self, start: usize, end: usize) {
         self.record_style_edit("Clear formatting", || {
@@ -1822,10 +1822,10 @@ impl TextEditState {
     /// peer (replaces every field); this preserves untouched ones.
     /// `start` / `end` are clamped + `char`-snapped; empty range no-op.
     ///
-    /// R928 §5.52 — undoable via [`StyleRunCommand`]: toggling **bold** over a
+    /// R928 §5.52 — undoable via `StyleRunCommand`: toggling **bold** over a
     /// selection is one `Ctrl+Z` step, the same as the wholesale
     /// [`apply_style_run`](Self::apply_style_run) and `clear`. The `mutate`
-    /// transform is applied inside the [`record_style_edit`](Self::record_style_edit)
+    /// transform is applied inside the `record_style_edit`
     /// span; the recorded delta is the net run change, whatever fields it set.
     pub fn merge_style_run(
         &self,
@@ -1899,7 +1899,7 @@ impl TextEditState {
     /// *armed* or merely *inherited*); the AI-first peer reads it over RPC
     /// before typing. At offset `0` with no mark there is no left character, so
     /// the next char is the field base (`None`) — matching what
-    /// [`shift_runs_for_insert`] produces for a leading insert.
+    /// `shift_runs_for_insert` produces for a leading insert.
     #[must_use]
     pub fn style_at_caret(&self) -> Option<TextStyle> {
         if let Some(style) = self.effective_pending() {
@@ -2015,7 +2015,7 @@ impl TextEditState {
     // match-count status stay correct through every edit with no manual refresh
     // threaded into the mutators. Replace routes through one splice primitive
     // ([`replace_range`]); *Replace All* wraps the run in an
-    // [`UndoStack`](crate::undo::UndoStack) macro so one Ctrl+Z reverses it.
+    // [`UndoStack`] macro so one Ctrl+Z reverses it.
 
     /// R903 §5.22 — the active find needle (reactive read). Empty is "no search".
     #[must_use]
@@ -2122,7 +2122,7 @@ impl TextEditState {
     /// the same line the outermost (widest) block toggles — the block the
     /// gutter chevron represents. No region opens there ⇒ no-op returning
     /// `false`. **Collapsing reanchors the caret** out of the now-hidden
-    /// interior (see [`reanchor_caret_out_of_folds`](Self::reanchor_caret_out_of_folds)):
+    /// interior (see `reanchor_caret_out_of_folds`):
     /// a fold must never strand the caret on an invisible line — the same
     /// view-state reanchor discipline the data widgets apply to sort /
     /// filter / group changes. Returns `true` when a region toggled.
@@ -2274,7 +2274,7 @@ impl TextEditState {
     /// undo step, returning the count replaced (0 leaves the buffer and the
     /// timeline untouched). The matches are spliced last-to-first so each
     /// earlier match's byte range stays valid as later text shifts, and the run
-    /// is bracketed by an [`UndoStack`](crate::undo::UndoStack) macro
+    /// is bracketed by an [`UndoStack`] macro
     /// ([`begin_macro`](crate::undo::UndoStack::begin_macro) /
     /// [`end_macro`](crate::undo::UndoStack::end_macro)) so a single Ctrl+Z
     /// reverses the whole batch — the first consumer of the macro axis the undo
@@ -2422,7 +2422,7 @@ impl TextEditState {
     /// the AI-first `toggle-comment` RPC verb's shared core. The VS Code
     /// "Toggle Line Comment" rule:
     ///
-    /// * The touched lines are [`line_starts_in_range`] — the line-op SSOT that
+    /// * The touched lines are `line_starts_in_range` — the line-op SSOT that
     ///   [`indent_selection`](Self::indent_selection) /
     ///   [`dedent_selection`](Self::dedent_selection) also iterate (a collapsed
     ///   caret toggles its own line). Blank lines (whitespace only, including a
@@ -2511,7 +2511,7 @@ impl TextEditState {
     /// R945 §5.22 — the byte extent `[start, end)` of the whole-line block the
     /// current selection (or collapsed caret) touches: from the first touched
     /// line's start to the last touched line's end, INCLUDING that line's
-    /// trailing `\n` ([`line_extent_end`] — a line owns its newline). The shared
+    /// trailing `\n` (`line_extent_end` — a line owns its newline). The shared
     /// preamble of [`move_lines`](Self::move_lines) /
     /// [`duplicate_lines`](Self::duplicate_lines): both cut on this block.
     fn line_block_extent(&self, text: &str) -> (usize, usize) {
@@ -2531,9 +2531,9 @@ impl TextEditState {
     /// chords. A boundary move (the first line up, the last line down) is a
     /// `false` no-op.
     ///
-    /// The touched lines are the [`line_starts_in_range`] block; the line
+    /// The touched lines are the `line_starts_in_range` block; the line
     /// swapped past is the adjacent one, taken with its newline
-    /// ([`line_extent_end`] — a line owns its trailing `\n`). The reorder is one
+    /// (`line_extent_end` — a line owns its trailing `\n`). The reorder is one
     /// [`replace_range`](Self::replace_range) over the two-line region with the
     /// lines re-sequenced, so the buffer's newline structure stays exact even
     /// when the move crosses the final, newline-less line (the swapped pair
@@ -2760,7 +2760,7 @@ impl TextEditState {
     }
 
     /// R941 §5.22 — the number of logical (newline-delimited) lines, 1-based:
-    /// the count of [`line_starts`] entries. Always `>= 1` (an empty buffer is
+    /// the count of `line_starts` entries. Always `>= 1` (an empty buffer is
     /// one line). The clamp bound for [`go_to_line`](Self::go_to_line) and the
     /// peer of a line-number gutter / a "go to line" prompt's max.
     #[must_use]
@@ -3231,7 +3231,7 @@ impl TextEditState {
     /// mirror) so the caret-area, glyph-run, selection-overlay, and
     /// IME candidate-popup geometries all derive from the same
     /// splice. The shared call ensures the
-    /// [`pinion_text::LayoutCache`] key (`(text, style, max_width)`)
+    /// `pinion_text::LayoutCache` key (`(text, style, max_width)`)
     /// is identical across the paths so the layout lookup is a
     /// cache hit, not a re-shape.
     ///
@@ -3532,7 +3532,7 @@ fn clip_runs_for_delete(runs: &mut Vec<StyleRun>, start: usize, end: usize) {
 
 /// R933.1 §5.36 — shift fold anchors right for a text insert of `len`
 /// bytes at `at` (the buffer-mutation maintenance step, the fold peer of
-/// [`shift_runs_for_insert`]). An anchor at or after the insertion point
+/// `shift_runs_for_insert`). An anchor at or after the insertion point
 /// moves with its `{`; one before is untouched. Mirrors the style-run
 /// maintenance so a collapsed block tracks *its* text across an edit
 /// rather than stranding on a stale byte (which a coincidental brace

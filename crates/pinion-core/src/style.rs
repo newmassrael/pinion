@@ -396,7 +396,7 @@ impl Color {
     ///   target re-tune, not from the lerp).
     /// - `t = NaN` is treated as `0.0` (returns `self`) — defensive
     ///   guard mirroring the R51.145
-    ///   [`clamp_frame_dt`](crate::frame_pacing::clamp_frame_dt) NaN
+    ///   `clamp_frame_dt` NaN
     ///   policy so a degraded numerical input does not propagate
     ///   visible artifacts.
     ///
@@ -518,7 +518,7 @@ fn srgb_decode(c: u8) -> f32 {
 ///
 /// NaN coerces to `0.0` before clamp so a degraded numerical input
 /// produces a zero-width fill (textbook silent recovery — matches
-/// R51.145 [`clamp_frame_dt`](crate::frame_pacing::clamp_frame_dt)
+/// R51.145 `clamp_frame_dt`
 /// + R51.151 [`Color::lerp`] NaN policy).
 ///
 /// ## Why not a `Size` method
@@ -1176,7 +1176,7 @@ mod color_linear_tests {
     }
 }
 
-/// Where the border is drawn relative to the [`BoxNode`]'s `rect`.
+/// Where the border is drawn relative to the [`BoxNode`](crate::scene::BoxNode)'s `rect`.
 /// R46.3.2 §5.3 — the legacy softbuffer paint helper drew the border
 /// strips *inside* the rect bounds (a 4-strip approximation of CSS
 /// `box-sizing: border-box`). The Vello `paint_adapter` reproduces
@@ -1441,8 +1441,8 @@ fn hash_gradient<H: core::hash::Hasher>(gradient: &Gradient, state: &mut H) {
     gradient.extend.hash(state);
 }
 
-/// R710 §5.50 — one drop-shadow cast behind a [`BoxNode`] /
-/// [`ContainerNode`], the CSS `box-shadow` / Flutter `BoxShadow` model.
+/// R710 §5.50 — one drop-shadow cast behind a [`BoxNode`](crate::scene::BoxNode) /
+/// [`ContainerNode`](crate::scene::ContainerNode), the CSS `box-shadow` / Flutter `BoxShadow` model.
 ///
 /// A shadow is the box's rounded silhouette, translated by
 /// `(offset_x, offset_y)`, inflated by `spread` (negative shrinks),

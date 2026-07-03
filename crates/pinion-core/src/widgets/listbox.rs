@@ -1,6 +1,6 @@
 //! R51.96 §5.38 — `ListBox` widget: framework-owned mutual exclusion
 //! across N [`ListBoxItem`] instances, mirroring
-//! [`crate::widgets::RadioGroup`] but exposed at the composite layer
+//! [`RadioGroup`](crate::widgets::radio_group::RadioGroup) but exposed at the composite layer
 //! with WAI-ARIA Listbox semantics (`AriaRole::Listbox` parent +
 //! `AriaRole::Option` children, Arrow-keys-focus-only + Space/Enter-
 //! commits keyboard model).
@@ -12,7 +12,7 @@
 //! industry consensus = HTML `<select>`, Material `DropdownMenu`,
 //! `SwiftUI` `List` with `selection:`, Qt `QListWidget`).
 //!
-//! Semantic axis vs [`crate::widgets::RadioGroup`]:
+//! Semantic axis vs [`RadioGroup`](crate::widgets::radio_group::RadioGroup):
 //!
 //! * **Keyboard model** — `RadioGroup` (W3C ARIA Radio Group): Arrow
 //!   keys move focus AND activate the new row immediately. `ListBox`
@@ -75,7 +75,7 @@ use crate::{WidgetEventName, WidgetStateName};
 
 /// Logical group of N `ListBoxItem` widgets with framework-owned
 /// mutual exclusion. See module docs for the full design rationale
-/// and the comparison axis vs [`crate::widgets::RadioGroup`].
+/// and the comparison axis vs [`RadioGroup`](crate::widgets::radio_group::RadioGroup).
 pub struct ListBox {
     items: Vec<ListBoxItem>,
     selected: Option<usize>,

@@ -17,7 +17,7 @@
 //! (with `setRecursiveFilteringEnabled(true)`) provides for a tree, the
 //! hierarchical analogue of WPF `CollectionView` / `TanStack` Table's
 //! filtered row model. The *recursion* — path-to-match + auto-expand +
-//! sibling renumbering — is the [`flat_visible_filtered`] SSOT in
+//! sibling renumbering — is the [`flat_visible_filtered`](crate::widgets::tree_nav::flat_visible_filtered) SSOT in
 //! [`tree_nav`](crate::widgets::tree_nav); this module is the reactive
 //! coordinator + RPC adapter around it, mirroring
 //! [`ViewOrderState`](crate::widgets::view_order::ViewOrderState).
@@ -39,7 +39,7 @@
 //! `(sort, filter)` config alone is sound — the source can never invalidate
 //! it. A tree filter **borrows** the consumer's *mutable* retained tree (via
 //! `rows_fn`), so a query-keyed memo would go stale on any tree edit. This
-//! proxy therefore derives its rows through a reactive [`Computed`](crate::reactive::Computed)
+//! proxy therefore derives its rows through a reactive [`Computed`]
 //! that tracks the query **and** the tree, recomputing when either changes —
 //! the correct memoization for a live source (the scene graph the Phase-D
 //! editor mutates).
@@ -487,7 +487,7 @@ mod tests {
 
     /// The consumer's recompute closure: an empty query shows the full
     /// expand-respecting tree; otherwise a case-insensitive label substring
-    /// drives [`flat_visible_filtered`]. Captures the source-tree `Signal` so
+    /// drives [`flat_visible_filtered`](crate::widgets::tree_nav::flat_visible_filtered). Captures the source-tree `Signal` so
     /// the `Computed` memo tracks live tree edits.
     fn rows_fn_over(nodes: Signal<Vec<Node>>) -> TreeRowsFn {
         Box::new(move |q: &str| {

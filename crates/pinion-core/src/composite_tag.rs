@@ -4,7 +4,7 @@
 //!
 //! ## Why a substrate
 //!
-//! The R51.42 [`InputRouter`] composite-tag dispatch splits a paint
+//! The R51.42 `InputRouter` composite-tag dispatch splits a paint
 //! tag like `"todo_delete#42"` at the `#` separator, then forwards the
 //! sub-index `42` to the resolved [`External`](crate::external::External)
 //! as part of a wire-form payload `"42:PointerDown"`. The receiving
@@ -12,9 +12,9 @@
 //! a typed key (`u64` id, `usize` enum discriminant, …) plus the
 //! event name suffix.
 //!
-//! R655 [`TodoDeleteExternal`] introduced the parse helper inline as a
-//! 5-LOC private function. R658 [`TodoToggleExternal`] copy-pasted it.
-//! R659 [`TodoFilterExternal`] is the **3rd consumer** of the same
+//! R655 `TodoDeleteExternal` introduced the parse helper inline as a
+//! 5-LOC private function. R658 `TodoToggleExternal` copy-pasted it.
+//! R659 `TodoFilterExternal` is the **3rd consumer** of the same
 //! shape — the Rule of Three from
 //! [[abstraction-needs-second-consumer]] fires, so the helper lifts
 //! into this module before the parsing logic forks across siblings.
@@ -41,7 +41,6 @@
 //! carry from R659 is repaid in the round after surface — every R51.42
 //! composite-tag invoke arm in the workspace shares one parser.
 //!
-//! [`InputRouter`]: pinion_runtime::InputRouter
 
 use crate::input::Modifiers;
 use core::str::FromStr;
@@ -361,7 +360,7 @@ impl GridTag {
 ///   first `#`; the remainder is opaque to the router today)
 ///
 /// This is the canonical `#` splitter shared by the
-/// [`InputRouter`](pinion_runtime::InputRouter) dispatch / drag / focus
+/// `InputRouter` dispatch / drag / focus
 /// paths, the shell's access-action router, and composite-widget
 /// bindings (e.g. the reorder list) — the `#` SSOT paired with the `:`
 /// SSOT above so neither separator is re-split inline (R742.4 review

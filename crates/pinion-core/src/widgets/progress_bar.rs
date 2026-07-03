@@ -7,7 +7,7 @@
 //! value holder, mirroring [`TooltipExternal`](crate::widgets::tooltip)
 //! (the other descriptive widget that is a hand-written [`External`]
 //! rather than an SCXML-backed one). The single observable axis is the
-//! normalized progress [`value`](Self::value) in `0.0..=1.0`.
+//! normalized progress `value` in `0.0..=1.0`.
 //!
 //! The value is **writable** through the §5.15 introspect channel
 //! (`intervene("value", Float)`) — the same side door the RPC
@@ -18,9 +18,9 @@
 //! task, but both expose one settable normalized `value`.
 //!
 //! a11y: the binding lowers the value into
-//! [`AccessValue::Float`](pinion_a11y::AccessValue::Float)
+//! `AccessValue::Float`
 //! (`aria-valuenow` / `aria-valuemin` / `aria-valuemax`) on an
-//! [`AriaRole::ProgressBar`](pinion_a11y::AriaRole::ProgressBar) node —
+//! `AriaRole::ProgressBar` node —
 //! the same numeric lowering a `Slider` uses, but on a passive role (no
 //! AT actions).
 //!
@@ -231,7 +231,7 @@ impl ExternalIntrospect for ProgressBarExternal {
 ///
 /// `set_active(false)` parks it (the determinate bar has no sweep), at
 /// which point `is_at_rest` returns `true` so the backend releases
-/// frames — the [`CaretBlink::set_enabled`] gating pattern.
+/// frames — the [`CaretBlink::set_enabled`](crate::widgets::caret_blink::CaretBlink::set_enabled) gating pattern.
 #[derive(Debug)]
 pub struct IndeterminateSweep {
     /// Sawtooth phase in `0.0..1.0` — auto-subscribes inside a view-fn

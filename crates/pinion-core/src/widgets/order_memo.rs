@@ -11,7 +11,7 @@
 //! divergence in either would be a bug, not a style choice — so they live here
 //! once (the R780 audit lift, on the second proxy consumer):
 //!
-//! - [`OrderMemo`] — the single-entry memo of the visual→source order
+//! - `OrderMemo` — the single-entry memo of the visual→source order
 //!   permutation, keyed on a config snapshot. The cache-invalidation dance
 //!   (recompute only when the key changes) is the error-prone part; one
 //!   correct copy serves both proxies. This value-keyed memo is sound only

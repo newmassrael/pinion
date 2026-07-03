@@ -436,14 +436,14 @@ impl core::fmt::Debug for ScrollBarInteractionSignal {
 /// (R660 §5.45) [`Owner::cache`] hook returning the shared
 /// [`ScrollBarInteractionSignal`] for `tag`. Same shape as
 /// [`use_text_edit_state`](crate::widgets::text_edit::use_text_edit_state) —
-/// per-`tag` singleton, lives for the [`Owner`](crate::reactive::Owner)'s
+/// per-`tag` singleton, lives for the [`Owner`]'s
 /// lifetime, returned through an [`Rc`] so the application can clone
 /// it once to thread into both [`ScrollBarExternal::attach_interaction`]
 /// (the write side) and the view fn (the read side).
 ///
 /// # Panics
 ///
-/// Panics if there is no active [`Owner`](crate::reactive::Owner)
+/// Panics if there is no active [`Owner`]
 /// scope. Framework-internal dispatch sites already supply the
 /// `root_owner.run()` wrap; application code only reaches this hook
 /// from inside `V::view` / `V::create_extra_externals` / similar
@@ -473,7 +473,7 @@ use crate::{WidgetEventName, WidgetStateName};
 /// Slider-mirror four-state interaction model
 /// (Idle / Hover / Dragging / Disabled). Unlike Slider's f32 value
 /// sidecar, the authoritative scroll value lives in
-/// [`ScrollState`](crate::widgets::scroll::ScrollState) (R55.B
+/// [`ScrollState`] (R55.B
 /// §5.45) — the orthogonal reactive container the framework owns.
 /// `ScrollBar` therefore carries no per-state numeric sidecar; the
 /// only construction-time sidecar is the
@@ -501,7 +501,7 @@ pub struct ScrollBar {
     state: Option<Rc<ScrollState>>,
     /// R55.D.3 §5.45 — press-time snapshot driving the drag math.
     /// `None` outside the `Dragging` state. The framework's
-    /// [`InputRouter`](pinion_runtime::InputRouter) opens a capture
+    /// `InputRouter` opens a capture
     /// lock on `pointer_down` and forwards the press-time cursor as
     /// the first `pointer_move`; that frame captures the snapshot,
     /// every subsequent `pointer_move` applies the delta against it.
@@ -631,12 +631,12 @@ impl ScrollBar {
 
     /// Drive a [`ScrollBarEvent`] through the SCXML. Pure state
     /// transition — the authoritative scroll offset lives in
-    /// [`ScrollState`](crate::widgets::scroll::ScrollState) and is
+    /// [`ScrollState`] and is
     /// mutated through that handle, not through this widget.
     ///
     /// R55.D.3 §5.45 — any transition that exits `Dragging`
     /// (`pointer_up`, `pointer_leave`, `pointer_cancel`, `disable`)
-    /// clears the press-time [`DragStart`] snapshot so the next
+    /// clears the press-time `DragStart` snapshot so the next
     /// press starts clean.
     pub fn send(&mut self, event: ScrollBarEvent) {
         self.inner.send(event);
@@ -884,7 +884,7 @@ impl External for ScrollBarExternal {
     ///
     /// The first `pointer_move` after `pointer_down` (the press-
     /// time cursor frame the framework supplies under capture lock)
-    /// captures a [`DragStart`] snapshot — cursor fraction +
+    /// captures a `DragStart` snapshot — cursor fraction +
     /// [`ScrollState`] offset + `scroll_max` — and does not move
     /// the offset. Each subsequent frame applies
     /// `delta_fraction × scroll_max` to the press-time offset and

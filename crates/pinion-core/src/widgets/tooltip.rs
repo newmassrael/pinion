@@ -13,7 +13,7 @@
 //! (`tab` / `option`), and no toggle (`button` + `aria-pressed`); it is
 //! never focusable and owns no keyboard model of its own. The trigger
 //! element references it through `aria-describedby`
-//! ([`AccessNode::with_described_by`](pinion_a11y) in the binding) so AT
+//! (`AccessNode::with_described_by` in the binding) so AT
 //! announces "Save, Saves the current file" — the tooltip text becomes
 //! the trigger's *description*, not a node the user can land on. This is
 //! why [`TooltipExternal`] is its own tiny visibility statechart rather
@@ -29,16 +29,16 @@
 //!   paint tag as the anchor and places it contiguous with the anchor
 //!   rect, so the router never sees a hover-target transition when the
 //!   cursor crosses from the trigger onto the tooltip body
-//!   ([`pinion_widget_paint::tooltip`] owns the geometry). The
+//!   (`pinion_widget_paint::tooltip` owns the geometry). The
 //!   `hovered` posture therefore stays set across the whole
 //!   trigger-plus-body region — the cursor can rest on the tooltip
 //!   without it disappearing.
-//! - **Dismissible** — [`Self::dismiss`] (the `dismiss` invoke action,
+//! - **Dismissible** — `Self::dismiss` (the `dismiss` invoke action,
 //!   driven by the shell's `Escape` key handler **and** the RPC
 //!   `scene/invoke` action channel — one funnel, §2 invariant #2) sets
 //!   a latch that hides the tooltip while hover / focus stays put.
 //! - **Persistent** — there is no timer; visibility is a pure function
-//!   of the live posture, [`Self::visible`].
+//!   of the live posture, `Self::visible`.
 //!
 //! The dismiss latch clears on the trigger-episode's falling edge (the
 //! `PointerLeave` that drops the last hover with no focus, or the blur
@@ -79,7 +79,7 @@ pub struct TooltipExternal {
     /// The trigger holds the shell keyboard focus (mirrored via
     /// [`External::on_focus_change`]).
     focused: bool,
-    /// WCAG 1.4.13 dismiss latch — set by [`Self::dismiss`], cleared on
+    /// WCAG 1.4.13 dismiss latch — set by `Self::dismiss`, cleared on
     /// the trigger episode's falling edge so a later hover / focus
     /// re-shows the tooltip.
     dismissed: bool,

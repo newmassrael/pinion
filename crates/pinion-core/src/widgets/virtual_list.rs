@@ -315,7 +315,7 @@ pub fn scroll_offset_to_reveal(
 
 /// R793.1 §5.27 — **rows per measured viewport-ful**: the `PageUp` /
 /// `PageDown` step a keyboard-navigation controller takes over a
-/// uniform-pitch virtualized collection, derived from the [`ScrollState`]'s
+/// uniform-pitch virtualized collection, derived from the [`ScrollState`](crate::widgets::scroll::ScrollState)'s
 /// measured viewport height and `row_pitch`. Clamped to ≥ 1 (a viewport
 /// shorter than one row, or an unmeasured `0`-height viewport, still pages
 /// by a single row), with the `row_pitch.max(1)` guard against a divide by
@@ -332,7 +332,7 @@ pub fn page_rows(scroll: &crate::widgets::scroll::ScrollState, row_pitch: u32) -
 }
 
 /// R793.1 §5.27 — scroll a uniform-pitch virtualized collection so the row
-/// at `index` is revealed, from the [`ScrollState`]'s current offset. The
+/// at `index` is revealed, from the [`ScrollState`](crate::widgets::scroll::ScrollState)'s current offset. The
 /// `&ScrollState`-applying wrapper around [`scroll_offset_to_reveal`]:
 /// reads the current offset + measured viewport, computes the align-auto
 /// target, and hands it to [`ScrollState::scroll_to`](crate::widgets::scroll::ScrollState::scroll_to)
@@ -387,7 +387,7 @@ pub fn at_bottom(offset_y: i32, max_y: i32) -> bool {
 /// The bound and the pin use the **same** `viewport_h`: when following, the new
 /// tail is below the window, so the pin target *is* the just-computed bottom
 /// bound. (It deliberately does not route through
-/// [`reveal_row`](self::reveal_row), which would re-derive a viewport height
+/// [`reveal_row`], which would re-derive a viewport height
 /// from `measured_viewport` — that can differ from `viewport_h` before the
 /// first layout pass, growing the bound while silently not pinning.)
 ///

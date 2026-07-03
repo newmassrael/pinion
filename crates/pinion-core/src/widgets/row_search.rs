@@ -9,7 +9,7 @@
 //! data set never shrinks, you navigate matches in place.
 //!
 //! The decisive reuse: a search query **is** an R997
-//! [`GridFilter`](crate::widgets::grid_sort::GridFilter) conjunction — the
+//! [`GridFilter`] conjunction — the
 //! same multi-facet predicate the grid's filter axis carries and the R998
 //! row-coloring engine matches against. Search is the **third** consumer of
 //! the `GridFilter` match vocabulary (filter removes, coloring tints, search
@@ -93,7 +93,7 @@ pub fn search_matches<'a>(
 /// and the memoized match list.
 ///
 /// Holds the source cells (materialized once — the immutable source that makes
-/// the value-keyed [`OrderMemo`] sound), the active `query` as a reactive
+/// the value-keyed `OrderMemo` sound), the active `query` as a reactive
 /// [`Signal`], a `cursor` [`Signal`] (an index into the match list), and the
 /// derived match list (memoized on the query). It holds **no** scroll — the
 /// reveal-into-view lives on the external, not here (see the module note).
@@ -115,7 +115,7 @@ pub struct RowSearchState {
     /// no active match (no query, or a query that matches nothing).
     cursor: Signal<Option<usize>>,
     /// Memoized matching source-row list, recomputed only when the query
-    /// changes — the shared [`OrderMemo`] (R780 lift), keyed on the query.
+    /// changes — the shared `OrderMemo` (R780 lift), keyed on the query.
     matches: RefCell<OrderMemo<Option<GridFilter>>>,
 }
 

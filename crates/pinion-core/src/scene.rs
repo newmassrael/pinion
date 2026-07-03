@@ -72,12 +72,12 @@ pub enum Scene {
     /// a paint-opaque leaf (mirrors [`Scene::External`] for input /
     /// path-lookup purposes) while the per-window paint cycle
     /// advances each driver in fixed-timestep steps (R831
-    /// [`pinion_runtime::FixedTimestep`] accumulator) every frame —
+    /// `pinion_runtime::FixedTimestep` accumulator) every frame —
     /// substrate for the §2 #4 immediate-mode ↔ retained widget
     /// tree dual execution model (Phase C entry).
     ///
     /// Landed across R681 (data shape + trait surface + Vello paint
-    /// bridge + per-window [`winit::event_loop::ControlFlow::WaitUntil`]
+    /// bridge + per-window `winit::event_loop::ControlFlow::WaitUntil`
     /// pacing + first consumer), R827 (intent bridge), R828
     /// (introspection), R829 (deterministic stepping), R830 (pointer
     /// input), and R831 (fixed-timestep accumulator).
@@ -96,7 +96,7 @@ pub enum Scene {
     /// backend (per-cell bg fill + cluster glyph; reverse / hidden / wide
     /// honoured) — extended in **R992** with the typographic SGR attributes
     /// (bold / italic / dim / underline / strikethrough) and in **R993** with
-    /// the [`GridCursor`] overlay (block / bar / underline shapes). **R994**
+    /// the [`GridCursor`](crate::term_grid::GridCursor) overlay (block / bar / underline shapes). **R994**
     /// added the ratatui TUI arm, so both backends now paint it — the §2 #6
     /// GUI / TUI dual holds for the grid. It is uncacheable — the projection
     /// is replaced wholesale each frame. The Vello `blink` slice (a timing
@@ -337,8 +337,8 @@ impl Scene {
     /// whose tag equals `target`. Mirrors the
     /// `find_external_by_tag` private helper inside
     /// `pinion_runtime::input` (R51.41 dispatch path); promoted to a
-    /// public `Scene` method so [`WidgetCore::read_state`] in
-    /// applications that opt into [`WidgetCore::create_extra_externals`]
+    /// public `Scene` method so [`WidgetCore::read_state`](crate::widget_core::WidgetCore::read_state) in
+    /// applications that opt into [`WidgetCore::create_extra_externals`](crate::widget_core::WidgetCore::create_extra_externals)
     /// can resolve the primary [`ExternalNode`] regardless of whether
     /// the substrate wrapped the state scene in a [`Scene::Container`]
     /// (multi-External) or left it as a bare [`Scene::External`]
@@ -352,7 +352,7 @@ impl Scene {
     ///
     /// Returns the first match in DFS pre-order. The substrate
     /// guarantees the primary External (declared via
-    /// [`WidgetCore::create_external`]) is the first child of the
+    /// [`WidgetCore::create_external`](crate::widget_core::WidgetCore::create_external)) is the first child of the
     /// composed Container, so the canonical
     /// `scene.find_external_with_tag(V::tag())` call resolves O(1)
     /// for the common case.
@@ -422,7 +422,7 @@ impl Scene {
     /// single-External shape (`Scene::External(...)`) and descends
     /// into `Container.children` / `Scroll.content` to find the
     /// first child External for the multi-External shape the
-    /// substrate composes when [`WidgetCore::create_extra_externals`]
+    /// substrate composes when [`WidgetCore::create_extra_externals`](crate::widget_core::WidgetCore::create_extra_externals)
     /// is non-empty.
     ///
     /// Used by the RPC introspect / invoke / dry-run / rewind
@@ -458,11 +458,11 @@ impl Scene {
     /// Called by the per-window paint cycle AFTER the §5.21 layout
     /// pass resolves [`ImmediateModeNode::viewport`] and BEFORE the
     /// paint adapter encodes the immediate-mode subtree
-    /// ([`pinion_runtime::paint_adapter::to_vello`]'s walker invokes
+    /// (`pinion_runtime::paint_adapter::to_vello`'s walker invokes
     /// [`ImmediateMode::paint`] inside the same frame).
     ///
     /// R831: the shell invokes this once per WHOLE fixed timestep its
-    /// per-window [`pinion_runtime::FixedTimestep`] accumulator
+    /// per-window `pinion_runtime::FixedTimestep` accumulator
     /// releases, so `dt` is the fixed simulation step (not the
     /// wall-clock frame delta) and `last_dt` publishes that fixed
     /// step. A sub-fixed / frozen frame invokes it zero times. The
@@ -509,7 +509,7 @@ impl Scene {
     /// least one [`Scene::ImmediateModeNode`]. Cheaper than
     /// [`Self::tick_immediate_mode`] when the caller only needs the
     /// presence signal (the per-window
-    /// [`winit::event_loop::ControlFlow::WaitUntil`] game-loop pacing
+    /// `winit::event_loop::ControlFlow::WaitUntil` game-loop pacing
     /// decision, and — R831 — the immediate→retained intent-drain gate,
     /// which must run even on a frame that ticked zero whole steps).
     ///
@@ -547,7 +547,7 @@ impl Scene {
     /// sentinel [`PAINT_HASH_UNCACHEABLE`]:
     ///
     /// - [`Scene::External`] — `Box<dyn External>` paint is opaque;
-    ///   currently a no-op in [`pinion_runtime::paint_adapter::to_vello`],
+    ///   currently a no-op in `pinion_runtime::paint_adapter::to_vello`,
     ///   but the sentinel keeps the contract honest for future
     ///   paint impls that wire the §5.15 surface bridge.
     /// - [`Scene::ImmediateModeNode`] — driver state advances every
@@ -727,11 +727,11 @@ impl Scene {
     ///
     /// Returns `(0, 0)` for an empty / zero-sized tree.
     ///
-    /// Consumer: [`pinion_shell::SizeStrategy::IntrinsicAfterFirstPaint`]
+    /// Consumer: `pinion_shell::SizeStrategy::IntrinsicAfterFirstPaint`
     /// — after the first paint cycle populates per-node rects, the
     /// shell calls this to compute the window resize target, clamped
     /// to `[min, max]`, and forwards it to
-    /// [`winit::window::Window::request_inner_size`]. The walk is
+    /// `winit::window::Window::request_inner_size`. The walk is
     /// O(N) over scene nodes and runs once per binding lifetime (only
     /// the first paint), not per frame.
     #[must_use]
@@ -745,7 +745,7 @@ impl Scene {
     /// (R55.D.5 §5.45) Mutable counterpart to
     /// [`Self::primary_external`]. Used by the RPC invoke / dry-run /
     /// rewind primitives which need to advance the `External`'s state
-    /// via [`ExternalIntrospect::invoke`](crate::external::ExternalIntrospect::invoke).
+    /// via [`ExternalIntrospect::invoke`].
     pub fn primary_external_mut(&mut self) -> Option<&mut ExternalNode> {
         match self {
             Scene::External(n) => Some(n),
@@ -764,8 +764,8 @@ impl Scene {
     /// (R55.D.5 §5.45) Mutable counterpart to
     /// [`Self::find_external_with_tag`]. Test fixtures and apply-key
     /// dispatch paths that need to call
-    /// [`ExternalIntrospect::intervene`](crate::external::ExternalIntrospect::intervene)
-    /// or [`ExternalIntrospect::invoke`](crate::external::ExternalIntrospect::invoke)
+    /// [`ExternalIntrospect::intervene`]
+    /// or [`ExternalIntrospect::invoke`]
     /// on the primary widget reach for the mutable borrow.
     pub fn find_external_with_tag_mut(&mut self, target: &str) -> Option<&mut ExternalNode> {
         match self {
@@ -905,7 +905,7 @@ impl Scene {
     /// as hits (a region-select on a tagged container is meaningful
     /// for AI reasoning).
     ///
-    /// Zero-area query rects return an empty vec (per [`rects_intersect`]
+    /// Zero-area query rects return an empty vec (per `rects_intersect`
     /// semantics). [`EffectNode`] is skipped — both at the leaf level
     /// and as a child during traversal.
     ///
@@ -1781,7 +1781,7 @@ pub struct TextNode {
     ///
     /// A [`TextField`](crate::widgets::text_field) derives its caret rect,
     /// selection bands, find / bracket highlights, IME-preedit underline, and
-    /// click-to-position hit-test all from ONE parley [`Layout`] of this same
+    /// click-to-position hit-test all from ONE parley `Layout` of this same
     /// string (the `field_shaping` SSOT). The §5.37 engine shapes with its own
     /// font and advances, which need not match parley's — so painting an
     /// editable field's glyphs through §5.37 while those overlays stay parley
@@ -2169,7 +2169,7 @@ impl ContainerNode {
     /// `corner_radius` via the same shape as `BoxNode`.
     ///
     /// Not `const`: R708 §5.50 made [`BoxStyle`] carry an optional heap
-    /// [`Gradient`], so assigning over `self.style` runs a destructor —
+    /// [`Gradient`](crate::style::Gradient), so assigning over `self.style` runs a destructor —
     /// disallowed in `const fn`.
     #[must_use]
     pub fn with_style(mut self, style: BoxStyle) -> Self {
@@ -2349,7 +2349,7 @@ pub enum ScrollAxis {
     /// Content overflows horizontally; height clamped to the viewport.
     Horizontal,
     /// R877 §5.45 — content overflows on both axes (a pannable 2-D
-    /// canvas). [`ScrollState`](crate::widgets::scroll::ScrollState)
+    /// canvas). [`ScrollState`]
     /// has always carried both offsets / maxima; this variant lets the
     /// layout pass leave both axes unbounded so the declared content
     /// extent survives measuring.
@@ -2494,7 +2494,7 @@ pub struct ScrollNode {
     /// substrate-internal detail.
     pub state: Option<Rc<ScrollState>>,
     /// R1194 §5.27 — optional reactive
-    /// [`MeasuredRowState`](crate::widgets::measured_rows::MeasuredRowState)
+    /// [`MeasuredRowState`]
     /// for a **measured variable-height** virtualized list. The peer of
     /// [`state`](Self::state): where `state` owns the scroll offset,
     /// `measured_rows` owns the progressively-discovered per-row heights.
@@ -2647,7 +2647,7 @@ impl ScrollNode {
     }
 
     /// R1194 §5.27 — attach the reactive
-    /// [`MeasuredRowState`](crate::widgets::measured_rows::MeasuredRowState)
+    /// [`MeasuredRowState`]
     /// for a measured variable-height list (see [`Self::measured_rows`]).
     /// Pairs with [`Self::with_state`]: the offset lives in the
     /// `ScrollState`, the per-row heights in the `MeasuredRowState`. The
@@ -2675,7 +2675,7 @@ impl ScrollNode {
     /// key string and the offset destructure at every call site.)
     ///
     /// The tag is set when [`ScrollState::tag`] is `Some` (states
-    /// constructed via [`use_scroll_state`] / [`ScrollState::with_tag`]
+    /// constructed via [`use_scroll_state`](crate::widgets::scroll::use_scroll_state) / [`ScrollState::with_tag`]
     /// always carry one); states built via [`ScrollState::new`]
     /// directly leave the node untagged, which matches the
     /// pre-R51.190 untagged default. To override the derived tag
@@ -2785,7 +2785,7 @@ impl ScrollNode {
 ///
 /// `Debug` is a super-trait so `Rc<RefCell<dyn ImmediateMode>>`
 /// participates in the scene tree's `#[derive(Debug)]` machinery
-/// (mirror of [`External`] `Debug` super-trait at §5.15 line ~349).
+/// (mirror of [`External`](crate::external::External) `Debug` super-trait at §5.15 line ~349).
 ///
 /// ## Lifecycle
 ///
@@ -2795,7 +2795,7 @@ impl ScrollNode {
 /// asks the driver to encode its paint. The `dt` argument is the
 /// monotonic wall-clock delta between the previous and current
 /// per-window paint instants (clamped by
-/// [`pinion_runtime::frame_pacing::clamp_frame_dt`] before
+/// `pinion_runtime::frame_pacing::clamp_frame_dt` before
 /// dispatch — R51.145 `1/30s` anchor + NaN guard precedent).
 ///
 /// Implementors that need persistent state across frames hold it
@@ -2927,7 +2927,7 @@ pub trait ImmediateMode: core::fmt::Debug {
 /// [`ImmediateModeNode::viewport`] the backend bridge handed the
 /// painter. Backends translate to root-window pixel coordinates
 /// before encoding (the Vello impl composes
-/// [`vello::kurbo::Affine::translate`] over the inherited transform
+/// `vello::kurbo::Affine::translate` over the inherited transform
 /// chain — same shape as `Scene::Scroll` content translation).
 ///
 /// Floating-point coordinates so impls can position sub-pixel without
@@ -3033,7 +3033,7 @@ pub struct ImmediateModeNode {
     /// R828).
     ///
     /// R831: this is the FIXED simulation timestep
-    /// ([`pinion_runtime::FixedTimestep`], 1/120 s), not the wall-clock
+    /// (`pinion_runtime::FixedTimestep`, 1/120 s), not the wall-clock
     /// frame delta — the shell advances the driver in whole fixed steps
     /// and carries the sub-step remainder across frames. A frame whose
     /// accumulated time is still sub-fixed (or a frozen / paused frame)

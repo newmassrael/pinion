@@ -89,7 +89,7 @@
 //! An open menu dismisses via **Escape**, **re-clicking the open
 //! title**, **activating an item**, or (R715) a **click-outside** on the
 //! transparent dismiss barrier. The barrier is the shared light-dismiss
-//! layer ([`pinion_widget_paint::barrier`]); the binding paints it as a
+//! layer (`pinion_widget_paint::barrier`); the binding paints it as a
 //! `<bar>#barrier` composite node behind the open dropdown and the
 //! R51.42 router feeds its `PointerUp` here as `send("barrier:…")`,
 //! which closes the menu (R985 — including any open submenus). *Focus-loss

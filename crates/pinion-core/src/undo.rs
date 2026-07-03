@@ -48,7 +48,7 @@
 //!   method) landed R796 with text typing as its consumer; compound *macro*
 //!   transactions (group N edits as one, the
 //!   [`begin_macro`](UndoStack::begin_macro) /
-//!   [`end_macro`](UndoStack::end_macro) pair folding into a [`MacroCommand`])
+//!   [`end_macro`](UndoStack::end_macro) pair folding into a `MacroCommand`)
 //!   landed R903 with text find &amp; replace's *Replace All* as its first
 //!   consumer. Both were the additive, backward-compatible extensions the
 //!   original shape reserved ([[abstraction-needs-second-consumer]]).
@@ -73,7 +73,7 @@ use crate::reactive::{Owner, Signal};
 /// A single reversible edit — the object-safe `QUndoCommand` peer.
 ///
 /// [`redo`](Self::redo) applies the edit forward (it is also what
-/// [`UndoStack::push`] calls to *first* apply a freshly recorded command,
+/// `UndoStack::push` calls to *first* apply a freshly recorded command,
 /// matching `QUndoStack`); [`undo`](Self::undo) applies its inverse. Both
 /// must be idempotent with respect to repeated `undo`/`redo` cycling — the
 /// canonical implementation captures the `before`/`after` snapshots at
@@ -225,7 +225,7 @@ pub struct UndoStack {
     /// here instead of the main [`commands`](Self::commands) timeline and does
     /// **not** bump the revision — so the N constituent edits stay invisible
     /// to `can_undo` / `index` until [`end_macro`](Self::end_macro) folds them
-    /// into one [`MacroCommand`] step. The first consumer is text find &
+    /// into one `MacroCommand` step. The first consumer is text find &
     /// replace's *Replace All* (one Ctrl+Z reverses every replacement).
     macro_buffer: RefCell<Vec<Box<dyn UndoCommand>>>,
     /// R903 §5.52 — macro nesting depth. `begin_macro` increments,
@@ -236,7 +236,7 @@ pub struct UndoStack {
     macro_depth: Cell<usize>,
     /// R903 §5.52 — label for the in-flight macro, captured at the outermost
     /// [`begin_macro`](Self::begin_macro) and applied to the folded
-    /// [`MacroCommand`] at [`end_macro`](Self::end_macro).
+    /// `MacroCommand` at [`end_macro`](Self::end_macro).
     macro_label: RefCell<Cow<'static, str>>,
 }
 
@@ -359,7 +359,7 @@ impl UndoStack {
     /// (the `QUndoStack::endMacro` peer). A no-op when no macro is open. When
     /// the **outermost** macro closes, the buffered edits fold into one history
     /// step: an empty buffer records nothing (an all-no-op macro leaves the
-    /// timeline untouched) and one or more fold into a [`MacroCommand`]
+    /// timeline untouched) and one or more fold into a `MacroCommand`
     /// carrying the macro `label`. A single-child macro still wraps, so the
     /// step reads as "Replace all" rather than the lone child's "Replace" — the
     /// macro name is the introspectable truth of what the user did. Its `undo`

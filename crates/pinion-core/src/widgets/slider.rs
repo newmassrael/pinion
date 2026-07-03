@@ -201,7 +201,7 @@ impl Slider {
     }
 
     /// Drive a [`SliderEvent`] through the SCXML. Pure state
-    /// transition — value mutation flows through [`set_value`].
+    /// transition — value mutation flows through [`set_value`](Self::set_value).
     pub fn send(&mut self, event: SliderEvent) {
         self.inner.send(event);
     }
@@ -422,7 +422,7 @@ impl External for SliderExternal {
     }
 
     /// R51.35 §5.15 + §5.35 — opt in to capture lock so the
-    /// framework's [`InputRouter`](pinion_runtime::InputRouter) keeps
+    /// framework's `InputRouter` keeps
     /// the cursor pinned to this Slider for the duration of the
     /// `pointer_down` → `pointer_up` span, even when the cursor
     /// strays outside the widget's track rect. Required for the

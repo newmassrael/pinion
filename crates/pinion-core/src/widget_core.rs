@@ -500,7 +500,7 @@ pub trait WidgetCore: 'static {
     /// Default returns `false` for every widget — only text-input
     /// widgets (`TextField`-class) override to wire the PRIMARY
     /// paste path the X11 / Wayland desktop convention expects.
-    /// On macOS / Windows the [`Clipboard::paste_from`] default impl
+    /// On macOS / Windows the [`Clipboard::paste_from`](crate::clipboard::Clipboard::paste_from) default impl
     /// returns `None` for `Primary` so the widget override harmlessly
     /// produces a no-op (matching the OS-level absence of a parallel
     /// selection clipboard).
@@ -521,7 +521,7 @@ pub trait WidgetCore: 'static {
     /// cursor landed**, independent of which widget owns keyboard focus,
     /// so the roving-tabindex "handle only when my tag is focused"
     /// contract does not apply here. Position-bearing pointer hooks are
-    /// the established pattern: [`Self::position_caret_for_point`] takes
+    /// the established pattern: `Self::position_caret_for_point` takes
     /// the same window-space `(x, y)` to hit-test a text caret. The
     /// binding override walks the scene for its
     /// [`ContextMenuExternal`](crate::widgets::context_menu::ContextMenuExternal)
@@ -540,7 +540,7 @@ pub trait WidgetCore: 'static {
     /// every wheel / touchpad-pan event to this hook **before** the
     /// [`InputRouter`](crate::input)'s two-stage default routing
     /// (the hover-`External` wheel offer, then the
-    /// [`Scene::Scroll`](crate::scene::Scene::Scroll) pixel-clip
+    /// [`Scene::Scroll`] pixel-clip
     /// fallback). Returning `true` consumes the event — the router's
     /// two-stage never runs, so the producing `External` stays
     /// uncontaminated. Returning `false` (the default) defers to the
@@ -642,8 +642,8 @@ pub trait WidgetCore: 'static {
     /// already-reconciled state.
     ///
     /// The motivating gap: a binding whose scroll authority is an
-    /// **offset-projection** rather than a [`Scene::Scroll`](crate::scene::Scene::Scroll)
-    /// pixel clip — a terminal grid ([`Scene::TextGrid`](crate::scene::Scene::TextGrid))
+    /// **offset-projection** rather than a [`Scene::Scroll`]
+    /// pixel clip — a terminal grid ([`Scene::TextGrid`])
     /// that re-projects scrollback by `offset_lines` — has no clip node
     /// for the post-layout reducer
     /// (`update_scroll_state_bounds`) to measure, AND its content extent
@@ -771,7 +771,7 @@ pub trait WidgetCore: 'static {
     ///    `match intent.tag_str() { "main_btn.click" => …, _ => Vec::new() }`.
     ///    A wildcard-emit reducer (every intent returns the same
     ///    command) is acceptable in tests (see
-    ///    [`crate::test_fixtures::EchoButtonFixture`]) but produces
+    ///    `crate::test_fixtures::EchoButtonFixture`) but produces
     ///    a guaranteed infinite loop in production whenever a
     ///    handler echoes any intent back through the SCXML send
     ///    channel.
@@ -820,7 +820,7 @@ pub trait WidgetCore: 'static {
 /// next to the `pub use sm::*;` re-export. Authors of new SCE-emitted
 /// state enums add one macro invocation; the bindings then opt into
 /// the derived [`WidgetCore::read_state`] body via the
-/// `state_name_derive` flag on [`#[widget]`](pinion_derive::widget).
+/// `state_name_derive` flag on `#[widget]`.
 pub trait WidgetStateName: Sized {
     /// Map `self` to its `PascalCase` SCXML state id (1:1 with the
     /// `<state id="...">` attribute in the source `.scxml`).
@@ -989,7 +989,7 @@ macro_rules! widget_event_name {
 /// [`Self::from_tag`]: WidgetTag::from_tag
 pub trait WidgetTag: Sized + 'static {
     /// Map `self` to its canonical `snake_case` string. The
-    /// [`#[derive(WidgetTag)]`](pinion_derive::WidgetTag) macro
+    /// `#[derive(WidgetTag)]` macro
     /// generates this by `PascalCase` → `snake_case` conversion on
     /// the variant ident (`MainBtn` → `"main_btn"`,
     /// `FigmaButtonM3` → `"figma_button_m3"`).

@@ -7,7 +7,7 @@
 //! (R56.1.d — see [`apply_key`]), clipboard (R56.1.e), selection
 //! (R56.1.f), and IME composition (R56.1.g). The R56.1.h
 //! focus-lifecycle wire — shell focus mgr ↔ `External::on_focus_change`
-//! ↔ statechart focus/blur drive ↔ [`CaretBlink`](crate::widgets::caret_blink::CaretBlink)
+//! ↔ statechart focus/blur drive ↔ [`CaretBlink`]
 //! `set_enabled` — splits off so the keystroke surface lands without
 //! the cross-cutting shell substrate change. R55.D.1 → R55.D.2
 //! cascade mirror — land the interaction substrate first so the
@@ -182,7 +182,7 @@ pub fn caret_rect(
 /// branch ignores the parameter (the canonical no-modifier
 /// `Backspace` / `ArrowLeft` / printable-char dispatch); R56.1.f
 /// layers selection-extension semantics on top by branching on
-/// [`Modifiers::shift_key`] inside the arrow / Home / End arms.
+/// [`Modifiers::shift_key`](crate::input::Modifiers::shift_key) inside the arrow / Home / End arms.
 ///
 /// Pure function: no statechart drive, no [`Owner`](crate::reactive::Owner)
 /// access, no IME composition path. Focus/blur statechart drive +
@@ -556,7 +556,7 @@ impl TextField {
     /// R56.1.h §5.38 §5.28 — attach a [`CaretBlink`] animation handle.
     /// After attachment, every statechart transition
     /// ([`Self::send`]) syncs the blink's enabled gate via
-    /// [`Self::sync_blink`]: `Focused` / `Editing` → enabled,
+    /// `Self::sync_blink`: `Focused` / `Editing` → enabled,
     /// `Idle` / `Disabled` → disabled. Builder-style; chain after
     /// [`Self::new`] for the fluent
     /// `TextField::new().attach_state(text).attach_blink(blink)`
@@ -726,14 +726,14 @@ impl WidgetTransition for TextField {
 /// [`GridSendKey`](crate::composite_tag::GridSendKey) pattern in full —
 /// `GridSendKey` earns its enum via a *polymorphic* `row()` projection that
 /// several row-only coordinators consume without caring about the variant; this
-/// has no such polymorphic consumer (its sole decoder, [`invoke_send`](TextFieldExternal::invoke_send),
+/// has no such polymorphic consumer (its sole decoder, `invoke_send`,
 /// immediately matches and dispatches per-kind). The enum is justified as the
 /// one home of the two-kind send grammar (and the exhaustive `match` forces a
 /// future kind to be handled), not by shared downstream behaviour — the two
 /// kinds bifurcate into unrelated actions (`go_to_line` vs `toggle_fold`).
 ///
 /// A gutter click routes here instead of through the geometry press hook
-/// ([`position_caret_for_point`](pinion_shell::WidgetView::position_caret_for_point)):
+/// (`position_caret_for_point`):
 /// focus-independent and arming no caret text-drag, because click-to-focus
 /// resolves the composite to the primary focusable field and the press hook
 /// rejects the `!= field` composite tag (R959 B1/B2). The discrete tagged
@@ -1120,7 +1120,7 @@ impl External for TextFieldExternal {
 
     /// R56.1.h §5.38 §5.39 — shell focus change ↔ SCXML statechart
     /// drive. The shell's
-    /// [`notify_focus_change`](`pinion_shell::ShellSubstrate::notify_focus_change`)
+    /// `notify_focus_change`
     /// calls this hook on the outgoing widget (`focused=false`)
     /// before the incoming widget (`focused=true`) — mirrors the
     /// W3C DOM `FocusEvent` dispatch order (`blur` then `focus`).
@@ -1156,7 +1156,7 @@ impl External for TextFieldExternal {
     /// upgraded `Text` intent through `apply_composition_commit`.
     ///
     /// The blink lifecycle syncs automatically through
-    /// [`TextField::sync_blink`] (called from [`TextField::send`]),
+    /// `TextField::sync_blink` (called from [`TextField::send`]),
     /// so attaching a [`CaretBlink`] makes the gate flip in lockstep
     /// with the statechart transition.
     fn on_focus_change(&mut self, focused: bool) {

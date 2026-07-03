@@ -21,10 +21,10 @@
 //! A data grid sorts **any** of its columns, and a column of numbers sorted
 //! lexicographically (`"12" < "9"`) is visibly wrong — so the grid proxy is
 //! multi-column and **numeric-aware**, sorting through the
-//! [`cell_cmp`](crate::widgets::table::cell_cmp) /
-//! [`grid_order_by`](crate::widgets::table::grid_order_by) SSOT the eager
+//! [`cell_cmp`] /
+//! [`grid_order_by`] SSOT the eager
 //! [`Table`](crate::widgets::table::Table) already uses. The two proxies share
-//! that comparator + the [`cycle_col_sort`](crate::widgets::table::cycle_col_sort)
+//! that comparator + the [`cycle_col_sort`]
 //! transition, not their whole shape: the sort *representation* differs
 //! (`Option<(col, bool)>` vs `Option<bool>`), so a forced merge would be a
 //! wrong abstraction.
@@ -91,7 +91,7 @@ pub fn col_sort_dir(sort: Option<(usize, bool)>, col: usize) -> Option<bool> {
 /// lets an admin / AI client read or restore the **whole** grid sort state in
 /// one round-trip (the column matters for a grid, unlike the 1-D list's bare
 /// direction string). The direction half reuses
-/// [`sort_dir_str`](crate::widgets::view_order::sort_dir_str).
+/// [`sort_dir_str`].
 #[must_use]
 pub fn grid_sort_str(sort: Option<(usize, bool)>) -> String {
     match sort {
@@ -104,7 +104,7 @@ pub fn grid_sort_str(sort: Option<(usize, bool)>) -> String {
 /// string without a `"<col>:<dir>"` shape whose direction parses as
 /// ascending / descending yields `None` (unsorted) — the safe default for a
 /// malformed wire payload (mirrors
-/// [`sort_dir_from_str`](crate::widgets::view_order::sort_dir_from_str)).
+/// [`sort_dir_from_str`]).
 #[must_use]
 pub fn grid_sort_from_str(s: &str) -> Option<(usize, bool)> {
     let (col, dir) = s.split_once(':')?;
@@ -175,7 +175,7 @@ impl FilterOp {
     }
 
     /// Whether `cell` text satisfies `self <value>`. Ordered ops route the
-    /// numeric-aware [`cell_cmp`] through the shared [`ordering_matches`](Self::ordering_matches)
+    /// numeric-aware [`cell_cmp`] through the shared `ordering_matches`
     /// truth table; `Contains` is a substring test; `Eq` / `Ne` are exact TEXT
     /// (in)equality (so `"9"` ≠ `"9.0"`, the R783 "exact cell text" contract,
     /// unlike the numeric ordered ops). The text policy of the at-scale
@@ -252,7 +252,7 @@ impl ColumnFacet {
     /// Parse one facet from `"<col><op><value>"`; `None` when malformed (no
     /// leading column digits, or no recognized op token after them). The
     /// column is the leading ASCII-digit run; the op token is decoded by
-    /// [`FilterOp::parse_prefix`]; the remainder is the value verbatim.
+    /// `FilterOp::parse_prefix`; the remainder is the value verbatim.
     #[must_use]
     pub fn from_wire(s: &str) -> Option<Self> {
         // The op token starts at the first non-digit byte; a facet with no

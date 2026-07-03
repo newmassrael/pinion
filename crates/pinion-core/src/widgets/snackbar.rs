@@ -25,7 +25,7 @@
 //!
 //! [`SnackbarTimer::DEFAULT_DURATION_SECS`] = 4 s — the Material 3
 //! "short" snackbar duration (M3 allows up to 10 s for snackbars with
-//! an action; the binding passes its own value to [`Self::show`]).
+//! an action; the binding passes its own value to `Self::show`).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -49,7 +49,7 @@ pub struct SnackbarTimer {
     /// `true` = snackbar shown (paint the overlay), `false` = hidden.
     /// Auto-subscribes when read inside a view-fn.
     visible: Signal<bool>,
-    /// Seconds elapsed since the current [`Self::show`]. Advanced by
+    /// Seconds elapsed since the current `Self::show`. Advanced by
     /// [`Tickable::tick`]; reset to `0.0` on each `show`.
     elapsed: Cell<f32>,
     /// Auto-dismiss horizon in seconds — the snackbar hides once
@@ -61,7 +61,7 @@ pub struct SnackbarTimer {
 impl SnackbarTimer {
     /// Material 3 "short" snackbar duration. M3 permits up to 10 s for
     /// snackbars carrying an action; callers pass their own value to
-    /// [`Self::show`].
+    /// `Self::show`.
     pub const DEFAULT_DURATION_SECS: f32 = 4.0;
 
     /// Construct a hidden timer (no countdown running).
@@ -111,7 +111,7 @@ impl SnackbarTimer {
     }
 
     /// The current auto-dismiss horizon in seconds (the last
-    /// [`Self::show`] duration, or [`Self::DEFAULT_DURATION_SECS`]).
+    /// `Self::show` duration, or [`Self::DEFAULT_DURATION_SECS`]).
     #[must_use]
     pub fn duration(&self) -> f32 {
         self.duration.get()

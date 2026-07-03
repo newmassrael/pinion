@@ -20,7 +20,7 @@ use std::rc::Rc;
 
 use crate::reactive::{Owner, Signal, batch};
 
-/// R55.B §5.45 — Reactive state for one [`ScrollNode`].
+/// R55.B §5.45 — Reactive state for one [`ScrollNode`](crate::scene::ScrollNode).
 ///
 /// Lifecycle: created lazily via
 /// [`use_scroll_state`] (which delegates to
@@ -104,7 +104,7 @@ pub struct ScrollState {
     measured_h: Signal<u32>,
     /// (R51.190 §5.45) Canonical input-router / introspection tag
     /// for this scroll container. Set by [`use_scroll_state`] from
-    /// the `Owner::cache` key so the matching [`ScrollNode`] can
+    /// the `Owner::cache` key so the matching [`ScrollNode`](crate::scene::ScrollNode) can
     /// derive its [`ScrollNode::tag`](crate::scene::ScrollNode::tag)
     /// in one call (via
     /// [`ScrollNode::from_state`](crate::scene::ScrollNode::from_state))
@@ -226,7 +226,7 @@ impl ScrollState {
     /// of the per-axis [`Signal::set`] calls landed past its
     /// equality-skip. The shell substrate's first-paint warmup uses
     /// this bit (bubbled through
-    /// [`update_scroll_state_bounds`](crate::runtime::layout::update_scroll_state_bounds))
+    /// `update_scroll_state_bounds`)
     /// to detect the chicken-and-egg case where `V::view` ran with
     /// the pre-layout `max = 0` snapshot. The offset-clamp Signal
     /// writes (which fire only when the new bound shrinks the live
@@ -285,7 +285,7 @@ impl ScrollState {
 
     /// (R774 §5.27) Publish the measured viewport extent. Called by
     /// the runtime layout pass
-    /// ([`update_scroll_state_bounds`](crate::runtime::layout::update_scroll_state_bounds))
+    /// (`update_scroll_state_bounds`)
     /// with the flex-computed clip-window rect — the `AutoSizer` write
     /// side paired with the [`Self::measured_viewport`] read side.
     ///

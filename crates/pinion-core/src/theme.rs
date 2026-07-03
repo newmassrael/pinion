@@ -114,7 +114,7 @@
 //! the active one via a critically-damped spring tuned to the
 //! Material 3 "Standard" easing duration (~200 ms settle —
 //! [`THEME_FADE_SPRING`]). The interpolation runs in linear-light
-//! [`AnimVec4`] space via the private [`ThemeLinear`] carrier so the
+//! [`AnimVec4`] space via the private `ThemeLinear` carrier so the
 //! perceptual quality matches [`Color::lerp`](crate::style::Color::lerp)
 //! (R51.151) — no muddy-grey artifact on a light↔dark swap.
 //!
@@ -131,7 +131,7 @@
 //! Callers retain the instant [`ThemeProvider::theme`] accessor for
 //! tests and snapshot reads. Opt-in keeps the substrate layered
 //! ([[abstraction-needs-second-consumer]]); widget retrofit to
-//! [`Self::theme_animated`] is a follow-up cascade with explicit
+//! `Self::theme_animated` is a follow-up cascade with explicit
 //! visible-affordance scope.
 //!
 //! [`use_text_edit_state`]: crate::widgets::text_edit::use_text_edit_state
@@ -1114,7 +1114,7 @@ pub struct ThemeProvider {
     /// can re-derive the cache key without repeating the literal.
     tag: Option<&'static str>,
     /// R57.X.theme-fade — lazily-initialised palette cross-fade
-    /// animation. [`None`] until the first [`Self::theme_animated`]
+    /// animation. [`None`] until the first `Self::theme_animated`
     /// call inside an active [`Owner`] scope; thereafter holds the
     /// [`ThemeFadeState`] for the lifetime of the provider. Wrapped in
     /// [`RefCell`] for interior mutation — every access happens on the
@@ -1207,7 +1207,7 @@ impl ThemeProvider {
 
     /// Replace both palettes in a single reactive batch. Equivalent
     /// to calling [`Self::set_light_palette`] then
-    /// [`Self::set_dark_palette`] inside a [`batch`](crate::reactive::batch),
+    /// [`Self::set_dark_palette`] inside a [`batch`],
     /// but folds the two signal writes into one coalesced flush — every
     /// subscriber re-runs at most once even though two distinct
     /// signals were mutated.
@@ -1326,7 +1326,7 @@ impl ThemeProvider {
     /// ([`Animation::is_at_rest`](crate::animation::Animation::is_at_rest)),
     /// the accessor returns the cached sRGB [`Self::theme`] target
     /// directly rather than re-encoding the spring's linear-light
-    /// state through [`ThemeLinear::to_theme`]. The
+    /// state through `ThemeLinear::to_theme`. The
     /// [`Color::to_linear`](crate::style::Color::to_linear) /
     /// [`Color::from_linear`](crate::style::Color::from_linear)
     /// round-trip can drift midrange-channel values by ±1 8-bit unit
@@ -2327,7 +2327,7 @@ mod tests {
 
     /// Component-wise close-equality on [`Color`] within
     /// [`ROUND_TRIP_TOLERANCE`]. Used by the fade tests so a sRGB
-    /// round-trip through [`ThemeLinear`] does not flake the
+    /// round-trip through `ThemeLinear` does not flake the
     /// assertion at 8-bit precision.
     #[track_caller]
     fn assert_color_close(actual: Color, expected: Color) {

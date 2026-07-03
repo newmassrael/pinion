@@ -72,7 +72,7 @@ use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
 /// Checkbox widget state machine + Off/On value sidecar. Statechart
-/// identical to [`crate::widgets::Toggle`]; divergence is the
+/// identical to [`Toggle`](crate::widgets::toggle::Toggle); divergence is the
 /// per-widget intent name (`"checked"`) emitted by
 /// [`CheckboxExternal`] and the surrounding accessibility role
 /// applications attach (`checkbox`, not `switch`).
@@ -180,7 +180,7 @@ impl WidgetTransition for Checkbox {
 }
 
 /// `External` adapter wrapping a [`Checkbox`]. Mirrors
-/// [`crate::widgets::ToggleExternal`] one-to-one with the intent name
+/// [`ToggleExternal`](crate::widgets::toggle::ToggleExternal) one-to-one with the intent name
 /// (`"checked"`) and schema label (`"checked"` instead of `"value"`)
 /// adjusted so form-bound listeners can subscribe to checkbox state
 /// independently from settings toggles.

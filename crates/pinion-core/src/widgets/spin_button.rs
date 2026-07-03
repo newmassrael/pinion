@@ -20,7 +20,7 @@
 //! "similar-grammar-is-not-a-shared-statechart" rule).
 //!
 //! a11y: the binding lowers the value into
-//! [`AccessValue::Float`](pinion_a11y::AccessValue::Float)
+//! `AccessValue::Float`
 //! (`aria-valuenow` / `aria-valuemin` / `aria-valuemax`) on an
 //! `AriaRole::SpinButton` node — the same numeric lowering a `Slider`
 //! uses, on the *operable* role (Focus + Increment + Decrement AT
@@ -37,7 +37,7 @@ use crate::{WidgetEventName, WidgetStateName};
 /// interactive stepper sub-regions.
 ///
 /// Stores the value in domain units (`f32`, matching the
-/// [`AccessValue::Float`](pinion_a11y::AccessValue::Float) lowering) with
+/// `AccessValue::Float` lowering) with
 /// an explicit `min` / `max` / `step` and a larger `page_step`. Every
 /// mutation re-clamps into `[min, max]`; `NaN` saturates to `min` so a
 /// malformed wire payload can never poison the value.

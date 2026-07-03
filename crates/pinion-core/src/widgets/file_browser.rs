@@ -1,6 +1,6 @@
 //! R787 §5.15 §5.16 — own-rendered file-browser state: the reactive
 //! directory-navigation model + its AI-first `External` surface, built
-//! over the [`Directory`](crate::directory::Directory) read substrate.
+//! over the [`Directory`] read substrate.
 //!
 //! This is the scene-graph-native peer of an OS file dialog. Where
 //! `examples/hello-file-dialog` bridges to a native (`rfd`-class) dialog
@@ -19,7 +19,7 @@
 //!   navigation transitions (`navigate` into a child dir, `up` to the
 //!   parent, `select` a leaf, `open_dir` an absolute jump). Mirrors the
 //!   [`ColumnWidths`](crate::widgets::column_widths::ColumnWidths) /
-//!   [`ScrollState`](crate::widgets::scroll::ScrollState) reactive-holder
+//!   [`ScrollState`] reactive-holder
 //!   pattern: the view reads it, the `External` mutates it, one `Rc` SSOT
 //!   via [`use_directory_state`].
 //! - [`DirectoryExternal`] — the `External` adapter exposing the model
@@ -538,7 +538,7 @@ impl DirectoryState {
     }
 
     /// R794 §5.51 — arm a [`DragPayload`] from the [`pressed`](Self::pressed)
-    /// row: the [`External::begin_drag`](crate::external::External::begin_drag)
+    /// row: the [`External::begin_drag`]
     /// hook the router calls on `PointerDown`. The payload carries the dragged
     /// entry's **leaf name** under [`FILE_DRAG_KIND`] (so the in-flight drag is
     /// introspectable as scene-as-data and a future cross-widget target can
@@ -565,7 +565,7 @@ impl DirectoryState {
     }
 
     /// R794 §5.51 — live drag update
-    /// ([`External::drag_to`](crate::external::External::drag_to)): resolve and
+    /// ([`External::drag_to`]): resolve and
     /// store the [`FileDropTarget`] under the cursor so the view repaints the
     /// highlight. `over` is the router's hit-test of the tag under the absolute
     /// cursor.
@@ -574,7 +574,7 @@ impl DirectoryState {
     }
 
     /// R794 §5.51 — drop commit
-    /// ([`External::drag_release`](crate::external::External::drag_release)):
+    /// ([`External::drag_release`]):
     /// move the dragged entry into the resolved [`FileDropTarget`] (a folder,
     /// or up to the parent), then clear the transient drag state. Returns
     /// whether a move took effect (`false` for a drop over no valid target,

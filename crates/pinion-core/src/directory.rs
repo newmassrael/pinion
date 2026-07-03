@@ -117,7 +117,7 @@ pub trait Directory {
     /// must already exist). Returns `true` on success, `false` when the
     /// parent does not exist, an entry of that name already exists, or
     /// the backing is read-only (the default). A successful call makes
-    /// the new directory appear in its parent's [`read_dir`].
+    /// the new directory appear in its parent's [`read_dir`](Self::read_dir).
     fn create_dir(&self, path: &str) -> bool {
         let _ = path;
         false

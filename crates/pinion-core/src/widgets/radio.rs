@@ -6,8 +6,8 @@
 //! [`Radio::set_selected`] (typical pattern: a `RadioGroup`
 //! deselects siblings when one is selected).
 //!
-//! This contrasts with [`crate::widgets::Toggle`] and
-//! [`crate::widgets::Checkbox`], whose activate path *flips* a
+//! This contrasts with [`Toggle`](crate::widgets::toggle::Toggle) and
+//! [`Checkbox`](crate::widgets::checkbox::Checkbox), whose activate path *flips* a
 //! boolean. Statechart is identical; only the value-mutation
 //! callback differs.
 
