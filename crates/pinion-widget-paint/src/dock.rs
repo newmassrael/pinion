@@ -65,8 +65,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, DragPayload, DragUpdate, DropPoint, External,
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    Backend, BackendFallback, BackendSupport, DOCK_SURFACE_TAG, DragPayload, DragUpdate, DropPoint,
+    External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
     RepaintOwner, ThreadOwnership,
 };
 use pinion_core::input::PointerWireEvent;
@@ -85,7 +85,7 @@ use std::rc::Rc;
 use pinion_core::reactive::Signal;
 use pinion_core::undo::{SignalEdit, UndoStack};
 
-use crate::splitter::{SplitterOrientation, SplitterStyle, view_splitter};
+use crate::splitter::{SplitterOrientation, SplitterStyle, apply_flex_main, view_splitter};
 use crate::tabs::{TabsStyle, composite_tab_tag, view_tabs};
 use pinion_a11y::{AccessNode, TabCell, tablist_tab_nodes};
 
@@ -5482,13 +5482,50 @@ where
     Z: Fn(&str) -> Option<DockDropZone>,
     F: Fn(&str, DockPanelStyle) -> DockPanelStyle,
 {
-    view_dock_surface_node(
+    // (R1205 §5.51 §5.39) Wrap the whole workspace subtree in a
+    // [`DOCK_SURFACE_TAG`] container so its laid-out rect IS the DOCK AREA — the
+    // one SSOT the same-window OUTER dock band + the cross-window redock preview
+    // read (`Scene::dock_surface_rect`). Wherever the composing view places this
+    // surface (below a client-side chrome strip, a fixed toolbar, inside a split),
+    // the layout engine gives the wrapper the workspace rect for free — no
+    // per-window chrome-height scalar to stamp (R1202/R1203's top-only inset,
+    // blind to a toolbar, was retired for this). The wrapper is a `Column` /
+    // `Stretch` flex parent and the workspace flex-fills it (`apply_flex_main`, the
+    // splitter's own fill idiom), so the surface fills its allotted region on both
+    // the direct-root (fills the window) and chrome-inset (fills below the strip)
+    // paths. Tagged ONCE at the top level (not in the recursive `_node`), and an
+    // ANCESTOR of the tagged splitter / panel that fills it, so `resolve_hover_tag`
+    // never resolves to it.
+    //
+    // (R1205) The wrapper carries the theme `Surface` fill, mirroring the splitter
+    // root (`r683_c_view_splitter_outer_container_filled_with_theme_surface`): the
+    // dock surface is the binding's root paint scene, so `root_background`
+    // (`pinion_runtime::paint_adapter`) samples THIS Container's fill as the Vello
+    // surface-clear colour. Without it a window resized larger than the laid-out
+    // scene would clear to BLACK (the R683.C leak) for the frame before relayout —
+    // the splitter's own fill covers the visible area, but the CLEAR reads the new
+    // root (this wrapper), not its child.
+    let workspace = view_dock_surface_node(
         topology.root(),
         &panel_content,
         &split_state,
         &drop_zone,
         &panel_style,
         theme,
+    );
+    Scene::Container(
+        ContainerNode::new(vec![apply_flex_main(
+            workspace,
+            1.0,
+            SplitterOrientation::Vertical,
+        )])
+        .with_tag(DOCK_SURFACE_TAG.to_string())
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Stretch),
+        ),
     )
 }
 
@@ -13975,6 +14012,7 @@ mod surface_tests {
     use pinion_core::reactive::{Owner, Signal};
     use pinion_core::scene::{ContainerNode, Scene};
     use pinion_core::style::{BoxStyle, Color, FlexDirection};
+    use pinion_core::theme::ColorRole;
     use pinion_core::theme::Theme;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -14010,6 +14048,23 @@ mod surface_tests {
         Owner::new().run(f)
     }
 
+    /// (R1205) Unwrap the `DOCK_SURFACE_TAG` wrapper the walker now stamps around
+    /// the whole workspace, returning the workspace root (the splitter / panel)
+    /// these structural assertions target. Also pins that the wrapper is present —
+    /// its laid-out rect is the dock-area SSOT (`Scene::dock_surface_rect`).
+    fn dock_workspace_root(scene: &Scene) -> &Scene {
+        let Scene::Container(surface) = scene else {
+            panic!("the dock surface is a Container");
+        };
+        assert_eq!(
+            surface.tag.as_deref(),
+            Some(pinion_core::external::DOCK_SURFACE_TAG),
+            "the walker root is the DOCK_SURFACE wrapper",
+        );
+        assert_eq!(surface.children.len(), 1, "the wrapper holds one workspace");
+        &surface.children[0]
+    }
+
     #[test]
     fn r685_dock_surface_single_leaf_emits_panel_no_splitter_wrap() {
         run_in_owner(|| {
@@ -14024,7 +14079,7 @@ mod surface_tests {
                 |_| None,
                 &theme_light(),
             );
-            let Scene::Container(outer) = &scene else {
+            let Scene::Container(outer) = dock_workspace_root(&scene) else {
                 panic!()
             };
             assert_eq!(outer.tag.as_deref(), Some("viewport"));
@@ -14045,7 +14100,7 @@ mod surface_tests {
                 |id| (id == "viewport").then_some(DockDropZone::Bottom),
                 &theme_light(),
             );
-            let Scene::Container(outer) = &scene else {
+            let Scene::Container(outer) = dock_workspace_root(&scene) else {
                 panic!()
             };
             assert_eq!(
@@ -14122,7 +14177,7 @@ mod surface_tests {
                 |_| None,
                 &theme_light(),
             );
-            let Scene::Container(outer) = &scene else {
+            let Scene::Container(outer) = dock_workspace_root(&scene) else {
                 panic!()
             };
             assert_eq!(outer.layout.flex_direction, FlexDirection::Row);
@@ -14150,11 +14205,58 @@ mod surface_tests {
                 |_| None,
                 &theme_light(),
             );
-            let Scene::Container(outer) = &scene else {
+            let Scene::Container(outer) = dock_workspace_root(&scene) else {
                 panic!()
             };
             assert_eq!(outer.layout.flex_direction, FlexDirection::Column);
             assert_eq!(outer.children.len(), 3);
+        });
+    }
+
+    #[test]
+    fn r1205_dock_surface_wrapper_fills_the_viewport_after_layout() {
+        // (R1205) The risky claim de-risked: the DOCK_SURFACE wrapper flex-fills
+        // its allotted region, so its laid-out rect IS the dock area
+        // (`Scene::dock_surface_rect`). Lay a 2-leaf split out in a 400×300 viewport
+        // and assert the surface rect == the whole viewport (no chrome here → the
+        // dock area is the window); a chrome / toolbar inset would show up as a
+        // smaller surface rect for free, since the layout engine carries it.
+        use pinion_core::scene::Rect;
+        use pinion_runtime::layout::compute_layout;
+        use pinion_text::LayoutCache;
+        run_in_owner(|| {
+            let topology = DockTopology::new(DockNode::split_horizontal(
+                "h_split",
+                0.4,
+                DockNode::leaf("left_panel"),
+                DockNode::leaf("right_panel"),
+            ));
+            let mut scene = view_dock_surface(
+                &topology,
+                panel_content_for,
+                |_split_id, initial_ratio| split_state_for(initial_ratio),
+                |_| None,
+                &theme_light(),
+            );
+            // (R1205) The wrapper carries the theme Surface fill so `root_background`
+            // (which samples the ROOT Container's fill for the surface clear) does
+            // not regress to BLACK now that the wrapper — not the splitter — is the
+            // root paint scene (the R683.C leak).
+            let Scene::Container(surface) = &scene else {
+                panic!("dock surface is a Container");
+            };
+            assert_eq!(
+                surface.style.fill,
+                theme_light().resolve(ColorRole::Surface),
+                "the dock surface root carries the theme Surface fill (root-clear SSOT)",
+            );
+            let mut cache = LayoutCache::new();
+            compute_layout(&mut scene, &mut cache, 400, 300);
+            assert_eq!(
+                scene.dock_surface_rect(),
+                Rect::new(0, 0, 400, 300),
+                "the DOCK_SURFACE wrapper flex-fills the viewport (the dock area)",
+            );
         });
     }
 

@@ -826,9 +826,12 @@ fn inject_styled_focus_ring<V: WidgetView>(
 ///
 /// The content's own root layout gets the `view_splitter` flex-main idiom
 /// (`flex-basis: 0; flex-grow: 1; min-<main>: 0`, R1086) so a large content
-/// child shrinks into the inset region instead of overflowing. This inlines
-/// the splitter's private `apply_flex_main` (the shell is its 2nd consumer;
-/// a 3rd lifts it to a shared home).
+/// child shrinks into the inset region instead of overflowing. This mirrors
+/// `view_splitter::apply_flex_main` (now `pub(crate)`, reused by the dock
+/// walker's R1205 surface wrapper as its 2nd in-crate consumer); the shell
+/// keeps a local vertical-only copy because it is a separate crate. A
+/// cross-crate lift to `pinion-core` is the clean consolidation once it earns
+/// the churn — deferred (R1121/R1205 carry).
 fn chrome_inset_wrap(content: Scene, chrome_h: u32) -> Scene {
     use pinion_core::scene::{BoxNode, ContainerNode, Rect};
     use pinion_core::style::{AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, SizeValue};
@@ -856,31 +859,6 @@ fn apply_chrome_inset(scene: Scene, chrome_h: Option<u32>) -> Scene {
     match chrome_h {
         Some(h) => chrome_inset_wrap(scene, h),
         None => scene,
-    }
-}
-
-/// (R1202 §5.51 §5.39) Shrink a window-absolute `rect` to the DOCK-AREA rect —
-/// the region below a CSD chrome strip of height `chrome_h` — by moving its top
-/// edge down and shortening it. The rect peer of [`apply_chrome_inset`] (which
-/// insets the CONTENT scene): the cross-window OUTER dock preview
-/// ([`ShellCore::apply_cross_window_drop_preview`]) spans this so the full-span
-/// band lands below the min / max / close controls, matching where
-/// `dock_panel_outer` docks (the topology carries no chrome row). `None`
-/// (a decorated window, no chrome) returns `rect` unchanged; a `chrome_h`
-/// taller than the window clamps to an empty rect rather than underflowing.
-fn inset_below_chrome(
-    rect: pinion_core::scene::Rect,
-    chrome_h: Option<u32>,
-) -> pinion_core::scene::Rect {
-    match chrome_h {
-        // Clamp the inset to the rect's own height so the result stays IN bounds:
-        // a chrome taller than the window yields an empty band at the bottom edge,
-        // never a `y` past the window (which a bare `saturating_add` would give).
-        Some(h) => {
-            let dy = h.min(rect.h);
-            pinion_core::scene::Rect::new(rect.x, rect.y + dy, rect.w, rect.h - dy)
-        }
-        None => rect,
     }
 }
 
@@ -3729,16 +3707,18 @@ impl<V: WidgetView> ShellCore<V> {
                 // hand the binding the DOCK-AREA rect so it renders a full-span strip
                 // (a row/column across every pane).
                 let rect = if drop.point.tag == pinion_core::external::OUTER_DOCK_ZONE_TAG {
-                    // (R1202) …the dock area, NOT the whole window: a CSD-chrome
-                    // window insets its dock content below the control strip
-                    // (min / max / close), so a preview spanning `scene.rect()`
-                    // painted the full-span band ACROSS the title-bar controls when
-                    // redocking a floater onto it (the user's "붙일 때 최소화/최대화/x
-                    // 영역까지 preview가 보임"). Inset the top by the chrome height so the
-                    // previewed band == where `dock_panel_outer` actually lands (the
-                    // topology has no chrome row), restoring preview == result. A
-                    // decorated window (no chrome inset) is unchanged.
-                    inset_below_chrome(scene.rect(), self.chrome_inset_height(window_id))
+                    // (R1205) …the DOCK AREA, NOT the whole window: the target
+                    // window's dock content sits below any client-side chrome strip
+                    // / toolbar / menu, so a preview spanning `scene.rect()` painted
+                    // the full-span band ACROSS the title-bar controls when redocking
+                    // a floater onto a chromed window (the user's "붙일 때 최소화/최대화/x
+                    // 영역까지 preview가 보임"). Read the dock walker's `DOCK_SURFACE_TAG`
+                    // rect so the previewed band == where `dock_panel_outer` actually
+                    // lands (the topology has no chrome row) — preview == result. The
+                    // same `dock_surface_rect` SSOT the same-window band reads; a
+                    // window with no dock surface (a decorated / naked one) falls back
+                    // to its own rect, unchanged.
+                    scene.dock_surface_rect()
                 } else {
                     scene.rect_for_tag_absolute(&drop.point.tag)?
                 };
@@ -4280,22 +4260,8 @@ impl<V: WidgetView> ShellCore<V> {
         window_id: &str,
         paint_scene: Scene,
     ) {
-        self.stamp_router_dock_inset(window_id);
         self.core
             .update_paint_scene_for_window(window_id, paint_scene);
-    }
-
-    /// (R1203 §5.51 §5.39) Stamp the window's DOCK-AREA top inset (its chrome
-    /// strip height, `0` for OS-decorated) onto its router before publishing the
-    /// paint scene, so the same-window OUTER dock band is measured against the
-    /// dock area (below the chrome), not the whole window — the router-side peer
-    /// of R1202's cross-window preview inset. Called from BOTH paint-publish
-    /// primitives so the band is correct whether the frame came from a live winit
-    /// paint (hover-refresh) or an RPC dispatch (storage-only).
-    fn stamp_router_dock_inset(&mut self, window_id: &str) {
-        let inset = self.chrome_inset_height(Some(window_id)).unwrap_or(0);
-        self.core
-            .set_dock_area_top_inset_for_window(window_id, inset);
     }
 
     /// (R685.C atomic 4 §5.16 §5.41 §5.35) Paint-storage write with
@@ -4328,7 +4294,6 @@ impl<V: WidgetView> ShellCore<V> {
     /// R685.C lifts it into this named primitive so the dispatch hook
     /// reads declaratively.
     pub fn apply_paint_for_window_storage_only(&mut self, window_id: &str, paint_scene: Scene) {
-        self.stamp_router_dock_inset(window_id);
         self.core.set_paint_scene_for_window(window_id, paint_scene);
     }
 
@@ -6931,7 +6896,7 @@ mod r1138_redock_hint_injection_tests {
     //! cursor to an absolute point over main's dock — the exact floater→main redock
     //! direction — so the shell stashes the cross-window drop and
     //! `apply_cross_window_drop_preview` paints it in main at the target.
-    use super::{ShellCore, inset_below_chrome};
+    use super::ShellCore;
     use crate::test_fixtures::TestRenderer;
     use crate::{SizeStrategy, WidgetView, WindowChromeStyle, WindowPolicy, WindowSpec};
     use pinion_a11y::WidgetA11y;
@@ -7184,32 +7149,42 @@ mod r1138_redock_hint_injection_tests {
         );
     }
 
-    /// (R1202) The rect-inset geometry the cross-window OUTER preview uses.
-    #[test]
-    fn r1202_inset_below_chrome_geometry() {
-        let full = Rect::new(0, 0, 1000, 800);
-        // No chrome (decorated window) → unchanged.
-        assert_eq!(inset_below_chrome(full, None), full);
-        // A 32px chrome strip → the top edge drops by 32, the height shortens by 32
-        // (x / w untouched — chrome is a top strip).
-        assert_eq!(
-            inset_below_chrome(full, Some(32)),
-            Rect::new(0, 32, 1000, 768)
+    /// (R1205) A dock target scene whose panel sits inside a `DOCK_SURFACE_TAG`
+    /// wrapper at `surface` — the dock area below a client-side chrome strip. The
+    /// cross-window OUTER preview + the same-window band both read this wrapper's
+    /// rect (`Scene::dock_surface_rect`), so the band lands in the dock area.
+    fn dock_surface_scene(panel_tag: &str, panel_rect: Rect, surface: Rect) -> Scene {
+        use pinion_core::external::DOCK_SURFACE_TAG;
+        let mut panel = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag(panel_tag.to_string())
+                .with_layout(LayoutStyle::new().with_drop_target(true)),
         );
-        // A chrome taller than the window clamps to an empty height, never underflows.
-        assert_eq!(
-            inset_below_chrome(full, Some(900)),
-            Rect::new(0, 800, 1000, 0)
+        if let Scene::Container(c) = &mut panel {
+            c.rect = panel_rect;
+        }
+        let mut wrapper = Scene::Container(
+            ContainerNode::new(vec![panel]).with_tag(DOCK_SURFACE_TAG.to_string()),
         );
+        if let Scene::Container(c) = &mut wrapper {
+            c.rect = surface;
+        }
+        let mut root = Scene::Container(ContainerNode::new(vec![wrapper]));
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 1000, 800);
+        }
+        root
     }
 
-    /// (R1202) Redocking a floater onto a CSD-chrome window: the OUTER full-span
+    /// (R1205) Redocking a floater onto a CSD-chrome window: the OUTER full-span
     /// preview must land in the DOCK AREA (below the min / max / close strip), not
     /// across the whole window over the controls — the user's "붙일 때 최소화/최대화/x
-    /// 영역까지 preview가 보임". The band's rect is inset by the chrome height, so
-    /// preview == where `dock_panel_outer` docks (the topology has no chrome row).
+    /// 영역까지 preview가 보임". The band reads the target's `DOCK_SURFACE_TAG` rect, so
+    /// preview == where `dock_panel_outer` docks (the topology has no chrome row);
+    /// generalising R1202's chrome-height scalar to the surface rect also tracks a
+    /// toolbar the scalar was blind to.
     #[test]
-    fn r1202_outer_redock_preview_lands_below_the_chrome() {
+    fn r1205_outer_redock_preview_lands_on_the_dock_surface() {
         fn rect_of_tag(scene: &Scene, tag: &str) -> Option<Rect> {
             if scene.tag() == Some(tag) {
                 return Some(scene.rect());
@@ -7220,13 +7195,13 @@ mod r1138_redock_hint_injection_tests {
                 _ => None,
             }
         }
+        // Main's dock surface is inset 32px below its chrome strip.
+        let surface = Rect::new(0, 32, 1000, 768);
+        let main_scene = || dock_surface_scene("main_dock", Rect::new(500, 400, 100, 100), surface);
         let mut sc = ShellCore::<RedockHintFixture>::new();
         // Main is a 1000x800 window at the desktop origin (abs == main-local); its
         // painted dock target sits inside it.
-        sc.core.set_paint_scene_for_window(
-            "main",
-            drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100)),
-        );
+        sc.core.set_paint_scene_for_window("main", main_scene());
         let f = sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200);
         sc.finalize_frame_for_window(FLOAT_WINDOW, f);
         // Open the floater's drag session, then march to main's OUTER LEFT perimeter:
@@ -7235,7 +7210,6 @@ mod r1138_redock_hint_injection_tests {
         sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, 40.0, 40.0);
         sc.mouse_pressed_for_window(FLOAT_WINDOW, PointerId::MOUSE);
         sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -795.0, 300.0);
-        let main_scene = || drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100));
         let previewed = sc.apply_cross_window_drop_preview(main_scene(), Some("main"));
         assert!(
             has_tag(&previewed, super::CROSS_WINDOW_DROP_PREVIEW_TAG),
@@ -7245,46 +7219,85 @@ mod r1138_redock_hint_injection_tests {
         // ★The band starts BELOW the 32px chrome strip (not y=0 over the controls).
         assert_eq!(
             band.y, 32,
-            "the OUTER band clears the min/max/close chrome strip"
+            "the OUTER band clears the min/max/close chrome strip (dock surface top)"
         );
-        assert_eq!(band.h, 800 - 32, "and is shortened by the chrome height");
-        // The horizontal extent still spans the whole window (a full-span dock).
+        assert_eq!(
+            band.h,
+            800 - 32,
+            "and is shortened to the dock surface height"
+        );
+        // The horizontal extent still spans the whole surface (a full-span dock).
         assert_eq!(band.x, 0);
         assert_eq!(band.w, 1000);
     }
 
-    /// (R1203) Publishing a window's paint stamps its chrome height onto that
-    /// window's router, so its SAME-window OUTER dock band measures the dock area
-    /// (below the min/max/close strip), not the whole window — the router-side
-    /// peer of R1202's cross-window preview inset. A naked window stays `0`.
+    /// (R1205) A window with NO dock surface (a naked floater / decorated window)
+    /// falls back to its own rect for the OUTER preview — the band spans the whole
+    /// window (there is no chrome strip to clear).
     #[test]
-    fn r1203_paint_publish_stamps_the_router_dock_inset() {
+    fn r1205_outer_redock_preview_without_surface_spans_the_window() {
+        fn rect_of_tag(scene: &Scene, tag: &str) -> Option<Rect> {
+            if scene.tag() == Some(tag) {
+                return Some(scene.rect());
+            }
+            match scene {
+                Scene::Container(c) => c.children.iter().find_map(|ch| rect_of_tag(ch, tag)),
+                Scene::Scroll(s) => rect_of_tag(&s.content, tag),
+                _ => None,
+            }
+        }
+        let main_scene = || drop_panel_scene("main_dock", Rect::new(500, 400, 100, 100));
         let mut sc = ShellCore::<RedockHintFixture>::new();
+        sc.core.set_paint_scene_for_window("main", main_scene());
+        let f = sc.compute_paint_scene_for_window(FLOAT_WINDOW, 200, 200);
+        sc.finalize_frame_for_window(FLOAT_WINDOW, f);
+        sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, 40.0, 40.0);
+        sc.mouse_pressed_for_window(FLOAT_WINDOW, PointerId::MOUSE);
+        sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -795.0, 300.0);
+        let previewed = sc.apply_cross_window_drop_preview(main_scene(), Some("main"));
+        let band = rect_of_tag(&previewed, PREVIEW_TAG).expect("the OUTER band is injected");
         assert_eq!(
-            sc.core.dock_area_top_inset_for_window("main"),
-            0,
-            "no inset before the first paint publish",
+            band.y, 0,
+            "no dock surface → band spans from the window top"
         );
-        // Main wears a 32px CSD chrome strip (RedockHintFixture window_policy).
-        sc.apply_paint_for_window_storage_only(
-            "main",
-            drop_panel_scene("main_dock", Rect::new(0, 0, 1000, 800)),
-        );
-        assert_eq!(
-            sc.core.dock_area_top_inset_for_window("main"),
-            32,
-            "★main's 32px chrome is stamped onto its router so the outer band clears it",
-        );
-        // The naked floater window (no chrome) gets no inset.
-        sc.apply_paint_for_window_storage_only(
-            FLOAT_WINDOW,
-            drop_panel_scene("f", Rect::new(0, 0, 200, 200)),
-        );
-        assert_eq!(
-            sc.core.dock_area_top_inset_for_window(FLOAT_WINDOW),
-            0,
-            "the naked floater has no chrome inset",
-        );
+        assert_eq!(band.h, 800, "and the full window height");
+    }
+
+    /// (R1205) The CRUX integration path: compose the REAL dock walker output with
+    /// `chrome_inset_wrap` (the live paint path's borderless-window inset) + a real
+    /// `compute_layout`, and assert the `DOCK_SURFACE` wrapper lands BELOW the
+    /// chrome strip. This is the fact R1205 replaced the top-only scalar with — the
+    /// surface rect is LAYOUT-derived (it would track a toolbar/menu the scalar
+    /// could not), not the hard-coded rect the preview unit tests inject.
+    #[test]
+    fn r1205_chrome_inset_lays_the_dock_surface_below_the_strip() {
+        use pinion_core::reactive::Owner;
+        use pinion_runtime::layout::compute_layout;
+        use pinion_text::LayoutCache;
+        use pinion_widget_paint::dock::{DockTopology, view_dock_surface};
+        const CHROME_H: u32 = 32; // WindowChromeStyle::default().height_px
+        Owner::new().run(|| {
+            let topo = DockTopology::single("a");
+            let theme = pinion_core::theme::Theme::light();
+            // A single-leaf surface: the split_state closure never fires, so no
+            // DockSplitState construction is needed — the wrapper + one panel.
+            let surface = view_dock_surface(
+                &topo,
+                |_| Scene::Container(ContainerNode::new(Vec::new())),
+                |_, _| unreachable!("single leaf has no split"),
+                |_| None,
+                &theme,
+            );
+            // Wrap exactly as the live paint path does for a 32px-chrome window.
+            let mut scene = super::chrome_inset_wrap(surface, CHROME_H);
+            let mut cache = LayoutCache::new();
+            compute_layout(&mut scene, &mut cache, 1000, 800);
+            assert_eq!(
+                scene.dock_surface_rect(),
+                Rect::new(0, CHROME_H, 1000, 800 - CHROME_H),
+                "chrome_inset_wrap lays the DOCK_SURFACE below the strip (layout-derived)",
+            );
+        });
     }
 
     // (R1168 removed `r1142_drag_release_repaints_the_guide_host_to_strip_its_guides`

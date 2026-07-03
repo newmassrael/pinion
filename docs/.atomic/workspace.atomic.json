@@ -21380,6 +21380,86 @@
         "fix is the prerequisite so the chromed editor actually resizes)"
       ]
     },
+    "R1205": {
+      "decision_summary": "Retire the per-window chrome-height SCALAR (dock_area_top_inset / inset_below_chrome, a top-only inset blind to a toolbar/menu) for a single dock-area RECT SSOT: the dock walker wraps its whole workspace subtree in a DOCK_SURFACE_TAG container whose laid-out rect IS the dock area (new Scene::dock_surface_rect, falling back to the window rect). The same-window OUTER dock band (resolve_own_outer_dock) and the cross-window redock preview (apply_cross_window_drop_preview) both read that one rect, so they agree on where the dock area sits (below any chrome / toolbar / menu) with zero wiring, and the layout engine carries every inset for free.",
+      "changes_bullets": [
+        "retire the per-window chrome-height scalar (dock_area_top_inset router",
+        "field + CoreShell get/set + stamp_router_dock_inset shell; inset_below_chrome)",
+        "for a single dock-area RECT: the dock walker wraps its workspace subtree in a",
+        "DOCK_SURFACE_TAG container whose laid-out rect IS the dock area",
+        "(new Scene::dock_surface_rect, falling back to the window rect)",
+        "resolve_own_outer_dock (same-window band) + apply_cross_window_drop_preview",
+        "(cross-window redock) both read that one rect, agreeing with zero wiring and",
+        "tracking a toolbar / menu / status bar the top-only scalar was blind to",
+        "DOCK_SURFACE_TAG + Scene::dock_surface_rect land in pinion-core; the walker",
+        "reuses the splitter's apply_flex_main (now pub(crate)) to flex-fill the surface"
+      ],
+      "verification_bullets": [
+        "widget-paint 679 + runtime 153 + shell lib tests green; workspace test green",
+        "new units: dock_surface_rect reads the tagged wrapper / falls back to the window",
+        "resolve_own_outer_dock measures the dock surface below chrome (non-tautological:",
+        "no surface -> window top band); the wrapper flex-fills the viewport after",
+        "compute_layout; editor view root is the DOCK_SURFACE wrapping the outer splitter",
+        "shell: cross-window OUTER preview lands on the dock surface (y==chrome top),",
+        "and spans the whole window when there is no surface (fallback)",
+        "clippy(vello) clean; cargo doc clean; r1205 demo 30 asserts PASS via RPC",
+        "scene/layout (DOCK_SURFACE node present, IS the dock area, stable across docks);",
+        "r1201 + r1167 outer-dock demos no-regress"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "cross-window RESOLUTION band still uses the window rect for its vertical inset",
+        "(straddle band, no visible symptom - R1202 fixed the cross-window preview rect)",
+        "the vertical flex-fill idiom now has 3 consumers (splitter apply_flex_main /",
+        "shell set_scene_flex_fill_vertical / dock wrapper reuses apply_flex_main) - a",
+        "pinion-core lift is the clean follow-up when it earns a 4th consumer",
+        "R1205 follow-ups remain: #2 toolbar OUT of the reorganizer (A plan) / #3 chrome",
+        "controls 6px clear (R1204 graze) / #4 editor pinion-chromed permanently"
+      ],
+      "publishable_decision_summary": "Retire the per-window chrome-height SCALAR (dock_area_top_inset / inset_below_chrome, a top-only inset blind to a toolbar/menu) for a single dock-area RECT SSOT: the dock walker wraps its whole workspace subtree in a DOCK_SURFACE_TAG container whose laid-out rect IS the dock area (new Scene::dock_surface_rect, falling back to the window rect). The same-window OUTER dock band (resolve_own_outer_dock) and the cross-window redock preview (apply_cross_window_drop_preview) both read that one rect, so they agree on where the dock area sits (below any chrome / toolbar / menu) with zero wiring, and the layout engine carries every inset for free.",
+      "publishable_changes_bullets": [
+        "retire the per-window chrome-height scalar (dock_area_top_inset router",
+        "field + CoreShell get/set + stamp_router_dock_inset shell; inset_below_chrome)",
+        "for a single dock-area RECT: the dock walker wraps its workspace subtree in a",
+        "DOCK_SURFACE_TAG container whose laid-out rect IS the dock area",
+        "(new Scene::dock_surface_rect, falling back to the window rect)",
+        "resolve_own_outer_dock (same-window band) + apply_cross_window_drop_preview",
+        "(cross-window redock) both read that one rect, agreeing with zero wiring and",
+        "tracking a toolbar / menu / status bar the top-only scalar was blind to",
+        "DOCK_SURFACE_TAG + Scene::dock_surface_rect land in pinion-core; the walker",
+        "reuses the splitter's apply_flex_main (now pub(crate)) to flex-fill the surface"
+      ],
+      "publishable_verification_bullets": [
+        "widget-paint 679 + runtime 153 + shell lib tests green; workspace test green",
+        "new units: dock_surface_rect reads the tagged wrapper / falls back to the window",
+        "resolve_own_outer_dock measures the dock surface below chrome (non-tautological:",
+        "no surface -> window top band); the wrapper flex-fills the viewport after",
+        "compute_layout; editor view root is the DOCK_SURFACE wrapping the outer splitter",
+        "shell: cross-window OUTER preview lands on the dock surface (y==chrome top),",
+        "and spans the whole window when there is no surface (fallback)",
+        "clippy(vello) clean; cargo doc clean; r1205 demo 30 asserts PASS via RPC",
+        "scene/layout (DOCK_SURFACE node present, IS the dock area, stable across docks);",
+        "r1201 + r1167 outer-dock demos no-regress"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "cross-window RESOLUTION band still uses the window rect for its vertical inset",
+        "(straddle band, no visible symptom - R1202 fixed the cross-window preview rect)",
+        "the vertical flex-fill idiom now has 3 consumers (splitter apply_flex_main /",
+        "shell set_scene_flex_fill_vertical / dock wrapper reuses apply_flex_main) - a",
+        "pinion-core lift is the clean follow-up when it earns a 4th consumer",
+        "R1205 follow-ups remain: #2 toolbar OUT of the reorganizer (A plan) / #3 chrome",
+        "controls 6px clear (R1204 graze) / #4 editor pinion-chromed permanently"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

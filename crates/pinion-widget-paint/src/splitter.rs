@@ -308,7 +308,11 @@ fn set_flex_main(layout: &mut LayoutStyle, flex_grow: f32, min_size: Size) {
 /// path requires a `layout` field on the scene; the wrap is a
 /// single Container with no `BoxStyle` (so the scene's visual
 /// shape stays bit-identical) carrying just the flex props.
-fn apply_flex_main(scene: Scene, flex_grow: f32, orientation: SplitterOrientation) -> Scene {
+pub(crate) fn apply_flex_main(
+    scene: Scene,
+    flex_grow: f32,
+    orientation: SplitterOrientation,
+) -> Scene {
     // (R1086 §5.21) Zero the MAIN-axis minimum only; the cross axis stays
     // `Auto` so the outer container's `AlignItems::Stretch` fills it.
     let min_size = match orientation {

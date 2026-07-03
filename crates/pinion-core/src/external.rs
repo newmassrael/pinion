@@ -323,6 +323,23 @@ pub struct DropPoint {
 /// tag can collide with.
 pub const OUTER_DOCK_ZONE_TAG: &str = "\u{0}outer-dock-zone";
 
+/// (R1205 §5.51 §5.39) Tag the dock walker
+/// ([`view_dock_surface`](../../pinion_widget_paint/dock/fn.view_dock_surface.html))
+/// stamps on the container wrapping its whole workspace subtree, so the laid-out
+/// rect of that wrapper IS the DOCK AREA — the region the reorganizer manages,
+/// wherever the composing view places it (below a client-side chrome strip, below
+/// a fixed toolbar / menu, inside a split, …). The one SSOT for "where is the
+/// dock area" ([`Scene::dock_surface_rect`](crate::scene::Scene::dock_surface_rect)):
+/// the same-window OUTER dock band ([`InputRouter::resolve_own_outer_dock`]) and the
+/// cross-window redock preview both read this rect, so they agree on the dock area
+/// with ZERO wiring — no per-window chrome-height scalar to stamp (R1202/R1203's
+/// `dock_area_top_inset` / `inset_below_chrome`, a top-only approximation blind to a
+/// toolbar, were retired for this rect). The leading `NUL` makes it a sentinel no
+/// real user paint tag can collide with, and it is a structural ANCESTOR of the
+/// tagged splitter / panel that fills it, so `resolve_hover_tag`'s deepest-first
+/// walk never resolves to it.
+pub const DOCK_SURFACE_TAG: &str = "\u{0}dock-surface";
+
 /// (R1156 §5.51) How far INSIDE / outside the drop surface's perimeter the cursor
 /// may sit and still classify as an OUTER full-span dock (logical px). The
 /// outermost band of this width maps to the container edge; the interior past it

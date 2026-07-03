@@ -1558,26 +1558,6 @@ impl<V: WidgetCore> CoreShell<V> {
         router.update_paint_scene(paint_scene, scene);
     }
 
-    /// (R1203 §5.51 §5.39) Stamp `window_id`'s DOCK-AREA top inset (its
-    /// client-side chrome strip height, `0` for OS-decorated) onto that window's
-    /// [`InputRouter`], so its same-window OUTER dock band sits at the dock's top
-    /// edge (below the chrome), not up in the control strip. The shell calls this
-    /// from its paint-publish sites with `chrome_inset_height`; the runtime layer
-    /// stays chrome-agnostic (it stores the resolved scalar, not the policy).
-    pub fn set_dock_area_top_inset_for_window(&mut self, window_id: &str, inset: u32) {
-        router_for(&mut self.routers, window_id).set_dock_area_top_inset(inset);
-    }
-
-    /// (R1203 §5.51 §5.39) Read `window_id`'s stamped DOCK-AREA top inset (`0` if
-    /// the window has no router yet / is OS-decorated). Non-creating read peer of
-    /// [`Self::set_dock_area_top_inset_for_window`].
-    #[must_use]
-    pub fn dock_area_top_inset_for_window(&self, window_id: &str) -> u32 {
-        self.routers
-            .get(window_id)
-            .map_or(0, InputRouter::dock_area_top_inset)
-    }
-
     /// (R685 §5.16 §5.35) Pure-storage paint-scene write — no
     /// `refresh_hover` side effect. Per-window mirror of
     /// [`InputRouter::set_paint_scene`].

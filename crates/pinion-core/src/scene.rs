@@ -985,6 +985,22 @@ impl Scene {
         self.rect_for_tag_with_offset(target, 0, 0, None)
     }
 
+    /// (R1205 §5.51 §5.39) The DOCK AREA of this (window) paint scene: the
+    /// window-absolute rect of the [`DOCK_SURFACE_TAG`](crate::external::DOCK_SURFACE_TAG)
+    /// wrapper the dock walker stamps around its workspace subtree, falling back to
+    /// this scene's own rect (the whole window) when there is no dock surface — a
+    /// naked floater, or any non-dock window. The one SSOT the same-window OUTER
+    /// dock band ([`InputRouter::resolve_own_outer_dock`](../../pinion_runtime/input/struct.InputRouter.html))
+    /// and the cross-window redock preview both measure against, so they agree on
+    /// where the dock area sits (below a chrome strip / toolbar / menu) with no
+    /// per-window scalar to stamp — the rect the layout engine already computed for
+    /// the workspace wrapper carries every inset for free.
+    #[must_use]
+    pub fn dock_surface_rect(&self) -> Rect {
+        self.rect_for_tag_absolute(crate::external::DOCK_SURFACE_TAG)
+            .unwrap_or_else(|| self.rect())
+    }
+
     fn rect_for_tag_with_offset(
         &self,
         target: &str,

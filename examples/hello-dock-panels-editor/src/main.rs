@@ -1545,6 +1545,7 @@ mod tests {
     //!    of the 4 splits with the canonical tags.
 
     use super::*;
+    use pinion_core::external::DOCK_SURFACE_TAG;
     use pinion_core::reactive::Owner;
     use pinion_widget_paint::dock::{
         DockReorganizeIntent, DockSplitPosition, FloatPolicy, PLACEHOLDER_TAG_SUFFIX,
@@ -1861,12 +1862,21 @@ mod tests {
     }
 
     #[test]
-    fn r685_editor_view_root_is_outer_splitter_container() {
+    fn r1205_editor_view_root_is_the_dock_surface_wrapping_the_outer_splitter() {
         run_in_owner(|| {
             let frame = Frame::default();
             let scene = <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &frame);
-            let Scene::Container(outer) = scene else {
-                panic!("editor view root should be a splitter Container");
+            // (R1205) The view root is now the DOCK_SURFACE wrapper — its laid-out
+            // rect is the dock-area SSOT (`Scene::dock_surface_rect`) the same-window
+            // outer band + cross-window redock preview read. The outer splitter is
+            // its sole (flex-filled) child.
+            let Scene::Container(surface) = scene else {
+                panic!("editor view root should be the dock surface Container");
+            };
+            assert_eq!(surface.tag.as_deref(), Some(DOCK_SURFACE_TAG));
+            assert_eq!(surface.children.len(), 1, "the wrapper holds one workspace");
+            let Scene::Container(outer) = &surface.children[0] else {
+                panic!("the workspace root should be the outer splitter Container");
             };
             assert_eq!(outer.tag.as_deref(), Some(SPLIT_OUTER_TAG));
         });

@@ -386,18 +386,6 @@ pub struct InputRouter {
     /// shell-composed `over_window`); knowing its OWN id is a different, local
     /// fact.
     window_id: Option<String>,
-    /// (R1203 §5.51 §5.39) Logical-pixel height the DOCK AREA is inset from the
-    /// window's top edge — the client-side chrome strip height, or `0` for an
-    /// OS-decorated / naked window. The shell stamps it per window
-    /// ([`crate::CoreShell::set_dock_area_top_inset_for_window`]) from its
-    /// `chrome_inset_height`. [`Self::resolve_own_outer_dock`] measures the
-    /// same-window OUTER band against `paint.rect()` shrunk by this, so the top
-    /// full-span band sits at the DOCK's top edge (below the min / max / close
-    /// controls) — not up in the chrome strip. The R1202 peer for the same-window
-    /// band: R1202 fixed the cross-window preview rect (shell-side), this fixes
-    /// the same-window band membership (router-side) so the band and the preview
-    /// agree on where the dock area is.
-    dock_area_top_inset: u32,
 }
 
 /// R881.1 §5.35 — one pointer's wheel remainder: the scroll container
@@ -767,22 +755,6 @@ impl InputRouter {
     /// stationary cursor — both want the hover arcs).
     pub fn set_paint_scene(&mut self, scene: Scene) {
         self.last_paint_scene = Some(scene);
-    }
-
-    /// (R1203 §5.51 §5.39) Stamp the DOCK-AREA top inset (the client-side chrome
-    /// strip height, `0` for OS-decorated) the shell resolves for this window, so
-    /// [`Self::resolve_own_outer_dock`] measures the same-window OUTER band
-    /// against the dock area — below the chrome — not the whole window. See
-    /// [`Self::dock_area_top_inset`].
-    pub fn set_dock_area_top_inset(&mut self, inset: u32) {
-        self.dock_area_top_inset = inset;
-    }
-
-    /// (R1203 §5.51 §5.39) The stamped DOCK-AREA top inset. `0` until the shell
-    /// stamps a chrome height (OS-decorated windows stay `0`).
-    #[must_use]
-    pub fn dock_area_top_inset(&self) -> u32 {
-        self.dock_area_top_inset
     }
 
     /// (R685 §5.16 §5.35) Refresh-hover side-effect half of the R51.39
@@ -2021,12 +1993,15 @@ impl InputRouter {
     /// reparent) near the window edge keeps the plain `resolve_drop_point` hit-test.
     fn resolve_own_outer_dock(&self, x: f64, y: f64) -> Option<DropPoint> {
         let paint = self.last_paint_scene.as_ref()?;
-        // (R1203) Measure the band against the DOCK AREA — the window shrunk from
-        // the top by the chrome strip height — so the top full-span band sits at
-        // the dock's top edge (below the client-side min/max/close controls), not
-        // up in the chrome. The same-window peer of R1202's cross-window preview
-        // inset; both now agree on where the dock area is.
-        let root = dock_area_rect(paint.rect(), self.dock_area_top_inset);
+        // (R1205) Measure the band against the DOCK AREA — the laid-out rect of the
+        // dock walker's `DOCK_SURFACE_TAG` wrapper (the whole workspace subtree),
+        // falling back to the window rect when there is no dock surface. So the top
+        // full-span band sits at the dock's top edge (below a client-side chrome
+        // strip / toolbar / menu), not up in the chrome. The same-window peer of
+        // R1202's cross-window preview, now reading the SAME `dock_surface_rect`
+        // SSOT — both agree on where the dock area is, and it tracks a toolbar the
+        // retired chrome-height scalar was blind to.
+        let root = paint.dock_surface_rect();
         let (rx, ry) = (f64::from(root.x), f64::from(root.y));
         let (rw, rh) = (f64::from(root.w), f64::from(root.h));
         if rw <= 0.0 || rh <= 0.0 {
@@ -2493,18 +2468,6 @@ const OUTER_DOCK_MARGIN_FRAC: f64 = 0.1;
 fn outer_dock_margin(root: Rect) -> f64 {
     let smaller = f64::from(root.w.min(root.h));
     (OUTER_DOCK_MARGIN_FRAC * smaller).min(OUTER_DOCK_MARGIN)
-}
-
-/// (R1203 §5.51 §5.39) The DOCK-AREA rect: `root` (the window content rect)
-/// shrunk from the top by `top_inset` — the client-side chrome strip height (`0`
-/// for OS-decorated). The router-side peer of the shell's `inset_below_chrome`;
-/// clamps the inset to the height so an over-tall chrome yields an in-bounds
-/// empty rect rather than underflowing. [`InputRouter::resolve_own_outer_dock`]
-/// measures its band against this so the top band sits at the dock's top, not in
-/// the chrome.
-fn dock_area_rect(root: Rect, top_inset: u32) -> Rect {
-    let top = top_inset.min(root.h);
-    Rect::new(root.x, root.y + top, root.w, root.h - top)
 }
 
 /// R1102 §5.51 PR-33 — the own-window-first precedence mapping a per-window own
@@ -6559,59 +6522,79 @@ mod tests {
     }
 
     #[test]
-    fn r1203_dock_area_rect_insets_the_top() {
-        let root = Rect::new(0, 0, 400, 600);
+    fn r1205_dock_surface_rect_reads_the_tagged_wrapper() {
+        use pinion_core::external::DOCK_SURFACE_TAG;
+        use pinion_core::scene::ContainerNode;
+        // A dock-area wrapper (below a 32px chrome strip) nested in the window root.
+        let mut surface = ContainerNode::new(vec![]).with_tag(DOCK_SURFACE_TAG.to_string());
+        surface.rect = Rect::new(0, 32, 400, 568);
+        let mut root = ContainerNode::new(vec![Scene::Container(surface)]);
+        root.rect = Rect::new(0, 0, 400, 600);
         assert_eq!(
-            super::dock_area_rect(root, 0),
-            root,
-            "no chrome → unchanged"
+            Scene::Container(root).dock_surface_rect(),
+            Rect::new(0, 32, 400, 568),
+            "the dock surface tag's laid-out rect is the dock area (below the chrome)",
         );
-        assert_eq!(super::dock_area_rect(root, 32), Rect::new(0, 32, 400, 568));
-        // A chrome taller than the window clamps to an in-bounds empty rect.
-        assert_eq!(super::dock_area_rect(root, 700), Rect::new(0, 600, 400, 0));
+        // No dock surface (a naked / decorated window) → the whole window rect.
+        let mut bare = ContainerNode::new(vec![]);
+        bare.rect = Rect::new(0, 0, 400, 600);
+        assert_eq!(
+            Scene::Container(bare).dock_surface_rect(),
+            Rect::new(0, 0, 400, 600),
+            "no dock surface → fall back to the window rect",
+        );
     }
 
     #[test]
-    fn r1203_resolve_own_outer_dock_measures_the_dock_area_below_chrome() {
+    fn r1205_resolve_own_outer_dock_measures_the_dock_surface_below_chrome() {
+        use pinion_core::external::DOCK_SURFACE_TAG;
         use pinion_core::scene::{BoxNode, ContainerNode};
         use pinion_core::style::{Color, LayoutStyle};
-        let content = Scene::Box(
-            BoxNode::filled(Rect::new(0, 0, 400, 600), Color::default()).with_tag("panel#content"),
-        );
-        let mut panel = ContainerNode::new(vec![content])
-            .with_tag("panel")
-            .with_layout(LayoutStyle::new().with_drop_target(true));
-        panel.rect = Rect::new(0, 0, 400, 600);
+        // A window whose dock surface (`DOCK_SURFACE_TAG` wrapper) is inset 32px
+        // below a client-side chrome strip: the dock area is y ∈ [32, 600].
+        fn chromed_paint_scene() -> Scene {
+            let content = Scene::Box(
+                BoxNode::filled(Rect::new(0, 32, 400, 568), Color::default())
+                    .with_tag("panel#content"),
+            );
+            let mut surface = ContainerNode::new(vec![content])
+                .with_tag(DOCK_SURFACE_TAG.to_string())
+                .with_layout(LayoutStyle::new().with_drop_target(true));
+            surface.rect = Rect::new(0, 32, 400, 568);
+            let mut root = ContainerNode::new(vec![Scene::Container(surface)]);
+            root.rect = Rect::new(0, 0, 400, 600);
+            Scene::Container(root)
+        }
         let mut router = InputRouter::new();
         let (mut state_scene, _) = state_with_button();
-        router.update_paint_scene(Scene::Container(panel), &mut state_scene);
-        // A 32px client-side chrome strip: the dock area is y ∈ [32, 600].
-        router.set_dock_area_top_inset(32);
+        router.update_paint_scene(chromed_paint_scene(), &mut state_scene);
         // A cursor IN the chrome strip (y=10 < 32) has left the dock area upward —
         // an escape, NOT the top outer band (it would land on the min/max/close
         // controls, not the dock).
         assert!(
             router.resolve_own_outer_dock(200.0, 10.0).is_none(),
-            "the chrome strip is above the dock area, not the top outer band",
+            "the chrome strip is above the dock surface, not the top outer band",
         );
-        // The dock's TOP edge (y=40, 8px below the chrome) IS the top outer band,
-        // normalised over the DOCK area (so `outer_zone_for` derives Top).
+        // The dock surface's TOP edge (y=40, 8px below the chrome) IS the top outer
+        // band, normalised over the DOCK surface (so `outer_zone_for` derives Top).
         let top = router
             .resolve_own_outer_dock(200.0, 40.0)
-            .expect("the dock top edge is the outer band");
+            .expect("the dock surface top edge is the outer band");
         assert_eq!(top.tag, OUTER_DOCK_ZONE_TAG);
         assert!(
             top.y_rel < 0.1,
-            "normalised over the dock area → near its top (y_rel={})",
+            "normalised over the dock surface → near its top (y_rel={})",
             top.y_rel,
         );
-        // Non-tautological: WITHOUT the inset the SAME chrome-strip cursor is the
-        // window's top band — the inset is exactly what moves the band off the
-        // controls (the R1202 preview and this band now agree on the dock area).
-        router.set_dock_area_top_inset(0);
+        // Non-tautological: WITHOUT a dock surface the SAME chrome-strip cursor is
+        // the window's top band — the tagged surface is exactly what moves the band
+        // off the controls (the R1202 preview and this band read the same rect).
+        let mut bare = ContainerNode::new(vec![]);
+        bare.rect = Rect::new(0, 0, 400, 600);
+        router.update_paint_scene(Scene::Container(bare), &mut state_scene);
         assert!(
             router.resolve_own_outer_dock(200.0, 10.0).is_some(),
-            "no chrome inset → the window's top band includes y=10",
+            "no dock surface → the window's top band includes y=10",
         );
     }
 
