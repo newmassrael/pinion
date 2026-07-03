@@ -2537,6 +2537,7 @@ impl<V: WidgetView> AppShell<V> {
             .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id)
             .to_owned();
         let mut maximized = None;
+        let mut resized = false;
         if let Some(slot) = self.windows.get_mut(&window_id)
             && let RenderState::Active {
                 renderer, window, ..
@@ -2544,12 +2545,23 @@ impl<V: WidgetView> AppShell<V> {
         {
             renderer.resize(size.width.max(1), size.height.max(1));
             maximized = Some(window.is_maximized());
-            // winit coalesces repeated `request_redraw` before the next
-            // `RedrawRequested`, so a fast drag costs at most one paint/frame.
-            window.request_redraw();
+            resized = true;
         }
         if let Some(m) = maximized {
             self.core.set_maximized_for_window(&spec_id, m);
+        }
+        // R1219 §5.16 §5.41 — paint the resized surface SYNCHRONOUSLY, in-band
+        // with the `Resized` event, instead of scheduling an async
+        // `request_redraw`. During an interactive OS resize the platform runs a
+        // modal resize loop that can withhold `RedrawRequested` until the drag
+        // ends; an async redraw then leaves the newly-exposed region unpainted
+        // for the whole drag — a flash at the grow edge (the bottom when
+        // growing vertically). An immediate paint fills the new size before the
+        // compositor composites the resized frame, so the surface never shows a
+        // stale/uncleared band. `render_window` early-returns on a 0-size
+        // (minimize) window, so the un-guarded call is safe.
+        if resized {
+            self.render_window(window_id);
         }
     }
 

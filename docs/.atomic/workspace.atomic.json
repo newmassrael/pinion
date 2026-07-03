@@ -22090,6 +22090,48 @@
         "Next session: roadmap resumes at a Phase-B value-order slice ([[phase-b-substrate-roadmap]]) unless the user redirects. Doc-hygiene/truth debt is fully cleared."
       ]
     },
+    "R1219": {
+      "decision_summary": "R1219 fixes a live-testing bug: the bottom of a window flickered during interactive resize because the newly-exposed region went unpainted through the OS modal resize loop.",
+      "changes_bullets": [
+        "pinion-shell app.rs note_window_resized: paint the resized surface SYNCHRONOUSLY (call render_window in-band) instead of scheduling an async request_redraw. During an interactive OS resize the platform's modal resize loop withholds RedrawRequested until the drag ends, so the async path left the grown region unpainted for the whole drag -> a flash at the grow edge (bottom when growing vertically). Shell-global, so all windows/apps benefit.",
+        "render_window early-returns on a 0-size (minimize) window, so the unconditional synchronous call is safe; winit coalesces any residual redraw so there is no double paint.",
+        "Found by the user live-testing the todomvc example window on :0 (the 'show me a testable app' request)."
+      ],
+      "verification_bullets": [
+        "VISUAL (user-verified on :0, the only way to verify this HW/compositor-timing artifact -- headless cannot reproduce an interactive resize): user resized the live todomvc window and confirmed the bottom flicker is gone.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0; cargo test -p pinion-shell = pass; no test asserted request_redraw-on-resize (no regression).",
+        "Rebuilt binary confirmed to contain the fix (binary newer than the edit; rebuild a 0.16s no-op)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "LESSON: interactive-resize flicker = the OS modal resize loop withholds RedrawRequested during the drag, so any async request_redraw-on-resize leaves the newly-exposed region unpainted until drag-end. Fix = synchronous paint in the Resized handler. Verification of such flicker is HW-gated (user's eyes on a real compositor); headless/RPC cannot reproduce an interactive resize.",
+        "Watch: synchronous paint-per-Resized could in theory add paints on a very fast drag (user asked to watch for stutter; none reported). If a future fast-drag stutter appears, throttle to ~one paint/frame while keeping the sync-in-band paint.",
+        "Live-testing an example (PINION_SCREENSHOT for in-chat stills + a visible window on :0 for hands-on) is a high-value way to surface real rendering bugs the headless gate never sees."
+      ],
+      "publishable_decision_summary": "R1219 fixes a live-testing bug: the bottom of a window flickered during interactive resize because the newly-exposed region went unpainted through the OS modal resize loop.",
+      "publishable_changes_bullets": [
+        "pinion-shell app.rs note_window_resized: paint the resized surface SYNCHRONOUSLY (call render_window in-band) instead of scheduling an async request_redraw. During an interactive OS resize the platform's modal resize loop withholds RedrawRequested until the drag ends, so the async path left the grown region unpainted for the whole drag -> a flash at the grow edge (bottom when growing vertically). Shell-global, so all windows/apps benefit.",
+        "render_window early-returns on a 0-size (minimize) window, so the unconditional synchronous call is safe; winit coalesces any residual redraw so there is no double paint.",
+        "Found by the user live-testing the todomvc example window on :0 (the 'show me a testable app' request)."
+      ],
+      "publishable_verification_bullets": [
+        "VISUAL (user-verified on :0, the only way to verify this HW/compositor-timing artifact -- headless cannot reproduce an interactive resize): user resized the live todomvc window and confirmed the bottom flicker is gone.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0; cargo test -p pinion-shell = pass; no test asserted request_redraw-on-resize (no regression).",
+        "Rebuilt binary confirmed to contain the fix (binary newer than the edit; rebuild a 0.16s no-op)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "LESSON: interactive-resize flicker = the OS modal resize loop withholds RedrawRequested during the drag, so any async request_redraw-on-resize leaves the newly-exposed region unpainted until drag-end. Fix = synchronous paint in the Resized handler. Verification of such flicker is HW-gated (user's eyes on a real compositor); headless/RPC cannot reproduce an interactive resize.",
+        "Watch: synchronous paint-per-Resized could in theory add paints on a very fast drag (user asked to watch for stutter; none reported). If a future fast-drag stutter appears, throttle to ~one paint/frame while keeping the sync-in-band paint.",
+        "Live-testing an example (PINION_SCREENSHOT for in-chat stills + a visible window on :0 for hands-on) is a high-value way to surface real rendering bugs the headless gate never sees."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
