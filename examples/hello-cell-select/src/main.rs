@@ -84,6 +84,7 @@ use pinion_core::widgets::table::{
     TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
 };
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{TableData, TableSelection, TableStyle, view_table};
 
@@ -371,6 +372,17 @@ impl WidgetCore for CellSelectView {
         if key == "Escape" {
             let _ = intro.invoke("clear-cell-selection", IntrospectValue::Null);
             return true;
+        }
+        // R1222 §5.38 §5.22 — Ctrl/Cmd+C copies the selected cell rectangle as
+        // TSV to the platform clipboard (the spreadsheet copy; the AI-first peer
+        // is `query cell_selection_tsv`, the SAME serialization). Unhandled when
+        // nothing is selected, so the key falls through.
+        if modifiers.command_key() && key.eq_ignore_ascii_case("c") {
+            if let Some(IntrospectValue::Text(tsv)) = intro.query("cell_selection_tsv") {
+                use_app_clipboard(PRIMARY_TAG).copy(tsv);
+                return true;
+            }
+            return false;
         }
         false
     }
@@ -830,6 +842,28 @@ mod tests {
         assert_eq!(
             intro.query("cell_selection"),
             Some(IntrospectValue::Text("1,0,3,2".to_string())),
+        );
+    }
+
+    /// R1222 §5.38 §5.22 — Ctrl+C with NO selection is unhandled (falls through)
+    /// and touches no clipboard. The with-selection path writes the real system
+    /// clipboard via arboard, which on a live display would clobber / race the
+    /// user's clipboard (the [[test-real-clipboard-races-concurrent]] class), so
+    /// it is HW-gated, not auto-driven — the copied payload's determinism is
+    /// covered by `Table::selected_tsv` (pinion-core) + the `cell_selection_tsv`
+    /// query (the RPC demo). This asserts only the safe guard: no selection, no
+    /// copy, key passes through.
+    #[test]
+    fn r1222_ctrl_c_with_no_selection_is_unhandled() {
+        let mut scene = scene_fixture();
+        let ctrl = pinion_core::Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert_eq!(bounds(&scene), None, "no selection at boot");
+        assert!(
+            !CellSelectView::apply_key(&mut scene, Some(PRIMARY_TAG), "c", ctrl),
+            "Ctrl+C with nothing selected is unhandled (and copies nothing)",
         );
     }
 }

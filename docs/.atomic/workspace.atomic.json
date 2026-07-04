@@ -22238,6 +22238,52 @@
         "step_property multi-object semantic is RELATIVE (each += dir), preserving the mix; an ABSOLUTE \"set all to N\" (mixed -> uniform) numeric edit needs an inline text field (the property grid's delegate), the next inline-edit slice. Choice/Color inline delegates across a selection likewise wait for a shared such common property (never arises in the sample data)."
       ]
     },
+    "R1222": {
+      "decision_summary": "R1222 adds cell-range COPY (as TSV) to the shared Table coordinator: Table::selected_tsv serializes the selected cell rectangle row-major (the Excel/Sheets clipboard form), exposed as the cell_selection_tsv query -- the AI-first 'copy the selection' read (an AI copies a range by reading it, no clipboard). hello-cell-select's Ctrl+C writes the same TSV to the platform clipboard (the human copy). Additive on the shared Table (every grid gains it); closes part of the R953 'range copy' deferral.",
+      "changes_bullets": [
+        "pinion-core Table (shared grid coordinator): cell-range COPY as TSV. New Table::selected_tsv() serializes the cell_selection_bounds rectangle row-major (tab columns, newline rows, reading each cell()) -- the Excel/Sheets clipboard form; None when no range is selected. Additive: no behavior change to any existing path, so every grid built on Table gains it and no consumer needs a change.",
+        "TableExternal: a selected_tsv() delegate (the established cell_selection_bounds/cell_selection_count delegate pattern) + a \"cell_selection_tsv\" query arm (Text, or Null when empty) + the schema entry. This is the AI-first \"copy the selection\" read (§2 #2): an AI copies a range by READING it -- no pixels, no platform clipboard.",
+        "hello-cell-select: Ctrl/Cmd+C in apply_key reads cell_selection_tsv and writes it to the platform clipboard via use_app_clipboard (the human copy; the SAME TSV the query returns). Unhandled (falls through) when nothing is selected. New pinion-platform-clipboard dep.",
+        "Closes part of the R953 \"range copy\" deferral (hello-cell-select module doc); the R953 rectangle-selection substrate is reused unchanged."
+      ],
+      "verification_bullets": [
+        "pinion-core unit tests (r1222_*): Table::selected_tsv serializes full-grid / single-row / single-column / single-cell rectangles row-major and returns None with no selection / after clear; the cell_selection_tsv query mirrors it over the wire (Text vs Null) and is schema-declared.",
+        "hello-cell-select unit test: Ctrl+C with NO selection is unhandled and touches no clipboard (the safe guard).",
+        "RPC verify demo tools/demos/r1222_cell_range_copy.py = PASS (~30 assertions): boot Null TSV; single cell; grown 2x2 rectangle (row-major); full row; full column; whole 6x4 grid; a lower-right sub-rectangle whose TSV matches the cell_selection bounds exactly (one source of truth); clear -> Null; re-select after clear. Drives select-cell/extend-cell and reads cell_selection_tsv -- a pure read, no clipboard side-effect.",
+        "Gates: cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0; cargo test --workspace -j2 = 0 failed; cargo test -p pinion-core r1222 + -p hello-cell-select = pass."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "HW-gated (not auto-tested): the human Ctrl+C system-clipboard write. Driving it in a test/demo would call arboard on a live display and CLOBBER / race the user's real clipboard (the test-real-clipboard-races-concurrent class), so only the deterministic payload (Table::selected_tsv + the cell_selection_tsv query) is auto-asserted; the final clipboard.copy() platform call is exercised in production, not in CI.",
+        "The full \"block clipboard\" (PASTE + fill-down + clear-range over EDITABLE cells) stays deferred: hello-cell-select is read-only (paste has nowhere to write) and the editable grid (hello-data-grid, 9200 lines) still has a single-cell model. Bringing the cell-range model into the editable grid + block paste/fill is the next, larger slice; R1222 delivers the copy (read) half safely.",
+        "selected_tsv lives on the shared Table (the right home -- every cell-range grid wants copy-as-TSV); it reuses cell_selection_bounds + cell() (no new selection state)."
+      ],
+      "publishable_decision_summary": "R1222 adds cell-range COPY (as TSV) to the shared Table coordinator: Table::selected_tsv serializes the selected cell rectangle row-major (the Excel/Sheets clipboard form), exposed as the cell_selection_tsv query -- the AI-first 'copy the selection' read (an AI copies a range by reading it, no clipboard). hello-cell-select's Ctrl+C writes the same TSV to the platform clipboard (the human copy). Additive on the shared Table (every grid gains it); closes part of the R953 'range copy' deferral.",
+      "publishable_changes_bullets": [
+        "pinion-core Table (shared grid coordinator): cell-range COPY as TSV. New Table::selected_tsv() serializes the cell_selection_bounds rectangle row-major (tab columns, newline rows, reading each cell()) -- the Excel/Sheets clipboard form; None when no range is selected. Additive: no behavior change to any existing path, so every grid built on Table gains it and no consumer needs a change.",
+        "TableExternal: a selected_tsv() delegate (the established cell_selection_bounds/cell_selection_count delegate pattern) + a \"cell_selection_tsv\" query arm (Text, or Null when empty) + the schema entry. This is the AI-first \"copy the selection\" read (§2 #2): an AI copies a range by READING it -- no pixels, no platform clipboard.",
+        "hello-cell-select: Ctrl/Cmd+C in apply_key reads cell_selection_tsv and writes it to the platform clipboard via use_app_clipboard (the human copy; the SAME TSV the query returns). Unhandled (falls through) when nothing is selected. New pinion-platform-clipboard dep.",
+        "Closes part of the R953 \"range copy\" deferral (hello-cell-select module doc); the R953 rectangle-selection substrate is reused unchanged."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core unit tests (r1222_*): Table::selected_tsv serializes full-grid / single-row / single-column / single-cell rectangles row-major and returns None with no selection / after clear; the cell_selection_tsv query mirrors it over the wire (Text vs Null) and is schema-declared.",
+        "hello-cell-select unit test: Ctrl+C with NO selection is unhandled and touches no clipboard (the safe guard).",
+        "RPC verify demo tools/demos/r1222_cell_range_copy.py = PASS (~30 assertions): boot Null TSV; single cell; grown 2x2 rectangle (row-major); full row; full column; whole 6x4 grid; a lower-right sub-rectangle whose TSV matches the cell_selection bounds exactly (one source of truth); clear -> Null; re-select after clear. Drives select-cell/extend-cell and reads cell_selection_tsv -- a pure read, no clipboard side-effect.",
+        "Gates: cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0; cargo test --workspace -j2 = 0 failed; cargo test -p pinion-core r1222 + -p hello-cell-select = pass."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "HW-gated (not auto-tested): the human Ctrl+C system-clipboard write. Driving it in a test/demo would call arboard on a live display and CLOBBER / race the user's real clipboard (the test-real-clipboard-races-concurrent class), so only the deterministic payload (Table::selected_tsv + the cell_selection_tsv query) is auto-asserted; the final clipboard.copy() platform call is exercised in production, not in CI.",
+        "The full \"block clipboard\" (PASTE + fill-down + clear-range over EDITABLE cells) stays deferred: hello-cell-select is read-only (paste has nowhere to write) and the editable grid (hello-data-grid, 9200 lines) still has a single-cell model. Bringing the cell-range model into the editable grid + block paste/fill is the next, larger slice; R1222 delivers the copy (read) half safely.",
+        "selected_tsv lives on the shared Table (the right home -- every cell-range grid wants copy-as-TSV); it reuses cell_selection_bounds + cell() (no new selection state)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

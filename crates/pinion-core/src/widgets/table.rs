@@ -428,6 +428,30 @@ impl Table {
             .map_or(0, |(r0, c0, r1, c1)| (r1 - r0 + 1) * (c1 - c0 + 1))
     }
 
+    /// R1222 §5.38 — the selected cell rectangle serialized as TSV
+    /// (tab-separated columns, newline-separated rows) — the spreadsheet
+    /// clipboard form (an Excel / Sheets paste lands as a cell block). `None`
+    /// when no cell range is selected. Row-major over
+    /// [`cell_selection_bounds`](Self::cell_selection_bounds) reading each
+    /// [`cell`](Self::cell), so it mirrors exactly the rectangle the grid
+    /// paints as selected — the AI-first "copy the selection" read (§2 #2) AND
+    /// the payload a Ctrl+C writes to the platform clipboard.
+    #[must_use]
+    pub fn selected_tsv(&self) -> Option<String> {
+        let (r0, c0, r1, c1) = self.cell_selection_bounds()?;
+        Some(
+            (r0..=r1)
+                .map(|r| {
+                    (c0..=c1)
+                        .map(|c| self.cell(r, c))
+                        .collect::<Vec<_>>()
+                        .join("\t")
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
     /// R952 §5.38 §5.40 — drop the cell range selection (clear the anchor).
     /// The roving cursor is untouched — clearing a selection leaves the
     /// active descendant where it was (the cell stays navigable / editable).
@@ -848,6 +872,14 @@ impl TableExternal {
         self.em.inner.cell_selection_count()
     }
 
+    /// R1222 §5.38 — the selected cell rectangle as TSV
+    /// ([`Table::selected_tsv`]); the `cell_selection_tsv` query and a Ctrl+C
+    /// clipboard copy both read this.
+    #[must_use]
+    pub fn selected_tsv(&self) -> Option<String> {
+        self.em.inner.selected_tsv()
+    }
+
     /// R952 §5.38 — the cell range selection `invoke` actions, split out of
     /// [`invoke`](ExternalIntrospect::invoke) for SRP (and to keep that
     /// dispatch under the line ceiling, like the find / fold helpers
@@ -1008,6 +1040,7 @@ impl ExternalIntrospect for TableExternal {
             // of click / Shift+click / Shift+Arrow.
             ("cell_selection", "string"),
             ("cell_selection_count", "int"),
+            ("cell_selection_tsv", "string"),
             ("select-cell", "boolean"),
             ("extend-cell", "boolean"),
             ("clear-cell-selection", "boolean"),
@@ -1058,6 +1091,12 @@ impl ExternalIntrospect for TableExternal {
             "cell_selection_count" => {
                 Some(IntrospectValue::Int(int_of(self.cell_selection_count())))
             }
+            // R1222 §5.38 — the selected cell rectangle as TSV (the AI-first
+            // "copy the selection" read; `Null` when nothing is selected).
+            "cell_selection_tsv" => Some(match self.selected_tsv() {
+                Some(tsv) => IntrospectValue::Text(tsv),
+                None => IntrospectValue::Null,
+            }),
             // R730 §5.40 — sort key column (`-1` when unsorted) + the
             // WAI-ARIA `aria-sort` token the active header carries.
             "sort_col" => Some(IntrospectValue::Int(
@@ -1885,6 +1924,65 @@ mod tests {
             "the cursor moved to the extent (row)"
         );
         assert_eq!(t.focused_col(), 1, "the cursor moved to the extent (col)");
+    }
+
+    #[test]
+    fn r1222_selected_tsv_serializes_the_rectangle() {
+        let mut t = sample(); // Tabs/R690, Menu/R691, Table/R707
+        assert_eq!(t.selected_tsv(), None, "no selection -> None");
+        // The full 3x2 rectangle: row-major, tab columns, newline rows.
+        t.select_cell(0, 0);
+        t.extend_cell(2, 1);
+        assert_eq!(
+            t.selected_tsv().as_deref(),
+            Some("Tabs\tR690\nMenu\tR691\nTable\tR707"),
+        );
+        // A single row (1x2), a single column (3x1), a single cell.
+        t.select_cell(1, 0);
+        t.extend_cell(1, 1);
+        assert_eq!(t.selected_tsv().as_deref(), Some("Menu\tR691"), "one row");
+        t.select_cell(0, 1);
+        t.extend_cell(2, 1);
+        assert_eq!(
+            t.selected_tsv().as_deref(),
+            Some("R690\nR691\nR707"),
+            "one column"
+        );
+        t.select_cell(2, 0);
+        assert_eq!(t.selected_tsv().as_deref(), Some("Table"), "one cell");
+        // Clearing the range drops the TSV (the cursor is untouched).
+        t.clear_cell_selection();
+        assert_eq!(t.selected_tsv(), None, "cleared -> None");
+    }
+
+    #[test]
+    fn r1222_cell_selection_tsv_query_and_schema() {
+        let mut ext = TableExternal::with_select_items(
+            vec!["A".to_string(), "B".to_string()],
+            vec![
+                vec!["1".to_string(), "2".to_string()],
+                vec!["3".to_string(), "4".to_string()],
+            ],
+        );
+        assert_eq!(
+            ext.query("cell_selection_tsv"),
+            Some(IntrospectValue::Null),
+            "no selection -> Null",
+        );
+        ext.invoke("select-cell", IntrospectValue::Text("0,0".to_string()))
+            .unwrap();
+        ext.invoke("extend-cell", IntrospectValue::Text("1,1".to_string()))
+            .unwrap();
+        assert_eq!(
+            ext.query("cell_selection_tsv"),
+            Some(IntrospectValue::Text("1\t2\n3\t4".to_string())),
+            "the query mirrors Table::selected_tsv over the wire",
+        );
+        let fields: Vec<&str> = ext.schema().fields.iter().map(|(p, _)| *p).collect();
+        assert!(
+            fields.contains(&"cell_selection_tsv"),
+            "cell_selection_tsv is schema-declared",
+        );
     }
 
     #[test]

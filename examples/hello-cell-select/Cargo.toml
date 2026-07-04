@@ -19,6 +19,8 @@ pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R952 §5.50 — data-grid paint composition (`view_table` + `TableSelection`).
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# R1222 §5.22 — platform clipboard for the Ctrl+C range copy (TSV).
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]
