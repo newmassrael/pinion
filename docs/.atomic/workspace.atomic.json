@@ -61610,6 +61610,50 @@
         "after R1233 the R1224-R1227 adversarial-review debt is fully retired"
       ]
     },
+    "Round 1233": {
+      "decision_summary": "R1233 STR-1 clearance: extract hello-node-editor's 5.7k-line test module to a sibling tests.rs (main.rs 12,427->6,705 lines); a child mod tests reaches all private items via use super::*, zero visibility churn; audit-clearance campaign complete",
+      "changes_bullets": [
+        "STR-1 clearance: extract hello-node-editor's #[cfg(test)] mod tests (5721 lines) to a sibling src/tests.rs; main.rs = `#[cfg(test)] mod tests;`",
+        "a child mod tests reaches all private parent items via `use super::*` -> ZERO pub(crate) visibility churn, a pure reorganization",
+        "main.rs 12,427 -> 6,705 lines (production); the fastest-growing chunk (tests, ~100-150 lines/round) is now a separate file",
+        "no behavior change: 167 node-editor tests + r1226 cut + r1227 frame demos all unchanged"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 167 pass (identical to pre-split)",
+        "cargo test --workspace -j2: 8025 pass / 0 fail (real exit 0)",
+        "cargo clippy -p hello-node-editor --all-targets + cargo fmt --all --check + cargo doc: clean",
+        "tools/demos/r1226 (cut) + r1227 (frames) re-run: PASS (the split binary works)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "AUDIT-CLEARANCE CAMPAIGN COMPLETE: the full R1224-R1227 adversarial-review debt is retired -- a11y (R1228 B1 combobox->spinbutton + B3 AT-operable, R1229 B2 tri-state checkbox) + SSOT (R1230 edge_endpoints/node_bounds, R1231 composite_tag::prefixed_index, R1232 RenameCmd<T>) + DOC (R1232 cut-overclaim + persistence-doc) + STR (R1233 test-module extraction)",
+        "OPTIONAL finer follow-up (NOT a defect, deferred): split the 6.7k production main.rs further into geometry/entities/undo/view/a11y submodules -- larger + visibility-churn; the primary one-giant-file concern is addressed by the test extraction (the file is halved and the growing part is separate)"
+      ],
+      "publishable_decision_summary": "R1233 STR-1 clearance: extract hello-node-editor's 5.7k-line test module to a sibling tests.rs (main.rs 12,427->6,705 lines); a child mod tests reaches all private items via use super::*, zero visibility churn; audit-clearance campaign complete",
+      "publishable_changes_bullets": [
+        "STR-1 clearance: extract hello-node-editor's #[cfg(test)] mod tests (5721 lines) to a sibling src/tests.rs; main.rs = `#[cfg(test)] mod tests;`",
+        "a child mod tests reaches all private parent items via `use super::*` -> ZERO pub(crate) visibility churn, a pure reorganization",
+        "main.rs 12,427 -> 6,705 lines (production); the fastest-growing chunk (tests, ~100-150 lines/round) is now a separate file",
+        "no behavior change: 167 node-editor tests + r1226 cut + r1227 frame demos all unchanged"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 167 pass (identical to pre-split)",
+        "cargo test --workspace -j2: 8025 pass / 0 fail (real exit 0)",
+        "cargo clippy -p hello-node-editor --all-targets + cargo fmt --all --check + cargo doc: clean",
+        "tools/demos/r1226 (cut) + r1227 (frames) re-run: PASS (the split binary works)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "AUDIT-CLEARANCE CAMPAIGN COMPLETE: the full R1224-R1227 adversarial-review debt is retired -- a11y (R1228 B1 combobox->spinbutton + B3 AT-operable, R1229 B2 tri-state checkbox) + SSOT (R1230 edge_endpoints/node_bounds, R1231 composite_tag::prefixed_index, R1232 RenameCmd<T>) + DOC (R1232 cut-overclaim + persistence-doc) + STR (R1233 test-module extraction)",
+        "OPTIONAL finer follow-up (NOT a defect, deferred): split the 6.7k production main.rs further into geometry/entities/undo/view/a11y submodules -- larger + visibility-churn; the primary one-giant-file concern is addressed by the test extraction (the file is halved and the growing part is separate)"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
