@@ -168,7 +168,7 @@
 //!   keymap is the lifted [`pinion_core::edit_field_keymap`] SSOT with the
 //!   target's typed [`CellKind`] gate (title = text, a `Float` port = a
 //!   number, a `Vector`/`Color` port = a `#RRGGBB[AA]` hex). A commit journals
-//!   an undoable [`RenameNodeCmd`] / [`SetPortDefaultCmd`] through the
+//!   an undoable [`RenameCmd`] / [`SetPortDefaultCmd`] through the
 //!   `apply_rename` / `apply_set_default` SSOT — the same path the AI-first
 //!   `intervene node.<id>.title` / `node.<id>.input_default.<port>` write-twins
 //!   drive (`query editing` is the in-flight read; `query renaming` survives as
@@ -951,9 +951,13 @@ struct SerializedGraph {
     edges: Vec<Edge>,
     next_node_id: u32,
     next_edge_id: u32,
-    /// R1227 — the comment frames + their id counter. `#[serde(default)]` so a
-    /// pre-R1227 (schema-3) blob still deserializes into an empty frame list;
-    /// the schema bump to 4 marks the additive field for a fresh save.
+    /// R1227 — the comment frames + their id counter. `#[serde(default)]` lets
+    /// the *current* (schema-4) format tolerate a frames-less blob during the
+    /// deserialize step. R1232 — it does NOT forward-load an old save: `load_json`
+    /// rejects any `schema_version != PERSISTED_SCHEMA_VERSION` BEFORE the field
+    /// defaults matter, so a pre-R1227 (schema-3) blob is version-rejected (the
+    /// strict "a foreign document version does not open" contract the 1→2 rename /
+    /// 2→3 semantic bumps established), not migrated to empty frames.
     #[serde(default)]
     frames: Vec<CommentFrame>,
     #[serde(default)]
@@ -1095,9 +1099,14 @@ fn segments_cross(p1: (f64, f64), p2: (f64, f64), p3: (f64, f64), p4: (f64, f64)
 
 /// R1226 — whether the straight cut segment `a`-`b` crosses the wire from
 /// `from` to `to`. The curve is sampled into [`EDGE_SAMPLES`] sub-segments —
-/// the SAME `edge_curve` + `cubic_at` geometry [`point_near_edge`] reads, so the
-/// knife cuts exactly the drawn curve (no paint/geometry divergence) — and each
-/// is tested against the cut with [`segments_cross`].
+/// the SAME `edge_curve` + `cubic_at` control points [`point_near_edge`] reads —
+/// and each sub-segment is tested against the cut with [`segments_cross`].
+/// R1232 — the knife tests this 18-chord polyline approximation, which the paint
+/// (a true `CurveTo` cubic) matches only up to the sub-pixel chord deviation;
+/// unlike the click hit-test's `EDGE_HIT_THRESHOLD` halo, the crossing test has
+/// no tolerance, so a cut grazing a bowed wire's bulge between two samples can
+/// miss (or a concave pinch can false-cut) within that chord-vs-curve gap. Fine
+/// at the pixel scale; an analytic segment-vs-cubic root would be exact.
 fn edge_crosses_segment(from: (i32, i32), to: (i32, i32), a: (i32, i32), b: (i32, i32)) -> bool {
     let (c1, c2) = edge_curve(from, to);
     let p0 = (f64::from(from.0), f64::from(from.1));
@@ -2003,40 +2012,81 @@ impl UndoCommand for MoveNodesCmd {
     }
 }
 
-/// R878 §5.52 — a reversible node **rename** (the title-edit `UndoCommand`,
-/// the [`MoveNodesCmd`] shape over the `title` field). Stores only the renamed
-/// node's `before` / `after` title, so undo / redo is an O(1) field write —
-/// never a graph-wide delta ([[granular-undo-not-snapshot]]). A rename commits
-/// once per editing session (Enter / blur), so it does NOT opt into the
-/// coalescing hook — every committed rename is its own undo step (the
-/// canonical editor behaviour; Qt's `QUndoStack` rename commands likewise
-/// don't merge across sessions).
-struct RenameNodeCmd {
-    nodes: Rc<Signal<Vec<GraphNode>>>,
-    id: NodeId,
+/// R1232 §5.52 — a titled, id-addressed graph entity a rename undo command
+/// edits. [`GraphNode`] + [`CommentFrame`] are the two consumers: the arrival of
+/// the 2nd unified [`RenameCmd`]/[`apply_rename`] over what were byte-identical
+/// `RenameNodeCmd` + `RenameFrameCmd` copies ([[abstraction-needs-second-consumer]]).
+/// `Serialize`/`Deserialize` are the `Signal<Vec<T>>` write bound.
+trait Titled: Clone + PartialEq + Serialize + serde::de::DeserializeOwned + 'static {
+    type Id: PartialEq + Copy;
+    /// The entity kind for the undo label (`"node"` / `"frame"`).
+    const KIND: &'static str;
+    fn entity_id(&self) -> Self::Id;
+    fn title_ref(&self) -> &str;
+    fn set_title(&mut self, title: String);
+}
+
+impl Titled for GraphNode {
+    type Id = NodeId;
+    const KIND: &'static str = "node";
+    fn entity_id(&self) -> NodeId {
+        self.id
+    }
+    fn title_ref(&self) -> &str {
+        &self.title
+    }
+    fn set_title(&mut self, title: String) {
+        self.title = title;
+    }
+}
+
+impl Titled for CommentFrame {
+    type Id = FrameId;
+    const KIND: &'static str = "frame";
+    fn entity_id(&self) -> FrameId {
+        self.id
+    }
+    fn title_ref(&self) -> &str {
+        &self.title
+    }
+    fn set_title(&mut self, title: String) {
+        self.title = title;
+    }
+}
+
+/// R1232 §5.52 — a reversible **rename** of a [`Titled`] entity by id (the
+/// generic that unified R878 `RenameNodeCmd` + R1227 `RenameFrameCmd` — those
+/// were structurally identical, only the entity type differing, so the 2nd
+/// consumer lifts them). Stores only the `before` / `after` title, so undo /
+/// redo is an O(1) field write, never a graph-wide delta
+/// ([[granular-undo-not-snapshot]]). A rename commits once per editing session
+/// (Enter / blur), so it does NOT opt into the coalescing hook — every committed
+/// rename is its own undo step (Qt's `QUndoStack` rename model).
+struct RenameCmd<T: Titled> {
+    entities: Rc<Signal<Vec<T>>>,
+    id: T::Id,
     before: String,
     after: String,
 }
 
-impl RenameNodeCmd {
-    /// Set the renamed node's title. A no-op if the node is absent (a LIFO
-    /// undo can never reach a rename while the node is deleted, but the
-    /// signal write stays total either way — the [`MoveNodesCmd::set_all`]
-    /// discipline).
+impl<T: Titled> RenameCmd<T> {
+    /// Set the renamed entity's title. A no-op if it is absent (a LIFO undo can
+    /// never reach a rename while the entity is deleted, but the signal write
+    /// stays total either way — the [`MoveNodesCmd::set_all`] discipline).
     fn set_title(&self, title: &str) {
-        self.nodes.set_with(|prev| {
+        self.entities.set_with(|prev| {
             let mut next = prev.clone();
-            if let Some(n) = next.iter_mut().find(|n| n.id == self.id) {
-                title.clone_into(&mut n.title);
+            if let Some(e) = next.iter_mut().find(|e| e.entity_id() == self.id) {
+                e.set_title(title.to_owned());
             }
             next
         });
     }
 }
 
-impl UndoCommand for RenameNodeCmd {
+impl<T: Titled> UndoCommand for RenameCmd<T> {
     fn label(&self) -> Cow<'static, str> {
-        Cow::Borrowed("Rename node")
+        Cow::Owned(format!("Rename {}", T::KIND))
     }
 
     fn redo(&self) {
@@ -2048,37 +2098,34 @@ impl UndoCommand for RenameNodeCmd {
     }
 }
 
-/// R878 — apply a node rename undoably: trim, reject an empty / whitespace
-/// title or an unknown id (graph unchanged), no-op (and journal nothing) when
-/// the trimmed title already matches. The ONE rename mutation path — the
-/// interactive commit (Enter / blur via [`commit_edit`]) and the AI-first
-/// `intervene node.<id>.title` both land here, so they cannot drift.
-fn apply_rename(
-    nodes: &Rc<Signal<Vec<GraphNode>>>,
+/// R1232 — rename [`Titled`] entity `id` undoably (the ONE rename path for both
+/// nodes AND frames): trim, reject an empty / whitespace title or an unknown id
+/// (graph unchanged), no-op (and journal nothing) when the trimmed title already
+/// matches. The interactive commit (Enter / blur via [`commit_edit`]) and the
+/// AI-first `intervene <node|frame>.<id>.title` both land here, so they cannot drift.
+fn apply_rename<T: Titled>(
+    entities: &Rc<Signal<Vec<T>>>,
     undo: &UndoStack,
-    id: NodeId,
+    id: T::Id,
     title: &str,
 ) -> bool {
     let trimmed = title.trim();
     if trimmed.is_empty() {
         return false;
     }
-    let Some(before) = nodes
+    let Some(before) = entities
         .get()
-        .into_iter()
-        .find(|n| n.id == id)
-        .map(|n| n.title)
+        .iter()
+        .find(|e| e.entity_id() == id)
+        .map(|e| e.title_ref().to_owned())
     else {
         return false;
     };
     if before == trimmed {
-        // Committing the unchanged title is a successful no-op — no
-        // signal churn, no spurious undo step (the `record_moves`
-        // `before == after` guard's analogue).
         return true;
     }
-    let cmd = RenameNodeCmd {
-        nodes: Rc::clone(nodes),
+    let cmd = RenameCmd {
+        entities: Rc::clone(entities),
         id,
         before,
         after: trimmed.to_owned(),
@@ -2088,88 +2135,20 @@ fn apply_rename(
     true
 }
 
-/// R1227 — a reversible comment-frame **rename** (the [`RenameNodeCmd`] shape
-/// over the frame list). A committed rename is its own undo step (no coalescing).
-struct RenameFrameCmd {
-    frames: Rc<Signal<Vec<CommentFrame>>>,
-    id: FrameId,
-    before: String,
-    after: String,
-}
-
-impl RenameFrameCmd {
-    fn set_title(&self, title: &str) {
-        self.frames.set_with(|prev| {
-            let mut next = prev.clone();
-            if let Some(f) = next.iter_mut().find(|f| f.id == self.id) {
-                title.clone_into(&mut f.title);
-            }
-            next
-        });
-    }
-}
-
-impl UndoCommand for RenameFrameCmd {
-    fn label(&self) -> Cow<'static, str> {
-        Cow::Borrowed("Rename frame")
-    }
-
-    fn redo(&self) {
-        self.set_title(&self.after);
-    }
-
-    fn undo(&self) {
-        self.set_title(&self.before);
-    }
-}
-
-/// R1227 — rename comment frame `id` undoably (the [`apply_rename`] peer): trim,
-/// reject an empty title or unknown id, no-op when unchanged. The ONE frame-
-/// rename path the `intervene frame.<id>.title` write funnels through.
-fn apply_frame_rename(
-    frames: &Rc<Signal<Vec<CommentFrame>>>,
-    undo: &UndoStack,
-    id: FrameId,
-    title: &str,
-) -> bool {
-    let trimmed = title.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let Some(before) = frames
-        .get()
-        .into_iter()
-        .find(|f| f.id == id)
-        .map(|f| f.title)
-    else {
-        return false;
-    };
-    if before == trimmed {
-        return true;
-    }
-    let cmd = RenameFrameCmd {
-        frames: Rc::clone(frames),
-        id,
-        before,
-        after: trimmed.to_owned(),
-    };
-    cmd.redo();
-    undo.push_applied(cmd);
-    true
-}
-
-/// R899 — one reversible edit to an input port's literal default value
-/// (the granular [`RenameNodeCmd`] peer — a per-field, non-coalescing undo
-/// step: each committed default change is its own step). Stores the typed
-/// [`CellValue`] before / after, so undo / redo restore the exact value.
+/// R899 — one reversible edit to an input port's literal default value (a
+/// per-field, non-coalescing undo step: each committed default change is its own
+/// step). Stores the typed [`CellValue`] before / after, so undo / redo restore
+/// the exact value.
 ///
-/// R900 — this is the *fourth* per-widget [`UndoCommand`] ([`GraphEdit`] /
-/// [`MoveNodesCmd`] / [`RenameNodeCmd`] / this), the established node-editor
-/// pattern: each command owns the shape of the one mutation it reverses, not a
-/// generic field-functor. They are deliberately separate — `MoveNodesCmd` is
-/// multi-target + coalescing, `RenameNodeCmd` validates a non-empty trim, this
-/// no-ops on a total-order-equal value — so a single closure-parameterised
-/// `FieldUndoCmd<T>` would be a behaviour-bifurcating wrong abstraction (R853).
+/// R900 / R1232 — this is one of four node-editor [`UndoCommand`]s ([`GraphEdit`]
+/// / [`MoveNodesCmd`] / [`RenameCmd`] / this). Each owns the shape of the one
+/// mutation it reverses; a single closure-parameterised `FieldUndoCmd<T>` over
+/// ALL of them would be a behaviour-bifurcating wrong abstraction (R853) —
+/// `MoveNodesCmd` is multi-target + coalescing, this no-ops on a
+/// total-order-equal value. The rename command is the one that DID generalise:
+/// its node + frame copies were byte-identical, so R1232 lifted them to the
+/// generic [`RenameCmd<T>`](RenameCmd) (the 2nd-consumer rule), whereas Move /
+/// SetPortDefault genuinely differ and stay distinct.
 struct SetPortDefaultCmd {
     nodes: Rc<Signal<Vec<GraphNode>>>,
     id: NodeId,
@@ -2181,7 +2160,7 @@ struct SetPortDefaultCmd {
 impl SetPortDefaultCmd {
     /// Write the port's default. A no-op if the node / port is absent (a LIFO
     /// undo cannot reach it while deleted, but the write stays total — the
-    /// [`RenameNodeCmd::set_title`] discipline).
+    /// [`RenameCmd::set_title`] discipline).
     fn set_default(&self, value: &CellValue) {
         self.nodes.set_with(|prev| {
             let mut next = prev.clone();
@@ -3475,7 +3454,7 @@ impl NodeGraphExternal {
     }
 
     /// R1227 — the `intervene frame.<id>.<field>` write: `title` renames through
-    /// the [`apply_frame_rename`] SSOT (journaled), while the rect
+    /// the shared [`apply_rename`] SSOT (journaled), while the rect
     /// (`x`/`y`/`w`/`h`) is READ-ONLY in v1 — a frame is sized from its
     /// selection's bbox at creation; move-with-contents + resize are R1228.
     fn intervene_frame(
@@ -3494,7 +3473,7 @@ impl NodeGraphExternal {
         match field {
             "title" => match value {
                 IntrospectValue::Text(t) => {
-                    if apply_frame_rename(&self.frames, &self.undo, id, &t) {
+                    if apply_rename(&self.frames, &self.undo, id, &t) {
                         Ok(())
                     } else {
                         Err(InterveneError::OutOfRange)
@@ -4846,7 +4825,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R878 — the write twin of `query node.<id>.title` ([[wire-form-
             // read-write-symmetry]]; pre-R878 this slot was ReadOnly). Routes
             // through the `apply_rename` SSOT, so an RPC rename journals the
-            // same undoable [`RenameNodeCmd`] an interactive commit does. An
+            // same undoable `RenameCmd` an interactive commit does. An
             // empty / whitespace title is a value rejection (`OutOfRange`) —
             // the node keeps its name.
             "title" => match value {

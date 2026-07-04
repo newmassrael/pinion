@@ -61562,6 +61562,54 @@
         "STR-1 (node-editor 12,458-line main.rs internal mod split) = R1233 (large, its own round)"
       ]
     },
+    "Round 1232": {
+      "decision_summary": "R1232 SSOT+doc clearance (audit SSOT-5+DOC-1+DOC-2): RenameNodeCmd+RenameFrameCmd unified to generic RenameCmd<T:Titled> (2nd-consumer lift); the cut-geometry overclaim + the persistence serde-default field doc corrected to match the code",
+      "changes_bullets": [
+        "SSOT-5 lift: RenameCmd<T: Titled> + generic apply_rename<T> unify the byte-identical RenameNodeCmd + RenameFrameCmd (2nd-consumer lift)",
+        "Titled trait (GraphNode + CommentFrame); the undo label derives from T::KIND (\"node\" / \"frame\")",
+        "DOC-1 fix: cut_wires \"cuts exactly the drawn curve / no divergence\" corrected -> it tests the 18-chord polyline (zero-tolerance vs the true bezier; a grazing cut can miss / false-cut)",
+        "DOC-2 fix: frames serde-default field doc corrected -> a v3 blob is version-REJECTED by load_json (strict document-version), NOT migrated to empty frames",
+        "R900 doc + stale RenameNodeCmd refs updated: rename was the pair that generalised; Move / SetPortDefault genuinely differ and stay distinct"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 167 pass (the generic RenameCmd behaves identically for node + frame; r1174 + r1227 rename paths unchanged)",
+        "cargo test --workspace -j2: 8025 pass / 0 fail (real exit 0)",
+        "cargo clippy -p hello-node-editor --all-targets + fmt + cargo doc: clean (no broken intra-doc links to the deleted types)",
+        "tools/demos/r1227 (frame rename) + r1174 (node rename) re-run: PASS"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "audit-clearance campaign nearly complete: a11y (R1228 B1/B3 + R1229 B2) + node SSOT (R1230) + prefix SSOT (R1231) + rename-generic + doc-accuracy (R1232) all cleared",
+        "LAST item: STR-1 (hello-node-editor/main.rs = 12,458 lines, one file, no internal mods) -> R1233 internal mod split (geometry / entities / undo / rpc / view / a11y), pure reorganization, no behavior change",
+        "after R1233 the R1224-R1227 adversarial-review debt is fully retired"
+      ],
+      "publishable_decision_summary": "R1232 SSOT+doc clearance (audit SSOT-5+DOC-1+DOC-2): RenameNodeCmd+RenameFrameCmd unified to generic RenameCmd<T:Titled> (2nd-consumer lift); the cut-geometry overclaim + the persistence serde-default field doc corrected to match the code",
+      "publishable_changes_bullets": [
+        "SSOT-5 lift: RenameCmd<T: Titled> + generic apply_rename<T> unify the byte-identical RenameNodeCmd + RenameFrameCmd (2nd-consumer lift)",
+        "Titled trait (GraphNode + CommentFrame); the undo label derives from T::KIND (\"node\" / \"frame\")",
+        "DOC-1 fix: cut_wires \"cuts exactly the drawn curve / no divergence\" corrected -> it tests the 18-chord polyline (zero-tolerance vs the true bezier; a grazing cut can miss / false-cut)",
+        "DOC-2 fix: frames serde-default field doc corrected -> a v3 blob is version-REJECTED by load_json (strict document-version), NOT migrated to empty frames",
+        "R900 doc + stale RenameNodeCmd refs updated: rename was the pair that generalised; Move / SetPortDefault genuinely differ and stay distinct"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 167 pass (the generic RenameCmd behaves identically for node + frame; r1174 + r1227 rename paths unchanged)",
+        "cargo test --workspace -j2: 8025 pass / 0 fail (real exit 0)",
+        "cargo clippy -p hello-node-editor --all-targets + fmt + cargo doc: clean (no broken intra-doc links to the deleted types)",
+        "tools/demos/r1227 (frame rename) + r1174 (node rename) re-run: PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "audit-clearance campaign nearly complete: a11y (R1228 B1/B3 + R1229 B2) + node SSOT (R1230) + prefix SSOT (R1231) + rename-generic + doc-accuracy (R1232) all cleared",
+        "LAST item: STR-1 (hello-node-editor/main.rs = 12,458 lines, one file, no internal mods) -> R1233 internal mod split (geometry / entities / undo / rpc / view / a11y), pure reorganization, no behavior change",
+        "after R1233 the R1224-R1227 adversarial-review debt is fully retired"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
