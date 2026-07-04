@@ -61128,6 +61128,70 @@
         "unsafe_code = deny (was forbid) - acceptable trade-off for SCE generated code consumption"
       ]
     },
+    "Round 1224": {
+      "decision_summary": "R1224 inspector interactive-cell keyboard + focus a11y: Tab-cycled focus region + property cursor (RPC + keyboard one funnel); Details rows now switch/spinbutton with region-gated active-descendant",
+      "changes_bullets": [
+        "Added FocusRegion (Objects/Details) + InspectorFocus reactive holder in the External",
+        "focus_region / prop_cursor / focus_property RPC surface (query + invoke); read into InspectorState",
+        "apply_key two-region dispatch: Tab cycles the pane (consumed); Objects keeps the pre-R1224 nav",
+        "Details pane: Arrow/Home/End move the property cursor; Space/Enter toggle, +/- step, Delete reset",
+        "keyboard row-nav + edits funnel through the existing focus_property / toggle_property / step_property / reset verbs",
+        "a11y: Details rows now operable roles — Bool a switch (aria-checked, mixed via valuetext), numeric a spinbutton",
+        "active-descendant + painted focus ring are region-gated (roving focus: one pane shows the cursor at a time)",
+        "6 new unit tests; updated the List/ListItem a11y test to Group + Switch/SpinButton value assertions"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 8004 pass / 0 fail (199 binaries); real exit 0 (unpiped, no tail-mask)",
+        "cargo test -p hello-inspector: 37 pass incl 6 new R1224 + the updated Group/switch/spinbutton a11y test",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo fmt --all --check: clean",
+        "tools/demos/r1224_inspector_keyboard_a11y.py: PASS ~36 assertions (Tab/Arrow/Space/+-/Delete keyboard + RPC focus verbs)",
+        "keyboard path genuinely exercised: click-focus -> scene/key drove apply_key (region toggle + edits observable via value/mixed/modified)"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.40",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "no new external-dependency carry; VELLO-001/002 upstream carry unchanged",
+        "numeric SpinButton exposes value_text only (no aria-valuenow/min/max) — inspector properties carry no declared bounds; a bounded numeric would want AccessValue::Float (deferred, no consumer)",
+        "mixed multi-object Bool announces via value_text \"Multiple Values\", not accesskit Toggled::Mixed (substrate lacks a Mixed toggled leg; 1 consumer — deferred per abstraction-needs-2nd-consumer)",
+        "Tab consumes always (single-widget focus trap) — correct while the inspector is the sole focusable; a 2nd focusable widget would need fall-through on the last region",
+        "next: data-grid editable cell-range block PASTE / property-grid inline text-field absolute edit / node comment-frame"
+      ],
+      "publishable_decision_summary": "R1224 inspector interactive-cell keyboard + focus a11y: Tab-cycled focus region + property cursor (RPC + keyboard one funnel); Details rows now switch/spinbutton with region-gated active-descendant",
+      "publishable_changes_bullets": [
+        "Added FocusRegion (Objects/Details) + InspectorFocus reactive holder in the External",
+        "focus_region / prop_cursor / focus_property RPC surface (query + invoke); read into InspectorState",
+        "apply_key two-region dispatch: Tab cycles the pane (consumed); Objects keeps the pre-R1224 nav",
+        "Details pane: Arrow/Home/End move the property cursor; Space/Enter toggle, +/- step, Delete reset",
+        "keyboard row-nav + edits funnel through the existing focus_property / toggle_property / step_property / reset verbs",
+        "a11y: Details rows now operable roles — Bool a switch (aria-checked, mixed via valuetext), numeric a spinbutton",
+        "active-descendant + painted focus ring are region-gated (roving focus: one pane shows the cursor at a time)",
+        "6 new unit tests; updated the List/ListItem a11y test to Group + Switch/SpinButton value assertions"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 8004 pass / 0 fail (199 binaries); real exit 0 (unpiped, no tail-mask)",
+        "cargo test -p hello-inspector: 37 pass incl 6 new R1224 + the updated Group/switch/spinbutton a11y test",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo fmt --all --check: clean",
+        "tools/demos/r1224_inspector_keyboard_a11y.py: PASS ~36 assertions (Tab/Arrow/Space/+-/Delete keyboard + RPC focus verbs)",
+        "keyboard path genuinely exercised: click-focus -> scene/key drove apply_key (region toggle + edits observable via value/mixed/modified)"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.40",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "no new external-dependency carry; VELLO-001/002 upstream carry unchanged",
+        "numeric SpinButton exposes value_text only (no aria-valuenow/min/max) — inspector properties carry no declared bounds; a bounded numeric would want AccessValue::Float (deferred, no consumer)",
+        "mixed multi-object Bool announces via value_text \"Multiple Values\", not accesskit Toggled::Mixed (substrate lacks a Mixed toggled leg; 1 consumer — deferred per abstraction-needs-2nd-consumer)",
+        "Tab consumes always (single-widget focus trap) — correct while the inspector is the sole focusable; a 2nd focusable widget would need fall-through on the last region",
+        "next: data-grid editable cell-range block PASTE / property-grid inline text-field absolute edit / node comment-frame"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

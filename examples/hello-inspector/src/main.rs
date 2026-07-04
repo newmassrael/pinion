@@ -71,7 +71,9 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AriaRole, ListOption, WidgetA11y, listbox_option_nodes};
+use pinion_a11y::{
+    AccessNode, AccessValue, AriaRole, ListOption, WidgetA11y, listbox_option_nodes,
+};
 use pinion_core::cell_value::CellValue;
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::external::query_proxy_external_impl;
@@ -129,6 +131,57 @@ const DETAIL_ROW_W: u32 = 260;
 const SWATCH: u32 = 16;
 /// R1221 — the +/- numeric-stepper button size (px) on a Details value cell.
 const STEPPER: u32 = 18;
+/// R1224 — the keyboard-cursor focus ring width (px) painted around the active
+/// row of whichever pane currently owns the keyboard (the paint peer of the a11y
+/// active-descendant `focused`).
+const FOCUS_RING: u32 = 2;
+
+/// R1224 — which pane owns the keyboard cursor. The inspector is a single
+/// focus stop (`with_focusable(true)` on the root) that hosts TWO composite
+/// sub-regions — the object `listbox` (left) and the Details property form
+/// (right) — so a `region` axis tracks which one the Arrow keys drive, the
+/// WAI-ARIA "roving focus between grouped widgets" pattern (`Tab` cycles the
+/// region, exactly as it would move between two separate widgets). Lives in the
+/// External beside the selection so it is observable + drivable over RPC (§2 #2):
+/// `focus_region` reads/sets it, matching the keyboard funnel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum FocusRegion {
+    /// The multi-select object list (left) — Arrow keys move the object cursor.
+    #[default]
+    Objects,
+    /// The Details property form (right) — Arrow keys move the property cursor
+    /// and edit the value at it (toggle a Bool / step a numeric / reset).
+    Details,
+}
+
+impl FocusRegion {
+    /// The wire token the `focus_region` query reports + `intervene` accepts —
+    /// one SSOT so the RPC read and write cannot drift.
+    fn wire(self) -> &'static str {
+        match self {
+            FocusRegion::Objects => "objects",
+            FocusRegion::Details => "details",
+        }
+    }
+
+    /// Decode a wire token back to a region; `None` on an unknown token (the
+    /// caller Rejects rather than silently defaulting).
+    fn from_wire(token: &str) -> Option<Self> {
+        match token {
+            "objects" => Some(FocusRegion::Objects),
+            "details" => Some(FocusRegion::Details),
+            _ => None,
+        }
+    }
+
+    /// The other region — the `Tab` cycle target.
+    fn toggled(self) -> Self {
+        match self {
+            FocusRegion::Objects => FocusRegion::Details,
+            FocusRegion::Details => FocusRegion::Objects,
+        }
+    }
+}
 
 // ─── Model ────────────────────────────────────────────────────────
 
@@ -251,6 +304,24 @@ fn use_selection() -> Rc<Signal<VirtualSelect>> {
         model.select(0);
         Signal::new(model)
     })
+}
+
+/// R1224 — the keyboard-focus state: which pane owns the cursor, plus the active
+/// Details property row (the a11y active-descendant + keyboard-edit target).
+/// `prop_cursor` is stored raw and clamped against the live common-property
+/// count on read (the selection can shrink it out of range), so it is not the
+/// authority for "is this a valid row" — [`InspectorExternal::edit_cursor`] is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+struct InspectorFocus {
+    region: FocusRegion,
+    prop_cursor: Option<usize>,
+}
+
+/// R1224 — the shared keyboard-focus holder, persisted across rebuilds like the
+/// object + selection models so the region / property-cursor survive a re-render.
+fn use_focus() -> Rc<Signal<InspectorFocus>> {
+    let owner = Owner::current().expect("use_focus requires an active Owner scope");
+    owner.cache("inspector.focus", || Signal::new(InspectorFocus::default()))
 }
 
 // ─── Common-property derivation (the SSOT shared by query / paint / a11y) ──
@@ -453,6 +524,9 @@ struct InspectorExternal {
     /// R958 — the frozen class defaults the "modified" indicator + reset compare
     /// against (the [`use_object_defaults`] snapshot).
     defaults: Rc<Vec<ObjectData>>,
+    /// R1224 — the keyboard-focus region + active Details property cursor (the
+    /// `focus_region` / `focus_property` RPC surface + the keyboard funnel).
+    focus: Rc<Signal<InspectorFocus>>,
 }
 
 impl InspectorExternal {
@@ -460,11 +534,13 @@ impl InspectorExternal {
         objects: Rc<Signal<Vec<ObjectData>>>,
         selection: Rc<Signal<VirtualSelect>>,
         defaults: Rc<Vec<ObjectData>>,
+        focus: Rc<Signal<InspectorFocus>>,
     ) -> Self {
         Self {
             objects,
             selection,
             defaults,
+            focus,
         }
     }
 
@@ -566,6 +642,63 @@ impl InspectorExternal {
     /// SSOT over the live object + selection state).
     fn common(&self) -> Vec<CommonProperty> {
         common_properties(&self.objects.get(), &self.selection_set())
+    }
+
+    /// The number of Details rows (common properties) for the current selection —
+    /// the [`clamp_nav`] bound the property cursor navigates within.
+    fn row_count(&self) -> usize {
+        self.common().len()
+    }
+
+    // ─── focus funnel (keyboard / RPC converge here) ─── R1224 ─────────
+
+    /// The pane that currently owns the keyboard cursor.
+    fn focus_region(&self) -> FocusRegion {
+        self.focus.get().region
+    }
+
+    /// The active Details property row, CLAMPED to the live common-property
+    /// count (a shrinking selection can leave the stored cursor out of range).
+    /// `None` when there are no rows OR the cursor was never placed — the SSOT
+    /// the `prop_cursor` query, the keyboard edit, the paint ring, and the a11y
+    /// active-descendant all read, so none can address a stale row.
+    fn edit_cursor(&self) -> Option<usize> {
+        let last = self.row_count().checked_sub(1)?;
+        self.focus.get().prop_cursor.map(|i| i.min(last))
+    }
+
+    /// Move the keyboard cursor to `region`. Entering the Details pane with no
+    /// property cursor yet seeds it at the first row (if any), so the Arrow keys
+    /// have an anchor immediately — the roving-focus "land on the first item"
+    /// convention.
+    fn set_region(&self, region: FocusRegion) {
+        let seed = region == FocusRegion::Details && self.edit_cursor().is_none();
+        let first = (self.row_count() > 0).then_some(0);
+        self.focus.set_with(move |prev| {
+            let mut next = *prev;
+            next.region = region;
+            if seed {
+                next.prop_cursor = first;
+            }
+            next
+        });
+    }
+
+    /// Place the Details property cursor at `idx` (clamped to a valid row, or
+    /// `None` when there are no rows) and focus the Details pane — the single
+    /// "focus this property" intent the `focus_property` verb and the keyboard
+    /// row-navigation both drive.
+    fn set_prop_cursor(&self, idx: Option<usize>) {
+        let clamped = match self.row_count().checked_sub(1) {
+            Some(last) => idx.map(|i| i.min(last)),
+            None => None,
+        };
+        self.focus.set_with(move |prev| {
+            let mut next = *prev;
+            next.region = FocusRegion::Details;
+            next.prop_cursor = clamped;
+            next
+        });
     }
 
     // ─── selection funnel (keyboard / pointer / RPC all converge here) ──
@@ -848,6 +981,14 @@ impl ExternalIntrospect for InspectorExternal {
             // unit count). Both write across every selected object.
             ("toggle_property", "int"),
             ("step_property", "string"),
+            // R1224 — the keyboard-focus surface (§2 #2: the region + property
+            // cursor the Arrow keys drive are observable + drivable over RPC).
+            // `focus_region` reads/sets which pane owns the cursor ("objects" /
+            // "details"); `prop_cursor` reads the active Details row (clamped);
+            // `focus_property` places the cursor at a row (and focuses Details).
+            ("focus_region", "string"),
+            ("prop_cursor", "int"),
+            ("focus_property", "int"),
         ])
     }
 
@@ -867,6 +1008,10 @@ impl ExternalIntrospect for InspectorExternal {
                 i64::try_from(common_properties(&objects, &selection).len()).ok()?,
             )),
             "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
+            // R1224 — the keyboard-focus reads (the paint + a11y + AI all resolve
+            // the active pane / property row through these).
+            "focus_region" => Some(IntrospectValue::Text(self.focus_region().wire().to_owned())),
+            "prop_cursor" => Some(selected_to_value(self.edit_cursor())),
             _ => {
                 if let Some(j) = path.strip_prefix("object_name.") {
                     let j: usize = j.parse().ok()?;
@@ -1029,6 +1174,24 @@ impl ExternalIntrospect for InspectorExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1224 — move the keyboard cursor to a pane (the `Tab`-toggle twin);
+            // an unknown token is a typed Rejected, never a silent default.
+            "focus_region" => match args {
+                IntrospectValue::Text(token) => {
+                    let region = FocusRegion::from_wire(&token).ok_or(InvokeError::Rejected)?;
+                    self.set_region(region);
+                    Ok(IntrospectValue::Text(self.focus_region().wire().to_owned()))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R1224 — place the Details property cursor at a row and focus the
+            // Details pane (the Arrow-key row-navigation twin). Returns the
+            // clamped cursor actually landed on (`Null` when the panel is empty).
+            "focus_property" => {
+                let idx = int_arg(args)?;
+                self.set_prop_cursor(Some(idx));
+                Ok(selected_to_value(self.edit_cursor()))
+            }
             // R910/R902.1 — the composite pointer wire (modifier-aware).
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
@@ -1043,7 +1206,12 @@ impl ExternalIntrospect for InspectorExternal {
 }
 
 fn make_inspector_external() -> InspectorExternal {
-    InspectorExternal::new(use_objects(), use_selection(), use_object_defaults())
+    InspectorExternal::new(
+        use_objects(),
+        use_selection(),
+        use_object_defaults(),
+        use_focus(),
+    )
 }
 
 // ─── View ─────────────────────────────────────────────────────────
@@ -1065,10 +1233,17 @@ const N_OBJECTS: usize = 3;
 struct InspectorState {
     selected: [bool; N_OBJECTS],
     cursor: Option<usize>,
+    /// R1224 — which pane owns the keyboard cursor (default [`FocusRegion::Objects`]).
+    region: FocusRegion,
+    /// R1224 — the active Details property row (already clamped by the External),
+    /// the a11y active-descendant + keyboard-edit target when `region` is Details.
+    prop_cursor: Option<usize>,
 }
 
 impl InspectorState {
-    /// Build the bitmap state from the decoded selection set + cursor.
+    /// Build the bitmap state from the decoded selection set + cursor. The
+    /// keyboard-focus axis defaults to [`FocusRegion::Objects`] with no property
+    /// cursor; [`with_focus`](Self::with_focus) layers it on for `read_state`.
     fn from_parts(selection: &[usize], cursor: Option<usize>) -> Self {
         let mut selected = [false; N_OBJECTS];
         for &i in selection {
@@ -1076,7 +1251,35 @@ impl InspectorState {
                 *slot = true;
             }
         }
-        Self { selected, cursor }
+        Self {
+            selected,
+            cursor,
+            ..Self::default()
+        }
+    }
+
+    /// R1224 — layer the keyboard-focus axis (region + Details property cursor)
+    /// onto the selection state, kept a separate builder so the many existing
+    /// `from_parts` call sites (all selection-only) stay unchanged.
+    fn with_focus(mut self, region: FocusRegion, prop_cursor: Option<usize>) -> Self {
+        self.region = region;
+        self.prop_cursor = prop_cursor;
+        self
+    }
+
+    /// Whether the Details property row `i` is the active keyboard cursor — the
+    /// one gate the paint focus ring and the a11y active-descendant share, so the
+    /// screen and the AT never disagree on where focus rests. Only true when the
+    /// Details pane owns the keyboard (an Objects-region cursor rests on the list).
+    fn is_prop_cursor(&self, i: usize) -> bool {
+        self.region == FocusRegion::Details && self.prop_cursor == Some(i)
+    }
+
+    /// Whether object row `i` is the active keyboard cursor — the object list's
+    /// active-descendant, shown only while the Objects pane owns the keyboard
+    /// (peer of [`is_prop_cursor`](Self::is_prop_cursor)).
+    fn is_object_cursor(&self, i: usize) -> bool {
+        self.region == FocusRegion::Objects && self.cursor == Some(i)
     }
 
     fn is_selected(&self, index: usize) -> bool {
@@ -1267,10 +1470,14 @@ fn detail_value_cell(
 /// absolutely positioned at the trailing edge, tagged `inspector#reset<i>` so a
 /// click routes to [`InspectorExternal::reset_property`] (the Unreal / Qt
 /// "reset to default" affordance; the arrow paints only on a changed property).
+/// R1224 — when `focused` (the Details pane owns the keyboard and this is the
+/// property cursor) the row carries an accent focus ring, the paint peer of the
+/// a11y active-descendant.
 fn property_row(
     index: usize,
     prop: &CommonProperty,
     modified: bool,
+    focused: bool,
     fg: Color,
     muted: Color,
     accent: Color,
@@ -1298,9 +1505,17 @@ fn property_row(
             ),
         ));
     }
+    // R1224 — the keyboard focus ring: a rounded accent border on the active
+    // property row (transparent fill, so the row content is unchanged). Only the
+    // style is conditional; the layout is byte-identical focused or not.
+    let mut style = BoxStyle::filled(Color::TRANSPARENT).with_corner_radius(5);
+    if focused {
+        style = style.with_border(Border::new(accent, FOCUS_RING));
+    }
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("prop_{index}"))
+            .with_style(style)
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -1386,7 +1601,7 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
                 i,
                 &o.name,
                 state.is_selected(i),
-                state.cursor == Some(i),
+                state.is_object_cursor(i),
                 on_surface,
                 accent,
             )
@@ -1419,7 +1634,15 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
     let defaults = use_object_defaults();
     for (i, prop) in common_properties(&objects, &selection).iter().enumerate() {
         let modified = property_modified_from_default(&objects, &selection, &defaults, &prop.name);
-        detail_children.push(property_row(i, prop, modified, on_surface, muted, accent));
+        detail_children.push(property_row(
+            i,
+            prop,
+            modified,
+            state.is_prop_cursor(i),
+            on_surface,
+            muted,
+            accent,
+        ));
     }
     let detail = Scene::Container(
         ContainerNode::new(detail_children)
@@ -1483,7 +1706,8 @@ impl InspectorView {
     fn read_state(scene: &Scene) -> InspectorState {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                return InspectorState::from_parts(&read_selection(intro), read_selected(intro));
+                return InspectorState::from_parts(&read_selection(intro), read_selected(intro))
+                    .with_focus(read_focus_region(intro), read_prop_cursor(intro));
             }
         }
         InspectorState::default()
@@ -1497,13 +1721,24 @@ impl InspectorView {
         "__internal__"
     }
 
-    /// Keyboard control over the multi-select object list, reusing the policy
-    /// substrate (no scroll — the object list is not virtualized, so the full
-    /// `nav_select_key` controller does not apply): `Ctrl+A` selects all,
-    /// `Ctrl+Space` toggles the active row ([`MultiSelectKeyOp`]); Arrow /
-    /// Home / End navigate ([`clamp_nav`]) and, with `Shift`, extend the
-    /// range. Every op goes through the External's `select` / `toggle` /
-    /// `extend_to` / `select_all` funnel — keyboard and RPC are one path.
+    /// Keyboard control over BOTH inspector panes, `Tab`-switched (R1224). The
+    /// inspector is one focus stop hosting two composite sub-regions, so a
+    /// `focus_region` axis selects which the Arrow keys drive:
+    ///
+    /// - **`Tab`** cycles the region (Objects ⇄ Details). Consumed — the
+    ///   inspector is the app's only focusable content, so it keeps focus
+    ///   rather than falling through to the shell's focus-traverse.
+    /// - **Objects** (the pre-R1224 multi-select nav): `Ctrl+A` selects all,
+    ///   `Ctrl+Space` toggles the active row ([`MultiSelectKeyOp`]); Arrow /
+    ///   Home / End navigate ([`clamp_nav`]), `Shift` extends the range.
+    /// - **Details**: Arrow-Up/Down + Home/End move the property cursor
+    ///   ([`clamp_nav`], funneled through `focus_property`); at the cursor
+    ///   `Space`/`Enter` toggles a Bool, `ArrowLeft`/`-` and `ArrowRight`/`+`
+    ///   step a numeric, `Delete`/`Backspace` resets a modified row.
+    ///
+    /// Every op goes through the SAME External verb its pointer / RPC twin uses
+    /// (`select` / `toggle` / `focus_region` / `focus_property` / `toggle_property`
+    /// / `step_property` / `reset`) — keyboard, pointer, and RPC are one path.
     fn apply_key(
         scene: &mut Scene,
         _focused: Option<&str>,
@@ -1513,12 +1748,68 @@ impl InspectorView {
         let Scene::External(node) = scene else {
             return false;
         };
-        let Some(intro) = node.handle.introspect() else {
-            return false;
+        // Snapshot everything the dispatch reads, releasing the immutable borrow
+        // before any `introspect_mut` mutation below.
+        let (region, obj_count, obj_cursor, row_count, prop_cursor) = {
+            let Some(intro) = node.handle.introspect() else {
+                return false;
+            };
+            (
+                read_focus_region(intro),
+                read_count(intro),
+                read_selected(intro),
+                read_row_count(intro),
+                read_prop_cursor(intro),
+            )
         };
-        let count = read_count(intro);
-        let cursor = read_selected(intro);
 
+        if key == "Tab" {
+            if let Some(intro) = node.handle.introspect_mut() {
+                let token = region.toggled().wire().to_owned();
+                let _ = intro.invoke("focus_region", IntrospectValue::Text(token));
+            }
+            return true;
+        }
+
+        if region == FocusRegion::Details {
+            // Row navigation (Up/Down/Home/End) via the shared policy, funneled
+            // through `focus_property` so keyboard and RPC place the cursor
+            // identically.
+            if let Some(target) = clamp_nav(prop_cursor, key, row_count, row_count) {
+                if let (Some(intro), Ok(t)) = (node.handle.introspect_mut(), i64::try_from(target))
+                {
+                    let _ = intro.invoke("focus_property", IntrospectValue::Int(t));
+                }
+                return true;
+            }
+            // Value edits at the cursor. A cursor-less panel (empty selection)
+            // leaves every edit a benign no-op.
+            let Some(cursor) = prop_cursor else {
+                return false;
+            };
+            let Ok(idx) = i64::try_from(cursor) else {
+                return false;
+            };
+            let (verb, arg) = match key {
+                " " | "Enter" => ("toggle_property", IntrospectValue::Int(idx)),
+                "ArrowRight" | "+" => (
+                    "step_property",
+                    IntrospectValue::Text(format!("{cursor},1")),
+                ),
+                "ArrowLeft" | "-" => (
+                    "step_property",
+                    IntrospectValue::Text(format!("{cursor},-1")),
+                ),
+                "Delete" | "Backspace" => ("reset", IntrospectValue::Int(idx)),
+                _ => return false,
+            };
+            if let Some(intro) = node.handle.introspect_mut() {
+                let _ = intro.invoke(verb, arg);
+            }
+            return true;
+        }
+
+        // ── Objects region ──
         match MultiSelectKeyOp::classify(key, modifiers) {
             Some(MultiSelectKeyOp::SelectAll) => {
                 if let Some(intro) = node.handle.introspect_mut() {
@@ -1527,19 +1818,19 @@ impl InspectorView {
                 return true;
             }
             Some(MultiSelectKeyOp::ToggleCursor) => {
-                if let (Some(intro), Some(c)) = (node.handle.introspect_mut(), cursor) {
+                if let (Some(intro), Some(c)) = (node.handle.introspect_mut(), obj_cursor) {
                     if let Ok(c) = i64::try_from(c) {
                         let _ = intro.invoke("toggle", IntrospectValue::Int(c));
                     }
                 }
-                return cursor.is_some();
+                return obj_cursor.is_some();
             }
             None => {}
         }
 
         // Plain / Shift navigation. `clamp_nav` maps the key to a target index
         // (no paging here, so page == item_count); Shift extends, else replace.
-        let Some(target) = clamp_nav(cursor, key, count, count) else {
+        let Some(target) = clamp_nav(obj_cursor, key, obj_count, obj_count) else {
             return false;
         };
         let action = if modifiers.shift_key() {
@@ -1563,7 +1854,36 @@ fn read_count(intro: &dyn ExternalIntrospect) -> usize {
     }
 }
 
-/// The Details-panel tag — a WAI-ARIA `list` of the common properties.
+/// R1224 — the Details row count off introspect (the property-cursor
+/// [`clamp_nav`] bound), mirroring [`read_count`] for the `row_count` query.
+fn read_row_count(intro: &dyn ExternalIntrospect) -> usize {
+    match intro.query("row_count") {
+        Some(IntrospectValue::Int(n)) => usize::try_from(n).unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// R1224 — decode the keyboard-focus region off the External's introspect (the
+/// `read_selected` peer for the `focus_region` axis); an unknown / absent value
+/// falls back to [`FocusRegion::Objects`], the boot pane.
+fn read_focus_region(intro: &dyn ExternalIntrospect) -> FocusRegion {
+    match intro.query("focus_region") {
+        Some(IntrospectValue::Text(token)) => FocusRegion::from_wire(&token).unwrap_or_default(),
+        _ => FocusRegion::default(),
+    }
+}
+
+/// R1224 — decode the active Details property cursor (already clamped by the
+/// External) off introspect; `Null` / absent is `None`.
+fn read_prop_cursor(intro: &dyn ExternalIntrospect) -> Option<usize> {
+    match intro.query("prop_cursor") {
+        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        _ => None,
+    }
+}
+
+/// The Details-panel tag — a WAI-ARIA `group` of the common-property controls
+/// (R1224; a `list` of read-only rows pre-R1224).
 const DETAIL_TAG: &str = "detail_panel";
 
 impl WidgetA11y for InspectorView {
@@ -1572,15 +1892,17 @@ impl WidgetA11y for InspectorView {
     /// - the object list as a multi-select WAI-ARIA `listbox`
     ///   ([`listbox_option_nodes`]): `aria-multiselectable`, each row an
     ///   `option` whose `aria-selected` is its membership and whose `focused`
-    ///   (active descendant) is the cursor — the peer of the painted accent
+    ///   (active descendant) is the cursor — shown only while the Objects pane
+    ///   owns the keyboard (R1224 region-gated), the peer of the painted accent
     ///   fill (selected) + border (cursor);
-    /// - the **Details panel** as a `list` named by the selection summary,
-    ///   one `listitem` per common property named `"{name}: {value}"` — the
-    ///   value text is [`common_value_label`], the SAME source the paint
-    ///   renders, so "Multiple Values" announces exactly when it paints
-    ///   (R886.1 one-gate: the panel content is AT-reachable, not orphaned).
+    /// - the **Details panel** as a `group` named by the selection summary, one
+    ///   node per common property in its operable role ([`detail_access_node`]):
+    ///   a Bool `switch`, a numeric `spinbutton`, else an informational
+    ///   `listitem` — each carrying the value the paint shows (R886.1 one-gate)
+    ///   and, in the Details pane, the active-descendant on the property cursor.
     ///
-    /// The root `Group` references both regions.
+    /// The root `Group` references both regions; keyboard focus roves between
+    /// them (R1224), so at most one pane shows an active descendant at a time.
     fn access_node(state: &InspectorState, _focused: Option<&str>) -> Vec<AccessNode> {
         let objects = use_objects().get();
         let selection = state.selection_set();
@@ -1595,7 +1917,9 @@ impl WidgetA11y for InspectorView {
                 label: Some(&o.name),
                 state: ListboxItemState::Idle,
                 selected: state.is_selected(i),
-                focused: state.cursor == Some(i),
+                // R1224 — the object list's active-descendant shows only while
+                // the Objects pane owns the keyboard (region-gated roving focus).
+                focused: state.is_object_cursor(i),
             })
             .collect();
 
@@ -1612,26 +1936,65 @@ impl WidgetA11y for InspectorView {
             &options,
         ));
 
-        // The Details panel: a `list` named by the selection summary, one
-        // `listitem` per common property (tagged `prop_<i>`, the same tag the
-        // paint uses, so the AT node resolves to the painted row's bounds).
+        // R1224 — the Details panel: a `group` of property controls named by the
+        // selection summary. Each interactive row is its operable WAI-ARIA role —
+        // a Bool a `switch`, a numeric a `spinbutton` — carrying the SAME value
+        // the paint shows and, when the Details pane owns the keyboard, the
+        // active-descendant `focused` flag (peer of the painted focus ring).
+        // Read-only rows (Choice / Color / Text) stay informational `listitem`s
+        // named `"{name}: {value}"`. All tagged `prop_<i>`, the same tag the
+        // paint uses, so each AT node resolves to its painted row's bounds.
         let rows = common_properties(&objects, &selection);
-        let mut panel = AccessNode::new(DETAIL_TAG, AriaRole::List)
+        let mut panel = AccessNode::new(DETAIL_TAG, AriaRole::Group)
             .with_name(selection_summary(&objects, &selection));
         for i in 0..rows.len() {
             panel = panel.with_child(format!("prop_{i}"));
         }
         nodes.push(panel);
         for (i, prop) in rows.iter().enumerate() {
-            nodes.push(
-                AccessNode::new(format!("prop_{i}"), AriaRole::ListItem).with_name(format!(
-                    "{}: {}",
-                    prop.name,
-                    common_value_label(prop)
-                )),
-            );
+            nodes.push(detail_access_node(i, prop, state.is_prop_cursor(i)));
         }
         nodes
+    }
+}
+
+/// R1224 — the a11y node for one Details property row, its operable WAI-ARIA
+/// role matching the interactive paint cell so an AT drives it the way the
+/// pointer / keyboard do:
+///
+/// - **Bool** → `switch` (`with_value(AccessValue::Bool)` = `aria-checked`);
+///   a mixed multi-object Bool has no definite check, so it carries the
+///   `"Multiple Values"` `aria-valuetext` instead (the honest indeterminate
+///   readout, one-gate with [`common_value_label`]).
+/// - **Int / Float** → `spinbutton` with the numeric display as
+///   `aria-valuetext` (the values carry no declared min/max, so a bare
+///   value-text is the faithful reading — the AT still exposes Increment /
+///   Decrement actions from the role).
+/// - **Choice / Color / Text** → an informational `listitem` named
+///   `"{name}: {value}"` (read-only over RPC via `intervene value.<i>`).
+///
+/// `focused` sets the active-descendant flag (the Details pane owns the
+/// keyboard and this is the property cursor), the a11y peer of the painted ring.
+fn detail_access_node(index: usize, prop: &CommonProperty, focused: bool) -> AccessNode {
+    let tag = format!("prop_{index}");
+    match prop.value {
+        CellValue::Bool(b) => {
+            let node = AccessNode::new(tag, AriaRole::Switch)
+                .with_name(prop.name.clone())
+                .with_focused(focused);
+            if prop.mixed {
+                node.with_value_text(MULTIPLE_VALUES)
+            } else {
+                node.with_value(AccessValue::Bool(b))
+            }
+        }
+        CellValue::Int(_) | CellValue::Float(_) => AccessNode::new(tag, AriaRole::SpinButton)
+            .with_name(prop.name.clone())
+            .with_value_text(common_value_label(prop))
+            .with_focused(focused),
+        _ => AccessNode::new(tag, AriaRole::ListItem)
+            .with_name(format!("{}: {}", prop.name, common_value_label(prop)))
+            .with_focused(focused),
     }
 }
 
@@ -2366,7 +2729,12 @@ mod tests {
             // R958 — defaults match the boot values (option 0), so the initial
             // state reads "not modified"; the test edits then asserts the change.
             let defaults = Rc::new(vec![mode(0), mode(1)]);
-            InspectorExternal::new(objects, Rc::new(Signal::new(model)), defaults)
+            InspectorExternal::new(
+                objects,
+                Rc::new(Signal::new(model)),
+                defaults,
+                Rc::new(Signal::new(InspectorFocus::default())),
+            )
         });
         // value.0 (the common "Mode") set to option index 2 across both.
         e.intervene("value.0", IntrospectValue::Int(2)).unwrap();
@@ -2387,9 +2755,10 @@ mod tests {
     #[test]
     fn r922_1_details_panel_is_a11y_reachable_with_mixed_label() {
         // All three objects selected → the base properties are mixed. The
-        // Details panel (the headline content) must be IN the a11y tree
-        // (not orphaned), with each property a `listitem` whose name carries
-        // the value the paint shows ("Multiple Values" when mixed).
+        // Details panel (the headline content) must be IN the a11y tree (not
+        // orphaned). R1224 — the panel is a `group` and each interactive row its
+        // operable role (Bool `switch`, numeric `spinbutton`), each carrying the
+        // value the paint shows ("Multiple Values" when mixed).
         let nodes = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
                 &InspectorState::from_parts(&[0, 1, 2], Some(2)),
@@ -2404,25 +2773,224 @@ mod tests {
             .iter()
             .find(|n| n.tag == DETAIL_TAG)
             .expect("detail panel node");
-        assert_eq!(panel.role, AriaRole::List);
+        assert_eq!(panel.role, AriaRole::Group);
         assert_eq!(panel.name.as_deref(), Some("3 objects selected"));
-        let items: Vec<&AccessNode> = nodes
-            .iter()
-            .filter(|n| n.role == AriaRole::ListItem)
-            .collect();
-        assert!(
-            !items.is_empty(),
-            "common properties are AT-reachable listitems"
-        );
-        // "Visible" is (true, true, false) across the trio → mixed.
-        let visible = items
-            .iter()
-            .find(|n| n.name.as_deref().is_some_and(|s| s.starts_with("Visible")))
-            .expect("Visible row present");
+        let row = |name: &str| {
+            nodes
+                .iter()
+                .find(|n| n.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{name} row present"))
+        };
+        // "Visible" is (t, t, f) → a mixed Bool: a `switch` with no definite
+        // check, announcing "Multiple Values" via aria-valuetext (one-gate).
+        let visible = row("Visible");
+        assert_eq!(visible.role, AriaRole::Switch, "a Bool row is a switch");
         assert_eq!(
-            visible.name.as_deref(),
-            Some("Visible: Multiple Values"),
-            "a mixed property announces Multiple Values (one-gate with the paint)"
+            visible.value_text.as_deref(),
+            Some(MULTIPLE_VALUES),
+            "a mixed Bool announces Multiple Values, no definite check"
+        );
+        assert!(visible.value.is_none(), "mixed Bool has no aria-checked");
+        // "Layer" is (1, 1, 2) → a mixed numeric: a `spinbutton`.
+        let layer = row("Layer");
+        assert_eq!(
+            layer.role,
+            AriaRole::SpinButton,
+            "a numeric row is a spinbutton"
+        );
+        assert_eq!(layer.value_text.as_deref(), Some(MULTIPLE_VALUES));
+    }
+
+    // ─── R1224 keyboard-focus + interactive-cell a11y ─────────────────
+
+    #[test]
+    fn r1224_focus_region_verb_roundtrips_and_rejects_unknown() {
+        let mut e = ext();
+        assert_eq!(
+            e.query("focus_region"),
+            Some(IntrospectValue::Text("objects".to_owned())),
+            "boot pane is the object list"
+        );
+        assert_eq!(
+            e.invoke("focus_region", IntrospectValue::Text("details".to_owned()))
+                .unwrap(),
+            IntrospectValue::Text("details".to_owned()),
+            "the setter returns the read-back region"
+        );
+        assert_eq!(
+            e.query("focus_region"),
+            Some(IntrospectValue::Text("details".to_owned()))
+        );
+        assert!(
+            e.invoke("focus_region", IntrospectValue::Text("bogus".to_owned()))
+                .is_err(),
+            "an unknown region token is a typed Rejected, not a silent default"
+        );
+        assert!(
+            e.invoke("focus_region", IntrospectValue::Int(1)).is_err(),
+            "a non-string region arg is a TypeMismatch"
+        );
+    }
+
+    #[test]
+    fn r1224_focus_property_clamps_focuses_details_and_tracks_row_count() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(3)));
+        // A cursor past the last row clamps to the last, and placing it focuses
+        // the Details pane (the "focus this property" intent).
+        assert_eq!(
+            e.invoke("focus_property", IntrospectValue::Int(99))
+                .unwrap(),
+            IntrospectValue::Int(2),
+            "an out-of-range cursor clamps to the last row"
+        );
+        assert_eq!(e.query("prop_cursor"), Some(IntrospectValue::Int(2)));
+        assert_eq!(
+            e.query("focus_region"),
+            Some(IntrospectValue::Text("details".to_owned())),
+            "focus_property focuses the Details pane"
+        );
+        // Shrinking the panel re-clamps the reported cursor; an empty panel has none.
+        e.invoke("clear", IntrospectValue::Null).unwrap();
+        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(0)));
+        assert_eq!(
+            e.query("prop_cursor"),
+            Some(IntrospectValue::Null),
+            "an empty panel reports no property cursor"
+        );
+    }
+
+    #[test]
+    fn r1224_entering_details_seeds_the_first_property_cursor() {
+        let mut e = ext();
+        // Boot: object 0 selected, region Objects, no property cursor yet.
+        assert_eq!(e.query("prop_cursor"), Some(IntrospectValue::Null));
+        e.invoke("focus_region", IntrospectValue::Text("details".to_owned()))
+            .unwrap();
+        assert_eq!(
+            e.query("prop_cursor"),
+            Some(IntrospectValue::Int(0)),
+            "entering the Details pane seeds the cursor at the first row"
+        );
+    }
+
+    #[test]
+    fn r1224_a11y_bool_is_switch_numeric_is_spinbutton_with_active_descendant() {
+        // Single selection (Player) → every property uniform; cursor on row 0
+        // (Visible, a Bool) with the Details pane focused.
+        let nodes = Owner::new().run(|| {
+            <InspectorView as WidgetA11y>::access_node(
+                &InspectorState::from_parts(&[0], Some(0))
+                    .with_focus(FocusRegion::Details, Some(0)),
+                None,
+            )
+        });
+        let row = |tag: &str| nodes.iter().find(|n| n.tag == tag).unwrap();
+        // Visible (Bool, uniform true) → switch carrying aria-checked, and the
+        // active descendant (Details cursor on row 0).
+        let visible = row("prop_0");
+        assert_eq!(visible.role, AriaRole::Switch);
+        assert_eq!(visible.value, Some(AccessValue::Bool(true)));
+        assert!(
+            visible.state.focused,
+            "the cursor row is the active descendant"
+        );
+        // Layer (Int) → spinbutton, not focused.
+        let layer = row("prop_1");
+        assert_eq!(layer.role, AriaRole::SpinButton);
+        assert!(!layer.state.focused);
+    }
+
+    #[test]
+    fn r1224_active_descendant_roves_between_the_two_panes() {
+        let obj_focused = |nodes: &[AccessNode]| {
+            nodes
+                .iter()
+                .find(|n| n.tag == format!("{INSPECTOR_TAG}#1"))
+                .unwrap()
+                .state
+                .focused
+        };
+        let detail_focused = |nodes: &[AccessNode]| {
+            nodes
+                .iter()
+                .find(|n| n.tag == "prop_0")
+                .unwrap()
+                .state
+                .focused
+        };
+
+        // Objects pane owns the keyboard: the object cursor is the active
+        // descendant; no Details row is.
+        let objects = Owner::new().run(|| {
+            <InspectorView as WidgetA11y>::access_node(
+                &InspectorState::from_parts(&[0, 1], Some(1))
+                    .with_focus(FocusRegion::Objects, Some(0)),
+                None,
+            )
+        });
+        assert!(obj_focused(&objects), "Objects pane: object cursor focused");
+        assert!(
+            !detail_focused(&objects),
+            "Objects pane: no Details active descendant"
+        );
+
+        // Details pane owns the keyboard: the roles flip — exactly one pane
+        // shows an active descendant at a time.
+        let details = Owner::new().run(|| {
+            <InspectorView as WidgetA11y>::access_node(
+                &InspectorState::from_parts(&[0, 1], Some(1))
+                    .with_focus(FocusRegion::Details, Some(0)),
+                None,
+            )
+        });
+        assert!(
+            !obj_focused(&details),
+            "Details pane: object cursor not focused"
+        );
+        assert!(
+            detail_focused(&details),
+            "Details pane: Details cursor focused"
+        );
+    }
+
+    /// Whether the tagged container in `scene` carries a border (the R1224 focus
+    /// ring) — the paint-side probe for the focus-ring test.
+    fn container_has_border(scene: &Scene, tag: &str) -> Option<bool> {
+        if let Scene::Container(c) = scene {
+            if c.tag.as_deref() == Some(tag) {
+                return Some(c.style.border.is_some());
+            }
+            for child in &c.children {
+                if let Some(hit) = container_has_border(child, tag) {
+                    return Some(hit);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn r1224_paint_focus_ring_only_on_the_details_cursor_row() {
+        // The paint focus ring (a border on the property row) is the peer of the
+        // a11y active descendant: present on the cursor row iff the Details pane
+        // owns the keyboard, byte-identical layout otherwise.
+        let ringed = |state: &InspectorState| {
+            let scene = Owner::new().run(|| view(state, &Frame::new()));
+            container_has_border(&scene, "prop_0").expect("prop_0 row present")
+        };
+        let details_cursor =
+            InspectorState::from_parts(&[0], Some(0)).with_focus(FocusRegion::Details, Some(0));
+        let objects_cursor =
+            InspectorState::from_parts(&[0], Some(0)).with_focus(FocusRegion::Objects, Some(0));
+        assert!(
+            ringed(&details_cursor),
+            "Details cursor row carries the focus ring"
+        );
+        assert!(
+            !ringed(&objects_cursor),
+            "no ring when the Objects pane owns the keyboard"
         );
     }
 }
