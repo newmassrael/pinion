@@ -377,7 +377,11 @@ impl WidgetCore for CellSelectView {
         // TSV to the platform clipboard (the spreadsheet copy; the AI-first peer
         // is `query cell_selection_tsv`, the SAME serialization). Unhandled when
         // nothing is selected, so the key falls through.
-        if modifiers.command_key() && key.eq_ignore_ascii_case("c") {
+        // R1223 — `!alt_key()` mirrors the canonical `text_field` chord decode:
+        // on layouts where AltGr = Ctrl+Alt, `command_key()` is true while the
+        // keypress is producing a composed character, so without this guard
+        // AltGr+C would misfire the copy and swallow the character.
+        if modifiers.command_key() && !modifiers.alt_key() && key.eq_ignore_ascii_case("c") {
             if let Some(IntrospectValue::Text(tsv)) = intro.query("cell_selection_tsv") {
                 use_app_clipboard(PRIMARY_TAG).copy(tsv);
                 return true;

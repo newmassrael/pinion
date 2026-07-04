@@ -22284,6 +22284,62 @@
         "selected_tsv lives on the shared Table (the right home -- every cell-range grid wants copy-as-TSV); it reuses cell_selection_bounds + cell() (no new selection state)."
       ]
     },
+    "R1223": {
+      "decision_summary": "R1223 audit-clearance of the R1220-R1222 session (user cost-no-object textbook/SSOT audit; independent adversarial reviewers per round + own SSOT grep found real smells my post-round self-claims missed). Fixes: the write-all SSOT (set_property/step_property share one mutate_selected funnel + killed a silent-fallback arm; my R1221 3b grep had missed the 3rd inlined copy); the §2 #2 pin_create introspection-twin + modal-keyboard-trap on a deleted source; the modal filter modifier-leak; the Ctrl+C !alt_key chord guard; TSV delimiter sanitization on the shared Table; mixed-Bool resolves to checked (Qt/Unreal). The interactive-inspector keyboard+a11y gap is deferred to R1224 (additive capability, not a regression).",
+      "changes_bullets": [
+        "Audit-clearance for R1220-R1222 (user cost-no-object textbook/SSOT audit; independent adversarial reviewers per round + own SSOT grep). Fixes real smells in EXISTING code; the interactive-inspector keyboard+a11y GAP is deferred to R1224 (additive capability, not a regression).",
+        "SSOT (R1221-F2 + own grep, the biggest): hello-inspector set_property (absolute) and step_property (relative) had INLINED the same \"iterate selection -> find named prop -> mutate\" loop (a 3rd copy after reset); the R1221 3b self-grep missed it (grepped the send-key prefix, not the write scaffold). Lifted one mutate_selected(name, |j,cur| Option<new>) funnel both use; reset_names_to_default stays a peer (restore-per-object-default atomic multi-name is a genuinely different op, not the scaffold). Killed step_property's silent `other => clone()` (reintroduced the R906 no-silent-fallback anti-pattern set_property documents) -> explicit None no-op.",
+        "§2 #2 (R1220-#2): pin_create_introspect now gates on source validity (pin_candidates None -> query returns Null), mirroring the paint + a11y menu. Fixes the introspection-twin violation + modal-keyboard-trap when the source node is deleted while the menu is open (open_pin_create -> delete_node left query reporting an open menu the user could not see + swallowed all shortcuts).",
+        "R1220-#1: pin_create_key now takes modifiers; a command/Alt chord (Ctrl+Z / Ctrl+A) while the menu is open is swallowed as a modal no-op, no longer typed into the type-to-narrow filter (the modal path had dropped the command_key gate the idle path applies).",
+        "R1222-#1: hello-cell-select Ctrl+C chord adds !alt_key() (the canonical text_field chord decode) so AltGr+C (Ctrl+Alt on EU layouts) no longer misfires the copy + swallows the character.",
+        "R1222-#2/#5: Table::selected_tsv sanitizes embedded tab/newline in a cell to a space (tsv_sanitize) so the TSV block's row/column shape ALWAYS matches the selection rectangle on a general-purpose (free-text) grid; doc corrected (data-ordered, NOT the paint-under-sort — paint suppresses the overlay while sorted).",
+        "R1221-F4: a mixed Bool toggle resolves to true (checked) -- the Qt/Unreal indeterminate-checkbox convention, order-INDEPENDENT -- not the pre-R1223 !first_selected (which turned a mostly-on group off depending on object order). A uniform Bool still flips.",
+        "R1220-#4: the create-menu ▸ glyph is a named PIN_MENU_ARROW const, not inlined twice (non-ASCII-literal convention)."
+      ],
+      "verification_bullets": [
+        "New regression tests (each FAILS on the pre-R1223 code): hello-node-editor r1223_menu_command_chord_does_not_leak_into_filter (Ctrl+Z swallowed, filter unchanged; a plain char still filters) + r1223_menu_source_deleted_reads_closed_and_untraps_keyboard (delete source -> query pin_create = Null, Ctrl+A reaches select_all); pinion-core r1223_selected_tsv_sanitizes_embedded_delimiters (tab/newline cell -> space, 2x2 block shape preserved). Updated r1221 toggle test + demo for the mixed->checked convention.",
+        "Gates: cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0; cargo test --workspace -j2 = 0 failed; hello-inspector 31 / hello-node-editor 155 / hello-cell-select 16 / pinion-core lib pass. Demos r1220/r1221/r1222 all re-run PASS after the fixes.",
+        "Honest record corrections: R1221 decision_summary said gestures \"funnel through set_property\" -- only toggle did; R1223's mutate_selected lift makes it true for both. R1222 \"HW-gated\" over-claimed -- the positive Ctrl+C path is CI-testable via InMemoryClipboard fallback; the real constraint is local-:0 clobber (the sanitize/return-logic is now unit-covered regardless)."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "DEFERRED to R1224 (real gap, additive capability, feature-sized -- NOT a regression, the cells were read-only pre-R1221): hello-inspector's interactive value cells (toggle/steppers) have NO keyboard path and NO per-control switch/spinbutton AccessNode -- mouse+RPC only. The reset dot (R958) shares the gap. Closing it needs a keyboard edit model the inspector does not yet have + a11y roles. Prioritized as the next slice.",
+        "Accepted minor (documented, not fixed): toggle_property rebuilds common() twice (trivial at 3 rows); step_property/set_property's `_ => None` unreachable arm is a safe no-op (not a debug_assert like set's Err -- symmetric-enough).",
+        "Future enhancement: Table::selected_tsv sanitizes delimiters (structure-preserving, lossy on delimiter content); full Excel-style TSV quoting (faithful content for a delimiter-bearing grid) is deferred until such a grid exists.",
+        "The two frozen changelog entries (R1221/R1222) keep their original text; this R1223 entry is the correction of record for the F5/HW-gated overstatements."
+      ],
+      "publishable_decision_summary": "R1223 audit-clearance of the R1220-R1222 session (user cost-no-object textbook/SSOT audit; independent adversarial reviewers per round + own SSOT grep found real smells my post-round self-claims missed). Fixes: the write-all SSOT (set_property/step_property share one mutate_selected funnel + killed a silent-fallback arm; my R1221 3b grep had missed the 3rd inlined copy); the §2 #2 pin_create introspection-twin + modal-keyboard-trap on a deleted source; the modal filter modifier-leak; the Ctrl+C !alt_key chord guard; TSV delimiter sanitization on the shared Table; mixed-Bool resolves to checked (Qt/Unreal). The interactive-inspector keyboard+a11y gap is deferred to R1224 (additive capability, not a regression).",
+      "publishable_changes_bullets": [
+        "Audit-clearance for R1220-R1222 (user cost-no-object textbook/SSOT audit; independent adversarial reviewers per round + own SSOT grep). Fixes real smells in EXISTING code; the interactive-inspector keyboard+a11y GAP is deferred to R1224 (additive capability, not a regression).",
+        "SSOT (R1221-F2 + own grep, the biggest): hello-inspector set_property (absolute) and step_property (relative) had INLINED the same \"iterate selection -> find named prop -> mutate\" loop (a 3rd copy after reset); the R1221 3b self-grep missed it (grepped the send-key prefix, not the write scaffold). Lifted one mutate_selected(name, |j,cur| Option<new>) funnel both use; reset_names_to_default stays a peer (restore-per-object-default atomic multi-name is a genuinely different op, not the scaffold). Killed step_property's silent `other => clone()` (reintroduced the R906 no-silent-fallback anti-pattern set_property documents) -> explicit None no-op.",
+        "§2 #2 (R1220-#2): pin_create_introspect now gates on source validity (pin_candidates None -> query returns Null), mirroring the paint + a11y menu. Fixes the introspection-twin violation + modal-keyboard-trap when the source node is deleted while the menu is open (open_pin_create -> delete_node left query reporting an open menu the user could not see + swallowed all shortcuts).",
+        "R1220-#1: pin_create_key now takes modifiers; a command/Alt chord (Ctrl+Z / Ctrl+A) while the menu is open is swallowed as a modal no-op, no longer typed into the type-to-narrow filter (the modal path had dropped the command_key gate the idle path applies).",
+        "R1222-#1: hello-cell-select Ctrl+C chord adds !alt_key() (the canonical text_field chord decode) so AltGr+C (Ctrl+Alt on EU layouts) no longer misfires the copy + swallows the character.",
+        "R1222-#2/#5: Table::selected_tsv sanitizes embedded tab/newline in a cell to a space (tsv_sanitize) so the TSV block's row/column shape ALWAYS matches the selection rectangle on a general-purpose (free-text) grid; doc corrected (data-ordered, NOT the paint-under-sort — paint suppresses the overlay while sorted).",
+        "R1221-F4: a mixed Bool toggle resolves to true (checked) -- the Qt/Unreal indeterminate-checkbox convention, order-INDEPENDENT -- not the pre-R1223 !first_selected (which turned a mostly-on group off depending on object order). A uniform Bool still flips.",
+        "R1220-#4: the create-menu ▸ glyph is a named PIN_MENU_ARROW const, not inlined twice (non-ASCII-literal convention)."
+      ],
+      "publishable_verification_bullets": [
+        "New regression tests (each FAILS on the pre-R1223 code): hello-node-editor r1223_menu_command_chord_does_not_leak_into_filter (Ctrl+Z swallowed, filter unchanged; a plain char still filters) + r1223_menu_source_deleted_reads_closed_and_untraps_keyboard (delete source -> query pin_create = Null, Ctrl+A reaches select_all); pinion-core r1223_selected_tsv_sanitizes_embedded_delimiters (tab/newline cell -> space, 2x2 block shape preserved). Updated r1221 toggle test + demo for the mixed->checked convention.",
+        "Gates: cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0; cargo test --workspace -j2 = 0 failed; hello-inspector 31 / hello-node-editor 155 / hello-cell-select 16 / pinion-core lib pass. Demos r1220/r1221/r1222 all re-run PASS after the fixes.",
+        "Honest record corrections: R1221 decision_summary said gestures \"funnel through set_property\" -- only toggle did; R1223's mutate_selected lift makes it true for both. R1222 \"HW-gated\" over-claimed -- the positive Ctrl+C path is CI-testable via InMemoryClipboard fallback; the real constraint is local-:0 clobber (the sanitize/return-logic is now unit-covered regardless)."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DEFERRED to R1224 (real gap, additive capability, feature-sized -- NOT a regression, the cells were read-only pre-R1221): hello-inspector's interactive value cells (toggle/steppers) have NO keyboard path and NO per-control switch/spinbutton AccessNode -- mouse+RPC only. The reset dot (R958) shares the gap. Closing it needs a keyboard edit model the inspector does not yet have + a11y roles. Prioritized as the next slice.",
+        "Accepted minor (documented, not fixed): toggle_property rebuilds common() twice (trivial at 3 rows); step_property/set_property's `_ => None` unreachable arm is a safe no-op (not a debug_assert like set's Err -- symmetric-enough).",
+        "Future enhancement: Table::selected_tsv sanitizes delimiters (structure-preserving, lossy on delimiter content); full Excel-style TSV quoting (faithful content for a delimiter-bearing grid) is deferred until such a grid exists.",
+        "The two frozen changelog entries (R1221/R1222) keep their original text; this R1223 entry is the correction of record for the F5/HW-gated overstatements."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

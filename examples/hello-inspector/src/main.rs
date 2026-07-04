@@ -681,6 +681,42 @@ impl InspectorExternal {
     /// the representative (surfacing a `TypeMismatch` without mutating), then
     /// applies [`CellValue::with_intervene`] per object so a choice sets its
     /// own option index and a colour parses the hex against its own value.
+    /// R1223 — the single "transform a named property across the whole
+    /// selection" funnel: for every selected object, find its property named
+    /// `name` and, when `mutate` returns `Some`, replace the value. One
+    /// `objects.set_with` + one iterate-find loop, shared by
+    /// [`set_property`](Self::set_property) (absolute) and
+    /// [`step_property`](Self::step_property) (relative) so the two cannot drift —
+    /// `step_property` had INLINED a second copy of this scaffold (the R1221 3b
+    /// self-grep missed it; R727/R732 mandate). `mutate` receives the object
+    /// index (for a per-object lookup, though the current callers ignore it) and
+    /// the object's own current value; `None` leaves the property untouched (no
+    /// silent value-clobber). NOTE: [`reset_names_to_default`] stays a separate
+    /// peer — restoring each object's own default across a *set* of names in one
+    /// atomic write is a genuinely different operation, not this scaffold.
+    fn mutate_selected(
+        &self,
+        name: &str,
+        mut mutate: impl FnMut(usize, &CellValue) -> Option<CellValue>,
+    ) {
+        let name = name.to_owned();
+        let selection = self.selection_set();
+        self.objects.set_with(move |prev| {
+            let mut next = prev.clone();
+            for &j in &selection {
+                if let Some(p) = next
+                    .get_mut(j)
+                    .and_then(|o| o.properties.iter_mut().find(|p| p.name == name))
+                {
+                    if let Some(v) = mutate(j, &p.value) {
+                        p.value = v;
+                    }
+                }
+            }
+            next
+        });
+    }
+
     fn set_property(&self, idx: usize, value: &IntrospectValue) -> Result<(), InterveneError> {
         let common = self.common();
         let target = common.get(idx).ok_or(InterveneError::UnknownPath)?;
@@ -690,41 +726,41 @@ impl InspectorExternal {
         // for the whole write: a value the representative accepts cannot be
         // rejected by a same-shape property.
         target.value.with_intervene(value.clone())?;
-        let name = target.name.clone();
         let shape = target.value.clone();
-        let selection = self.selection_set();
         let value = value.clone();
-        self.objects.set_with(move |prev| {
-            let mut next = prev.clone();
-            for &j in &selection {
-                if let Some(prop) = next.get_mut(j).and_then(|o| {
-                    o.properties.iter_mut().find(|p| p.name == name && same_property_shape(&p.value, &shape))
-                }) {
-                    match prop.value.with_intervene(value.clone()) {
-                        Ok(updated) => prop.value = updated,
-                        // Unreachable: same shape as the representative, which
-                        // accepted `value`. Fail loud in dev, preserve the
-                        // existing value in release (R906 — no silent fallback
-                        // on a should-be-impossible branch).
-                        Err(e) => debug_assert!(
-                            false,
-                            "multi-write: a value valid for the representative was rejected by a same-shape property: {e:?}"
-                        ),
-                    }
+        self.mutate_selected(&target.name.clone(), move |_j, cur| {
+            // The shape gate the pre-R1223 find-predicate carried, now in the
+            // per-object closure. Under the unique-name invariant this matches
+            // the representative for every selected object.
+            if !same_property_shape(cur, &shape) {
+                return None;
+            }
+            match cur.with_intervene(value.clone()) {
+                Ok(updated) => Some(updated),
+                // Unreachable: same shape as the representative, which accepted
+                // `value`. Fail loud in dev, no-op (not a silent clobber) in
+                // release (R906 — no silent fallback on a should-be-impossible
+                // branch).
+                Err(e) => {
+                    debug_assert!(
+                        false,
+                        "multi-write: a value valid for the representative was rejected by a same-shape property: {e:?}"
+                    );
+                    None
                 }
             }
-            next
         });
         Ok(())
     }
 
-    /// R1221 — flip common **Bool** property `idx` across EVERY selected object
-    /// (the multi-object toggle). A mixed Bool resolves to a single uniform
-    /// state: its representative (the first selected object's value) is flipped
-    /// and written to all. The GUI value-cell click + the `toggle_property` verb
-    /// funnel here, writing through [`set_property`](Self::set_property) — the SAME
-    /// path `intervene value.<i>` drives. `false` (no write) when `idx` is out of
-    /// range or the common property is not a Bool.
+    /// R1221 — set common **Bool** property `idx` across EVERY selected object
+    /// (the multi-object toggle), writing through [`set_property`](Self::set_property)
+    /// — the SAME path `intervene value.<i>` drives. R1223 — a **mixed** Bool
+    /// resolves to `true` (checked), the Qt / Unreal convention for clicking an
+    /// indeterminate checkbox: an order-INDEPENDENT definite state, not the
+    /// pre-R1223 `!first_selected` (which turned a mostly-on group OFF depending
+    /// on which object happened to be first). A **uniform** Bool flips. `false`
+    /// (no write) when `idx` is out of range or the common property is not a Bool.
     fn toggle_property(&self, idx: usize) -> bool {
         let common = self.common();
         let Some(prop) = common.get(idx) else {
@@ -733,7 +769,8 @@ impl InspectorExternal {
         let CellValue::Bool(cur) = prop.value else {
             return false;
         };
-        self.set_property(idx, &IntrospectValue::Bool(!cur)).is_ok()
+        let next = if prop.mixed { true } else { !cur };
+        self.set_property(idx, &IntrospectValue::Bool(next)).is_ok()
     }
 
     /// R1221 — step common **numeric** property `idx` by `dir` (a signed unit
@@ -741,8 +778,9 @@ impl InspectorExternal {
     /// dir·step), so a mixed numeric stays mixed but shifts together — the
     /// multi-object spinbox that PRESERVES the per-object differences (unlike the
     /// Bool toggle, which resolves to uniform). `Int` steps by `dir`, `Float` by
-    /// `dir · FLOAT_STEP`. `false` when `idx` is out of range or the common
-    /// property is not numeric.
+    /// `dir · FLOAT_STEP`. R1223 — funnels through the shared
+    /// [`mutate_selected`](Self::mutate_selected).
+    /// `false` when `idx` is out of range or the common property is not numeric.
     fn step_property(&self, idx: usize, dir: i32) -> bool {
         let common = self.common();
         let Some(prop) = common.get(idx) else {
@@ -751,23 +789,13 @@ impl InspectorExternal {
         if !matches!(prop.value, CellValue::Int(_) | CellValue::Float(_)) {
             return false;
         }
-        let name = prop.name.clone();
-        let selection = self.selection_set();
-        self.objects.set_with(move |prev| {
-            let mut next = prev.clone();
-            for &j in &selection {
-                if let Some(p) = next
-                    .get_mut(j)
-                    .and_then(|o| o.properties.iter_mut().find(|p| p.name == name))
-                {
-                    p.value = match p.value {
-                        CellValue::Int(v) => CellValue::Int(v.saturating_add(i64::from(dir))),
-                        CellValue::Float(v) => CellValue::Float(v + f64::from(dir) * FLOAT_STEP),
-                        ref other => other.clone(),
-                    };
-                }
-            }
-            next
+        self.mutate_selected(&prop.name.clone(), move |_j, cur| match cur {
+            CellValue::Int(v) => Some(CellValue::Int(v.saturating_add(i64::from(dir)))),
+            CellValue::Float(v) => Some(CellValue::Float(v + f64::from(dir) * FLOAT_STEP)),
+            // Unreachable: the common property is numeric, so every selected
+            // object's same-name prop is numeric. `None` = no change (not the
+            // pre-R1223 silent `clone()` — R906 discipline).
+            _ => None,
         });
         true
     }
@@ -1698,7 +1726,9 @@ mod tests {
             Some(IntrospectValue::Bool(true)),
             "Visible starts mixed"
         );
-        // Toggle flips the representative (Player=true) and writes !true to ALL.
+        // R1223 — a MIXED Bool resolves to `true` (checked), the Qt/Unreal
+        // indeterminate-checkbox convention (order-independent), NOT
+        // `!first_selected`.
         assert_eq!(
             e.invoke("toggle_property", IntrospectValue::Int(0))
                 .unwrap(),
@@ -1712,11 +1742,11 @@ mod tests {
         for obj in 0..3 {
             assert_eq!(
                 obj_value(&e, obj, "Visible"),
-                CellValue::Bool(false),
-                "obj {obj} Visible written"
+                CellValue::Bool(true),
+                "obj {obj} Visible resolved to checked (mixed -> true)"
             );
         }
-        // A second toggle flips the (now uniform) value across all.
+        // A second toggle flips the (now uniform, true) value to false across all.
         assert_eq!(
             e.invoke("toggle_property", IntrospectValue::Int(0))
                 .unwrap(),
@@ -1725,8 +1755,8 @@ mod tests {
         for obj in 0..3 {
             assert_eq!(
                 obj_value(&e, obj, "Visible"),
-                CellValue::Bool(true),
-                "obj {obj} Visible re-toggled"
+                CellValue::Bool(false),
+                "obj {obj} Visible flipped (uniform true -> false)"
             );
         }
     }

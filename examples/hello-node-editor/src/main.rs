@@ -286,6 +286,10 @@ const PALETTE_W: u32 = 132;
 const PALETTE_TAG: &str = "node_palette";
 /// R1220 — the pin-drop create menu width (canvas px).
 const PIN_CREATE_MENU_W: u32 = 150;
+/// R1223 — the create-menu search-header separator glyph (▸ U+25B8), named per
+/// the repo's non-ASCII-literal convention rather than inlined at the two use
+/// sites.
+const PIN_MENU_ARROW: &str = "\u{25b8}";
 /// R1220 — the create menu container's composite sub (`node_graph#pin_menu`):
 /// a press on the menu's own chrome (header / padding) carries this sub, so the
 /// click-away dismiss guard leaves the menu open (only a press *outside* it, or
@@ -2783,10 +2787,19 @@ impl NodeGraphExternal {
         let Some(pc) = self.pin_create.get() else {
             return IntrospectValue::Null;
         };
-        let candidates: Vec<&str> = self
-            .pin_candidates(&pc)
-            .map(|(_, cands)| cands.into_iter().map(|k| PALETTE[k].0).collect())
-            .unwrap_or_default();
+        // R1223 — gate on source validity, mirroring the paint + a11y menu
+        // (which render nothing when the source pin is stale). Without this, a
+        // source node deleted while the menu was open (e.g. `open_pin_create` →
+        // `delete_node`) left `query pin_create` reporting an OPEN menu the user
+        // could not see — an introspection-twin (§2 #2) violation — and, because
+        // the modal keyboard keys off this query returning `Json`, trapped the
+        // shell keyboard with no visible menu. `pin_candidates` is `None` exactly
+        // when the source node / port is gone, so a stale menu now reads `Null`
+        // (effectively closed) through the SAME gate paint and a11y apply.
+        let Some((_, cands)) = self.pin_candidates(&pc) else {
+            return IntrospectValue::Null;
+        };
+        let candidates: Vec<&str> = cands.into_iter().map(|k| PALETTE[k].0).collect();
         IntrospectValue::Json(serde_json::json!({
             "from_node": pc.from_node.raw(),
             "from_port": pc.from_port,
@@ -4754,7 +4767,12 @@ fn single_printable(key: &str) -> Option<char> {
 /// edit the filter, and every other key is swallowed (returns `true`) so a graph
 /// shortcut never leaks through an open menu. `menu` is the `query pin_create`
 /// JSON (its `filter` seeds the type-ahead edit).
-fn pin_create_key(intro: &mut dyn ExternalIntrospect, menu: &serde_json::Value, key: &str) -> bool {
+fn pin_create_key(
+    intro: &mut dyn ExternalIntrospect,
+    menu: &serde_json::Value,
+    key: &str,
+    modifiers: Modifiers,
+) -> bool {
     let mut set_filter = |filter: String| {
         let _ = intro.invoke("pin_create_filter", IntrospectValue::Text(filter));
     };
@@ -4789,7 +4807,15 @@ fn pin_create_key(intro: &mut dyn ExternalIntrospect, menu: &serde_json::Value, 
             set_filter(filter);
         }
         _ => {
-            if let Some(ch) = single_printable(key) {
+            // R1223 — a real character keypress (no command / Alt chord) types
+            // into the type-to-narrow filter; a chord like Ctrl+Z / Ctrl+A is
+            // SWALLOWED as a no-op, never appended. The pre-R1223 modal path
+            // passed only the bare `key`, so Ctrl+Z typed `z` into the filter —
+            // the idle path's `command_key()` gate was missing here.
+            if !modifiers.command_key()
+                && !modifiers.alt_key()
+                && let Some(ch) = single_printable(key)
+            {
                 let mut filter = filter_of();
                 filter.push(ch);
                 set_filter(filter);
@@ -4806,7 +4832,7 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     if let Some(node) = scene.find_external_with_tag_mut(GRAPH_TAG) {
         if let Some(intro) = node.handle.introspect_mut() {
             if let Some(IntrospectValue::Json(menu)) = intro.query("pin_create") {
-                return pin_create_key(intro, &menu, key);
+                return pin_create_key(intro, &menu, key, modifiers);
             }
         }
     }
@@ -5278,9 +5304,9 @@ fn view_pin_create_menu(pc: &PinCreate, nodes: &[GraphNode], theme: &Theme) -> O
     let candidates = pin_create_candidates(from_ty, &pc.filter);
     let mut items: Vec<Scene> = Vec::with_capacity(candidates.len() + 1);
     let header = if pc.filter.is_empty() {
-        format!("{} \u{25b8}", from_ty.name())
+        format!("{} {PIN_MENU_ARROW}", from_ty.name())
     } else {
-        format!("{} \u{25b8} {}", from_ty.name(), pc.filter)
+        format!("{} {PIN_MENU_ARROW} {}", from_ty.name(), pc.filter)
     };
     items.push(Scene::Text(
         TextNode::styled(
@@ -8275,6 +8301,107 @@ mod tests {
                 "menu stays open on a rejected commit"
             );
             assert_eq!(coord.nodes.get().len(), nodes0, "graph unchanged");
+        });
+    }
+
+    /// R1223 audit-clearance — a command chord (Ctrl+Z / Ctrl+A) while the menu
+    /// is open is SWALLOWED as a modal no-op and must NOT type into the
+    /// type-to-narrow filter (the pre-R1223 modal path passed only the bare key,
+    /// so Ctrl+Z appended `z`). A real character keypress still filters.
+    #[test]
+    fn r1223_menu_command_chord_does_not_leak_into_filter() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                assert_eq!(
+                    intro.invoke("open_pin_create", IntrospectValue::Text("0.0".to_owned())),
+                    Ok(IntrospectValue::Bool(true)),
+                );
+            }
+            let filter_now = |scene: &Scene| -> String {
+                match scene
+                    .find_external_with_tag(GRAPH_TAG)
+                    .and_then(|n| n.handle.introspect())
+                    .and_then(|i| i.query("pin_create"))
+                {
+                    Some(IntrospectValue::Json(v)) => v["filter"].as_str().unwrap_or("").to_owned(),
+                    other => panic!("expected open menu Json, got {other:?}"),
+                }
+            };
+            let ctrl = Modifiers {
+                ctrl: true,
+                ..Default::default()
+            };
+            assert!(
+                apply_key_graph(&mut scene, "z", ctrl),
+                "Ctrl+Z swallowed by the modal menu"
+            );
+            assert_eq!(
+                filter_now(&scene),
+                "",
+                "a command chord did NOT leak into the filter"
+            );
+            // A real character keypress (no modifier) types into the filter.
+            assert!(apply_key_graph(&mut scene, "a", Modifiers::empty()));
+            assert_eq!(
+                filter_now(&scene),
+                "a",
+                "a plain character keypress filters"
+            );
+        });
+    }
+
+    /// R1223 audit-clearance — deleting the source node while the menu is open
+    /// (an RPC-reachable non-menu mutation) makes the menu read CLOSED (`Null`)
+    /// through the same validity gate paint + a11y apply, so `query pin_create`
+    /// is not a phantom-open introspection twin (§2 #2) and the keyboard is not
+    /// modal-trapped.
+    #[test]
+    fn r1223_menu_source_deleted_reads_closed_and_untraps_keyboard() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene
+                    .find_external_with_tag_mut(GRAPH_TAG)
+                    .expect("present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                assert_eq!(
+                    intro.invoke("open_pin_create", IntrospectValue::Text("0.0".to_owned())),
+                    Ok(IntrospectValue::Bool(true)),
+                );
+                assert!(
+                    matches!(intro.query("pin_create"), Some(IntrospectValue::Json(_))),
+                    "menu opens",
+                );
+                // Delete the source node out from under the open menu.
+                assert_eq!(
+                    intro.invoke("delete_node", IntrospectValue::Int(0)),
+                    Ok(IntrospectValue::Bool(true)),
+                );
+                assert_eq!(
+                    intro.query("pin_create"),
+                    Some(IntrospectValue::Null),
+                    "stale-source menu reads CLOSED (paint/a11y/introspect share the gate)",
+                );
+            }
+            // The keyboard is NOT modal-trapped: Ctrl+A now reaches the graph
+            // (the modal branch is bypassed because the query reads Null).
+            let ctrl = Modifiers {
+                ctrl: true,
+                ..Default::default()
+            };
+            assert!(
+                apply_key_graph(&mut scene, "a", ctrl),
+                "Ctrl+A reaches select_all"
+            );
+            assert!(
+                !selected_ids_of(&scene).is_empty(),
+                "keyboard un-trapped: Ctrl+A selected the surviving nodes",
+            );
         });
     }
 

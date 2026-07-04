@@ -146,6 +146,17 @@ pub struct Table {
     selection_behavior: SelectionBehavior,
 }
 
+/// R1223 §5.38 — replace embedded tab / newline in a cell with a space so a
+/// [`Table::selected_tsv`] block's row / column shape always matches the
+/// selection rectangle. TSV has no in-band delimiter escaping, so a raw tab
+/// would split a column and a raw newline a row (silently disagreeing with the
+/// selected bounds). Structure-preserving over content-faithful; the grid's
+/// typical numeric / single-line cells never contain a delimiter, so this is a
+/// no-op there.
+fn tsv_sanitize(cell: &str) -> String {
+    cell.replace(['\t', '\n'], " ")
+}
+
 impl Table {
     /// Construct a table over `headers` columns and `rows` of cell text.
     /// All rows start idle and unselected, with no active descendant.
@@ -431,11 +442,20 @@ impl Table {
     /// R1222 §5.38 — the selected cell rectangle serialized as TSV
     /// (tab-separated columns, newline-separated rows) — the spreadsheet
     /// clipboard form (an Excel / Sheets paste lands as a cell block). `None`
-    /// when no cell range is selected. Row-major over
+    /// when no cell range is selected. Row-major over the data-ordered
     /// [`cell_selection_bounds`](Self::cell_selection_bounds) reading each
-    /// [`cell`](Self::cell), so it mirrors exactly the rectangle the grid
-    /// paints as selected — the AI-first "copy the selection" read (§2 #2) AND
+    /// [`cell`](Self::cell): the AI-first "copy the selection" read (§2 #2) AND
     /// the payload a Ctrl+C writes to the platform clipboard.
+    ///
+    /// R1223 — this is DATA-ORDERED (it does not re-map through a sort); it
+    /// mirrors the data-indexed selection *rectangle*, which under an active
+    /// sort is NOT what the widget paints as selected (the paint suppresses the
+    /// cell-range overlay while sorted). Any embedded tab / newline in a cell is
+    /// replaced with a space (`tsv_sanitize`) so the TSV block's row/column
+    /// shape ALWAYS matches the selection rectangle — a general-purpose grid may
+    /// hold free-text cells, and raw joining would silently split a row/column
+    /// (structure-preserving over content-faithful; full Excel-style quoting is
+    /// a later enhancement if a delimiter-bearing grid needs faithful content).
     #[must_use]
     pub fn selected_tsv(&self) -> Option<String> {
         let (r0, c0, r1, c1) = self.cell_selection_bounds()?;
@@ -443,7 +463,7 @@ impl Table {
             (r0..=r1)
                 .map(|r| {
                     (c0..=c1)
-                        .map(|c| self.cell(r, c))
+                        .map(|c| tsv_sanitize(self.cell(r, c)))
                         .collect::<Vec<_>>()
                         .join("\t")
                 })
@@ -1983,6 +2003,33 @@ mod tests {
             fields.contains(&"cell_selection_tsv"),
             "cell_selection_tsv is schema-declared",
         );
+    }
+
+    #[test]
+    fn r1223_selected_tsv_sanitizes_embedded_delimiters() {
+        // A free-text grid whose cells contain a tab / newline: the TSV block's
+        // shape must STILL match the 2x2 selection rectangle (delimiters → space),
+        // never silently split a row/column.
+        let mut t = Table::new(
+            vec!["A".to_string(), "B".to_string()],
+            vec![
+                vec!["a\tb".to_string(), "line1\nline2".to_string()],
+                vec!["x".to_string(), "y".to_string()],
+            ],
+        );
+        t.select_cell(0, 0);
+        t.extend_cell(1, 1);
+        let tsv = t.selected_tsv().expect("selection");
+        assert_eq!(
+            tsv, "a b\tline1 line2\nx\ty",
+            "embedded tab/newline replaced with space; 2 rows x 2 cols preserved",
+        );
+        // Structure invariant: exactly one row-separator per (rows-1), and every
+        // row has exactly one column-separator (cols-1) — never more.
+        assert_eq!(tsv.matches('\n').count(), 1, "exactly 2 rows");
+        for row in tsv.split('\n') {
+            assert_eq!(row.matches('\t').count(), 1, "exactly 2 columns per row");
+        }
     }
 
     #[test]
