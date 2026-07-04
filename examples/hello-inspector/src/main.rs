@@ -1812,13 +1812,38 @@ impl InspectorView {
     /// / `step_property` / `reset`) — keyboard, pointer, and RPC are one path.
     fn apply_key(
         scene: &mut Scene,
-        _focused: Option<&str>,
+        focused: Option<&str>,
         key: &str,
         modifiers: Modifiers,
     ) -> bool {
         let Scene::External(node) = scene else {
             return false;
         };
+
+        // R1228 (B3) — AT-driven Details edit. The shell routes an AT
+        // Increment / Decrement / Click on an operable Details row (switch /
+        // spinbutton) here as `apply_key(Some("prop_<i>"), "ArrowRight" /
+        // "ArrowLeft" / "Enter")`. Operate THAT row by kind, independent of the
+        // pointer cursor / region — so a screen reader drives a cell exactly as
+        // the pointer / keyboard / RPC do (the fix for the "operable role is a
+        // facade for AT" gap). A `prop_<i>` tag never reaches here from ordinary
+        // keyboard (the Details rows are not focus stops — only the root is), so
+        // this gate is AT-exclusive. The AT-targeted row is also focused, so the
+        // paint ring + a11y active-descendant follow the AT action.
+        if let Some(idx) = focused
+            .and_then(|t| t.strip_prefix("prop_"))
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            let kind = node.handle.introspect().and_then(|i| read_kind_at(i, idx));
+            let Some(intro) = node.handle.introspect_mut() else {
+                return false;
+            };
+            if let Ok(i) = i64::try_from(idx) {
+                let _ = intro.invoke("focus_property", IntrospectValue::Int(i));
+            }
+            return edit_property_at(intro, idx, kind.as_deref(), key);
+        }
+
         // Snapshot everything the dispatch reads, releasing the immutable borrow
         // before any `introspect_mut` mutation below.
         let (region, obj_count, obj_cursor, row_count, prop_cursor, cursor_kind) = {
@@ -1857,32 +1882,16 @@ impl InspectorView {
                 }
                 return true;
             }
-            // Value edits at the cursor. A cursor-less panel (empty selection)
-            // leaves every edit a benign no-op.
+            // Value edits at the cursor, through the shared `edit_property_at`
+            // funnel (the SAME dispatch the AT path above uses). A cursor-less
+            // panel (empty selection) leaves every edit a benign no-op.
             let Some(cursor) = prop_cursor else {
                 return false;
             };
-            let Ok(idx) = i64::try_from(cursor) else {
+            let Some(intro) = node.handle.introspect_mut() else {
                 return false;
             };
-            // R1225 — ArrowLeft/Right adjust the cursor cell by its kind: a Choice
-            // cycles prev/next option, everything else numeric-steps. `+`/`-` stay
-            // numeric-only (the spinbox keys). `spec` is the shared "<i>,<dir>" arg.
-            let is_choice = cursor_kind.as_deref() == Some("choice");
-            let spec = |dir: i32| IntrospectValue::Text(format!("{cursor},{dir}"));
-            let (verb, arg) = match key {
-                " " | "Enter" => ("toggle_property", IntrospectValue::Int(idx)),
-                "ArrowRight" if is_choice => ("cycle_property", spec(1)),
-                "ArrowLeft" if is_choice => ("cycle_property", spec(-1)),
-                "ArrowRight" | "+" => ("step_property", spec(1)),
-                "ArrowLeft" | "-" => ("step_property", spec(-1)),
-                "Delete" | "Backspace" => ("reset", IntrospectValue::Int(idx)),
-                _ => return false,
-            };
-            if let Some(intro) = node.handle.introspect_mut() {
-                let _ = intro.invoke(verb, arg);
-            }
-            return true;
+            return edit_property_at(intro, cursor, cursor_kind.as_deref(), key);
         }
 
         // ── Objects region ──
@@ -1966,6 +1975,38 @@ fn read_kind_at(intro: &dyn ExternalIntrospect, i: usize) -> Option<String> {
         Some(IntrospectValue::Text(k)) => Some(k),
         _ => None,
     }
+}
+
+/// R1228 — dispatch a value-edit key onto Details property `idx` by its `kind`,
+/// through the shared verb funnel: `Space`/`Enter` toggle a Bool,
+/// `ArrowRight`/`+` and `ArrowLeft`/`-` step a numeric while `ArrowRight`/`ArrowLeft`
+/// cycle a Choice, `Delete`/`Backspace` reset. The ONE edit dispatch shared by BOTH
+/// the keyboard property-cursor path AND the AT operable-role path
+/// (`apply_key(Some("prop_<i>"), …)`), so a screen reader operates a cell exactly
+/// as the pointer / keyboard / RPC do — the fix for the R1224/R1225 "operable role
+/// is a facade for AT" gap. Returns whether a value-edit key was recognised.
+fn edit_property_at(
+    intro: &mut dyn ExternalIntrospect,
+    idx: usize,
+    kind: Option<&str>,
+    key: &str,
+) -> bool {
+    let Ok(i) = i64::try_from(idx) else {
+        return false;
+    };
+    let is_choice = kind == Some("choice");
+    let spec = |dir: i32| IntrospectValue::Text(format!("{idx},{dir}"));
+    let (verb, arg) = match key {
+        " " | "Enter" => ("toggle_property", IntrospectValue::Int(i)),
+        "ArrowRight" if is_choice => ("cycle_property", spec(1)),
+        "ArrowLeft" if is_choice => ("cycle_property", spec(-1)),
+        "ArrowRight" | "+" => ("step_property", spec(1)),
+        "ArrowLeft" | "-" => ("step_property", spec(-1)),
+        "Delete" | "Backspace" => ("reset", IntrospectValue::Int(i)),
+        _ => return false,
+    };
+    let _ = intro.invoke(verb, arg);
+    true
 }
 
 /// The Details-panel tag — a WAI-ARIA `group` of the common-property controls
@@ -2056,14 +2097,20 @@ impl WidgetA11y for InspectorView {
 ///   `aria-valuetext` (the values carry no declared min/max, so a bare
 ///   value-text is the faithful reading — the AT still exposes Increment /
 ///   Decrement actions from the role).
-/// - **Choice** → `combobox` (R1225) carrying the selected option as
-///   `aria-valuetext` (`"Multiple Values"` when mixed) — the cycled enum cell;
-///   ArrowLeft/Right change the value, no popup.
+/// - **Int / Float / Choice** → `spinbutton` carrying the value as
+///   `aria-valuetext` (`"Multiple Values"` when mixed). R1228 — a Choice is a
+///   spinbutton too (NOT the R1225 `combobox`: a WAI-ARIA combobox REQUIRES
+///   `aria-expanded` + a controlled popup, which this in-place `ArrowLeft` /
+///   `ArrowRight` cycle cell has NOT); its AT Increment / Decrement map to the
+///   arrow-cycle exactly as a numeric's do.
 /// - **Color / Text** → an informational `listitem` named `"{name}: {value}"`
 ///   (read-only over RPC via `intervene value.<i>`).
 ///
 /// `focused` sets the active-descendant flag (the Details pane owns the
 /// keyboard and this is the property cursor), the a11y peer of the painted ring.
+/// The operable roles are genuinely AT-operable: the shell routes an AT
+/// Increment / Decrement / Click on `prop_<i>` to `apply_key(Some("prop_<i>"), …)`,
+/// which `edit_property_at` dispatches to the same verb (R1228 B3).
 fn detail_access_node(index: usize, prop: &CommonProperty, focused: bool) -> AccessNode {
     let tag = format!("prop_{index}");
     match prop.value {
@@ -2077,14 +2124,14 @@ fn detail_access_node(index: usize, prop: &CommonProperty, focused: bool) -> Acc
                 node.with_value(AccessValue::Bool(b))
             }
         }
-        CellValue::Int(_) | CellValue::Float(_) => AccessNode::new(tag, AriaRole::SpinButton)
-            .with_name(prop.name.clone())
-            .with_value_text(common_value_label(prop))
-            .with_focused(focused),
-        CellValue::Choice { .. } => AccessNode::new(tag, AriaRole::ComboBox)
-            .with_name(prop.name.clone())
-            .with_value_text(common_value_label(prop))
-            .with_focused(focused),
+        // R1228 — numeric AND Choice are both `spinbutton`s (arrow-cycle =
+        // Increment/Decrement); one arm, no divergence.
+        CellValue::Int(_) | CellValue::Float(_) | CellValue::Choice { .. } => {
+            AccessNode::new(tag, AriaRole::SpinButton)
+                .with_name(prop.name.clone())
+                .with_value_text(common_value_label(prop))
+                .with_focused(focused)
+        }
         _ => AccessNode::new(tag, AriaRole::ListItem)
             .with_name(format!("{}: {}", prop.name, common_value_label(prop)))
             .with_focused(focused),
@@ -3233,7 +3280,7 @@ mod tests {
     }
 
     #[test]
-    fn r1225_a11y_choice_is_combobox_with_selected_option() {
+    fn r1228_a11y_choice_is_spinbutton_with_selected_option() {
         let nodes = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
                 &InspectorState::from_parts(&[0], Some(0))
@@ -3245,7 +3292,13 @@ mod tests {
             .iter()
             .find(|n| n.name.as_deref() == Some("Team"))
             .expect("Team row");
-        assert_eq!(team.role, AriaRole::ComboBox, "a Choice row is a combobox");
+        // R1228 — a Choice row is a `spinbutton` (NOT a combobox: no popup /
+        // aria-expanded; arrow-cycle maps to Increment/Decrement).
+        assert_eq!(
+            team.role,
+            AriaRole::SpinButton,
+            "a Choice row is a spinbutton"
+        );
         assert_eq!(
             team.value_text.as_deref(),
             Some("Red"),
@@ -3255,5 +3308,79 @@ mod tests {
             team.state.focused,
             "the Details cursor on Team is the active descendant"
         );
+    }
+
+    #[test]
+    fn r1228_edit_property_at_is_the_shared_kind_dispatch() {
+        // The ONE dispatch both the keyboard property-cursor path and the AT
+        // operable-role path funnel through — verified by kind here.
+        let mut e = ext(); // Player: Visible(bool,0) Layer(int,1) … Team(choice,5)
+        assert_eq!(choice_sel(&obj_value(&e, 0, "Team")), 0, "Team starts Red");
+        assert!(edit_property_at(&mut e, 5, Some("choice"), "ArrowRight"));
+        assert_eq!(choice_sel(&obj_value(&e, 0, "Team")), 1, "a Choice cycles");
+        assert_eq!(obj_value(&e, 0, "Visible"), CellValue::Bool(true));
+        assert!(edit_property_at(&mut e, 0, Some("bool"), "Enter"));
+        assert_eq!(
+            obj_value(&e, 0, "Visible"),
+            CellValue::Bool(false),
+            "a Bool toggles"
+        );
+        assert_eq!(obj_value(&e, 0, "Layer"), CellValue::Int(1));
+        assert!(edit_property_at(&mut e, 1, Some("int"), "ArrowLeft"));
+        assert_eq!(
+            obj_value(&e, 0, "Layer"),
+            CellValue::Int(0),
+            "a numeric steps"
+        );
+        assert!(
+            !edit_property_at(&mut e, 0, Some("bool"), "F1"),
+            "an unrecognised key is not consumed"
+        );
+    }
+
+    #[test]
+    fn r1228_at_action_operates_the_targeted_row_regardless_of_region() {
+        use pinion_core::external::External;
+        use pinion_core::scene::ExternalNode;
+        Owner::new().run(|| {
+            let mut scene = Scene::External(ExternalNode::new(
+                Box::new(make_inspector_external()) as Box<dyn External>
+            ));
+            let team = || {
+                let objs = use_objects().get();
+                choice_sel(
+                    &objs[0]
+                        .properties
+                        .iter()
+                        .find(|p| p.name == "Team")
+                        .unwrap()
+                        .value,
+                )
+            };
+            assert_eq!(
+                team(),
+                0,
+                "Team starts Red; boot region is Objects (NOT Details)"
+            );
+            // The shell routes an AT Increment on the Team spinbutton as
+            // apply_key(Some("prop_5"), "ArrowRight"). It must operate row 5 even
+            // though the pointer cursor / region is on the Objects pane.
+            let handled = InspectorView::apply_key(
+                &mut scene,
+                Some("prop_5"),
+                "ArrowRight",
+                Modifiers::empty(),
+            );
+            assert!(handled, "the AT action is handled");
+            assert_eq!(
+                team(),
+                1,
+                "AT Increment cycled Team from the Objects region"
+            );
+            // The AT-targeted row became the focused Details cursor (ring + a11y).
+            let focus = use_focus().get();
+            assert_eq!(focus.region, FocusRegion::Details);
+            assert_eq!(focus.prop_cursor, Some(5));
+        });
     }
 }

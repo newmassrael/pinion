@@ -61360,6 +61360,62 @@
         "next R1228 candidates: comment-frame move-with-contents / reroute node / data-grid block PASTE"
       ]
     },
+    "Round 1228": {
+      "decision_summary": "R1228 a11y-correctness clearance (audit B1+B3): Choice combobox->spinbutton (mis-role, no popup); operable Details roles now genuinely AT-operable (apply_key honors _focused prop_<i> via shared edit_property_at funnel); keyboard+AT one dispatch",
+      "changes_bullets": [
+        "B1 audit-fix: Choice cell ComboBox -> SpinButton (combobox REQUIRES aria-expanded/popup this arrow-cycle cell lacks)",
+        "B3 audit-fix: apply_key honors _focused prop_<i> -> operates the AT-targeted row by kind (was ignored -> operable roles were an AT facade)",
+        "edit_property_at: the shared kind-dispatch funnel for BOTH the keyboard property-cursor AND the AT operable-role paths",
+        "doc: corrected the false \"an AT drives it like pointer/keyboard\" claim (now true); merged Int/Float/Choice spinbutton arm",
+        "2 new tests (shared dispatch by kind; AT Increment operates the targeted row regardless of region/cursor)"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-inspector: 44 pass (2 new B3; the R1225 combobox test is now r1228 spinbutton)",
+        "cargo test --workspace -j2: 8023 pass / 0 fail (real exit 0)",
+        "cargo clippy -p hello-inspector --all-targets + fmt + cargo doc: clean",
+        "tools/demos/r1224 + r1225 re-run: PASS (the keyboard-cursor edit refactor through edit_property_at did not regress)",
+        "audit provenance: 3 independent adversarial reviewers + self-grep; B1/B3 were self-report-clean but reviewer-caught"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.22",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "audit-clearance campaign (R1228-R1232) from the R1224-R1227 adversarial review: B1+B3 cleared here",
+        "B2 (mixed Bool switch emits no aria-checked = invalid switch) = R1229: add pinion-a11y Toggled::Mixed tri-state + role mixed Bool as checkbox",
+        "SSOT-2 (cut_wires triplicates hit_test_edge endpoint resolve) + SSOT-3 (add_frame bypasses node_bounds) = R1230",
+        "SSOT-1 (prefix+index decode 3-site -> composite_tag) + SSOT-5 (RenameCmd<T> or doc) = R1231",
+        "DOC-1 (cut overclaim) + DOC-2 (persistence doc/migrate) + STR-1 (node-editor 12k mod split) = R1232"
+      ],
+      "publishable_decision_summary": "R1228 a11y-correctness clearance (audit B1+B3): Choice combobox->spinbutton (mis-role, no popup); operable Details roles now genuinely AT-operable (apply_key honors _focused prop_<i> via shared edit_property_at funnel); keyboard+AT one dispatch",
+      "publishable_changes_bullets": [
+        "B1 audit-fix: Choice cell ComboBox -> SpinButton (combobox REQUIRES aria-expanded/popup this arrow-cycle cell lacks)",
+        "B3 audit-fix: apply_key honors _focused prop_<i> -> operates the AT-targeted row by kind (was ignored -> operable roles were an AT facade)",
+        "edit_property_at: the shared kind-dispatch funnel for BOTH the keyboard property-cursor AND the AT operable-role paths",
+        "doc: corrected the false \"an AT drives it like pointer/keyboard\" claim (now true); merged Int/Float/Choice spinbutton arm",
+        "2 new tests (shared dispatch by kind; AT Increment operates the targeted row regardless of region/cursor)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-inspector: 44 pass (2 new B3; the R1225 combobox test is now r1228 spinbutton)",
+        "cargo test --workspace -j2: 8023 pass / 0 fail (real exit 0)",
+        "cargo clippy -p hello-inspector --all-targets + fmt + cargo doc: clean",
+        "tools/demos/r1224 + r1225 re-run: PASS (the keyboard-cursor edit refactor through edit_property_at did not regress)",
+        "audit provenance: 3 independent adversarial reviewers + self-grep; B1/B3 were self-report-clean but reviewer-caught"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.22",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "audit-clearance campaign (R1228-R1232) from the R1224-R1227 adversarial review: B1+B3 cleared here",
+        "B2 (mixed Bool switch emits no aria-checked = invalid switch) = R1229: add pinion-a11y Toggled::Mixed tri-state + role mixed Bool as checkbox",
+        "SSOT-2 (cut_wires triplicates hit_test_edge endpoint resolve) + SSOT-3 (add_frame bypasses node_bounds) = R1230",
+        "SSOT-1 (prefix+index decode 3-site -> composite_tag) + SSOT-5 (RenameCmd<T> or doc) = R1231",
+        "DOC-1 (cut overclaim) + DOC-2 (persistence doc/migrate) + STR-1 (node-editor 12k mod split) = R1232"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
