@@ -55,7 +55,8 @@
 //! `x`/`y` move the frame + its contents, `w`/`h` resize it) /
 //! `selected` / `selected_ids` /
 //! `selected_edge`; `invoke add_edge` / `remove_edge` /
-//! `reconnect_edge` / `delete_node` / `delete_selected` / `nudge` / the
+//! `reconnect_edge` / `add_reroute` (R1235: splice a typed passthrough into an
+//! edge) / `delete_node` / `delete_selected` / `nudge` / the
 //! pointer `send` wire.
 //!
 //! R929 / R1174 — **reconnect** re-wires an existing edge's *target* input
@@ -3242,6 +3243,17 @@ impl NodeGraphExternal {
     /// one SSOT. Each caller's `validate_connection` gate and its `removed` set
     /// are the only differences (R929 factored the validation but left this
     /// commit tail duplicated — the missing half of that lift).
+    /// R1235 — mint the next stable [`EdgeId`], bumping the monotonic counter.
+    /// The one id source shared by [`commit_new_edge`](Self::commit_new_edge)
+    /// (connect / reconnect) and the reroute splice ([`add_reroute`](Self::add_reroute),
+    /// which mints two) — a deleted-then-saved id is never re-handed-out
+    /// (the counter only advances), so a splice + undo leaves no id collision.
+    fn mint_edge_id(&self) -> EdgeId {
+        let id = EdgeId(self.next_edge_id.get());
+        self.next_edge_id.set(id.raw() + 1);
+        id
+    }
+
     fn commit_new_edge(
         &self,
         label: &'static str,
@@ -3251,8 +3263,7 @@ impl NodeGraphExternal {
         to_port: usize,
         removed: Vec<Edge>,
     ) {
-        let id = EdgeId(self.next_edge_id.get());
-        self.next_edge_id.set(id.raw() + 1);
+        let id = self.mint_edge_id();
         let new_edge = Edge {
             id,
             from_node,
@@ -3328,6 +3339,77 @@ impl NodeGraphExternal {
             removed,
         );
         true
+    }
+
+    /// R1235 — splice a **reroute node** into edge `edge_id`: a typed 1-in /
+    /// 1-out passthrough dropped at the wire's midpoint so the connection routes
+    /// `A -> R -> B` instead of `A -> B` (the Blueprint / material-editor
+    /// "reroute" knot — bend a wire around for readability, then drag `R` to
+    /// route it). The reroute adopts the wire's [`PortType`] on BOTH ports, so
+    /// `A -> R` and `R -> B` are assignable exactly when `A -> B` was — the
+    /// splice never weakens type-safety. ONE undoable [`GraphEdit`]: the original
+    /// edge is removed and the node + its two edges are added together, so a
+    /// single `Ctrl`+`Z` undoes the whole reroute. `None` for an unknown edge id.
+    fn add_reroute(&self, edge_id: EdgeId) -> Option<NodeId> {
+        let edge = self.edges.get().iter().copied().find(|e| e.id == edge_id)?;
+        let nodes = self.nodes.get();
+        // The wire's type is its SOURCE output's type; both reroute ports take it.
+        let ty = node_ref(&nodes, edge.from_node)?.output_type(edge.from_port)?;
+        // Centre the reroute on the wire's straight midpoint (graph units — the
+        // same space `edge_endpoints` + node positions live in).
+        let (from, to) = edge_endpoints(&nodes, &edge)?;
+        let mid_x = i32::midpoint(from.0, to.0);
+        let mid_y = i32::midpoint(from.1, to.1);
+        let node_raw = self.next_node_id.get();
+        self.next_node_id.set(node_raw + 1);
+        let mut reroute = GraphNode::new(node_raw, "Reroute", 0, 0, &[ty], &[ty]);
+        reroute.x = clamp_node_x(mid_x - NODE_W / 2);
+        reroute.y = clamp_node_y(mid_y - reroute.height() / 2);
+        let node_id = reroute.id;
+        // Mint the two replacement edges (A -> R, R -> B).
+        let e_in = self.mint_edge_id();
+        let e_out = self.mint_edge_id();
+        let a_to_r = Edge {
+            id: e_in,
+            from_node: edge.from_node,
+            from_port: edge.from_port,
+            to_node: node_id,
+            to_port: 0,
+        };
+        let r_to_b = Edge {
+            id: e_out,
+            from_node: node_id,
+            from_port: 0,
+            to_node: edge.to_node,
+            to_port: edge.to_port,
+        };
+        let sel_before = self.selection.get();
+        self.record_edit(
+            "Insert reroute",
+            GraphDelta {
+                added_nodes: vec![reroute],
+                added_edges: vec![a_to_r, r_to_b],
+                removed_edges: vec![edge],
+                ..GraphDelta::default()
+            },
+            sel_before,
+            Selection::single(node_id),
+        );
+        Some(node_id)
+    }
+
+    /// R1235 — the `add_reroute` verb arm: splice a reroute into edge `<int>`,
+    /// returning the new node id (`Null` for an unknown edge; a non-`Int` arg is
+    /// a `TypeMismatch`).
+    fn invoke_add_reroute(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let &IntrospectValue::Int(i) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+        Ok(match self.add_reroute(EdgeId(id)) {
+            Some(n) => IntrospectValue::Int(i64::from(n.raw())),
+            None => IntrospectValue::Null,
+        })
     }
 
     /// R899 — the `intervene node.<id>.input_default.<port>` write path. The
@@ -4762,6 +4844,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             // (graph units) crosses, as one undo step. Returns the CSV of cut
             // edge ids (mirrors `edge_ids`), empty when nothing was crossed.
             ("cut_wires", "string"),
+            // R1235 — splice a reroute node into edge `<int>`; returns the new
+            // node id (`Null` for an unknown edge).
+            ("add_reroute", "int"),
             // R1227 — comment-frame verbs: `add_frame` (no arg) frames the
             // current node selection, returning the new frame id (`Null` when
             // nothing is selected); `remove_frame` deletes a frame by id.
@@ -5115,6 +5200,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R1226 — the wire knife (the AI-first primary path). Arg
             // `"x1,y1,x2,y2"` (graph units); returns the CSV of cut edge ids.
             "cut_wires" => self.invoke_cut_wires(args),
+            // R1235 — splice a reroute node into an edge (the AI-first peer of a
+            // double-click-on-wire gesture). Arg `<edge_id>`; returns the new id.
+            "add_reroute" => self.invoke_add_reroute(&args),
             // R1227 — comment-frame verbs (bodies extracted to keep `invoke`
             // within the workspace line ceiling).
             "add_frame" => Ok(self.invoke_add_frame()),

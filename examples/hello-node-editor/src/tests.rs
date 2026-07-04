@@ -5952,3 +5952,124 @@ fn r1234_frame_geom_type_and_path_errors() {
         );
     });
 }
+
+#[test]
+fn r1235_add_reroute_splices_edge_as_one_undo_step() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        // Seed edge 0: node0.out0 -> node2.in0 (a Vector wire).
+        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(4)));
+        assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(3)));
+        let rid = coord.add_reroute(EdgeId(0)).expect("edge 0 exists");
+        // A fifth node (the reroute) and a net +1 edge (removed 1, added 2).
+        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(4)));
+        // The spliced edge is gone; the path now routes node0 -> R -> node2.
+        let edges = coord.edges.get();
+        assert!(
+            !edges.iter().any(|e| e.id == EdgeId(0)),
+            "the original edge is removed"
+        );
+        let a_to_r = edges
+            .iter()
+            .find(|e| e.from_node == NodeId(0))
+            .expect("node0 -> reroute");
+        assert_eq!(a_to_r.to_node, rid, "node0 now feeds the reroute");
+        assert_eq!(a_to_r.to_port, 0, "into the reroute's only input");
+        let r_to_b = edges
+            .iter()
+            .find(|e| e.from_node == rid)
+            .expect("reroute -> node2");
+        assert_eq!(r_to_b.to_node, NodeId(2), "the reroute feeds node2");
+        assert_eq!(r_to_b.to_port, 0, "into the original input port");
+        // One undo removes the whole reroute (node + both edges) and restores E0.
+        assert_eq!(
+            use_undo().undo_label().as_deref(),
+            Some("Insert reroute"),
+            "the splice is a single labelled step"
+        );
+        assert!(use_undo().undo(), "one undo reverts the splice");
+        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(4)));
+        assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(3)));
+        assert!(
+            coord.edges.get().iter().any(|e| e.id == EdgeId(0)),
+            "the original edge is restored"
+        );
+        assert!(use_undo().redo(), "redo re-splices in one step");
+        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
+    });
+}
+
+#[test]
+fn r1235_reroute_is_a_typed_passthrough_adopting_the_wire_type() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        // Build a FLOAT wire: Scalar (Float out, palette 5) -> Lerp's Float
+        // factor input (palette 6, port 2).
+        let scalar = coord.add_node(5).expect("Scalar");
+        let lerp = coord.add_node(6).expect("Lerp");
+        assert!(coord.add_edge(scalar, 0, lerp, 2), "Float -> Float wired");
+        let float_edge = coord
+            .edges
+            .get()
+            .iter()
+            .copied()
+            .find(|e| e.from_node == scalar)
+            .expect("the float edge")
+            .id;
+        let rid = coord
+            .add_reroute(float_edge)
+            .expect("splice the float wire");
+        let r = coord.node_by_id(rid).expect("reroute node");
+        assert_eq!(r.title, "Reroute", "titled Reroute");
+        assert_eq!(
+            r.input_ports,
+            vec![PortType::Float],
+            "the input port adopts the wire's type (not a hardcoded Vector)"
+        );
+        assert_eq!(
+            r.output_ports,
+            vec![PortType::Float],
+            "the output port adopts the wire's type"
+        );
+        assert!(
+            r.x >= 0 && r.y >= 0,
+            "the reroute lands on the world surface"
+        );
+    });
+}
+
+#[test]
+fn r1235_add_reroute_unknown_edge_is_none_and_verb_errors() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        let n0 = coord.query("node_count");
+        let e0 = coord.query("edge_count");
+        // An unknown edge splices nothing (graph unchanged).
+        assert_eq!(coord.add_reroute(EdgeId(99)), None, "unknown edge -> None");
+        assert_eq!(coord.query("node_count"), n0, "node count unchanged");
+        assert_eq!(coord.query("edge_count"), e0, "edge count unchanged");
+        // The RPC verb: Null for unknown, a non-Int arg is a TypeMismatch.
+        assert_eq!(
+            coord.invoke("add_reroute", IntrospectValue::Int(99)),
+            Ok(IntrospectValue::Null),
+        );
+        assert_eq!(
+            coord.invoke("add_reroute", IntrospectValue::Text("x".to_owned())),
+            Err(InvokeError::TypeMismatch),
+        );
+        // A real splice returns the new node id, and the verb is schema-declared.
+        assert!(matches!(
+            coord.invoke("add_reroute", IntrospectValue::Int(0)),
+            Ok(IntrospectValue::Int(_))
+        ));
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+        assert!(
+            fields.contains(&"add_reroute"),
+            "add_reroute schema-declared"
+        );
+    });
+}

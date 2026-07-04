@@ -61706,6 +61706,58 @@
         "next R1235 candidates: node reroute node / data-grid editable cell-range + block PASTE / inspector inline TextField absolute type-in"
       ]
     },
+    "Round 1235": {
+      "decision_summary": "R1235 node-graph REROUTE node: invoke add_reroute <edge_id> splices a typed 1-in/1-out passthrough into an edge (A->B becomes A->R->B) as one undoable GraphEdit; the knot adopts the wire's PortType so type-safety is preserved; SSOT: edge-id minting lifted to a mint_edge_id funnel (3rd-consumer)",
+      "changes_bullets": [
+        "add_reroute(edge_id): removes edge A->B, drops a typed 1-in/1-out passthrough GraphNode (\"Reroute\") at the wire midpoint, adds A->R + R->B = ONE undoable GraphEdit (\"Insert reroute\")",
+        "the reroute adopts the wire's PortType on both ports, so A->R and R->B are assignable exactly when A->B was (type-safety preserved); Vector wire -> Vector knot, Float wire -> Float knot",
+        "RPC invoke add_reroute <edge_id> returns the new node id (Null for unknown edge, non-Int = TypeMismatch); schema-declared; module doc + intervene surface updated",
+        "SSOT lift (3b): edge-id minting was a 3-site mechanical dup after this round (commit_new_edge + add_reroute x2) -> lifted mint_edge_id funnel; commit_new_edge routed through it (connect/reconnect unchanged)",
+        "reroute paints + a11ys via the generic GraphNode path (no special-casing); a knot-style minimal rendering + a double-click-on-wire gesture are deferred paint/GUI polish"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 8033 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 175 pass (3 new R1235: splice-undo-redo / typed-passthrough Float-adoption / unknown-edge + verb errors)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic; i32::midpoint); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1235_node_reroute.py: PASS, 32 assertions (splice/path/typed-Vector/undo-redo/Float-adoption/reject); r929 reconnect demo still PASS (mint_edge_id lift is behaviour-preserving)",
+        "3b self-grep: reroute reuses record_edit + GraphDelta (the structural-edit SSOT); edge-id mint lifted to mint_edge_id; node-id mint stays 2-site (add_node entangled with cascade-step) = deferred"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "knot-style minimal reroute rendering deferred: v1 paints a full \"Reroute\" card at the midpoint (functional but bulky vs a Blueprint dot); a compact knot render is paint polish, not correctness",
+        "double-click-on-wire gesture deferred (GUI): RPC add_reroute is the AI-first primary path (invariant 2) and is done; a pointer gesture is the same class as the comment-frame grab handle (HW-gated live pixel)",
+        "node-id minting stays a 2-site inline pattern (add_node cascade-step reads the raw u32); lift a mint_node_id funnel only when a 3rd consumer appears (abstraction-needs-second-consumer)",
+        "next R1236 candidates: reroute delete-and-reconnect (Blueprint Alt-delete rejoins A->B) / data-grid editable cell-range + block PASTE / inspector inline TextField absolute type-in"
+      ],
+      "publishable_decision_summary": "R1235 node-graph REROUTE node: invoke add_reroute <edge_id> splices a typed 1-in/1-out passthrough into an edge (A->B becomes A->R->B) as one undoable GraphEdit; the knot adopts the wire's PortType so type-safety is preserved; SSOT: edge-id minting lifted to a mint_edge_id funnel (3rd-consumer)",
+      "publishable_changes_bullets": [
+        "add_reroute(edge_id): removes edge A->B, drops a typed 1-in/1-out passthrough GraphNode (\"Reroute\") at the wire midpoint, adds A->R + R->B = ONE undoable GraphEdit (\"Insert reroute\")",
+        "the reroute adopts the wire's PortType on both ports, so A->R and R->B are assignable exactly when A->B was (type-safety preserved); Vector wire -> Vector knot, Float wire -> Float knot",
+        "RPC invoke add_reroute <edge_id> returns the new node id (Null for unknown edge, non-Int = TypeMismatch); schema-declared; module doc + intervene surface updated",
+        "SSOT lift (3b): edge-id minting was a 3-site mechanical dup after this round (commit_new_edge + add_reroute x2) -> lifted mint_edge_id funnel; commit_new_edge routed through it (connect/reconnect unchanged)",
+        "reroute paints + a11ys via the generic GraphNode path (no special-casing); a knot-style minimal rendering + a double-click-on-wire gesture are deferred paint/GUI polish"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 8033 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 175 pass (3 new R1235: splice-undo-redo / typed-passthrough Float-adoption / unknown-edge + verb errors)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic; i32::midpoint); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1235_node_reroute.py: PASS, 32 assertions (splice/path/typed-Vector/undo-redo/Float-adoption/reject); r929 reconnect demo still PASS (mint_edge_id lift is behaviour-preserving)",
+        "3b self-grep: reroute reuses record_edit + GraphDelta (the structural-edit SSOT); edge-id mint lifted to mint_edge_id; node-id mint stays 2-site (add_node entangled with cascade-step) = deferred"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "knot-style minimal reroute rendering deferred: v1 paints a full \"Reroute\" card at the midpoint (functional but bulky vs a Blueprint dot); a compact knot render is paint polish, not correctness",
+        "double-click-on-wire gesture deferred (GUI): RPC add_reroute is the AI-first primary path (invariant 2) and is done; a pointer gesture is the same class as the comment-frame grab handle (HW-gated live pixel)",
+        "node-id minting stays a 2-site inline pattern (add_node cascade-step reads the raw u32); lift a mint_node_id funnel only when a 3rd consumer appears (abstraction-needs-second-consumer)",
+        "next R1236 candidates: reroute delete-and-reconnect (Blueprint Alt-delete rejoins A->B) / data-grid editable cell-range + block PASTE / inspector inline TextField absolute type-in"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
