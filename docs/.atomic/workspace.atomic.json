@@ -62206,6 +62206,50 @@
         "Next candidates (audit-first): inspector inline type-in (large, designed) / node wire-connect auto-pan (the R1182 node-body auto-pan's documented follow-up for the begin_drag DnD path) / data-grid range-preselect-bounded paste."
       ]
     },
+    "Round 1246": {
+      "decision_summary": "R1246 audit-clearance (F1+F4): begin_edit refuses a CARD-surface edit on a reroute knot -> paint==a11y root fix covering begin_rename via F2/RPC/double-click + begin_edit_default on an unwired knot pin (R1245 only patched the double-click symptom); revert R1245's invented double-click-to-dissolve footgun, dissolve stays on the standard Alt+Delete.",
+      "changes_bullets": [
+        "paint==a11y ROOT fix (audit-clearance of R1243/R1245): begin_edit now refuses a CARD-surface edit on a reroute knot (a knot paints as a compact dot via view_reroute_knot with no card to host a field). ONE guard covers EVERY entry point that R1245 missed — begin_rename via F2, the begin_rename RPC verb (by id AND the Null=selection form F2 drives), the double-click, and begin_edit_default on an unwired knot pin. Pre-R1246 all but the double-click still armed a focused a11y title/port textbox with no painted peer (query editing/renaming reported a phantom editor) — the exact paint!=a11y violation R1245's message wrongly claimed to clear. R1245 fixed the symptom (one of ~4 routes); this is the root.",
+        "reverted R1245's double-click-to-dissolve gesture: it was an invented, non-standard, destructive-on-a-benign-gesture footgun that duplicated the standard Alt+Delete/dissolve_node, chosen because rename was meaningless on a knot (implementation-accident-driven, not UX-first) and had a silent dead-end on degenerate knots. The DoubleClick arm reverts to plain begin_rename, which the new gate makes a clean no-op for a knot. Dissolve stays on Alt+Delete / invoke dissolve_node (R1236, unchanged). is_reroute_node now earns its consumer in the gate."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 197 pass / 0 fail (5 R1246 tests replacing R1245's, incl the F1 coverage the audit exposed: begin_rename refused via direct + RPC-by-id + RPC-Null/F2 routes / begin_edit_default on an unwired knot pin refused / double-click knot is a no-op / dissolve verb still works / compute node still renames).",
+        "clippy -D pedantic clean; rustdoc -D warnings clean; rustfmt clean; validate-workspace T1=0.",
+        "tools/demos/r1246_node_knot_gate.py: PASS, 31 assertions (real scene/double_click on a knot = no-op; invoke begin_rename by-id + Null both refused, renaming/editing stay null = no phantom editor; dissolve via invoke dissolve_node still works + undo; compute node double-click renames). r1245_node_knot_dissolve.py retired (behavior reverted). Regressions r1236/r878/r1243 PASS."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.49",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "R1246 opens an audit-clearance campaign (5 independent adversarial reviewers on R1243-R1245 at the user's \"textbook/SSOT/north-star?\" request; 5th self-report-bias instance). Cleared this round: F1 paint!=a11y root gate + F4 revert the invented dissolve gesture.",
+        "Still to clear in the campaign: R1247 = F2 (R1244 paste-grow appends a PHANTOM empty row for an all-unparseable overrun line; written count hides it; the renamed test's documented invariant is false) ; R1248 = F3 (width() SSOT incomplete: open_pin_create main.rs:5695 src.x+NODE_W not routed through right() -> invoke open_pin_create <knot>.0 misplaces the menu ~112px; docstring \"never disagree with paint\" false) + F5 (view_node card Size uses literal NODE_W not node.width()).",
+        "Design correction (not code): the inspector inline-type-in round should ADD extra_externals to the #[widget] macro (65 example bindings already hand-roll create_extra_externals -> the gap is proven), NOT convert macro->manual; the \"1 consumer\" premise was backwards. Update the r1245-inspector-inline-typein-design memory.",
+        "Noted carries (not this campaign): value.<r>.<c> out-of-range -> RPC UnknownIntrospectPath error not null (pre-existing framework-wide §2#7 smell) ; MAX_NODE_X over-clamps a knot (acceptable conservative bound) ; append_default_row(bool) -> CursorHop enum (polish) ; pending_reroute_splice weaker-guarded than the marquee (pathological, add_reroute re-validates)."
+      ],
+      "publishable_decision_summary": "R1246 audit-clearance (F1+F4): begin_edit refuses a CARD-surface edit on a reroute knot -> paint==a11y root fix covering begin_rename via F2/RPC/double-click + begin_edit_default on an unwired knot pin (R1245 only patched the double-click symptom); revert R1245's invented double-click-to-dissolve footgun, dissolve stays on the standard Alt+Delete.",
+      "publishable_changes_bullets": [
+        "paint==a11y ROOT fix (audit-clearance of R1243/R1245): begin_edit now refuses a CARD-surface edit on a reroute knot (a knot paints as a compact dot via view_reroute_knot with no card to host a field). ONE guard covers EVERY entry point that R1245 missed — begin_rename via F2, the begin_rename RPC verb (by id AND the Null=selection form F2 drives), the double-click, and begin_edit_default on an unwired knot pin. Pre-R1246 all but the double-click still armed a focused a11y title/port textbox with no painted peer (query editing/renaming reported a phantom editor) — the exact paint!=a11y violation R1245's message wrongly claimed to clear. R1245 fixed the symptom (one of ~4 routes); this is the root.",
+        "reverted R1245's double-click-to-dissolve gesture: it was an invented, non-standard, destructive-on-a-benign-gesture footgun that duplicated the standard Alt+Delete/dissolve_node, chosen because rename was meaningless on a knot (implementation-accident-driven, not UX-first) and had a silent dead-end on degenerate knots. The DoubleClick arm reverts to plain begin_rename, which the new gate makes a clean no-op for a knot. Dissolve stays on Alt+Delete / invoke dissolve_node (R1236, unchanged). is_reroute_node now earns its consumer in the gate."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 197 pass / 0 fail (5 R1246 tests replacing R1245's, incl the F1 coverage the audit exposed: begin_rename refused via direct + RPC-by-id + RPC-Null/F2 routes / begin_edit_default on an unwired knot pin refused / double-click knot is a no-op / dissolve verb still works / compute node still renames).",
+        "clippy -D pedantic clean; rustdoc -D warnings clean; rustfmt clean; validate-workspace T1=0.",
+        "tools/demos/r1246_node_knot_gate.py: PASS, 31 assertions (real scene/double_click on a knot = no-op; invoke begin_rename by-id + Null both refused, renaming/editing stay null = no phantom editor; dissolve via invoke dissolve_node still works + undo; compute node double-click renames). r1245_node_knot_dissolve.py retired (behavior reverted). Regressions r1236/r878/r1243 PASS."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.49",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1246 opens an audit-clearance campaign (5 independent adversarial reviewers on R1243-R1245 at the user's \"textbook/SSOT/north-star?\" request; 5th self-report-bias instance). Cleared this round: F1 paint!=a11y root gate + F4 revert the invented dissolve gesture.",
+        "Still to clear in the campaign: R1247 = F2 (R1244 paste-grow appends a PHANTOM empty row for an all-unparseable overrun line; written count hides it; the renamed test's documented invariant is false) ; R1248 = F3 (width() SSOT incomplete: open_pin_create main.rs:5695 src.x+NODE_W not routed through right() -> invoke open_pin_create <knot>.0 misplaces the menu ~112px; docstring \"never disagree with paint\" false) + F5 (view_node card Size uses literal NODE_W not node.width()).",
+        "Design correction (not code): the inspector inline-type-in round should ADD extra_externals to the #[widget] macro (65 example bindings already hand-roll create_extra_externals -> the gap is proven), NOT convert macro->manual; the \"1 consumer\" premise was backwards. Update the r1245-inspector-inline-typein-design memory.",
+        "Noted carries (not this campaign): value.<r>.<c> out-of-range -> RPC UnknownIntrospectPath error not null (pre-existing framework-wide §2#7 smell) ; MAX_NODE_X over-clamps a knot (acceptable conservative bound) ; append_default_row(bool) -> CursorHop enum (polish) ; pending_reroute_splice weaker-guarded than the marquee (pathological, add_reroute re-validates)."
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

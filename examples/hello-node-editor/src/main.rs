@@ -184,10 +184,12 @@
 //!   the cursor (`A -> R -> B`), the live gesture twin of `invoke add_reroute
 //!   <edge_id>`. Reads the background edge-hit probe the same in-place click
 //!   selects a wire from, so a double-click on empty canvas no-ops.
-//! - **Double-click a reroute knot** (R1245): DISSOLVES it (remove + reconnect
-//!   the wire through it) — the inverse of the double-click-on-wire create. A
-//!   knot has no title to rename, so this is its natural double-click action; a
-//!   compute node's double-click still opens its title rename.
+//! - **Double-click a reroute knot** (R1246): a no-op — a knot paints no card,
+//!   so `begin_edit` refuses the card-title rename (the paint==a11y gate). To
+//!   remove a knot, use `Alt`+`Delete` / `invoke dissolve_node` (R1236), which
+//!   reconnects the wire through it. (R1245's double-click-to-dissolve was
+//!   reverted: a destructive action on a benign gesture is a footgun that
+//!   duplicated the standard delete.)
 //! - **Multi-select marquee** (R879 model / R880 gesture) — an LMB background-
 //!   drag rubber-bands a rect (`MarqueeStart` + the `DragLatch` click-vs-drag
 //!   dead zone); on release every intersected node joins the set via
@@ -4490,6 +4492,17 @@ impl NodeGraphExternal {
     /// text (caret parked at the end — the todomvc `begin_edit` UX), and hand
     /// focus to the field through the focus-request mailbox.
     fn begin_edit(&self, target: EditTarget, surface: EditSurface) -> bool {
+        // R1246 — a reroute knot paints as a compact dot with NO card
+        // ([`view_reroute_knot`] renders no header / port rows), so a CARD-surface
+        // inline editor on a knot would arm a focused a11y textbox with no painted
+        // peer (the paint==a11y gate). Refuse it at the ROOT — one guard covering
+        // every entry point (`begin_rename` via F2 / the `begin_rename` RPC verb /
+        // double-click, and `begin_edit_default` on an unwired knot pin). The
+        // Details PANEL surface is unaffected: the panel row paints its own field,
+        // so a knot's properties stay editable there.
+        if surface == EditSurface::Card && self.is_reroute_node(target.node()) {
+            return false;
+        }
         let Some(seed) = self.edit_seed_text(target) else {
             return false;
         };
@@ -4745,19 +4758,14 @@ impl NodeGraphExternal {
             // and the `scene/double_click` RPC drain emits the identical wire.
             (Some(s), "DoubleClick") => {
                 if let Some(n) = parse_node_sub(s) {
-                    // R1245 — a reroute KNOT has no title to rename (it paints as
-                    // a compact dot, not a titled card), so its double-click
-                    // DISSOLVES it (remove + reconnect the wire through it) — the
-                    // inverse of R1243's double-click-on-wire that CREATED it. A
-                    // non-reroute node opens its title rename (R878). This also
-                    // clears an R1243 latent bug: routing a knot to `begin_rename`
-                    // armed an editor that `view_reroute_knot` never paints (an
-                    // a11y textbox with no painted peer — the paint==a11y gate).
-                    if self.is_reroute_node(n) {
-                        self.dissolve_node(n);
-                    } else {
-                        self.begin_rename(n);
-                    }
+                    // R1246 — begin the card-title rename. `begin_edit` refuses a
+                    // CARD edit on a reroute KNOT (it paints no card to host the
+                    // field), so a knot double-click is a clean no-op here — NOT a
+                    // destructive dissolve (R1245 bound double-click-to-dissolve,
+                    // an invented, non-standard, footgun gesture that duplicated
+                    // the standard `Alt`+`Delete`; reverted). Dissolve stays on
+                    // `Alt`+`Delete` / `invoke dissolve_node`.
+                    self.begin_rename(n);
                 } else if let Some((n, port)) = parse_idefault_sub(s) {
                     self.begin_edit_default(n, port);
                 }
