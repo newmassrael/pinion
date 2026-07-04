@@ -61468,6 +61468,52 @@
         "DOC-1 (cut overclaim) + DOC-2 (persistence doc/migrate) + STR-1 (node-editor 12k mod split) = R1232"
       ]
     },
+    "Round 1230": {
+      "decision_summary": "R1230 SSOT-lift clearance (audit SSOT-2+SSOT-3, node-editor): edge_endpoints unifies the edge->port-center resolve across paint/hit-test/knife (knife had copied hit_test_edge verbatim); add_frame routes through node_bounds (was a hand-rolled bbox bypassing the SSOT + bottom())",
+      "changes_bullets": [
+        "SSOT-2 lift: edge_endpoints() = the ONE edge->(from,to) port-center resolve for view_edges + hit_test_edge + cut_wires",
+        "the R1226 knife had copied hit_test_edge's endpoint-resolution body verbatim (3rd divergent site); all three now read edge_endpoints",
+        "SSOT-3 lift: add_frame's selection bbox now goes through node_bounds() (align_selected's SSOT), dropping the hand-rolled min/max fold that bypassed both node_bounds and the bottom() accessor",
+        "behavior-preserving: 167 node-editor tests + r1226 cut + r1227 frame demos unchanged (the lifts are refactors, not behavior)"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 167 pass (unchanged; the lifts are behavior-preserving)",
+        "cargo test --workspace -j2: 8024 pass / 0 fail (real exit 0)",
+        "cargo clippy -p hello-node-editor --all-targets + fmt: clean",
+        "tools/demos/r1226 (cut_wires) + r1227 (comment frames) re-run: PASS (both exercise the lifted helpers)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "audit-clearance campaign: a11y (R1228 B1/B3 + R1229 B2) + node-editor SSOT (R1230 SSOT-2/3) cleared",
+        "remaining: SSOT-1 (prefix+index decode 3-site inspector/property-grid/data-grid -> composite_tag::prefixed_index) + SSOT-5 (RenameCmd<T> generic or correct the stale R900 doc) = R1231",
+        "DOC-1 (cut \"exactly the drawn curve\" overclaim) + DOC-2 (persistence serde-default doc vs strict version gate) + STR-1 (node-editor 12k main.rs mod split) = R1232"
+      ],
+      "publishable_decision_summary": "R1230 SSOT-lift clearance (audit SSOT-2+SSOT-3, node-editor): edge_endpoints unifies the edge->port-center resolve across paint/hit-test/knife (knife had copied hit_test_edge verbatim); add_frame routes through node_bounds (was a hand-rolled bbox bypassing the SSOT + bottom())",
+      "publishable_changes_bullets": [
+        "SSOT-2 lift: edge_endpoints() = the ONE edge->(from,to) port-center resolve for view_edges + hit_test_edge + cut_wires",
+        "the R1226 knife had copied hit_test_edge's endpoint-resolution body verbatim (3rd divergent site); all three now read edge_endpoints",
+        "SSOT-3 lift: add_frame's selection bbox now goes through node_bounds() (align_selected's SSOT), dropping the hand-rolled min/max fold that bypassed both node_bounds and the bottom() accessor",
+        "behavior-preserving: 167 node-editor tests + r1226 cut + r1227 frame demos unchanged (the lifts are refactors, not behavior)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 167 pass (unchanged; the lifts are behavior-preserving)",
+        "cargo test --workspace -j2: 8024 pass / 0 fail (real exit 0)",
+        "cargo clippy -p hello-node-editor --all-targets + fmt: clean",
+        "tools/demos/r1226 (cut_wires) + r1227 (comment frames) re-run: PASS (both exercise the lifted helpers)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "audit-clearance campaign: a11y (R1228 B1/B3 + R1229 B2) + node-editor SSOT (R1230 SSOT-2/3) cleared",
+        "remaining: SSOT-1 (prefix+index decode 3-site inspector/property-grid/data-grid -> composite_tag::prefixed_index) + SSOT-5 (RenameCmd<T> generic or correct the stale R900 doc) = R1231",
+        "DOC-1 (cut \"exactly the drawn curve\" overclaim) + DOC-2 (persistence serde-default doc vs strict version gate) + STR-1 (node-editor 12k main.rs mod split) = R1232"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

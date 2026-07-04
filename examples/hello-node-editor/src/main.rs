@@ -3309,18 +3309,8 @@ impl NodeGraphExternal {
             .iter()
             .copied()
             .filter(|e| {
-                let (Some(src), Some(dst)) = (
-                    nodes.iter().find(|n| n.id == e.from_node),
-                    nodes.iter().find(|n| n.id == e.to_node),
-                ) else {
-                    return false;
-                };
-                edge_crosses_segment(
-                    output_port_center(src, e.from_port),
-                    input_port_center(dst, e.to_port),
-                    a,
-                    b,
-                )
+                edge_endpoints(&nodes, e)
+                    .is_some_and(|(from, to)| edge_crosses_segment(from, to, a, b))
             })
             .collect();
         if cut.is_empty() {
@@ -3372,11 +3362,10 @@ impl NodeGraphExternal {
     fn add_frame(&self) -> Option<FrameId> {
         let sel = self.selection.get().nodes();
         let nodes = self.nodes.get();
-        let members: Vec<&GraphNode> = nodes.iter().filter(|n| sel.contains(&n.id)).collect();
-        let left = members.iter().map(|n| n.x).min()?;
-        let top = members.iter().map(|n| n.y).min()?;
-        let right = members.iter().map(|n| n.right()).max()?;
-        let bottom = members.iter().map(|n| n.y + n.height()).max()?;
+        // R1230 — the selection's bounding box through the `node_bounds` SSOT
+        // (the same fold `align_selected` uses); the pre-R1230 hand-rolled fold
+        // here bypassed both `node_bounds` and the `bottom()` accessor.
+        let (left, top, right, bottom) = node_bounds(nodes.iter().filter(|n| sel.contains(&n.id)))?;
         let x = (left - FRAME_PAD).max(0);
         let y = (top - FRAME_PAD - FRAME_HEADER_H).max(0);
         let raw = self.next_frame_id.get();
@@ -3605,19 +3594,8 @@ impl NodeGraphExternal {
             .get()
             .iter()
             .find(|e| {
-                let (Some(src), Some(dst)) = (
-                    nodes.iter().find(|n| n.id == e.from_node),
-                    nodes.iter().find(|n| n.id == e.to_node),
-                ) else {
-                    return false;
-                };
-                point_near_edge(
-                    px,
-                    py,
-                    output_port_center(src, e.from_port),
-                    input_port_center(dst, e.to_port),
-                    threshold,
-                )
+                edge_endpoints(&nodes, e)
+                    .is_some_and(|(from, to)| point_near_edge(px, py, from, to, threshold))
             })
             .map(|e| e.id)
     }
@@ -5501,6 +5479,19 @@ fn node_ref(nodes: &[GraphNode], id: NodeId) -> Option<&GraphNode> {
     nodes.iter().find(|n| n.id == id)
 }
 
+/// R1230 — resolve edge `e` to its `(from output-port, to input-port)` centres,
+/// dropping an edge whose endpoint node is absent. The ONE endpoint SSOT the
+/// edge paint ([`view_edges`]), the click hit-test ([`NodeGraphExternal::hit_test_edge`]),
+/// and the wire knife ([`NodeGraphExternal::cut_wires`]) all read — a port-anchor
+/// change (offset, multi-row ports) lands once, so the three can never disagree
+/// (the R1226 knife had copied `hit_test_edge`'s body verbatim as a third site).
+fn edge_endpoints(nodes: &[GraphNode], e: &Edge) -> Option<((i32, i32), (i32, i32))> {
+    Some((
+        output_port_center(node_ref(nodes, e.from_node)?, e.from_port),
+        input_port_center(node_ref(nodes, e.to_node)?, e.to_port),
+    ))
+}
+
 /// All committed edges, resolved to their port centres. Painted behind the
 /// node cards; the selected edge paints thicker in the highlight colour. Each
 /// edge is tagged by its stable [`EdgeId`].
@@ -5516,8 +5507,7 @@ fn view_edges(
     edges
         .iter()
         .filter_map(|e| {
-            let from = output_port_center(node_ref(nodes, e.from_node)?, e.from_port);
-            let to = input_port_center(node_ref(nodes, e.to_node)?, e.to_port);
+            let (from, to) = edge_endpoints(nodes, e)?;
             let (c, w) = if selected_edge == Some(e.id) {
                 (hot, SELECTED_EDGE_W)
             } else {
