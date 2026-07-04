@@ -98,6 +98,14 @@ def body() -> None:
         assert_eq(inv(tf, "paste", "abc"), 0, "'abc' does not parse into Int")
         assert_eq(q(tf, "value.0.2"), 1, "the Int cell keeps its value")
         assert_eq(inv(tf, "paste", ""), 0, "an empty paste writes nothing")
+        # R1239 — a trailing newline (OS-clipboard convention) is stripped, so a
+        # single-cell paste does not clobber the Text row below it.
+        cursor(tf, 0, 0)  # Text column
+        assert_eq(inv(tf, "paste", "Solo\n"), 1, "trailing newline strips to 1 cell")
+        assert_eq(q(tf, "value.0.0"), "Solo", "row 0 Asset got Solo")
+        assert_eq(q(tf, "value.1.0"), "Tree", "row 1 Asset UNTOUCHED (no phantom write)")
+        tf.invoke(f"{UNDO}/undo", None)  # revert Solo before the sort section
+        assert_eq(q(tf, "value.0.0"), "Hero", "row 0 Asset back to Hero")
 
         # ── (F) the paste follows the active sort (visible order) ────
         inv(tf, "cycle_sort", 0)  # sort col 0 (Asset) ascending

@@ -1613,6 +1613,13 @@ impl DataGridExternal {
     /// transaction — the grid's first macro consumer), so a single `Ctrl`+`Z`
     /// reverts every pasted cell. Returns the count of cells actually written.
     fn paste_block(&self, tsv: &str) -> usize {
+        // R1239 — strip ONE trailing line terminator (`\n` or `\r\n`) before
+        // splitting: real clipboards / spreadsheet copies emit a trailing
+        // newline, and `"X\n".split('\n')` yields a phantom `""` row that would
+        // overwrite the row below the block (an empty string parses as a valid
+        // `Text` cell — silent data loss). Interior blank rows are still honored.
+        let tsv = tsv.strip_suffix('\n').unwrap_or(tsv);
+        let tsv = tsv.strip_suffix('\r').unwrap_or(tsv);
         if tsv.is_empty() {
             return 0;
         }
@@ -1620,7 +1627,14 @@ impl DataGridExternal {
         // cursor re-anchor also reads), SNAPSHOTTED once so a write into the
         // sort-key column cannot make the remaining rows chase a moving target.
         let visible = self.cur_visible();
-        let anchor_pos = cursor_visual_pos(&visible, self.focused_row.get());
+        // R1239 — anchor at the cursor's VISIBLE position; if the cursor's source
+        // row is off-view (hidden by a filter / collapsed group), paste is a no-op
+        // rather than silently dumping the block at visible row 0 (the
+        // `cursor_visual_pos` `0`-fallback is for re-anchor callers, not a write
+        // anchor).
+        let Some(anchor_pos) = visible.iter().position(|&s| s == self.focused_row.get()) else {
+            return 0;
+        };
         let anchor_col = self.focused_col.get();
         self.undo.begin_macro("Paste");
         let mut written = 0;
@@ -9396,6 +9410,135 @@ mod tests {
                 intro.query(&format!("value.{}.0", visible[1])),
                 Some(IntrospectValue::Text("Beta".to_owned())),
                 "visual row 1 got Beta",
+            );
+        });
+    }
+
+    #[test]
+    fn r1239_paste_strips_one_trailing_newline_no_phantom_write() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // A single-cell paste with a trailing newline (what OS clipboards
+            // emit) into the Text column must NOT write a phantom "" into row 1.
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(0));
+            assert_eq!(
+                grid_invoke(&mut scene, "paste", IntrospectValue::Text("X\n".to_owned())),
+                Ok(IntrospectValue::Int(1)),
+                "the trailing newline does not create a 2nd written cell",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.0.0"),
+                Some(IntrospectValue::Text("X".to_owned())),
+                "row 0 Asset got X",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.1.0"),
+                Some(IntrospectValue::Text("Tree".to_owned())),
+                "row 1 Asset is UNTOUCHED (no phantom empty-string write)",
+            );
+            // A CRLF terminator is stripped too.
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(2));
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("Y\r\n".to_owned())
+                ),
+                Ok(IntrospectValue::Int(1)),
+                "CRLF terminator also stripped",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.3.0"),
+                Some(IntrospectValue::Text("Boss".to_owned())),
+                "row 3 untouched by the CRLF paste",
+            );
+            // An INTERIOR blank row is still honored (2 rows, middle empty).
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("A\n\nC".to_owned())
+                ),
+                Ok(IntrospectValue::Int(3)),
+                "interior blank row writes an empty Text cell (not stripped)",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.1.0"),
+                Some(IntrospectValue::Text(String::new()))
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.2.0"),
+                Some(IntrospectValue::Text("C".to_owned()))
+            );
+        });
+    }
+
+    #[test]
+    fn r1239_paste_off_view_cursor_is_a_no_op() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Filter to show only "Tree" (source row 1); row 0 is now hidden.
+            grid_invoke(
+                &mut scene,
+                "set_filter",
+                IntrospectValue::Text("0=Tree".to_owned()),
+            )
+            .unwrap();
+            // Point the cursor at the HIDDEN row 0 (the intervene path clamps to
+            // [0,nrows) but does not check visibility).
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(0));
+            // Paste is a no-op — NOT silently dumped onto the top visible row (1).
+            assert_eq!(
+                grid_invoke(&mut scene, "paste", IntrospectValue::Text("Z".to_owned())),
+                Ok(IntrospectValue::Int(0)),
+                "an off-view cursor makes paste a no-op",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.1.0"),
+                Some(IntrospectValue::Text("Tree".to_owned())),
+                "the top visible row was NOT clobbered",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.0.0"),
+                Some(IntrospectValue::Text("Hero".to_owned())),
+                "the hidden cursor row is untouched too",
+            );
+        });
+    }
+
+    #[test]
+    fn r1239_paste_skips_non_text_editable_columns() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Col 1 is Choice, col 4 is Bool — neither is text-parseable, so a
+            // block spanning them skips those cells (keeps prior value), while the
+            // adjacent Text/Int cells land.
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(0));
+            // cols 0(Text) 1(Choice) 2(Int): "Zed\tanything\t77"
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("Zed\tanything\t77".to_owned()),
+                ),
+                Ok(IntrospectValue::Int(2)),
+                "only the Text + Int cells land; the Choice cell is skipped",
+            );
+            let intro = grid_intro(&scene);
+            assert_eq!(
+                intro.query("value.0.0"),
+                Some(IntrospectValue::Text("Zed".to_owned()))
+            );
+            assert_eq!(intro.query("value.0.2"), Some(IntrospectValue::Int(77)));
+            // The Choice cell (col 1) kept its seed value (Hero's type = index 0).
+            assert_eq!(
+                intro.query("value.0.1"),
+                grid_intro(&boot_scene()).query("value.0.1"),
+                "the Choice cell is unchanged (not text-pasteable)",
             );
         });
     }

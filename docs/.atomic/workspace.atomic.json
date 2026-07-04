@@ -61904,6 +61904,48 @@
         "still to clear: R1239 reroute-first-class (NodeKind::Reroute field + knot render + double-click-splice arm + reroute discriminator query) / R1240 frame move on-world bound + docstring + a11y member-children / R1241 dissolvable read-twin + dissolve synthetic-graph tests + Alt+Delete feedback / R1242 paste group+collapse test"
       ]
     },
+    "Round 1239": {
+      "decision_summary": "R1239 paste correctness (campaign 2/5): fix a silent Text-cell DATA-LOSS bug (trailing newline wrote a phantom empty row over the row below) + off-view-cursor paste dumping onto visible row 0; both found by independent adversarial correctness review, regression-tested",
+      "changes_bullets": [
+        "BUG FIX (data loss): paste_block did not strip a trailing newline, so \"X\\n\" (what real OS clipboards emit) split to [\"X\",\"\"] and the phantom \"\" row wrote an empty Text cell over the row below (Text.parse(\"\")=Some(Text(\"\"))) -> silent clobber. Now strips ONE trailing \\n or \\r\\n; interior blank rows still honored",
+        "BUG FIX: paste with an off-view cursor (row hidden by filter/collapse) used cursor_visual_pos's 0-fallback as the write anchor, dumping the block on visible row 0. Now anchors via visible.iter().position(...) and no-ops (0 cells) when the cursor is off-view",
+        "found by independent adversarial correctness review; my 3 R1237 tests all used mid-string newlines + an ungrouped/unfiltered cursor, so none exercised either path"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-data-grid: 120 pass / 0 fail (3 new R1239: trailing-newline no-phantom-write / off-view-cursor no-op / non-text-editable-column skip)",
+        "cargo clippy -p hello-data-grid --all-targets: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1237_data_grid_paste.py: PASS, 36 assertions (added a trailing-newline RPC guard asserting the row below is untouched)",
+        "the trailing-newline regression test fails against the pre-R1239 code (writes value.1.0=\"\" then returns 2) -> confirms it guards the real bug"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "Bool/Choice columns are still not pasteable (CellKind::{Bool,Choice}::parse always None) — documented + tested as a deliberate skip (they are not text-editable in the model); making them pasteable needs a pinion-core cell_value.rs change, deferred until a consumer needs it",
+        "audit-clearance campaign 2/5 done (R1238 SSOT + R1239 paste-correctness). Remaining: R1240 reroute-first-class (NodeKind + knot render + double-click splice + discriminator query) / R1241 frame on-world bound + docstring overclaim + a11y member-children / R1242 dissolve observability (dissolvable read-twin) + self-loop test + dead-code markers + Alt+Delete feedback"
+      ],
+      "publishable_decision_summary": "R1239 paste correctness (campaign 2/5): fix a silent Text-cell DATA-LOSS bug (trailing newline wrote a phantom empty row over the row below) + off-view-cursor paste dumping onto visible row 0; both found by independent adversarial correctness review, regression-tested",
+      "publishable_changes_bullets": [
+        "BUG FIX (data loss): paste_block did not strip a trailing newline, so \"X\\n\" (what real OS clipboards emit) split to [\"X\",\"\"] and the phantom \"\" row wrote an empty Text cell over the row below (Text.parse(\"\")=Some(Text(\"\"))) -> silent clobber. Now strips ONE trailing \\n or \\r\\n; interior blank rows still honored",
+        "BUG FIX: paste with an off-view cursor (row hidden by filter/collapse) used cursor_visual_pos's 0-fallback as the write anchor, dumping the block on visible row 0. Now anchors via visible.iter().position(...) and no-ops (0 cells) when the cursor is off-view",
+        "found by independent adversarial correctness review; my 3 R1237 tests all used mid-string newlines + an ungrouped/unfiltered cursor, so none exercised either path"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-data-grid: 120 pass / 0 fail (3 new R1239: trailing-newline no-phantom-write / off-view-cursor no-op / non-text-editable-column skip)",
+        "cargo clippy -p hello-data-grid --all-targets: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1237_data_grid_paste.py: PASS, 36 assertions (added a trailing-newline RPC guard asserting the row below is untouched)",
+        "the trailing-newline regression test fails against the pre-R1239 code (writes value.1.0=\"\" then returns 2) -> confirms it guards the real bug"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Bool/Choice columns are still not pasteable (CellKind::{Bool,Choice}::parse always None) — documented + tested as a deliberate skip (they are not text-editable in the model); making them pasteable needs a pinion-core cell_value.rs change, deferred until a consumer needs it",
+        "audit-clearance campaign 2/5 done (R1238 SSOT + R1239 paste-correctness). Remaining: R1240 reroute-first-class (NodeKind + knot render + double-click splice + discriminator query) / R1241 frame on-world bound + docstring overclaim + a11y member-children / R1242 dissolve observability (dissolvable read-twin) + self-loop test + dead-code markers + Alt+Delete feedback"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
