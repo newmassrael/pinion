@@ -91,10 +91,9 @@ use pinion_core::style::{
 };
 use pinion_core::theme::Theme;
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
-use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
+use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_extra};
 use pinion_core::widgets::virtual_select::{
     SelectionMode, VirtualSelect, clamp_nav, read_selected, read_selection, selected_to_value,
     selection_to_value,
@@ -120,7 +119,7 @@ const OBJECTS_TAG: &str = "inspector_objects";
 const THEME_TAG: &str = "app";
 
 /// R1249 — the ONE shared inline numeric type-in editor hosted as an extra
-/// [`TextFieldExternal`] (the property-grid `EDIT_TF` precedent). A
+/// `TextFieldExternal` (the property-grid `EDIT_TF` precedent). A
 /// double-click on an `Int` / `Float` Details cell (or `invoke begin_edit
 /// <i>`) seeds it with the property's current value and focuses it; `Enter`
 /// commits the typed value across the whole selection, `Escape` cancels,
@@ -1443,22 +1442,14 @@ fn make_inspector_external() -> InspectorExternal {
 
 /// R1249 — the sibling `External`s the `#[widget(extra_externals = ...)]`
 /// attribute registers alongside the primary [`InspectorExternal`]: the ONE
-/// shared inline numeric type-in editor. Runs in the root Owner scope, so
-/// `use_text_edit_state` / `use_caret_blink` resolve the same `Rc`s the view
-/// fn ([`detail_value_cell`]) and the free-fn edit lifecycle later read.
-/// `with_blur_intent` opts the field into the R793 commit-on-blur signal the
-/// `update` reducer drains. The registration reshapes the state scene into a
-/// `Scene::Container([inspector, inspector_edit])`.
+/// shared inline numeric type-in editor. R1250 — the registration is the lifted
+/// [`blur_committing_field_extra`] SSOT (the `TextFieldExternal` sharing the
+/// Owner-cached `TextEditState` + `CaretBlink` the view fn ([`detail_value_cell`])
+/// and the free-fn edit lifecycle read, with the R793 commit-on-blur intent the
+/// `update` reducer drains). Runs in the root Owner scope. The registration
+/// reshapes the state scene into a `Scene::Container([inspector, inspector_edit])`.
 fn make_inspector_extras() -> Vec<ExtraExternal> {
-    vec![ExtraExternal::new(
-        EDIT_TF_TAG,
-        Box::new(
-            TextFieldExternal::new()
-                .attach_state(use_text_edit_state(EDIT_TF_TAG))
-                .attach_blink(use_caret_blink(EDIT_TF_TAG))
-                .with_blur_intent(),
-        ),
-    )]
+    vec![blur_committing_field_extra(EDIT_TF_TAG)]
 }
 
 // ─── Inline type-in edit lifecycle (R1249) ────────────────────────

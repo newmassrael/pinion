@@ -22402,6 +22402,48 @@
         "begin_edit uses captured Rcs (RPC-safe); commit/cancel free-fns Owner-scoped (apply_key/update)"
       ]
     },
+    "R1250": {
+      "decision_summary": "R1250: lift blur_committing_field_extra(tag) SSOT — the commit-on-blur inline-editor extra, 4 byte-identical hand-rolls (property-grid/data-grid/node-editor/inspector) into one pinion-core helper",
+      "changes_bullets": [
+        "§5.45 new pinion-core blur_committing_field_extra(tag)->ExtraExternal in widgets::text_field",
+        "§5.38 property-grid/data-grid/node-editor/inspector create_extra_externals now use the helper",
+        "§5.45 removed editor_state/blink locals + dead TextFieldExternal/use_caret_blink imports (3 sites)",
+        "clipboard rename variant (file-manager/todomvc) left custom: different shape, no 3rd consumer yet"
+      ],
+      "verification_bullets": [
+        "workspace 199 test binaries pass 0 fail; clippy -D pedantic + rustfmt + cargo doc(private) green",
+        "behavior-preserving: r836/r837/r878/r1249 inline-editor demos PASS (all 4 bindings host the field)",
+        "helper resolves use_text_edit_state/use_caret_blink in Owner scope = identical Rc sharing"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "clipboard inline-editor variant needs a _with_clipboard peer when its 3rd consumer appears",
+        "property-grid search-box field stays custom (no blur intent, live filter = different decision)"
+      ],
+      "publishable_decision_summary": "R1250: lift blur_committing_field_extra(tag) SSOT — the commit-on-blur inline-editor extra, 4 byte-identical hand-rolls (property-grid/data-grid/node-editor/inspector) into one pinion-core helper",
+      "publishable_changes_bullets": [
+        "§5.45 new pinion-core blur_committing_field_extra(tag)->ExtraExternal in widgets::text_field",
+        "§5.38 property-grid/data-grid/node-editor/inspector create_extra_externals now use the helper",
+        "§5.45 removed editor_state/blink locals + dead TextFieldExternal/use_caret_blink imports (3 sites)",
+        "clipboard rename variant (file-manager/todomvc) left custom: different shape, no 3rd consumer yet"
+      ],
+      "publishable_verification_bullets": [
+        "workspace 199 test binaries pass 0 fail; clippy -D pedantic + rustfmt + cargo doc(private) green",
+        "behavior-preserving: r836/r837/r878/r1249 inline-editor demos PASS (all 4 bindings host the field)",
+        "helper resolves use_text_edit_state/use_caret_blink in Owner scope = identical Rc sharing"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "clipboard inline-editor variant needs a _with_clipboard peer when its 3rd consumer appears",
+        "property-grid search-box field stays custom (no blur intent, live filter = different decision)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

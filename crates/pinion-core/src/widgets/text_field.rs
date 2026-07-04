@@ -117,8 +117,9 @@ use crate::scene::Rect;
 use crate::style::{
     Color, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
 };
-use crate::widgets::caret_blink::CaretBlink;
-use crate::widgets::text_edit::{FormatField, TextEditState};
+use crate::widget_core::ExtraExternal;
+use crate::widgets::caret_blink::{CaretBlink, use_caret_blink};
+use crate::widgets::text_edit::{FormatField, TextEditState, use_text_edit_state};
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
@@ -546,8 +547,7 @@ impl TextField {
     /// `None` until [`Self::attach_state`] fires. Diagnostic / test
     /// surface; production callers reach the state through the same
     /// `Rc<TextEditState>` they passed in (the R56.1.b
-    /// [`use_text_edit_state`](crate::widgets::text_edit::use_text_edit_state)
-    /// hook returns the canonical shared handle).
+    /// [`use_text_edit_state`] hook returns the canonical shared handle).
     #[must_use]
     pub fn text_state(&self) -> Option<&Rc<TextEditState>> {
         self.text_state.as_ref()
@@ -1079,6 +1079,37 @@ impl Default for TextFieldExternal {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// R1250 §5.45 §5.38 — the standard **commit-on-blur inline editor** sibling
+/// extra: a [`TextFieldExternal`] keyed by `tag`, sharing the Owner-cached
+/// [`TextEditState`] + [`CaretBlink`] the view fn / edit lifecycle resolve, with
+/// the R793 [`with_blur_intent`](TextFieldExternal::with_blur_intent) commit
+/// signal. Lifted from four byte-identical `create_extra_externals` hand-rolls
+/// (`hello-property-grid` / `hello-data-grid` / `hello-node-editor` /
+/// `hello-inspector`) — the mechanical `ExtraExternal::new(tag,
+/// Box::new(TextFieldExternal::new().attach_state(use_text_edit_state(tag))
+/// .attach_blink(use_caret_blink(tag)).with_blur_intent()))` registration with
+/// no per-binding opinion (a mechanical 4-site duplication, R727/R732 3b lift).
+///
+/// Call inside the root [`Owner`](crate::reactive::Owner) scope (where
+/// [`WidgetCore::create_extra_externals`](crate::widget_core::WidgetCore::create_extra_externals)
+/// runs), so the `use_*` hooks resolve the same `Rc`s the view fn later reads.
+///
+/// The rename-editor variants (`hello-file-manager` / `todomvc`) additionally
+/// `attach_clipboard` — a different capability, deliberately NOT folded in here
+/// (a `_with_clipboard` peer is the answer when its 3rd consumer surfaces).
+#[must_use]
+pub fn blur_committing_field_extra(tag: &'static str) -> ExtraExternal {
+    ExtraExternal::new(
+        tag,
+        Box::new(
+            TextFieldExternal::new()
+                .attach_state(use_text_edit_state(tag))
+                .attach_blink(use_caret_blink(tag))
+                .with_blur_intent(),
+        ),
+    )
 }
 
 impl core::fmt::Debug for TextFieldExternal {

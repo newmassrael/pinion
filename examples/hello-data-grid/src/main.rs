@@ -191,7 +191,6 @@ use pinion_core::undo::{
     UndoCommand, UndoStack, UndoStackExternal, undo_redo_verb, use_undo_stack,
 };
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
 use pinion_core::widgets::grid_sort::{
     GridFilter, col_sort_dir, grid_filter_from_str, grid_filter_str, grid_sort_from_str,
@@ -203,7 +202,7 @@ use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
-use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
+use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_extra};
 use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, content_height};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -4557,8 +4556,6 @@ impl WidgetCore for DataGridView {
     }
 
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        let editor_state = use_text_edit_state(EDIT_TF_TAG);
-        let blink = use_caret_blink(EDIT_TF_TAG);
         vec![
             // R932 — the AI-first undo-history surface wraps the same shared
             // [`UndoStack`] the coordinator records onto (via [`use_undo`]), so
@@ -4566,15 +4563,8 @@ impl WidgetCore for DataGridView {
             // the identical history the cell / row mutators + keyboard use.
             // A coordinator-only extra: it paints nothing, not a focus stop.
             ExtraExternal::new(UNDO_TAG, Box::new(UndoStackExternal::new(use_undo()))),
-            ExtraExternal::new(
-                EDIT_TF_TAG,
-                Box::new(
-                    TextFieldExternal::new()
-                        .attach_state(editor_state)
-                        .attach_blink(blink)
-                        .with_blur_intent(),
-                ),
-            ),
+            // R1250 — the shared commit-on-blur inline editor (lifted SSOT).
+            blur_committing_field_extra(EDIT_TF_TAG),
         ]
     }
 

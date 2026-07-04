@@ -139,7 +139,9 @@ use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_mod
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::slider::SliderState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
-use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
+use pinion_core::widgets::text_field::{
+    TextFieldExternal, TextFieldState, blur_committing_field_extra,
+};
 use pinion_core::widgets::tree_nav::{
     TreeKey, TreeNode, VisibleRow, find_node, find_node_mut, flat_visible, flat_visible_filtered,
     resolve_tree_key, set_expanded_in, toggle_expanded, tree_view_introspection_extra,
@@ -4128,8 +4130,6 @@ impl WidgetCore for PropertyGridView {
     /// dedup). `with_blur_intent` opts the field into the R793 commit-on-blur
     /// signal the `update` reducer drains.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        let editor_state = use_text_edit_state(EDIT_TF_TAG);
-        let blink = use_caret_blink(EDIT_TF_TAG);
         let search_state = use_text_edit_state(SEARCH_TF_TAG);
         let search_blink = use_caret_blink(SEARCH_TF_TAG);
         // R921 — resolve the tree / cursor / filter `Rc`s NOW (this hook runs in
@@ -4154,15 +4154,8 @@ impl WidgetCore for PropertyGridView {
                 },
                 move || cursor.get(),
             ),
-            ExtraExternal::new(
-                EDIT_TF_TAG,
-                Box::new(
-                    TextFieldExternal::new()
-                        .attach_state(editor_state)
-                        .attach_blink(blink)
-                        .with_blur_intent(),
-                ),
-            ),
+            // R1250 — the shared commit-on-blur inline editor (lifted SSOT).
+            blur_committing_field_extra(EDIT_TF_TAG),
             // R872 — the live search / filter box. No commit-on-blur intent:
             // the filter is live (every keystroke re-filters), not commit-gated.
             ExtraExternal::new(

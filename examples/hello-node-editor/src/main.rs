@@ -169,7 +169,7 @@
 //!   card (or `F2` on the selection, or `invoke begin_rename`) edits the
 //!   title; double-click a pin's default label (or `invoke
 //!   begin_edit_default`) edits that input port's literal default. Both open
-//!   ONE shared inline [`TextFieldExternal`] (the R790 todomvc `EDIT_TF`
+//!   ONE shared inline `TextFieldExternal` (the R790 todomvc `EDIT_TF`
 //!   modal-member shape) keyed by an [`EditTarget`]. `Enter` commits,
 //!   `Escape` cancels, a click-away commits through the R793 blur intent; the
 //!   keymap is the lifted [`pinion_core::edit_field_keymap`] SSOT with the
@@ -236,10 +236,9 @@ use pinion_core::undo::{
     UndoCommand, UndoStack, UndoStackExternal, undo_redo_verb, use_undo_stack,
 };
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
-use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
+use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_extra};
 use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, SelectionChord, WidgetCore};
 use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -337,7 +336,7 @@ const UNDO_TAG: &str = "node_undo";
 /// resolve the same shared [`UndoStack`] from this key.
 const UNDO_KEY: &str = "node_graph.undo";
 
-/// R878 / R901 — the shared inline edit field (a [`TextFieldExternal`] extra,
+/// R878 / R901 — the shared inline edit field (a `TextFieldExternal` extra,
 /// the R790 todomvc `EDIT_TF` modal-member shape): ONE field painted over the
 /// target's title (a rename) or a pin's default label (a port-default edit)
 /// while an edit is in flight. No `#` in the tag — it routes as its own
@@ -1465,7 +1464,7 @@ fn use_node_drag() -> Rc<RefCell<Option<NodeDragStart>>> {
 }
 
 /// R1182 — register the edge-drag auto-pan driver on the owner's animation
-/// clock (idempotent; the [`use_caret_blink`] *register-once mechanism* is the
+/// clock (idempotent; the `use_caret_blink` *register-once mechanism* is the
 /// precedent — the rest-semantics differ, see [`AutoPan::is_at_rest`]). Called
 /// from the view setup so it ticks on every paint cycle, self-gating via
 /// [`AutoPan::active`].
@@ -7126,24 +7125,15 @@ impl WidgetCore for NodeEditorView {
     /// coordinator-only extra: it paints nothing and is not a focus stop.
     ///
     /// R878 / R901 — plus the shared inline edit field (`EDIT_TF_TAG`), a
-    /// [`TextFieldExternal`] modal member (the R790 todomvc `EDIT_TF`
+    /// `TextFieldExternal` modal member (the R790 todomvc `EDIT_TF`
     /// shape): one field reused for every node title AND every input port
     /// default, painted only while an edit is in flight, raising the R793
     /// commit-on-blur intent on a click-away.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        let editor_state = use_text_edit_state(EDIT_TF_TAG);
-        let blink = use_caret_blink(EDIT_TF_TAG);
         vec![
             ExtraExternal::new(UNDO_TAG, Box::new(UndoStackExternal::new(use_undo()))),
-            ExtraExternal::new(
-                EDIT_TF_TAG,
-                Box::new(
-                    TextFieldExternal::new()
-                        .attach_state(editor_state)
-                        .attach_blink(blink)
-                        .with_blur_intent(),
-                ),
-            ),
+            // R1250 — the shared commit-on-blur inline editor (lifted SSOT).
+            blur_committing_field_extra(EDIT_TF_TAG),
         ]
     }
 
