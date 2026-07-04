@@ -2101,35 +2101,38 @@ impl UndoCommand for FrameGeomCmd {
     }
 }
 
-/// R1234 — the feasible one-axis translation `dx` of comment frame `frame`
-/// keeping its origin AND every member node on the world surface: the requested
-/// delta clamped to an interval `[lo, hi]` that always contains `0` (the current
-/// state is already on-world). A *rigid* group clamp — the frame and its
-/// contents move by the SAME delta, so their relative geometry is preserved even
-/// at the world edge (a node can never slide out of the frame it sits in). With
-/// no members only the frame origin bounds it, so an empty frame still cannot be
-/// pushed off the world.
+/// R1234 / R1240 — the feasible one-axis translation `dx` of comment frame
+/// `frame` keeping its whole RECT (`x .. x+w`) AND every member node on the world
+/// surface: the requested delta clamped to an interval `[lo, hi]` that always
+/// contains `0` (the current state is on-world). A *rigid* group clamp — the
+/// frame and its contents move by the SAME delta, so their relative geometry is
+/// preserved even at the world edge (a node can never slide out of the frame it
+/// sits in). R1240 — `hi` bounds the frame's RIGHT edge (`x+w`), not just its
+/// origin, so an empty frame (no members) cannot be pushed off the world and a
+/// populated one no longer overhangs the edge by `FRAME_PAD` — the same on-world
+/// bound [`resize_frame`](NodeGraphExternal::resize_frame) enforces. `hi.max(lo)`
+/// guards a pathologically world-wide frame from an inverted range.
 fn clamp_frame_dx(frame: &CommentFrame, members: &[GraphNode], dx: i32) -> i32 {
     let mut lo = -frame.x;
-    let mut hi = WORLD - frame.x;
+    let mut hi = WORLD - frame.x - frame.w;
     for n in members {
         lo = lo.max(-n.x);
         hi = hi.min(MAX_NODE_X - n.x);
     }
-    dx.clamp(lo, hi)
+    dx.clamp(lo, hi.max(lo))
 }
 
-/// R1234 — the vertical twin of [`clamp_frame_dx`]: the feasible `dy` keeping
-/// the frame origin and every member within the world's `y` extent (the same
-/// bound [`clamp_node_y`] enforces per node).
+/// R1234 / R1240 — the vertical twin of [`clamp_frame_dx`]: the feasible `dy`
+/// keeping the frame's whole rect (`y .. y+h`) AND every member on-world. `hi`
+/// bounds the frame's BOTTOM edge (`y+h`) so an empty frame stays on the surface.
 fn clamp_frame_dy(frame: &CommentFrame, members: &[GraphNode], dy: i32) -> i32 {
     let mut lo = -frame.y;
-    let mut hi = WORLD - frame.y;
+    let mut hi = WORLD - frame.y - frame.h;
     for n in members {
         lo = lo.max(-n.y);
         hi = hi.min(MAX_NODE_Y - n.y);
     }
-    dy.clamp(lo, hi)
+    dy.clamp(lo, hi.max(lo))
 }
 
 /// R1232 §5.52 — a titled, id-addressed graph entity a rename undo command
@@ -3649,12 +3652,16 @@ impl NodeGraphExternal {
     }
 
     /// R1234 — resize comment frame `id` to a new `w` (`new_w`) and / or `h`
-    /// (`new_h`), clamped to `[FRAME_MIN, WORLD - origin]` so the box keeps its
-    /// chrome and its right / bottom edge stays on the world surface. The origin
-    /// is fixed and NO node moves: a resize changes which nodes the frame
-    /// contains (recomputed lazily by [`CommentFrame::contains_node`]), it does
-    /// not drag them ([`FrameGeomCmd`], label "Resize frame"). `false` for an
-    /// unknown id.
+    /// (`new_h`), clamped to `[FRAME_MIN, (WORLD - origin).max(FRAME_MIN)]` so the
+    /// box keeps its chrome and — whenever the origin leaves room for it — its
+    /// right / bottom edge stays on the world surface. (The minimum wins over the
+    /// world fit: a frame whose origin is within `FRAME_MIN` of the world edge
+    /// keeps the `FRAME_MIN` chrome and its edge pokes past `WORLD` rather than
+    /// collapsing below its title strip — the deliberate min-size-over-fit
+    /// tradeoff.) The origin is fixed and NO node moves: a resize changes which
+    /// nodes the frame contains (recomputed lazily by
+    /// [`CommentFrame::contains_node`]), it does not drag them ([`FrameGeomCmd`],
+    /// label "Resize frame"). `false` for an unknown id.
     fn resize_frame(&self, id: FrameId, new_w: Option<i32>, new_h: Option<i32>) -> bool {
         let Some(frame) = self.frame_by_id(id) else {
             return false;

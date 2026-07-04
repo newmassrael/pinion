@@ -61946,6 +61946,48 @@
         "audit-clearance campaign 2/5 done (R1238 SSOT + R1239 paste-correctness). Remaining: R1240 reroute-first-class (NodeKind + knot render + double-click splice + discriminator query) / R1241 frame on-world bound + docstring overclaim + a11y member-children / R1242 dissolve observability (dissolvable read-twin) + self-loop test + dead-code markers + Alt+Delete feedback"
       ]
     },
+    "Round 1240": {
+      "decision_summary": "R1240 frame on-world clamp (campaign 3/5): fix an empty comment frame being pushed fully off-world (clamp the frame's right/bottom edge, not just its origin) + correct the resize_frame docstring overclaim; found by independent adversarial review, rigid-group invariant preserved",
+      "changes_bullets": [
+        "BUG FIX: clamp_frame_dx/dy bounded only the frame ORIGIN, so an EMPTY comment frame (all members moved/shrunk out) could be pushed fully off-world (origin to WORLD, box beyond) and a populated frame overhung the edge by FRAME_PAD. Now hi bounds the frame's RIGHT/BOTTOM edge (x+w / y+h <= WORLD), mirroring resize_frame; hi.max(lo) guards a pathologically world-wide frame from an inverted clamp range",
+        "DOC FIX: resize_frame doc claimed the clamp keeps \"its right/bottom edge stays on the world surface\" unconditionally — false when the origin is within FRAME_MIN of the edge (min-size wins, edge pokes past). Corrected to state the min-size-over-fit tradeoff explicitly",
+        "both found by independent adversarial review (correctness + north-star judge); the rigid-group-move invariant is preserved (r1234 test still green)"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 181 pass / 0 fail (2 new R1240: empty-frame move keeps whole rect on-world / populated-frame right edge on-world + rigid offset preserved)",
+        "r1234_frame_move_is_a_rigid_group_clamp still green (the tighter bound did not break the rigid-group invariant)",
+        "cargo clippy -p hello-node-editor --all-targets: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1234_node_frame_move_resize.py: PASS (added an RPC guard: frame right edge x+w <= WORLD after a far move)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "a11y LOW (deferred, pre-existing R1227): the frame's a11y Group announces \"(N nodes)\" but has no member CHILDREN in the AT tree (membership is label-only) — an AT-tree restructure, tracked for a later a11y round; and no a11y regression test for the membership recount after resize",
+        "audit-clearance campaign 3/5 done (R1238 SSOT + R1239 paste-correctness + R1240 frame-clamp). Remaining: R1241 dissolve observability (dissolvable read-twin + self-loop test + dead-code // unreachable markers + Alt+Delete key-consume) / R1242 reroute-first-class (is_reroute model + knot render + double-click splice + discriminator query) — the big north-star round"
+      ],
+      "publishable_decision_summary": "R1240 frame on-world clamp (campaign 3/5): fix an empty comment frame being pushed fully off-world (clamp the frame's right/bottom edge, not just its origin) + correct the resize_frame docstring overclaim; found by independent adversarial review, rigid-group invariant preserved",
+      "publishable_changes_bullets": [
+        "BUG FIX: clamp_frame_dx/dy bounded only the frame ORIGIN, so an EMPTY comment frame (all members moved/shrunk out) could be pushed fully off-world (origin to WORLD, box beyond) and a populated frame overhung the edge by FRAME_PAD. Now hi bounds the frame's RIGHT/BOTTOM edge (x+w / y+h <= WORLD), mirroring resize_frame; hi.max(lo) guards a pathologically world-wide frame from an inverted clamp range",
+        "DOC FIX: resize_frame doc claimed the clamp keeps \"its right/bottom edge stays on the world surface\" unconditionally — false when the origin is within FRAME_MIN of the edge (min-size wins, edge pokes past). Corrected to state the min-size-over-fit tradeoff explicitly",
+        "both found by independent adversarial review (correctness + north-star judge); the rigid-group-move invariant is preserved (r1234 test still green)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 181 pass / 0 fail (2 new R1240: empty-frame move keeps whole rect on-world / populated-frame right edge on-world + rigid offset preserved)",
+        "r1234_frame_move_is_a_rigid_group_clamp still green (the tighter bound did not break the rigid-group invariant)",
+        "cargo clippy -p hello-node-editor --all-targets: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1234_node_frame_move_resize.py: PASS (added an RPC guard: frame right edge x+w <= WORLD after a far move)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a11y LOW (deferred, pre-existing R1227): the frame's a11y Group announces \"(N nodes)\" but has no member CHILDREN in the AT tree (membership is label-only) — an AT-tree restructure, tracked for a later a11y round; and no a11y regression test for the membership recount after resize",
+        "audit-clearance campaign 3/5 done (R1238 SSOT + R1239 paste-correctness + R1240 frame-clamp). Remaining: R1241 dissolve observability (dissolvable read-twin + self-loop test + dead-code // unreachable markers + Alt+Delete key-consume) / R1242 reroute-first-class (is_reroute model + knot render + double-click splice + discriminator query) — the big north-star round"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

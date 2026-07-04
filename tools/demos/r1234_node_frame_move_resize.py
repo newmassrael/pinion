@@ -156,6 +156,8 @@ def body() -> None:
         assert q(tf, "node.1.x") <= WORLD_MAX_NODE_X, "node 1 stayed on the world surface"
         assert_eq(q(tf, "frame.1.x") - q(tf, "node.0.x"), rel,
                   "the frame->member offset is preserved (rigid group move)")
+        # R1240 — the frame's own RIGHT edge stays on-world (no FRAME_PAD overhang).
+        assert q(tf, "frame.1.x") + q(tf, "frame.1.w") <= 2048, "frame right edge on-world"
 
         # ── (H) rejects ──────────────────────────────────────────────
         type_err = False

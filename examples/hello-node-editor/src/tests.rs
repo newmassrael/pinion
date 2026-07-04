@@ -6219,3 +6219,79 @@ fn r1236_alt_delete_dissolves_the_selected_node() {
         );
     });
 }
+
+#[test]
+fn r1240_empty_frame_move_keeps_the_whole_rect_on_world() {
+    Owner::new().run(|| {
+        let (mut coord, id) = framed_pair();
+        // Shrink the frame so it contains no nodes (an empty annotation).
+        coord
+            .intervene(
+                &format!("frame.{}.w", id.raw()),
+                IntrospectValue::Int(i64::from(FRAME_MIN)),
+            )
+            .unwrap();
+        coord
+            .intervene(
+                &format!("frame.{}.h", id.raw()),
+                IntrospectValue::Int(i64::from(FRAME_MIN)),
+            )
+            .unwrap();
+        assert_eq!(
+            coord.query(&format!("frame.{}.contains", id.raw())),
+            Some(IntrospectValue::Text(String::new())),
+            "the shrunk frame contains nothing"
+        );
+        // Push it far past the right / bottom: the whole RECT must stay on-world
+        // (pre-R1240 only the origin was bounded, so the box slid fully off).
+        coord
+            .intervene(
+                &format!("frame.{}.x", id.raw()),
+                IntrospectValue::Int(1_000_000),
+            )
+            .unwrap();
+        coord
+            .intervene(
+                &format!("frame.{}.y", id.raw()),
+                IntrospectValue::Int(1_000_000),
+            )
+            .unwrap();
+        let f = coord.frame_by_id(id).unwrap();
+        assert!(f.x >= 0 && f.y >= 0, "origin on-world");
+        assert!(
+            f.x + f.w <= WORLD,
+            "the empty frame's right edge stays on-world"
+        );
+        assert!(
+            f.y + f.h <= WORLD,
+            "the empty frame's bottom edge stays on-world"
+        );
+    });
+}
+
+#[test]
+fn r1240_populated_frame_right_edge_stays_on_world() {
+    Owner::new().run(|| {
+        let (mut coord, id) = framed_pair();
+        let rel = coord.frame_by_id(id).unwrap().x - coord.node_by_id(NodeId(0)).unwrap().x;
+        coord
+            .intervene(
+                &format!("frame.{}.x", id.raw()),
+                IntrospectValue::Int(1_000_000),
+            )
+            .unwrap();
+        let f = coord.frame_by_id(id).unwrap();
+        // The frame edge stops at the world (no FRAME_PAD overhang past WORLD)...
+        assert!(f.x + f.w <= WORLD, "the frame's right edge stays on-world");
+        // ...and the rigid group is preserved (members carried, still on-world).
+        assert!(
+            coord.node_by_id(NodeId(0)).unwrap().x <= WORLD - NODE_W,
+            "member on-world"
+        );
+        assert_eq!(
+            f.x - coord.node_by_id(NodeId(0)).unwrap().x,
+            rel,
+            "the frame->member offset is preserved (rigid)"
+        );
+    });
+}
