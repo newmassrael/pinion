@@ -38,6 +38,9 @@
 //!   row add/remove (`RowEdit`) / row move (`MoveRowEdit`) as granular
 //!   reversible commands, the AI-first `UndoStackExternal` and the keyboard
 //!   `Ctrl+Z` driving one timeline (the node-graph's journaled-edit shape at 2-D).
+//!   R1237 — `invoke "paste" "<tsv>"` writes a TSV block anchored at the cursor
+//!   (following the active sort / filter / group), the whole block one undo step
+//!   (a `begin_macro` transaction — the grid's first macro consumer).
 //!   Exposes the whole grid
 //!   for AI-first introspection: `query value.<r>.<c>` / `col_name.<c>` / `col_kind.<c>` /
 //!   `focused_row` / `focused_col` / `editing_row` / `editing_col`,
@@ -1595,6 +1598,51 @@ impl DataGridExternal {
         );
     }
 
+    /// R1237 — paste a TSV block anchored at the cursor (the spreadsheet block
+    /// paste; the AI-first `invoke paste "<tsv>"`). Rows split on `\n`, cells on
+    /// `\t`; row `i` / col `j` of the block lands at the cell `j` columns right of
+    /// the cursor in the `i`-th VISIBLE data row from the cursor down — so the
+    /// paste follows the active sort / filter / group exactly as the grid reads,
+    /// never the raw source order. The visible target rows are SNAPSHOTTED once
+    /// (before any write), so a paste into the sort-key column can re-sort the
+    /// grid mid-write without the remaining rows chasing a moving target. Each
+    /// cell parses through its COLUMN's [`CellKind`] + clamps (a value that does
+    /// not parse for that type is skipped — the cell keeps its prior value, no
+    /// data loss); a block that overruns the last visible row / the right edge is
+    /// clipped. The whole paste is ONE undo step (a `begin_macro` / `end_macro`
+    /// transaction — the grid's first macro consumer), so a single `Ctrl`+`Z`
+    /// reverts every pasted cell. Returns the count of cells actually written.
+    fn paste_block(&self, tsv: &str) -> usize {
+        if tsv.is_empty() {
+            return 0;
+        }
+        // The current visible source-row order (through the `cur_visible` SSOT the
+        // cursor re-anchor also reads), SNAPSHOTTED once so a write into the
+        // sort-key column cannot make the remaining rows chase a moving target.
+        let visible = self.cur_visible();
+        let anchor_pos = cursor_visual_pos(&visible, self.focused_row.get());
+        let anchor_col = self.focused_col.get();
+        self.undo.begin_macro("Paste");
+        let mut written = 0;
+        for (i, line) in tsv.split('\n').enumerate() {
+            let Some(&source_row) = visible.get(anchor_pos + i) else {
+                break; // the block overruns the last visible row — clip it
+            };
+            for (j, text) in line.split('\t').enumerate() {
+                let col = anchor_col + j;
+                if col >= NCOLS {
+                    break; // clip columns past the grid's right edge
+                }
+                if let Some(parsed) = COL_KINDS[col].parse(text) {
+                    self.edit_cell(source_row, col, parsed, Cow::Borrowed("Paste cell"));
+                    written += 1;
+                }
+            }
+        }
+        self.undo.end_macro();
+        written
+    }
+
     /// R930 — the live row count (the [`nrows`] free fn over this grid's model
     /// Signal). The dynamic-length bound every former `NROWS` read in the
     /// coordinator now consults, so add / remove track the same SSOT the paint
@@ -2555,6 +2603,8 @@ impl ExternalIntrospect for DataGridExternal {
             ("expand_all", "json"),
             ("add_row", "json"),
             ("remove_row", "int"),
+            // R1237 — paste a TSV block at the cursor; returns the cells written.
+            ("paste", "string"),
             // R937 — row drag-to-reorder: whether reorder is enabled now (the
             // plain view), the live drop gap a drag is hovering, and the move verb.
             ("reorder_enabled", "bool"),
@@ -3027,6 +3077,16 @@ impl ExternalIntrospect for DataGridExternal {
                         })
                         .ok_or(InvokeError::Rejected)?;
                     Ok(IntrospectValue::Bool(self.move_row(from, to)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R1237 — paste a TSV block at the cursor (rows `\n`, cells `\t`),
+            // following the active sort / filter / group; one undo step. Returns
+            // the count of cells written. The AI-first primary; a Ctrl+V that
+            // reads the OS clipboard would funnel here (HW-gated, deferred).
+            "paste" => match args {
+                IntrospectValue::Text(ref s) => {
+                    Ok(IntrospectValue::Int(int_of(self.paste_block(s))))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -9195,6 +9255,147 @@ mod tests {
             assert!(
                 nodes.iter().any(|n| n.tag == "data_grid#sw4"),
                 "the active-descendant swatch is a real a11y node",
+            );
+        });
+    }
+
+    #[test]
+    fn r1237_paste_writes_a_tsv_block_at_the_cursor_one_undo() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Anchor the cursor at (row 0, col 2 = Int); col 3 is Float.
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(2));
+            // A 2x2 block into the Int + Float columns.
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("42\t1.5\n7\t9.5".to_owned()),
+                ),
+                Ok(IntrospectValue::Int(4)),
+                "four cells written",
+            );
+            {
+                let intro = grid_intro(&scene);
+                assert_eq!(intro.query("value.0.2"), Some(IntrospectValue::Int(42)));
+                assert_eq!(intro.query("value.0.3"), Some(IntrospectValue::Float(1.5)));
+                assert_eq!(intro.query("value.1.2"), Some(IntrospectValue::Int(7)));
+                assert_eq!(intro.query("value.1.3"), Some(IntrospectValue::Float(9.5)));
+            }
+            // The whole block is ONE undo step.
+            assert_eq!(
+                undo_query(&scene, "undo_label"),
+                Some(IntrospectValue::Text("Paste".to_owned())),
+                "the block folds into one labelled undo step",
+            );
+            assert!(use_undo().undo(), "one undo reverts the whole block");
+            let intro = grid_intro(&scene);
+            assert_eq!(
+                intro.query("value.0.2"),
+                Some(IntrospectValue::Int(1)),
+                "row0 Int restored"
+            );
+            assert_eq!(
+                intro.query("value.1.2"),
+                Some(IntrospectValue::Int(24)),
+                "row1 Int restored"
+            );
+            assert_eq!(
+                intro.query("value.1.3"),
+                Some(IntrospectValue::Float(2.5)),
+                "row1 Float restored"
+            );
+        });
+    }
+
+    #[test]
+    fn r1237_paste_clips_overflow_and_skips_unparseable() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene(); // 4 rows
+            // A 2-row block anchored at the LAST row: the 2nd row overruns and is
+            // clipped, so only the anchor row is written.
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(3));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(2));
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("55\n66".to_owned())
+                ),
+                Ok(IntrospectValue::Int(1)),
+                "only the in-range row lands (the overrun row is clipped)",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.3.2"),
+                Some(IntrospectValue::Int(55)),
+                "the last row got 55",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(4)),
+                "the overrun did not add rows",
+            );
+            // A value that does not parse for the column's type is skipped (the
+            // cell keeps its prior value — no data loss).
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            assert_eq!(
+                grid_invoke(&mut scene, "paste", IntrospectValue::Text("abc".to_owned())),
+                Ok(IntrospectValue::Int(0)),
+                "'abc' does not parse into the Int column",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.0.2"),
+                Some(IntrospectValue::Int(1)),
+                "the cell keeps its prior value",
+            );
+            // An empty paste is a no-op.
+            assert_eq!(
+                grid_invoke(&mut scene, "paste", IntrospectValue::Text(String::new())),
+                Ok(IntrospectValue::Int(0)),
+                "an empty paste writes nothing",
+            );
+        });
+    }
+
+    #[test]
+    fn r1237_paste_follows_active_sort_not_source_order() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Sort by the Asset column so the VISUAL order differs from source.
+            use_sort().set(Some((0, true)));
+            let model = use_data_model().get();
+            let visible = visible_data_order(
+                &model,
+                use_sort().get(),
+                None,
+                None,
+                &std::collections::BTreeSet::new(),
+            );
+            assert_ne!(visible, vec![0, 1, 2, 3], "the sort reorders the rows");
+            // Cursor at visual row 0; paste a 2-row Text block down col 0.
+            use_focused_row().set(visible[0]);
+            use_focused_col().set(0);
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("Alpha\nBeta".to_owned()),
+                ),
+                Ok(IntrospectValue::Int(2)),
+            );
+            // The block landed on the VISUAL rows (source visible[0], visible[1]),
+            // never source rows 0 and 1.
+            let intro = grid_intro(&scene);
+            assert_eq!(
+                intro.query(&format!("value.{}.0", visible[0])),
+                Some(IntrospectValue::Text("Alpha".to_owned())),
+                "visual row 0 got Alpha",
+            );
+            assert_eq!(
+                intro.query(&format!("value.{}.0", visible[1])),
+                Some(IntrospectValue::Text("Beta".to_owned())),
+                "visual row 1 got Beta",
             );
         });
     }

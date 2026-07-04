@@ -61810,6 +61810,56 @@
         "next R1237 candidates: data-grid editable cell-range + block PASTE (cross-widget, large) / inspector inline TextField absolute type-in / node knot compact render"
       ]
     },
+    "Round 1237": {
+      "decision_summary": "R1237 data-grid block PASTE (TSV): invoke paste writes a TSV block anchored at the cursor following the active sort/filter/group (visible order), each cell parsed per column + clamped, the whole block one undo step (the grid's first begin_macro transaction); the write-twin of R1222 cell-range copy",
+      "changes_bullets": [
+        "paste_block(tsv): write a TSV block anchored at the cursor (rows \\n, cells \\t); block row i / col j lands at the i-th VISIBLE data row from the cursor down and j cols right, so the paste follows the active sort/filter/group (via the cur_visible SSOT), never raw source order",
+        "target rows SNAPSHOTTED once before any write, so a paste into the sort-key column re-sorts mid-write without the remaining rows chasing a moving target; each cell parses through its COLUMN CellKind + clamps (unparseable = skipped, cell keeps prior value); overrun rows/cols clipped",
+        "the whole block is ONE undo step: the grid's FIRST begin_macro/end_macro transaction (empty macro records nothing); reuses the existing edit_cell + push_cell_edit funnel so paste journals identically to keyboard/RPC edits",
+        "RPC invoke paste \"<tsv>\" returns the count of cells written; schema-declared + module-doc updated; the AI-first primary path (agent supplies the block, no OS clipboard)",
+        "SSOT: paste_block routes visible-order through self.cur_visible() (the same helper the cursor re-anchor reads), not an inlined visible_data_order copy"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 8040 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-data-grid: 117 pass (3 new R1237: block+one-undo / clip+skip+empty / follows-active-sort visual order)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1237_data_grid_paste.py: PASS, 32 assertions (block/undo-redo/clip/skip/empty/sort-visible-order); r930 rows demo still PASS",
+        "3b self-grep: paste_block composes cur_visible + cursor_visual_pos + edit_cell + begin/end_macro (all existing SSOT); no new dup (inlined visible_data_order replaced by cur_visible)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "Ctrl+V (OS-clipboard read -> paste) deferred: HW-gated + the data-grid has no clipboard plumbing yet; the AI-first invoke paste is the primary path and is done. R1222 added Ctrl+C on hello-cell-select (a different example); a shared clipboard bridge would unify them when a 3rd consumer appears",
+        "paste anchors at the cursor + clips overrun (spreadsheet default); it does NOT grow the grid to fit a taller block (add_row exists but auto-grow-on-paste is a separate policy) and does NOT paste into a pre-selected cell-range rectangle (hello-cell-select owns cell-range; a range-limited paste is a later cross-widget unification)",
+        "next R1238 candidates: inspector inline TextField absolute type-in / node knot compact render / grid auto-grow-on-paste (add rows to fit)"
+      ],
+      "publishable_decision_summary": "R1237 data-grid block PASTE (TSV): invoke paste writes a TSV block anchored at the cursor following the active sort/filter/group (visible order), each cell parsed per column + clamped, the whole block one undo step (the grid's first begin_macro transaction); the write-twin of R1222 cell-range copy",
+      "publishable_changes_bullets": [
+        "paste_block(tsv): write a TSV block anchored at the cursor (rows \\n, cells \\t); block row i / col j lands at the i-th VISIBLE data row from the cursor down and j cols right, so the paste follows the active sort/filter/group (via the cur_visible SSOT), never raw source order",
+        "target rows SNAPSHOTTED once before any write, so a paste into the sort-key column re-sorts mid-write without the remaining rows chasing a moving target; each cell parses through its COLUMN CellKind + clamps (unparseable = skipped, cell keeps prior value); overrun rows/cols clipped",
+        "the whole block is ONE undo step: the grid's FIRST begin_macro/end_macro transaction (empty macro records nothing); reuses the existing edit_cell + push_cell_edit funnel so paste journals identically to keyboard/RPC edits",
+        "RPC invoke paste \"<tsv>\" returns the count of cells written; schema-declared + module-doc updated; the AI-first primary path (agent supplies the block, no OS clipboard)",
+        "SSOT: paste_block routes visible-order through self.cur_visible() (the same helper the cursor re-anchor reads), not an inlined visible_data_order copy"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 8040 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-data-grid: 117 pass (3 new R1237: block+one-undo / clip+skip+empty / follows-active-sort visual order)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1237_data_grid_paste.py: PASS, 32 assertions (block/undo-redo/clip/skip/empty/sort-visible-order); r930 rows demo still PASS",
+        "3b self-grep: paste_block composes cur_visible + cursor_visual_pos + edit_cell + begin/end_macro (all existing SSOT); no new dup (inlined visible_data_order replaced by cur_visible)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Ctrl+V (OS-clipboard read -> paste) deferred: HW-gated + the data-grid has no clipboard plumbing yet; the AI-first invoke paste is the primary path and is done. R1222 added Ctrl+C on hello-cell-select (a different example); a shared clipboard bridge would unify them when a 3rd consumer appears",
+        "paste anchors at the cursor + clips overrun (spreadsheet default); it does NOT grow the grid to fit a taller block (add_row exists but auto-grow-on-paste is a separate policy) and does NOT paste into a pre-selected cell-range rectangle (hello-cell-select owns cell-range; a range-limited paste is a later cross-widget unification)",
+        "next R1238 candidates: inspector inline TextField absolute type-in / node knot compact render / grid auto-grow-on-paste (add rows to fit)"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
