@@ -117,10 +117,18 @@ const ROW_H: u32 = 30;
 /// R958 — the reset-arrow mark size (px), the trailing "modified, click to
 /// reset" affordance on a Details row.
 const RESET_DOT: u32 = 10;
+/// R1221 — the trailing gutter (px) an INTERACTIVE value cell (Bool toggle /
+/// numeric steppers) reserves so it never sits under the absolutely-positioned
+/// reset dot at the row's trailing edge — else a `+`/toggle click on a *modified*
+/// row would land on the reset dot instead. Read-only value cells (Choice / Color
+/// / Text) do not need it (a click on them does nothing anyway).
+const RESET_GUTTER: u32 = 16;
 /// R958.1 — the Details (property) row width; the reset arrow's trailing X
 /// inset derives from it so the arrow tracks the row edge if the width changes.
 const DETAIL_ROW_W: u32 = 260;
 const SWATCH: u32 = 16;
+/// R1221 — the +/- numeric-stepper button size (px) on a Details value cell.
+const STEPPER: u32 = 18;
 
 // ─── Model ────────────────────────────────────────────────────────
 
@@ -333,6 +341,34 @@ fn common_properties(objects: &[ObjectData], selection: &BTreeSet<usize>) -> Vec
 /// under (`inspector#reset<i>`), distinguishing a reset click from a row-select
 /// click (`inspector#<i>`) in [`InspectorExternal::handle_send`].
 const RESET_PREFIX: &str = "reset";
+/// R1221 — the Details value-cell edit-gesture key prefixes (the `inspector#`
+/// funnel carries them alongside `<i>` row-select and `reset<i>`, distinguished
+/// by prefix in [`InspectorExternal::handle_send`]): `toggle<i>` flips a Bool,
+/// `inc<i>` / `dec<i>` step a numeric across the whole selection.
+const TOGGLE_PREFIX: &str = "toggle";
+const INC_PREFIX: &str = "inc";
+const DEC_PREFIX: &str = "dec";
+/// R1221 — the per-`inc`/`dec` step for a `Float` common property (an `Int`
+/// steps by 1). Common Float rows do not arise in the sample data (the shared
+/// actor properties are Bool/Int), so this only bites a future shared Float.
+const FLOAT_STEP: f64 = 0.5;
+
+/// R1221 — parse the `step_property` arg `"<idx>,<dir>"` (a common-property index
+/// and a signed unit count). `None` on a malformed spec, so the verb Rejects
+/// rather than silently no-op'ing.
+fn parse_step_spec(spec: &str) -> Option<(usize, i32)> {
+    let (idx, dir) = spec.split_once(',')?;
+    Some((idx.trim().parse().ok()?, dir.trim().parse().ok()?))
+}
+
+/// R1221 — the common-property index a `<prefix><i>` send key carries (`reset3`,
+/// `toggle0`, `inc1`, `dec1`), or `None` when `key` lacks `prefix` or the tail is
+/// not an index. The one SSOT the [`InspectorExternal::handle_send`] Details-cell
+/// gesture dispatch reads, so each gesture is just a `prefix -> action` line (the
+/// `strip_prefix`+`parse` wiring is factored out — R727/R732 3rd-consumer lift).
+fn prefixed_index(key: &str, prefix: &str) -> Option<usize> {
+    key.strip_prefix(prefix)?.parse().ok()
+}
 
 /// R958 — is the common property `name` MODIFIED from its class default in ANY
 /// selected object? Each selected object compares its own current value (by
@@ -608,10 +644,26 @@ impl InspectorExternal {
         // the per-property reset instead of the row-select chord (the `inspector#`
         // funnel carries both, distinguished by the key prefix — the
         // hello-property-grid `reset<i>` send pattern).
-        if let Some(rest) = key.strip_prefix(RESET_PREFIX) {
-            if let Ok(idx) = rest.parse::<usize>() {
-                self.reset_property(idx);
-            }
+        // R958 — the reset arrow; R1221 — the Details value-cell edit gestures
+        // (toggle a Bool, step a numeric across the whole selection). Each is a
+        // `prefix -> action` line over the [`prefixed_index`] SSOT; all write
+        // through the same funnels the `reset` / `toggle_property` / `step_property`
+        // verbs use (the invoke-funnel discipline). Checked before the row-select
+        // `<i>` parse because these keys never parse as a bare index.
+        if let Some(idx) = prefixed_index(key, RESET_PREFIX) {
+            self.reset_property(idx);
+            return;
+        }
+        if let Some(idx) = prefixed_index(key, TOGGLE_PREFIX) {
+            self.toggle_property(idx);
+            return;
+        }
+        if let Some(idx) = prefixed_index(key, INC_PREFIX) {
+            self.step_property(idx, 1);
+            return;
+        }
+        if let Some(idx) = prefixed_index(key, DEC_PREFIX) {
+            self.step_property(idx, -1);
             return;
         }
         let Some(index) = key.parse::<usize>().ok() else {
@@ -665,6 +717,60 @@ impl InspectorExternal {
         });
         Ok(())
     }
+
+    /// R1221 — flip common **Bool** property `idx` across EVERY selected object
+    /// (the multi-object toggle). A mixed Bool resolves to a single uniform
+    /// state: its representative (the first selected object's value) is flipped
+    /// and written to all. The GUI value-cell click + the `toggle_property` verb
+    /// funnel here, writing through [`set_property`](Self::set_property) — the SAME
+    /// path `intervene value.<i>` drives. `false` (no write) when `idx` is out of
+    /// range or the common property is not a Bool.
+    fn toggle_property(&self, idx: usize) -> bool {
+        let common = self.common();
+        let Some(prop) = common.get(idx) else {
+            return false;
+        };
+        let CellValue::Bool(cur) = prop.value else {
+            return false;
+        };
+        self.set_property(idx, &IntrospectValue::Bool(!cur)).is_ok()
+    }
+
+    /// R1221 — step common **numeric** property `idx` by `dir` (a signed unit
+    /// count) on EVERY selected object, RELATIVELY (each object's own value +=
+    /// dir·step), so a mixed numeric stays mixed but shifts together — the
+    /// multi-object spinbox that PRESERVES the per-object differences (unlike the
+    /// Bool toggle, which resolves to uniform). `Int` steps by `dir`, `Float` by
+    /// `dir · FLOAT_STEP`. `false` when `idx` is out of range or the common
+    /// property is not numeric.
+    fn step_property(&self, idx: usize, dir: i32) -> bool {
+        let common = self.common();
+        let Some(prop) = common.get(idx) else {
+            return false;
+        };
+        if !matches!(prop.value, CellValue::Int(_) | CellValue::Float(_)) {
+            return false;
+        }
+        let name = prop.name.clone();
+        let selection = self.selection_set();
+        self.objects.set_with(move |prev| {
+            let mut next = prev.clone();
+            for &j in &selection {
+                if let Some(p) = next
+                    .get_mut(j)
+                    .and_then(|o| o.properties.iter_mut().find(|p| p.name == name))
+                {
+                    p.value = match p.value {
+                        CellValue::Int(v) => CellValue::Int(v.saturating_add(i64::from(dir))),
+                        CellValue::Float(v) => CellValue::Float(v + f64::from(dir) * FLOAT_STEP),
+                        ref other => other.clone(),
+                    };
+                }
+            }
+            next
+        });
+        true
+    }
 }
 
 impl core::fmt::Debug for InspectorExternal {
@@ -708,6 +814,12 @@ impl ExternalIntrospect for InspectorExternal {
             ("send", "string"),
             ("reset", "int"),
             ("reset_all", "null"),
+            // R1221 — the Details inline-edit verbs (the AI-first peers of the
+            // value-cell click gestures): flip a common Bool across the whole
+            // selection, or step a common numeric (arg "<i>,<dir>", dir a signed
+            // unit count). Both write across every selected object.
+            ("toggle_property", "int"),
+            ("step_property", "string"),
         ])
     }
 
@@ -873,6 +985,22 @@ impl ExternalIntrospect for InspectorExternal {
             "reset_all" => Ok(IntrospectValue::Int(
                 i64::try_from(self.reset_all_modified()).expect("reset count fits in i64"),
             )),
+            // R1221 — flip a common Bool across the whole selection (the value-cell
+            // click twin); `false` when `idx` is not a common Bool row.
+            "toggle_property" => {
+                let idx = int_arg(args)?;
+                Ok(IntrospectValue::Bool(self.toggle_property(idx)))
+            }
+            // R1221 — step a common numeric across the whole selection by a signed
+            // unit count (the +/- stepper twin). Arg `"<i>,<dir>"`; `false` when
+            // `idx` is not a common numeric row.
+            "step_property" => match args {
+                IntrospectValue::Text(spec) => {
+                    let (idx, dir) = parse_step_spec(&spec).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.step_property(idx, dir)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             // R910/R902.1 — the composite pointer wire (modifier-aware).
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
@@ -1029,6 +1157,82 @@ fn detail_value_visual(prop: &CommonProperty, fg: Color, accent: Color, muted: C
     }
 }
 
+/// R1221 — one +/- numeric stepper button, tagged so a click routes to
+/// [`InspectorExternal::step_property`] via `handle_send`.
+fn stepper_button(glyph: &str, tag: String, accent: Color) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            glyph.to_owned(),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(ROW_FONT_PX)
+                .with_fg(Color::rgb(0xff, 0xff, 0xff)),
+        ))])
+        .with_tag(tag)
+        .with_style(BoxStyle::filled(accent).with_corner_radius(4))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Center)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(STEPPER, STEPPER)),
+        ),
+    )
+}
+
+/// R1221 — the interactive Details value cell. A **Bool** paints its pill (or
+/// the mixed placeholder) inside a `inspector#toggle<i>` click target (flip
+/// across the whole selection, resolving a mixed Bool to uniform); an **Int** /
+/// **Float** paints `[-] value [+]` steppers (`inspector#dec<i>` /
+/// `inspector#inc<i>`, a mix-preserving relative shift). Every other kind
+/// (Choice / Color / Text) keeps the read-only [`detail_value_visual`] display
+/// (still RPC-editable via `intervene value.<i>` — inline delegates for those
+/// kinds are the property-grid's, reusable when a shared such property arises).
+fn detail_value_cell(
+    index: usize,
+    prop: &CommonProperty,
+    fg: Color,
+    accent: Color,
+    muted: Color,
+) -> Scene {
+    match prop.value {
+        CellValue::Bool(_) => Scene::Container(
+            ContainerNode::new(vec![detail_value_visual(prop, fg, accent, muted)])
+                .with_tag(format!("{INSPECTOR_TAG}#{TOGGLE_PREFIX}{index}"))
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Center)
+                        .with_margin(Rect::new(0, 0, RESET_GUTTER, 0)),
+                ),
+        ),
+        CellValue::Int(_) | CellValue::Float(_) => {
+            let label = Scene::Text(TextNode::styled(
+                common_value_label(prop),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(ROW_FONT_PX)
+                    .with_fg(if prop.mixed { muted } else { fg }),
+            ));
+            Scene::Container(
+                ContainerNode::new(vec![
+                    stepper_button("-", format!("{INSPECTOR_TAG}#{DEC_PREFIX}{index}"), accent),
+                    label,
+                    stepper_button("+", format!("{INSPECTOR_TAG}#{INC_PREFIX}{index}"), accent),
+                ])
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Center)
+                        .with_gap(6)
+                        .with_margin(Rect::new(0, 0, RESET_GUTTER, 0)),
+                ),
+            )
+        }
+        _ => detail_value_visual(prop, fg, accent, muted),
+    }
+}
+
 /// One Details row: `name` (left, muted) + value visual (right). Tagged
 /// `prop_<i>` so the demo can locate it. R958 — when `modified` (the property
 /// diverges from its class default in any selected object) a reset arrow is
@@ -1048,7 +1252,7 @@ fn property_row(
         Rect::default(),
         TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(muted),
     ));
-    let mut children = vec![name, detail_value_visual(prop, fg, accent, muted)];
+    let mut children = vec![name, detail_value_cell(index, prop, fg, accent, muted)];
     if modified {
         // A small accent square at the trailing edge: the "modified, click to
         // reset" mark. Absolutely positioned (out of the SpaceBetween flow) so
@@ -1467,6 +1671,240 @@ mod tests {
         // Idempotent: a reset on an at-default row changes nothing.
         assert_eq!(
             e.invoke("reset", IntrospectValue::Int(1)).unwrap(),
+            IntrospectValue::Bool(false)
+        );
+    }
+
+    // ── R1221 Details inline-edit gestures (toggle Bool / step numeric) ──────
+    // Common rows across all three objects: Visible(0)=Bool, Layer(1)=Int,
+    // Locked(2)=Bool.
+
+    fn obj_value(e: &InspectorExternal, obj: usize, name: &str) -> CellValue {
+        e.objects
+            .get()
+            .get(obj)
+            .and_then(|o| o.properties.iter().find(|p| p.name == name).cloned())
+            .unwrap_or_else(|| panic!("object {obj} has no {name}"))
+            .value
+    }
+
+    #[test]
+    fn r1221_toggle_bool_resolves_mixed_to_uniform_across_all() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // Visible: Player=true, Camera=true, Light=false -> mixed.
+        assert_eq!(
+            e.query("mixed.0"),
+            Some(IntrospectValue::Bool(true)),
+            "Visible starts mixed"
+        );
+        // Toggle flips the representative (Player=true) and writes !true to ALL.
+        assert_eq!(
+            e.invoke("toggle_property", IntrospectValue::Int(0))
+                .unwrap(),
+            IntrospectValue::Bool(true)
+        );
+        assert_eq!(
+            e.query("mixed.0"),
+            Some(IntrospectValue::Bool(false)),
+            "toggle resolved the mix"
+        );
+        for obj in 0..3 {
+            assert_eq!(
+                obj_value(&e, obj, "Visible"),
+                CellValue::Bool(false),
+                "obj {obj} Visible written"
+            );
+        }
+        // A second toggle flips the (now uniform) value across all.
+        assert_eq!(
+            e.invoke("toggle_property", IntrospectValue::Int(0))
+                .unwrap(),
+            IntrospectValue::Bool(true)
+        );
+        for obj in 0..3 {
+            assert_eq!(
+                obj_value(&e, obj, "Visible"),
+                CellValue::Bool(true),
+                "obj {obj} Visible re-toggled"
+            );
+        }
+    }
+
+    #[test]
+    fn r1221_step_int_shifts_each_object_mix_preserving() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // Layer: Player=1, Camera=1, Light=2 -> mixed. Step +1 shifts EACH by 1
+        // (relative), so the mix is PRESERVED (1,1,2 -> 2,2,3), not collapsed.
+        assert_eq!(
+            e.query("mixed.1"),
+            Some(IntrospectValue::Bool(true)),
+            "Layer starts mixed"
+        );
+        assert_eq!(
+            e.invoke("step_property", IntrospectValue::Text("1,1".to_owned()))
+                .unwrap(),
+            IntrospectValue::Bool(true)
+        );
+        assert_eq!(
+            obj_value(&e, 0, "Layer"),
+            CellValue::Int(2),
+            "Player Layer +1"
+        );
+        assert_eq!(
+            obj_value(&e, 1, "Layer"),
+            CellValue::Int(2),
+            "Camera Layer +1"
+        );
+        assert_eq!(
+            obj_value(&e, 2, "Layer"),
+            CellValue::Int(3),
+            "Light Layer +1"
+        );
+        assert_eq!(
+            e.query("mixed.1"),
+            Some(IntrospectValue::Bool(true)),
+            "still mixed after a uniform shift"
+        );
+        // Step -2 shifts each back below the start.
+        assert!(matches!(
+            e.invoke("step_property", IntrospectValue::Text("1,-2".to_owned())),
+            Ok(IntrospectValue::Bool(true))
+        ));
+        assert_eq!(
+            obj_value(&e, 2, "Layer"),
+            CellValue::Int(1),
+            "Light Layer 3 - 2"
+        );
+    }
+
+    #[test]
+    fn r1221_step_on_agreeing_selection_stays_uniform() {
+        let mut e = ext();
+        // Player + Camera both have Layer=1 (common, NOT mixed).
+        e.intervene(
+            "selection",
+            IntrospectValue::Json(serde_json::json!([0, 1])),
+        )
+        .unwrap();
+        assert_eq!(
+            e.query("mixed.1"),
+            Some(IntrospectValue::Bool(false)),
+            "agreeing Layer is not mixed"
+        );
+        e.invoke("step_property", IntrospectValue::Text("1,1".to_owned()))
+            .unwrap();
+        assert_eq!(obj_value(&e, 0, "Layer"), CellValue::Int(2));
+        assert_eq!(obj_value(&e, 1, "Layer"), CellValue::Int(2));
+        assert_eq!(
+            e.query("mixed.1"),
+            Some(IntrospectValue::Bool(false)),
+            "both shifted equally -> still uniform"
+        );
+    }
+
+    #[test]
+    fn r1221_edit_gestures_route_through_the_send_wire() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // A value-cell click on Locked(2) arrives as `toggle2:PointerUp`.
+        e.invoke(
+            "send",
+            IntrospectValue::Text("toggle2:PointerUp".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            e.query("mixed.2"),
+            Some(IntrospectValue::Bool(false)),
+            "gesture toggled Locked across all"
+        );
+        // A +/- stepper click on Layer(1) arrives as `inc1` / `dec1`.
+        let before = obj_value(&e, 2, "Layer");
+        e.invoke("send", IntrospectValue::Text("inc1:PointerUp".to_owned()))
+            .unwrap();
+        e.invoke("send", IntrospectValue::Text("inc1:PointerUp".to_owned()))
+            .unwrap();
+        e.invoke("send", IntrospectValue::Text("dec1:PointerUp".to_owned()))
+            .unwrap();
+        let CellValue::Int(b) = before else {
+            panic!("Layer is Int")
+        };
+        assert_eq!(
+            obj_value(&e, 2, "Layer"),
+            CellValue::Int(b + 1),
+            "net +1 from inc,inc,dec"
+        );
+    }
+
+    #[test]
+    fn r1221_toggle_rejects_nonbool_and_step_rejects_nonnumeric() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // Layer(1) is Int, not Bool -> toggle is a no-op false.
+        assert_eq!(
+            e.invoke("toggle_property", IntrospectValue::Int(1))
+                .unwrap(),
+            IntrospectValue::Bool(false)
+        );
+        // Visible(0) is Bool, not numeric -> step is a no-op false.
+        assert_eq!(
+            e.invoke("step_property", IntrospectValue::Text("0,1".to_owned()))
+                .unwrap(),
+            IntrospectValue::Bool(false)
+        );
+        // An out-of-range index is a no-op false (never panics).
+        assert_eq!(
+            e.invoke("toggle_property", IntrospectValue::Int(99))
+                .unwrap(),
+            IntrospectValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn r1221_step_spec_parse_and_malformed_arg_rejected() {
+        assert_eq!(parse_step_spec("1,-2"), Some((1, -2)));
+        assert_eq!(parse_step_spec(" 0 , 1 "), Some((0, 1)));
+        assert_eq!(parse_step_spec("nope"), None);
+        assert_eq!(parse_step_spec("1"), None);
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert_eq!(
+            e.invoke("step_property", IntrospectValue::Text("bad".to_owned())),
+            Err(InvokeError::Rejected)
+        );
+        assert_eq!(
+            e.invoke("step_property", IntrospectValue::Int(1)),
+            Err(InvokeError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn r1221_edit_verbs_are_schema_declared() {
+        let e = ext();
+        let fields: Vec<&str> = e.schema().fields.iter().map(|(p, _)| *p).collect();
+        assert!(
+            fields.contains(&"toggle_property"),
+            "toggle_property schema-declared"
+        );
+        assert!(
+            fields.contains(&"step_property"),
+            "step_property schema-declared"
+        );
+    }
+
+    #[test]
+    fn r1221_edits_with_no_selection_are_no_ops() {
+        let mut e = ext();
+        e.invoke("clear", IntrospectValue::Null).unwrap();
+        assert_eq!(
+            e.invoke("toggle_property", IntrospectValue::Int(0))
+                .unwrap(),
+            IntrospectValue::Bool(false)
+        );
+        assert_eq!(
+            e.invoke("step_property", IntrospectValue::Text("0,1".to_owned()))
+                .unwrap(),
             IntrospectValue::Bool(false)
         );
     }

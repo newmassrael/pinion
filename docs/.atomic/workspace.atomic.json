@@ -22186,6 +22186,58 @@
         "The RPC-opened menu places the node right-of-source (PIN_CREATE_GAP) rather than at a cursor; the live gesture uses the true drop point. Menu height is a fixed row-count estimate (a flex column clips an over-tall child) — a very tall candidate list would need scroll (not reachable with the 7-kind palette)."
       ]
     },
+    "R1221": {
+      "decision_summary": "R1221 completes the multi-object inspector's documented GUI follow-up: the Details value cells are now inline-editable and write across the ENTIRE selection. A Bool cell click toggles the property (resolving a mixed Bool to uniform); an Int/Float cell gets +/- steppers that shift each selected object relatively (mix-preserving). GUI gestures + the toggle_property/step_property verbs funnel through the same write set_property/intervene value.<i> drives. The property-grid/inspector value-order gap the R1220 audit ranked #1.",
+      "changes_bullets": [
+        "hello-inspector: the multi-object Details panel's inline EDIT gestures (Phase-B DCC axis, the property-grid/inspector value-order gap the R1220 audit ranked #1). R922 built the multi-object model (common-property derivation + \"Multiple Values\" mixed state + write-all edit) but edited only over RPC (intervene value.<i>); R1221 makes the value cells interactive and write across the ENTIRE selection.",
+        "Bool value cell = a click target (inspector#toggle<i>) that flips the property across all selected, RESOLVING a mixed Bool to a single uniform state (representative flipped, written to all via the existing set_property funnel).",
+        "Int/Float value cell = a [-] value [+] SPINBOX (inspector#dec<i>/inc<i>) that shifts each selected object RELATIVELY (new step_property: per-object value += dir, or dir*FLOAT_STEP for Float), so a mixed numeric stays mixed but moves together (PRESERVES per-object differences, unlike the Bool toggle which resolves to uniform).",
+        "AI-first RPC peers: invoke toggle_property <i> (flip a common Bool) + step_property \"<i>,<dir>\" (step a common numeric); the GUI clicks funnel through the SAME set_property / step_property the verbs use (invoke-funnel). value.<i> / mixed.<i> stay the read surface.",
+        "Layout fix: interactive value cells reserve a trailing RESET_GUTTER so a +/toggle click on a MODIFIED row lands on the cell, not the absolutely-positioned reset dot at the row edge (found while writing the demo: click(inc1) on a modified Layer hit inspector#reset1 -> reset-to-default instead of +1); read-only cells (Choice/Color/Text) keep the old layout (a click on them does nothing).",
+        "SSOT: 4th consumer (reset + toggle + inc + dec) of the send-key strip_prefix+parse wiring -> lifted prefixed_index(key, prefix); handle_send is now one prefix->action line per gesture (R727/R732 3rd-consumer mandate).",
+        "Only the shared actor base (Visible/Layer/Locked = Bool/Int) is ever common across a multi-selection, so Bool toggle + numeric steppers cover every common row; inline delegates for Choice/Color/Text across a selection remain the property-grid's, reusable when a shared such property arises."
+      ],
+      "verification_bullets": [
+        "8 new unit tests (r1221_*): toggle resolves a mixed Bool to uniform across every object (verified per-object via e.objects); step shifts each object relatively (mix preserved, 1/1/2 -> 2/2/3); an agreeing selection stays uniform after a step; the value-cell gestures route through the send wire (toggle<i>/inc<i>/dec<i>); toggle rejects a non-Bool + step rejects a non-numeric + out-of-range is a no-op; parse_step_spec + a malformed/typed-wrong verb arg is Rejected; the verbs are schema-declared; no-selection edits are no-ops.",
+        "RPC verify demo tools/demos/r1221_inspector_inline_edit.py = PASS (~35 assertions, above the R660 30 baseline): select_all common base; RPC toggle_property resolves a mixed Bool to uniform (write-all); RPC step_property shifts each relatively (mix preserved); GUI CLICK the painted Bool cell + the +/- steppers (paint->route path); an agreeing selection stays uniform after a step; rejects (non-Bool toggle, non-numeric step, malformed spec) + no-selection no-ops.",
+        "Gates: cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0 (-D pedantic); cargo test --workspace -j2 = 0 failed; cargo test -p hello-inspector = 31 passed. The gutter-overlap bug (a real mis-click) was found by driving the actual GUI click over RPC, not by the unit tests (which drive the wire directly) -- an instance of verify-via-real-consumer."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "The inspector has no UndoStack (pre-existing: reset + intervene edits are also non-undoable); the toggle/step gestures match that posture. A shared UndoStack across the multi-object write funnel is a separate axis (the property grid has one).",
+        "Per-control AT semantics: the toggle/stepper cells, like the R958 reset dot, are paint+RPC affordances with no per-control button/switch/spinbutton AccessNode -- the row's ListItem announces the value (common_value_label). A switch/spinbutton role per interactive cell is a shared a11y follow-up (reset shares the gap).",
+        "step_property multi-object semantic is RELATIVE (each += dir), preserving the mix; an ABSOLUTE \"set all to N\" (mixed -> uniform) numeric edit needs an inline text field (the property grid's delegate), the next inline-edit slice. Choice/Color inline delegates across a selection likewise wait for a shared such common property (never arises in the sample data)."
+      ],
+      "publishable_decision_summary": "R1221 completes the multi-object inspector's documented GUI follow-up: the Details value cells are now inline-editable and write across the ENTIRE selection. A Bool cell click toggles the property (resolving a mixed Bool to uniform); an Int/Float cell gets +/- steppers that shift each selected object relatively (mix-preserving). GUI gestures + the toggle_property/step_property verbs funnel through the same write set_property/intervene value.<i> drives. The property-grid/inspector value-order gap the R1220 audit ranked #1.",
+      "publishable_changes_bullets": [
+        "hello-inspector: the multi-object Details panel's inline EDIT gestures (Phase-B DCC axis, the property-grid/inspector value-order gap the R1220 audit ranked #1). R922 built the multi-object model (common-property derivation + \"Multiple Values\" mixed state + write-all edit) but edited only over RPC (intervene value.<i>); R1221 makes the value cells interactive and write across the ENTIRE selection.",
+        "Bool value cell = a click target (inspector#toggle<i>) that flips the property across all selected, RESOLVING a mixed Bool to a single uniform state (representative flipped, written to all via the existing set_property funnel).",
+        "Int/Float value cell = a [-] value [+] SPINBOX (inspector#dec<i>/inc<i>) that shifts each selected object RELATIVELY (new step_property: per-object value += dir, or dir*FLOAT_STEP for Float), so a mixed numeric stays mixed but moves together (PRESERVES per-object differences, unlike the Bool toggle which resolves to uniform).",
+        "AI-first RPC peers: invoke toggle_property <i> (flip a common Bool) + step_property \"<i>,<dir>\" (step a common numeric); the GUI clicks funnel through the SAME set_property / step_property the verbs use (invoke-funnel). value.<i> / mixed.<i> stay the read surface.",
+        "Layout fix: interactive value cells reserve a trailing RESET_GUTTER so a +/toggle click on a MODIFIED row lands on the cell, not the absolutely-positioned reset dot at the row edge (found while writing the demo: click(inc1) on a modified Layer hit inspector#reset1 -> reset-to-default instead of +1); read-only cells (Choice/Color/Text) keep the old layout (a click on them does nothing).",
+        "SSOT: 4th consumer (reset + toggle + inc + dec) of the send-key strip_prefix+parse wiring -> lifted prefixed_index(key, prefix); handle_send is now one prefix->action line per gesture (R727/R732 3rd-consumer mandate).",
+        "Only the shared actor base (Visible/Layer/Locked = Bool/Int) is ever common across a multi-selection, so Bool toggle + numeric steppers cover every common row; inline delegates for Choice/Color/Text across a selection remain the property-grid's, reusable when a shared such property arises."
+      ],
+      "publishable_verification_bullets": [
+        "8 new unit tests (r1221_*): toggle resolves a mixed Bool to uniform across every object (verified per-object via e.objects); step shifts each object relatively (mix preserved, 1/1/2 -> 2/2/3); an agreeing selection stays uniform after a step; the value-cell gestures route through the send wire (toggle<i>/inc<i>/dec<i>); toggle rejects a non-Bool + step rejects a non-numeric + out-of-range is a no-op; parse_step_spec + a malformed/typed-wrong verb arg is Rejected; the verbs are schema-declared; no-selection edits are no-ops.",
+        "RPC verify demo tools/demos/r1221_inspector_inline_edit.py = PASS (~35 assertions, above the R660 30 baseline): select_all common base; RPC toggle_property resolves a mixed Bool to uniform (write-all); RPC step_property shifts each relatively (mix preserved); GUI CLICK the painted Bool cell + the +/- steppers (paint->route path); an agreeing selection stays uniform after a step; rejects (non-Bool toggle, non-numeric step, malformed spec) + no-selection no-ops.",
+        "Gates: cargo clippy --workspace --all-targets --features pinion-runtime/vello = exit 0 (-D pedantic); cargo test --workspace -j2 = 0 failed; cargo test -p hello-inspector = 31 passed. The gutter-overlap bug (a real mis-click) was found by driving the actual GUI click over RPC, not by the unit tests (which drive the wire directly) -- an instance of verify-via-real-consumer."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The inspector has no UndoStack (pre-existing: reset + intervene edits are also non-undoable); the toggle/step gestures match that posture. A shared UndoStack across the multi-object write funnel is a separate axis (the property grid has one).",
+        "Per-control AT semantics: the toggle/stepper cells, like the R958 reset dot, are paint+RPC affordances with no per-control button/switch/spinbutton AccessNode -- the row's ListItem announces the value (common_value_label). A switch/spinbutton role per interactive cell is a shared a11y follow-up (reset shares the gap).",
+        "step_property multi-object semantic is RELATIVE (each += dir), preserving the mix; an ABSOLUTE \"set all to N\" (mixed -> uniform) numeric edit needs an inline text field (the property grid's delegate), the next inline-edit slice. Choice/Color inline delegates across a selection likewise wait for a shared such common property (never arises in the sample data)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
