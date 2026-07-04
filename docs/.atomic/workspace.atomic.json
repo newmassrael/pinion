@@ -62288,6 +62288,46 @@
         "Then close-out: update r1245-inspector-inline-typein-design memory (macro extra_externals, not macro->manual; 65 consumers prove the gap) + note carries (value.<r>.<c> out-of-range framework smell; MAX_NODE_X conservative bound; append_default_row bool->enum polish; pending_reroute_splice guard)."
       ]
     },
+    "Round 1248": {
+      "decision_summary": "R1248 audit-clearance (F3+F5): complete the R1243 width() SSOT -- open_pin_create's raw NODE_W spawn point (a missed pre-existing peer, misplacing a knot menu ~112px via RPC) routes through right(); view_node card width uses node.width(); the width() docstring's false 'never disagree' claim is corrected to name the deliberate MAX_NODE_X exception.",
+      "changes_bullets": [
+        "complete the R1243 width() SSOT (audit-clearance F3, a missed pre-existing peer): open_pin_create (main.rs:5703) computed the create-menu / spawn point as `src.x + NODE_W + PIN_CREATE_GAP` -- a hand-inlined `src.right()` using raw NODE_W. Reachable via `invoke open_pin_create \"<knot>.0\"`, it placed the menu / new node ~112px off a reroute knot's true 18px right edge. Now routed through `src.right()` (i.e. width()), so a knot source spawns at its DOT right edge. This is the exact \"self-grep counted the new width() pairs and missed a pre-existing peer\" pattern the prior audit campaigns flagged.",
+        "F5: view_node's card container width now uses node.width() (the twin of the adjacent node.height()), not literal NODE_W -- behaviour-equivalent (a reroute early-returns to view_reroute_knot) but restores the route-through-width() symmetry.",
+        "docstring honesty: the width() docstring's overclaim (\"bounds/hit-test/centre/align never disagree with the paint\") is corrected to name the one deliberate exception -- MAX_NODE_X keeps the NODE_W-based clamp bound (a safe conservative bound: a knot stays on-world, merely can't reach the far-right 112px band)."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 198 pass / 0 fail (1 new R1248: open_pin_create on a knot spawns the node at knot.right()+gap [dot edge], NOT knot.x+NODE_W+gap [~112px off]; asserts both the correct placement and its difference from the buggy one). clippy -D pedantic / rustdoc -D warnings / rustfmt clean.",
+        "tools/demos/r1220_node_pin_drop_create.py: PASS (regular-node open_pin_create unchanged -- right()==x+NODE_W for a full card). Audit-clearance round; the fix is unit-covered + the pin-drop demo regression-covers the common path."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "R1248 = campaign round 3/3 (F3+F5). The R1243-R1245 audit-clearance campaign (5 independent adversarial reviewers, user \"textbook/SSOT/north-star?\" request) is now code-complete: F1 paint!=a11y root gate (R1246) + F4 revert dissolve footgun (R1246) + F2 phantom empty row (R1247) + F3 width() open_pin_create peer (R1248) + F5 card width symmetry (R1248).",
+        "Remaining = a DESIGN correction (not code): update r1245-inspector-inline-typein-design memory -- the inspector inline-type-in round should ADD extra_externals to the #[widget] macro (65 example bindings already hand-roll create_extra_externals, so the gap is PROVEN, not premature), NOT convert macro->manual; the \"1 consumer\" premise was backwards.",
+        "Noted carries (out of this campaign's scope): value.<r>.<c> out-of-range -> RPC UnknownIntrospectPath error not null (pre-existing framework-wide §2#7 smell, a query-resolver change touching every External) ; MAX_NODE_X conservative clamp (documented, acceptable) ; append_default_row(bool) -> CursorHop enum (polish) ; pending_reroute_splice weaker-guarded than the marquee (pathological, add_reroute re-validates -> spurious splice at worst, not a crash)."
+      ],
+      "publishable_decision_summary": "R1248 audit-clearance (F3+F5): complete the R1243 width() SSOT -- open_pin_create's raw NODE_W spawn point (a missed pre-existing peer, misplacing a knot menu ~112px via RPC) routes through right(); view_node card width uses node.width(); the width() docstring's false 'never disagree' claim is corrected to name the deliberate MAX_NODE_X exception.",
+      "publishable_changes_bullets": [
+        "complete the R1243 width() SSOT (audit-clearance F3, a missed pre-existing peer): open_pin_create (main.rs:5703) computed the create-menu / spawn point as `src.x + NODE_W + PIN_CREATE_GAP` -- a hand-inlined `src.right()` using raw NODE_W. Reachable via `invoke open_pin_create \"<knot>.0\"`, it placed the menu / new node ~112px off a reroute knot's true 18px right edge. Now routed through `src.right()` (i.e. width()), so a knot source spawns at its DOT right edge. This is the exact \"self-grep counted the new width() pairs and missed a pre-existing peer\" pattern the prior audit campaigns flagged.",
+        "F5: view_node's card container width now uses node.width() (the twin of the adjacent node.height()), not literal NODE_W -- behaviour-equivalent (a reroute early-returns to view_reroute_knot) but restores the route-through-width() symmetry.",
+        "docstring honesty: the width() docstring's overclaim (\"bounds/hit-test/centre/align never disagree with the paint\") is corrected to name the one deliberate exception -- MAX_NODE_X keeps the NODE_W-based clamp bound (a safe conservative bound: a knot stays on-world, merely can't reach the far-right 112px band)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 198 pass / 0 fail (1 new R1248: open_pin_create on a knot spawns the node at knot.right()+gap [dot edge], NOT knot.x+NODE_W+gap [~112px off]; asserts both the correct placement and its difference from the buggy one). clippy -D pedantic / rustdoc -D warnings / rustfmt clean.",
+        "tools/demos/r1220_node_pin_drop_create.py: PASS (regular-node open_pin_create unchanged -- right()==x+NODE_W for a full card). Audit-clearance round; the fix is unit-covered + the pin-drop demo regression-covers the common path."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1248 = campaign round 3/3 (F3+F5). The R1243-R1245 audit-clearance campaign (5 independent adversarial reviewers, user \"textbook/SSOT/north-star?\" request) is now code-complete: F1 paint!=a11y root gate (R1246) + F4 revert dissolve footgun (R1246) + F2 phantom empty row (R1247) + F3 width() open_pin_create peer (R1248) + F5 card width symmetry (R1248).",
+        "Remaining = a DESIGN correction (not code): update r1245-inspector-inline-typein-design memory -- the inspector inline-type-in round should ADD extra_externals to the #[widget] macro (65 example bindings already hand-roll create_extra_externals, so the gap is PROVEN, not premature), NOT convert macro->manual; the \"1 consumer\" premise was backwards.",
+        "Noted carries (out of this campaign's scope): value.<r>.<c> out-of-range -> RPC UnknownIntrospectPath error not null (pre-existing framework-wide §2#7 smell, a query-resolver change touching every External) ; MAX_NODE_X conservative clamp (documented, acceptable) ; append_default_row(bool) -> CursorHop enum (polish) ; pending_reroute_splice weaker-guarded than the marquee (pathological, add_reroute re-validates -> spurious splice at worst, not a crash)."
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

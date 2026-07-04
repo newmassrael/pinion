@@ -730,10 +730,14 @@ impl GraphNode {
     }
 
     /// R1243 — the node's width in graph units: a reroute knot is a compact
-    /// [`KNOT_SIZE`] dot, every other node the fixed [`NODE_W`] card. The one
-    /// home for "how wide is this node" so bounds / hit-test / centre / align
-    /// never disagree with the paint — the horizontal twin of [`GraphNode::height`]
-    /// (whose docstring already established the per-node height accessor).
+    /// [`KNOT_SIZE`] dot, every other node the fixed [`NODE_W`] card. The intended
+    /// one home for "how wide is this node" — the horizontal twin of
+    /// [`GraphNode::height`] — so `right()` / `contains_node` / `centre_key` /
+    /// align / distribute / the card paint all measure the knot's dot, not a
+    /// phantom [`NODE_W`]. R1248 caveat (honesty): [`MAX_NODE_X`] deliberately
+    /// keeps the [`NODE_W`]-based clamp bound (a safe conservative bound — a knot
+    /// stays on-world, merely can't reach the far-right 112px band), so it is the
+    /// one width site NOT routed through here.
     fn width(&self) -> i32 {
         if self.is_reroute { KNOT_SIZE } else { NODE_W }
     }
@@ -5700,7 +5704,12 @@ impl NodeGraphExternal {
                     let Some(src) = self.node_by_id(from_node) else {
                         return Some(Ok(IntrospectValue::Bool(false)));
                     };
-                    let at_graph = (src.x + NODE_W + PIN_CREATE_GAP, src.y);
+                    // R1248 — route the source's right edge through `right()`
+                    // (i.e. `width()`), NOT raw `NODE_W`: a reroute knot source
+                    // (`invoke open_pin_create "<knot>.0"`) is 18px wide, so a raw
+                    // `NODE_W` placed the create menu ~112px off its true edge (the
+                    // width() SSOT peer R1243's self-grep missed).
+                    let at_graph = (src.right() + PIN_CREATE_GAP, src.y);
                     let (cx, cy) = graph_to_canvas(
                         &self.scroll,
                         self.zoom.get(),
@@ -6424,8 +6433,12 @@ fn view_node(
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(upx(wpx(node.x, zoom)), upx(wpx(node.y, zoom)))
+                    // R1248 — width via `node.width()` (the twin of the adjacent
+                    // `node.height()`), not literal `NODE_W`: behaviour-equivalent
+                    // here (a reroute early-returns to `view_reroute_knot`), but it
+                    // keeps the "route through width()" symmetry the R1243 SSOT set.
                     .with_size(Size::px(
-                        upx(wpx(NODE_W, zoom)),
+                        upx(wpx(node.width(), zoom)),
                         upx(wpx(node.height(), zoom)),
                     )),
             ),

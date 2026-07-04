@@ -6868,3 +6868,40 @@ fn r1246_double_click_a_compute_node_still_renames() {
         );
     });
 }
+
+/// R1248 — width() SSOT completeness (the missed pre-existing peer): the
+/// `open_pin_create` spawn point routes through `right()`/`width()`, so opening
+/// a create menu from a KNOT's output pin (`invoke open_pin_create "<knot>.0"`)
+/// lands the new node at the knot's compact DOT right edge + gap, not ~112px off
+/// as if the 18px knot were a 130px card (the pre-R1248 raw-`NODE_W` bug).
+#[test]
+fn r1248_open_pin_create_on_a_knot_uses_its_dot_right_edge() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).expect("splice"); // a Vector knot
+        let knot = coord.node_by_id(rid).expect("the knot");
+        assert_eq!(
+            coord.invoke(
+                "open_pin_create",
+                IntrospectValue::Text(format!("{}.0", rid.raw())),
+            ),
+            Ok(IntrospectValue::Bool(true)),
+            "the create menu opens from a knot's typed output pin",
+        );
+        let new_id = coord
+            .commit_pin_create_highlighted()
+            .expect("committed a node");
+        let new_node = coord.node_by_id(new_id).expect("the created node");
+        assert_eq!(
+            new_node.x,
+            clamp_node_x(knot.right() + PIN_CREATE_GAP),
+            "the node lands at the knot's DOT right edge + gap (width()-routed)",
+        );
+        assert_ne!(
+            new_node.x,
+            clamp_node_x(knot.x + NODE_W + PIN_CREATE_GAP),
+            "NOT placed ~112px off as if the 18px knot were a 130px card",
+        );
+    });
+}
