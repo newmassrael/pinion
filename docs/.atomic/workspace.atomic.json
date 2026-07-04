@@ -61988,6 +61988,50 @@
         "audit-clearance campaign 3/5 done (R1238 SSOT + R1239 paste-correctness + R1240 frame-clamp). Remaining: R1241 dissolve observability (dissolvable read-twin + self-loop test + dead-code // unreachable markers + Alt+Delete key-consume) / R1242 reroute-first-class (is_reroute model + knot render + double-click splice + discriminator query) — the big north-star round"
       ]
     },
+    "Round 1241": {
+      "decision_summary": "R1241 dissolve observability (campaign 4/5): add dissolvable.<id>/dissolvable_ids read-twins via an extracted side-effect-free dissolve_plan SSOT shared with the verb; add the reachable self-loop rejection test; document the forward-defensive dead branches honestly. Found by independent adversarial review",
+      "changes_bullets": [
+        "dissolve observability: added dissolvable.<id> (bool read) + dissolvable_ids (CSV enumeration) so an editor can gray out / offer Dissolve without mutate-to-probe (the reorder_enabled/pin_create eligibility-read precedent the dissolve verb was breaking)",
+        "SSOT: extracted dissolve_plan (side-effect-free eligibility + bridge endpoints, mints nothing) shared by the dissolvable READ and the dissolve_node mutation -> the query can never disagree with the verb (setter-returns-read); dissolve_node now routes through it",
+        "coverage: added the self-loop dissolve test (a 2-cycle Multiply<->Multiply -> the bridge would be A->A, the ONE reachable rejection branch that was untested); validate_connection blocks only direct self-loops, so a multi-hop cycle is constructible",
+        "honesty: the type-mismatch + duplicate-bridge branches are documented as FORWARD-DEFENSIVE + currently-unreachable (no Vector-in/Float-out palette kind; single-wire rule) rather than implying test coverage; kept as real guards (not unreachable!) so a future type-converting node stays safe"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 183 pass / 0 fail (2 new R1241: dissolvable read matches the verb / self-loop bridge rejected)",
+        "cargo clippy -p hello-node-editor --all-targets: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1236_node_dissolve.py: PASS (added dissolvable.<id>/dissolvable_ids RPC guards asserting the read predicts the verb)",
+        "dissolve_node refactor is behavior-preserving: all pre-existing R1236 tests still green"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "Alt+Delete on a non-dissolvable node stays a no-op that returns the verb outcome (consistent with plain Delete's return-the-outcome) — reviewed as acceptable, NOT a fallback-to-delete (that would surprise; Alt+Delete = dissolve-only)",
+        "audit-clearance campaign 4/5 done (R1238 SSOT + R1239 paste + R1240 frame + R1241 dissolve). Remaining: R1242 reroute-first-class (is_reroute model field + knot render branch in view_node + serialization + double-click-on-wire splice arm + node.<id>.is_reroute/reroute_ids discriminator query) — the HIGH north-star finding (reroute is currently a full card, not a knot)"
+      ],
+      "publishable_decision_summary": "R1241 dissolve observability (campaign 4/5): add dissolvable.<id>/dissolvable_ids read-twins via an extracted side-effect-free dissolve_plan SSOT shared with the verb; add the reachable self-loop rejection test; document the forward-defensive dead branches honestly. Found by independent adversarial review",
+      "publishable_changes_bullets": [
+        "dissolve observability: added dissolvable.<id> (bool read) + dissolvable_ids (CSV enumeration) so an editor can gray out / offer Dissolve without mutate-to-probe (the reorder_enabled/pin_create eligibility-read precedent the dissolve verb was breaking)",
+        "SSOT: extracted dissolve_plan (side-effect-free eligibility + bridge endpoints, mints nothing) shared by the dissolvable READ and the dissolve_node mutation -> the query can never disagree with the verb (setter-returns-read); dissolve_node now routes through it",
+        "coverage: added the self-loop dissolve test (a 2-cycle Multiply<->Multiply -> the bridge would be A->A, the ONE reachable rejection branch that was untested); validate_connection blocks only direct self-loops, so a multi-hop cycle is constructible",
+        "honesty: the type-mismatch + duplicate-bridge branches are documented as FORWARD-DEFENSIVE + currently-unreachable (no Vector-in/Float-out palette kind; single-wire rule) rather than implying test coverage; kept as real guards (not unreachable!) so a future type-converting node stays safe"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 183 pass / 0 fail (2 new R1241: dissolvable read matches the verb / self-loop bridge rejected)",
+        "cargo clippy -p hello-node-editor --all-targets: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1236_node_dissolve.py: PASS (added dissolvable.<id>/dissolvable_ids RPC guards asserting the read predicts the verb)",
+        "dissolve_node refactor is behavior-preserving: all pre-existing R1236 tests still green"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Alt+Delete on a non-dissolvable node stays a no-op that returns the verb outcome (consistent with plain Delete's return-the-outcome) — reviewed as acceptable, NOT a fallback-to-delete (that would surprise; Alt+Delete = dissolve-only)",
+        "audit-clearance campaign 4/5 done (R1238 SSOT + R1239 paste + R1240 frame + R1241 dissolve). Remaining: R1242 reroute-first-class (is_reroute model field + knot render branch in view_node + serialization + double-click-on-wire splice arm + node.<id>.is_reroute/reroute_ids discriminator query) — the HIGH north-star finding (reroute is currently a full card, not a knot)"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

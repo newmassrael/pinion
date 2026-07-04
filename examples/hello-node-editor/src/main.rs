@@ -49,7 +49,8 @@
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
 //! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs,input_types,output_types,input_default.<port>}` /
-//! `edge.<id>` / `selected` / `selected_ids` / `selected_edge`;
+//! `edge.<id>` / `dissolvable.<id>` / `dissolvable_ids` (R1241: dissolve
+//! eligibility) / `selected` / `selected_ids` / `selected_edge`;
 //! `intervene node.<id>.x` / `node.<id>.y` / `node.<id>.title` /
 //! `node.<id>.input_default.<port>` / `frame.<id>.{title,x,y,w,h}` (R1234:
 //! `x`/`y` move the frame + its contents, `w`/`h` resize it) /
@@ -1786,6 +1787,20 @@ enum PendingPress {
 /// adds the `added_*`; `undo` is the exact inverse with the sets swapped, so the
 /// stored entities (with their stable ids) round-trip byte-for-byte — a redone
 /// node keeps its original [`NodeId`], a restored edge its [`EdgeId`].
+/// R1241 — the side-effect-free plan a dissolve would apply: the two incident
+/// edges to remove (`A -> id`, `id -> B`) and the bridge endpoints (`A -> B`)
+/// that replace them. Computed by [`dissolve_plan`](NodeGraphExternal::dissolve_plan),
+/// shared by the `dissolvable.<id>` read and the `dissolve_node` mutation so the
+/// two agree by construction (no minted edge id — that is the mutation's job).
+struct DissolvePlan {
+    a_edge: Edge,
+    b_edge: Edge,
+    from_node: NodeId,
+    from_port: usize,
+    to_node: NodeId,
+    to_port: usize,
+}
+
 /// The entity delta of one [`GraphEdit`]: what the edit adds and what it
 /// removes. `add_*` are present *after* the edit but not before; `remove_*` are
 /// present *before* but not after, stored verbatim so `undo` re-inserts them
@@ -3918,7 +3933,15 @@ impl NodeGraphExternal {
     /// non-passthrough wiring (zero or many edges either side), or a bridge that
     /// would self-loop / mistype / duplicate an existing wire — the caller falls
     /// back to a plain [`delete_node`](Self::delete_node).
-    fn dissolve_node(&self, id: NodeId) -> bool {
+    /// R1241 — the eligibility + bridge plan for dissolving node `id`: the two
+    /// incident edges to remove (`A -> id`, `id -> B`) and the bridge endpoints
+    /// (`A -> B`) that replace them, or `None` when the node is not a dissolvable
+    /// passthrough (not exactly one incident edge on each side, or the bridge
+    /// would self-loop / mistype / duplicate an existing wire). SIDE-EFFECT FREE
+    /// (mints nothing), so the `dissolvable.<id>` READ and the `dissolve_node`
+    /// mutation share ONE predicate — the query can never disagree with what the
+    /// verb will do ([[setter-wire-returns-read-outcome]]).
+    fn dissolve_plan(&self, id: NodeId) -> Option<DissolvePlan> {
         let edges = self.edges.get();
         let incoming: Vec<Edge> = edges.iter().copied().filter(|e| e.to_node == id).collect();
         let outgoing: Vec<Edge> = edges
@@ -3928,51 +3951,76 @@ impl NodeGraphExternal {
             .collect();
         // Exactly one hop in, one hop out — otherwise the bridge is ambiguous.
         let ([a_edge], [b_edge]) = (incoming.as_slice(), outgoing.as_slice()) else {
-            return false;
+            return None;
         };
-        let (a_node, a_port) = (a_edge.from_node, a_edge.from_port);
-        let (b_node, b_port) = (b_edge.to_node, b_edge.to_port);
-        // Removing the hop's two edges frees B's input, so the single-wire rule
-        // holds by construction; the checks here are self-loop / type / exact
-        // duplicate. (A reroute always passes — its ports carry the wire type.)
-        if a_node == b_node {
-            return false;
+        let (from_node, from_port) = (a_edge.from_node, a_edge.from_port);
+        let (to_node, to_port) = (b_edge.to_node, b_edge.to_port);
+        // Self-loop (a multi-hop cycle routed through `id`) — the one REACHABLE
+        // rejection: `validate_connection` blocks only *direct* self-loops, so a
+        // 2-cycle A->id->A is constructible and must not bridge to A->A.
+        if from_node == to_node {
+            return None;
         }
         let nodes = self.nodes.get();
-        let Some(ty_a) = node_ref(&nodes, a_node).and_then(|n| n.output_type(a_port)) else {
-            return false;
-        };
-        let Some(ty_b) = node_ref(&nodes, b_node).and_then(|n| n.input_type(b_port)) else {
-            return false;
-        };
+        let ty_a = node_ref(&nodes, from_node)?.output_type(from_port)?;
+        let ty_b = node_ref(&nodes, to_node)?.input_type(to_port)?;
+        // FORWARD-DEFENSIVE, currently unreachable (correctness audit R1237.5):
+        // no palette kind is Vector-in / Float-out, so a dissolvable 1-in/1-out
+        // node can never bridge to a type-mismatch; and the single-wire rule
+        // prevents a pre-existing parallel `A->B` at the freed input. Both go
+        // LIVE the moment a type-converting node kind is added — kept as real
+        // guards (not `unreachable!`) so a future palette stays type-safe.
         if !ty_a.is_assignable_to(ty_b) {
-            return false;
+            return None;
         }
         if edges.iter().any(|e| {
-            e.from_node == a_node
-                && e.from_port == a_port
-                && e.to_node == b_node
-                && e.to_port == b_port
+            e.from_node == from_node
+                && e.from_port == from_port
+                && e.to_node == to_node
+                && e.to_port == to_port
         }) {
-            return false;
+            return None;
         }
-        let Some(removed_node) = node_ref(&nodes, id).cloned() else {
+        Some(DissolvePlan {
+            a_edge: *a_edge,
+            b_edge: *b_edge,
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+        })
+    }
+
+    /// R1241 — whether node `id` can be dissolved (the `dissolvable.<id>` read;
+    /// the AI-first eligibility twin of the `dissolve_node` verb, so an editor can
+    /// gray out / offer "Dissolve" without a mutate-to-probe). Shares the
+    /// [`dissolve_plan`](Self::dissolve_plan) predicate with the mutation.
+    fn dissolvable(&self, id: NodeId) -> bool {
+        self.dissolve_plan(id).is_some()
+    }
+
+    fn dissolve_node(&self, id: NodeId) -> bool {
+        let Some(plan) = self.dissolve_plan(id) else {
+            return false;
+        };
+        let Some(removed_node) = node_ref(&self.nodes.get(), id).cloned() else {
             return false;
         };
         let bridge = Edge {
             id: self.mint_edge_id(),
-            from_node: a_node,
-            from_port: a_port,
-            to_node: b_node,
-            to_port: b_port,
+            from_node: plan.from_node,
+            from_port: plan.from_port,
+            to_node: plan.to_node,
+            to_port: plan.to_port,
         };
         let sel_before = self.selection.get();
-        let sel_after = validate_after(sel_before.clone(), &[id], &[a_edge.id, b_edge.id]);
+        let sel_after =
+            validate_after(sel_before.clone(), &[id], &[plan.a_edge.id, plan.b_edge.id]);
         self.record_edit(
             "Dissolve node",
             GraphDelta {
                 removed_nodes: vec![removed_node],
-                removed_edges: vec![*a_edge, *b_edge],
+                removed_edges: vec![plan.a_edge, plan.b_edge],
                 added_edges: vec![bridge],
                 ..GraphDelta::default()
             },
@@ -4916,6 +4964,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("edge_count", "int"),
             ("node_ids", "string"),
             ("edge_ids", "string"),
+            // R1241 — dissolve-eligibility reads (the twins of the dissolve verb).
+            ("dissolvable_ids", "string"),
+            ("dissolvable.<id>", "bool"),
             // R1227 — comment-frame introspection: the annotation layer as data.
             ("frame_count", "int"),
             ("frame_ids", "string"),
@@ -5036,6 +5087,17 @@ impl ExternalIntrospect for NodeGraphExternal {
             "frame_ids" => Some(IntrospectValue::Text(csv_ids(
                 self.frames.get().iter().map(|f| f.id.raw()),
             ))),
+            // R1241 — the AI-first dissolve-eligibility enumeration: the CSV of
+            // node ids that can be dissolved (1-in / 1-out + a valid bridge), so
+            // an editor can offer "Dissolve" without probing each node. The
+            // `dissolvable.<id>` read is the per-node twin.
+            "dissolvable_ids" => Some(IntrospectValue::Text(csv_ids(
+                self.nodes
+                    .get()
+                    .iter()
+                    .filter(|n| self.dissolvable(n.id))
+                    .map(|n| n.id.raw()),
+            ))),
             // R879 — `selected` answers the *single*-selection question:
             // an Int only when exactly one node is selected (a multi-set
             // has no unambiguous "the" node — read `selected_ids`).
@@ -5145,6 +5207,12 @@ impl ExternalIntrospect for NodeGraphExternal {
                         "{}:{}->{}:{}",
                         e.from_node, e.from_port, e.to_node, e.to_port
                     )));
+                }
+                // R1241 — the per-node dissolve-eligibility read (the twin of the
+                // `dissolve_node` verb; shares the `dissolve_plan` predicate).
+                if let Some(id_str) = path.strip_prefix("dissolvable.") {
+                    let id = NodeId(id_str.parse().ok()?);
+                    return Some(IntrospectValue::Bool(self.dissolvable(id)));
                 }
                 // R1227 — `frame.<id>.<field>` reads (extracted to keep `query`
                 // within the workspace line ceiling).

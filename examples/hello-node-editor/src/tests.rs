@@ -6295,3 +6295,62 @@ fn r1240_populated_frame_right_edge_stays_on_world() {
         );
     });
 }
+
+#[test]
+fn r1241_dissolvable_query_matches_the_verb() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).unwrap();
+        // The read twin agrees with the gate: only the reroute (1-in/1-out) is
+        // dissolvable; Multiply (2 inputs), a source (0 inputs), unknown are not.
+        assert!(coord.dissolvable(rid), "the reroute is dissolvable");
+        assert!(!coord.dissolvable(NodeId(2)), "Multiply (2 inputs) is not");
+        assert!(!coord.dissolvable(NodeId(0)), "a source (0 inputs) is not");
+        assert!(!coord.dissolvable(NodeId(99)), "an unknown id is not");
+        // The RPC reads mirror the method.
+        assert_eq!(
+            coord.query(&format!("dissolvable.{}", rid.raw())),
+            Some(IntrospectValue::Bool(true)),
+        );
+        assert_eq!(
+            coord.query("dissolvable.2"),
+            Some(IntrospectValue::Bool(false))
+        );
+        assert_eq!(
+            coord.query("dissolvable_ids"),
+            Some(IntrospectValue::Text(rid.raw().to_string())),
+            "only the reroute is enumerated as dissolvable"
+        );
+        // Eligibility predicts the verb: dissolvable -> the verb succeeds -> gone.
+        assert!(coord.dissolve_node(rid), "the verb agrees with the read");
+        assert!(!coord.dissolvable(rid), "after dissolve the node is gone");
+    });
+}
+
+#[test]
+fn r1241_dissolve_rejects_a_self_loop_bridge() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        // Build a 2-cycle: Multiply m1 <-> Multiply m2 (each edge type-valid and
+        // NOT a direct self-loop, so add_edge accepts both).
+        let m1 = coord.add_node(2).unwrap();
+        let m2 = coord.add_node(2).unwrap();
+        assert!(coord.add_edge(m1, 0, m2, 0), "m1 -> m2");
+        assert!(
+            coord.add_edge(m2, 0, m1, 0),
+            "m2 -> m1 (a cycle, not a direct loop)"
+        );
+        // m2 has exactly one incident edge each side, but its bridge would be
+        // m1 -> m1 (self-loop) — the one REACHABLE rejection branch.
+        let (n0, e0) = (coord.query("node_count"), coord.query("edge_count"));
+        assert!(
+            !coord.dissolvable(m2),
+            "a 2-cycle node's bridge would self-loop"
+        );
+        assert!(!coord.dissolve_node(m2), "dissolve is a no-op");
+        assert_eq!(coord.query("node_count"), n0, "graph unchanged");
+        assert_eq!(coord.query("edge_count"), e0, "graph unchanged");
+    });
+}

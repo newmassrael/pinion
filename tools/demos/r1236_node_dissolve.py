@@ -58,6 +58,11 @@ def body() -> None:
         rid = tf.invoke("/external/add_reroute", 0)
         assert_eq(rid, 4, "reroute minted node 4")
         assert_eq(q(tf, "node_count"), 5, "the hop node0 -> R -> node2 exists")
+        # R1241 — the eligibility read (no mutate-to-probe): only the reroute is
+        # dissolvable; the read predicts the verb.
+        assert_eq(q(tf, f"dissolvable.{rid}"), True, "the reroute reads as dissolvable")
+        assert_eq(q(tf, "dissolvable.2"), False, "Multiply (2 inputs) is not")
+        assert_eq(q(tf, "dissolvable_ids"), str(rid), "only the reroute is enumerated")
         assert_eq(dissolve(tf, rid), True, "the reroute dissolves")
         assert_eq(q(tf, "node_count"), 4, "the reroute node is removed")
         assert_eq(q(tf, "edge_count"), 3, "net -1 edge (removed 2, added 1 bridge)")
