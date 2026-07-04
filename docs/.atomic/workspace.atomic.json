@@ -62250,6 +62250,44 @@
         "Noted carries (not this campaign): value.<r>.<c> out-of-range -> RPC UnknownIntrospectPath error not null (pre-existing framework-wide §2#7 smell) ; MAX_NODE_X over-clamps a knot (acceptable conservative bound) ; append_default_row(bool) -> CursorHop enum (polish) ; pending_reroute_splice weaker-guarded than the marquee (pathological, add_reroute re-validates)."
       ]
     },
+    "Round 1247": {
+      "decision_summary": "R1247 audit-clearance (F2): fix R1244 phantom empty row -- paste_block grew a blank row for every overrun line before any cell parsed; now precomputes each line's landed cells and grows a row only when the line lands >=1 cell (per-landed-row, not per-overrun-line), correcting a false test invariant too.",
+      "changes_bullets": [
+        "fix the R1244 phantom-empty-row bug (audit-clearance F2): paste_block appended a grown row for EVERY overrun line BEFORE any cell parsed, so an all-unparseable overrun line (e.g. a text label over an Int column, `paste \"55\\nTotal\"`) grew a BLANK default row and the returned `written` count hid the growth. Now each line's landing cells are precomputed FIRST (take_while col<NCOLS to clip the fixed column schema, then filter_map by per-column parse), and an overrun line grows a row ONLY when it lands >=1 cell -- mirroring the in-range no-op for an unparseable cell. Growth is now per LANDED row, not per overrun line; no phantom row, honest count.",
+        "this also corrects the R1244 renamed-test invariant that was FALSE: `r1237_paste_skips_unparseable_and_empty_is_noop`'s comment claimed \"growth is per landed row\" while the code grew per overrun line. Now the comment is true and two R1247 tests pin it."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-data-grid: 125 pass / 0 fail (2 new R1247: an all-unparseable overrun line grows NO phantom row [written=1, row_count stays 4] / a partial overrun line grows exactly one row and lands only the parseable cell, the rest keeping the column default). clippy -D pedantic / rustdoc -D warnings / rustfmt clean.",
+        "tools/demos/r1244_data_grid_paste_grow.py: PASS, 35 assertions (added case H: `paste \"55\\nTotal\"` at the last row lands only the anchor, grows no phantom row, undo restores). All prior grow/undo/clip cases unchanged."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "R1247 = campaign round 2/3 (F2). Cleared: R1244 phantom empty row + false test invariant.",
+        "Still to clear: R1248 = F3 (width() SSOT: open_pin_create main.rs:5695 src.x+NODE_W -> route through right(); docstring \"never disagree with paint\" is false) + F5 (view_node card Size literal NODE_W -> node.width()).",
+        "Then close-out: update r1245-inspector-inline-typein-design memory (macro extra_externals, not macro->manual; 65 consumers prove the gap) + note carries (value.<r>.<c> out-of-range framework smell; MAX_NODE_X conservative bound; append_default_row bool->enum polish; pending_reroute_splice guard)."
+      ],
+      "publishable_decision_summary": "R1247 audit-clearance (F2): fix R1244 phantom empty row -- paste_block grew a blank row for every overrun line before any cell parsed; now precomputes each line's landed cells and grows a row only when the line lands >=1 cell (per-landed-row, not per-overrun-line), correcting a false test invariant too.",
+      "publishable_changes_bullets": [
+        "fix the R1244 phantom-empty-row bug (audit-clearance F2): paste_block appended a grown row for EVERY overrun line BEFORE any cell parsed, so an all-unparseable overrun line (e.g. a text label over an Int column, `paste \"55\\nTotal\"`) grew a BLANK default row and the returned `written` count hid the growth. Now each line's landing cells are precomputed FIRST (take_while col<NCOLS to clip the fixed column schema, then filter_map by per-column parse), and an overrun line grows a row ONLY when it lands >=1 cell -- mirroring the in-range no-op for an unparseable cell. Growth is now per LANDED row, not per overrun line; no phantom row, honest count.",
+        "this also corrects the R1244 renamed-test invariant that was FALSE: `r1237_paste_skips_unparseable_and_empty_is_noop`'s comment claimed \"growth is per landed row\" while the code grew per overrun line. Now the comment is true and two R1247 tests pin it."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-data-grid: 125 pass / 0 fail (2 new R1247: an all-unparseable overrun line grows NO phantom row [written=1, row_count stays 4] / a partial overrun line grows exactly one row and lands only the parseable cell, the rest keeping the column default). clippy -D pedantic / rustdoc -D warnings / rustfmt clean.",
+        "tools/demos/r1244_data_grid_paste_grow.py: PASS, 35 assertions (added case H: `paste \"55\\nTotal\"` at the last row lands only the anchor, grows no phantom row, undo restores). All prior grow/undo/clip cases unchanged."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1247 = campaign round 2/3 (F2). Cleared: R1244 phantom empty row + false test invariant.",
+        "Still to clear: R1248 = F3 (width() SSOT: open_pin_create main.rs:5695 src.x+NODE_W -> route through right(); docstring \"never disagree with paint\" is false) + F5 (view_node card Size literal NODE_W -> node.width()).",
+        "Then close-out: update r1245-inspector-inline-typein-design memory (macro extra_externals, not macro->manual; 65 consumers prove the gap) + note carries (value.<r>.<c> out-of-range framework smell; MAX_NODE_X conservative bound; append_default_row bool->enum polish; pending_reroute_splice guard)."
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

@@ -1609,13 +1609,15 @@ impl DataGridExternal {
     /// cell parses through its COLUMN's [`CellKind`] + clamps (a value that does
     /// not parse for that type is skipped — the cell keeps its prior value, no
     /// data loss). R1244 — a block that overruns the last visible row GROWS the
-    /// grid: each overrun line appends a fresh row (the model's row count is
-    /// dynamic, [`add_row`](Self::add_row)) so the whole block lands, the
-    /// spreadsheet-paste convention. Columns past the grid's right edge still
-    /// CLIP — the column schema ([`NCOLS`]) is fixed, unlike the rows. The whole
-    /// paste (grown rows AND their cells) is ONE undo step (a `begin_macro` /
-    /// `end_macro` transaction), so a single `Ctrl`+`Z` reverts every pasted cell
-    /// and every row it grew. Returns the count of cells actually written.
+    /// grid: each overrun line that LANDS at least one cell appends a fresh row
+    /// (the model's row count is dynamic, [`add_row`](Self::add_row)) so the whole
+    /// block lands. R1247 — an all-unparseable overrun line grows NOTHING (it
+    /// mirrors the in-range no-op), so a paste never leaves a phantom empty row
+    /// and the returned count never hides a growth. Columns past the grid's right
+    /// edge still CLIP — the column schema ([`NCOLS`]) is fixed, unlike the rows.
+    /// The whole paste (grown rows AND their cells) is ONE undo step (a
+    /// `begin_macro` / `end_macro` transaction), so a single `Ctrl`+`Z` reverts
+    /// every pasted cell and every row it grew. Returns the count of cells written.
     fn paste_block(&self, tsv: &str) -> usize {
         // R1239 — strip ONE trailing line terminator (`\n` or `\r\n`) before
         // splitting: real clipboards / spreadsheet copies emit a trailing
@@ -1643,24 +1645,33 @@ impl DataGridExternal {
         self.undo.begin_macro("Paste");
         let mut written = 0;
         for (i, line) in tsv.split('\n').enumerate() {
+            // R1247 — precompute the cells this line will actually LAND, BEFORE any
+            // row grows: clip columns past the fixed schema (`take_while col <
+            // NCOLS`, the rows-dynamic / columns-fixed split), then keep only cells
+            // that parse for their column (an unparseable cell is skipped, keeping
+            // the prior value — no data loss). Computing this first is what lets an
+            // all-unparseable OVERRUN line grow NOTHING (mirroring the in-range
+            // no-op); R1244 grew a phantom empty row per overrun line regardless of
+            // whether any cell landed, and reported a `written` count that hid it.
+            let landed: Vec<(usize, CellValue)> = line
+                .split('\t')
+                .enumerate()
+                .map(|(j, text)| (anchor_col + j, text))
+                .take_while(|&(col, _)| col < NCOLS)
+                .filter_map(|(col, text)| COL_KINDS[col].parse(text).map(|v| (col, v)))
+                .collect();
             // R1244 — an in-range visible row writes in place (the snapshot); an
-            // overrun row GROWS the grid by appending a fresh row and writing
-            // into it by its known source index (never a visible-position lookup,
-            // so a mid-paste re-sort cannot make it chase a moving target). Rows
-            // are dynamic; columns (below) stay a fixed, clipped schema.
+            // overrun row GROWS the grid, but ONLY when it lands data. A grown row
+            // writes by its known appended source index (never a visible-position
+            // lookup, so a mid-paste re-sort cannot make it chase a moving target).
             let source_row = match visible.get(anchor_pos + i) {
                 Some(&s) => s,
+                None if landed.is_empty() => continue, // no data -> no phantom row
                 None => self.append_default_row(false, Cow::Borrowed("Paste row")),
             };
-            for (j, text) in line.split('\t').enumerate() {
-                let col = anchor_col + j;
-                if col >= NCOLS {
-                    break; // clip columns past the grid's right edge (fixed schema)
-                }
-                if let Some(parsed) = COL_KINDS[col].parse(text) {
-                    self.edit_cell(source_row, col, parsed, Cow::Borrowed("Paste cell"));
-                    written += 1;
-                }
+            for (col, value) in landed {
+                self.edit_cell(source_row, col, value, Cow::Borrowed("Paste cell"));
+                written += 1;
             }
         }
         self.undo.end_macro();
@@ -9357,8 +9368,9 @@ mod tests {
                 Some(IntrospectValue::Int(1)),
                 "the cell keeps its prior value",
             );
-            // An empty paste is a no-op — and neither an unparseable nor an
-            // empty paste ever grows the grid (R1244 growth is per landed row).
+            // An empty paste is a no-op — and neither an unparseable nor an empty
+            // paste grows the grid (R1247: growth is per LANDED row, not per
+            // overrun line, so a line that lands no cell grows nothing).
             assert_eq!(
                 grid_invoke(&mut scene, "paste", IntrospectValue::Text(String::new())),
                 Ok(IntrospectValue::Int(0)),
@@ -9368,6 +9380,77 @@ mod tests {
                 grid_intro(&scene).query("row_count"),
                 Some(IntrospectValue::Int(4)),
                 "no unparseable / empty paste grows the grid",
+            );
+        });
+    }
+
+    #[test]
+    fn r1247_all_unparseable_overrun_line_grows_no_phantom_row() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene(); // 4 rows
+            // A 2-row block at the LAST row where the OVERRUN line's only cell
+            // fails its column type (a text label over the Int column — the real
+            // spreadsheet case). Pre-R1247 the overrun grew a PHANTOM empty row
+            // and `written` hid it; now it grows nothing (mirrors the in-range
+            // no-op for an unparseable cell).
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(3));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(2)); // Int col
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("55\nTotal".to_owned())
+                ),
+                Ok(IntrospectValue::Int(1)),
+                "only the anchor cell (55) lands; the unparseable overrun lands nothing",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(4)),
+                "the all-unparseable overrun line grew NO phantom row",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.3.2"),
+                Some(IntrospectValue::Int(55)),
+                "the anchor row still got 55",
+            );
+        });
+    }
+
+    #[test]
+    fn r1247_partial_overrun_line_grows_one_row_lands_only_parseable() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene(); // 4 rows
+            // An overrun line with a parseable cell (Int) AND an unparseable one
+            // (a text over the Float column) grows exactly one row and lands only
+            // the parseable cell; the row's other cells keep their typed default.
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(3));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(2)); // Int, then Float
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("10\t1.0\n20\txyz".to_owned())
+                ),
+                Ok(IntrospectValue::Int(3)),
+                "anchor row (2 cells) + grown row's one parseable Int = 3 landed",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(5)),
+                "the partial overrun line grew exactly one row (it landed data)",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.4.2"),
+                Some(IntrospectValue::Int(20)),
+                "the grown row's Int cell landed",
+            );
+            // The grown row's Float cell got no data — it keeps the column default
+            // (col 3 default is Float(0.0)), NOT the unparseable "NaNish".
+            assert_eq!(
+                grid_intro(&scene).query("value.4.3"),
+                Some(IntrospectValue::Float(0.0)),
+                "the grown row's Float cell kept its default (unparseable skipped)",
             );
         });
     }

@@ -104,6 +104,17 @@ def body() -> None:
         assert_eq(q(tf, "value.0.2"), 1, "row 0 Count restored")
         assert_eq(q(tf, "value.1.2"), 24, "row 1 Count restored (both in-range rows revert)")
 
+        # ── (H) R1247 — an all-unparseable overrun line grows NO phantom row ──
+        # A text label over the Int column (the real spreadsheet case): the
+        # anchor lands 55, the overrun "Total" parses to nothing, so growth is
+        # per LANDED row, not per overrun line — no phantom empty row.
+        cursor(tf, 3, 2)  # last row, Int column
+        assert_eq(inv(tf, "paste", "55\nTotal"), 1, "only the anchor cell lands")
+        assert_eq(q(tf, "row_count"), 4, "the unparseable overrun grew NO phantom row")
+        assert_eq(q(tf, "value.3.2"), 55, "the anchor row got 55")
+        assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the anchor write")
+        assert_eq(q(tf, "value.3.2"), base_anchor, "the anchor Count restored")
+
 
 if __name__ == "__main__":
     sys.exit(run_demo("R1244 data-grid paste auto-grows rows", body))
