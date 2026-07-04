@@ -144,6 +144,20 @@ pub fn send_activation_index(payload: &str) -> Option<usize> {
     send_activation_key(payload)?.parse::<usize>().ok()
 }
 
+/// R1231 — decode a `<prefix><i>` composite-tag key (`reset3`, `toggle0`,
+/// `elem1`, `opt2`) to the trailing `usize` index, or `None` when `key` lacks
+/// `prefix` or the tail is not an index. The mechanical strip-and-parse SSOT the
+/// per-widget send-key dispatchers read: the *prefix vocabulary* (`reset` /
+/// `toggle` / `opt` / …) is the widget's own, but this decode was independently
+/// hand-rolled in the inspector, the property grid, and the data grid — three
+/// sites, so it lifts here (the R727/R732 3rd-consumer mandate). A widget that
+/// maps the index into its own value type composes: `prefixed_index(k, ELEM)?`
+/// then `.map(ValueRef::Elem)`.
+#[must_use]
+pub fn prefixed_index(key: &str, prefix: &str) -> Option<usize> {
+    key.strip_prefix(prefix)?.parse().ok()
+}
+
 /// Parse a R51.42 §5.35 composite-tag send payload
 /// `"<key>:<EventName>[:<mods>]"` into `(key, event_name, modifiers)`.
 ///
@@ -378,8 +392,8 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        GridSendKey, GridTag, compose_send_payload, parse_send_payload, send_activation_index,
-        send_activation_key, split_send_payload, split_subindex,
+        GridSendKey, GridTag, compose_send_payload, parse_send_payload, prefixed_index,
+        send_activation_index, send_activation_key, split_send_payload, split_subindex,
     };
     use crate::input::Modifiers;
 
@@ -644,5 +658,17 @@ mod tests {
         // Non-numeric key / malformed payload.
         assert_eq!(send_activation_index("xx:PointerUp"), None);
         assert_eq!(send_activation_index("PointerUp"), None);
+    }
+
+    #[test]
+    fn r1231_prefixed_index_strips_and_parses() {
+        assert_eq!(prefixed_index("reset3", "reset"), Some(3));
+        assert_eq!(prefixed_index("toggle0", "toggle"), Some(0));
+        // Wrong prefix / missing index / non-numeric tail.
+        assert_eq!(prefixed_index("toggle0", "reset"), None);
+        assert_eq!(prefixed_index("reset", "reset"), None);
+        assert_eq!(prefixed_index("resetcol", "reset"), None);
+        // Composes into a widget value type via `.map`.
+        assert_eq!(prefixed_index("elem2", "elem").map(|i| i + 100), Some(102));
     }
 }

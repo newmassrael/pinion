@@ -171,7 +171,7 @@ use pinion_a11y::{
     attach_child_button, grid_table_nodes, grouped_grid_access_nodes, listbox_option_nodes,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
-use pinion_core::composite_tag::{GridSendKey, split_subindex};
+use pinion_core::composite_tag::{GridSendKey, prefixed_index, split_subindex};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint, External,
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
@@ -503,10 +503,11 @@ impl ResetTarget {
     /// remainder is a [`GridSendKey::Cell`] `<row>_<col>`. A malformed remainder
     /// (`"row"` with no index, an unknown shape) decodes to `None` (a no-op).
     fn parse(rest: &str) -> Option<Self> {
-        if let Some(row) = rest.strip_prefix("row").and_then(|r| r.parse().ok()) {
+        // R1231 — `row<i>` / `col<i>` via the shared `composite_tag::prefixed_index`.
+        if let Some(row) = prefixed_index(rest, "row") {
             return Some(ResetTarget::Row { row });
         }
-        if let Some(col) = rest.strip_prefix("col").and_then(|c| c.parse().ok()) {
+        if let Some(col) = prefixed_index(rest, "col") {
             return Some(ResetTarget::Col { col });
         }
         match GridSendKey::parse(rest)? {
@@ -545,7 +546,7 @@ fn handle_tag(source: usize) -> String {
 /// R937 — the `'d'`-prefixed sub-key of a [`handle_tag`] decoded back to its
 /// source row (the producer's inverse, the one place the handle grammar is read).
 fn parse_handle_sub(sub: &str) -> Option<usize> {
-    sub.strip_prefix('d').and_then(|n| n.parse::<usize>().ok())
+    prefixed_index(sub, "d")
 }
 
 // ─── column sort (R886 — the editable fold of the sort axis) ──────

@@ -61514,6 +61514,54 @@
         "DOC-1 (cut \"exactly the drawn curve\" overclaim) + DOC-2 (persistence serde-default doc vs strict version gate) + STR-1 (node-editor 12k main.rs mod split) = R1232"
       ]
     },
+    "Round 1231": {
+      "decision_summary": "R1231 SSOT-lift clearance (audit SSOT-1): prefixed_index lifted to composite_tag (the strip-<prefix>+parse-usize decode was independently hand-rolled in inspector/property-grid/data-grid = a 3-site mechanical dup the mandatory scaffold-grep missed); Result-semantics sites stay local",
+      "changes_bullets": [
+        "SSOT-1 lift: composite_tag::prefixed_index = the ONE strip-<prefix> + parse-usize decode SSOT",
+        "was hand-rolled in inspector (a local helper) + property-grid inline + data-grid inline = a 3-site mechanical dup the mandatory scaffold-grep missed (grep-the-name saw one prefixed_index and looked clean)",
+        "inspector deletes its local copy; property-grid row_ref(elem) + data-grid row/col/'d' decodes route through it",
+        "the Result-semantics sites (property-grid opt/sw parse->Rejected) deliberately stay local: different contract (prefix-match then parse-or-error), not the same scaffold",
+        "test r1231_prefixed_index_strips_and_parses (strip / wrong-prefix / missing-index / .map compose)"
+      ],
+      "verification_bullets": [
+        "cargo test: pinion-core 114 / hello-inspector 44 / hello-property-grid 81 / hello-data-grid 2546 pass (behavior-preserving)",
+        "cargo test --workspace -j2: 8025 pass / 0 fail (real exit 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello + fmt: clean"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "audit-clearance campaign: a11y (R1228 B1/B3 + R1229 B2) + node-editor SSOT (R1230) + prefix-decode SSOT (R1231) cleared",
+        "remaining: SSOT-5 (RenameNodeCmd/RenameFrameCmd = 2nd identical rename copy -> generic RenameCmd<T>/Titled at the 2nd-consumer lift point; correct the stale R900 \"deliberately separate\" doc) = R1232",
+        "DOC-1 (cut \"cuts exactly the drawn curve\" overclaim -> soften/tolerance) + DOC-2 (persistence serde-default field doc vs strict != version gate) = R1232",
+        "STR-1 (node-editor 12,458-line main.rs internal mod split) = R1233 (large, its own round)"
+      ],
+      "publishable_decision_summary": "R1231 SSOT-lift clearance (audit SSOT-1): prefixed_index lifted to composite_tag (the strip-<prefix>+parse-usize decode was independently hand-rolled in inspector/property-grid/data-grid = a 3-site mechanical dup the mandatory scaffold-grep missed); Result-semantics sites stay local",
+      "publishable_changes_bullets": [
+        "SSOT-1 lift: composite_tag::prefixed_index = the ONE strip-<prefix> + parse-usize decode SSOT",
+        "was hand-rolled in inspector (a local helper) + property-grid inline + data-grid inline = a 3-site mechanical dup the mandatory scaffold-grep missed (grep-the-name saw one prefixed_index and looked clean)",
+        "inspector deletes its local copy; property-grid row_ref(elem) + data-grid row/col/'d' decodes route through it",
+        "the Result-semantics sites (property-grid opt/sw parse->Rejected) deliberately stay local: different contract (prefix-match then parse-or-error), not the same scaffold",
+        "test r1231_prefixed_index_strips_and_parses (strip / wrong-prefix / missing-index / .map compose)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test: pinion-core 114 / hello-inspector 44 / hello-property-grid 81 / hello-data-grid 2546 pass (behavior-preserving)",
+        "cargo test --workspace -j2: 8025 pass / 0 fail (real exit 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello + fmt: clean"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "audit-clearance campaign: a11y (R1228 B1/B3 + R1229 B2) + node-editor SSOT (R1230) + prefix-decode SSOT (R1231) cleared",
+        "remaining: SSOT-5 (RenameNodeCmd/RenameFrameCmd = 2nd identical rename copy -> generic RenameCmd<T>/Titled at the 2nd-consumer lift point; correct the stale R900 \"deliberately separate\" doc) = R1232",
+        "DOC-1 (cut \"cuts exactly the drawn curve\" overclaim -> soften/tolerance) + DOC-2 (persistence serde-default field doc vs strict != version gate) = R1232",
+        "STR-1 (node-editor 12,458-line main.rs internal mod split) = R1233 (large, its own round)"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

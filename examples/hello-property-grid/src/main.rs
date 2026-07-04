@@ -113,7 +113,7 @@ use pinion_a11y::{
     listbox_option_nodes, tree_access_nodes, tree_row_tag, windowed_list_nodes_selected,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
-use pinion_core::composite_tag::split_send_payload;
+use pinion_core::composite_tag::{prefixed_index, split_send_payload};
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
@@ -847,8 +847,10 @@ impl ValueRef {
 /// where does its value live?" is decided, shared by the click router, the
 /// keyboard activation, the view and the a11y builder.
 fn row_ref(id: &str) -> Option<ValueRef> {
-    if let Some(k) = id.strip_prefix(ELEM_PREFIX) {
-        return k.parse::<usize>().ok().map(ValueRef::Elem);
+    // R1231 — the `elem<k>` decode via the shared `composite_tag::prefixed_index`
+    // (the bare-decimal Scalar fallback is not a prefixed key).
+    if let Some(k) = prefixed_index(id, ELEM_PREFIX) {
+        return Some(ValueRef::Elem(k));
     }
     id.parse::<usize>().ok().map(ValueRef::Scalar)
 }

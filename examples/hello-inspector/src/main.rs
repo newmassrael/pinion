@@ -75,7 +75,7 @@ use pinion_a11y::{
     AccessNode, AccessValue, AriaRole, ListOption, WidgetA11y, listbox_option_nodes,
 };
 use pinion_core::cell_value::CellValue;
-use pinion_core::composite_tag::split_send_payload;
+use pinion_core::composite_tag::{prefixed_index, split_send_payload};
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
@@ -434,15 +434,6 @@ const FLOAT_STEP: f64 = 0.5;
 fn parse_step_spec(spec: &str) -> Option<(usize, i32)> {
     let (idx, dir) = spec.split_once(',')?;
     Some((idx.trim().parse().ok()?, dir.trim().parse().ok()?))
-}
-
-/// R1221 — the common-property index a `<prefix><i>` send key carries (`reset3`,
-/// `toggle0`, `inc1`, `dec1`), or `None` when `key` lacks `prefix` or the tail is
-/// not an index. The one SSOT the [`InspectorExternal::handle_send`] Details-cell
-/// gesture dispatch reads, so each gesture is just a `prefix -> action` line (the
-/// `strip_prefix`+`parse` wiring is factored out — R727/R732 3rd-consumer lift).
-fn prefixed_index(key: &str, prefix: &str) -> Option<usize> {
-    key.strip_prefix(prefix)?.parse().ok()
 }
 
 /// R958 — is the common property `name` MODIFIED from its class default in ANY
