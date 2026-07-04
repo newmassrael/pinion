@@ -62164,6 +62164,48 @@
         "Next candidates (audit-first): inspector numeric absolute type-in inline TextField (hello-inspector has ZERO inline field vs hello-property-grid's full one — the biggest remaining DCC gap, a \"large\" round: a Details value can be stepped but never typed to an exact value) / node knot compact-hover affordance / property-grid per-element modified-reset."
       ]
     },
+    "Round 1245": {
+      "decision_summary": "R1245 double-click a reroute knot dissolves it (remove + reconnect through it), the inverse of R1243's double-click-on-wire create; reuses the R1236 dissolve_node. Also clears an R1243 latent paint!=a11y bug: a knot double-clicked into begin_rename, arming a title editor view_reroute_knot never paints.",
+      "changes_bullets": [
+        "double-click a reroute KNOT dissolves it: the (Some, DoubleClick) arm now routes a reroute node to `dissolve_node` (remove the knot + reconnect the wire straight through, A -> B) instead of `begin_rename`. The inverse of R1243's double-click-ON-WIRE that CREATES a knot (A -> R -> B) — a satisfying symmetric gesture pair, reusing the R1236 dissolve substrate. A compute node's double-click still opens its title rename (R878 unchanged); the gate is a new `is_reroute_node(id)` accessor.",
+        "R1243 latent bug cleared (inline debt): pre-R1245 a knot (which carries the `#node_{id}` tag) double-clicked into `begin_rename`, arming a title editor seeded \"Reroute\" that `view_reroute_knot` never paints — an a11y textbox with no painted peer (the paint==a11y gate the codebase enforces). A knot has no title to rename, so routing its double-click to dissolve is both the correct semantic AND the fix: no editor is armed on a knot."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 195 pass / 0 fail (3 new R1245: a knot double-click dissolves + reconnects via the gesture path / a knot double-click arms NO rename [the paint==a11y fix] / a compute node's double-click still renames).",
+        "cargo test --workspace -j2: pass / 0 fail (real exit 0). clippy --all-targets -D pedantic clean; rustdoc -D warnings clean; rustfmt clean.",
+        "tools/demos/r1245_node_knot_dissolve.py: PASS, 30 assertions (real scene/double_click on the knot dissolves + reconnects node0 -> node2; one undo restores the hop, redo re-dissolves; a compute node's double-click opens the title rename, dissolves nothing). Regression demos PASS: r1236 dissolve, r878 rename, r1243 reroute create/render."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.49",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "R1245 clears the R1243 latent paint!=a11y bug (double-clicking a knot armed an unpainted rename) AND completes the reroute gesture symmetry (double-click wire=create, double-click knot=dissolve). Node-editor DCC axis: the reroute knot is now render + create-gesture + dissolve-gesture complete.",
+        "Deferred (unchanged): the biggest remaining DCC gap is the INSPECTOR absolute type-in inline TextField — hello-inspector has ZERO inline field (step/toggle/cycle/reset only) while hello-property-grid + hello-node-editor have the full one. It is a LARGE round (needs a macro->manual InspectorView binding conversion because #[widget] has no extra_externals attr, plus forward_key_to_field requires a real hosted field). The full executable recipe (exact macro emit, property-grid template, wiring) is documented in the r1245-inspector-inline-typein-design memory; run it with a fresh budget.",
+        "Next candidates (audit-first): inspector inline type-in (large, designed) / node wire-connect auto-pan (the R1182 node-body auto-pan's documented follow-up for the begin_drag DnD path) / data-grid range-preselect-bounded paste."
+      ],
+      "publishable_decision_summary": "R1245 double-click a reroute knot dissolves it (remove + reconnect through it), the inverse of R1243's double-click-on-wire create; reuses the R1236 dissolve_node. Also clears an R1243 latent paint!=a11y bug: a knot double-clicked into begin_rename, arming a title editor view_reroute_knot never paints.",
+      "publishable_changes_bullets": [
+        "double-click a reroute KNOT dissolves it: the (Some, DoubleClick) arm now routes a reroute node to `dissolve_node` (remove the knot + reconnect the wire straight through, A -> B) instead of `begin_rename`. The inverse of R1243's double-click-ON-WIRE that CREATES a knot (A -> R -> B) — a satisfying symmetric gesture pair, reusing the R1236 dissolve substrate. A compute node's double-click still opens its title rename (R878 unchanged); the gate is a new `is_reroute_node(id)` accessor.",
+        "R1243 latent bug cleared (inline debt): pre-R1245 a knot (which carries the `#node_{id}` tag) double-clicked into `begin_rename`, arming a title editor seeded \"Reroute\" that `view_reroute_knot` never paints — an a11y textbox with no painted peer (the paint==a11y gate the codebase enforces). A knot has no title to rename, so routing its double-click to dissolve is both the correct semantic AND the fix: no editor is armed on a knot."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 195 pass / 0 fail (3 new R1245: a knot double-click dissolves + reconnects via the gesture path / a knot double-click arms NO rename [the paint==a11y fix] / a compute node's double-click still renames).",
+        "cargo test --workspace -j2: pass / 0 fail (real exit 0). clippy --all-targets -D pedantic clean; rustdoc -D warnings clean; rustfmt clean.",
+        "tools/demos/r1245_node_knot_dissolve.py: PASS, 30 assertions (real scene/double_click on the knot dissolves + reconnects node0 -> node2; one undo restores the hop, redo re-dissolves; a compute node's double-click opens the title rename, dissolves nothing). Regression demos PASS: r1236 dissolve, r878 rename, r1243 reroute create/render."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.49",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1245 clears the R1243 latent paint!=a11y bug (double-clicking a knot armed an unpainted rename) AND completes the reroute gesture symmetry (double-click wire=create, double-click knot=dissolve). Node-editor DCC axis: the reroute knot is now render + create-gesture + dissolve-gesture complete.",
+        "Deferred (unchanged): the biggest remaining DCC gap is the INSPECTOR absolute type-in inline TextField — hello-inspector has ZERO inline field (step/toggle/cycle/reset only) while hello-property-grid + hello-node-editor have the full one. It is a LARGE round (needs a macro->manual InspectorView binding conversion because #[widget] has no extra_externals attr, plus forward_key_to_field requires a real hosted field). The full executable recipe (exact macro emit, property-grid template, wiring) is documented in the r1245-inspector-inline-typein-design memory; run it with a fresh budget.",
+        "Next candidates (audit-first): inspector inline type-in (large, designed) / node wire-connect auto-pan (the R1182 node-body auto-pan's documented follow-up for the begin_drag DnD path) / data-grid range-preselect-bounded paste."
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

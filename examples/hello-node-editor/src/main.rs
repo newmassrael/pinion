@@ -184,6 +184,10 @@
 //!   the cursor (`A -> R -> B`), the live gesture twin of `invoke add_reroute
 //!   <edge_id>`. Reads the background edge-hit probe the same in-place click
 //!   selects a wire from, so a double-click on empty canvas no-ops.
+//! - **Double-click a reroute knot** (R1245): DISSOLVES it (remove + reconnect
+//!   the wire through it) — the inverse of the double-click-on-wire create. A
+//!   knot has no title to rename, so this is its natural double-click action; a
+//!   compute node's double-click still opens its title rename.
 //! - **Multi-select marquee** (R879 model / R880 gesture) — an LMB background-
 //!   drag rubber-bands a rect (`MarqueeStart` + the `DragLatch` click-vs-drag
 //!   dead zone); on release every intersected node joins the set via
@@ -2802,6 +2806,13 @@ impl NodeGraphExternal {
         self.nodes.get().into_iter().find(|n| n.id == id)
     }
 
+    /// R1245 — whether node `id` is a reroute knot (a wire-routing passthrough,
+    /// [`GraphNode::is_reroute`]); a missing id reads `false`. Gates the
+    /// double-click gesture: a knot dissolves, a compute node renames.
+    fn is_reroute_node(&self, id: NodeId) -> bool {
+        self.node_by_id(id).is_some_and(|n| n.is_reroute)
+    }
+
     /// R916 — the absolute `node.<id>.<field>` path the Details panel's
     /// selection-relative `detail.<field>` resolves to, or `None` when the
     /// selection is not exactly one node. The single SSOT for the alias both the
@@ -4734,7 +4745,19 @@ impl NodeGraphExternal {
             // and the `scene/double_click` RPC drain emits the identical wire.
             (Some(s), "DoubleClick") => {
                 if let Some(n) = parse_node_sub(s) {
-                    self.begin_rename(n);
+                    // R1245 — a reroute KNOT has no title to rename (it paints as
+                    // a compact dot, not a titled card), so its double-click
+                    // DISSOLVES it (remove + reconnect the wire through it) — the
+                    // inverse of R1243's double-click-on-wire that CREATED it. A
+                    // non-reroute node opens its title rename (R878). This also
+                    // clears an R1243 latent bug: routing a knot to `begin_rename`
+                    // armed an editor that `view_reroute_knot` never paints (an
+                    // a11y textbox with no painted peer — the paint==a11y gate).
+                    if self.is_reroute_node(n) {
+                        self.dissolve_node(n);
+                    } else {
+                        self.begin_rename(n);
+                    }
                 } else if let Some((n, port)) = parse_idefault_sub(s) {
                     self.begin_edit_default(n, port);
                 }

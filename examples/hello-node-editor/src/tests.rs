@@ -6728,3 +6728,79 @@ fn r1243_reroute_width_flows_through_centre_key_and_contains() {
         );
     });
 }
+
+// ── R1245 — double-click a reroute knot DISSOLVES it (+ R1243 fix) ─────
+
+/// R1245 — a double-click on a reroute KNOT dissolves it (remove + reconnect),
+/// the inverse of R1243's double-click-on-wire that created it. The gesture
+/// path (a `node_<id>:DoubleClick` send), not the `dissolve_node` verb directly.
+#[test]
+fn r1245_double_click_a_knot_dissolves_it() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        // Splice a reroute into edge 0 (node0 -> node2.in0) via the shared model.
+        let rid = coordinator().add_reroute(EdgeId(0)).expect("splice");
+        assert_eq!(query_int(&scene, "node_count"), 5, "the knot is spliced in");
+        // Double-click the knot through the scene's External.
+        send(&mut scene, &format!("node_{}:DoubleClick", rid.raw()));
+        assert_eq!(
+            query_int(&scene, "node_count"),
+            4,
+            "the double-click dissolved the knot",
+        );
+        assert_eq!(
+            query_int(&scene, "edge_count"),
+            3,
+            "net -1 edge (removed 2, added 1 bridge)",
+        );
+        assert_eq!(
+            graph_intro(&scene).query("reroute_ids"),
+            Some(IntrospectValue::Text(String::new())),
+            "no reroutes remain",
+        );
+        // node0 -> node2.in0 is reconnected directly through the dissolve.
+        let bridged = coordinator().edges.get().iter().any(|e| {
+            e.from_node == NodeId(0) && e.from_port == 0 && e.to_node == NodeId(2) && e.to_port == 0
+        });
+        assert!(bridged, "node0 -> node2.in0 is reconnected by the dissolve");
+    });
+}
+
+/// R1245 — the R1243 latent-bug fix: a knot double-click must NOT arm the title
+/// rename. Pre-R1245 a knot routed to `begin_rename`, arming an editor
+/// `view_reroute_knot` never paints (an a11y textbox with no painted peer — the
+/// paint==a11y gate). Now it dissolves and arms no edit.
+#[test]
+fn r1245_double_click_a_knot_arms_no_rename() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let rid = coordinator().add_reroute(EdgeId(0)).expect("splice");
+        send(&mut scene, &format!("node_{}:DoubleClick", rid.raw()));
+        assert_eq!(
+            use_active_edit().get(),
+            None,
+            "a knot double-click arms no (unpainted) rename — it dissolves",
+        );
+    });
+}
+
+/// R1245 — a COMPUTE node's double-click still opens its title rename (R878
+/// unchanged); only reroute knots dissolve.
+#[test]
+fn r1245_double_click_a_compute_node_still_renames() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        send(&mut scene, "node_2:PointerDown");
+        send(&mut scene, "node_2:DoubleClick");
+        assert_eq!(
+            use_active_edit().get(),
+            card(EditTarget::Title(NodeId(2))),
+            "a compute node's double-click still renames its title",
+        );
+        assert_eq!(
+            query_int(&scene, "node_count"),
+            4,
+            "renaming a compute node dissolves nothing",
+        );
+    });
+}
