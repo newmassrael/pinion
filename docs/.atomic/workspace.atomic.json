@@ -61192,6 +61192,62 @@
         "next: data-grid editable cell-range block PASTE / property-grid inline text-field absolute edit / node comment-frame"
       ]
     },
+    "Round 1225": {
+      "decision_summary": "R1225 inspector Choice/enum cell cycle: cycle_property (relative wrapping, mix-preserving) + ArrowLeft/Right kind-dispatch + inspector#cycle click + combobox a11y — completes the Choice cell GUI edit path",
+      "changes_bullets": [
+        "cycle_property(idx,dir): relative wrapping enum cycle across the selection (mutate_selected, mix-preserving)",
+        "cycle_property RPC verb (\"<i>,<dir>\") + schema; CYCLE_PREFIX click gesture inspector#cycle<i>",
+        "apply_key Details: ArrowLeft/Right dispatch by cursor kind (a Choice cycles, a numeric steps); read_kind_at",
+        "detail_value_cell Choice arm = clickable cycle target; a11y Choice row -> combobox with option valuetext",
+        "5 unit tests (wrap / multi-object relative mix-preserving / rejects / schema+click / a11y combobox)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 8009 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-inspector: 42 pass (5 new R1225)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo fmt --all --check: clean",
+        "tools/demos/r1225_inspector_choice_cycle.py: PASS, 34 assertions (RPC cycle wrap + keyboard ArrowL/R + click)",
+        "keyboard path exercised: click-focus -> Tab -> ArrowDown x5 -> ArrowRight cycles Team, observable via value.5"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "Color/Text cells still GUI-uneditable (Color=picker / Text=inline field, heavier; deferred, no forcing consumer)",
+        "numeric absolute type-in gap remains (needs multi-external inline TextField = manual WidgetView conversion, large; deferred)",
+        "multi-object common Choice absent from sample data (Player/Camera enums differ) -> demo cycles single-obj Player.Team; multi-object relative cycle unit-tested with custom data",
+        "next candidates: node comment-frame/cut-wire OR data-grid block PASTE OR inspector inline TextField (the big structural round)"
+      ],
+      "publishable_decision_summary": "R1225 inspector Choice/enum cell cycle: cycle_property (relative wrapping, mix-preserving) + ArrowLeft/Right kind-dispatch + inspector#cycle click + combobox a11y — completes the Choice cell GUI edit path",
+      "publishable_changes_bullets": [
+        "cycle_property(idx,dir): relative wrapping enum cycle across the selection (mutate_selected, mix-preserving)",
+        "cycle_property RPC verb (\"<i>,<dir>\") + schema; CYCLE_PREFIX click gesture inspector#cycle<i>",
+        "apply_key Details: ArrowLeft/Right dispatch by cursor kind (a Choice cycles, a numeric steps); read_kind_at",
+        "detail_value_cell Choice arm = clickable cycle target; a11y Choice row -> combobox with option valuetext",
+        "5 unit tests (wrap / multi-object relative mix-preserving / rejects / schema+click / a11y combobox)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 8009 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-inspector: 42 pass (5 new R1225)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo fmt --all --check: clean",
+        "tools/demos/r1225_inspector_choice_cycle.py: PASS, 34 assertions (RPC cycle wrap + keyboard ArrowL/R + click)",
+        "keyboard path exercised: click-focus -> Tab -> ArrowDown x5 -> ArrowRight cycles Team, observable via value.5"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Color/Text cells still GUI-uneditable (Color=picker / Text=inline field, heavier; deferred, no forcing consumer)",
+        "numeric absolute type-in gap remains (needs multi-external inline TextField = manual WidgetView conversion, large; deferred)",
+        "multi-object common Choice absent from sample data (Player/Camera enums differ) -> demo cycles single-obj Player.Team; multi-object relative cycle unit-tested with custom data",
+        "next candidates: node comment-frame/cut-wire OR data-grid block PASTE OR inspector inline TextField (the big structural round)"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

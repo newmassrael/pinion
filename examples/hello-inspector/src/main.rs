@@ -419,6 +419,10 @@ const RESET_PREFIX: &str = "reset";
 const TOGGLE_PREFIX: &str = "toggle";
 const INC_PREFIX: &str = "inc";
 const DEC_PREFIX: &str = "dec";
+/// R1225 — the Choice value-cell click prefix (`inspector#cycle<i>`): a click on
+/// the enum cell advances it to the next option across the whole selection (the
+/// segmented-control gesture, the keyboard `ArrowRight` twin).
+const CYCLE_PREFIX: &str = "cycle";
 /// R1221 — the per-`inc`/`dec` step for a `Float` common property (an `Int`
 /// steps by 1). Common Float rows do not arise in the sample data (the shared
 /// actor properties are Bool/Int), so this only bites a future shared Float.
@@ -799,6 +803,10 @@ impl InspectorExternal {
             self.step_property(idx, -1);
             return;
         }
+        if let Some(idx) = prefixed_index(key, CYCLE_PREFIX) {
+            self.cycle_property(idx, 1);
+            return;
+        }
         let Some(index) = key.parse::<usize>().ok() else {
             return;
         };
@@ -932,6 +940,43 @@ impl InspectorExternal {
         });
         true
     }
+
+    /// R1225 — cycle common **Choice** property `idx` by `dir` (prev/next option)
+    /// on EVERY selected object, RELATIVELY and WRAPPING: each object advances its
+    /// OWN selected index by `dir` modulo its option count. Like the numeric
+    /// [`step_property`](Self::step_property) (the shared
+    /// [`mutate_selected`](Self::mutate_selected) funnel, mix-PRESERVING) rather
+    /// than the Bool toggle — a mixed enum stays
+    /// mixed but rotates together, the multi-object segmented control. Every
+    /// selected object's same-name Choice has the SAME options
+    /// ([`same_property_shape`] gate), so the wrap bound is uniform.
+    /// `false` when `idx` is out of range or the common property is not a Choice.
+    fn cycle_property(&self, idx: usize, dir: i32) -> bool {
+        let common = self.common();
+        let Some(prop) = common.get(idx) else {
+            return false;
+        };
+        if !matches!(prop.value, CellValue::Choice { .. }) {
+            return false;
+        }
+        self.mutate_selected(&prop.name.clone(), move |_j, cur| match cur {
+            CellValue::Choice { selected, options } if !options.is_empty() => {
+                let len = i64::try_from(options.len()).ok()?;
+                let next = usize::try_from(
+                    (i64::try_from(*selected).ok()? + i64::from(dir)).rem_euclid(len),
+                )
+                .ok()?;
+                Some(CellValue::Choice {
+                    selected: next,
+                    options: options.clone(),
+                })
+            }
+            // Unreachable (common Choice everywhere) or empty-option Choice: no
+            // change, never a silent clobber (R906).
+            _ => None,
+        });
+        true
+    }
 }
 
 impl core::fmt::Debug for InspectorExternal {
@@ -981,6 +1026,9 @@ impl ExternalIntrospect for InspectorExternal {
             // unit count). Both write across every selected object.
             ("toggle_property", "int"),
             ("step_property", "string"),
+            // R1225 — cycle a common Choice across the selection (arg "<i>,<dir>",
+            // the enum peer of step_property; the value-cell click twin).
+            ("cycle_property", "string"),
             // R1224 — the keyboard-focus surface (§2 #2: the region + property
             // cursor the Arrow keys drive are observable + drivable over RPC).
             // `focus_region` reads/sets which pane owns the cursor ("objects" /
@@ -1171,6 +1219,16 @@ impl ExternalIntrospect for InspectorExternal {
                 IntrospectValue::Text(spec) => {
                     let (idx, dir) = parse_step_spec(&spec).ok_or(InvokeError::Rejected)?;
                     Ok(IntrospectValue::Bool(self.step_property(idx, dir)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R1225 — cycle a common Choice across the selection by a signed unit
+            // count (the enum segmented-control twin). Arg `"<i>,<dir>"`; `false`
+            // when `idx` is not a common Choice row.
+            "cycle_property" => match args {
+                IntrospectValue::Text(spec) => {
+                    let (idx, dir) = parse_step_spec(&spec).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.cycle_property(idx, dir)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1419,6 +1477,9 @@ fn stepper_button(glyph: &str, tag: String, accent: Color) -> Scene {
 /// (Choice / Color / Text) keeps the read-only [`detail_value_visual`] display
 /// (still RPC-editable via `intervene value.<i>` — inline delegates for those
 /// kinds are the property-grid's, reusable when a shared such property arises).
+/// R1225 — a **Choice** cell is a `inspector#cycle<i>` click target: a click
+/// advances the enum to its next option across the whole selection (the keyboard
+/// `ArrowRight` twin, a segmented-control gesture).
 fn detail_value_cell(
     index: usize,
     prop: &CommonProperty,
@@ -1460,6 +1521,16 @@ fn detail_value_cell(
                 ),
             )
         }
+        CellValue::Choice { .. } => Scene::Container(
+            ContainerNode::new(vec![detail_value_visual(prop, fg, accent, muted)])
+                .with_tag(format!("{INSPECTOR_TAG}#{CYCLE_PREFIX}{index}"))
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Center)
+                        .with_margin(Rect::new(0, 0, RESET_GUTTER, 0)),
+                ),
+        ),
         _ => detail_value_visual(prop, fg, accent, muted),
     }
 }
@@ -1750,16 +1821,20 @@ impl InspectorView {
         };
         // Snapshot everything the dispatch reads, releasing the immutable borrow
         // before any `introspect_mut` mutation below.
-        let (region, obj_count, obj_cursor, row_count, prop_cursor) = {
+        let (region, obj_count, obj_cursor, row_count, prop_cursor, cursor_kind) = {
             let Some(intro) = node.handle.introspect() else {
                 return false;
             };
+            let prop_cursor = read_prop_cursor(intro);
             (
                 read_focus_region(intro),
                 read_count(intro),
                 read_selected(intro),
                 read_row_count(intro),
-                read_prop_cursor(intro),
+                prop_cursor,
+                // R1225 — the cursor cell's kind, so ArrowLeft/Right routes to the
+                // right edit (a numeric steps, a Choice cycles).
+                prop_cursor.and_then(|i| read_kind_at(intro, i)),
             )
         };
 
@@ -1790,16 +1865,17 @@ impl InspectorView {
             let Ok(idx) = i64::try_from(cursor) else {
                 return false;
             };
+            // R1225 — ArrowLeft/Right adjust the cursor cell by its kind: a Choice
+            // cycles prev/next option, everything else numeric-steps. `+`/`-` stay
+            // numeric-only (the spinbox keys). `spec` is the shared "<i>,<dir>" arg.
+            let is_choice = cursor_kind.as_deref() == Some("choice");
+            let spec = |dir: i32| IntrospectValue::Text(format!("{cursor},{dir}"));
             let (verb, arg) = match key {
                 " " | "Enter" => ("toggle_property", IntrospectValue::Int(idx)),
-                "ArrowRight" | "+" => (
-                    "step_property",
-                    IntrospectValue::Text(format!("{cursor},1")),
-                ),
-                "ArrowLeft" | "-" => (
-                    "step_property",
-                    IntrospectValue::Text(format!("{cursor},-1")),
-                ),
+                "ArrowRight" if is_choice => ("cycle_property", spec(1)),
+                "ArrowLeft" if is_choice => ("cycle_property", spec(-1)),
+                "ArrowRight" | "+" => ("step_property", spec(1)),
+                "ArrowLeft" | "-" => ("step_property", spec(-1)),
                 "Delete" | "Backspace" => ("reset", IntrospectValue::Int(idx)),
                 _ => return false,
             };
@@ -1878,6 +1954,16 @@ fn read_focus_region(intro: &dyn ExternalIntrospect) -> FocusRegion {
 fn read_prop_cursor(intro: &dyn ExternalIntrospect) -> Option<usize> {
     match intro.query("prop_cursor") {
         Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        _ => None,
+    }
+}
+
+/// R1225 — the kind token of common property `i` off the `kind.<i>` query
+/// (`"int"` / `"float"` / `"choice"` / …), so the keyboard routes ArrowLeft/Right
+/// to the kind-appropriate edit; `None` when the row is absent.
+fn read_kind_at(intro: &dyn ExternalIntrospect, i: usize) -> Option<String> {
+    match intro.query(&format!("kind.{i}")) {
+        Some(IntrospectValue::Text(k)) => Some(k),
         _ => None,
     }
 }
@@ -1970,8 +2056,11 @@ impl WidgetA11y for InspectorView {
 ///   `aria-valuetext` (the values carry no declared min/max, so a bare
 ///   value-text is the faithful reading — the AT still exposes Increment /
 ///   Decrement actions from the role).
-/// - **Choice / Color / Text** → an informational `listitem` named
-///   `"{name}: {value}"` (read-only over RPC via `intervene value.<i>`).
+/// - **Choice** → `combobox` (R1225) carrying the selected option as
+///   `aria-valuetext` (`"Multiple Values"` when mixed) — the cycled enum cell;
+///   ArrowLeft/Right change the value, no popup.
+/// - **Color / Text** → an informational `listitem` named `"{name}: {value}"`
+///   (read-only over RPC via `intervene value.<i>`).
 ///
 /// `focused` sets the active-descendant flag (the Details pane owns the
 /// keyboard and this is the property cursor), the a11y peer of the painted ring.
@@ -1989,6 +2078,10 @@ fn detail_access_node(index: usize, prop: &CommonProperty, focused: bool) -> Acc
             }
         }
         CellValue::Int(_) | CellValue::Float(_) => AccessNode::new(tag, AriaRole::SpinButton)
+            .with_name(prop.name.clone())
+            .with_value_text(common_value_label(prop))
+            .with_focused(focused),
+        CellValue::Choice { .. } => AccessNode::new(tag, AriaRole::ComboBox)
             .with_name(prop.name.clone())
             .with_value_text(common_value_label(prop))
             .with_focused(focused),
@@ -2991,6 +3084,176 @@ mod tests {
         assert!(
             !ringed(&objects_cursor),
             "no ring when the Objects pane owns the keyboard"
+        );
+    }
+
+    // ─── R1225 Choice cell cycle ───────────────────────────────────
+
+    fn choice_sel(v: &CellValue) -> usize {
+        match v {
+            CellValue::Choice { selected, .. } => *selected,
+            other => panic!("expected a Choice, got {other:?}"),
+        }
+    }
+
+    fn cycle(e: &mut InspectorExternal, spec: &str) -> IntrospectValue {
+        e.invoke("cycle_property", IntrospectValue::Text(spec.to_owned()))
+            .expect("cycle_property")
+    }
+
+    #[test]
+    fn r1225_cycle_choice_wraps_prev_and_next() {
+        let mut e = ext(); // Player selected; Team (Red/Blue/Neutral) is common row 5.
+        assert_eq!(
+            e.query("kind.5"),
+            Some(IntrospectValue::Text("choice".to_owned())),
+            "row 5 is Team, a Choice"
+        );
+        assert_eq!(choice_sel(&obj_value(&e, 0, "Team")), 0, "Team starts Red");
+        assert_eq!(
+            cycle(&mut e, "5,1"),
+            IntrospectValue::Bool(true),
+            "cycle +1"
+        );
+        assert_eq!(choice_sel(&obj_value(&e, 0, "Team")), 1, "Red -> Blue");
+        cycle(&mut e, "5,1");
+        cycle(&mut e, "5,1");
+        assert_eq!(
+            choice_sel(&obj_value(&e, 0, "Team")),
+            0,
+            "Neutral wraps to Red"
+        );
+        cycle(&mut e, "5,-1");
+        assert_eq!(
+            choice_sel(&obj_value(&e, 0, "Team")),
+            2,
+            "Red wraps back to Neutral"
+        );
+    }
+
+    #[test]
+    fn r1225_cycle_multi_object_is_relative_and_mix_preserving() {
+        let mode = |sel: usize| {
+            ObjectData::new(
+                "obj",
+                vec![Property::new(
+                    "Mode",
+                    CellValue::Choice {
+                        selected: sel,
+                        options: vec!["A".to_owned(), "B".to_owned(), "C".to_owned()],
+                    },
+                )],
+            )
+        };
+        let mut e = Owner::new().run(|| {
+            let objects = Rc::new(Signal::new(vec![mode(0), mode(2)])); // A, C
+            let mut model = VirtualSelect::new(2, SelectionMode::Multi);
+            model.set_selection(&[0usize, 1].into_iter().collect());
+            InspectorExternal::new(
+                objects,
+                Rc::new(Signal::new(model)),
+                Rc::new(vec![mode(0), mode(2)]),
+                Rc::new(Signal::new(InspectorFocus::default())),
+            )
+        });
+        assert_eq!(
+            e.query("row_count"),
+            Some(IntrospectValue::Int(1)),
+            "Mode is common"
+        );
+        assert_eq!(
+            e.query("mixed.0"),
+            Some(IntrospectValue::Bool(true)),
+            "A vs C -> mixed"
+        );
+        // Cycle +1: each advances from its OWN option (A->B, C->A wrap), so they
+        // stay one-apart — mix PRESERVED (the numeric-step semantics, not the
+        // Bool toggle's resolve-to-uniform).
+        cycle(&mut e, "0,1");
+        assert_eq!(choice_sel(&obj_value(&e, 0, "Mode")), 1, "obj0 A -> B");
+        assert_eq!(
+            choice_sel(&obj_value(&e, 1, "Mode")),
+            0,
+            "obj1 C wraps -> A"
+        );
+        assert_eq!(
+            e.query("mixed.0"),
+            Some(IntrospectValue::Bool(true)),
+            "still mixed -> the cycle is relative, not absolute"
+        );
+    }
+
+    #[test]
+    fn r1225_cycle_rejects_nonchoice_and_malformed() {
+        let mut e = ext(); // Player
+        assert_eq!(
+            cycle(&mut e, "0,1"),
+            IntrospectValue::Bool(false),
+            "cycle on a Bool is a no-op"
+        );
+        assert_eq!(
+            cycle(&mut e, "1,1"),
+            IntrospectValue::Bool(false),
+            "cycle on an Int is a no-op"
+        );
+        assert_eq!(
+            cycle(&mut e, "99,1"),
+            IntrospectValue::Bool(false),
+            "out-of-range is a no-op"
+        );
+        assert!(
+            e.invoke("cycle_property", IntrospectValue::Text("bad".to_owned()))
+                .is_err(),
+            "a malformed spec is a typed Rejected"
+        );
+        assert!(
+            e.invoke("cycle_property", IntrospectValue::Int(1)).is_err(),
+            "a non-string arg is a TypeMismatch"
+        );
+    }
+
+    #[test]
+    fn r1225_cycle_verb_schema_declared_and_choice_cell_click_cycles() {
+        let mut e = ext();
+        let fields: Vec<&str> = e.schema().fields.iter().map(|(p, _)| *p).collect();
+        assert!(
+            fields.contains(&"cycle_property"),
+            "cycle_property schema-declared"
+        );
+        // The painted Choice cell is `inspector#cycle<i>`; a click routes to
+        // cycle_property(+1) through the send wire (the segmented-control gesture).
+        assert_eq!(choice_sel(&obj_value(&e, 0, "Team")), 0, "Team starts Red");
+        e.invoke("send", IntrospectValue::Text("cycle5:PointerUp".to_owned()))
+            .unwrap();
+        assert_eq!(
+            choice_sel(&obj_value(&e, 0, "Team")),
+            1,
+            "clicking the Choice cell cycles Red -> Blue"
+        );
+    }
+
+    #[test]
+    fn r1225_a11y_choice_is_combobox_with_selected_option() {
+        let nodes = Owner::new().run(|| {
+            <InspectorView as WidgetA11y>::access_node(
+                &InspectorState::from_parts(&[0], Some(0))
+                    .with_focus(FocusRegion::Details, Some(5)),
+                None,
+            )
+        });
+        let team = nodes
+            .iter()
+            .find(|n| n.name.as_deref() == Some("Team"))
+            .expect("Team row");
+        assert_eq!(team.role, AriaRole::ComboBox, "a Choice row is a combobox");
+        assert_eq!(
+            team.value_text.as_deref(),
+            Some("Red"),
+            "the selected option"
+        );
+        assert!(
+            team.state.focused,
+            "the Details cursor on Team is the active descendant"
         );
     }
 }
