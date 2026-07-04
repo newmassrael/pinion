@@ -568,9 +568,7 @@ impl WidgetA11y for DndView {
             let access_state = AccessState {
                 focused: list_focused && visual == active,
                 disabled: false,
-                hovered: false,
-                pressed: false,
-                checked: None,
+                ..AccessState::default()
             };
             nodes.push(
                 AccessNode::new(row_tag(visual), AriaRole::ListItem)

@@ -567,6 +567,9 @@ fn emit_a11y_impl(
                         hovered: #hovered_expr,
                         pressed: #pressed_expr,
                         checked: #checked_expr,
+                        // R1229 — the derive never marks a widget indeterminate;
+                        // a tri-state checkbox opts in via `with_mixed`.
+                        ..::pinion_a11y::AccessState::default()
                     };
                     ::std::vec![
                         ::pinion_a11y::AccessNode::new(

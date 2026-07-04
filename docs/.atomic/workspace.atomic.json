@@ -61416,6 +61416,58 @@
         "DOC-1 (cut overclaim) + DOC-2 (persistence doc/migrate) + STR-1 (node-editor 12k mod split) = R1232"
       ]
     },
+    "Round 1229": {
+      "decision_summary": "R1229 a11y-substrate clearance (audit B2): pinion-a11y AccessState.mixed (aria-checked=mixed / Toggled::Mixed, the HTML indeterminate axis); inspector mixed multi-object Bool is now a tri-state checkbox, not an invalid aria-checked-less switch",
+      "changes_bullets": [
+        "pinion-a11y: AccessState.mixed field + with_mixed() builder; tree.rs lowers it to accesskit Toggled::Mixed (precedence over checked)",
+        "the indeterminate axis is the HTML <input>.indeterminate model (a SEPARATE property from checked), additive (default false)",
+        "inspector B2 audit-fix: mixed multi-object Bool -> tri-state CheckBox + with_mixed (was a Switch with NO aria-checked = invalid ARIA)",
+        "8 full-literal AccessState sites gained ..AccessState::default() (derive macro + 5 examples + a11y/paint) for the additive field",
+        "conformance test (mixed lowers indeterminate) + updated inspector a11y tests (Switch -> CheckBox, mixed -> state.mixed)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 231 pass (incl r1229_checkbox_with_mixed_lowers_indeterminate)",
+        "cargo test -p hello-inspector: 44 pass",
+        "cargo test --workspace -j2: 8024 pass / 0 fail (real exit 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello + fmt + cargo doc: clean",
+        "tools/demos/r1224 re-run: PASS (a11y-only change, no RPC/keyboard regression)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "audit-clearance campaign: all 3 a11y BLOCKERs now cleared (B1+B3 = R1228, B2 = R1229)",
+        "remaining: SSOT-2 (cut_wires triplicates hit_test_edge) + SSOT-3 (add_frame bypasses node_bounds) = R1230",
+        "SSOT-1 (prefix+index decode 3-site -> composite_tag) + SSOT-5 (RenameCmd<T> or doc) = R1231",
+        "DOC-1 (cut overclaim) + DOC-2 (persistence doc/migrate) + STR-1 (node-editor 12k mod split) = R1232"
+      ],
+      "publishable_decision_summary": "R1229 a11y-substrate clearance (audit B2): pinion-a11y AccessState.mixed (aria-checked=mixed / Toggled::Mixed, the HTML indeterminate axis); inspector mixed multi-object Bool is now a tri-state checkbox, not an invalid aria-checked-less switch",
+      "publishable_changes_bullets": [
+        "pinion-a11y: AccessState.mixed field + with_mixed() builder; tree.rs lowers it to accesskit Toggled::Mixed (precedence over checked)",
+        "the indeterminate axis is the HTML <input>.indeterminate model (a SEPARATE property from checked), additive (default false)",
+        "inspector B2 audit-fix: mixed multi-object Bool -> tri-state CheckBox + with_mixed (was a Switch with NO aria-checked = invalid ARIA)",
+        "8 full-literal AccessState sites gained ..AccessState::default() (derive macro + 5 examples + a11y/paint) for the additive field",
+        "conformance test (mixed lowers indeterminate) + updated inspector a11y tests (Switch -> CheckBox, mixed -> state.mixed)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 231 pass (incl r1229_checkbox_with_mixed_lowers_indeterminate)",
+        "cargo test -p hello-inspector: 44 pass",
+        "cargo test --workspace -j2: 8024 pass / 0 fail (real exit 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello + fmt + cargo doc: clean",
+        "tools/demos/r1224 re-run: PASS (a11y-only change, no RPC/keyboard regression)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "audit-clearance campaign: all 3 a11y BLOCKERs now cleared (B1+B3 = R1228, B2 = R1229)",
+        "remaining: SSOT-2 (cut_wires triplicates hit_test_edge) + SSOT-3 (add_frame bypasses node_bounds) = R1230",
+        "SSOT-1 (prefix+index decode 3-site -> composite_tag) + SSOT-5 (RenameCmd<T> or doc) = R1231",
+        "DOC-1 (cut overclaim) + DOC-2 (persistence doc/migrate) + STR-1 (node-editor 12k mod split) = R1232"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

@@ -397,6 +397,17 @@ impl AccessNode {
         self
     }
 
+    /// R1229 §5.40 — mark this checkbox as WAI-ARIA `aria-checked="mixed"` (the
+    /// HTML `<input>.indeterminate` axis, [`AccessState::mixed`]): an
+    /// indeterminate multi-object checkbox with no definite on/off. Lowers to
+    /// accesskit `Toggled::Mixed`, taking precedence over any `checked` /
+    /// [`AccessValue::Bool`]. Use on a `CheckBox` / `MenuItemCheckbox` only.
+    #[must_use]
+    pub fn with_mixed(mut self) -> Self {
+        self.state.mixed = true;
+        self
+    }
+
     /// R693 §5.40 — declare this node exposes `aria-modal="true"`. Used
     /// on the [`AriaRole::Dialog`] root while the dialog is open so AT
     /// confines its virtual cursor to the dialog subtree, mirroring the
@@ -545,6 +556,15 @@ pub struct AccessState {
     pub hovered: bool,
     pub pressed: bool,
     pub checked: Option<bool>,
+    /// R1229 §5.40 — WAI-ARIA `aria-checked="mixed"`: the *indeterminate* leg of
+    /// a tri-state checkbox, the HTML `<input type=checkbox>.indeterminate`
+    /// property — a **separate** axis from [`checked`](Self::checked) exactly as
+    /// in the DOM. `true` marks a multi-object checkbox whose members disagree
+    /// (no definite on/off); it lowers to accesskit `Toggled::Mixed`, taking
+    /// precedence over `checked` / [`AccessValue::Bool`]. Only a `CheckBox` /
+    /// `MenuItemCheckbox` may be mixed — a `Switch` / `RadioButton` is
+    /// two-state (the WAI-ARIA `aria-checked` value table). Default `false`.
+    pub mixed: bool,
 }
 
 impl AccessState {
@@ -567,6 +587,9 @@ impl AccessState {
             hovered: state.is_hovered(),
             pressed: state.is_pressed(),
             checked,
+            // R1229 — the indeterminate axis is a distinct opt-in (`with_mixed`),
+            // not derived from the interaction enum; interaction never implies mixed.
+            mixed: false,
         }
     }
 }
@@ -766,11 +789,9 @@ mod tests {
         assert_eq!(
             s,
             AccessState {
-                focused: false,
-                disabled: false,
                 hovered: true,
-                pressed: false,
                 checked: Some(true),
+                ..AccessState::default()
             }
         );
         // Disabled posture; checked None.

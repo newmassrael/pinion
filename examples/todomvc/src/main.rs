@@ -2432,11 +2432,8 @@ impl WidgetA11y for TodoMvcView {
             // dynamic state lives here (W3C-canonical split).
             nodes.push(
                 AccessNode::new(toggle_tag, AriaRole::CheckBox).with_state(AccessState {
-                    focused: false,
-                    disabled: false,
-                    hovered: false,
-                    pressed: false,
                     checked: Some(item.completed),
+                    ..AccessState::default()
                 }),
             );
             // R656 §5.40 — delete button is a Button child of the

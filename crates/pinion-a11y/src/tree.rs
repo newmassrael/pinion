@@ -410,6 +410,14 @@ fn lower_access_node(access: &AccessNode) -> Node {
             accesskit::Toggled::False
         });
     }
+    // R1229 §5.40 — WAI-ARIA `aria-checked="mixed"` (the HTML
+    // `<input>.indeterminate` axis): an indeterminate tri-state checkbox. Lowered
+    // AFTER `checked` / `AccessValue::Bool` so a mixed control overrides any
+    // definite toggle — a multi-object checkbox whose members disagree announces
+    // "mixed", not a misleading on/off.
+    if access.state.mixed {
+        node.set_toggled(accesskit::Toggled::Mixed);
+    }
     // R696 §5.40 — WAI-ARIA `aria-expanded` mapping for disclosure
     // controls (accordion header, future submenu title / tree twisty).
     // AccessKit's `Expanded` is a boolean flag: `set_expanded(true)` =
@@ -955,6 +963,36 @@ mod tests {
         let plain = AccessNode::new("btn", AriaRole::Button);
         assert_eq!(plain.state.checked, None);
         assert_eq!(pressed.state.checked, Some(true));
+    }
+
+    #[test]
+    fn r1229_checkbox_with_mixed_lowers_indeterminate() {
+        // R1229 §5.40 — a tri-state checkbox marked mixed carries the
+        // indeterminate axis (`aria-checked="mixed"` / accesskit `Toggled::Mixed`),
+        // the HTML `<input>.indeterminate` property. AccessKit exposes no public
+        // `toggled()` getter (see r733), so we pin the `AccessNode`-level state +
+        // that the lowering branch builds; the mixed leg is a separate opt-in that
+        // takes precedence over any definite `checked` / `AccessValue::Bool`.
+        let mixed = AccessNode::new("cb", AriaRole::CheckBox)
+            .with_name("Visible")
+            .with_mixed()
+            .with_bounds(Rect::new(0, 0, 40, 20));
+        assert!(mixed.state.mixed, "with_mixed sets the indeterminate axis");
+        // A definite `checked` alongside `mixed` still carries the mixed axis
+        // (the lowering resolves it last → Toggled::Mixed wins).
+        let both = AccessNode::new("cb2", AriaRole::CheckBox)
+            .with_value(AccessValue::Bool(true))
+            .with_mixed()
+            .with_bounds(Rect::new(0, 0, 40, 20));
+        assert!(both.state.mixed);
+        // The tree builds (the mixed lowering branch runs) without panic.
+        let mut b = AccessTreeBuilder::new();
+        b.add(&mixed);
+        b.add(&both);
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 3, "root + 2 checkboxes");
+        // A default checkbox is NOT mixed.
+        assert!(!AccessNode::new("cb3", AriaRole::CheckBox).state.mixed);
     }
 
     #[test]

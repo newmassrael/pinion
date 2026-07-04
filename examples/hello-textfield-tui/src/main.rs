@@ -551,9 +551,7 @@ impl WidgetA11y for HelloTextFieldTui {
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(interaction, TextFieldState::Disabled),
-            hovered: false,
-            pressed: false,
-            checked: None,
+            ..AccessState::default()
         };
         vec![
             AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::TextInput)

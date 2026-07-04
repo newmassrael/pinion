@@ -419,9 +419,8 @@ fn thumb_state(
     AccessState {
         focused: focused == Some(tag),
         disabled: matches!(state.interaction, SliderState::Disabled),
-        hovered: false,
         pressed: matches!(state.interaction, SliderState::Dragging) && state.active == thumb,
-        checked: None,
+        ..AccessState::default()
     }
 }
 

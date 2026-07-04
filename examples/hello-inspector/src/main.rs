@@ -2089,10 +2089,11 @@ impl WidgetA11y for InspectorView {
 /// role matching the interactive paint cell so an AT drives it the way the
 /// pointer / keyboard do:
 ///
-/// - **Bool** → `switch` (`with_value(AccessValue::Bool)` = `aria-checked`);
-///   a mixed multi-object Bool has no definite check, so it carries the
-///   `"Multiple Values"` `aria-valuetext` instead (the honest indeterminate
-///   readout, one-gate with [`common_value_label`]).
+/// - **Bool** → tri-state `checkbox` (R1229): uniform → `aria-checked` true/false
+///   (`with_value(AccessValue::Bool)`); mixed (the selected objects disagree) →
+///   `aria-checked="mixed"` (`with_mixed`), the standard indeterminate
+///   multi-object boolean. NOT a `switch` — a switch is two-state and cannot be
+///   indeterminate (the R1224 mixed `switch` emitted no `aria-checked` at all).
 /// - **Int / Float** → `spinbutton` with the numeric display as
 ///   `aria-valuetext` (the values carry no declared min/max, so a bare
 ///   value-text is the faithful reading — the AT still exposes Increment /
@@ -2115,11 +2116,16 @@ fn detail_access_node(index: usize, prop: &CommonProperty, focused: bool) -> Acc
     let tag = format!("prop_{index}");
     match prop.value {
         CellValue::Bool(b) => {
-            let node = AccessNode::new(tag, AriaRole::Switch)
+            // R1229 — a multi-object boolean is a tri-state `checkbox`, NOT a
+            // `switch`: a switch is two-state and cannot be indeterminate. Uniform
+            // → `aria-checked` true/false; mixed (the members disagree) →
+            // `aria-checked="mixed"` via `with_mixed` — the standard, and the fix
+            // for the R1224 invalid "switch with no aria-checked" (B2).
+            let node = AccessNode::new(tag, AriaRole::CheckBox)
                 .with_name(prop.name.clone())
                 .with_focused(focused);
             if prop.mixed {
-                node.with_value_text(MULTIPLE_VALUES)
+                node.with_mixed()
             } else {
                 node.with_value(AccessValue::Bool(b))
             }
@@ -2921,16 +2927,18 @@ mod tests {
                 .find(|n| n.name.as_deref() == Some(name))
                 .unwrap_or_else(|| panic!("{name} row present"))
         };
-        // "Visible" is (t, t, f) → a mixed Bool: a `switch` with no definite
-        // check, announcing "Multiple Values" via aria-valuetext (one-gate).
+        // "Visible" is (t, t, f) → a mixed Bool: a tri-state `checkbox` carrying
+        // aria-checked="mixed" (R1229; NOT a switch, which cannot be indeterminate).
         let visible = row("Visible");
-        assert_eq!(visible.role, AriaRole::Switch, "a Bool row is a switch");
-        assert_eq!(
-            visible.value_text.as_deref(),
-            Some(MULTIPLE_VALUES),
-            "a mixed Bool announces Multiple Values, no definite check"
+        assert_eq!(visible.role, AriaRole::CheckBox, "a Bool row is a checkbox");
+        assert!(
+            visible.state.mixed,
+            "a mixed Bool is aria-checked=\"mixed\""
         );
-        assert!(visible.value.is_none(), "mixed Bool has no aria-checked");
+        assert!(
+            visible.value.is_none(),
+            "a mixed checkbox carries no definite on/off value"
+        );
         // "Layer" is (1, 1, 2) → a mixed numeric: a `spinbutton`.
         let layer = row("Layer");
         assert_eq!(
@@ -3027,11 +3035,13 @@ mod tests {
             )
         });
         let row = |tag: &str| nodes.iter().find(|n| n.tag == tag).unwrap();
-        // Visible (Bool, uniform true) → switch carrying aria-checked, and the
-        // active descendant (Details cursor on row 0).
+        // Visible (Bool, uniform true) → checkbox carrying aria-checked=true, and
+        // the active descendant (Details cursor on row 0). R1229 — a uniform
+        // multi-object Bool is a definite checkbox (not mixed).
         let visible = row("prop_0");
-        assert_eq!(visible.role, AriaRole::Switch);
+        assert_eq!(visible.role, AriaRole::CheckBox);
         assert_eq!(visible.value, Some(AccessValue::Bool(true)));
+        assert!(!visible.state.mixed, "a uniform Bool is not indeterminate");
         assert!(
             visible.state.focused,
             "the cursor row is the active descendant"

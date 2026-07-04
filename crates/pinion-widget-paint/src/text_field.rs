@@ -1526,9 +1526,7 @@ pub fn text_field_a11y_node(
         .with_state(AccessState {
             focused,
             disabled: matches!(interaction, TextFieldState::Disabled),
-            hovered: false,
-            pressed: false,
-            checked: None,
+            ..AccessState::default()
         })
 }
 
