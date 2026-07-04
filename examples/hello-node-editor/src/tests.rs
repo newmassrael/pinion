@@ -5677,7 +5677,10 @@ fn r1227_frame_persists_and_paints_behind() {
         coord.add_frame().unwrap();
         // Persistence: the frame round-trips through the schema-4 blob.
         let json = coord.serialized_json();
-        assert!(json.contains("\"schema_version\":4"), "schema bumped to 4");
+        assert!(
+            json.contains("\"schema_version\":5"),
+            "schema bumped to 5 (R1242 is_reroute)"
+        );
         assert!(json.contains("Comment 1"), "the frame is in the blob");
         coord.frames.set(Vec::new());
         assert!(coord.load_json(&json), "load the snapshot");
@@ -6352,5 +6355,73 @@ fn r1241_dissolve_rejects_a_self_loop_bridge() {
         assert!(!coord.dissolve_node(m2), "dissolve is a no-op");
         assert_eq!(coord.query("node_count"), n0, "graph unchanged");
         assert_eq!(coord.query("edge_count"), e0, "graph unchanged");
+    });
+}
+
+#[test]
+fn r1242_reroute_is_a_first_class_model_identity_not_a_title() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).unwrap();
+        // The flag is set on the model, and the read twin reports it.
+        assert!(
+            coord.node_by_id(rid).unwrap().is_reroute,
+            "the model flag is set"
+        );
+        assert_eq!(
+            coord.query(&format!("node.{}.is_reroute", rid.raw())),
+            Some(IntrospectValue::Bool(true)),
+        );
+        // A seed op node is NOT a reroute...
+        assert_eq!(
+            coord.query("node.2.is_reroute"),
+            Some(IntrospectValue::Bool(false)),
+        );
+        // ...and the identity is NOT the title: renaming the knot keeps it a
+        // reroute, and renaming an op node "Reroute" does NOT make it one.
+        coord
+            .intervene(
+                &format!("node.{}.title", rid.raw()),
+                IntrospectValue::Text("knot".to_owned()),
+            )
+            .unwrap();
+        assert!(
+            coord.node_by_id(rid).unwrap().is_reroute,
+            "renamed knot stays a reroute"
+        );
+        coord
+            .intervene("node.2.title", IntrospectValue::Text("Reroute".to_owned()))
+            .unwrap();
+        assert!(
+            !coord.node_by_id(NodeId(2)).unwrap().is_reroute,
+            "a node named Reroute is not one"
+        );
+        // The enumeration finds exactly the reroute.
+        assert_eq!(
+            coord.query("reroute_ids"),
+            Some(IntrospectValue::Text(rid.raw().to_string())),
+        );
+    });
+}
+
+#[test]
+fn r1242_reroute_identity_survives_serialize_reload() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).unwrap();
+        let json = coord.serialized_json();
+        // Wipe + reload from the blob; the reroute identity round-trips.
+        coord.nodes.set(Vec::new());
+        assert!(coord.load_json(&json), "reload the snapshot");
+        assert!(
+            coord.node_by_id(rid).unwrap().is_reroute,
+            "the reroute flag persisted through serialize/reload (not just the title)"
+        );
+        assert_eq!(
+            coord.query("reroute_ids"),
+            Some(IntrospectValue::Text(rid.raw().to_string())),
+        );
     });
 }

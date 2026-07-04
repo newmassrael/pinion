@@ -119,7 +119,7 @@ def body() -> None:
         # ── (E) persistence ──────────────────────────────────────────
         blob = q(tf, "serialized")
         assert "Comment 1" in blob, "the frame is in the serialized graph"
-        assert '"schema_version":4' in blob, "schema bumped to 4"
+        assert '"schema_version":5' in blob, "schema is 5 (R1242 added is_reroute)"
 
         # ── (F) rejects ──────────────────────────────────────────────
         # Frame nothing: add_frame with an empty selection returns Null.

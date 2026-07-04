@@ -48,7 +48,7 @@
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
-//! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs,input_types,output_types,input_default.<port>}` /
+//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,input_types,output_types,input_default.<port>}` /
 //! `edge.<id>` / `dissolvable.<id>` / `dissolvable_ids` (R1241: dissolve
 //! eligibility) / `selected` / `selected_ids` / `selected_edge`;
 //! `intervene node.<id>.x` / `node.<id>.y` / `node.<id>.title` /
@@ -348,7 +348,7 @@ const STORAGE_KEY: &str = "node_graph.state";
 // (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists).
 // R899 -> 3: added per-port `input_defaults` (typed `CellValue`s). Each bump
 // mismatch-rejects a stale blob so it starts fresh rather than misreading.
-const PERSISTED_SCHEMA_VERSION: u32 = 4;
+const PERSISTED_SCHEMA_VERSION: u32 = 5;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -645,6 +645,15 @@ struct GraphNode {
     /// the port's [`PortType`]; retained while the port is wired (the Unreal
     /// model — wiring hides the editor, it does not discard the value).
     input_defaults: Vec<CellValue>,
+    /// R1242 — whether this node is a **reroute** knot (a wire-routing
+    /// passthrough spliced by `add_reroute`), not a compute op. A first-class
+    /// model identity — NOT the title string (which is freely rewritable) — so
+    /// the reroute survives a serialize / reload, an AI can enumerate reroutes
+    /// (`reroute_ids`), and the paint / future graph-eval can key off it. Serde
+    /// `default` (false) so a pre-R1242 (schema ≤ 4) blob's op nodes read as
+    /// non-reroute.
+    #[serde(default)]
+    is_reroute: bool,
 }
 
 impl GraphNode {
@@ -664,6 +673,7 @@ impl GraphNode {
             input_ports: inputs.to_vec(),
             output_ports: outputs.to_vec(),
             input_defaults: inputs.iter().map(|t| t.default_value()).collect(),
+            is_reroute: false,
         }
     }
 
@@ -3000,6 +3010,7 @@ impl NodeGraphExternal {
             input_ports: input_ports.to_vec(),
             output_ports: output_ports.to_vec(),
             input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
+            is_reroute: false,
         };
         let sel_before = self.selection.get();
         // `record` applies the edit forward — pushing the node and selecting it
@@ -3122,6 +3133,7 @@ impl NodeGraphExternal {
             input_ports: input_ports.to_vec(),
             output_ports: output_ports.to_vec(),
             input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
+            is_reroute: false,
         };
         let edge = Edge {
             id: self.mint_edge_id(),
@@ -3397,6 +3409,7 @@ impl NodeGraphExternal {
         let mid_y = i32::midpoint(from.1, to.1);
         let node_id = self.mint_node_id();
         let mut reroute = GraphNode::new(node_id.raw(), "Reroute", 0, 0, &[ty], &[ty]);
+        reroute.is_reroute = true; // R1242 — a first-class model identity, not the title
         reroute.x = clamp_node_x(mid_x - NODE_W / 2);
         reroute.y = clamp_node_y(mid_y - reroute.height() / 2);
         // Mint the two replacement edges (A -> R, R -> B).
@@ -3786,6 +3799,70 @@ impl NodeGraphExternal {
             ))),
             _ => None,
         }
+    }
+
+    /// R1242 — the prefixed-path reads for [`query`](Self::query): `detail.` /
+    /// `node.<id>.<field>` / `edge.<id>` / `dissolvable.<id>` / `frame.<id>.<field>`.
+    /// Extracted from `query` when its arm count crossed the line ceiling (the
+    /// R1227 `query_frame` extraction precedent).
+    fn query_prefixed(&self, path: &str) -> Option<IntrospectValue> {
+        // R916 — `detail.<field>` is a selection-relative alias for
+        // `node.<selected>.<field>`: resolve the single selected node and
+        // delegate to the existing absolute-addressing read. `Null` when
+        // the selection is not exactly one node (no unambiguous "the"
+        // node) — the R909 selection-driven detail-panel pattern.
+        if let Some(field) = path.strip_prefix("detail.") {
+            return Some(match self.selected_node_path(field) {
+                Some(node_path) => self.query(&node_path).unwrap_or(IntrospectValue::Null),
+                None => IntrospectValue::Null,
+            });
+        }
+        if let Some(rest) = path.strip_prefix("node.") {
+            let (id_str, field) = rest.split_once('.')?;
+            let id = NodeId(id_str.parse().ok()?);
+            let nodes = self.nodes.get();
+            let node = nodes.iter().find(|n| n.id == id)?;
+            return match field {
+                "title" => Some(IntrospectValue::Text(node.title.clone())),
+                "x" => Some(IntrospectValue::Int(i64::from(node.x))),
+                "y" => Some(IntrospectValue::Int(i64::from(node.y))),
+                "inputs" => Some(IntrospectValue::Int(int_of(node.inputs()))),
+                "outputs" => Some(IntrospectValue::Int(int_of(node.outputs()))),
+                // R1242 — the reroute discriminator (a first-class model read, not
+                // a title match — a user-renamed knot still reads true, a node
+                // renamed "Reroute" reads false).
+                "is_reroute" => Some(IntrospectValue::Bool(node.is_reroute)),
+                // R898 — the typed-port read twins: CSV of the port types in port
+                // order ("" for a source / sink). The arity reads stay the
+                // byte-stable count contract.
+                "input_types" => Some(IntrospectValue::Text(port_types_csv(&node.input_ports))),
+                "output_types" => Some(IntrospectValue::Text(port_types_csv(&node.output_ports))),
+                // R899 — the typed default of an input port (the write twin is
+                // `intervene node.<id>.input_default.<port>`); a `Float` reads as a
+                // float, a `Vector` (`Color`) as a `{hex,r,g,b,a}` object.
+                other => other
+                    .strip_prefix("input_default.")
+                    .and_then(|p| p.parse::<usize>().ok())
+                    .and_then(|port| node.input_default(port).map(CellValue::to_introspect)),
+            };
+        }
+        if let Some(id_str) = path.strip_prefix("edge.") {
+            let id = EdgeId(id_str.parse().ok()?);
+            let edges = self.edges.get();
+            let e = edges.iter().find(|e| e.id == id)?;
+            return Some(IntrospectValue::Text(format!(
+                "{}:{}->{}:{}",
+                e.from_node, e.from_port, e.to_node, e.to_port
+            )));
+        }
+        // R1241 — the per-node dissolve-eligibility read (the twin of the
+        // `dissolve_node` verb; shares the `dissolve_plan` predicate).
+        if let Some(id_str) = path.strip_prefix("dissolvable.") {
+            let id = NodeId(id_str.parse().ok()?);
+            return Some(IntrospectValue::Bool(self.dissolvable(id)));
+        }
+        // R1227 — `frame.<id>.<field>` reads.
+        self.query_frame(path)
     }
 
     /// R1227 / R1234 — the `intervene frame.<id>.<field>` write. `title` renames
@@ -4964,6 +5041,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("edge_count", "int"),
             ("node_ids", "string"),
             ("edge_ids", "string"),
+            // R1242 — the reroute-knot discriminator + enumeration.
+            ("reroute_ids", "string"),
+            ("node.<id>.is_reroute", "bool"),
             // R1241 — dissolve-eligibility reads (the twins of the dissolve verb).
             ("dissolvable_ids", "string"),
             ("dissolvable.<id>", "bool"),
@@ -5081,6 +5161,16 @@ impl ExternalIntrospect for NodeGraphExternal {
             "edge_ids" => Some(IntrospectValue::Text(csv_ids(
                 self.edges.get().iter().map(|e| e.id.raw()),
             ))),
+            // R1242 — the reroute-knot enumeration (the AI-first "find every
+            // reroute" handle a self-hosted editor's cleanup pass needs; the
+            // `node.<id>.is_reroute` read is the per-node twin).
+            "reroute_ids" => Some(IntrospectValue::Text(csv_ids(
+                self.nodes
+                    .get()
+                    .iter()
+                    .filter(|n| n.is_reroute)
+                    .map(|n| n.id.raw()),
+            ))),
             // R1227 — the comment-frame enumeration handles (the annotation
             // layer as data, exactly like `node_ids` / `edge_ids`).
             "frame_count" => Some(IntrospectValue::Int(int_of(self.frames.get().len()))),
@@ -5155,69 +5245,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R916 — `detail.node` is the single selected node id (the alias the
             // Details panel addresses against, same answer as `selected`).
             "detail.node" => self.query("selected"),
-            _ => {
-                // R916 — `detail.<field>` is a selection-relative alias for
-                // `node.<selected>.<field>`: resolve the single selected node and
-                // delegate to the existing absolute-addressing read. `Null` when
-                // the selection is not exactly one node (no unambiguous "the"
-                // node) — the R909 selection-driven detail-panel pattern.
-                if let Some(field) = path.strip_prefix("detail.") {
-                    return Some(match self.selected_node_path(field) {
-                        Some(node_path) => self.query(&node_path).unwrap_or(IntrospectValue::Null),
-                        None => IntrospectValue::Null,
-                    });
-                }
-                if let Some(rest) = path.strip_prefix("node.") {
-                    let (id_str, field) = rest.split_once('.')?;
-                    let id = NodeId(id_str.parse().ok()?);
-                    let nodes = self.nodes.get();
-                    let node = nodes.iter().find(|n| n.id == id)?;
-                    return match field {
-                        "title" => Some(IntrospectValue::Text(node.title.clone())),
-                        "x" => Some(IntrospectValue::Int(i64::from(node.x))),
-                        "y" => Some(IntrospectValue::Int(i64::from(node.y))),
-                        "inputs" => Some(IntrospectValue::Int(int_of(node.inputs()))),
-                        "outputs" => Some(IntrospectValue::Int(int_of(node.outputs()))),
-                        // R898 — the typed-port read twins: CSV of the port
-                        // types in port order ("" for a source / sink). The
-                        // arity reads above stay the byte-stable count contract.
-                        "input_types" => {
-                            Some(IntrospectValue::Text(port_types_csv(&node.input_ports)))
-                        }
-                        "output_types" => {
-                            Some(IntrospectValue::Text(port_types_csv(&node.output_ports)))
-                        }
-                        // R899 — the typed default of an input port (the
-                        // write twin is `intervene node.<id>.input_default.<port>`);
-                        // a `Float` reads as a float, a `Vector` (`Color`) as a
-                        // `{hex,r,g,b,a}` object — the CellValue introspect shape.
-                        other => other
-                            .strip_prefix("input_default.")
-                            .and_then(|p| p.parse::<usize>().ok())
-                            .and_then(|port| {
-                                node.input_default(port).map(CellValue::to_introspect)
-                            }),
-                    };
-                }
-                if let Some(id_str) = path.strip_prefix("edge.") {
-                    let id = EdgeId(id_str.parse().ok()?);
-                    let edges = self.edges.get();
-                    let e = edges.iter().find(|e| e.id == id)?;
-                    return Some(IntrospectValue::Text(format!(
-                        "{}:{}->{}:{}",
-                        e.from_node, e.from_port, e.to_node, e.to_port
-                    )));
-                }
-                // R1241 — the per-node dissolve-eligibility read (the twin of the
-                // `dissolve_node` verb; shares the `dissolve_plan` predicate).
-                if let Some(id_str) = path.strip_prefix("dissolvable.") {
-                    let id = NodeId(id_str.parse().ok()?);
-                    return Some(IntrospectValue::Bool(self.dissolvable(id)));
-                }
-                // R1227 — `frame.<id>.<field>` reads (extracted to keep `query`
-                // within the workspace line ceiling).
-                self.query_frame(path)
-            }
+            // R1242 — the prefixed (`detail.` / `node.` / `edge.` / `dissolvable.`
+            // / `frame.`) reads, extracted to keep `query` within the line ceiling.
+            _ => self.query_prefixed(path),
         }
     }
 

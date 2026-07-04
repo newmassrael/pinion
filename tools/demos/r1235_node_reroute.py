@@ -87,6 +87,11 @@ def body() -> None:
         assert_eq(q(tf, f"node.{rid}.outputs"), 1, "exactly one output port")
         assert_eq(q(tf, f"node.{rid}.input_types"), "Vector", "input adopts wire type")
         assert_eq(q(tf, f"node.{rid}.output_types"), "Vector", "output adopts wire type")
+        # R1242 — the reroute is a first-class model identity (not a title), so an
+        # AI can enumerate reroutes; a seed op node is not one.
+        assert_eq(q(tf, f"node.{rid}.is_reroute"), True, "the knot is a reroute")
+        assert_eq(q(tf, "node.2.is_reroute"), False, "Multiply is not a reroute")
+        assert_eq(q(tf, "reroute_ids"), str(rid), "reroute enumeration finds it")
 
         # ── (D) one undo reverts the whole splice; redo re-applies ───
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Insert reroute", "one labelled step")

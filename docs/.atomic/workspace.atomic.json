@@ -62032,6 +62032,48 @@
         "audit-clearance campaign 4/5 done (R1238 SSOT + R1239 paste + R1240 frame + R1241 dissolve). Remaining: R1242 reroute-first-class (is_reroute model field + knot render branch in view_node + serialization + double-click-on-wire splice arm + node.<id>.is_reroute/reroute_ids discriminator query) — the HIGH north-star finding (reroute is currently a full card, not a knot)"
       ]
     },
+    "Round 1242": {
+      "decision_summary": "R1242 reroute first-class model identity (campaign 5/6): add GraphNode.is_reroute (schema 4->5) so reroute-ness is a persisted model fact not the mutable title + node.<id>.is_reroute/reroute_ids discriminator reads; extract query_prefixed for the line ceiling. Clears the judge Q1 model complaint + AI F1 enumeration gap",
+      "changes_bullets": [
+        "reroute first-class MODEL identity: added GraphNode.is_reroute (serde default, schema 4->5) set by add_reroute, so reroute-ness is a persisted model fact — NOT the title string (which is freely rewritable). Judge Q1 / AI F1: pre-R1242 a reroute was indistinguishable from a node someone named \"Reroute\" and could not be reliably enumerated",
+        "AI discriminator: node.<id>.is_reroute (bool read, survives rename) + reroute_ids (CSV enumeration) so a self-hosted editor's cleanup pass can find every knot; schema-declared + module-doc updated",
+        "serialize round-trip: the is_reroute flag persists through the schema-5 SerializedGraph (tested); a pre-R1242 blob's op nodes read false via serde default",
+        "SSOT: extracted query_prefixed (the detail./node./edge./dissolvable./frame. reads) to keep query within the 100-line ceiling (the R1227 query_frame extraction precedent)"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 185 pass / 0 fail (2 new R1242: is_reroute is a model identity not a title / identity survives serialize-reload; r1227 persist updated to schema 5)",
+        "cargo clippy -p hello-node-editor --all-targets: clean (-D pedantic, query re-extracted under the line ceiling); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1235_node_reroute.py + r1227_node_comment_frames.py: PASS (added node.<id>.is_reroute/reroute_ids RPC guards; r1227 schema assertion -> 5)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "audit-clearance campaign 5/6 done. Reroute is now a first-class MODEL identity + AI-enumerable; still visual: R1243 = the KNOT RENDER (judge Q1 core) — a compact dot in view_node keyed on is_reroute, with reroute-aware port centers so wires anchor to the knot (NOT HW-gated; snapshot-verifiable) + the double-click-on-wire splice gesture (G1; hit_test_edge->add_reroute via the pending_edge_hit press-move sequence, headless-testable, was mislabeled HW-gated)",
+        "a11y LOW still deferred (pre-existing R1227): frame a11y group has no member children; no resize-recount a11y test"
+      ],
+      "publishable_decision_summary": "R1242 reroute first-class model identity (campaign 5/6): add GraphNode.is_reroute (schema 4->5) so reroute-ness is a persisted model fact not the mutable title + node.<id>.is_reroute/reroute_ids discriminator reads; extract query_prefixed for the line ceiling. Clears the judge Q1 model complaint + AI F1 enumeration gap",
+      "publishable_changes_bullets": [
+        "reroute first-class MODEL identity: added GraphNode.is_reroute (serde default, schema 4->5) set by add_reroute, so reroute-ness is a persisted model fact — NOT the title string (which is freely rewritable). Judge Q1 / AI F1: pre-R1242 a reroute was indistinguishable from a node someone named \"Reroute\" and could not be reliably enumerated",
+        "AI discriminator: node.<id>.is_reroute (bool read, survives rename) + reroute_ids (CSV enumeration) so a self-hosted editor's cleanup pass can find every knot; schema-declared + module-doc updated",
+        "serialize round-trip: the is_reroute flag persists through the schema-5 SerializedGraph (tested); a pre-R1242 blob's op nodes read false via serde default",
+        "SSOT: extracted query_prefixed (the detail./node./edge./dissolvable./frame. reads) to keep query within the 100-line ceiling (the R1227 query_frame extraction precedent)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 185 pass / 0 fail (2 new R1242: is_reroute is a model identity not a title / identity survives serialize-reload; r1227 persist updated to schema 5)",
+        "cargo clippy -p hello-node-editor --all-targets: clean (-D pedantic, query re-extracted under the line ceiling); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1235_node_reroute.py + r1227_node_comment_frames.py: PASS (added node.<id>.is_reroute/reroute_ids RPC guards; r1227 schema assertion -> 5)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "audit-clearance campaign 5/6 done. Reroute is now a first-class MODEL identity + AI-enumerable; still visual: R1243 = the KNOT RENDER (judge Q1 core) — a compact dot in view_node keyed on is_reroute, with reroute-aware port centers so wires anchor to the knot (NOT HW-gated; snapshot-verifiable) + the double-click-on-wire splice gesture (G1; hit_test_edge->add_reroute via the pending_edge_hit press-move sequence, headless-testable, was mislabeled HW-gated)",
+        "a11y LOW still deferred (pre-existing R1227): frame a11y group has no member children; no resize-recount a11y test"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
