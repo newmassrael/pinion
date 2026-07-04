@@ -61304,6 +61304,62 @@
         "next candidates: comment-frame OR reroute OR data-grid block PASTE OR inspector inline TextField (multi-external big round)"
       ]
     },
+    "Round 1227": {
+      "decision_summary": "R1227 node comment frames: new CommentFrame entity (behind nodes) framing the selection; add/remove/rename undoable + persisted (schema 4) + introspectable (frame.<id>.contains) + a11y group; move-with-contents deferred R1228",
+      "changes_bullets": [
+        "CommentFrame entity: Signal<Vec<CommentFrame>> + stable FrameId + persistence (schema 3->4, serde default)",
+        "add_frame frames the node selection (bbox+pad, \"Comment N\"); remove_frame; both undoable via GraphDelta.{added,removed}_frames",
+        "rename via intervene frame.<id>.title (RenameFrameCmd); the rect is read-only in v1",
+        "introspection frame_count/frame_ids/frame.<id>.{title,x,y,w,h,contains}; RPC verbs add_frame/remove_frame",
+        "paint view_frames (translucent titled rect, behind nodes, pointer-transparent) + a11y labelled group per frame",
+        "GraphEdit.apply refactored to (delta, reverse, sel) for the 3-entity delta; 7 unit tests"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 8021 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 167 pass (7 new R1227)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo fmt --all --check + cargo doc gate: clean",
+        "tools/demos/r1227_node_comment_frames.py: PASS, 30 assertions (frame subsets/contains/rename-undo/remove-undo/persist/rejects)",
+        "3b self-grep: no CommentFrame/comment-frame elsewhere; reuses GraphEdit + RenameNodeCmd shape"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "move-with-contents + resize + grab-to-move GESTURE deferred to R1228: the rect is read-only in v1 (a frame sizes to its selection); the defining \"drag the frame relocates its nodes\" behaviour needs a MoveFrameCmd + the §2#2 held-mid-drag gesture",
+        "frames are NOT part of Selection (a separate annotation axis) — frame-select + delete-node-with-its-frame are later",
+        "schema bump 3->4 strict-rejects a v3 blob on load (frames are additive via serde default, but the version check is strict-equality — acceptable, frames are new so no data loss)",
+        "next R1228 candidates: comment-frame move-with-contents / reroute node / data-grid block PASTE"
+      ],
+      "publishable_decision_summary": "R1227 node comment frames: new CommentFrame entity (behind nodes) framing the selection; add/remove/rename undoable + persisted (schema 4) + introspectable (frame.<id>.contains) + a11y group; move-with-contents deferred R1228",
+      "publishable_changes_bullets": [
+        "CommentFrame entity: Signal<Vec<CommentFrame>> + stable FrameId + persistence (schema 3->4, serde default)",
+        "add_frame frames the node selection (bbox+pad, \"Comment N\"); remove_frame; both undoable via GraphDelta.{added,removed}_frames",
+        "rename via intervene frame.<id>.title (RenameFrameCmd); the rect is read-only in v1",
+        "introspection frame_count/frame_ids/frame.<id>.{title,x,y,w,h,contains}; RPC verbs add_frame/remove_frame",
+        "paint view_frames (translucent titled rect, behind nodes, pointer-transparent) + a11y labelled group per frame",
+        "GraphEdit.apply refactored to (delta, reverse, sel) for the 3-entity delta; 7 unit tests"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 8021 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 167 pass (7 new R1227)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo fmt --all --check + cargo doc gate: clean",
+        "tools/demos/r1227_node_comment_frames.py: PASS, 30 assertions (frame subsets/contains/rename-undo/remove-undo/persist/rejects)",
+        "3b self-grep: no CommentFrame/comment-frame elsewhere; reuses GraphEdit + RenameNodeCmd shape"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "move-with-contents + resize + grab-to-move GESTURE deferred to R1228: the rect is read-only in v1 (a frame sizes to its selection); the defining \"drag the frame relocates its nodes\" behaviour needs a MoveFrameCmd + the §2#2 held-mid-drag gesture",
+        "frames are NOT part of Selection (a separate annotation axis) — frame-select + delete-node-with-its-frame are later",
+        "schema bump 3->4 strict-rejects a v3 blob on load (frames are additive via serde default, but the version check is strict-equality — acceptable, frames are new so no data loss)",
+        "next R1228 candidates: comment-frame move-with-contents / reroute node / data-grid block PASTE"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

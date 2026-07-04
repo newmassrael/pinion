@@ -343,7 +343,7 @@ const STORAGE_KEY: &str = "node_graph.state";
 // (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists).
 // R899 -> 3: added per-port `input_defaults` (typed `CellValue`s). Each bump
 // mismatch-rejects a stale blob so it starts fresh rather than misreading.
-const PERSISTED_SCHEMA_VERSION: u32 = 3;
+const PERSISTED_SCHEMA_VERSION: u32 = 4;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -365,6 +365,18 @@ const HEADER_H: i32 = 30;
 const PORT_PITCH: i32 = 28;
 const PORT_SIZE: i32 = 12;
 const BODY_PAD: i32 = 10;
+
+/// R1227 — comment-frame geometry. `FRAME_PAD` is the margin an
+/// `add_frame`-around-selection leaves on every side of the selected nodes'
+/// bounding box; `FRAME_HEADER_H` is the title strip height; `FRAME_FILL_ALPHA`
+/// the translucent body wash (the frame reads as a wash BEHIND the nodes, never
+/// obscuring them).
+const FRAME_PAD: i32 = 28;
+const FRAME_HEADER_H: i32 = 24;
+const FRAME_FILL_ALPHA: u8 = 28;
+/// The comment-frame accent (a muted amber, distinct from the port-type
+/// colours) — the fill is this at [`FRAME_FILL_ALPHA`], the border + title opaque.
+const FRAME_COLOR: Color = Color::rgb(0xc8, 0x9b, 0x3c);
 
 /// R880 — the marquee rubber band's fill alpha (a translucent wash of the
 /// accent; the border stays fully opaque).
@@ -459,6 +471,11 @@ struct NodeId(u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct EdgeId(u32);
 
+/// R1227 — stable comment-frame handle, same stable-id discipline as
+/// [`NodeId`] / [`EdgeId`] (minted once, never reused).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct FrameId(u32);
+
 impl NodeId {
     fn raw(self) -> u32 {
         self.0
@@ -471,6 +488,12 @@ impl EdgeId {
     }
 }
 
+impl FrameId {
+    fn raw(self) -> u32 {
+        self.0
+    }
+}
+
 impl core::fmt::Display for NodeId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
@@ -478,6 +501,12 @@ impl core::fmt::Display for NodeId {
 }
 
 impl core::fmt::Display for EdgeId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl core::fmt::Display for FrameId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -706,6 +735,44 @@ struct Edge {
     to_port: usize,
 }
 
+/// R1227 — a **comment frame**: a titled, translucent rectangle drawn BEHIND the
+/// nodes to group + label a region of the graph (the Blueprint / material-editor
+/// "comment box"). It owns no graph semantics — it is a pure annotation over
+/// graph units (`x`,`y`,`w`,`h`), created around a node selection and moved with
+/// the nodes it visually contains. Stable [`FrameId`] (R841 discipline), so a
+/// frame reference survives the deletion of others; persisted in the
+/// [`SerializedGraph`] like nodes + edges.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct CommentFrame {
+    id: FrameId,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    title: String,
+}
+
+impl CommentFrame {
+    /// The frame's rect right / bottom edges (graph units).
+    const fn right(&self) -> i32 {
+        self.x + self.w
+    }
+    const fn bottom(&self) -> i32 {
+        self.y + self.h
+    }
+
+    /// Whether node `n`'s CENTRE lies inside this frame's rect — the
+    /// "contained" test the move-with-contents + the `contains` query share, so
+    /// the painted membership and the moved set can never disagree. Centre (not
+    /// full-overlap) is the Blueprint rule: a node belongs to the frame it sits
+    /// in, even if its card slightly overhangs the border.
+    fn contains_node(&self, n: &GraphNode) -> bool {
+        let cx = n.x + NODE_W / 2;
+        let cy = n.y + n.height() / 2;
+        cx >= self.x && cx <= self.right() && cy >= self.y && cy <= self.bottom()
+    }
+}
+
 /// Live drag preview while a wire is being pulled — from an output port (a
 /// fresh connection), or, during an R1174 *reconnect*, from an existing edge's
 /// SOURCE output (a wired input was grabbed and pulled loose). Either way the
@@ -884,6 +951,13 @@ struct SerializedGraph {
     edges: Vec<Edge>,
     next_node_id: u32,
     next_edge_id: u32,
+    /// R1227 — the comment frames + their id counter. `#[serde(default)]` so a
+    /// pre-R1227 (schema-3) blob still deserializes into an empty frame list;
+    /// the schema bump to 4 marks the additive field for a fresh save.
+    #[serde(default)]
+    frames: Vec<CommentFrame>,
+    #[serde(default)]
+    next_frame_id: u32,
 }
 
 // ─── geometry (window coordinates; canvas == window) ───────────────
@@ -1114,6 +1188,20 @@ fn use_nodes() -> Rc<Signal<Vec<GraphNode>>> {
 fn use_edges() -> Rc<Signal<Vec<Edge>>> {
     let owner = Owner::current().expect("use_edges requires an active Owner scope");
     owner.cache("node_graph.edges", || Signal::new(default_edges()))
+}
+
+/// R1227 — the shared comment-frame list (empty at boot; frames are authored,
+/// not seeded), the same `Rc<Signal>` the view fn reads + the coordinator mutates.
+fn use_frames() -> Rc<Signal<Vec<CommentFrame>>> {
+    let owner = Owner::current().expect("use_frames requires an active Owner scope");
+    owner.cache("node_graph.frames", || Signal::new(Vec::new()))
+}
+
+/// R1227 — monotonic [`FrameId`] source (mirrors [`use_next_node_id`]); frames
+/// mint from 0 since the boot graph seeds none.
+fn use_next_frame_id() -> Rc<Cell<u32>> {
+    let owner = Owner::current().expect("use_next_frame_id requires an active Owner scope");
+    owner.cache("node_graph.next_frame_id", || Cell::new(0))
 }
 
 #[must_use]
@@ -1683,11 +1771,19 @@ struct GraphDelta {
     added_edges: Vec<Edge>,
     removed_nodes: Vec<GraphNode>,
     removed_edges: Vec<Edge>,
+    /// R1227 — comment frames added / removed by this edit (the `add_frame` /
+    /// `remove_frame` structural edits; stored verbatim so undo re-inserts them
+    /// with their original [`FrameId`]).
+    added_frames: Vec<CommentFrame>,
+    removed_frames: Vec<CommentFrame>,
 }
 
 struct GraphEdit {
     nodes: Rc<Signal<Vec<GraphNode>>>,
     edges: Rc<Signal<Vec<Edge>>>,
+    /// R1227 — the frame list, so `add_frame` / `remove_frame` round-trip on the
+    /// same shared undo path as node / edge edits.
+    frames: Rc<Signal<Vec<CommentFrame>>>,
     selection: Rc<Signal<Selection>>,
     label: Cow<'static, str>,
     delta: GraphDelta,
@@ -1701,14 +1797,27 @@ impl GraphEdit {
     /// with the add / remove roles swapped. The signal writes are gated on a
     /// non-empty delta so an edge-only edit never reclones the node vector
     /// (and vice-versa), keeping the repaint minimal.
-    fn apply(
-        &self,
-        rm_nodes: &[GraphNode],
-        add_nodes: &[GraphNode],
-        rm_edges: &[Edge],
-        add_edges: &[Edge],
-        sel: Selection,
-    ) {
+    /// Apply the delta in the `redo` direction (`reverse == false`: drop
+    /// `removed_*`, add `added_*`) or its inverse (`reverse == true`), then set
+    /// the selection. Taking the whole [`GraphDelta`] + a direction bit keeps the
+    /// signature within the argument budget as the entity kinds grow (R1227 added
+    /// frames — a per-kind param list would have overflowed).
+    fn apply(&self, delta: &GraphDelta, reverse: bool, sel: Selection) {
+        let (rm_nodes, add_nodes) = if reverse {
+            (&delta.added_nodes, &delta.removed_nodes)
+        } else {
+            (&delta.removed_nodes, &delta.added_nodes)
+        };
+        let (rm_edges, add_edges) = if reverse {
+            (&delta.added_edges, &delta.removed_edges)
+        } else {
+            (&delta.removed_edges, &delta.added_edges)
+        };
+        let (rm_frames, add_frames) = if reverse {
+            (&delta.added_frames, &delta.removed_frames)
+        } else {
+            (&delta.removed_frames, &delta.added_frames)
+        };
         if !rm_nodes.is_empty() || !add_nodes.is_empty() {
             self.nodes.set_with(|prev| {
                 let mut next: Vec<GraphNode> = prev
@@ -1731,6 +1840,17 @@ impl GraphEdit {
                 next
             });
         }
+        if !rm_frames.is_empty() || !add_frames.is_empty() {
+            self.frames.set_with(|prev| {
+                let mut next: Vec<CommentFrame> = prev
+                    .iter()
+                    .filter(|f| !rm_frames.iter().any(|r| r.id == f.id))
+                    .cloned()
+                    .collect();
+                next.extend(add_frames.iter().cloned());
+                next
+            });
+        }
         self.selection.set(sel);
     }
 }
@@ -1741,25 +1861,11 @@ impl UndoCommand for GraphEdit {
     }
 
     fn redo(&self) {
-        let d = &self.delta;
-        self.apply(
-            &d.removed_nodes,
-            &d.added_nodes,
-            &d.removed_edges,
-            &d.added_edges,
-            self.sel_after.clone(),
-        );
+        self.apply(&self.delta, false, self.sel_after.clone());
     }
 
     fn undo(&self) {
-        let d = &self.delta;
-        self.apply(
-            &d.added_nodes,
-            &d.removed_nodes,
-            &d.added_edges,
-            &d.removed_edges,
-            self.sel_before.clone(),
-        );
+        self.apply(&self.delta, true, self.sel_before.clone());
     }
 }
 
@@ -1973,6 +2079,76 @@ fn apply_rename(
     }
     let cmd = RenameNodeCmd {
         nodes: Rc::clone(nodes),
+        id,
+        before,
+        after: trimmed.to_owned(),
+    };
+    cmd.redo();
+    undo.push_applied(cmd);
+    true
+}
+
+/// R1227 — a reversible comment-frame **rename** (the [`RenameNodeCmd`] shape
+/// over the frame list). A committed rename is its own undo step (no coalescing).
+struct RenameFrameCmd {
+    frames: Rc<Signal<Vec<CommentFrame>>>,
+    id: FrameId,
+    before: String,
+    after: String,
+}
+
+impl RenameFrameCmd {
+    fn set_title(&self, title: &str) {
+        self.frames.set_with(|prev| {
+            let mut next = prev.clone();
+            if let Some(f) = next.iter_mut().find(|f| f.id == self.id) {
+                title.clone_into(&mut f.title);
+            }
+            next
+        });
+    }
+}
+
+impl UndoCommand for RenameFrameCmd {
+    fn label(&self) -> Cow<'static, str> {
+        Cow::Borrowed("Rename frame")
+    }
+
+    fn redo(&self) {
+        self.set_title(&self.after);
+    }
+
+    fn undo(&self) {
+        self.set_title(&self.before);
+    }
+}
+
+/// R1227 — rename comment frame `id` undoably (the [`apply_rename`] peer): trim,
+/// reject an empty title or unknown id, no-op when unchanged. The ONE frame-
+/// rename path the `intervene frame.<id>.title` write funnels through.
+fn apply_frame_rename(
+    frames: &Rc<Signal<Vec<CommentFrame>>>,
+    undo: &UndoStack,
+    id: FrameId,
+    title: &str,
+) -> bool {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let Some(before) = frames
+        .get()
+        .into_iter()
+        .find(|f| f.id == id)
+        .map(|f| f.title)
+    else {
+        return false;
+    };
+    if before == trimmed {
+        return true;
+    }
+    let cmd = RenameFrameCmd {
+        frames: Rc::clone(frames),
         id,
         before,
         after: trimmed.to_owned(),
@@ -2330,6 +2506,10 @@ struct GraphServices {
     /// R1220 — the open pin-drop create menu, shared with the view fn's
     /// floating-menu paint ([`use_pin_create`]).
     pin_create: Rc<Signal<Option<PinCreate>>>,
+    /// R1227 — the comment-frame list ([`use_frames`]) + its monotonic id source
+    /// ([`use_next_frame_id`]), bundled here with the other shared holders.
+    frames: Rc<Signal<Vec<CommentFrame>>>,
+    next_frame_id: Rc<Cell<u32>>,
 }
 
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
@@ -2337,6 +2517,9 @@ struct GraphServices {
 struct NodeGraphExternal {
     nodes: Rc<Signal<Vec<GraphNode>>>,
     edges: Rc<Signal<Vec<Edge>>>,
+    /// R1227 — the comment-frame annotation list + its stable-id source.
+    frames: Rc<Signal<Vec<CommentFrame>>>,
+    next_frame_id: Rc<Cell<u32>>,
     /// The single selection (node | edge | none) — a sum type over stable ids,
     /// so node/edge selection is mutually exclusive AND survives an unrelated
     /// delete (a dangling selection is pruned to `None` by [`validate_after`]
@@ -2399,6 +2582,8 @@ impl NodeGraphExternal {
         Self {
             nodes,
             edges,
+            frames: services.frames,
+            next_frame_id: services.next_frame_id,
             selection,
             preview,
             next_edge_id,
@@ -2546,6 +2731,7 @@ impl NodeGraphExternal {
         self.undo.record(GraphEdit {
             nodes: Rc::clone(&self.nodes),
             edges: Rc::clone(&self.edges),
+            frames: Rc::clone(&self.frames),
             selection: Rc::clone(&self.selection),
             label: label.into(),
             delta,
@@ -2581,6 +2767,8 @@ impl NodeGraphExternal {
             edges: self.edges.get(),
             next_node_id: self.next_node_id.get(),
             next_edge_id: self.next_edge_id.get(),
+            frames: self.frames.get(),
+            next_frame_id: self.next_frame_id.get(),
         }
     }
 
@@ -2597,6 +2785,8 @@ impl NodeGraphExternal {
     fn apply_snapshot(&self, g: SerializedGraph) {
         self.nodes.set(g.nodes);
         self.edges.set(g.edges);
+        self.frames.set(g.frames);
+        self.next_frame_id.set(g.next_frame_id);
         self.next_node_id.set(g.next_node_id);
         self.next_edge_id.set(g.next_edge_id);
         self.selection.set(Selection::None);
@@ -3163,6 +3353,169 @@ impl NodeGraphExternal {
         Ok(IntrospectValue::Text(csv_ids(
             self.cut_wires(a, b).iter().map(|id| id.raw()),
         )))
+    }
+
+    // ─── R1227 comment frames ─────────────────────────────────────────
+
+    fn frame_by_id(&self, id: FrameId) -> Option<CommentFrame> {
+        self.frames.get().into_iter().find(|f| f.id == id)
+    }
+
+    /// R1227 — frame the current node selection: the bounding box of the
+    /// selected nodes grown by [`FRAME_PAD`] on every side (plus
+    /// [`FRAME_HEADER_H`] on top for the title strip), titled `"Comment N"`. The
+    /// canonical Blueprint "comment the selection" create (the RPC `add_frame`
+    /// verb + the future `C` gesture funnel here). Undoable
+    /// (`GraphDelta.added_frames`). `None` when no node is selected (a frame with
+    /// nothing to annotate is not created). The node selection is untouched —
+    /// frames are a separate annotation axis, not part of [`Selection`].
+    fn add_frame(&self) -> Option<FrameId> {
+        let sel = self.selection.get().nodes();
+        let nodes = self.nodes.get();
+        let members: Vec<&GraphNode> = nodes.iter().filter(|n| sel.contains(&n.id)).collect();
+        let left = members.iter().map(|n| n.x).min()?;
+        let top = members.iter().map(|n| n.y).min()?;
+        let right = members.iter().map(|n| n.right()).max()?;
+        let bottom = members.iter().map(|n| n.y + n.height()).max()?;
+        let x = (left - FRAME_PAD).max(0);
+        let y = (top - FRAME_PAD - FRAME_HEADER_H).max(0);
+        let raw = self.next_frame_id.get();
+        self.next_frame_id.set(raw + 1);
+        let id = FrameId(raw);
+        let frame = CommentFrame {
+            id,
+            x,
+            y,
+            w: (right + FRAME_PAD) - x,
+            h: (bottom + FRAME_PAD) - y,
+            title: format!("Comment {}", raw + 1),
+        };
+        let sel = self.selection.get();
+        self.record_edit(
+            "Add frame",
+            GraphDelta {
+                added_frames: vec![frame],
+                ..GraphDelta::default()
+            },
+            sel.clone(),
+            sel,
+        );
+        Some(id)
+    }
+
+    /// R1227 — remove comment frame `id` (the nodes it annotated stay). Undoable
+    /// (`GraphDelta.removed_frames` — one Ctrl+Z restores it with its
+    /// [`FrameId`] + title). `false` for an unknown id.
+    fn remove_frame(&self, id: FrameId) -> bool {
+        let Some(frame) = self.frame_by_id(id) else {
+            return false;
+        };
+        let sel = self.selection.get();
+        self.record_edit(
+            "Remove frame",
+            GraphDelta {
+                removed_frames: vec![frame],
+                ..GraphDelta::default()
+            },
+            sel.clone(),
+            sel,
+        );
+        true
+    }
+
+    /// The `add_node` verb arm (extracted to keep `invoke` within the workspace
+    /// line ceiling): create a node by palette kind name, returning its new id.
+    fn invoke_add_node(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(s) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let kind = PALETTE
+            .iter()
+            .position(|&(name, _, _)| name == *s)
+            .ok_or(InvokeError::Rejected)?;
+        let id = self.add_node(kind).ok_or(InvokeError::Rejected)?;
+        Ok(IntrospectValue::Int(i64::from(id.raw())))
+    }
+
+    /// R1227 — the `add_frame` verb arm: frame the selection, returning the new
+    /// id (`Null` when nothing is selected).
+    fn invoke_add_frame(&mut self) -> IntrospectValue {
+        match self.add_frame() {
+            Some(id) => IntrospectValue::Int(i64::from(id.raw())),
+            None => IntrospectValue::Null,
+        }
+    }
+
+    /// R1227 — the `remove_frame` verb arm: delete a frame by id (`false` on an
+    /// unknown id; a non-`Int` arg is a `TypeMismatch`).
+    fn invoke_remove_frame(
+        &mut self,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let &IntrospectValue::Int(i) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+        Ok(IntrospectValue::Bool(self.remove_frame(FrameId(id))))
+    }
+
+    /// R1227 — the `frame.<id>.<field>` read: the comment-frame rect / title +
+    /// `contains` (the CSV of node ids whose centre lies inside). `None` when the
+    /// path is not a frame path or the id / field is unknown.
+    fn query_frame(&self, path: &str) -> Option<IntrospectValue> {
+        let rest = path.strip_prefix("frame.")?;
+        let (id_str, field) = rest.split_once('.')?;
+        let id = FrameId(id_str.parse().ok()?);
+        let frames = self.frames.get();
+        let f = frames.iter().find(|f| f.id == id)?;
+        match field {
+            "title" => Some(IntrospectValue::Text(f.title.clone())),
+            "x" => Some(IntrospectValue::Int(i64::from(f.x))),
+            "y" => Some(IntrospectValue::Int(i64::from(f.y))),
+            "w" => Some(IntrospectValue::Int(i64::from(f.w))),
+            "h" => Some(IntrospectValue::Int(i64::from(f.h))),
+            "contains" => Some(IntrospectValue::Text(csv_ids(
+                self.nodes
+                    .get()
+                    .iter()
+                    .filter(|n| f.contains_node(n))
+                    .map(|n| n.id.raw()),
+            ))),
+            _ => None,
+        }
+    }
+
+    /// R1227 — the `intervene frame.<id>.<field>` write: `title` renames through
+    /// the [`apply_frame_rename`] SSOT (journaled), while the rect
+    /// (`x`/`y`/`w`/`h`) is READ-ONLY in v1 — a frame is sized from its
+    /// selection's bbox at creation; move-with-contents + resize are R1228.
+    fn intervene_frame(
+        &mut self,
+        path: &str,
+        value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        let rest = path
+            .strip_prefix("frame.")
+            .ok_or(InterveneError::UnknownPath)?;
+        let (id_str, field) = rest.split_once('.').ok_or(InterveneError::UnknownPath)?;
+        let id = FrameId(id_str.parse().map_err(|_| InterveneError::UnknownPath)?);
+        if self.frame_by_id(id).is_none() {
+            return Err(InterveneError::UnknownPath);
+        }
+        match field {
+            "title" => match value {
+                IntrospectValue::Text(t) => {
+                    if apply_frame_rename(&self.frames, &self.undo, id, &t) {
+                        Ok(())
+                    } else {
+                        Err(InterveneError::OutOfRange)
+                    }
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            "x" | "y" | "w" | "h" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
     }
 
     /// Delete node `id` and its incident edges. No reindex: every surviving
@@ -4174,6 +4527,15 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("edge_count", "int"),
             ("node_ids", "string"),
             ("edge_ids", "string"),
+            // R1227 — comment-frame introspection: the annotation layer as data.
+            ("frame_count", "int"),
+            ("frame_ids", "string"),
+            ("frame.<id>.title", "string"),
+            ("frame.<id>.x", "int"),
+            ("frame.<id>.y", "int"),
+            ("frame.<id>.w", "int"),
+            ("frame.<id>.h", "int"),
+            ("frame.<id>.contains", "string"),
             ("selected", "int"),
             ("selected_ids", "string"),
             ("selected_edge", "int"),
@@ -4222,6 +4584,11 @@ impl ExternalIntrospect for NodeGraphExternal {
             // (graph units) crosses, as one undo step. Returns the CSV of cut
             // edge ids (mirrors `edge_ids`), empty when nothing was crossed.
             ("cut_wires", "string"),
+            // R1227 — comment-frame verbs: `add_frame` (no arg) frames the
+            // current node selection, returning the new frame id (`Null` when
+            // nothing is selected); `remove_frame` deletes a frame by id.
+            ("add_frame", "int"),
+            ("remove_frame", "int"),
             ("delete_node", "int"),
             ("delete_selected", "json"),
             ("select_all", "json"),
@@ -4265,6 +4632,12 @@ impl ExternalIntrospect for NodeGraphExternal {
             ))),
             "edge_ids" => Some(IntrospectValue::Text(csv_ids(
                 self.edges.get().iter().map(|e| e.id.raw()),
+            ))),
+            // R1227 — the comment-frame enumeration handles (the annotation
+            // layer as data, exactly like `node_ids` / `edge_ids`).
+            "frame_count" => Some(IntrospectValue::Int(int_of(self.frames.get().len()))),
+            "frame_ids" => Some(IntrospectValue::Text(csv_ids(
+                self.frames.get().iter().map(|f| f.id.raw()),
             ))),
             // R879 — `selected` answers the *single*-selection question:
             // an Int only when exactly one node is selected (a multi-set
@@ -4376,7 +4749,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                         e.from_node, e.from_port, e.to_node, e.to_port
                     )));
                 }
-                None
+                // R1227 — `frame.<id>.<field>` reads (extracted to keep `query`
+                // within the workspace line ceiling).
+                self.query_frame(path)
             }
         }
     }
@@ -4457,6 +4832,11 @@ impl ExternalIntrospect for NodeGraphExternal {
                 .ok_or(InterveneError::UnknownPath)?;
             return self.intervene(&node_path, value);
         }
+        // R1227 — the comment-frame writes (extracted to keep `intervene` within
+        // the workspace line ceiling).
+        if path.starts_with("frame.") {
+            return self.intervene_frame(path, value);
+        }
         let Some(rest) = path.strip_prefix("node.") else {
             return Err(InterveneError::UnknownPath);
         };
@@ -4524,17 +4904,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R849 — create a node by kind name; returns the new node's stable
             // id in one round-trip. An unknown kind is Rejected (the graph is
             // unchanged), the AI-first mirror of a clicked palette card.
-            "add_node" => match args {
-                IntrospectValue::Text(s) => {
-                    let kind = PALETTE
-                        .iter()
-                        .position(|&(name, _, _)| name == s)
-                        .ok_or(InvokeError::Rejected)?;
-                    let id = self.add_node(kind).ok_or(InvokeError::Rejected)?;
-                    Ok(IntrospectValue::Int(i64::from(id.raw())))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
+            "add_node" => self.invoke_add_node(&args),
             "add_edge" => match args {
                 IntrospectValue::Text(s) => {
                     let (fnode, fport, tnode, tport) =
@@ -4567,6 +4937,10 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R1226 — the wire knife (the AI-first primary path). Arg
             // `"x1,y1,x2,y2"` (graph units); returns the CSV of cut edge ids.
             "cut_wires" => self.invoke_cut_wires(args),
+            // R1227 — comment-frame verbs (bodies extracted to keep `invoke`
+            // within the workspace line ceiling).
+            "add_frame" => Ok(self.invoke_add_frame()),
+            "remove_frame" => self.invoke_remove_frame(&args),
             "delete_node" => match args {
                 IntrospectValue::Int(i) => {
                     let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
@@ -5387,6 +5761,69 @@ fn view_marquee(rect: MarqueeRect, theme: &Theme, zoom: f64) -> Scene {
     )
 }
 
+/// R1227 — one a11y `group` per comment frame, named by its title + the count
+/// of nodes it contains (the annotation reachable to AT, its membership
+/// announced — the same [`CommentFrame::contains_node`] gate the paint + the
+/// `contains` query use). Extracted from `access_node` (line ceiling).
+fn frame_access_nodes(frames: &[CommentFrame], nodes: &[GraphNode]) -> Vec<AccessNode> {
+    frames
+        .iter()
+        .map(|f| {
+            let members = nodes.iter().filter(|n| f.contains_node(n)).count();
+            AccessNode::new(format!("{GRAPH_TAG}#frame_{}", f.id), AriaRole::Group)
+                .with_name(format!("Comment frame: {} ({members} nodes)", f.title))
+        })
+        .collect()
+}
+
+/// R1227 — the comment-frame layer: one translucent titled rect per frame,
+/// painted BEHIND the edges + nodes (first in `world_children`). The rect is a
+/// [`FRAME_FILL_ALPHA`] wash of [`FRAME_COLOR`] with an opaque border + a title
+/// in the header strip. Pointer-transparent so a click passes straight through
+/// to the nodes / canvas beneath — a frame annotates a region without blocking
+/// interaction with the nodes it contains (the grab-to-move handle is the R1228
+/// follow-up; v1 frames are RPC-authored). Tagged `node_graph#frame_<id>` so a
+/// future gesture (and the a11y bounds) resolve to the painted rect.
+fn view_frames(frames: &[CommentFrame], zoom: f64) -> Vec<Scene> {
+    let fill = Color {
+        a: FRAME_FILL_ALPHA,
+        ..FRAME_COLOR
+    };
+    frames
+        .iter()
+        .map(|f| {
+            let title = Scene::Text(
+                TextNode::styled(
+                    f.title.clone(),
+                    Rect::default(),
+                    TextStyle::new()
+                        .with_size_px(wfont(NODE_TITLE_PX, zoom))
+                        .with_fg(FRAME_COLOR),
+                )
+                .with_layout(LayoutStyle::new().with_padding(Rect::new(6, 4, 6, 4))),
+            );
+            Scene::Container(
+                ContainerNode::new(vec![title])
+                    .with_tag(format!("{GRAPH_TAG}#frame_{}", f.id))
+                    .with_style(
+                        BoxStyle::filled(fill)
+                            .with_border(Border::new(FRAME_COLOR, wstroke(1, zoom)))
+                            .with_corner_radius(6),
+                    )
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_absolute_position(upx(wpx(f.x, zoom)), upx(wpx(f.y, zoom)))
+                            .with_size(Size::px(
+                                upx(wpx(f.w, zoom).max(1)),
+                                upx(wpx(f.h, zoom).max(1)),
+                            ))
+                            .with_pointer_transparent(true),
+                    ),
+            )
+        })
+        .collect()
+}
+
 /// R849 — the "add node" palette sidebar: a labelled column of clickable cards,
 /// one per [`PALETTE`] kind. Each card is a `node_graph#palette_<idx>` composite,
 /// so a click routes to the coordinator's `handle_send` (the same wire the
@@ -5790,6 +6227,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
 
     let mut world_children: Vec<Scene> = Vec::new();
 
+    // R1227 — comment frames sit BEHIND everything (a labelled backdrop wash).
+    world_children.extend(view_frames(&use_frames().get(), zoom));
+
     // Edges (behind) → preview wire → node cards (on top).
     world_children.extend(view_edges(&nodes, &edges, selected_edge, &theme, zoom));
 
@@ -5957,6 +6397,8 @@ impl WidgetCore for NodeEditorView {
                 marquee_rect: use_marquee_rect(),
                 node_drag: use_node_drag(),
                 pin_create: use_pin_create(),
+                frames: use_frames(),
+                next_frame_id: use_next_frame_id(),
             },
         ))
     }
@@ -6114,6 +6556,7 @@ impl WidgetA11y for NodeEditorView {
     /// on the RPC axis (`query edge.<i>`) per [[ai-first-rpc-introspection-obligation]].
     fn access_node(state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
         let nodes = use_nodes().get();
+        let frames = use_frames().get();
         let selection = use_selection().get();
         let selected = selection.nodes();
         let active = use_active_edit().get();
@@ -6182,12 +6625,18 @@ impl WidgetA11y for NodeEditorView {
         for node in &nodes {
             group = group.with_child(format!("{GRAPH_TAG}#node_{}", node.id));
         }
+        // R1227 — the comment frames are also children of the canvas group (a
+        // labelled `group` per frame, reachable in the AT tree, not an orphan).
+        for f in &frames {
+            group = group.with_child(format!("{GRAPH_TAG}#frame_{}", f.id));
+        }
         // R1220 — link the open create menu into the canvas group so its
         // `menu` subtree is reachable (not an orphan in the AT tree).
         if pin_menu.is_some() {
             group = group.with_child(format!("{GRAPH_TAG}#{PIN_MENU_SUB}"));
         }
         out.push(group);
+        out.extend(frame_access_nodes(&frames, &nodes));
         for node in &nodes {
             let mut entry =
                 AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
@@ -8103,6 +8552,8 @@ mod tests {
                 marquee_rect: use_marquee_rect(),
                 node_drag: use_node_drag(),
                 pin_create: use_pin_create(),
+                frames: use_frames(),
+                next_frame_id: use_next_frame_id(),
             },
         )
     }
@@ -9781,6 +10232,8 @@ mod tests {
                 edges: Vec::new(),
                 next_node_id: 0,
                 next_edge_id: 0,
+                frames: Vec::new(),
+                next_frame_id: 0,
             })
             .unwrap();
             assert!(!coord.load_json(&bad), "version mismatch rejected");
@@ -11808,6 +12261,197 @@ mod tests {
             assert_eq!(
                 coord.invoke("cut_wires", IntrospectValue::Int(1)),
                 Err(InvokeError::TypeMismatch),
+            );
+        });
+    }
+
+    // ── R1227 comment frames ──────────────────────────────────────────
+
+    #[test]
+    fn r1227_add_frame_encloses_the_selection_only() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            assert!(coord.frames.get().is_empty(), "boot: no frames");
+            // Frame the two left-column nodes (Texture id0 @ (40,70), Color id1 @ (40,210)).
+            coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
+            let id = coord.add_frame().expect("framed the selection");
+            assert_eq!(id, FrameId(0), "first frame mints id 0");
+            assert_eq!(coord.frames.get().len(), 1);
+            let f = coord.frame_by_id(id).unwrap();
+            assert_eq!(f.title, "Comment 1");
+            // The rect encloses both framed nodes with the FRAME_PAD margin.
+            assert!(f.x <= 40 - FRAME_PAD, "left margin");
+            assert!(
+                f.y <= 70 - FRAME_PAD - FRAME_HEADER_H,
+                "top margin + header"
+            );
+            assert!(f.right() >= 40 + NODE_W + FRAME_PAD, "right margin");
+            let nodes = coord.nodes.get();
+            let by = |id: NodeId| nodes.iter().find(|n| n.id == id).unwrap();
+            assert!(f.contains_node(by(NodeId(0))), "Texture inside");
+            assert!(f.contains_node(by(NodeId(1))), "Color inside");
+            assert!(
+                !f.contains_node(by(NodeId(3))),
+                "far-right Output not inside"
+            );
+            // Frames are a separate axis — the node selection is untouched.
+            assert_eq!(
+                coord.selection.get(),
+                Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])),
+            );
+        });
+    }
+
+    #[test]
+    fn r1227_add_frame_with_no_node_selection_is_none() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            coord.set_selection(Selection::None);
+            assert!(coord.add_frame().is_none(), "no selection -> no frame");
+            assert!(coord.frames.get().is_empty());
+        });
+    }
+
+    #[test]
+    fn r1227_add_remove_frame_undo_redo_one_step_each() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            coord.select_all();
+            let id = coord.add_frame().unwrap();
+            assert_eq!(coord.frames.get().len(), 1);
+            assert_eq!(stack.undo_label().as_deref(), Some("Add frame"));
+            assert!(stack.undo(), "undo the add");
+            assert!(coord.frames.get().is_empty(), "frame gone");
+            assert!(stack.redo(), "redo restores it");
+            assert_eq!(
+                coord.frame_by_id(id).map(|f| f.id),
+                Some(id),
+                "same stable id"
+            );
+            // remove_frame is its own undo step; the nodes are untouched.
+            assert!(coord.remove_frame(id));
+            assert!(coord.frames.get().is_empty());
+            assert_eq!(coord.node_count(), 4, "removing a frame keeps the nodes");
+            assert_eq!(stack.undo_label().as_deref(), Some("Remove frame"));
+            assert!(stack.undo(), "undo the remove restores the frame");
+            assert_eq!(coord.frames.get().len(), 1);
+        });
+    }
+
+    #[test]
+    fn r1227_frame_rename_undoable_rect_read_only() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            coord.select_all();
+            let id = coord.add_frame().unwrap();
+            let title_path = format!("frame.{}.title", id.raw());
+            coord
+                .intervene(&title_path, IntrospectValue::Text("Lighting".to_owned()))
+                .unwrap();
+            assert_eq!(coord.frame_by_id(id).unwrap().title, "Lighting");
+            assert!(use_undo().undo(), "undo the rename");
+            assert_eq!(coord.frame_by_id(id).unwrap().title, "Comment 1");
+            // v1: the rect is read-only (move / resize is the R1228 follow-up).
+            assert_eq!(
+                coord.intervene(&format!("frame.{}.x", id.raw()), IntrospectValue::Int(0)),
+                Err(InterveneError::ReadOnly),
+            );
+            // An empty title is rejected (the frame keeps its name).
+            assert_eq!(
+                coord.intervene(&title_path, IntrospectValue::Text("  ".to_owned())),
+                Err(InterveneError::OutOfRange),
+            );
+            // An unknown frame id is UnknownPath.
+            assert_eq!(
+                coord.intervene("frame.99.title", IntrospectValue::Text("x".to_owned())),
+                Err(InterveneError::UnknownPath),
+            );
+        });
+    }
+
+    #[test]
+    fn r1227_frame_introspection_contains_and_verb_schema() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
+            let id = coord.add_frame().unwrap();
+            assert_eq!(coord.query("frame_count"), Some(IntrospectValue::Int(1)));
+            assert_eq!(
+                coord.query("frame_ids"),
+                Some(IntrospectValue::Text("0".to_owned()))
+            );
+            assert_eq!(
+                coord.query(&format!("frame.{}.title", id.raw())),
+                Some(IntrospectValue::Text("Comment 1".to_owned()))
+            );
+            // `contains` = the framed node ids (0 and 1) whose centre is inside.
+            assert_eq!(
+                coord.query(&format!("frame.{}.contains", id.raw())),
+                Some(IntrospectValue::Text("0,1".to_owned()))
+            );
+            // The AI-first verbs + read handles are schema-declared.
+            let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+            for v in ["add_frame", "remove_frame", "frame_count", "frame_ids"] {
+                assert!(fields.contains(&v), "{v} schema-declared");
+            }
+        });
+    }
+
+    #[test]
+    fn r1227_frame_persists_and_paints_behind() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            coord.select_all();
+            coord.add_frame().unwrap();
+            // Persistence: the frame round-trips through the schema-4 blob.
+            let json = coord.serialized_json();
+            assert!(json.contains("\"schema_version\":4"), "schema bumped to 4");
+            assert!(json.contains("Comment 1"), "the frame is in the blob");
+            coord.frames.set(Vec::new());
+            assert!(coord.load_json(&json), "load the snapshot");
+            assert_eq!(
+                coord.frames.get().len(),
+                1,
+                "frame restored from persistence"
+            );
+            // Paint: the frame's tagged rect is present in the scene.
+            let scene = view(IDLE_TF, &Frame::new());
+            assert!(
+                scene.contains_tag(&format!("{GRAPH_TAG}#frame_0")),
+                "the comment frame is painted"
+            );
+        });
+    }
+
+    #[test]
+    fn r1227_a11y_frame_is_a_labeled_group_child_of_the_canvas() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
+            coord.add_frame().unwrap();
+            let a11y = NodeEditorView::access_node(&IDLE_TF, None);
+            let frame_tag = format!("{GRAPH_TAG}#frame_0");
+            let frame = a11y
+                .iter()
+                .find(|n| n.tag == frame_tag)
+                .expect("frame a11y node");
+            assert_eq!(frame.role, AriaRole::Group);
+            let name = frame.name.as_deref().unwrap_or_default();
+            assert!(name.contains("Comment 1"), "named by title");
+            assert!(name.contains("2 nodes"), "announces the membership count");
+            // The canvas group references it (not an orphan in the AT tree).
+            let graph = a11y.iter().find(|n| n.tag == GRAPH_TAG).unwrap();
+            assert!(
+                graph.children.iter().any(|c| c == &frame_tag),
+                "canvas group references the frame"
             );
         });
     }
