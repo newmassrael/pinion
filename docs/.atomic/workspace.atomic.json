@@ -62074,6 +62074,54 @@
         "a11y LOW still deferred (pre-existing R1227): frame a11y group has no member children; no resize-recount a11y test"
       ]
     },
+    "Round 1243": {
+      "decision_summary": "R1243 reroute knot RENDER + double-click-on-wire splice (audit-campaign visual remainder): view_node branches on is_reroute to a compact KNOT_SIZE dot (both ports anchor at knot_center so the wire passes through), width() lifted as the SSOT twin of height() so bounds/hit-test/centre/align measure the dot; a double-click on a wire arms a reroute splice fired on the in-place release (a dragged double-click marquees instead). Clears the R1242 carry -- the reroute was a full card and the gesture was deferred, mislabeled HW-gated.",
+      "changes_bullets": [
+        "knot RENDER: view_node now branches on is_reroute to view_reroute_knot, a compact KNOT_SIZE (18px) circular dot painted in the wire's signature colour with no header / port rows / inline editors. Through R1242 a reroute painted a full 130px \"Reroute\" card; the judge Q1 visual complaint (a knot should read as a knot) is cleared. snapshot-verified.",
+        "width() SSOT: added GraphNode::width() (reroute -> KNOT_SIZE, else NODE_W) as the horizontal twin of height(); routed right() / contains_node / centre_key / align CenterH+Right / distribute-horizontal / add_reroute-centring through it, so the compact knot's marquee bounds, hit-test, frame membership and align/distribute all measure the DOT, not a phantom NODE_W. knot_center extracted (both ports anchor there, so the wire passes straight through the dot).",
+        "double-click-on-wire splice: a background DoubleClick ARMS a reroute splice for the wire the press seeded (pending_reroute_splice); it FIRES on the trailing IN-PLACE PointerUp -- so a double-click that becomes a DRAG (a marquee begun on a wire, e.g. a click then marquee inside the RPC drain's tight double-click window) marquees instead of splicing. The spliced knot ends selected. Clears the R1242 carry (gesture was deferred, mislabeled HW-gated -- it dispatches through the already-headless scene/double_click).",
+        "node_border SSOT lift: the selected-node border (accent 2px / outline 1px) lifted to node_border(selected, theme), shared by the card (view_node) and the knot (view_reroute_knot) so a selected node can never draw two different rings (2nd consumer -> one home)."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 192 pass / 0 fail (7 new R1243: compact-knot render + view_node snapshot / knot input==output port centre == knot_center / knot centred on wire mid by KNOT_SIZE/2 not NODE_W/2 / double-click splices + keeps the knot selected / double-click-then-drag marquees not splices [r880 regression guard] / empty-canvas double-click inert / width flows through centre_key + contains_node).",
+        "cargo test --workspace -j2: 8056 pass / 0 fail (real exit 0). clippy --all-targets -D pedantic clean; rustdoc -D warnings (private items) clean; rustfmt clean.",
+        "tools/demos/r1243_node_reroute_render.py: PASS, 36 assertions + 2 wait_until (real scene/double_click on a wire splices; is_reroute; A->R->B typed Vector; knot centred by KNOT_SIZE/2 verified via RPC node.<id>.x/y, NOT NODE_W/2; selected == the knot; undo reverts / redo re-splices / undo to baseline; empty-canvas double-click no-op; re-splice mints the next monotonic id).",
+        "Regression demos all PASS: r880 marquee (the click-then-marquee interaction), r1235 reroute, r1236 dissolve, r948 align/distribute, r929 reconnect, r1227 comment-frames, r838 base editor."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.49",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "R1243 clears the R1242 audit carry (reroute-first-class VISUAL remainder: knot render + double-click-on-wire splice). Node / DCC axis: the reroute is now a compact knot with a live splice gesture, both headless-verified.",
+        "Non-blocking: the knot reuses the shared node a11y name (\"Reroute (1 in, 1 out)\", accurate) -- no knot-specific AT node needed. The double-click-then-drag disambiguation reuses the existing marquee dead-zone DragLatch (no new threshold). Frame a11y member-children stays the pre-existing R1227 LOW carry.",
+        "Next candidates (audit-first): inspector numeric absolute type-in inline TextField (Color=picker / Text=field still missing) / data-grid auto-grow-on-paste / node knot compact-hover affordance. build/link priority (global) satisfied: clippy/test/doc/fmt all green + gated."
+      ],
+      "publishable_decision_summary": "R1243 reroute knot RENDER + double-click-on-wire splice (audit-campaign visual remainder): view_node branches on is_reroute to a compact KNOT_SIZE dot (both ports anchor at knot_center so the wire passes through), width() lifted as the SSOT twin of height() so bounds/hit-test/centre/align measure the dot; a double-click on a wire arms a reroute splice fired on the in-place release (a dragged double-click marquees instead). Clears the R1242 carry -- the reroute was a full card and the gesture was deferred, mislabeled HW-gated.",
+      "publishable_changes_bullets": [
+        "knot RENDER: view_node now branches on is_reroute to view_reroute_knot, a compact KNOT_SIZE (18px) circular dot painted in the wire's signature colour with no header / port rows / inline editors. Through R1242 a reroute painted a full 130px \"Reroute\" card; the judge Q1 visual complaint (a knot should read as a knot) is cleared. snapshot-verified.",
+        "width() SSOT: added GraphNode::width() (reroute -> KNOT_SIZE, else NODE_W) as the horizontal twin of height(); routed right() / contains_node / centre_key / align CenterH+Right / distribute-horizontal / add_reroute-centring through it, so the compact knot's marquee bounds, hit-test, frame membership and align/distribute all measure the DOT, not a phantom NODE_W. knot_center extracted (both ports anchor there, so the wire passes straight through the dot).",
+        "double-click-on-wire splice: a background DoubleClick ARMS a reroute splice for the wire the press seeded (pending_reroute_splice); it FIRES on the trailing IN-PLACE PointerUp -- so a double-click that becomes a DRAG (a marquee begun on a wire, e.g. a click then marquee inside the RPC drain's tight double-click window) marquees instead of splicing. The spliced knot ends selected. Clears the R1242 carry (gesture was deferred, mislabeled HW-gated -- it dispatches through the already-headless scene/double_click).",
+        "node_border SSOT lift: the selected-node border (accent 2px / outline 1px) lifted to node_border(selected, theme), shared by the card (view_node) and the knot (view_reroute_knot) so a selected node can never draw two different rings (2nd consumer -> one home)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 192 pass / 0 fail (7 new R1243: compact-knot render + view_node snapshot / knot input==output port centre == knot_center / knot centred on wire mid by KNOT_SIZE/2 not NODE_W/2 / double-click splices + keeps the knot selected / double-click-then-drag marquees not splices [r880 regression guard] / empty-canvas double-click inert / width flows through centre_key + contains_node).",
+        "cargo test --workspace -j2: 8056 pass / 0 fail (real exit 0). clippy --all-targets -D pedantic clean; rustdoc -D warnings (private items) clean; rustfmt clean.",
+        "tools/demos/r1243_node_reroute_render.py: PASS, 36 assertions + 2 wait_until (real scene/double_click on a wire splices; is_reroute; A->R->B typed Vector; knot centred by KNOT_SIZE/2 verified via RPC node.<id>.x/y, NOT NODE_W/2; selected == the knot; undo reverts / redo re-splices / undo to baseline; empty-canvas double-click no-op; re-splice mints the next monotonic id).",
+        "Regression demos all PASS: r880 marquee (the click-then-marquee interaction), r1235 reroute, r1236 dissolve, r948 align/distribute, r929 reconnect, r1227 comment-frames, r838 base editor."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.49",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1243 clears the R1242 audit carry (reroute-first-class VISUAL remainder: knot render + double-click-on-wire splice). Node / DCC axis: the reroute is now a compact knot with a live splice gesture, both headless-verified.",
+        "Non-blocking: the knot reuses the shared node a11y name (\"Reroute (1 in, 1 out)\", accurate) -- no knot-specific AT node needed. The double-click-then-drag disambiguation reuses the existing marquee dead-zone DragLatch (no new threshold). Frame a11y member-children stays the pre-existing R1227 LOW carry.",
+        "Next candidates (audit-first): inspector numeric absolute type-in inline TextField (Color=picker / Text=field still missing) / data-grid auto-grow-on-paste / node knot compact-hover affordance. build/link priority (global) satisfied: clippy/test/doc/fmt all green + gated."
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

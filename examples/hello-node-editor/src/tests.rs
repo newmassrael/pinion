@@ -2619,6 +2619,20 @@ fn selected_ids_of(scene: &Scene) -> String {
     }
 }
 
+/// R1243 — the graph-space point at edge `from -> to`'s bezier midpoint
+/// (t = 0.5): the on-wire point an edge-click / double-click probe must land on
+/// (the same `edge_curve` + `cubic_at` SSOT the paint + `hit_test_edge` share).
+fn edge_mid(from: (i32, i32), to: (i32, i32)) -> (f64, f64) {
+    let (c1, c2) = edge_curve(from, to);
+    cubic_at(
+        (f64::from(from.0), f64::from(from.1)),
+        (f64::from(c1.0), f64::from(c1.1)),
+        (f64::from(c2.0), f64::from(c2.1)),
+        (f64::from(to.0), f64::from(to.1)),
+        0.5,
+    )
+}
+
 #[test]
 fn r880_marquee_replaces_selection_with_rect_hit_set() {
     Owner::new().run(|| {
@@ -6422,6 +6436,295 @@ fn r1242_reroute_identity_survives_serialize_reload() {
         assert_eq!(
             coord.query("reroute_ids"),
             Some(IntrospectValue::Text(rid.raw().to_string())),
+        );
+    });
+}
+
+// ── R1243 — reroute knot RENDER + double-click-on-wire splice ──────────
+
+/// R1243 — the compact-knot render: a spliced reroute paints as a
+/// `KNOT_SIZE` dot, while an op node keeps its full `NODE_W` card. The
+/// snapshot proof the audit deferred (the reroute was a full "Reroute" card
+/// through R1242).
+#[test]
+fn r1243_reroute_paints_as_a_compact_knot_not_a_card() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).expect("splice edge 0");
+        // The accessors are the SSOT the paint + bounds both read.
+        let knot = coord.node_by_id(rid).expect("the reroute");
+        assert_eq!(knot.width(), KNOT_SIZE, "the knot is KNOT_SIZE wide");
+        assert_eq!(knot.height(), KNOT_SIZE, "the knot is KNOT_SIZE tall");
+        assert_eq!(
+            knot.right(),
+            knot.x + KNOT_SIZE,
+            "its extent is the dot, not NODE_W"
+        );
+        // An op node is unchanged — still a full card.
+        let card = coord.node_by_id(NodeId(0)).expect("Texture");
+        assert_eq!(card.width(), NODE_W, "an op node stays a full-width card");
+        assert!(card.height() > KNOT_SIZE, "and a full-height card");
+        // The rendered scene: `view_node` dispatches the reroute to a compact
+        // KNOT_SIZE container (tagged `#node_{id}` like any node), while an op
+        // node renders its full NODE_W card — the paint mirrors the model.
+        let theme = use_theme(THEME_TAG).theme_animated();
+        let no_wired: BTreeSet<usize> = BTreeSet::new();
+        let knot_scene = view_node(&knot, false, None, IDLE_TF, &no_wired, &theme, 1.0);
+        assert_eq!(
+            knot_scene.tag(),
+            Some(format!("{GRAPH_TAG}#node_{}", rid.raw()).as_str()),
+            "the knot keeps the node tag (so it selects / drags like any node)",
+        );
+        let Scene::Container(knot_box) = &knot_scene else {
+            panic!("the knot renders as a Container, got {knot_scene:?}");
+        };
+        assert_eq!(
+            knot_box.layout.size,
+            Size::px(upx(KNOT_SIZE), upx(KNOT_SIZE)),
+            "the reroute paints as a compact KNOT_SIZE dot",
+        );
+        assert_eq!(
+            knot_box.style.corner_radius,
+            upx(KNOT_SIZE) / 2,
+            "a half-diameter radius rounds the square into a dot",
+        );
+        assert!(
+            knot_box.children.is_empty(),
+            "a knot has no header / port rows"
+        );
+        let card_scene = view_node(&card, false, None, IDLE_TF, &no_wired, &theme, 1.0);
+        let Scene::Container(card_box) = &card_scene else {
+            panic!("an op node renders as a Container, got {card_scene:?}");
+        };
+        assert_eq!(
+            card_box.layout.size,
+            Size::px(upx(NODE_W), upx(card.height())),
+            "an op node still paints a full NODE_W card",
+        );
+        assert!(
+            !card_box.children.is_empty(),
+            "a card has header + port rows"
+        );
+    });
+}
+
+/// R1243 — a knot has no port rows: every incident wire anchors at its
+/// centre (`knot_center`), so `input_port_center` == `output_port_center` ==
+/// the dot centre. A wire therefore terminates on the dot, not on a phantom
+/// full-card port row (which is what R1235's shared-path render did wrong).
+#[test]
+fn r1243_knot_ports_anchor_at_its_centre() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).expect("splice");
+        let knot = coord.node_by_id(rid).expect("the reroute");
+        let centre = (knot.x + KNOT_SIZE / 2, knot.y + KNOT_SIZE / 2);
+        assert_eq!(
+            knot_center(&knot),
+            centre,
+            "the dot centre is the geometric centre"
+        );
+        assert_eq!(
+            input_port_center(&knot, 0),
+            centre,
+            "the input anchors at the centre"
+        );
+        assert_eq!(
+            output_port_center(&knot, 0),
+            centre,
+            "the output anchors at the centre"
+        );
+        assert_eq!(
+            input_port_center(&knot, 0),
+            output_port_center(&knot, 0),
+            "both ports coincide — the wire passes straight through the dot",
+        );
+        // Contrast: an op node's ports are on its LEFT / RIGHT edges, never
+        // coincident (the branch is a real behaviour change, not a no-op).
+        let card = coord.node_by_id(NodeId(2)).expect("Multiply");
+        assert_ne!(
+            input_port_center(&card, 0),
+            output_port_center(&card, 0),
+            "a card's input and output ports are on opposite edges",
+        );
+    });
+}
+
+/// R1243 — `add_reroute` centres the compact knot on the wire midpoint
+/// (`mid - KNOT_SIZE/2`), not on a phantom `NODE_W/2` card half — so the dot
+/// sits exactly on the double-click point.
+#[test]
+fn r1243_add_reroute_centres_the_knot_on_the_wire_midpoint() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let nodes = default_nodes();
+        let from = output_port_center(&nodes[0], 0);
+        let to = input_port_center(&nodes[2], 0);
+        let straight_mid = (i32::midpoint(from.0, to.0), i32::midpoint(from.1, to.1));
+        let coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).expect("splice");
+        let knot = coord.node_by_id(rid).expect("the reroute");
+        assert_eq!(
+            knot.x,
+            clamp_node_x(straight_mid.0 - KNOT_SIZE / 2),
+            "knot x centres the dot (KNOT_SIZE/2), not the card (NODE_W/2)",
+        );
+        assert_eq!(
+            knot.y,
+            clamp_node_y(straight_mid.1 - KNOT_SIZE / 2),
+            "knot y centres the dot",
+        );
+    });
+}
+
+/// R1243 — the headline gesture: a double-click ON a wire splices a reroute
+/// knot into it (the live twin of `invoke add_reroute`). The press carrying
+/// the `DoubleClick` seeds the background edge-hit probe, so the arm splices
+/// the wire under the cursor; the trailing release must not re-select the
+/// now-removed edge (the consumed-probe invariant).
+#[test]
+fn r1243_double_click_on_a_wire_splices_a_reroute() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let nodes = default_nodes();
+        // Edge 0 = Texture.out0 -> Multiply.in0 — its bezier midpoint sits in
+        // open space (the same wire r839 hit-tests).
+        let mid = edge_mid(
+            output_port_center(&nodes[0], 0),
+            input_port_center(&nodes[2], 0),
+        );
+        assert_eq!(query_int(&scene, "node_count"), 4, "4 seed nodes");
+        assert_eq!(query_int(&scene, "edge_count"), 3, "3 seed edges");
+        // Background press, capture-seed move onto the wire (arms the probe),
+        // the DoubleClick (arms the splice), then the in-place release fires it.
+        send(&mut scene, "PointerDown");
+        bg_move(&mut scene, mid.0, mid.1);
+        send(&mut scene, "DoubleClick");
+        assert_eq!(
+            query_int(&scene, "node_count"),
+            4,
+            "the splice is deferred to the release"
+        );
+        send(&mut scene, "PointerUp");
+        assert_eq!(
+            query_int(&scene, "node_count"),
+            5,
+            "the in-place release splices the knot"
+        );
+        assert_eq!(
+            query_int(&scene, "edge_count"),
+            4,
+            "net +1 edge (removed 1, added 2)"
+        );
+        // The new node is a reroute, and the original edge is gone.
+        let reroute_ids = match graph_intro(&scene).query("reroute_ids") {
+            Some(IntrospectValue::Text(t)) => t,
+            other => panic!("expected Text at reroute_ids, got {other:?}"),
+        };
+        assert_eq!(reroute_ids, "4", "the double-click minted reroute node 4");
+        assert_eq!(
+            graph_intro(&scene).query("edge.0"),
+            None,
+            "the double-clicked edge 0 was removed",
+        );
+        // The in-place release that spliced also left the NEW KNOT selected
+        // (not a stale edge, not the fresh A->R wire under the cursor).
+        assert_eq!(
+            graph_intro(&scene).query("selected_edge"),
+            Some(IntrospectValue::Null),
+            "no edge is selected after the splice",
+        );
+        assert_eq!(
+            graph_intro(&scene).query("selected"),
+            Some(IntrospectValue::Int(4)),
+            "the new reroute knot is the selection",
+        );
+    });
+}
+
+/// R1243 — a double-click that turns into a DRAG (a marquee begun on a wire,
+/// e.g. a click immediately followed by a marquee in the RPC drain's tight
+/// double-click window) marquees instead of splicing: the splice is armed on
+/// the DoubleClick but only fires on an IN-PLACE release, and a moved gesture
+/// routes to the marquee. Regression guard for the r880 marquee interaction.
+#[test]
+fn r1243_double_click_then_drag_marquees_instead_of_splicing() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let nodes = default_nodes();
+        let mid = edge_mid(
+            output_port_center(&nodes[0], 0),
+            input_port_center(&nodes[2], 0),
+        );
+        send(&mut scene, "PointerDown");
+        bg_move(&mut scene, mid.0, mid.1); // anchor + seed the edge probe
+        send(&mut scene, "DoubleClick"); // ARMS a splice (does not fire it)
+        // Now drag far away — the marquee latch goes live past the dead zone.
+        bg_move(&mut scene, mid.0 + 240.0, mid.1 - 90.0);
+        send(&mut scene, "PointerUp");
+        assert_eq!(
+            query_int(&scene, "node_count"),
+            4,
+            "a moved gesture marquees — an armed splice never fires on a drag",
+        );
+        assert_eq!(
+            graph_intro(&scene).query("reroute_ids"),
+            Some(IntrospectValue::Text(String::new())),
+            "no reroute was spliced by the dragged double-click",
+        );
+    });
+}
+
+/// R1243 — a double-click on EMPTY canvas seeds no edge hit, so it splices
+/// nothing (the negative twin of the wire double-click).
+#[test]
+fn r1243_double_click_on_empty_canvas_is_inert() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        assert_eq!(query_int(&scene, "node_count"), 4);
+        send(&mut scene, "PointerDown");
+        bg_move(&mut scene, 8.0, 8.0); // an empty corner — hit_test_edge == None
+        send(&mut scene, "DoubleClick");
+        send(&mut scene, "PointerUp");
+        assert_eq!(
+            query_int(&scene, "node_count"),
+            4,
+            "a double-click off any wire splices nothing",
+        );
+    });
+}
+
+/// R1243 — the `width()` SSOT flows through the distribute centre key and the
+/// frame-membership centre: a reroute knot is measured by its dot, not a
+/// phantom `NODE_W` (the horizontal twin of the already-`height()`-aware
+/// vertical axis).
+#[test]
+fn r1243_reroute_width_flows_through_centre_key_and_contains() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).expect("splice");
+        let knot = coord.node_by_id(rid).expect("the reroute");
+        assert_eq!(
+            centre_key(&knot, DistributeAxis::Horizontal),
+            2 * knot.x + KNOT_SIZE,
+            "the horizontal distribute key uses the knot width, not NODE_W",
+        );
+        // A frame tightly around the knot's dot contains it (its centre sits
+        // inside), proving `contains_node` measures the dot, not a phantom card.
+        let tight = CommentFrame {
+            id: FrameId(0),
+            x: knot.x - 2,
+            y: knot.y - 2,
+            w: KNOT_SIZE + 4,
+            h: KNOT_SIZE + 4,
+            title: "F".to_owned(),
+        };
+        assert!(
+            tight.contains_node(&knot),
+            "the dot's centre is inside a tight frame"
         );
     });
 }

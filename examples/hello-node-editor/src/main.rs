@@ -57,7 +57,9 @@
 //! `selected` / `selected_ids` /
 //! `selected_edge`; `invoke add_edge` / `remove_edge` /
 //! `reconnect_edge` / `add_reroute` (R1235: splice a typed passthrough into an
-//! edge) / `delete_node` / `delete_selected` / `dissolve_node` /
+//! edge; R1243: also the live **double-click-on-wire** gesture, and the knot
+//! paints as a compact [`KNOT_SIZE`] dot) / `delete_node` / `delete_selected` /
+//! `dissolve_node` /
 //! `dissolve_selected` (R1236: delete + reconnect through a 1-in/1-out node) /
 //! `nudge` / the pointer `send` wire.
 //!
@@ -178,6 +180,10 @@
 //!   `intervene node.<id>.title` / `node.<id>.input_default.<port>` write-twins
 //!   drive (`query editing` is the in-flight read; `query renaming` survives as
 //!   its title-only projection).
+//! - **Double-click a wire** (R1243): splices a reroute knot into the wire under
+//!   the cursor (`A -> R -> B`), the live gesture twin of `invoke add_reroute
+//!   <edge_id>`. Reads the background edge-hit probe the same in-place click
+//!   selects a wire from, so a double-click on empty canvas no-ops.
 //! - **Multi-select marquee** (R879 model / R880 gesture) — an LMB background-
 //!   drag rubber-bands a rect (`MarqueeStart` + the `DragLatch` click-vs-drag
 //!   dead zone); on release every intersected node joins the set via
@@ -370,6 +376,14 @@ const HEADER_H: i32 = 30;
 const PORT_PITCH: i32 = 28;
 const PORT_SIZE: i32 = 12;
 const BODY_PAD: i32 = 10;
+
+/// R1243 — a reroute knot's diameter (logical px). A reroute node
+/// ([`GraphNode::is_reroute`]) is a wire-routing passthrough, not a compute op,
+/// so it paints as this compact circular dot instead of a full card: no header,
+/// port rows, or inline editors. Its width == height == this, and both its ports
+/// anchor at its centre ([`knot_center`]) — the wire passes straight through the
+/// dot (the Blueprint / material-editor reroute look).
+const KNOT_SIZE: i32 = 18;
 
 /// R1227 — comment-frame geometry. `FRAME_PAD` is the margin an
 /// `add_frame`-around-selection leaves on every side of the selected nodes'
@@ -709,16 +723,32 @@ impl GraphNode {
         irow(self.inputs().max(self.outputs()).max(1))
     }
 
+    /// R1243 — the node's width in graph units: a reroute knot is a compact
+    /// [`KNOT_SIZE`] dot, every other node the fixed [`NODE_W`] card. The one
+    /// home for "how wide is this node" so bounds / hit-test / centre / align
+    /// never disagree with the paint — the horizontal twin of [`GraphNode::height`]
+    /// (whose docstring already established the per-node height accessor).
+    fn width(&self) -> i32 {
+        if self.is_reroute { KNOT_SIZE } else { NODE_W }
+    }
+
     fn height(&self) -> i32 {
-        HEADER_H + self.rows() * PORT_PITCH + BODY_PAD
+        if self.is_reroute {
+            // R1243 — a reroute knot is a square dot: no header / port rows /
+            // body pad, just the [`KNOT_SIZE`] the width also takes.
+            KNOT_SIZE
+        } else {
+            HEADER_H + self.rows() * PORT_PITCH + BODY_PAD
+        }
     }
 
     /// R880.1 — the card's right extent in graph units. The bounds
-    /// expressions (`x + NODE_W` / `y + height()`) were re-derived at
+    /// expressions (`x + width()` / `y + height()`) were re-derived at
     /// three sites (frame_all, the marquee rect-hit, tests); the accessor
-    /// pair is their one home.
-    const fn right(&self) -> i32 {
-        self.x + NODE_W
+    /// pair is their one home. R1243 — routes through [`GraphNode::width`] so a
+    /// reroute knot's extent is its [`KNOT_SIZE`] dot, not a phantom [`NODE_W`].
+    fn right(&self) -> i32 {
+        self.x + self.width()
     }
 
     /// R880.1 — the card's bottom extent in graph units.
@@ -787,7 +817,9 @@ impl CommentFrame {
     /// full-overlap) is the Blueprint rule: a node belongs to the frame it sits
     /// in, even if its card slightly overhangs the border.
     fn contains_node(&self, n: &GraphNode) -> bool {
-        let cx = n.x + NODE_W / 2;
+        // R1243 — each axis uses the node's own extent (`width()` / `height()`),
+        // so a compact reroute knot's centre is where its dot actually is.
+        let cx = n.x + n.width() / 2;
         let cy = n.y + n.height() / 2;
         cx >= self.x && cx <= self.right() && cy >= self.y && cy <= self.bottom()
     }
@@ -992,8 +1024,21 @@ fn port_row_top(row: usize) -> i32 {
     HEADER_H + irow(row) * PORT_PITCH + PORT_PITCH / 2 - PORT_SIZE / 2
 }
 
+/// R1243 — the centre of a reroute knot in graph units: both its input and its
+/// output port anchor here, so a wire passes straight through the dot (the
+/// Blueprint reroute look). A reroute's `width()` and `height()` are both
+/// [`KNOT_SIZE`], so this is the geometric centre of the painted dot.
+fn knot_center(node: &GraphNode) -> (i32, i32) {
+    (node.x + node.width() / 2, node.y + node.height() / 2)
+}
+
 /// Centre of input port `i` of `node`, in window coordinates.
 fn input_port_center(node: &GraphNode, i: usize) -> (i32, i32) {
+    if node.is_reroute {
+        // R1243 — a knot has no port rows; every incident wire anchors at its
+        // centre, so the drawn wire terminates on the dot.
+        return knot_center(node);
+    }
     (
         node.x + PORT_SIZE / 2,
         node.y + port_row_top(i) + PORT_SIZE / 2,
@@ -1002,6 +1047,9 @@ fn input_port_center(node: &GraphNode, i: usize) -> (i32, i32) {
 
 /// Centre of output port `j` of `node`, in window coordinates.
 fn output_port_center(node: &GraphNode, j: usize) -> (i32, i32) {
+    if node.is_reroute {
+        return knot_center(node);
+    }
     (
         node.right() - PORT_SIZE / 2,
         node.y + port_row_top(j) + PORT_SIZE / 2,
@@ -1954,13 +2002,14 @@ enum DistributeAxis {
     Vertical,
 }
 
-/// R948 — twice a node's centre on `axis` (`2x + NODE_W` h / `2y + height()`
+/// R948 — twice a node's centre on `axis` (`2x + width()` h / `2y + height()`
 /// v). Doubling keeps the key an integer so the distribute sort + position math
 /// use a total `Ord` key with no float compare; the `/2` only re-enters at the
-/// final px target.
+/// final px target. R1243 — both axes read the node's own extent, so a reroute
+/// knot distributes about its dot centre, not a phantom [`NODE_W`].
 fn centre_key(n: &GraphNode, axis: DistributeAxis) -> i32 {
     match axis {
-        DistributeAxis::Horizontal => 2 * n.x + NODE_W,
+        DistributeAxis::Horizontal => 2 * n.x + n.width(),
         DistributeAxis::Vertical => 2 * n.y + n.height(),
     }
 }
@@ -2690,6 +2739,13 @@ struct NodeGraphExternal {
     /// Edge under the most recent background press (the capture-seed
     /// `pointer_move` records it; a background `PointerUp` consumes it).
     pending_edge_hit: Cell<Option<EdgeId>>,
+    /// R1243 — a reroute splice ARMED by a double-click on a wire, fired on the
+    /// trailing in-place `PointerUp` (`Some(edge)` between the `DoubleClick` and
+    /// its release). Deferred to the release — not run in the `DoubleClick` arm —
+    /// so a double-click that becomes a DRAG (a marquee begun on a wire) marquees
+    /// instead of splicing: the release routes to `apply_marquee`, and this arm
+    /// is dropped by `reset_gesture`.
+    pending_reroute_splice: Cell<Option<EdgeId>>,
     /// R880 — the in-flight background gesture (the marquee's press anchor +
     /// dead-zone latch; `None` while no background press is held).
     marquee: RefCell<Option<MarqueeStart>>,
@@ -2733,6 +2789,7 @@ impl NodeGraphExternal {
             pin_create: services.pin_create,
             pending_press: Cell::new(PendingPress::None),
             pending_edge_hit: Cell::new(None),
+            pending_reroute_splice: Cell::new(None),
             marquee: RefCell::new(None),
         }
     }
@@ -3410,7 +3467,10 @@ impl NodeGraphExternal {
         let node_id = self.mint_node_id();
         let mut reroute = GraphNode::new(node_id.raw(), "Reroute", 0, 0, &[ty], &[ty]);
         reroute.is_reroute = true; // R1242 — a first-class model identity, not the title
-        reroute.x = clamp_node_x(mid_x - NODE_W / 2);
+        // R1243 — centre the compact knot on the wire midpoint: `is_reroute` is
+        // set above, so `width()`/`height()` are both `KNOT_SIZE` and the dot
+        // sits exactly on the old wire (the double-click point).
+        reroute.x = clamp_node_x(mid_x - reroute.width() / 2);
         reroute.y = clamp_node_y(mid_y - reroute.height() / 2);
         // Mint the two replacement edges (A -> R, R -> B).
         let e_in = self.mint_edge_id();
@@ -4218,8 +4278,11 @@ impl NodeGraphExternal {
         };
         self.apply_node_moves(&sel, false, |n| match spec {
             AlignSpec::Left => (left, n.y),
-            AlignSpec::CenterH => (i32::midpoint(left, right) - NODE_W / 2, n.y),
-            AlignSpec::Right => (right - NODE_W, n.y),
+            // R1243 — horizontal specs use each node's own `width()` (the twin of
+            // the CenterV / Bottom `height()` below), so a reroute knot aligns by
+            // its dot, exactly as differently-sized cards align by their own box.
+            AlignSpec::CenterH => (i32::midpoint(left, right) - n.width() / 2, n.y),
+            AlignSpec::Right => (right - n.width(), n.y),
             AlignSpec::Top => (n.x, top),
             AlignSpec::CenterV => (n.x, i32::midpoint(top, bottom) - n.height() / 2),
             AlignSpec::Bottom => (n.x, bottom - n.height()),
@@ -4249,7 +4312,12 @@ impl NodeGraphExternal {
             .map(|(i, n)| {
                 let c2 = first_c + span * f64::from(i32::try_from(i).unwrap_or(0)) / denom;
                 let pos = match axis {
-                    DistributeAxis::Horizontal => (round_i32((c2 - f64::from(NODE_W)) / 2.0), n.y),
+                    // R1243 — the horizontal target derives x from the node's own
+                    // `width()` (the `n.height()` vertical twin), so a reroute
+                    // knot's centre lands on the equal-spacing grid.
+                    DistributeAxis::Horizontal => {
+                        (round_i32((c2 - f64::from(n.width())) / 2.0), n.y)
+                    }
                     DistributeAxis::Vertical => {
                         (n.x, round_i32((c2 - f64::from(n.height())) / 2.0))
                     }
@@ -4609,7 +4677,16 @@ impl NodeGraphExternal {
                 // drag was armed.
                 if self.grabbed_node.get().is_none() {
                     if let Some(rect) = self.live_marquee_rect() {
+                        // A MOVED background gesture is a marquee — never a
+                        // splice, even if a double-click armed one (the R1243
+                        // double-click-then-drag case): the armed splice is
+                        // dropped by `end_gesture` below.
                         self.apply_marquee(rect, mods);
+                    } else if let Some(edge) = self.pending_reroute_splice.get() {
+                        // R1243 — an IN-PLACE double-click on a wire splices a
+                        // reroute knot (deferred here from the `DoubleClick` arm).
+                        // `add_reroute` selects the new knot.
+                        self.add_reroute(edge);
                     } else {
                         match self.pending_edge_hit.get() {
                             Some(e) => self.select_edge(Some(e)),
@@ -4661,6 +4738,23 @@ impl NodeGraphExternal {
                 } else if let Some((n, port)) = parse_idefault_sub(s) {
                     self.begin_edit_default(n, port);
                 }
+            }
+            // R1243 — a double-click on empty canvas that lands on a WIRE splices
+            // a reroute knot into it (the Blueprint double-click-to-reroute
+            // gesture; the AI-first twin of `invoke add_reroute <edge_id>`). The
+            // press carrying this `DoubleClick` just seeded the background
+            // edge-hit probe (`pending_edge_hit`) at the double-click point — the
+            // same probe a single background click reads to select a wire (r880
+            // (G)) — so it names the wire under the cursor. A double-click on
+            // truly empty canvas seeded `None` and no-ops. The probe is CONSUMED
+            // (the edge it named is about to be removed), so the gesture's
+            // trailing `PointerUp` reads `None` and cannot re-select a dead edge.
+            (None, "DoubleClick") => {
+                // Arm the splice for the wire under the double-click (the probe
+                // the press just seeded). It FIRES on the trailing in-place
+                // `PointerUp`, not here — so a double-click that turns into a
+                // drag (a marquee begun on a wire) marquees instead of splicing.
+                self.pending_reroute_splice.set(self.pending_edge_hit.get());
             }
             _ => {}
         }
@@ -4734,6 +4828,10 @@ impl NodeGraphExternal {
         *self.node_drag.borrow_mut() = None;
         self.pending_press.set(PendingPress::None);
         self.pending_edge_hit.set(None);
+        // R1243 — drop any armed reroute splice: a fresh gesture never inherits
+        // one, and a double-click-then-drag's marquee release lands here to
+        // cancel the splice it armed (a moved gesture is never a splice).
+        self.pending_reroute_splice.set(None);
         // R880 — drop the marquee anchor + rubber-band paint (equality-skip
         // makes the idle-path clear a no-op repaint-wise).
         *self.marquee.borrow_mut() = None;
@@ -6135,6 +6233,50 @@ fn view_port_default_field(edit_field: RootState, top: i32, theme: &Theme, zoom:
 /// One node card: a header (title) over its input (left) + output (right)
 /// ports, absolutely placed at the node's canvas position. The whole card is
 /// one drag target; the ports are deeper hit targets for edge connect.
+/// R1243 — the selection border every node shape wears: a 2px accent ring when
+/// selected, else a 1px outline. The one home for the node-selection border so
+/// the full card ([`view_node`]) and the compact knot ([`view_reroute_knot`])
+/// can never draw a selected node differently.
+fn node_border(selected: bool, theme: &Theme) -> Border {
+    if selected {
+        Border::new(theme.resolve(ColorRole::Accent), 2)
+    } else {
+        Border::new(theme.resolve(ColorRole::Outline), 1)
+    }
+}
+
+/// R1243 — a reroute knot: a compact circular dot painted in its wire's
+/// signature colour, in place of a full node card. A reroute
+/// ([`GraphNode::is_reroute`]) is a wire-routing passthrough, not a compute op,
+/// so it carries no header / port rows / inline editors — the wire passes
+/// straight through the dot ([`knot_center`] anchors both ports). Tagged
+/// `#node_{id}` like any node, so it selects / drags / dissolves through the
+/// same paths; a selected knot gains the accent ring every node uses.
+fn view_reroute_knot(node: &GraphNode, selected: bool, theme: &Theme, zoom: f64) -> Scene {
+    let size = upx(wpx(KNOT_SIZE, zoom).max(4));
+    // The knot wears its wire's signature colour (the pin colour-coding
+    // convention); a reroute always has exactly one typed port.
+    let fill = node
+        .output_type(0)
+        .map_or_else(|| theme.resolve(ColorRole::Outline), PortType::color);
+    let border = node_border(selected, theme);
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(format!("{GRAPH_TAG}#node_{}", node.id))
+            .with_style(
+                BoxStyle::filled(fill)
+                    .with_border(border)
+                    // A half-diameter radius rounds the square into a dot.
+                    .with_corner_radius(size / 2),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(upx(wpx(node.x, zoom)), upx(wpx(node.y, zoom)))
+                    .with_size(Size::px(size, size)),
+            ),
+    )
+}
+
 fn view_node(
     node: &GraphNode,
     selected: bool,
@@ -6144,6 +6286,12 @@ fn view_node(
     theme: &Theme,
     zoom: f64,
 ) -> Scene {
+    // R1243 — a reroute paints as a compact knot (a wire passthrough), not a
+    // card: no header, port rows, or inline editors. It still selects / drags
+    // via its `#node_{id}` tag like any node.
+    if node.is_reroute {
+        return view_reroute_knot(node, selected, theme, zoom);
+    }
     let id = node.id;
     // R878 — while this node is being renamed, the header swaps its title
     // text for the ONE shared inline rename field (the data-grid
@@ -6237,11 +6385,7 @@ fn view_node(
         ));
     }
 
-    let border = if selected {
-        Border::new(theme.resolve(ColorRole::Accent), 2)
-    } else {
-        Border::new(theme.resolve(ColorRole::Outline), 1)
-    };
+    let border = node_border(selected, theme);
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("{GRAPH_TAG}#node_{id}"))
