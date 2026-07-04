@@ -978,6 +978,72 @@ fn point_near_edge(px: f64, py: f64, from: (i32, i32), to: (i32, i32), threshold
     false
 }
 
+/// The signed area of the triangle `a`-`b`-`c` (twice it): `> 0` when `c` is
+/// left of the directed segment `a`->`b`, `< 0` right, `0` collinear. The
+/// orientation primitive behind [`segments_cross`].
+fn orient2(a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> f64 {
+    (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+}
+
+/// Whether `c` (known collinear with `a`-`b`) lies within the segment `a`-`b`
+/// (its axis-aligned bounding box) — the boundary leg of [`segments_cross`].
+fn on_segment(a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> bool {
+    c.0 >= a.0.min(b.0) && c.0 <= a.0.max(b.0) && c.1 >= a.1.min(b.1) && c.1 <= a.1.max(b.1)
+}
+
+/// Whether segments `p1`-`p2` and `p3`-`p4` intersect — the robust CLRS
+/// predicate: a PROPER crossing (each segment straddles the other's supporting
+/// line, both orientation pairs strictly opposite) OR a boundary touch (an
+/// endpoint collinear with and inside the other segment). The boundary leg
+/// matters because the wire is sampled into sub-segments whose vertices can land
+/// exactly on the straight cut line — a strict-only test would then miss a knife
+/// that slices cleanly through a sample vertex (a flat wire cut at its midpoint).
+/// "Touching counts as cutting" is the intended knife behaviour.
+fn segments_cross(p1: (f64, f64), p2: (f64, f64), p3: (f64, f64), p4: (f64, f64)) -> bool {
+    let d1 = orient2(p3, p4, p1);
+    let d2 = orient2(p3, p4, p2);
+    let d3 = orient2(p1, p2, p3);
+    let d4 = orient2(p1, p2, p4);
+    if (d1 > 0.0) != (d2 > 0.0)
+        && d1 != 0.0
+        && d2 != 0.0
+        && (d3 > 0.0) != (d4 > 0.0)
+        && d3 != 0.0
+        && d4 != 0.0
+    {
+        return true;
+    }
+    (d1 == 0.0 && on_segment(p3, p4, p1))
+        || (d2 == 0.0 && on_segment(p3, p4, p2))
+        || (d3 == 0.0 && on_segment(p1, p2, p3))
+        || (d4 == 0.0 && on_segment(p1, p2, p4))
+}
+
+/// R1226 — whether the straight cut segment `a`-`b` crosses the wire from
+/// `from` to `to`. The curve is sampled into [`EDGE_SAMPLES`] sub-segments —
+/// the SAME `edge_curve` + `cubic_at` geometry [`point_near_edge`] reads, so the
+/// knife cuts exactly the drawn curve (no paint/geometry divergence) — and each
+/// is tested against the cut with [`segments_cross`].
+fn edge_crosses_segment(from: (i32, i32), to: (i32, i32), a: (i32, i32), b: (i32, i32)) -> bool {
+    let (c1, c2) = edge_curve(from, to);
+    let p0 = (f64::from(from.0), f64::from(from.1));
+    let p1 = (f64::from(c1.0), f64::from(c1.1));
+    let p2 = (f64::from(c2.0), f64::from(c2.1));
+    let p3 = (f64::from(to.0), f64::from(to.1));
+    let ca = (f64::from(a.0), f64::from(a.1));
+    let cb = (f64::from(b.0), f64::from(b.1));
+    let mut prev = p0;
+    for step in 1..=EDGE_SAMPLES {
+        let t = f64::from(step) / f64::from(EDGE_SAMPLES);
+        let cur = cubic_at(p0, p1, p2, p3, t);
+        if segments_cross(prev, cur, ca, cb) {
+            return true;
+        }
+        prev = cur;
+    }
+    false
+}
+
 /// R877 — node positions clamp to the WORLD extent, not the window: the
 /// canvas pans, so the old window-extent clamp would have pinned every
 /// node inside the boot view. The unsigned scene substrate makes `0` the
@@ -1464,6 +1530,20 @@ fn parse_reconnect(csv: &str) -> Option<(EdgeId, NodeId, usize)> {
         EdgeId(edge.trim().parse().ok()?),
         NodeId(tnode.trim().parse().ok()?),
         tport.trim().parse().ok()?,
+    ))
+}
+
+/// R1226 — parse the `cut_wires` arg `"x1,y1,x2,y2"` (a straight cut segment in
+/// graph units) into its two endpoints. `None` on a malformed spec, so the verb
+/// Rejects rather than cutting nothing silently.
+fn parse_cut_spec(csv: &str) -> Option<((i32, i32), (i32, i32))> {
+    let parts: Vec<&str> = csv.split(',').collect();
+    let [x1, y1, x2, y2] = parts.as_slice() else {
+        return None;
+    };
+    Some((
+        (x1.trim().parse().ok()?, y1.trim().parse().ok()?),
+        (x2.trim().parse().ok()?, y2.trim().parse().ok()?),
     ))
 }
 
@@ -3020,6 +3100,71 @@ impl NodeGraphExternal {
         true
     }
 
+    /// R1226 — the wire KNIFE: delete every edge the straight cut segment
+    /// `a`-`b` (graph units) crosses, as ONE undoable [`GraphEdit`] (a single
+    /// `Ctrl+Z` restores all cut wires with their stable ids — the multi-edge
+    /// analogue of [`remove_edge`](Self::remove_edge)). Each edge is resolved to
+    /// its port-center endpoints (the [`hit_test_edge`](Self::hit_test_edge)
+    /// SSOT) and tested with [`edge_crosses_segment`]. Returns the cut edge ids
+    /// (empty when the stroke crosses nothing — no undo entry recorded). This is
+    /// the §2 AI-first primary path for a knife gesture: the live drag is a
+    /// held mid-gesture the atomic `scene/drag` cannot snapshot (the R1114
+    /// §2 #2 note), so the cut is expressed verb-first and the human gesture
+    /// (a future canvas stroke) funnels through this same method.
+    fn cut_wires(&self, a: (i32, i32), b: (i32, i32)) -> Vec<EdgeId> {
+        let nodes = self.nodes.get();
+        let cut: Vec<Edge> = self
+            .edges
+            .get()
+            .iter()
+            .copied()
+            .filter(|e| {
+                let (Some(src), Some(dst)) = (
+                    nodes.iter().find(|n| n.id == e.from_node),
+                    nodes.iter().find(|n| n.id == e.to_node),
+                ) else {
+                    return false;
+                };
+                edge_crosses_segment(
+                    output_port_center(src, e.from_port),
+                    input_port_center(dst, e.to_port),
+                    a,
+                    b,
+                )
+            })
+            .collect();
+        if cut.is_empty() {
+            return Vec::new();
+        }
+        let ids: Vec<EdgeId> = cut.iter().map(|e| e.id).collect();
+        let sel_before = self.selection.get();
+        let sel_after = validate_after(sel_before.clone(), &[], &ids);
+        self.record_edit(
+            "Cut wires",
+            GraphDelta {
+                removed_edges: cut,
+                ..GraphDelta::default()
+            },
+            sel_before,
+            sel_after,
+        );
+        ids
+    }
+
+    /// R1226 — the `cut_wires` invoke arm, extracted so the `invoke` match stays
+    /// within the workspace `too_many_lines` ceiling. Parses `"x1,y1,x2,y2"` and
+    /// returns the CSV of cut edge ids; a malformed spec Rejects, a non-string
+    /// arg is a TypeMismatch.
+    fn invoke_cut_wires(&self, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(s) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let (a, b) = parse_cut_spec(&s).ok_or(InvokeError::Rejected)?;
+        Ok(IntrospectValue::Text(csv_ids(
+            self.cut_wires(a, b).iter().map(|id| id.raw()),
+        )))
+    }
+
     /// Delete node `id` and its incident edges. No reindex: every surviving
     /// node and edge keeps its stable id, so references elsewhere stay valid.
     /// R851 — the node *and* its incident edges are captured as a removed delta,
@@ -4073,6 +4218,10 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("add_edge", "string"),
             ("remove_edge", "int"),
             ("reconnect_edge", "string"),
+            // R1226 — the wire knife: cut every edge the segment "x1,y1,x2,y2"
+            // (graph units) crosses, as one undo step. Returns the CSV of cut
+            // edge ids (mirrors `edge_ids`), empty when nothing was crossed.
+            ("cut_wires", "string"),
             ("delete_node", "int"),
             ("delete_selected", "json"),
             ("select_all", "json"),
@@ -4415,6 +4564,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1226 — the wire knife (the AI-first primary path). Arg
+            // `"x1,y1,x2,y2"` (graph units); returns the CSV of cut edge ids.
+            "cut_wires" => self.invoke_cut_wires(args),
             "delete_node" => match args {
                 IntrospectValue::Int(i) => {
                     let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
@@ -11533,6 +11685,129 @@ mod tests {
             assert_eq!(
                 coord.invoke("align_nope", IntrospectValue::Null),
                 Err(InvokeError::UnknownPath),
+            );
+        });
+    }
+
+    // ── R1226 wire knife (cut_wires) ──────────────────────────────────
+
+    #[test]
+    fn r1226_segment_and_edge_cross_geometry() {
+        // A horizontal segment crossed by a vertical one -> proper cross.
+        assert!(segments_cross(
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (5.0, -5.0),
+            (5.0, 5.0)
+        ));
+        // Parallel segments never cross.
+        assert!(!segments_cross(
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (0.0, 5.0),
+            (10.0, 5.0)
+        ));
+        // A vertical line past the horizontal segment's end -> miss.
+        assert!(!segments_cross(
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (20.0, -5.0),
+            (20.0, 5.0)
+        ));
+        // A wire from (0,50)->(100,50) is a flat curve at y=50; a vertical cut at
+        // x=50 spanning it crosses, one offset below it does not.
+        assert!(edge_crosses_segment((0, 50), (100, 50), (50, 0), (50, 100)));
+        assert!(!edge_crosses_segment(
+            (0, 50),
+            (100, 50),
+            (50, 60),
+            (50, 100)
+        ));
+    }
+
+    #[test]
+    fn r1226_cut_wires_removes_only_the_crossed_edges() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            assert_eq!(coord.edges.get().len(), 3, "boot: 3 wires");
+            // A vertical knife at graph-x=200 (between the left column's right
+            // edge x=170 and Multiply's left x=250) crosses edges 0 + 1 (into
+            // Multiply) but not edge 2 (Multiply -> Output, x in [374,476]).
+            let cut = coord.cut_wires((200, 20), (200, 380));
+            assert_eq!(cut, vec![EdgeId(0), EdgeId(1)], "edges 0 and 1 are cut");
+            assert_eq!(
+                coord.edges.get().len(),
+                1,
+                "only Multiply -> Output survives"
+            );
+            assert!(
+                coord.edges.get().iter().any(|e| e.id == EdgeId(2)),
+                "edge 2 (past the knife) is untouched"
+            );
+        });
+    }
+
+    #[test]
+    fn r1226_cut_wires_is_one_undo_step() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            assert!(!stack.can_undo(), "boot: clean history");
+            let cut = coord.cut_wires((200, 20), (200, 380));
+            assert_eq!(cut.len(), 2, "two wires cut");
+            assert_eq!(coord.edges.get().len(), 1);
+            assert_eq!(stack.undo_label().as_deref(), Some("Cut wires"));
+            assert!(stack.undo(), "one undo restores BOTH cut wires");
+            assert_eq!(
+                coord.edges.get().len(),
+                3,
+                "the whole cut reverts in one step"
+            );
+            assert!(!stack.can_undo(), "the cut was a single journal entry");
+        });
+    }
+
+    #[test]
+    fn r1226_cut_wires_miss_is_a_noop_with_no_undo_entry() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            // A stroke in empty space (far below every wire) crosses nothing.
+            let cut = coord.cut_wires((600, 500), (700, 520));
+            assert!(cut.is_empty(), "no wire crossed -> nothing cut");
+            assert_eq!(coord.edges.get().len(), 3, "graph unchanged");
+            assert!(!stack.can_undo(), "a no-op cut records no undo entry");
+        });
+    }
+
+    #[test]
+    fn r1226_cut_wires_verb_schema_and_wire_form() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+            assert!(fields.contains(&"cut_wires"), "cut_wires schema-declared");
+            // The verb returns the CSV of cut ids (mirrors `edge_ids`).
+            assert_eq!(
+                coord.invoke(
+                    "cut_wires",
+                    IntrospectValue::Text("200,20,200,380".to_owned())
+                ),
+                Ok(IntrospectValue::Text("0,1".to_owned())),
+                "the verb cuts edges 0+1 and returns their id CSV",
+            );
+            // A malformed spec Rejects (never a silent empty cut); a non-string
+            // arg is a TypeMismatch.
+            assert_eq!(
+                coord.invoke("cut_wires", IntrospectValue::Text("bad".to_owned())),
+                Err(InvokeError::Rejected),
+            );
+            assert_eq!(
+                coord.invoke("cut_wires", IntrospectValue::Int(1)),
+                Err(InvokeError::TypeMismatch),
             );
         });
     }

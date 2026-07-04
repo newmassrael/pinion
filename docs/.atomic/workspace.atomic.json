@@ -61248,6 +61248,62 @@
         "next candidates: node comment-frame/cut-wire OR data-grid block PASTE OR inspector inline TextField (the big structural round)"
       ]
     },
+    "Round 1226": {
+      "decision_summary": "R1226 node-graph wire knife cut_wires: robust CLRS segment-intersection vs bezier samples (edge_curve SSOT); batch-remove all crossed wires as ONE undoable GraphEdit; RPC verb returns cut-edge CSV",
+      "changes_bullets": [
+        "cut_wires(a,b): delete every wire the straight cut segment crosses, as ONE undoable GraphEdit",
+        "geometry: segments_cross (robust CLRS proper+boundary) + edge_crosses_segment over the edge_curve/cubic_at samples",
+        "RPC verb cut_wires \"x1,y1,x2,y2\" (graph units) returns the cut-edge id CSV (mirrors edge_ids); parse_cut_spec",
+        "invoke_cut_wires extracted to keep the invoke match under the too_many_lines ceiling",
+        "5 unit tests (geometry / removes-only-crossed / one-undo-step / miss-noop / schema+wire-form)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 8014 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 160 pass (5 new R1226)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo fmt --all --check + cargo doc gate: clean",
+        "tools/demos/r1226_node_cut_wires.py: PASS, 30 assertions (cut subsets + one-undo + redo + miss + rejects)",
+        "3b self-grep: no existing segment-intersection in repo; reuses edge_curve/cubic_at + record_edit SSOT"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "live canvas knife GESTURE deferred: a held mid-drag is exactly the §2#2 scene/drag-cannot-snapshot case (R1114); cut_wires verb IS the AI-first primary path, a future stroke funnels through it",
+        "undo restores cut edges by APPEND (ids order [2,0,1] not [0,1,2]) — the set is correct, order is not a contract (GraphEdit append-on-restore; demo uses sorted ids like r1174)",
+        "node comment-frame / reroute node still gaps (bigger: a new entity / node kind)",
+        "next candidates: comment-frame OR reroute OR data-grid block PASTE OR inspector inline TextField (multi-external big round)"
+      ],
+      "publishable_decision_summary": "R1226 node-graph wire knife cut_wires: robust CLRS segment-intersection vs bezier samples (edge_curve SSOT); batch-remove all crossed wires as ONE undoable GraphEdit; RPC verb returns cut-edge CSV",
+      "publishable_changes_bullets": [
+        "cut_wires(a,b): delete every wire the straight cut segment crosses, as ONE undoable GraphEdit",
+        "geometry: segments_cross (robust CLRS proper+boundary) + edge_crosses_segment over the edge_curve/cubic_at samples",
+        "RPC verb cut_wires \"x1,y1,x2,y2\" (graph units) returns the cut-edge id CSV (mirrors edge_ids); parse_cut_spec",
+        "invoke_cut_wires extracted to keep the invoke match under the too_many_lines ceiling",
+        "5 unit tests (geometry / removes-only-crossed / one-undo-step / miss-noop / schema+wire-form)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 8014 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 160 pass (5 new R1226)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo fmt --all --check + cargo doc gate: clean",
+        "tools/demos/r1226_node_cut_wires.py: PASS, 30 assertions (cut subsets + one-undo + redo + miss + rejects)",
+        "3b self-grep: no existing segment-intersection in repo; reuses edge_curve/cubic_at + record_edit SSOT"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live canvas knife GESTURE deferred: a held mid-drag is exactly the §2#2 scene/drag-cannot-snapshot case (R1114); cut_wires verb IS the AI-first primary path, a future stroke funnels through it",
+        "undo restores cut edges by APPEND (ids order [2,0,1] not [0,1,2]) — the set is correct, order is not a contract (GraphEdit append-on-restore; demo uses sorted ids like r1174)",
+        "node comment-frame / reroute node still gaps (bigger: a new entity / node kind)",
+        "next candidates: comment-frame OR reroute OR data-grid block PASTE OR inspector inline TextField (multi-external big round)"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
