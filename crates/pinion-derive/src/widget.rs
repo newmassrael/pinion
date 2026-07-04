@@ -44,6 +44,15 @@
 //!   Returned from `WidgetView::initial_size`.
 //! - `external = ButtonExternal::new` — factory expression invoked
 //!   inside `WidgetCore::create_external` (`Box::new(<expr>())`).
+//! - `extra_externals = make_inspector_extras` (R1249, optional) —
+//!   nullary factory whose `Vec<ExtraExternal>` the emitted
+//!   `WidgetCore::create_extra_externals` returns, letting a macro
+//!   binding host sibling `External`s (an inline `TextField`, a
+//!   scrollbar) without dropping to a hand-written `impl WidgetCore`.
+//!   Incompatible with `read_state_derive` / `state_name_derive` (those
+//!   match `Scene::External` directly and cannot walk the `Container`
+//!   shape extras impose — rejected at parse time); the binding supplies
+//!   an inherent `read_state` calling `Scene::find_external_with_tag`.
 //!
 //! ## Required inherent methods
 //!
@@ -221,6 +230,7 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
         renderer,
         initial_size: (init_w, init_h),
         external,
+        extra_externals,
         role,
         state_flags,
         access_value,
@@ -306,31 +316,10 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
     } else {
         quote! { <#view_ident>::event_name(event) }
     };
-    // R670 §5.16 — `initial_size_strategy` body selector. The default
-    // emit is `SizeStrategy::Fixed { width, height }` from the
-    // `initial_size = (W, H)` attribute pair (the policy every R668
-    // binding migrated to). The `initial_size_strategy` flag opts
-    // into forwarding to the binding's inherent fn instead, used by
-    // `hello-popover` (and any future binding) that needs
-    // `SizeStrategy::IntrinsicAfterFirstPaint` or a custom variant
-    // the macro doesn't know how to emit declaratively.
-    //
-    // The `initial_size = (W, H)` attribute remains mandatory even
-    // when the strategy is overridden — the values feed
-    // `WidgetView::initial_size` (the cell-unit fallback the TUI
-    // sibling and headless screenshot path both still consult) and
-    // anchor winit's `set_min_inner_size` clamp at the same floor
-    // the strategy's `min` declares.
-    let initial_size_strategy_body = if flags.contains("initial_size_strategy") {
-        quote! { <#view_ident>::initial_size_strategy() }
-    } else {
-        quote! {
-            ::pinion_shell::SizeStrategy::Fixed {
-                width: #init_w,
-                height: #init_h,
-            }
-        }
-    };
+    let initial_size_strategy_body =
+        emit_initial_size_strategy_body(view_ident, &init_w, &init_h, &flags);
+
+    let extra_externals_impl = emit_extra_externals(extra_externals.as_ref());
 
     Ok(quote! {
         #item
@@ -345,6 +334,8 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
             fn create_external() -> ::std::boxed::Box<dyn ::pinion_core::external::External> {
                 ::std::boxed::Box::new(#external())
             }
+
+            #extra_externals_impl
 
             fn read_state(scene: &::pinion_core::Scene) -> #state {
                 #read_state_body
@@ -375,6 +366,55 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
             }
         }
     })
+}
+
+/// R670 §5.16 — `initial_size_strategy` body selector. The default emit is
+/// `SizeStrategy::Fixed { width, height }` from the `initial_size = (W, H)`
+/// attribute pair (the policy every R668 binding migrated to). The
+/// `initial_size_strategy` flag opts into forwarding to the binding's inherent
+/// fn instead, used by `hello-popover` (and any future binding) that needs
+/// `SizeStrategy::IntrinsicAfterFirstPaint` or a custom variant the macro
+/// doesn't know how to emit declaratively.
+///
+/// The `initial_size = (W, H)` attribute remains mandatory even when the
+/// strategy is overridden — the values feed `WidgetView::initial_size` (the
+/// cell-unit fallback the TUI sibling and headless screenshot path both still
+/// consult) and anchor winit's `set_min_inner_size` clamp at the same floor
+/// the strategy's `min` declares.
+fn emit_initial_size_strategy_body(
+    view_ident: &Ident,
+    init_w: &Expr,
+    init_h: &Expr,
+    flags: &HashSet<String>,
+) -> TokenStream2 {
+    if flags.contains("initial_size_strategy") {
+        quote! { <#view_ident>::initial_size_strategy() }
+    } else {
+        quote! {
+            ::pinion_shell::SizeStrategy::Fixed {
+                width: #init_w,
+                height: #init_h,
+            }
+        }
+    }
+}
+
+/// R1249 §5.45 — optional `create_extra_externals` override. Present only
+/// when the binding declared `extra_externals = <factory>`; the factory is a
+/// nullary fn returning `Vec<ExtraExternal>` invoked inside the root Owner
+/// scope (so `use_*` reactive hooks in it resolve the same `Rc`s the view fn
+/// later reads). Absent → the trait default (empty) stands and the
+/// single-External state-scene shape is preserved bit-for-bit.
+fn emit_extra_externals(extra_externals: Option<&Expr>) -> TokenStream2 {
+    match extra_externals {
+        Some(factory) => quote! {
+            fn create_extra_externals(
+            ) -> ::std::vec::Vec<::pinion_core::widget_core::ExtraExternal> {
+                #factory()
+            }
+        },
+        None => TokenStream2::new(),
+    }
 }
 
 fn emit_optional_forwards(
@@ -645,6 +685,11 @@ struct WidgetArgs {
     renderer: Type,
     initial_size: (Expr, Expr),
     external: Expr,
+    /// (R1249 §5.45) Optional `extra_externals = <factory>` — `None`
+    /// leaves the `WidgetCore::create_extra_externals` trait default
+    /// (empty) in place; `Some(expr)` emits an override returning
+    /// `expr()`.
+    extra_externals: Option<Expr>,
     role: Option<Ident>,
     state_flags: StateFlagsConfig,
     /// (R653 §5.16) Optional `access_value = bool_field(N)` top-level
@@ -672,6 +717,7 @@ struct WidgetArgsBuilder {
     renderer: Option<Type>,
     initial_size: Option<(Expr, Expr)>,
     external: Option<Expr>,
+    extra_externals: Option<Expr>,
     role: Option<Ident>,
     state_flags: Option<StateFlagsConfig>,
     access_value: Option<StateFlagSource>,
@@ -697,6 +743,12 @@ impl WidgetArgsBuilder {
                 Ok(())
             }
             WidgetArg::External(v) => assign(&mut self.external, v, "external", Spanned::span),
+            WidgetArg::ExtraExternals(v) => assign(
+                &mut self.extra_externals,
+                v,
+                "extra_externals",
+                Spanned::span,
+            ),
             WidgetArg::Role(v) => assign(&mut self.role, v, "role", |i: &Ident| i.span()),
             WidgetArg::StateFlags(cfg, span) => {
                 if self.state_flags.is_some() {
@@ -747,6 +799,28 @@ impl WidgetArgsBuilder {
                  attaches to the derived access_node body)",
             ));
         }
+        // R1249 §5.45 — hosting `extra_externals` reshapes the state scene
+        // from `Scene::External(primary)` to `Scene::Container([primary,
+        // ...extras])`. The DERIVED `read_state` (`read_state_derive` /
+        // `state_name_derive`) pattern-matches `Scene::External` directly,
+        // so it would fall through to the default state on a Container and
+        // silently read nothing (the R832 multi-External no-op class).
+        // Reject the combination at parse time: an extras-hosting binding
+        // must supply an inherent `read_state` that walks the container via
+        // `Scene::find_external_with_tag(Self::tag())`.
+        if self.extra_externals.is_some()
+            && (self.flags.contains("read_state_derive")
+                || self.flags.contains("state_name_derive"))
+        {
+            return Err(syn::Error::new(
+                input_span,
+                "'extra_externals = ...' is incompatible with 'read_state_derive' / \
+                 'state_name_derive': the derived read_state matches `Scene::External` \
+                 directly and cannot walk the `Scene::Container` shape extras impose. \
+                 Provide an inherent `read_state` that calls \
+                 `Scene::find_external_with_tag(Self::tag())` instead.",
+            ));
+        }
         let missing = |field: &str| {
             syn::Error::new(
                 input_span,
@@ -761,6 +835,7 @@ impl WidgetArgsBuilder {
             renderer: self.renderer.ok_or_else(|| missing("renderer"))?,
             initial_size: self.initial_size.ok_or_else(|| missing("initial_size"))?,
             external: self.external.ok_or_else(|| missing("external"))?,
+            extra_externals: self.extra_externals,
             role: self.role,
             state_flags: self.state_flags.unwrap_or_default(),
             access_value: self.access_value,
@@ -822,6 +897,16 @@ enum WidgetArg {
     Renderer(Type),
     InitialSize(Expr, Expr),
     External(Expr),
+    /// (R1249 §5.16 §5.45) `extra_externals = <factory>` — an optional
+    /// nullary factory whose `Vec<ExtraExternal>` the emitted
+    /// `WidgetCore::create_extra_externals` returns, so a macro binding
+    /// can host sibling `External`s (an inline `TextField`, a scrollbar)
+    /// without dropping to a hand-written `impl WidgetCore`. Absent → the
+    /// trait default (empty) stands; the 65 pre-R1249 extra-hosting
+    /// bindings that hand-rolled this method proved the gap
+    /// ([[abstraction-needs-second-consumer]]). `hello-inspector` is the
+    /// first consumer.
+    ExtraExternals(Expr),
     Role(Ident),
     StateFlags(StateFlagsConfig, proc_macro2::Span),
     /// (R653 §5.16) `access_value = bool_field(N)` parsed into the
@@ -880,6 +965,7 @@ impl Parse for WidgetArg {
                     Ok(Self::InitialSize(w, h))
                 }
                 "external" => Ok(Self::External(input.parse()?)),
+                "extra_externals" => Ok(Self::ExtraExternals(input.parse()?)),
                 "role" => Ok(Self::Role(input.parse()?)),
                 "access_value" => {
                     // R653 §5.16 — accept only the `bool_field(N)`

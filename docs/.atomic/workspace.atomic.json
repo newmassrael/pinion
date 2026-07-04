@@ -22340,6 +22340,68 @@
         "The two frozen changelog entries (R1221/R1222) keep their original text; this R1223 entry is the correction of record for the F5/HW-gated overstatements."
       ]
     },
+    "R1249": {
+      "decision_summary": "R1249: inspector absolute numeric type-in. New #[widget(extra_externals=)] macro attr hosts an inline TextField; Int/Float double-click/RPC commits an absolute value across the whole selection",
+      "changes_bullets": [
+        "§5.45 #[widget] extra_externals= attr emits create_extra_externals; inspector 1st consumer",
+        "§5.45 reject extra_externals + read_state_derive (derived read_state cant walk Container)",
+        "§5.38 inspector Int/Float cell double-click/begin_edit opens inline TextField (was steppers-only)",
+        "§5.38 commit=absolute value across selection via set_property; Enter/blur commit, Esc cancels",
+        "§5.38 malformed numeric commit keeps prior value (parse gate, no data loss)",
+        "§5.45 read_state/apply_key walk Container via find_external_with_tag (editor=sibling External)",
+        "§5.38 RPC editing/edit_text + begin_edit/commit_edit/cancel_edit verbs; edit-row a11y=textbox"
+      ],
+      "verification_bullets": [
+        "workspace 199 test binaries pass 0 fail; clippy -D pedantic + rustfmt + cargo doc(private) green",
+        "hello-inspector 54 unit tests pass (44 pre-existing unchanged + 10 new R1249 type-in)",
+        "r1249 demo 43 asserts PASS: keyboard type/Enter/Esc + double-click gesture (real runtime)",
+        "regression: r1221/r1224/r1225 inspector demos PASS = Container conversion behavior-preserving",
+        "macro compiles all 65 #[widget] bindings; workspace clippy+test green = no regression"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.45",
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "blur inline-editor extra=4 identical sites (pgrid/dgrid/node-ed/inspector); lift=R1250 SSOT round",
+        "clipboard inline-editor variant (file-manager/todomvc) separate shape, not the Variant-A helper",
+        "EDIT_FIELD_W=110 fixed field width; per-column measured width when a shared Float row appears",
+        "IME into the inline numeric field deferred (no consumer); digit/backspace/Enter/Esc covered",
+        "begin_edit uses captured Rcs (RPC-safe); commit/cancel free-fns Owner-scoped (apply_key/update)"
+      ],
+      "publishable_decision_summary": "R1249: inspector absolute numeric type-in. New #[widget(extra_externals=)] macro attr hosts an inline TextField; Int/Float double-click/RPC commits an absolute value across the whole selection",
+      "publishable_changes_bullets": [
+        "§5.45 #[widget] extra_externals= attr emits create_extra_externals; inspector 1st consumer",
+        "§5.45 reject extra_externals + read_state_derive (derived read_state cant walk Container)",
+        "§5.38 inspector Int/Float cell double-click/begin_edit opens inline TextField (was steppers-only)",
+        "§5.38 commit=absolute value across selection via set_property; Enter/blur commit, Esc cancels",
+        "§5.38 malformed numeric commit keeps prior value (parse gate, no data loss)",
+        "§5.45 read_state/apply_key walk Container via find_external_with_tag (editor=sibling External)",
+        "§5.38 RPC editing/edit_text + begin_edit/commit_edit/cancel_edit verbs; edit-row a11y=textbox"
+      ],
+      "publishable_verification_bullets": [
+        "workspace 199 test binaries pass 0 fail; clippy -D pedantic + rustfmt + cargo doc(private) green",
+        "hello-inspector 54 unit tests pass (44 pre-existing unchanged + 10 new R1249 type-in)",
+        "r1249 demo 43 asserts PASS: keyboard type/Enter/Esc + double-click gesture (real runtime)",
+        "regression: r1221/r1224/r1225 inspector demos PASS = Container conversion behavior-preserving",
+        "macro compiles all 65 #[widget] bindings; workspace clippy+test green = no regression"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.45",
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "blur inline-editor extra=4 identical sites (pgrid/dgrid/node-ed/inspector); lift=R1250 SSOT round",
+        "clipboard inline-editor variant (file-manager/todomvc) separate shape, not the Variant-A helper",
+        "EDIT_FIELD_W=110 fixed field width; per-column measured width when a shared Float row appears",
+        "IME into the inline numeric field deferred (no consumer); digit/backspace/Enter/Esc covered",
+        "begin_edit uses captured Rcs (RPC-safe); commit/cancel free-fns Owner-scoped (apply_key/update)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

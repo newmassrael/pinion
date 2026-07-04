@@ -22,6 +22,10 @@ pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 # R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
 # WidgetA11y + WidgetView forwarding trio.
 pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R1249 §5.38 — the shared inline `TextField` paint / read / a11y helpers
+# (`view_field` / `read_text_field_state` / `text_field_a11y_node`) for the
+# Details numeric type-in editor (the property-grid inline-editor lift).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 # R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
 # winit transitively).
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }

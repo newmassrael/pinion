@@ -74,19 +74,27 @@ use std::rc::Rc;
 use pinion_a11y::{
     AccessNode, AccessValue, AriaRole, ListOption, WidgetA11y, listbox_option_nodes,
 };
-use pinion_core::cell_value::CellValue;
+use pinion_core::cell_value::{CellKind, CellValue};
+use pinion_core::command::Command;
 use pinion_core::composite_tag::{prefixed_index, split_send_payload};
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
-use pinion_core::input::{Modifiers, MultiSelectKeyOp, SelectionChord, is_activation_event};
+use pinion_core::input::{
+    Modifiers, MultiSelectKeyOp, SelectionChord, edit_field_keymap, is_activation_event,
+};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle,
     Size, TextStyle,
 };
+use pinion_core::theme::Theme;
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::listbox_item::ListboxItemState;
+use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
+use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::widgets::virtual_select::{
     SelectionMode, VirtualSelect, clamp_nav, read_selected, read_selection, selected_to_value,
     selection_to_value,
@@ -94,6 +102,7 @@ use pinion_core::widgets::virtual_select::{
 use pinion_core::{ColorRole, Frame, Owner, Scene, Signal, use_theme};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
+use pinion_widget_paint::text_field as tf_paint;
 
 // pinion-forge codegen output: `pub struct HelloInspectorRenderer`.
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -109,6 +118,22 @@ const INSPECTOR_TAG: &str = "inspector";
 /// The object-list container tag — the `aria-multiselectable` `listbox`.
 const OBJECTS_TAG: &str = "inspector_objects";
 const THEME_TAG: &str = "app";
+
+/// R1249 — the ONE shared inline numeric type-in editor hosted as an extra
+/// [`TextFieldExternal`] (the property-grid `EDIT_TF` precedent). A
+/// double-click on an `Int` / `Float` Details cell (or `invoke begin_edit
+/// <i>`) seeds it with the property's current value and focuses it; `Enter`
+/// commits the typed value across the whole selection, `Escape` cancels,
+/// blur commits. Its state-scene registration turns the root scene into a
+/// `Scene::Container([primary, edit_field])` — hence `read_state` /
+/// `apply_key` walk via [`Scene::find_external_with_tag`], not a bare
+/// `Scene::External` match.
+const EDIT_TF_TAG: &str = "inspector_edit";
+/// R1249 — the R793 commit-on-blur intent the editor raises when it loses
+/// focus mid-edit; the `update` reducer drains it to a `commit_edit`. Built
+/// through the drift-safe `intent_tag!` macro so the raise + drain spellings
+/// cannot diverge.
+const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("inspector_edit", "blur");
 
 const TITLE_FONT_PX: u32 = 16;
 const HEADER_FONT_PX: u32 = 15;
@@ -131,6 +156,10 @@ const DETAIL_ROW_W: u32 = 260;
 const SWATCH: u32 = 16;
 /// R1221 — the +/- numeric-stepper button size (px) on a Details value cell.
 const STEPPER: u32 = 18;
+/// R1249 — the inline absolute type-in editor's field width (px), replacing the
+/// stepper row on the row being edited. Sized to sit in the value column
+/// alongside the reset gutter without overflowing [`DETAIL_ROW_W`].
+const EDIT_FIELD_W: u32 = 110;
 /// R1224 — the keyboard-cursor focus ring width (px) painted around the active
 /// row of whichever pane currently owns the keyboard (the paint peer of the a11y
 /// active-descendant `focused`).
@@ -324,6 +353,19 @@ fn use_focus() -> Rc<Signal<InspectorFocus>> {
     owner.cache("inspector.focus", || Signal::new(InspectorFocus::default()))
 }
 
+/// R1249 — the common-property index currently being type-in edited (`None`
+/// when the inline editor is closed). Owner-scoped like the object / selection /
+/// focus models so the edit lifecycle ([`InspectorExternal::begin_edit`] /
+/// [`commit_edit`] / [`cancel_edit`]) and the view / a11y all read one authority
+/// — the property-grid `use_editing_row` precedent. The index addresses the
+/// live common-property list (the same space `focus_property` / the value cells
+/// use); a selection change that shrinks the list is handled by the
+/// [`InspectorExternal::common`] bounds gate in `commit_edit`.
+fn use_editing_prop() -> Rc<Signal<Option<usize>>> {
+    let owner = Owner::current().expect("use_editing_prop requires an active Owner scope");
+    owner.cache("inspector.editing_prop", || Signal::new(None))
+}
+
 // ─── Common-property derivation (the SSOT shared by query / paint / a11y) ──
 
 /// One row of the multi-object Details panel: a property common to every
@@ -423,6 +465,12 @@ const DEC_PREFIX: &str = "dec";
 /// the enum cell advances it to the next option across the whole selection (the
 /// segmented-control gesture, the keyboard `ArrowRight` twin).
 const CYCLE_PREFIX: &str = "cycle";
+/// R1249 — the `Int` / `Float` value-cell double-click prefix
+/// (`inspector#typein<i>`): a double-click opens the inline absolute type-in
+/// editor ([`EDIT_TF_TAG`]) on that row (the steppers stay for single-click).
+/// Distinct from `inc`/`dec` so a stepper click and a cell double-click never
+/// alias.
+const TYPEIN_PREFIX: &str = "typein";
 /// R1221 — the per-`inc`/`dec` step for a `Float` common property (an `Int`
 /// steps by 1). Common Float rows do not arise in the sample data (the shared
 /// actor properties are Bool/Int), so this only bites a future shared Float.
@@ -522,6 +570,17 @@ struct InspectorExternal {
     /// R1224 — the keyboard-focus region + active Details property cursor (the
     /// `focus_region` / `focus_property` RPC surface + the keyboard funnel).
     focus: Rc<Signal<InspectorFocus>>,
+    /// R1249 — the common-property index the inline type-in editor is open on
+    /// (`None` = closed), captured from [`use_editing_prop`] so
+    /// [`InspectorExternal::begin_edit`] can latch it from the RPC-invoke /
+    /// pointer-send paths (which are not
+    /// reliably inside an `Owner` scope — the property-grid captured-`Rc`
+    /// precedent). The Owner cache makes it the SAME signal the view / a11y /
+    /// free-fn `commit_edit` resolve.
+    editing_prop: Rc<Signal<Option<usize>>>,
+    /// R1249 — the shared inline editor's text buffer, captured from
+    /// [`use_text_edit_state`] so `begin_edit` can seed it off-Owner.
+    editor: Rc<TextEditState>,
 }
 
 impl InspectorExternal {
@@ -530,12 +589,16 @@ impl InspectorExternal {
         selection: Rc<Signal<VirtualSelect>>,
         defaults: Rc<Vec<ObjectData>>,
         focus: Rc<Signal<InspectorFocus>>,
+        editing_prop: Rc<Signal<Option<usize>>>,
+        editor: Rc<TextEditState>,
     ) -> Self {
         Self {
             objects,
             selection,
             defaults,
             focus,
+            editing_prop,
+            editor,
         }
     }
 
@@ -765,6 +828,18 @@ impl InspectorExternal {
         let Some((key, event_name, modifiers)) = split_send_payload(payload) else {
             return;
         };
+        // R1249 — a DOUBLE-click on an Int/Float value cell (`inspector#typein<i>`)
+        // opens the inline absolute type-in editor; a single click keeps hitting
+        // the steppers. `DoubleClick` is not an activation event, so branch on it
+        // before the `is_activation_event` gate below (the node-editor
+        // double-click precedent). A non-numeric row's cell carries no `typein`
+        // tag, so this never fires there.
+        if event_name == "DoubleClick" {
+            if let Some(idx) = prefixed_index(key, TYPEIN_PREFIX) {
+                self.begin_edit(idx);
+            }
+            return;
+        }
         if !is_activation_event(event_name) {
             return;
         }
@@ -968,6 +1043,68 @@ impl InspectorExternal {
         });
         true
     }
+
+    /// R1249 — open the inline ABSOLUTE type-in editor on common property `idx`.
+    /// Gated to the text-editable NUMERIC kinds (`Int` / `Float`) — the only
+    /// gap the steppers left (a value could be STEPPED but never TYPED). A
+    /// `Bool` has its click-toggle, a `Choice` its click-cycle, a `Color` /
+    /// `Text` its read-only display (still RPC-editable via `intervene value.<i>`;
+    /// a shared inline delegate for those is the property-grid's, reusable when a
+    /// shared such property arises). Seeds the shared editor with the
+    /// representative value's [`edit_text`](CellValue::edit_text) (a mixed
+    /// selection anchors on the first object's value — a concrete number to type
+    /// over), latches `editing_prop`, and focuses the field. Uses the CAPTURED
+    /// `Rc`s (not `use_*` hooks) so the RPC-invoke / double-click paths open it
+    /// whether or not they run inside an `Owner` scope. Returns `false` (no-op)
+    /// for a non-numeric or out-of-range row.
+    fn begin_edit(&self, idx: usize) -> bool {
+        let common = self.common();
+        let Some(prop) = common.get(idx) else {
+            return false;
+        };
+        if !matches!(prop.value, CellValue::Int(_) | CellValue::Float(_)) {
+            return false;
+        }
+        // `seed` = set_text + caret-at-end (the lifted TextEditState pair).
+        self.editor.seed(prop.value.edit_text());
+        self.editing_prop.set(Some(idx));
+        pinion_core::focus_request::request(EDIT_TF_TAG);
+        true
+    }
+
+    /// R1249 — parse `text` by the editing row's [`CellKind`] and write the
+    /// ABSOLUTE value across the WHOLE selection through the
+    /// [`set_property`](Self::set_property) funnel (the same multi-object path
+    /// `intervene value.<i>` drives), then tear the editor down. A malformed
+    /// numeric keeps the prior value (the `parse` gate — no data loss). Returns
+    /// `true` iff a value was written. This is the write SSOT both the RPC
+    /// `commit_edit` verb (with the wire text) and the free-fn keyboard/blur
+    /// [`commit_edit`] (with the live buffer) route through; it uses the CAPTURED
+    /// `Rc`s so the RPC-invoke path commits with no `Owner` scope.
+    fn commit_edit_text(&self, text: &str, restore_focus: bool) -> bool {
+        let Some(idx) = self.editing_prop.get() else {
+            return false;
+        };
+        let written = self
+            .common()
+            .get(idx)
+            .and_then(|prop| prop.value.kind().parse(text))
+            .is_some_and(|parsed| self.set_property(idx, &parsed.to_introspect()).is_ok());
+        self.close_edit(restore_focus);
+        written
+    }
+
+    /// R1249 — editor teardown SSOT: clear `editing_prop`, wipe the buffer so the
+    /// next open starts from a fresh seed, and (on request) return focus to the
+    /// inspector root. Captured-`Rc` based (no `Owner`), so the RPC `cancel_edit`
+    /// verb reaches it. The `editing_prop` gate makes a post-commit blur a no-op.
+    fn close_edit(&self, restore_focus: bool) {
+        self.editing_prop.set(None);
+        self.editor.set_text(String::new());
+        if restore_focus {
+            pinion_core::focus_request::request(INSPECTOR_TAG);
+        }
+    }
 }
 
 impl core::fmt::Debug for InspectorExternal {
@@ -1028,6 +1165,18 @@ impl ExternalIntrospect for InspectorExternal {
             ("focus_region", "string"),
             ("prop_cursor", "int"),
             ("focus_property", "int"),
+            // R1249 — the inline absolute type-in editor surface (§2 #2: the
+            // editor's open row + live buffer are observable, and the AI drives
+            // the whole edit over RPC without char-by-char keys). `editing` reads
+            // the common-property index the field is open on (Null when closed);
+            // `edit_text` reads the live buffer. `begin_edit` opens it on a
+            // numeric row, `commit_edit` writes the wire text across the selection
+            // and closes, `cancel_edit` closes without writing.
+            ("editing", "int"),
+            ("edit_text", "string"),
+            ("begin_edit", "int"),
+            ("commit_edit", "string"),
+            ("cancel_edit", "null"),
         ])
     }
 
@@ -1051,6 +1200,10 @@ impl ExternalIntrospect for InspectorExternal {
             // the active pane / property row through these).
             "focus_region" => Some(IntrospectValue::Text(self.focus_region().wire().to_owned())),
             "prop_cursor" => Some(selected_to_value(self.edit_cursor())),
+            // R1249 — the inline editor's open row (Null when closed) + live
+            // buffer, the read half of the type-in surface.
+            "editing" => Some(selected_to_value(self.editing_prop.get())),
+            "edit_text" => Some(IntrospectValue::Text(self.editor.text())),
             _ => {
                 if let Some(j) = path.strip_prefix("object_name.") {
                     let j: usize = j.parse().ok()?;
@@ -1241,6 +1394,29 @@ impl ExternalIntrospect for InspectorExternal {
                 self.set_prop_cursor(Some(idx));
                 Ok(selected_to_value(self.edit_cursor()))
             }
+            // R1249 — open the inline ABSOLUTE type-in editor on common property
+            // `idx` (the double-click twin). `false` for a non-numeric / out-of-
+            // range row (a benign miss). Seeds the field with the current value
+            // and focuses it — the AI then drives `commit_edit`/`cancel_edit`.
+            "begin_edit" => {
+                let idx = int_arg(args)?;
+                Ok(IntrospectValue::Bool(self.begin_edit(idx)))
+            }
+            // R1249 — commit a typed ABSOLUTE value across the whole selection +
+            // close (the `Enter` twin). Arg = the wire text; parsed by the editing
+            // row's kind (a malformed numeric keeps the prior value). `true` iff a
+            // value was written; `false` when no editor is open or the parse fails.
+            "commit_edit" => match args {
+                IntrospectValue::Text(text) => {
+                    Ok(IntrospectValue::Bool(self.commit_edit_text(&text, true)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R1249 — close the editor without writing (the `Escape` twin).
+            "cancel_edit" => {
+                self.close_edit(true);
+                Ok(IntrospectValue::Null)
+            }
             // R910/R902.1 — the composite pointer wire (modifier-aware).
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
@@ -1260,7 +1436,67 @@ fn make_inspector_external() -> InspectorExternal {
         use_selection(),
         use_object_defaults(),
         use_focus(),
+        use_editing_prop(),
+        use_text_edit_state(EDIT_TF_TAG),
     )
+}
+
+/// R1249 — the sibling `External`s the `#[widget(extra_externals = ...)]`
+/// attribute registers alongside the primary [`InspectorExternal`]: the ONE
+/// shared inline numeric type-in editor. Runs in the root Owner scope, so
+/// `use_text_edit_state` / `use_caret_blink` resolve the same `Rc`s the view
+/// fn ([`detail_value_cell`]) and the free-fn edit lifecycle later read.
+/// `with_blur_intent` opts the field into the R793 commit-on-blur signal the
+/// `update` reducer drains. The registration reshapes the state scene into a
+/// `Scene::Container([inspector, inspector_edit])`.
+fn make_inspector_extras() -> Vec<ExtraExternal> {
+    vec![ExtraExternal::new(
+        EDIT_TF_TAG,
+        Box::new(
+            TextFieldExternal::new()
+                .attach_state(use_text_edit_state(EDIT_TF_TAG))
+                .attach_blink(use_caret_blink(EDIT_TF_TAG))
+                .with_blur_intent(),
+        ),
+    )]
+}
+
+// ─── Inline type-in edit lifecycle (R1249) ────────────────────────
+//
+// `begin_edit` is an `InspectorExternal` method (its callers — RPC invoke +
+// double-click send — hold `&self`). `commit` / `cancel` are free fns: the
+// commit-on-blur path (the `update` reducer) has neither `&self` nor the scene,
+// so it resolves the Owner-cached signals through `use_*` hooks + rebuilds the
+// write handle via `make_inspector_external()` (the same signals `begin_edit`
+// captured), reusing the audit-cleared `set_property` multi-object funnel
+// without a second copy of the write scaffold.
+
+/// R1249 — the keyboard/blur commit: read the LIVE editor buffer and commit it
+/// across the selection through the [`InspectorExternal::commit_edit_text`]
+/// write SSOT. Reached from the Owner-scoped `apply_key` (`Enter`) + `update`
+/// (blur) paths, so it rebuilds the handle over the same Owner-cached signals.
+/// `restore_focus` returns focus to the root on `Enter`; a blur passes `false`
+/// (the click already moved focus).
+fn commit_edit(restore_focus: bool) {
+    let text = use_text_edit_state(EDIT_TF_TAG).text();
+    make_inspector_external().commit_edit_text(&text, restore_focus);
+}
+
+/// R1249 — the keyboard cancel (`Escape`): leave every selected object's value
+/// untouched, close, restore focus. Delegates to the
+/// [`InspectorExternal::close_edit`] teardown SSOT.
+fn cancel_edit() {
+    make_inspector_external().close_edit(true);
+}
+
+/// R1249 — the [`CellKind`] of the row the inline editor is open on (`None`
+/// when closed), the int/float keystroke gate [`edit_field_keymap`] consults.
+fn editing_kind() -> Option<CellKind> {
+    let idx = use_editing_prop().get()?;
+    make_inspector_external()
+        .common()
+        .get(idx)
+        .map(|p| p.value.kind())
 }
 
 // ─── View ─────────────────────────────────────────────────────────
@@ -1278,7 +1514,7 @@ const N_OBJECTS: usize = 3;
 /// membership, `cursor` the active (WAI-ARIA active-descendant) object. Drives
 /// both the painted selection highlight and the a11y `aria-selected` / active
 /// descendant.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct InspectorState {
     selected: [bool; N_OBJECTS],
     cursor: Option<usize>,
@@ -1287,6 +1523,25 @@ struct InspectorState {
     /// R1224 — the active Details property row (already clamped by the External),
     /// the a11y active-descendant + keyboard-edit target when `region` is Details.
     prop_cursor: Option<usize>,
+    /// R1249 — the inline numeric type-in editor's paint posture (interaction
+    /// state + caret byte), read off the sibling `inspector_edit` External in
+    /// `read_state`. Consumed by [`detail_value_cell`] / [`detail_access_node`]
+    /// only for the row equal to [`use_editing_prop`]; `(Idle, 0)` otherwise.
+    /// [`TextFieldState`] is not `Default`, so [`InspectorState`]'s `Default` is
+    /// hand-written below rather than derived.
+    edit_field: (TextFieldState, u32),
+}
+
+impl Default for InspectorState {
+    fn default() -> Self {
+        Self {
+            selected: [false; N_OBJECTS],
+            cursor: None,
+            region: FocusRegion::default(),
+            prop_cursor: None,
+            edit_field: (TextFieldState::Idle, 0),
+        }
+    }
 }
 
 impl InspectorState {
@@ -1313,6 +1568,14 @@ impl InspectorState {
     fn with_focus(mut self, region: FocusRegion, prop_cursor: Option<usize>) -> Self {
         self.region = region;
         self.prop_cursor = prop_cursor;
+        self
+    }
+
+    /// R1249 — layer the inline editor's paint posture (read off the sibling
+    /// `inspector_edit` External) onto the state; the many selection-only
+    /// `from_parts` call sites stay `(Idle, 0)` (the [`Default`] editor field).
+    fn with_edit_field(mut self, field: (TextFieldState, u32)) -> Self {
+        self.edit_field = field;
         self
     }
 
@@ -1464,20 +1727,28 @@ fn stepper_button(glyph: &str, tag: String, accent: Color) -> Scene {
 /// the mixed placeholder) inside a `inspector#toggle<i>` click target (flip
 /// across the whole selection, resolving a mixed Bool to uniform); an **Int** /
 /// **Float** paints `[-] value [+]` steppers (`inspector#dec<i>` /
-/// `inspector#inc<i>`, a mix-preserving relative shift). Every other kind
-/// (Choice / Color / Text) keeps the read-only [`detail_value_visual`] display
-/// (still RPC-editable via `intervene value.<i>` — inline delegates for those
-/// kinds are the property-grid's, reusable when a shared such property arises).
-/// R1225 — a **Choice** cell is a `inspector#cycle<i>` click target: a click
-/// advances the enum to its next option across the whole selection (the keyboard
-/// `ArrowRight` twin, a segmented-control gesture).
+/// `inspector#inc<i>`, a mix-preserving relative shift) wrapped in a
+/// `inspector#typein<i>` double-click target (R1249 — a double-click opens the
+/// inline absolute type-in editor). Every other kind (Choice / Color / Text)
+/// keeps the read-only [`detail_value_visual`] display (still RPC-editable via
+/// `intervene value.<i>` — inline delegates for those kinds are the
+/// property-grid's, reusable when a shared such property arises). R1225 — a
+/// **Choice** cell is a `inspector#cycle<i>` click target.
+///
+/// R1249 — when `editing` (this row is the one [`use_editing_prop`] points at)
+/// the Int/Float arm paints the shared inline [`EDIT_TF_TAG`] field in place of
+/// the steppers, seeded + focused by [`InspectorExternal::begin_edit`]. Colours
+/// derive from `theme` so the value column and the field share one palette.
 fn detail_value_cell(
     index: usize,
     prop: &CommonProperty,
-    fg: Color,
-    accent: Color,
-    muted: Color,
+    theme: &Theme,
+    editing: bool,
+    edit_field: (TextFieldState, u32),
 ) -> Scene {
+    let fg = theme.resolve(ColorRole::OnSurface);
+    let accent = theme.resolve(ColorRole::Accent);
+    let muted = theme.resolve(ColorRole::OnSurfaceMuted);
     match prop.value {
         CellValue::Bool(_) => Scene::Container(
             ContainerNode::new(vec![detail_value_visual(prop, fg, accent, muted)])
@@ -1489,6 +1760,34 @@ fn detail_value_cell(
                         .with_margin(Rect::new(0, 0, RESET_GUTTER, 0)),
                 ),
         ),
+        CellValue::Int(_) | CellValue::Float(_) if editing => {
+            // R1249 — the inline absolute type-in editor replaces the steppers on
+            // the edited row. `view_field` tags its node `EDIT_TF_TAG`, so the
+            // router routes clicks / focus to the sibling `inspector_edit`
+            // External. The reset gutter is preserved so a modified row's reset
+            // dot still clears the field.
+            let style = tf_paint::TextFieldStyle {
+                field_w: EDIT_FIELD_W,
+                field_h: ROW_H - 8,
+                ..tf_paint::TextFieldStyle::m3_filled()
+            };
+            Scene::Container(
+                ContainerNode::new(vec![tf_paint::view_field(
+                    EDIT_TF_TAG,
+                    edit_field.0,
+                    edit_field.1,
+                    theme,
+                    &style,
+                    "",
+                )])
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Center)
+                        .with_margin(Rect::new(0, 0, RESET_GUTTER, 0)),
+                ),
+            )
+        }
         CellValue::Int(_) | CellValue::Float(_) => {
             let label = Scene::Text(TextNode::styled(
                 common_value_label(prop),
@@ -1503,6 +1802,10 @@ fn detail_value_cell(
                     label,
                     stepper_button("+", format!("{INSPECTOR_TAG}#{INC_PREFIX}{index}"), accent),
                 ])
+                // R1249 — a double-click anywhere on the numeric cell (the label
+                // between the steppers) opens the type-in editor; single-click
+                // still hits the steppers (their own deeper tags win the hit-test).
+                .with_tag(format!("{INSPECTOR_TAG}#{TYPEIN_PREFIX}{index}"))
                 .with_layout(
                     LayoutStyle::new()
                         .flex(FlexDirection::Row)
@@ -1540,16 +1843,21 @@ fn property_row(
     prop: &CommonProperty,
     modified: bool,
     focused: bool,
-    fg: Color,
-    muted: Color,
-    accent: Color,
+    theme: &Theme,
+    editing: bool,
+    edit_field: (TextFieldState, u32),
 ) -> Scene {
+    let muted = theme.resolve(ColorRole::OnSurfaceMuted);
+    let accent = theme.resolve(ColorRole::Accent);
     let name = Scene::Text(TextNode::styled(
         prop.name.clone(),
         Rect::default(),
         TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(muted),
     ));
-    let mut children = vec![name, detail_value_cell(index, prop, fg, accent, muted)];
+    let mut children = vec![
+        name,
+        detail_value_cell(index, prop, theme, editing, edit_field),
+    ];
     if modified {
         // A small accent square at the trailing edge: the "modified, click to
         // reset" mark. Absolutely positioned (out of the SpaceBetween flow) so
@@ -1639,7 +1947,6 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
     let surface_alt = theme.resolve(ColorRole::SurfaceContainerHighest);
-    let muted = theme.resolve(ColorRole::OnSurfaceMuted);
     let accent = theme.resolve(ColorRole::Accent);
 
     let objects = use_objects().get();
@@ -1694,6 +2001,9 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
     // R958 — the frozen defaults the per-row reset arrow compares against
     // (same SSOT the External's `modified.<i>` query reads).
     let defaults = use_object_defaults();
+    // R1249 — the common-property index the inline editor is open on; the row
+    // equal to it paints the field instead of the steppers.
+    let editing_prop = use_editing_prop().get();
     for (i, prop) in common_properties(&objects, &selection).iter().enumerate() {
         let modified = property_modified_from_default(&objects, &selection, &defaults, &prop.name);
         detail_children.push(property_row(
@@ -1701,9 +2011,9 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
             prop,
             modified,
             state.is_prop_cursor(i),
-            on_surface,
-            muted,
-            accent,
+            &theme,
+            editing_prop == Some(i),
+            state.edit_field,
         ));
     }
     let detail = Scene::Container(
@@ -1757,8 +2067,14 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
     renderer = HelloInspectorRenderer,
     initial_size = (WIN_W, WIN_H),
     external = make_inspector_external,
+    // R1249 — host the shared inline numeric type-in editor as a sibling
+    // External (the state scene becomes a Container); `read_state` / `apply_key`
+    // walk it via `find_external_with_tag`.
+    extra_externals = make_inspector_extras,
     a11y_manual,
     apply_key,
+    // R1249 — drain the editor's R793 commit-on-blur intent.
+    update,
 )]
 struct InspectorView;
 
@@ -1766,10 +2082,17 @@ impl InspectorView {
     /// Read the selection (set + cursor) off the primary External's introspect,
     /// reusing the canonical [`read_selection`] / [`read_selected`] decoders.
     fn read_state(scene: &Scene) -> InspectorState {
-        if let Scene::External(node) = scene {
+        // R1249 — the state scene is a `Container([inspector, inspector_edit])`
+        // now that the inline editor is a sibling External, so walk to the
+        // primary by tag rather than matching `Scene::External` directly (which
+        // would silently read the default state off the container — the R832
+        // multi-External no-op). The inline editor's own paint posture (caret +
+        // interaction) is read off the sibling for the editing value cell.
+        if let Some(node) = scene.find_external_with_tag(INSPECTOR_TAG) {
             if let Some(intro) = node.handle.introspect() {
                 return InspectorState::from_parts(&read_selection(intro), read_selected(intro))
-                    .with_focus(read_focus_region(intro), read_prop_cursor(intro));
+                    .with_focus(read_focus_region(intro), read_prop_cursor(intro))
+                    .with_edit_field(tf_paint::read_text_field_state(scene, EDIT_TF_TAG));
             }
         }
         InspectorState::default()
@@ -1781,6 +2104,19 @@ impl InspectorView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
+    }
+
+    /// R1249 §5.38 — commit-on-blur: the inline numeric editor lost focus (a
+    /// click elsewhere) mid-edit → commit the typed value without restoring
+    /// focus (the click already moved it). Gated on an open editor so the
+    /// post-commit blur (focus already restored to the root) is a no-op — only a
+    /// genuine click-away commits (the R793 discipline). Runs in the root Owner
+    /// scope (`CoreShell` wraps `update`), so the `use_*` hooks resolve.
+    fn update(_state: InspectorState, intent: &pinion_core::Intent) -> Vec<Command> {
+        if intent.tag_str() == EDIT_TF_BLUR_INTENT_TAG && use_editing_prop().get().is_some() {
+            commit_edit(false);
+        }
+        Vec::new()
     }
 
     /// Keyboard control over BOTH inspector panes, `Tab`-switched (R1224). The
@@ -1807,7 +2143,27 @@ impl InspectorView {
         key: &str,
         modifiers: Modifiers,
     ) -> bool {
-        let Scene::External(node) = scene else {
+        // R1249 — while the inline numeric editor owns focus it owns the keys:
+        // `Enter` commits the typed value across the selection, `Escape` cancels,
+        // the caret / deletion keys forward to the field, and a non-numeric
+        // keystroke is rejected at the `CellKind` gate (the shared
+        // `edit_field_keymap` SSOT). Must run before the primary is borrowed —
+        // the keymap forwards into the sibling field via `&mut scene`.
+        if focused == Some(EDIT_TF_TAG) {
+            let kind = editing_kind().unwrap_or(CellKind::Float);
+            return edit_field_keymap(
+                scene,
+                EDIT_TF_TAG,
+                key,
+                modifiers,
+                kind,
+                || commit_edit(true),
+                cancel_edit,
+            );
+        }
+
+        // R1249 — the state scene is a `Container`; walk to the primary by tag.
+        let Some(node) = scene.find_external_with_tag_mut(INSPECTOR_TAG) else {
             return false;
         };
 
@@ -2063,14 +2419,31 @@ impl WidgetA11y for InspectorView {
         // named `"{name}: {value}"`. All tagged `prop_<i>`, the same tag the
         // paint uses, so each AT node resolves to its painted row's bounds.
         let rows = common_properties(&objects, &selection);
+        // R1249 — the row being type-in edited: its AT node is the inline field's
+        // `textbox` (tagged `EDIT_TF_TAG`, resolving to the painted field bounds)
+        // in place of the row's `spinbutton`, so the Details group references
+        // that tag as its child for the edited row.
+        let editing_prop = use_editing_prop().get();
+        let edit_text = use_text_edit_state(EDIT_TF_TAG).text();
         let mut panel = AccessNode::new(DETAIL_TAG, AriaRole::Group)
             .with_name(selection_summary(&objects, &selection));
         for i in 0..rows.len() {
-            panel = panel.with_child(format!("prop_{i}"));
+            if editing_prop == Some(i) {
+                panel = panel.with_child(EDIT_TF_TAG.to_owned());
+            } else {
+                panel = panel.with_child(format!("prop_{i}"));
+            }
         }
         nodes.push(panel);
         for (i, prop) in rows.iter().enumerate() {
-            nodes.push(detail_access_node(i, prop, state.is_prop_cursor(i)));
+            let editing =
+                (editing_prop == Some(i)).then(|| (edit_text.clone(), state.edit_field.0));
+            nodes.push(detail_access_node(
+                i,
+                prop,
+                state.is_prop_cursor(i),
+                editing,
+            ));
         }
         nodes
     }
@@ -2103,7 +2476,21 @@ impl WidgetA11y for InspectorView {
 /// The operable roles are genuinely AT-operable: the shell routes an AT
 /// Increment / Decrement / Click on `prop_<i>` to `apply_key(Some("prop_<i>"), …)`,
 /// which `edit_property_at` dispatches to the same verb (R1228 B3).
-fn detail_access_node(index: usize, prop: &CommonProperty, focused: bool) -> AccessNode {
+fn detail_access_node(
+    index: usize,
+    prop: &CommonProperty,
+    focused: bool,
+    editing: Option<(String, TextFieldState)>,
+) -> AccessNode {
+    // R1249 — while type-in editing, the row's operable role yields to the
+    // inline field's `textbox` (the lifted `text_field_a11y_node` SSOT), tagged
+    // `EDIT_TF_TAG` so it resolves to the painted field bounds and the AT reads
+    // the live buffer. The spinbutton returns once the edit commits / cancels —
+    // the paint==a11y one-gate, both keyed off `use_editing_prop`.
+    if let Some((text, posture)) = editing {
+        return tf_paint::text_field_a11y_node(EDIT_TF_TAG, text, posture, focused)
+            .with_name(prop.name.clone());
+    }
     let tag = format!("prop_{index}");
     match prop.value {
         CellValue::Bool(b) => {
@@ -2871,6 +3258,8 @@ mod tests {
                 Rc::new(Signal::new(model)),
                 defaults,
                 Rc::new(Signal::new(InspectorFocus::default())),
+                use_editing_prop(),
+                use_text_edit_state(EDIT_TF_TAG),
             )
         });
         // value.0 (the common "Mode") set to option index 2 across both.
@@ -3202,6 +3591,8 @@ mod tests {
                 Rc::new(Signal::new(model)),
                 Rc::new(vec![mode(0), mode(2)]),
                 Rc::new(Signal::new(InspectorFocus::default())),
+                use_editing_prop(),
+                use_text_edit_state(EDIT_TF_TAG),
             )
         });
         assert_eq!(
@@ -3344,9 +3735,15 @@ mod tests {
         use pinion_core::external::External;
         use pinion_core::scene::ExternalNode;
         Owner::new().run(|| {
-            let mut scene = Scene::External(ExternalNode::new(
-                Box::new(make_inspector_external()) as Box<dyn External>
-            ));
+            // R1249 — tag the primary as the runtime does (`CoreShell` wraps
+            // `ExternalNode::new(...).with_tag(V::tag())`), so `apply_key`'s
+            // `find_external_with_tag(INSPECTOR_TAG)` container-walk resolves it.
+            // The pre-R1249 untagged node only worked because the old code matched
+            // `Scene::External` shape-blind.
+            let mut scene = Scene::External(
+                ExternalNode::new(Box::new(make_inspector_external()) as Box<dyn External>)
+                    .with_tag(INSPECTOR_TAG),
+            );
             let team = || {
                 let objs = use_objects().get();
                 choice_sel(
@@ -3382,6 +3779,218 @@ mod tests {
             let focus = use_focus().get();
             assert_eq!(focus.region, FocusRegion::Details);
             assert_eq!(focus.prop_cursor, Some(5));
+        });
+    }
+
+    // ── R1249 inline absolute type-in editor ─────────────────────────────
+    // Common numeric row across all three objects: Layer(1) = 1, 1, 2. The
+    // steppers shift RELATIVELY; the type-in editor writes an ABSOLUTE value.
+
+    fn layer_default(obj: usize) -> CellValue {
+        default_objects()[obj].properties[1].value.clone()
+    }
+
+    #[test]
+    fn r1249_begin_edit_opens_a_numeric_row_and_seeds_the_value() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert_eq!(
+            e.query("name.1"),
+            Some(IntrospectValue::Text("Layer".to_owned()))
+        );
+        assert!(e.begin_edit(1), "a numeric row opens the editor");
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(1)));
+        // Seeded with the representative (first selected object's) value.
+        assert_eq!(e.editor.text(), "1", "seeded with the representative value");
+    }
+
+    #[test]
+    fn r1249_begin_edit_rejects_non_numeric_and_out_of_range_rows() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // Visible(0) + Locked(2) are Bool rows — the type-in editor never opens.
+        assert!(
+            !e.begin_edit(0),
+            "a Bool row does not open the type-in editor"
+        );
+        assert!(
+            !e.begin_edit(2),
+            "a Bool row does not open the type-in editor"
+        );
+        assert!(!e.begin_edit(99), "an out-of-range row is a benign miss");
+        assert_eq!(
+            e.query("editing"),
+            Some(IntrospectValue::Null),
+            "still closed"
+        );
+    }
+
+    #[test]
+    fn r1249_commit_writes_the_absolute_value_across_the_whole_selection() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert!(e.begin_edit(1));
+        // Type 7 + commit -> EVERY selected object's Layer becomes 7 (absolute,
+        // collapsing the prior 1/1/2 divergence) — the multi-object write, for
+        // free through `set_property`.
+        assert!(e.commit_edit_text("7", true), "a valid numeric commits");
+        for obj in 0..3 {
+            assert_eq!(obj_value(&e, obj, "Layer"), CellValue::Int(7));
+        }
+        assert_eq!(
+            e.query("editing"),
+            Some(IntrospectValue::Null),
+            "closed after commit"
+        );
+        assert_eq!(e.editor.text(), "", "buffer wiped for the next edit");
+    }
+
+    #[test]
+    fn r1249_commit_of_a_malformed_number_keeps_the_prior_value() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert!(e.begin_edit(1));
+        assert!(
+            !e.commit_edit_text("not a number", true),
+            "a malformed numeric is not written (no data loss)"
+        );
+        for obj in 0..3 {
+            assert_eq!(obj_value(&e, obj, "Layer"), layer_default(obj));
+        }
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r1249_cancel_leaves_every_value_untouched() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert!(e.begin_edit(1));
+        e.close_edit(true);
+        for obj in 0..3 {
+            assert_eq!(obj_value(&e, obj, "Layer"), layer_default(obj));
+        }
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r1249_editing_and_edit_text_are_rpc_introspectable() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert_eq!(
+            e.query("editing"),
+            Some(IntrospectValue::Null),
+            "closed at boot"
+        );
+        e.begin_edit(1);
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(1)));
+        assert_eq!(
+            e.query("edit_text"),
+            Some(IntrospectValue::Text("1".to_owned()))
+        );
+    }
+
+    #[test]
+    fn r1249_rpc_begin_and_commit_verbs_drive_the_whole_edit() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // The AI-first path: begin on a numeric row, commit the wire text.
+        assert_eq!(
+            e.invoke("begin_edit", IntrospectValue::Int(1)).unwrap(),
+            IntrospectValue::Bool(true)
+        );
+        assert_eq!(
+            e.invoke("commit_edit", IntrospectValue::Text("42".to_owned()))
+                .unwrap(),
+            IntrospectValue::Bool(true)
+        );
+        for obj in 0..3 {
+            assert_eq!(obj_value(&e, obj, "Layer"), CellValue::Int(42));
+        }
+        // begin_edit on a Bool row via RPC -> false, editor stays closed.
+        assert_eq!(
+            e.invoke("begin_edit", IntrospectValue::Int(0)).unwrap(),
+            IntrospectValue::Bool(false)
+        );
+        // cancel_edit verb closes without writing.
+        e.invoke("begin_edit", IntrospectValue::Int(1)).unwrap();
+        assert_eq!(
+            e.invoke("cancel_edit", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Null
+        );
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r1249_double_click_send_opens_the_editor_single_click_does_not() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // A single click (PointerUp) on the numeric cell is the stepper row — it
+        // does NOT open the type-in editor.
+        e.invoke(
+            "send",
+            IntrospectValue::Text("typein1:PointerUp".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            e.query("editing"),
+            Some(IntrospectValue::Null),
+            "a single click does not open the editor"
+        );
+        // A double-click opens it.
+        e.invoke(
+            "send",
+            IntrospectValue::Text("typein1:DoubleClick".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            e.query("editing"),
+            Some(IntrospectValue::Int(1)),
+            "a double-click opens the editor"
+        );
+    }
+
+    #[test]
+    fn r1249_editing_row_paints_the_field_not_the_steppers() {
+        Owner::new().run(|| {
+            let mut e = make_inspector_external();
+            e.invoke("select_all", IntrospectValue::Null).unwrap();
+            let state = InspectorState::from_parts(&[0, 1, 2], Some(0));
+            // Idle: the numeric cell is the stepper row (a `typein1` double-click
+            // target); no inline field.
+            let idle = view(&state, &Frame::new());
+            assert!(idle.contains_tag(&format!("{INSPECTOR_TAG}#{TYPEIN_PREFIX}1")));
+            assert!(!idle.contains_tag(EDIT_TF_TAG));
+            // Editing row 1: the inline field replaces the steppers.
+            e.begin_edit(1);
+            let editing = view(&state, &Frame::new());
+            assert!(editing.contains_tag(EDIT_TF_TAG), "the inline field paints");
+            assert!(
+                !editing.contains_tag(&format!("{INSPECTOR_TAG}#{TYPEIN_PREFIX}1")),
+                "the steppers give way to the field"
+            );
+        });
+    }
+
+    #[test]
+    fn r1249_editing_row_a11y_is_a_textbox_not_a_spinbutton() {
+        Owner::new().run(|| {
+            let mut e = make_inspector_external();
+            e.invoke("select_all", IntrospectValue::Null).unwrap();
+            let state = InspectorState::from_parts(&[0, 1, 2], Some(0));
+            e.begin_edit(1);
+            let nodes = <InspectorView as WidgetA11y>::access_node(&state, None);
+            // The edited row's AT node is the inline field's `textbox` (tagged
+            // EDIT_TF_TAG so it resolves to the field bounds), NOT the row's
+            // spinbutton — the paint==a11y one-gate.
+            let field = nodes
+                .iter()
+                .find(|n| n.tag == EDIT_TF_TAG)
+                .expect("the edited row emits a textbox a11y node");
+            assert_eq!(field.role, AriaRole::TextInput);
+            assert!(
+                !nodes.iter().any(|n| n.tag == "prop_1"),
+                "the spinbutton yields to the textbox while editing"
+            );
         });
     }
 }

@@ -2419,6 +2419,7 @@ dependencies = [
  "pinion-derive",
  "pinion-forge",
  "pinion-shell",
+ "pinion-widget-paint",
  "serde",
  "serde_json",
  "vello",
