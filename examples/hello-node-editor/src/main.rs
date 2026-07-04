@@ -1136,17 +1136,25 @@ fn edge_crosses_segment(from: (i32, i32), to: (i32, i32), a: (i32, i32), b: (i32
     false
 }
 
+/// R1238 — the hard right / bottom bound a node's top-left may take so the whole
+/// card stays on the world surface (`WORLD` minus the card extent). Named once so
+/// the per-node clamp ([`clamp_node_x`] / [`clamp_node_y`]) and the frame rigid-
+/// group clamp ([`clamp_frame_dx`] / [`clamp_frame_dy`]) can never disagree on the
+/// ceiling — the bare `WORLD - HEADER_H - 8` literal was duplicated across them.
+const MAX_NODE_X: i32 = WORLD - NODE_W;
+const MAX_NODE_Y: i32 = WORLD - HEADER_H - 8;
+
 /// R877 — node positions clamp to the WORLD extent, not the window: the
 /// canvas pans, so the old window-extent clamp would have pinned every
 /// node inside the boot view. The unsigned scene substrate makes `0` the
 /// world's hard left/top edge; the right/bottom clamp keeps the whole
 /// card on the world surface.
 fn clamp_node_x(x: i32) -> i32 {
-    x.clamp(0, WORLD - NODE_W)
+    x.clamp(0, MAX_NODE_X)
 }
 
 fn clamp_node_y(y: i32) -> i32 {
-    y.clamp(0, WORLD - HEADER_H - 8)
+    y.clamp(0, MAX_NODE_Y)
 }
 
 // ─── R877 viewport math (graph units ↔ world px ↔ canvas px) ───────
@@ -1945,24 +1953,35 @@ struct MoveNodesCmd {
     coalescable: bool,
 }
 
+/// R1238 — replay a recorded [`NodeMove`] set onto the node signal in the
+/// `to_after` (redo) or `!to_after` (undo) direction, in one write. No clamp
+/// (both ends were captured from already-clamped positions); an absent member is
+/// skipped (a LIFO undo can never reach a move while the node is deleted, but the
+/// write stays total). The ONE home for this reactive reposition loop, shared by
+/// [`MoveNodesCmd::set_all`] (a group move) and [`FrameGeomCmd::set_geom`] (a
+/// move-with-contents) — the 2nd consumer (R1234) that arrived after R853
+/// ([[abstraction-needs-second-consumer]]). Distinct from the coordinator's
+/// [`apply_node_moves`](NodeGraphExternal::apply_node_moves), which *computes +
+/// journals* a fresh move; this only replays an already-recorded one.
+fn replay_node_moves(nodes: &Rc<Signal<Vec<GraphNode>>>, moves: &[NodeMove], to_after: bool) {
+    nodes.set_with(|prev| {
+        let mut next = prev.clone();
+        for (id, before, after) in moves {
+            let pos = if to_after { after } else { before };
+            if let Some(n) = next.iter_mut().find(|n| n.id == *id) {
+                n.x = pos.0;
+                n.y = pos.1;
+            }
+        }
+        next
+    });
+}
+
 impl MoveNodesCmd {
     /// Set every member to its `before` (`to_after = false`) or `after`
-    /// position in one signal write (no clamp — both ends were captured
-    /// from already-clamped positions). An absent member is skipped (a
-    /// LIFO undo can never reach a move while the node is deleted, but
-    /// the signal write stays total either way).
+    /// position (the [`replay_node_moves`] SSOT).
     fn set_all(&self, to_after: bool) {
-        self.nodes.set_with(|prev| {
-            let mut next = prev.clone();
-            for (id, before, after) in &self.moves {
-                let pos = if to_after { after } else { before };
-                if let Some(n) = next.iter_mut().find(|n| n.id == *id) {
-                    n.x = pos.0;
-                    n.y = pos.1;
-                }
-            }
-            next
-        });
+        replay_node_moves(&self.nodes, &self.moves, to_after);
     }
 }
 
@@ -2063,17 +2082,7 @@ impl FrameGeomCmd {
             next
         });
         if !self.moves.is_empty() {
-            self.nodes.set_with(|prev| {
-                let mut next = prev.clone();
-                for (id, before, after) in &self.moves {
-                    let pos = if to_after { after } else { before };
-                    if let Some(n) = next.iter_mut().find(|n| n.id == *id) {
-                        n.x = pos.0;
-                        n.y = pos.1;
-                    }
-                }
-                next
-            });
+            replay_node_moves(&self.nodes, &self.moves, to_after);
         }
     }
 }
@@ -2105,7 +2114,7 @@ fn clamp_frame_dx(frame: &CommentFrame, members: &[GraphNode], dx: i32) -> i32 {
     let mut hi = WORLD - frame.x;
     for n in members {
         lo = lo.max(-n.x);
-        hi = hi.min(WORLD - NODE_W - n.x);
+        hi = hi.min(MAX_NODE_X - n.x);
     }
     dx.clamp(lo, hi)
 }
@@ -2118,7 +2127,7 @@ fn clamp_frame_dy(frame: &CommentFrame, members: &[GraphNode], dy: i32) -> i32 {
     let mut hi = WORLD - frame.y;
     for n in members {
         lo = lo.max(-n.y);
-        hi = hi.min((WORLD - HEADER_H - 8) - n.y);
+        hi = hi.min(MAX_NODE_Y - n.y);
     }
     dy.clamp(lo, hi)
 }
@@ -2950,9 +2959,8 @@ impl NodeGraphExternal {
     /// is needed (the stable-id model: adding is purely additive).
     fn add_node(&self, kind: usize) -> Option<NodeId> {
         let &(title, input_ports, output_ports) = PALETTE.get(kind)?;
-        let raw = self.next_node_id.get();
-        self.next_node_id.set(raw + 1);
-        let id = NodeId(raw);
+        let id = self.mint_node_id();
+        let raw = id.raw();
         // Cascade in minted order from the spawn point so repeated adds fan out
         // instead of stacking exactly on one another. R877 — the spawn point is
         // a fixed *canvas* position projected into graph space through the
@@ -3087,9 +3095,7 @@ impl NodeGraphExternal {
         }
         let target_port = first_compatible_input(kind, from_ty)?;
         let &(title, input_ports, output_ports) = PALETTE.get(kind)?;
-        let raw = self.next_node_id.get();
-        self.next_node_id.set(raw + 1);
-        let node_id = NodeId(raw);
+        let node_id = self.mint_node_id();
         let node = GraphNode {
             id: node_id,
             title: title.to_owned(),
@@ -3099,10 +3105,8 @@ impl NodeGraphExternal {
             output_ports: output_ports.to_vec(),
             input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
         };
-        let edge_id = EdgeId(self.next_edge_id.get());
-        self.next_edge_id.set(edge_id.raw() + 1);
         let edge = Edge {
-            id: edge_id,
+            id: self.mint_edge_id(),
             from_node: pc.from_node,
             from_port: pc.from_port,
             to_node: node_id,
@@ -3255,6 +3259,18 @@ impl NodeGraphExternal {
         id
     }
 
+    /// R1238 — the [`NodeId`] twin of [`mint_edge_id`](Self::mint_edge_id): mint
+    /// the next stable node id, bumping the monotonic counter. The one node-id
+    /// source shared by [`add_node`](Self::add_node), the pin-drop create
+    /// ([`commit_pin_create_kind`](Self::commit_pin_create_kind)), and the reroute
+    /// splice ([`add_reroute`](Self::add_reroute)) — the 3rd consumer that made the
+    /// lift due (`add_node` still reads `.raw()` afterward for its cascade offset).
+    fn mint_node_id(&self) -> NodeId {
+        let id = NodeId(self.next_node_id.get());
+        self.next_node_id.set(id.raw() + 1);
+        id
+    }
+
     fn commit_new_edge(
         &self,
         label: &'static str,
@@ -3361,12 +3377,10 @@ impl NodeGraphExternal {
         let (from, to) = edge_endpoints(&nodes, &edge)?;
         let mid_x = i32::midpoint(from.0, to.0);
         let mid_y = i32::midpoint(from.1, to.1);
-        let node_raw = self.next_node_id.get();
-        self.next_node_id.set(node_raw + 1);
-        let mut reroute = GraphNode::new(node_raw, "Reroute", 0, 0, &[ty], &[ty]);
+        let node_id = self.mint_node_id();
+        let mut reroute = GraphNode::new(node_id.raw(), "Reroute", 0, 0, &[ty], &[ty]);
         reroute.x = clamp_node_x(mid_x - NODE_W / 2);
         reroute.y = clamp_node_y(mid_y - reroute.height() / 2);
-        let node_id = reroute.id;
         // Mint the two replacement edges (A -> R, R -> B).
         let e_in = self.mint_edge_id();
         let e_out = self.mint_edge_id();

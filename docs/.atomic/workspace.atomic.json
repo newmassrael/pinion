@@ -61860,6 +61860,50 @@
         "next R1238 candidates: inspector inline TextField absolute type-in / node knot compact render / grid auto-grow-on-paste (add rows to fit)"
       ]
     },
+    "Round 1238": {
+      "decision_summary": "R1238 SSOT audit-clearance (campaign 1/5): route commit_pin_create_kind through mint_edge_id (4th site R1235 missed), lift mint_node_id (3-site), extract replay_node_moves (FrameGeomCmd/MoveNodesCmd shared loop), name MAX_NODE_X/Y consts; found by independent adversarial review (self-grep-count-all-sites failure mode)",
+      "changes_bullets": [
+        "S1: commit_pin_create_kind (R1220 pin-drop) still hand-rolled the edge-id mint -> routed through mint_edge_id; R1235's \"fully funneled\" claim was false (4th site missed by self-grep)",
+        "S2: node-id minting was 3 sites (add_node, commit_pin_create_kind, add_reroute) not the claimed 2 -> lifted mint_node_id funnel (NodeId twin of mint_edge_id); add_node keeps .raw() for its cascade offset",
+        "S3: FrameGeomCmd::set_geom copy-pasted MoveNodesCmd::set_all's node-move loop verbatim (R1234 2nd consumer) -> extracted free fn replay_node_moves, both route through it (distinct from the coordinator apply_node_moves which computes+journals)",
+        "S4: named MAX_NODE_X/MAX_NODE_Y consts (WORLD-NODE_W / WORLD-HEADER_H-8) consumed by clamp_node_x/y AND clamp_frame_dx/dy -> the bare magic 8 no longer duplicated across the node + frame clamps"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 179 pass / 0 fail (behavior-preserving refactor; no test delta)",
+        "cargo clippy -p hello-node-editor --all-targets: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "regression demos PASS: r1220 pin-drop (commit_pin_create_kind mint change), r1234 frame-move (clamp const change), r1235 reroute, r851 undo",
+        "root cause = self-grep-count-all-sites-not-just-new-pair: R1235/R1236 self-grep counted only the sites being added, missing the pre-existing commit_pin_create_kind peer; found by independent adversarial SSOT review"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "this is round 1 of a 5-round audit-clearance campaign (R1238-R1242) triggered by a user \"textbook/SSOT/north-star?\" audit; independent adversarial reviewers found real defects my post-round self-reports missed",
+        "still to clear: R1239 reroute-first-class (NodeKind::Reroute field + knot render + double-click-splice arm + reroute discriminator query) / R1240 frame move on-world bound + docstring + a11y member-children / R1241 dissolvable read-twin + dissolve synthetic-graph tests + Alt+Delete feedback / R1242 paste group+collapse test"
+      ],
+      "publishable_decision_summary": "R1238 SSOT audit-clearance (campaign 1/5): route commit_pin_create_kind through mint_edge_id (4th site R1235 missed), lift mint_node_id (3-site), extract replay_node_moves (FrameGeomCmd/MoveNodesCmd shared loop), name MAX_NODE_X/Y consts; found by independent adversarial review (self-grep-count-all-sites failure mode)",
+      "publishable_changes_bullets": [
+        "S1: commit_pin_create_kind (R1220 pin-drop) still hand-rolled the edge-id mint -> routed through mint_edge_id; R1235's \"fully funneled\" claim was false (4th site missed by self-grep)",
+        "S2: node-id minting was 3 sites (add_node, commit_pin_create_kind, add_reroute) not the claimed 2 -> lifted mint_node_id funnel (NodeId twin of mint_edge_id); add_node keeps .raw() for its cascade offset",
+        "S3: FrameGeomCmd::set_geom copy-pasted MoveNodesCmd::set_all's node-move loop verbatim (R1234 2nd consumer) -> extracted free fn replay_node_moves, both route through it (distinct from the coordinator apply_node_moves which computes+journals)",
+        "S4: named MAX_NODE_X/MAX_NODE_Y consts (WORLD-NODE_W / WORLD-HEADER_H-8) consumed by clamp_node_x/y AND clamp_frame_dx/dy -> the bare magic 8 no longer duplicated across the node + frame clamps"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 179 pass / 0 fail (behavior-preserving refactor; no test delta)",
+        "cargo clippy -p hello-node-editor --all-targets: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "regression demos PASS: r1220 pin-drop (commit_pin_create_kind mint change), r1234 frame-move (clamp const change), r1235 reroute, r851 undo",
+        "root cause = self-grep-count-all-sites-not-just-new-pair: R1235/R1236 self-grep counted only the sites being added, missing the pre-existing commit_pin_create_kind peer; found by independent adversarial SSOT review"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "this is round 1 of a 5-round audit-clearance campaign (R1238-R1242) triggered by a user \"textbook/SSOT/north-star?\" audit; independent adversarial reviewers found real defects my post-round self-reports missed",
+        "still to clear: R1239 reroute-first-class (NodeKind::Reroute field + knot render + double-click-splice arm + reroute discriminator query) / R1240 frame move on-world bound + docstring + a11y member-children / R1241 dissolvable read-twin + dissolve synthetic-graph tests + Alt+Delete feedback / R1242 paste group+collapse test"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [
