@@ -62122,6 +62122,48 @@
         "Next candidates (audit-first): inspector numeric absolute type-in inline TextField (Color=picker / Text=field still missing) / data-grid auto-grow-on-paste / node knot compact-hover affordance. build/link priority (global) satisfied: clippy/test/doc/fmt all green + gated."
       ]
     },
+    "Round 1244": {
+      "decision_summary": "R1244 data-grid paste auto-grows rows to fit an overrunning block (completing R1237's clip): each overrun line appends a fresh row via a lifted append_default_row SSOT (shared with add_row), the whole grown paste one undo step; columns past the fixed NCOLS schema still clip.",
+      "changes_bullets": [
+        "paste AUTO-GROWS rows: `paste_block` no longer CLIPS a block that overruns the last visible row (R1237 behavior) — each overrun line now GROWS the grid by appending a fresh row and landing in it (the spreadsheet-paste convention; the row model is dynamic per R930). Columns past the right edge still clip: the column schema (NCOLS) is fixed, the rows are not — a deliberate, principled split.",
+        "SSOT lift (obligation 3b): extracted `append_default_row(move_cursor, label)` from `add_row` (append one default row + journal one reversible RowEdit, already-applied), routed `add_row` through it (with cursor-move) and paste-grow through it (without). One home for \"append a journaled default row\"; the 2nd consumer forced the lift.",
+        "one atomic paste: the grown rows AND their cells are ONE undo step — the appended-row RowEdits + the cell SetCellEdits all fall inside the existing `begin_macro`/`end_macro` \"Paste\" transaction, so a single Ctrl+Z reverts every pasted cell and every row it grew; redo re-grows. Grown rows target their known appended source index (never a visible-position lookup), so a mid-paste re-sort cannot make them chase a moving target."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-data-grid: 123 pass / 0 fail (3 new R1244: paste grows rows to fit overrun / grow is one undo step reverting rows+cells with redo / paste still clips columns; R1237's now-obsolete row-clip test retitled to cover skip-unparseable + empty-noop, the parts that did not change).",
+        "cargo test --workspace -j2: 8059 pass / 0 fail (real exit 0). clippy --all-targets -D pedantic clean; rustdoc -D warnings (private items) clean; rustfmt clean.",
+        "tools/demos/r1244_data_grid_paste_grow.py: PASS, 30 assertions (a 3-row block at the last row grows to 6 rows, typed per column; ONE undo reverts the grown rows AND the anchor edits; redo re-grows; columns still clip; an in-range paste grows nothing). r1237 demo updated (step D now \"grow\", not \"clip\") + PASS; r930 add_row regression PASS (the lift is behavior-preserving)."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "R1244 completes the R1237 block-paste (which clipped row overruns). Data-grid DCC axis: block copy (R1222) + typed block paste (R1237) + trailing-newline safety (R1239) + auto-grow-on-paste (R1244) now cohere as a spreadsheet-grade paste. Row growth is dynamic; the column schema stays fixed (a column overrun clips) — the principled policy for a typed grid.",
+        "Non-blocking: no cell-range preselect-limited paste (a paste always anchors at the single cursor cell; a range-bounded paste is a cross-widget follow-up when a 2nd consumer needs it) / Ctrl+V OS-clipboard read stays HW-gated (the AI-first invoke paste is the primary path).",
+        "Next candidates (audit-first): inspector numeric absolute type-in inline TextField (hello-inspector has ZERO inline field vs hello-property-grid's full one — the biggest remaining DCC gap, a \"large\" round: a Details value can be stepped but never typed to an exact value) / node knot compact-hover affordance / property-grid per-element modified-reset."
+      ],
+      "publishable_decision_summary": "R1244 data-grid paste auto-grows rows to fit an overrunning block (completing R1237's clip): each overrun line appends a fresh row via a lifted append_default_row SSOT (shared with add_row), the whole grown paste one undo step; columns past the fixed NCOLS schema still clip.",
+      "publishable_changes_bullets": [
+        "paste AUTO-GROWS rows: `paste_block` no longer CLIPS a block that overruns the last visible row (R1237 behavior) — each overrun line now GROWS the grid by appending a fresh row and landing in it (the spreadsheet-paste convention; the row model is dynamic per R930). Columns past the right edge still clip: the column schema (NCOLS) is fixed, the rows are not — a deliberate, principled split.",
+        "SSOT lift (obligation 3b): extracted `append_default_row(move_cursor, label)` from `add_row` (append one default row + journal one reversible RowEdit, already-applied), routed `add_row` through it (with cursor-move) and paste-grow through it (without). One home for \"append a journaled default row\"; the 2nd consumer forced the lift.",
+        "one atomic paste: the grown rows AND their cells are ONE undo step — the appended-row RowEdits + the cell SetCellEdits all fall inside the existing `begin_macro`/`end_macro` \"Paste\" transaction, so a single Ctrl+Z reverts every pasted cell and every row it grew; redo re-grows. Grown rows target their known appended source index (never a visible-position lookup), so a mid-paste re-sort cannot make them chase a moving target."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-data-grid: 123 pass / 0 fail (3 new R1244: paste grows rows to fit overrun / grow is one undo step reverting rows+cells with redo / paste still clips columns; R1237's now-obsolete row-clip test retitled to cover skip-unparseable + empty-noop, the parts that did not change).",
+        "cargo test --workspace -j2: 8059 pass / 0 fail (real exit 0). clippy --all-targets -D pedantic clean; rustdoc -D warnings (private items) clean; rustfmt clean.",
+        "tools/demos/r1244_data_grid_paste_grow.py: PASS, 30 assertions (a 3-row block at the last row grows to 6 rows, typed per column; ONE undo reverts the grown rows AND the anchor edits; redo re-grows; columns still clip; an in-range paste grows nothing). r1237 demo updated (step D now \"grow\", not \"clip\") + PASS; r930 add_row regression PASS (the lift is behavior-preserving)."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1244 completes the R1237 block-paste (which clipped row overruns). Data-grid DCC axis: block copy (R1222) + typed block paste (R1237) + trailing-newline safety (R1239) + auto-grow-on-paste (R1244) now cohere as a spreadsheet-grade paste. Row growth is dynamic; the column schema stays fixed (a column overrun clips) — the principled policy for a typed grid.",
+        "Non-blocking: no cell-range preselect-limited paste (a paste always anchors at the single cursor cell; a range-bounded paste is a cross-widget follow-up when a 2nd consumer needs it) / Ctrl+V OS-clipboard read stays HW-gated (the AI-first invoke paste is the primary path).",
+        "Next candidates (audit-first): inspector numeric absolute type-in inline TextField (hello-inspector has ZERO inline field vs hello-property-grid's full one — the biggest remaining DCC gap, a \"large\" round: a Details value can be stepped but never typed to an exact value) / node knot compact-hover affordance / property-grid per-element modified-reset."
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

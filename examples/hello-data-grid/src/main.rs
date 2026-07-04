@@ -1608,10 +1608,14 @@ impl DataGridExternal {
     /// grid mid-write without the remaining rows chasing a moving target. Each
     /// cell parses through its COLUMN's [`CellKind`] + clamps (a value that does
     /// not parse for that type is skipped — the cell keeps its prior value, no
-    /// data loss); a block that overruns the last visible row / the right edge is
-    /// clipped. The whole paste is ONE undo step (a `begin_macro` / `end_macro`
-    /// transaction — the grid's first macro consumer), so a single `Ctrl`+`Z`
-    /// reverts every pasted cell. Returns the count of cells actually written.
+    /// data loss). R1244 — a block that overruns the last visible row GROWS the
+    /// grid: each overrun line appends a fresh row (the model's row count is
+    /// dynamic, [`add_row`](Self::add_row)) so the whole block lands, the
+    /// spreadsheet-paste convention. Columns past the grid's right edge still
+    /// CLIP — the column schema ([`NCOLS`]) is fixed, unlike the rows. The whole
+    /// paste (grown rows AND their cells) is ONE undo step (a `begin_macro` /
+    /// `end_macro` transaction), so a single `Ctrl`+`Z` reverts every pasted cell
+    /// and every row it grew. Returns the count of cells actually written.
     fn paste_block(&self, tsv: &str) -> usize {
         // R1239 — strip ONE trailing line terminator (`\n` or `\r\n`) before
         // splitting: real clipboards / spreadsheet copies emit a trailing
@@ -1639,13 +1643,19 @@ impl DataGridExternal {
         self.undo.begin_macro("Paste");
         let mut written = 0;
         for (i, line) in tsv.split('\n').enumerate() {
-            let Some(&source_row) = visible.get(anchor_pos + i) else {
-                break; // the block overruns the last visible row — clip it
+            // R1244 — an in-range visible row writes in place (the snapshot); an
+            // overrun row GROWS the grid by appending a fresh row and writing
+            // into it by its known source index (never a visible-position lookup,
+            // so a mid-paste re-sort cannot make it chase a moving target). Rows
+            // are dynamic; columns (below) stay a fixed, clipped schema.
+            let source_row = match visible.get(anchor_pos + i) {
+                Some(&s) => s,
+                None => self.append_default_row(false, Cow::Borrowed("Paste row")),
             };
             for (j, text) in line.split('\t').enumerate() {
                 let col = anchor_col + j;
                 if col >= NCOLS {
-                    break; // clip columns past the grid's right edge
+                    break; // clip columns past the grid's right edge (fixed schema)
                 }
                 if let Some(parsed) = COL_KINDS[col].parse(text) {
                     self.edit_cell(source_row, col, parsed, Cow::Borrowed("Paste cell"));
@@ -1671,6 +1681,19 @@ impl DataGridExternal {
     /// group over the longer model — no separate row-count field to keep in
     /// sync.
     fn add_row(&self) -> usize {
+        self.append_default_row(true, Cow::Borrowed("Add row"))
+    }
+
+    /// R1244 — the shared append core behind [`add_row`](Self::add_row) (the
+    /// explicit "add a row" gesture) and [`paste_block`](Self::paste_block)'s
+    /// auto-grow (append rows to fit an overrunning block): extend the model by
+    /// one [`default_row`] and journal it as one reversible [`RowEdit`] (already
+    /// applied — redo re-inserts the seed cells, undo drains them), returning the
+    /// new source index. `move_cursor` gates the R930.1 cursor hop onto the fresh
+    /// row: `add_row` wants the cursor there; a paste keeps it at the paste
+    /// anchor (a per-row hop mid-paste would strand the cursor). An append never
+    /// hides an existing row, so a moved cursor stays visible.
+    fn append_default_row(&self, move_cursor: bool, label: Cow<'static, str>) -> usize {
         let new_row = self.nrows();
         let at = idx(new_row, 0);
         let before_cursor = self.focused_row.get();
@@ -1683,16 +1706,9 @@ impl DataGridExternal {
                 next
             }
         });
-        // R930.1 — move the cursor onto the new row ONLY if the active
-        // sort/filter/group shows it; otherwise leave the (still-visible)
-        // cursor where it was — never strand it on a hidden row, the re-anchor
-        // invariant every other mutator upholds. An append never hides an
-        // existing row, so the prior cursor stays visible.
-        if self.cur_visible().contains(&new_row) {
+        if move_cursor && self.cur_visible().contains(&new_row) {
             self.focused_row.set(new_row);
         }
-        // R932 — journal the append as one RowEdit (already applied): redo
-        // re-inserts the seed cells, undo drains them; the cursor rides along.
         self.undo.push_applied(RowEdit {
             ctx: Rc::clone(&self.undo_ctx),
             at,
@@ -1700,7 +1716,7 @@ impl DataGridExternal {
             inserted: cells,
             before_cursor,
             after_cursor: self.focused_row.get(),
-            label: Cow::Borrowed("Add row"),
+            label,
         });
         new_row
     }
@@ -9324,35 +9340,13 @@ mod tests {
     }
 
     #[test]
-    fn r1237_paste_clips_overflow_and_skips_unparseable() {
+    fn r1237_paste_skips_unparseable_and_empty_is_noop() {
         Owner::new().run(|| {
             let mut scene = boot_scene(); // 4 rows
-            // A 2-row block anchored at the LAST row: the 2nd row overruns and is
-            // clipped, so only the anchor row is written.
-            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(3));
-            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(2));
-            assert_eq!(
-                grid_invoke(
-                    &mut scene,
-                    "paste",
-                    IntrospectValue::Text("55\n66".to_owned())
-                ),
-                Ok(IntrospectValue::Int(1)),
-                "only the in-range row lands (the overrun row is clipped)",
-            );
-            assert_eq!(
-                grid_intro(&scene).query("value.3.2"),
-                Some(IntrospectValue::Int(55)),
-                "the last row got 55",
-            );
-            assert_eq!(
-                grid_intro(&scene).query("row_count"),
-                Some(IntrospectValue::Int(4)),
-                "the overrun did not add rows",
-            );
             // A value that does not parse for the column's type is skipped (the
             // cell keeps its prior value — no data loss).
             let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(2)); // the Int column
             assert_eq!(
                 grid_invoke(&mut scene, "paste", IntrospectValue::Text("abc".to_owned())),
                 Ok(IntrospectValue::Int(0)),
@@ -9363,11 +9357,138 @@ mod tests {
                 Some(IntrospectValue::Int(1)),
                 "the cell keeps its prior value",
             );
-            // An empty paste is a no-op.
+            // An empty paste is a no-op — and neither an unparseable nor an
+            // empty paste ever grows the grid (R1244 growth is per landed row).
             assert_eq!(
                 grid_invoke(&mut scene, "paste", IntrospectValue::Text(String::new())),
                 Ok(IntrospectValue::Int(0)),
                 "an empty paste writes nothing",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(4)),
+                "no unparseable / empty paste grows the grid",
+            );
+        });
+    }
+
+    #[test]
+    fn r1244_paste_grows_rows_to_fit_overrun() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene(); // 4 rows (sources 0..3)
+            // A 2-row block anchored at the LAST row: the 2nd row overruns the
+            // grid. Pre-R1244 it clipped; now the grid GROWS one row so the whole
+            // block lands (the spreadsheet-paste convention — the row model is
+            // dynamic, the column schema is not).
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(3));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(2)); // Int col
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("55\n66".to_owned())
+                ),
+                Ok(IntrospectValue::Int(2)),
+                "both rows land — the overrun grew a row instead of clipping",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(5)),
+                "the grid grew by one row to fit the block",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.3.2"),
+                Some(IntrospectValue::Int(55)),
+                "the anchor row got 55",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.4.2"),
+                Some(IntrospectValue::Int(66)),
+                "the grown row (source 4) got 66",
+            );
+        });
+    }
+
+    #[test]
+    fn r1244_paste_grow_is_one_undo_step() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene(); // 4 rows
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(3));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(2));
+            let before_anchor = grid_intro(&scene).query("value.3.2");
+            // A 3-row block at the last row grows TWO rows (sources 4, 5).
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("10\n20\n30".to_owned())
+                ),
+                Ok(IntrospectValue::Int(3)),
+                "all three rows land",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(6)),
+                "grew from 4 to 6 rows",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.5.2"),
+                Some(IntrospectValue::Int(30)),
+                "the last grown row got 30",
+            );
+            // ONE undo reverts the WHOLE paste: the grown rows AND their cells.
+            assert!(
+                undo_invoke(&mut scene, "undo"),
+                "one undo reverts the paste"
+            );
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(4)),
+                "back to 4 rows — the grown rows are gone",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.3.2"),
+                before_anchor,
+                "the anchor row's cell reverted too (one atomic paste)",
+            );
+            // Redo re-applies the whole grown paste.
+            assert!(undo_invoke(&mut scene, "redo"), "redo re-splices the paste");
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(6)),
+                "redo re-grows the rows",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("value.5.2"),
+                Some(IntrospectValue::Int(30)),
+                "and re-writes the grown cell",
+            );
+        });
+    }
+
+    #[test]
+    fn r1244_paste_still_clips_columns() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Rows grow, but the COLUMN schema ([`NCOLS`]) is FIXED: a cell past
+            // the right edge clips (no new column, no row growth from it). Anchor
+            // at the last column (Tint / Color); a 2-cell line writes the colour
+            // and clips the overflow cell.
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(5)); // last col (Color)
+            assert_eq!(
+                grid_invoke(
+                    &mut scene,
+                    "paste",
+                    IntrospectValue::Text("#a1b2c3\tCLIP".to_owned())
+                ),
+                Ok(IntrospectValue::Int(1)),
+                "only the in-range colour cell lands; the overflow column clips",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(4)),
+                "a column overrun never grows rows (columns are a fixed schema)",
             );
         });
     }

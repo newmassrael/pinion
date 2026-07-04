@@ -16,8 +16,8 @@ Count is col 2 (Int), Scale is col 3 (Float).
   (B) paste a 2x2 block at (row 0, col 2): the Int + Float cells take it; the
       verb returns the count of cells written (4).
   (C) the whole block is ONE undo step ("Paste"); undo restores every cell.
-  (D) clip — a block overrunning the last row writes only the in-range cells,
-      and never adds rows.
+  (D) grow (R1244) — a block overrunning the last row GROWS the grid (appends
+      rows to fit); one undo reverts the grown rows and their cells together.
   (E) skip — a value that does not parse for the column's type is skipped (the
       cell keeps its prior value); an empty paste is a no-op.
   (F) visible order — under an active sort, the block lands on the VISUAL rows
@@ -85,12 +85,14 @@ def body() -> None:
         assert_eq(q(tf, "value.1.2"), 7, "row1 Count re-applied")
         tf.invoke(f"{UNDO}/undo", None)  # settle back to baseline
 
-        # ── (D) clip an overrunning block ────────────────────────────
+        # ── (D) grow on overrun (R1244) ──────────────────────────────
         cursor(tf, 3, 2)  # last row
-        assert_eq(inv(tf, "paste", "55\n66"), 1, "only the in-range row lands")
+        assert_eq(inv(tf, "paste", "55\n66"), 2, "both rows land — the overrun grew a row")
         assert_eq(q(tf, "value.3.2"), 55, "the last row got 55")
-        assert_eq(q(tf, "row_count"), 4, "the overrun added no rows")
-        assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the clipped paste")
+        assert_eq(q(tf, "row_count"), 5, "the grid grew by one row to fit the block")
+        assert_eq(q(tf, "value.4.2"), 66, "the grown row got 66")
+        assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the grown paste")
+        assert_eq(q(tf, "row_count"), 4, "one undo removed the grown row too")
         assert_eq(q(tf, "value.3.2"), 1, "the last row's Count restored")
 
         # ── (E) skip unparseable + empty paste ───────────────────────
