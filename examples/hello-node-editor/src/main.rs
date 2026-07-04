@@ -56,8 +56,9 @@
 //! `selected` / `selected_ids` /
 //! `selected_edge`; `invoke add_edge` / `remove_edge` /
 //! `reconnect_edge` / `add_reroute` (R1235: splice a typed passthrough into an
-//! edge) / `delete_node` / `delete_selected` / `nudge` / the
-//! pointer `send` wire.
+//! edge) / `delete_node` / `delete_selected` / `dissolve_node` /
+//! `dissolve_selected` (R1236: delete + reconnect through a 1-in/1-out node) /
+//! `nudge` / the pointer `send` wire.
 //!
 //! R929 / R1174 — **reconnect** re-wires an existing edge's *target* input
 //! (keeping its source output): the canonical "grab a wired input and drop it
@@ -3412,6 +3413,17 @@ impl NodeGraphExternal {
         })
     }
 
+    /// R1236 — the `dissolve_node` verb arm: dissolve node `<int>` (delete +
+    /// reconnect), returning the `Bool` outcome (a non-`Int` arg is a
+    /// `TypeMismatch`). Extracted to keep `invoke` within the line ceiling.
+    fn invoke_dissolve_node(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let &IntrospectValue::Int(i) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+        Ok(IntrospectValue::Bool(self.dissolve_node(NodeId(id))))
+    }
+
     /// R899 — the `intervene node.<id>.input_default.<port>` write path. The
     /// value is type-checked against the port's kind by
     /// [`CellValue::with_intervene`] (a `Float` takes a float, a `Vector`/`Color`
@@ -3838,11 +3850,20 @@ impl NodeGraphExternal {
             sel_before,
             sel_after,
         );
+        self.clear_removed_node_interaction(&removed_ids);
+        true
+    }
+
+    /// R1236 — reset the per-node interaction latches after a node removal:
+    /// cancel any in-flight grab / drag, and drop an in-flight inline edit whose
+    /// target is among `removed_ids` (a gone node must not keep advertising an
+    /// edit via `query editing`). Extracted from [`delete_nodes`](Self::delete_nodes)
+    /// when the reroute [`dissolve_node`](Self::dissolve_node) became its 2nd
+    /// consumer ([[abstraction-needs-second-consumer]]), so both removal paths
+    /// restore the same invariant.
+    fn clear_removed_node_interaction(&self, removed_ids: &[NodeId]) {
         self.grabbed_node.set(None);
         *self.node_drag.borrow_mut() = None;
-        // R920 — cancel an in-flight edit of a deleted node (card or panel): the
-        // node is gone, so committing would be a no-op and `query editing` would
-        // otherwise keep advertising an edit on an absent node.
         if self
             .editing
             .get()
@@ -3851,7 +3872,6 @@ impl NodeGraphExternal {
             self.editing.set(None);
             self.edit_buffer.set_text(String::new());
         }
-        true
     }
 
     /// Delete whatever is selected — the node set or an edge (the single
@@ -3863,6 +3883,94 @@ impl NodeGraphExternal {
             Selection::Nodes(set) => self.delete_nodes(&set),
             Selection::None => false,
         }
+    }
+
+    /// R1236 — DISSOLVE node `id`: remove it and bridge its single upstream
+    /// source straight to its single downstream target, so the wire survives the
+    /// removed hop (the Blueprint "delete + reconnect" / `Alt`+`Delete` on a
+    /// reroute knot — the natural inverse of R1235's [`add_reroute`](Self::add_reroute)).
+    /// Requires EXACTLY one incident input edge (`A -> id`) and one output edge
+    /// (`id -> B`) plus a valid, non-duplicate bridge `A -> B` — always true for
+    /// a reroute, whose ports share the wire's type. ONE undoable [`GraphEdit`]:
+    /// the node + its two edges are removed and the bridge added together, so a
+    /// single `Ctrl`+`Z` restores the hop. `false` (a no-op) for an unknown id, a
+    /// non-passthrough wiring (zero or many edges either side), or a bridge that
+    /// would self-loop / mistype / duplicate an existing wire — the caller falls
+    /// back to a plain [`delete_node`](Self::delete_node).
+    fn dissolve_node(&self, id: NodeId) -> bool {
+        let edges = self.edges.get();
+        let incoming: Vec<Edge> = edges.iter().copied().filter(|e| e.to_node == id).collect();
+        let outgoing: Vec<Edge> = edges
+            .iter()
+            .copied()
+            .filter(|e| e.from_node == id)
+            .collect();
+        // Exactly one hop in, one hop out — otherwise the bridge is ambiguous.
+        let ([a_edge], [b_edge]) = (incoming.as_slice(), outgoing.as_slice()) else {
+            return false;
+        };
+        let (a_node, a_port) = (a_edge.from_node, a_edge.from_port);
+        let (b_node, b_port) = (b_edge.to_node, b_edge.to_port);
+        // Removing the hop's two edges frees B's input, so the single-wire rule
+        // holds by construction; the checks here are self-loop / type / exact
+        // duplicate. (A reroute always passes — its ports carry the wire type.)
+        if a_node == b_node {
+            return false;
+        }
+        let nodes = self.nodes.get();
+        let Some(ty_a) = node_ref(&nodes, a_node).and_then(|n| n.output_type(a_port)) else {
+            return false;
+        };
+        let Some(ty_b) = node_ref(&nodes, b_node).and_then(|n| n.input_type(b_port)) else {
+            return false;
+        };
+        if !ty_a.is_assignable_to(ty_b) {
+            return false;
+        }
+        if edges.iter().any(|e| {
+            e.from_node == a_node
+                && e.from_port == a_port
+                && e.to_node == b_node
+                && e.to_port == b_port
+        }) {
+            return false;
+        }
+        let Some(removed_node) = node_ref(&nodes, id).cloned() else {
+            return false;
+        };
+        let bridge = Edge {
+            id: self.mint_edge_id(),
+            from_node: a_node,
+            from_port: a_port,
+            to_node: b_node,
+            to_port: b_port,
+        };
+        let sel_before = self.selection.get();
+        let sel_after = validate_after(sel_before.clone(), &[id], &[a_edge.id, b_edge.id]);
+        self.record_edit(
+            "Dissolve node",
+            GraphDelta {
+                removed_nodes: vec![removed_node],
+                removed_edges: vec![*a_edge, *b_edge],
+                added_edges: vec![bridge],
+                ..GraphDelta::default()
+            },
+            sel_before,
+            sel_after,
+        );
+        self.clear_removed_node_interaction(&[id]);
+        true
+    }
+
+    /// R1236 — dissolve the single selected node (the `Alt`+`Delete` gesture +
+    /// the RPC `dissolve_selected` verb). Only a lone node selection has an
+    /// unambiguous hop to dissolve; a multi-selection / edge / empty selection is
+    /// a no-op `false` (the caller can plain-`delete_selected` instead).
+    fn dissolve_selected(&self) -> bool {
+        self.selection
+            .get()
+            .node()
+            .is_some_and(|id| self.dissolve_node(id))
     }
 
     /// Hit-test a window-px click against every wire; the first within
@@ -4854,6 +4962,11 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("remove_frame", "int"),
             ("delete_node", "int"),
             ("delete_selected", "json"),
+            // R1236 — dissolve = delete + reconnect through a 1-in/1-out node
+            // (the reroute inverse). `dissolve_node <id>`; `dissolve_selected`
+            // (no arg) dissolves the lone selected node.
+            ("dissolve_node", "int"),
+            ("dissolve_selected", "json"),
             ("select_all", "json"),
             ("nudge", "string"),
             // R948 — align / distribute the selection (no args; the AI-first
@@ -5215,6 +5328,12 @@ impl ExternalIntrospect for NodeGraphExternal {
                 _ => Err(InvokeError::TypeMismatch),
             },
             "delete_selected" => Ok(IntrospectValue::Bool(self.delete_selected())),
+            // R1236 — dissolve a node (delete + reconnect A -> B through it), the
+            // inverse of `add_reroute`. `dissolve_node <id>` by id; the no-arg
+            // `dissolve_selected` (the Alt+Delete gesture) targets the lone
+            // selected node.
+            "dissolve_node" => self.invoke_dissolve_node(&args),
+            "dissolve_selected" => Ok(IntrospectValue::Bool(self.dissolve_selected())),
             // R880 — select every node (the keyboard `Ctrl`+`A` twin).
             // `false` on an empty graph.
             "select_all" => Ok(IntrospectValue::Bool(self.select_all())),
@@ -5677,10 +5796,20 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
         "ArrowDown" => nudge_ok(intro, 0, NUDGE_STEP),
         "ArrowLeft" => nudge_ok(intro, -NUDGE_STEP, 0),
         "ArrowRight" => nudge_ok(intro, NUDGE_STEP, 0),
-        "Delete" | "Backspace" => matches!(
-            intro.invoke("delete_selected", IntrospectValue::Null),
-            Ok(IntrospectValue::Bool(true))
-        ),
+        // R1236 — `Alt`+`Delete` DISSOLVES the selected node (delete + reconnect
+        // through it, the reroute inverse); plain `Delete` removes it. Both
+        // funnel to the RPC verbs the AI-first path drives.
+        "Delete" | "Backspace" => {
+            let verb = if modifiers.alt_key() {
+                "dissolve_selected"
+            } else {
+                "delete_selected"
+            };
+            matches!(
+                intro.invoke(verb, IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(true))
+            )
+        }
         "Escape" => {
             let _ = intro.intervene("selected", IntrospectValue::Null);
             true

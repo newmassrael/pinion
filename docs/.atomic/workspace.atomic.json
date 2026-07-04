@@ -61758,6 +61758,58 @@
         "next R1236 candidates: reroute delete-and-reconnect (Blueprint Alt-delete rejoins A->B) / data-grid editable cell-range + block PASTE / inspector inline TextField absolute type-in"
       ]
     },
+    "Round 1236": {
+      "decision_summary": "R1236 node-graph DISSOLVE (delete + reconnect): invoke dissolve_node <id> / dissolve_selected / Alt+Delete removes a 1-in/1-out node and bridges A->B through it as one undoable GraphEdit (the inverse of R1235 add_reroute); SSOT: post-removal cleanup lifted to clear_removed_node_interaction (delete_nodes 2nd consumer)",
+      "changes_bullets": [
+        "dissolve_node(id): remove a 1-in/1-out node and bridge its upstream source straight to its downstream target (delete + reconnect), one undoable GraphEdit (\"Dissolve node\") = removed_nodes + 2 removed_edges + 1 bridge added_edge; the inverse of R1235 add_reroute",
+        "gated to EXACTLY one incident input + one output edge + a valid non-duplicate/non-self-loop/type-assignable bridge (always true for a reroute since assignability is transitive when in==out type); else no-op false (caller falls back to delete_node)",
+        "dissolve_selected(): dissolves the lone selected node; RPC verbs dissolve_node <id> + dissolve_selected (no arg); Alt+Delete keyboard gesture dissolves (plain Delete deletes); both schema-declared + module-doc updated",
+        "SSOT lift: the post-node-removal cleanup (cancel grab/drag + drop an in-flight edit of a removed node) was inline in delete_nodes; dissolve is its 2nd consumer -> extracted clear_removed_node_interaction shared by both (abstraction-needs-second-consumer)",
+        "invoke_dissolve_node extracted to keep invoke within the 100-line pedantic ceiling (the R1227/R1235 verb-body extraction pattern)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 8037 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 179 pass (4 new R1236: reroute-reconnect+undo / arity-gate / dissolve_selected+verb / Alt+Delete keyboard)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1236_node_dissolve.py: PASS, 31 assertions (splice+dissolve+bridge / undo-redo / second-edge dissolve / arity gate); r1235 reroute + r851 undo demos still PASS",
+        "3b self-grep: clear_removed_node_interaction lifted (2 consumers); bridge uses record_edit+GraphDelta (structural-edit SSOT) + mint_edge_id (R1235 funnel); no new mechanical dup"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "dissolve type/duplicate-bridge rejections are DEFENSIVE (not unit-reachable with the current palette): for a reroute the bridge is always valid, and the single-wire rule makes a pre-existing parallel A->B unreachable; documented in the doc comment",
+        "general 1-in/1-out dissolve on a NON-reroute node (in-type != out-type) could reject on the bridge type, but no palette node has that shape to force it; add a test if such a node kind is introduced",
+        "knot-style minimal reroute rendering + double-click-on-wire splice gesture still deferred (paint/GUI polish, RPC is the AI-first primary path for both add_reroute + dissolve)",
+        "next R1237 candidates: data-grid editable cell-range + block PASTE (cross-widget, large) / inspector inline TextField absolute type-in / node knot compact render"
+      ],
+      "publishable_decision_summary": "R1236 node-graph DISSOLVE (delete + reconnect): invoke dissolve_node <id> / dissolve_selected / Alt+Delete removes a 1-in/1-out node and bridges A->B through it as one undoable GraphEdit (the inverse of R1235 add_reroute); SSOT: post-removal cleanup lifted to clear_removed_node_interaction (delete_nodes 2nd consumer)",
+      "publishable_changes_bullets": [
+        "dissolve_node(id): remove a 1-in/1-out node and bridge its upstream source straight to its downstream target (delete + reconnect), one undoable GraphEdit (\"Dissolve node\") = removed_nodes + 2 removed_edges + 1 bridge added_edge; the inverse of R1235 add_reroute",
+        "gated to EXACTLY one incident input + one output edge + a valid non-duplicate/non-self-loop/type-assignable bridge (always true for a reroute since assignability is transitive when in==out type); else no-op false (caller falls back to delete_node)",
+        "dissolve_selected(): dissolves the lone selected node; RPC verbs dissolve_node <id> + dissolve_selected (no arg); Alt+Delete keyboard gesture dissolves (plain Delete deletes); both schema-declared + module-doc updated",
+        "SSOT lift: the post-node-removal cleanup (cancel grab/drag + drop an in-flight edit of a removed node) was inline in delete_nodes; dissolve is its 2nd consumer -> extracted clear_removed_node_interaction shared by both (abstraction-needs-second-consumer)",
+        "invoke_dissolve_node extracted to keep invoke within the 100-line pedantic ceiling (the R1227/R1235 verb-body extraction pattern)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 8037 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 179 pass (4 new R1236: reroute-reconnect+undo / arity-gate / dissolve_selected+verb / Alt+Delete keyboard)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic); cargo fmt --check + cargo doc gate clean",
+        "tools/demos/r1236_node_dissolve.py: PASS, 31 assertions (splice+dissolve+bridge / undo-redo / second-edge dissolve / arity gate); r1235 reroute + r851 undo demos still PASS",
+        "3b self-grep: clear_removed_node_interaction lifted (2 consumers); bridge uses record_edit+GraphDelta (structural-edit SSOT) + mint_edge_id (R1235 funnel); no new mechanical dup"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "dissolve type/duplicate-bridge rejections are DEFENSIVE (not unit-reachable with the current palette): for a reroute the bridge is always valid, and the single-wire rule makes a pre-existing parallel A->B unreachable; documented in the doc comment",
+        "general 1-in/1-out dissolve on a NON-reroute node (in-type != out-type) could reject on the bridge type, but no palette node has that shape to force it; add a test if such a node kind is introduced",
+        "knot-style minimal reroute rendering + double-click-on-wire splice gesture still deferred (paint/GUI polish, RPC is the AI-first primary path for both add_reroute + dissolve)",
+        "next R1237 candidates: data-grid editable cell-range + block PASTE (cross-widget, large) / inspector inline TextField absolute type-in / node knot compact render"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

@@ -6073,3 +6073,149 @@ fn r1235_add_reroute_unknown_edge_is_none_and_verb_errors() {
         );
     });
 }
+
+#[test]
+fn r1236_dissolve_reroute_reconnects_the_wire() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        // Splice a reroute into edge 0 (node0 -> node2.in0), then dissolve it.
+        let rid = coord.add_reroute(EdgeId(0)).expect("splice");
+        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
+        assert!(coord.dissolve_node(rid), "the reroute dissolves");
+        // The reroute + its two edges are gone; the wire node0 -> node2 is bridged.
+        assert_eq!(
+            coord.query("node_count"),
+            Some(IntrospectValue::Int(4)),
+            "the reroute node is removed"
+        );
+        assert_eq!(
+            coord.query("edge_count"),
+            Some(IntrospectValue::Int(3)),
+            "net -1 edge (removed 2, added 1 bridge)"
+        );
+        assert!(coord.node_by_id(rid).is_none(), "the reroute is gone");
+        let bridged = coord.edges.get().iter().any(|e| {
+            e.from_node == NodeId(0) && e.from_port == 0 && e.to_node == NodeId(2) && e.to_port == 0
+        });
+        assert!(bridged, "node0 -> node2.in0 is reconnected directly");
+        // ONE undo restores the whole hop (the reroute + its two edges).
+        assert_eq!(use_undo().undo_label().as_deref(), Some("Dissolve node"));
+        assert!(use_undo().undo(), "one undo restores the hop");
+        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
+        assert!(coord.node_by_id(rid).is_some(), "the reroute is back");
+    });
+}
+
+#[test]
+fn r1236_dissolve_requires_exactly_one_in_and_one_out() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        // node2 (Multiply) has TWO incoming edges — an ambiguous bridge.
+        assert!(!coord.dissolve_node(NodeId(2)), "two inputs -> no dissolve");
+        // node0 (Texture) is a source: zero incoming edges.
+        assert!(!coord.dissolve_node(NodeId(0)), "no input -> no dissolve");
+        // node3 (Output) is a sink: zero outgoing edges.
+        assert!(!coord.dissolve_node(NodeId(3)), "no output -> no dissolve");
+        // Unknown id.
+        assert!(
+            !coord.dissolve_node(NodeId(99)),
+            "unknown id -> no dissolve"
+        );
+        // The graph is untouched by every rejected dissolve.
+        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(4)));
+        assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(3)));
+    });
+}
+
+#[test]
+fn r1236_dissolve_selected_verb_and_gate() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).expect("splice");
+        // A lone reroute selection dissolves via the no-arg verb.
+        coord.set_selection(Selection::single(rid));
+        assert_eq!(
+            coord.invoke("dissolve_selected", IntrospectValue::Null),
+            Ok(IntrospectValue::Bool(true)),
+            "dissolve_selected removes the lone reroute",
+        );
+        assert!(coord.node_by_id(rid).is_none(), "reroute dissolved");
+        // With nothing selected, dissolve_selected is a no-op.
+        coord.set_selection(Selection::None);
+        assert_eq!(
+            coord.invoke("dissolve_selected", IntrospectValue::Null),
+            Ok(IntrospectValue::Bool(false)),
+            "no selection -> no-op",
+        );
+        // The by-id verb: Bool for a real/unknown id, non-Int is a TypeMismatch.
+        assert_eq!(
+            coord.invoke("dissolve_node", IntrospectValue::Int(99)),
+            Ok(IntrospectValue::Bool(false)),
+        );
+        assert_eq!(
+            coord.invoke("dissolve_node", IntrospectValue::Text("x".to_owned())),
+            Err(InvokeError::TypeMismatch),
+        );
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+        assert!(
+            fields.contains(&"dissolve_node"),
+            "dissolve_node schema-declared"
+        );
+        assert!(
+            fields.contains(&"dissolve_selected"),
+            "dissolve_selected schema-declared"
+        );
+    });
+}
+
+#[test]
+fn r1236_alt_delete_dissolves_the_selected_node() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        // Splice a reroute into edge 0 and select it.
+        {
+            let intro = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .unwrap()
+                .handle
+                .introspect_mut()
+                .unwrap();
+            let IntrospectValue::Int(id) = intro
+                .invoke("add_reroute", IntrospectValue::Int(0))
+                .unwrap()
+            else {
+                panic!("add_reroute returns the new node id");
+            };
+            let _ = intro.intervene("selected", IntrospectValue::Int(id));
+        }
+        assert_eq!(
+            graph_intro(&scene).query("node_count"),
+            Some(IntrospectValue::Int(5)),
+            "the reroute was spliced in"
+        );
+        let alt = Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        // Alt+Delete DISSOLVES (delete + reconnect); plain Delete would just cut.
+        assert!(NodeEditorView::apply_key(
+            &mut scene,
+            Some(GRAPH_TAG),
+            "Delete",
+            alt
+        ));
+        assert_eq!(
+            graph_intro(&scene).query("node_count"),
+            Some(IntrospectValue::Int(4)),
+            "the reroute node was removed"
+        );
+        assert_eq!(
+            graph_intro(&scene).query("edge_count"),
+            Some(IntrospectValue::Int(3)),
+            "the wire survived the removed hop (bridged, net -1 edge)"
+        );
+    });
+}
