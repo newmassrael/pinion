@@ -61654,6 +61654,58 @@
         "OPTIONAL finer follow-up (NOT a defect, deferred): split the 6.7k production main.rs further into geometry/entities/undo/view/a11y submodules -- larger + visibility-churn; the primary one-giant-file concern is addressed by the test extraction (the file is halved and the growing part is separate)"
       ]
     },
+    "Round 1234": {
+      "decision_summary": "R1234 comment-frame move-with-contents + resize: intervene frame.<id>.{x,y} translates the frame AND its contained nodes as one undoable FrameGeomCmd (rigid group clamp), {w,h} resizes the box (membership recomputed lazily); clears the R1227 read-only-rect debt; SSOT: 3 undo commit sites routed through UndoStack::record",
+      "changes_bullets": [
+        "FrameGeomCmd (new UndoCommand): frame before/after rect + Vec<NodeMove> per member = one step; a move populates moves + changes x/y, a resize leaves moves empty + changes w/h",
+        "translate_frame moves the frame + its contains_node members by one clamped delta (clamp_frame_dx/dy = rigid group clamp keeping the frame origin AND every node on-world); resize_frame clamps w/h to [FRAME_MIN, WORLD-origin]",
+        "intervene frame.<id>.{x,y,w,h} now writable (was ReadOnly in R1227): x/y=move-with-contents, w/h=resize (membership recomputed lazily); non-Int rect value=TypeMismatch, unknown id=UnknownPath",
+        "SSOT: commit_frame_geom + apply_rename + apply_set_default routed through UndoStack::record (== apply-then-journal); replaced 3 hand-rolled cmd.redo();push_applied sites (use-substrate-not-hand-rolled-equivalent, 3rd-consumer lift)",
+        "membership stays the single CommentFrame::contains_node gate (paint + a11y + contains query + move snapshot share it); view_frames + module docs updated; FRAME_MIN const added"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 8030 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 172 pass (5 new R1234; r1227 read-only test repurposed to TypeMismatch)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic); cargo fmt --check clean",
+        "tools/demos/r1234_node_frame_move_resize.py: PASS, 37 assertions (move/resize/undo-redo/rigid-clamp/min-clamp/errors); r1227 + r851 demos still PASS",
+        "3b self-grep: contains_node is the single membership gate; the record migration resolves the 3-site cmd.redo();push_applied idiom via the existing substrate"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "GUI grab-to-move HANDLE still deferred (live pointer drag on the frame body/edge = HW-gated live pixel); the RPC intervene path is the AI-first primary path (invariant 2) and is done",
+        "2#2 held-mid-drag RPC peer still deferred (press-and-hold begin/hold/release) — build when an AI mid-drag-observe consumer appears (abstraction-needs-second-consumer)",
+        "FrameGeomCmd does NOT coalesce (each intervene = its own undo step, like RenameCmd); add coalescing only if a real burst consumer appears",
+        "next R1235 candidates: node reroute node / data-grid editable cell-range + block PASTE / inspector inline TextField absolute type-in"
+      ],
+      "publishable_decision_summary": "R1234 comment-frame move-with-contents + resize: intervene frame.<id>.{x,y} translates the frame AND its contained nodes as one undoable FrameGeomCmd (rigid group clamp), {w,h} resizes the box (membership recomputed lazily); clears the R1227 read-only-rect debt; SSOT: 3 undo commit sites routed through UndoStack::record",
+      "publishable_changes_bullets": [
+        "FrameGeomCmd (new UndoCommand): frame before/after rect + Vec<NodeMove> per member = one step; a move populates moves + changes x/y, a resize leaves moves empty + changes w/h",
+        "translate_frame moves the frame + its contains_node members by one clamped delta (clamp_frame_dx/dy = rigid group clamp keeping the frame origin AND every node on-world); resize_frame clamps w/h to [FRAME_MIN, WORLD-origin]",
+        "intervene frame.<id>.{x,y,w,h} now writable (was ReadOnly in R1227): x/y=move-with-contents, w/h=resize (membership recomputed lazily); non-Int rect value=TypeMismatch, unknown id=UnknownPath",
+        "SSOT: commit_frame_geom + apply_rename + apply_set_default routed through UndoStack::record (== apply-then-journal); replaced 3 hand-rolled cmd.redo();push_applied sites (use-substrate-not-hand-rolled-equivalent, 3rd-consumer lift)",
+        "membership stays the single CommentFrame::contains_node gate (paint + a11y + contains query + move snapshot share it); view_frames + module docs updated; FRAME_MIN const added"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 8030 pass / 0 fail (real exit 0, unpiped)",
+        "cargo test -p hello-node-editor: 172 pass (5 new R1234; r1227 read-only test repurposed to TypeMismatch)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic); cargo fmt --check clean",
+        "tools/demos/r1234_node_frame_move_resize.py: PASS, 37 assertions (move/resize/undo-redo/rigid-clamp/min-clamp/errors); r1227 + r851 demos still PASS",
+        "3b self-grep: contains_node is the single membership gate; the record migration resolves the 3-site cmd.redo();push_applied idiom via the existing substrate"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "GUI grab-to-move HANDLE still deferred (live pointer drag on the frame body/edge = HW-gated live pixel); the RPC intervene path is the AI-first primary path (invariant 2) and is done",
+        "2#2 held-mid-drag RPC peer still deferred (press-and-hold begin/hold/release) — build when an AI mid-drag-observe consumer appears (abstraction-needs-second-consumer)",
+        "FrameGeomCmd does NOT coalesce (each intervene = its own undo step, like RenameCmd); add coalescing only if a real burst consumer appears",
+        "next R1235 candidates: node reroute node / data-grid editable cell-range + block PASTE / inspector inline TextField absolute type-in"
+      ]
+    },
     "Round 13": {
       "decision_summary": "Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending",
       "changes_bullets": [

@@ -12,8 +12,9 @@ translucent rectangle. All AI-first over the §5.12 plane (§2 #2), no pixels:
   * `query frame_count` / `frame_ids` / `frame.<id>.{title,x,y,w,h,contains}` read
     the annotation layer as data — `contains` is the CSV of node ids whose centre
     is inside the frame (the membership the paint + a11y share).
-  * `intervene frame.<id>.title` renames it (undoable); the rect is read-only in
-    v1 (a frame sizes to its selection — move-with-contents + resize are R1228).
+  * `intervene frame.<id>.title` renames it (undoable); the rect (x/y/w/h) is
+    writable as of R1234 (see `r1234_node_frame_move_resize.py`) — v1 R1227
+    sized a frame to its selection at creation and left the rect read-only.
 
 Frames persist in the schema-4 [`SerializedGraph`] and lower to a labelled a11y
 `group` per frame (unit-tested in the crate).
@@ -23,8 +24,8 @@ Frames persist in the schema-4 [`SerializedGraph`] and lower to a labelled a11y
   (C) rename the frame; one undo reverts it.
   (D) a second frame around ALL nodes; remove one, undo restores it.
   (E) persistence: the frames are in `query serialized`.
-  (F) rejects: add_frame with no selection is Null; the rect is read-only; an
-      unknown frame id is a benign no-op / error.
+  (F) rejects: add_frame with no selection is Null; an unknown frame id is a
+      benign no-op / error.
 
 Run from the workspace root:
     cargo build -p hello-node-editor --release
@@ -127,13 +128,15 @@ def body() -> None:
                    desc="selection cleared")
         assert_eq(add_frame(tf), None, "framing an empty selection creates nothing")
         assert_eq(q(tf, "frame_count"), 2, "frame count unchanged")
-        # The rect is read-only in v1.
-        read_only = False
+        # The rect is writable as of R1234 (move / resize) — a non-Int value on a
+        # rect field is a typed error; move / resize coverage lives in the R1234
+        # demo.
+        type_err = False
         try:
-            tf.intervene("/external/frame.0.x", 0)
+            tf.intervene("/external/frame.0.x", "nope")
         except RpcError:
-            read_only = True
-        assert read_only, "the frame rect is read-only in v1"
+            type_err = True
+        assert type_err, "a non-Int rect value is rejected"
         # An unknown frame id is a benign no-op / typed error.
         assert_eq(tf.invoke("/external/remove_frame", 99), False, "unknown frame id -> false")
 

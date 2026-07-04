@@ -5604,7 +5604,7 @@ fn r1227_add_remove_frame_undo_redo_one_step_each() {
 }
 
 #[test]
-fn r1227_frame_rename_undoable_rect_read_only() {
+fn r1227_frame_rename_undoable() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let mut coord = coordinator();
@@ -5617,10 +5617,14 @@ fn r1227_frame_rename_undoable_rect_read_only() {
         assert_eq!(coord.frame_by_id(id).unwrap().title, "Lighting");
         assert!(use_undo().undo(), "undo the rename");
         assert_eq!(coord.frame_by_id(id).unwrap().title, "Comment 1");
-        // v1: the rect is read-only (move / resize is the R1228 follow-up).
+        // R1234 — the rect is now writable (move / resize); a non-`Int` value on
+        // a rect field is a `TypeMismatch`, not `ReadOnly`.
         assert_eq!(
-            coord.intervene(&format!("frame.{}.x", id.raw()), IntrospectValue::Int(0)),
-            Err(InterveneError::ReadOnly),
+            coord.intervene(
+                &format!("frame.{}.x", id.raw()),
+                IntrospectValue::Text("nope".to_owned()),
+            ),
+            Err(InterveneError::TypeMismatch),
         );
         // An empty title is rejected (the frame keeps its name).
         assert_eq!(
@@ -5713,6 +5717,238 @@ fn r1227_a11y_frame_is_a_labeled_group_child_of_the_canvas() {
         assert!(
             graph.children.iter().any(|c| c == &frame_tag),
             "canvas group references the frame"
+        );
+    });
+}
+
+/// R1234 — a frame around {0,1}, moved via `intervene frame.<id>.x`, and one
+/// coordinator (`select {0,1}` → add_frame). Shared setup for the move tests.
+fn framed_pair() -> (NodeGraphExternal, FrameId) {
+    let _ = boot_scene();
+    let coord = coordinator();
+    coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
+    let id = coord.add_frame().unwrap();
+    (coord, id)
+}
+
+#[test]
+fn r1234_frame_move_carries_contents_as_one_undo_step() {
+    Owner::new().run(|| {
+        let (mut coord, id) = framed_pair();
+        let fx0 = coord.frame_by_id(id).unwrap().x;
+        let (n0x, n1x, n2x) = (
+            coord.node_by_id(NodeId(0)).unwrap().x,
+            coord.node_by_id(NodeId(1)).unwrap().x,
+            coord.node_by_id(NodeId(2)).unwrap().x,
+        );
+        // Move the frame right by 60 graph units.
+        coord
+            .intervene(
+                &format!("frame.{}.x", id.raw()),
+                IntrospectValue::Int(i64::from(fx0 + 60)),
+            )
+            .unwrap();
+        assert_eq!(coord.frame_by_id(id).unwrap().x, fx0 + 60, "frame moved");
+        assert_eq!(
+            coord.node_by_id(NodeId(0)).unwrap().x,
+            n0x + 60,
+            "framed node 0 moved with the frame"
+        );
+        assert_eq!(
+            coord.node_by_id(NodeId(1)).unwrap().x,
+            n1x + 60,
+            "framed node 1 moved with the frame"
+        );
+        assert_eq!(
+            coord.node_by_id(NodeId(2)).unwrap().x,
+            n2x,
+            "node 2 (outside the frame) is untouched"
+        );
+        // ONE undo step restores the frame AND both members together.
+        assert_eq!(
+            use_undo().undo_label().as_deref(),
+            Some("Move frame"),
+            "the move is a single labelled step"
+        );
+        assert!(use_undo().undo(), "one undo reverts the whole move");
+        assert_eq!(coord.frame_by_id(id).unwrap().x, fx0, "frame restored");
+        assert_eq!(
+            coord.node_by_id(NodeId(0)).unwrap().x,
+            n0x,
+            "node 0 restored"
+        );
+        assert_eq!(
+            coord.node_by_id(NodeId(1)).unwrap().x,
+            n1x,
+            "node 1 restored"
+        );
+        // Redo re-applies it in one step.
+        assert!(use_undo().redo(), "redo the move");
+        assert_eq!(
+            coord.node_by_id(NodeId(0)).unwrap().x,
+            n0x + 60,
+            "node 0 re-moved"
+        );
+    });
+}
+
+#[test]
+fn r1234_frame_move_is_a_rigid_group_clamp_at_the_world_edge() {
+    Owner::new().run(|| {
+        let (mut coord, id) = framed_pair();
+        // A y-move carries the contents on the other axis too.
+        let fy0 = coord.frame_by_id(id).unwrap().y;
+        let start_y = coord.node_by_id(NodeId(0)).unwrap().y;
+        coord
+            .intervene(
+                &format!("frame.{}.y", id.raw()),
+                IntrospectValue::Int(i64::from(fy0 + 40)),
+            )
+            .unwrap();
+        assert_eq!(
+            coord.frame_by_id(id).unwrap().y,
+            fy0 + 40,
+            "frame moved down"
+        );
+        assert_eq!(
+            coord.node_by_id(NodeId(0)).unwrap().y,
+            start_y + 40,
+            "member moved down with it"
+        );
+        // Push x far past the world: the group clamps rigidly — every member
+        // stays on-world and the frame→node offset is preserved (no slide-out).
+        let rel = coord.frame_by_id(id).unwrap().x - coord.node_by_id(NodeId(0)).unwrap().x;
+        coord
+            .intervene(
+                &format!("frame.{}.x", id.raw()),
+                IntrospectValue::Int(1_000_000),
+            )
+            .unwrap();
+        let first = coord.node_by_id(NodeId(0)).unwrap().x;
+        let second = coord.node_by_id(NodeId(1)).unwrap().x;
+        assert!(
+            first <= WORLD - NODE_W,
+            "node 0 stayed on the world surface"
+        );
+        assert!(
+            second <= WORLD - NODE_W,
+            "node 1 stayed on the world surface"
+        );
+        assert_eq!(
+            coord.frame_by_id(id).unwrap().x - first,
+            rel,
+            "the frame→member offset is preserved (rigid group move)"
+        );
+    });
+}
+
+#[test]
+fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
+    Owner::new().run(|| {
+        let (mut coord, id) = framed_pair();
+        let contains = format!("frame.{}.contains", id.raw());
+        assert_eq!(
+            coord.query(&contains),
+            Some(IntrospectValue::Text("0,1".to_owned())),
+            "only the two framed nodes to start"
+        );
+        let (n0, n2) = (
+            coord.node_by_id(NodeId(0)).unwrap(),
+            coord.node_by_id(NodeId(2)).unwrap(),
+        );
+        // Grow the box wide enough to swallow the whole graph.
+        coord
+            .intervene(&format!("frame.{}.w", id.raw()), IntrospectValue::Int(800))
+            .unwrap();
+        assert_eq!(coord.frame_by_id(id).unwrap().w, 800, "width grew");
+        // A resize never drags nodes.
+        assert_eq!(
+            coord.node_by_id(NodeId(0)).unwrap().x,
+            n0.x,
+            "node 0 stayed put"
+        );
+        assert_eq!(
+            coord.node_by_id(NodeId(0)).unwrap().y,
+            n0.y,
+            "node 0 y stayed put"
+        );
+        assert_eq!(
+            coord.node_by_id(NodeId(2)).unwrap().x,
+            n2.x,
+            "node 2 stayed put"
+        );
+        // Membership is recomputed lazily: the wider frame now holds all four.
+        assert_eq!(
+            coord.query(&contains),
+            Some(IntrospectValue::Text("0,1,2,3".to_owned())),
+            "the widened frame swallows every node"
+        );
+        assert_eq!(
+            use_undo().undo_label().as_deref(),
+            Some("Resize frame"),
+            "a resize is its own labelled step"
+        );
+        assert!(use_undo().undo(), "undo the resize");
+        assert_eq!(
+            coord.query(&contains),
+            Some(IntrospectValue::Text("0,1".to_owned())),
+            "membership reverts with the size"
+        );
+    });
+}
+
+#[test]
+fn r1234_frame_resize_clamps_to_the_minimum() {
+    Owner::new().run(|| {
+        let (mut coord, id) = framed_pair();
+        // Collapsing below the chrome height clamps to FRAME_MIN, never zero.
+        coord
+            .intervene(&format!("frame.{}.w", id.raw()), IntrospectValue::Int(1))
+            .unwrap();
+        assert_eq!(coord.frame_by_id(id).unwrap().w, FRAME_MIN, "width clamped");
+        coord
+            .intervene(&format!("frame.{}.h", id.raw()), IntrospectValue::Int(-9))
+            .unwrap();
+        assert_eq!(
+            coord.frame_by_id(id).unwrap().h,
+            FRAME_MIN,
+            "height clamped"
+        );
+    });
+}
+
+#[test]
+fn r1234_frame_geom_type_and_path_errors() {
+    Owner::new().run(|| {
+        let (mut coord, id) = framed_pair();
+        // A non-Int rect value is a TypeMismatch (not ReadOnly any more).
+        assert_eq!(
+            coord.intervene(
+                &format!("frame.{}.w", id.raw()),
+                IntrospectValue::Text("wide".to_owned()),
+            ),
+            Err(InterveneError::TypeMismatch),
+        );
+        // An unknown frame id / field is UnknownPath.
+        assert_eq!(
+            coord.intervene("frame.99.x", IntrospectValue::Int(0)),
+            Err(InterveneError::UnknownPath),
+        );
+        assert_eq!(
+            coord.intervene(&format!("frame.{}.zz", id.raw()), IntrospectValue::Int(0)),
+            Err(InterveneError::UnknownPath),
+        );
+        // A no-op move (same x) journals nothing — the last step is still the add.
+        coord
+            .intervene(
+                &format!("frame.{}.x", id.raw()),
+                IntrospectValue::Int(i64::from(coord.frame_by_id(id).unwrap().x)),
+            )
+            .unwrap();
+        assert_eq!(
+            use_undo().undo_label().as_deref(),
+            Some("Add frame"),
+            "a no-op move records no undo step"
         );
     });
 }

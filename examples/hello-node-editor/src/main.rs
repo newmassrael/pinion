@@ -51,7 +51,9 @@
 //! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs,input_types,output_types,input_default.<port>}` /
 //! `edge.<id>` / `selected` / `selected_ids` / `selected_edge`;
 //! `intervene node.<id>.x` / `node.<id>.y` / `node.<id>.title` /
-//! `node.<id>.input_default.<port>` / `selected` / `selected_ids` /
+//! `node.<id>.input_default.<port>` / `frame.<id>.{title,x,y,w,h}` (R1234:
+//! `x`/`y` move the frame + its contents, `w`/`h` resize it) /
+//! `selected` / `selected_ids` /
 //! `selected_edge`; `invoke add_edge` / `remove_edge` /
 //! `reconnect_edge` / `delete_node` / `delete_selected` / `nudge` / the
 //! pointer `send` wire.
@@ -373,6 +375,11 @@ const BODY_PAD: i32 = 10;
 /// obscuring them).
 const FRAME_PAD: i32 = 28;
 const FRAME_HEADER_H: i32 = 24;
+/// R1234 — the smallest a comment frame can be resized to (its chrome height:
+/// the title strip + one pad), so a `resize` can never collapse the box below
+/// its own header. Both axes share it — a frame narrower than its title is as
+/// useless as one shorter than its header.
+const FRAME_MIN: i32 = FRAME_HEADER_H + FRAME_PAD;
 const FRAME_FILL_ALPHA: u8 = 28;
 /// The comment-frame accent (a muted amber, distinct from the port-type
 /// colours) — the fill is this at [`FRAME_FILL_ALPHA`], the border + title opaque.
@@ -2012,6 +2019,108 @@ impl UndoCommand for MoveNodesCmd {
     }
 }
 
+/// R1234 §5.52 — a reversible comment-frame **geometry** edit. Two shapes share
+/// it: a *move* translates the frame's rect AND carries every node it contained
+/// by the same delta (the Blueprint "drag the comment box, its contents come
+/// along" contract); a *resize* changes only `w`/`h` with an empty `moves` (the
+/// nodes stay put and the membership is recomputed lazily by
+/// [`CommentFrame::contains_node`]). Stores the frame's `before` / `after` rect
+/// plus one [`NodeMove`] per translated member, so undo / redo is an
+/// O(members) reposition, never a graph-wide delta ([[granular-undo-not-snapshot]]).
+/// Like [`RenameCmd`] (and unlike [`MoveNodesCmd`]) it does NOT coalesce — an
+/// `intervene frame.<id>.x` is a discrete RPC edit, not a keyboard nudge burst,
+/// so every committed geometry edit is its own undo step.
+struct FrameGeomCmd {
+    frames: Rc<Signal<Vec<CommentFrame>>>,
+    nodes: Rc<Signal<Vec<GraphNode>>>,
+    id: FrameId,
+    /// The frame's `(x, y, w, h)` before / after this edit.
+    before: (i32, i32, i32, i32),
+    after: (i32, i32, i32, i32),
+    /// `(id, before, after)` per member node the move carried — empty for a
+    /// resize (which never moves nodes).
+    moves: Vec<NodeMove>,
+    /// "Move frame" / "Resize frame" — set by the caller so the undo label
+    /// names the gesture.
+    label: Cow<'static, str>,
+}
+
+impl FrameGeomCmd {
+    /// Set the frame's rect + every member node to its `after` (`to_after`) or
+    /// `before` position, one write per touched signal (the node write is
+    /// skipped for a resize — an empty `moves`). An absent frame / member is
+    /// skipped: a LIFO undo cannot reach this edit while the entity is deleted,
+    /// but the write stays total ([`MoveNodesCmd::set_all`] discipline).
+    fn set_geom(&self, to_after: bool) {
+        let rect = if to_after { self.after } else { self.before };
+        self.frames.set_with(|prev| {
+            let mut next = prev.clone();
+            if let Some(f) = next.iter_mut().find(|f| f.id == self.id) {
+                (f.x, f.y, f.w, f.h) = rect;
+            }
+            next
+        });
+        if !self.moves.is_empty() {
+            self.nodes.set_with(|prev| {
+                let mut next = prev.clone();
+                for (id, before, after) in &self.moves {
+                    let pos = if to_after { after } else { before };
+                    if let Some(n) = next.iter_mut().find(|n| n.id == *id) {
+                        n.x = pos.0;
+                        n.y = pos.1;
+                    }
+                }
+                next
+            });
+        }
+    }
+}
+
+impl UndoCommand for FrameGeomCmd {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        self.set_geom(true);
+    }
+
+    fn undo(&self) {
+        self.set_geom(false);
+    }
+}
+
+/// R1234 — the feasible one-axis translation `dx` of comment frame `frame`
+/// keeping its origin AND every member node on the world surface: the requested
+/// delta clamped to an interval `[lo, hi]` that always contains `0` (the current
+/// state is already on-world). A *rigid* group clamp — the frame and its
+/// contents move by the SAME delta, so their relative geometry is preserved even
+/// at the world edge (a node can never slide out of the frame it sits in). With
+/// no members only the frame origin bounds it, so an empty frame still cannot be
+/// pushed off the world.
+fn clamp_frame_dx(frame: &CommentFrame, members: &[GraphNode], dx: i32) -> i32 {
+    let mut lo = -frame.x;
+    let mut hi = WORLD - frame.x;
+    for n in members {
+        lo = lo.max(-n.x);
+        hi = hi.min(WORLD - NODE_W - n.x);
+    }
+    dx.clamp(lo, hi)
+}
+
+/// R1234 — the vertical twin of [`clamp_frame_dx`]: the feasible `dy` keeping
+/// the frame origin and every member within the world's `y` extent (the same
+/// bound [`clamp_node_y`] enforces per node).
+fn clamp_frame_dy(frame: &CommentFrame, members: &[GraphNode], dy: i32) -> i32 {
+    let mut lo = -frame.y;
+    let mut hi = WORLD - frame.y;
+    for n in members {
+        lo = lo.max(-n.y);
+        hi = hi.min((WORLD - HEADER_H - 8) - n.y);
+    }
+    dy.clamp(lo, hi)
+}
+
 /// R1232 §5.52 — a titled, id-addressed graph entity a rename undo command
 /// edits. [`GraphNode`] + [`CommentFrame`] are the two consumers: the arrival of
 /// the 2nd unified [`RenameCmd`]/[`apply_rename`] over what were byte-identical
@@ -2130,8 +2239,11 @@ fn apply_rename<T: Titled>(
         before,
         after: trimmed.to_owned(),
     };
-    cmd.redo();
-    undo.push_applied(cmd);
+    // R1234 — `record` applies the fresh command's forward effect then journals
+    // it; the pre-R1234 `cmd.redo(); push_applied(cmd)` hand-rolled exactly that
+    // ([[use-substrate-not-hand-rolled-equivalent]]). `push_applied` is only for
+    // an edit already applied out-of-band (the drag / keystroke path), not here.
+    undo.record(cmd);
     true
 }
 
@@ -2230,8 +2342,11 @@ fn apply_set_default(
         before,
         after: value,
     };
-    cmd.redo();
-    undo.push_applied(cmd);
+    // R1234 — `record` (apply-then-journal) over the hand-rolled `cmd.redo();
+    // push_applied(cmd)` ([[use-substrate-not-hand-rolled-equivalent]]); the
+    // value was NOT applied out-of-band, so this is a `record`, not a
+    // `push_applied` (which is for the eager drag / keystroke path).
+    undo.record(cmd);
     true
 }
 
@@ -3391,6 +3506,96 @@ impl NodeGraphExternal {
         true
     }
 
+    /// R1234 — move comment frame `id` to a new `x` (`new_x`) and / or `y`
+    /// (`new_y`), carrying every node it CURRENTLY contains by the same clamped
+    /// delta as ONE undo step ([`FrameGeomCmd`], label "Move frame"). The
+    /// Blueprint move-with-contents contract — the membership is snapshotted at
+    /// the start of the move ([`CommentFrame::contains_node`]), so the moved set
+    /// is exactly what the paint + the `contains` query show. Nodes outside the
+    /// frame are untouched. `false` for an unknown id.
+    fn translate_frame(&self, id: FrameId, new_x: Option<i32>, new_y: Option<i32>) -> bool {
+        let Some(frame) = self.frame_by_id(id) else {
+            return false;
+        };
+        let members: Vec<GraphNode> = self
+            .nodes
+            .get()
+            .iter()
+            .filter(|n| frame.contains_node(n))
+            .cloned()
+            .collect();
+        let dx = clamp_frame_dx(&frame, &members, new_x.map_or(0, |x| x - frame.x));
+        let dy = clamp_frame_dy(&frame, &members, new_y.map_or(0, |y| y - frame.y));
+        let after = (frame.x + dx, frame.y + dy, frame.w, frame.h);
+        let moves: Vec<NodeMove> = members
+            .iter()
+            .map(|n| (n.id, (n.x, n.y), (n.x + dx, n.y + dy)))
+            .collect();
+        self.commit_frame_geom(
+            id,
+            (frame.x, frame.y, frame.w, frame.h),
+            after,
+            moves,
+            "Move frame",
+        )
+    }
+
+    /// R1234 — resize comment frame `id` to a new `w` (`new_w`) and / or `h`
+    /// (`new_h`), clamped to `[FRAME_MIN, WORLD - origin]` so the box keeps its
+    /// chrome and its right / bottom edge stays on the world surface. The origin
+    /// is fixed and NO node moves: a resize changes which nodes the frame
+    /// contains (recomputed lazily by [`CommentFrame::contains_node`]), it does
+    /// not drag them ([`FrameGeomCmd`], label "Resize frame"). `false` for an
+    /// unknown id.
+    fn resize_frame(&self, id: FrameId, new_w: Option<i32>, new_h: Option<i32>) -> bool {
+        let Some(frame) = self.frame_by_id(id) else {
+            return false;
+        };
+        let w = new_w.map_or(frame.w, |w| {
+            w.clamp(FRAME_MIN, (WORLD - frame.x).max(FRAME_MIN))
+        });
+        let h = new_h.map_or(frame.h, |h| {
+            h.clamp(FRAME_MIN, (WORLD - frame.y).max(FRAME_MIN))
+        });
+        self.commit_frame_geom(
+            id,
+            (frame.x, frame.y, frame.w, frame.h),
+            (frame.x, frame.y, w, h),
+            Vec::new(),
+            "Resize frame",
+        )
+    }
+
+    /// R1234 — the ONE commit funnel [`Self::translate_frame`] + [`Self::resize_frame`]
+    /// share: build the geometry edit and hand it to [`UndoStack::record`],
+    /// which applies its forward effect then journals it as a single
+    /// [`FrameGeomCmd`] (the same primitive [`apply_rename`] routes through — NOT
+    /// a hand-rolled `cmd.redo(); push_applied`). A no-op edit (rect unchanged,
+    /// every move stationary) journals nothing. Always `true` — the frame was
+    /// validated at the call site.
+    fn commit_frame_geom(
+        &self,
+        id: FrameId,
+        before: (i32, i32, i32, i32),
+        after: (i32, i32, i32, i32),
+        moves: Vec<NodeMove>,
+        label: impl Into<Cow<'static, str>>,
+    ) -> bool {
+        if before == after && moves.iter().all(|(_, b, a)| b == a) {
+            return true;
+        }
+        self.undo.record(FrameGeomCmd {
+            frames: Rc::clone(&self.frames),
+            nodes: Rc::clone(&self.nodes),
+            id,
+            before,
+            after,
+            moves,
+            label: label.into(),
+        });
+        true
+    }
+
     /// The `add_node` verb arm (extracted to keep `invoke` within the workspace
     /// line ceiling): create a node by palette kind name, returning its new id.
     fn invoke_add_node(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
@@ -3453,10 +3658,12 @@ impl NodeGraphExternal {
         }
     }
 
-    /// R1227 — the `intervene frame.<id>.<field>` write: `title` renames through
-    /// the shared [`apply_rename`] SSOT (journaled), while the rect
-    /// (`x`/`y`/`w`/`h`) is READ-ONLY in v1 — a frame is sized from its
-    /// selection's bbox at creation; move-with-contents + resize are R1228.
+    /// R1227 / R1234 — the `intervene frame.<id>.<field>` write. `title` renames
+    /// through the shared [`apply_rename`] SSOT (journaled). `x` / `y` MOVE the
+    /// frame + the nodes it contains ([`Self::translate_frame`] — move-with-contents);
+    /// `w` / `h` RESIZE the box, origin fixed, nodes untouched ([`Self::resize_frame`]).
+    /// Each rect write journals one [`FrameGeomCmd`]. An unknown id is caught up
+    /// front; a non-`Int` rect value is a `TypeMismatch`.
     fn intervene_frame(
         &mut self,
         path: &str,
@@ -3481,7 +3688,21 @@ impl NodeGraphExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            "x" | "y" | "w" | "h" => Err(InterveneError::ReadOnly),
+            "x" | "y" | "w" | "h" => {
+                let IntrospectValue::Int(v) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                let v = i32::try_from(v).map_err(|_| InterveneError::TypeMismatch)?;
+                // The id was validated above, so both funnels return `true`;
+                // `x`/`y` translate (move-with-contents), `w`/`h` resize.
+                match field {
+                    "x" => self.translate_frame(id, Some(v), None),
+                    "y" => self.translate_frame(id, None, Some(v)),
+                    "w" => self.resize_frame(id, Some(v), None),
+                    _ => self.resize_frame(id, None, Some(v)),
+                };
+                Ok(())
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -5750,9 +5971,11 @@ fn frame_access_nodes(frames: &[CommentFrame], nodes: &[GraphNode]) -> Vec<Acces
 /// [`FRAME_FILL_ALPHA`] wash of [`FRAME_COLOR`] with an opaque border + a title
 /// in the header strip. Pointer-transparent so a click passes straight through
 /// to the nodes / canvas beneath — a frame annotates a region without blocking
-/// interaction with the nodes it contains (the grab-to-move handle is the R1228
-/// follow-up; v1 frames are RPC-authored). Tagged `node_graph#frame_<id>` so a
-/// future gesture (and the a11y bounds) resolve to the painted rect.
+/// interaction with the nodes it contains. R1234 made the rect writable over the
+/// §5.12 plane (`intervene frame.<id>.{x,y}` moves the frame + contents,
+/// `{w,h}` resizes); a GUI grab-to-move handle stays deferred pending a live
+/// pointer consumer. Tagged `node_graph#frame_<id>` so that gesture (and the
+/// a11y bounds) resolve to the painted rect.
 fn view_frames(frames: &[CommentFrame], zoom: f64) -> Vec<Scene> {
     let fill = Color {
         a: FRAME_FILL_ALPHA,
