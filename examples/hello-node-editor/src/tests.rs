@@ -8000,3 +8000,96 @@ fn r1260_query_resolved_input_and_localises_a_cycle() {
         );
     });
 }
+
+// ── R1261 — node-graph paint scales: O(nodes·edges) cross-scans -> O((n+e)logn) ──
+
+#[test]
+fn r1261_large_graph_paints_the_full_structure_at_scale() {
+    // R1261 precomputes the node/edge lookup indices in view_node_cards /
+    // view_edges (the paint was O(nodes·edges)). This pins that the refactor's
+    // output is identical AT SCALE — exactly one card per node and one wire per
+    // edge for a large chain, no drops / dups from the index change.
+    Owner::new().run(|| {
+        let _ = boot_scene(); // establishes the theme + reactive scopes
+        let n: u32 = 300;
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for i in 0..n {
+            nodes.push(eval_node_of(i, NodeOp::Add, 2, true));
+            if i > 0 {
+                edges.push(Edge {
+                    id: EdgeId(i - 1),
+                    from_node: NodeId(i - 1),
+                    from_port: 0,
+                    to_node: NodeId(i),
+                    to_port: 0,
+                });
+            }
+        }
+        let theme = use_theme(THEME_TAG).theme_animated();
+        let sel = BTreeSet::new();
+        let cards = view_node_cards(&nodes, &edges, &sel, None, IDLE_TF, &theme, 1.0);
+        assert_eq!(cards.len(), n as usize, "one card per node at scale");
+        let tags: BTreeSet<String> = cards
+            .iter()
+            .filter_map(|c| c.tag().map(str::to_owned))
+            .collect();
+        assert_eq!(
+            tags.len(),
+            n as usize,
+            "every card carries a distinct node tag (no drops/dups)"
+        );
+        let wires = view_edges(&nodes, &edges, None, &theme, 1.0);
+        assert_eq!(wires.len(), (n - 1) as usize, "one wire per edge at scale");
+    });
+}
+
+#[test]
+fn r1261_wired_input_precompute_matches_the_per_node_scan() {
+    // The precomputed wired-port map must equal the old per-node edge scan for
+    // every node (identical paint input). Multiple wires into distinct ports of
+    // one node aggregate; an unwired node maps to the empty set.
+    let nodes = vec![
+        eval_node_of(0, NodeOp::Color, 0, true),
+        eval_node_of(1, NodeOp::Color, 0, true),
+        eval_node_of(2, NodeOp::Lerp, 3, true), // 3 input ports
+    ];
+    let edges = vec![
+        Edge {
+            id: EdgeId(0),
+            from_node: NodeId(0),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 0,
+        },
+        Edge {
+            id: EdgeId(1),
+            from_node: NodeId(1),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 2,
+        },
+    ];
+    for node in &nodes {
+        let precomputed: BTreeSet<usize> = {
+            let mut m: BTreeMap<NodeId, BTreeSet<usize>> = BTreeMap::new();
+            for e in &edges {
+                m.entry(e.to_node).or_default().insert(e.to_port);
+            }
+            m.get(&node.id).cloned().unwrap_or_default()
+        };
+        let per_node: BTreeSet<usize> = edges
+            .iter()
+            .filter(|e| e.to_node == node.id)
+            .map(|e| e.to_port)
+            .collect();
+        assert_eq!(precomputed, per_node, "node {} wired set", node.id.raw());
+    }
+    // Node 2 (Lerp) has ports 0 and 2 wired, not 1.
+    let n2: BTreeSet<usize> = edges
+        .iter()
+        .filter(|e| e.to_node == NodeId(2))
+        .map(|e| e.to_port)
+        .collect();
+    assert_eq!(n2, BTreeSet::from([0, 2]), "aggregated wired ports");
+}

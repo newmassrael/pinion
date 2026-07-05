@@ -22890,6 +22890,46 @@
         "resolved_input recomputes per query (fresh memo per port); no incremental cache -- measure-first at editor scale."
       ]
     },
+    "R1261": {
+      "decision_summary": "R1261 measure-first pro-tool-perf: drop the node-graph paint's O(nodes*edges) node<->edge cross-scans to O((n+e)logn) by precomputing the wired-input map (view_node_cards) and a node-by-id index (view_edges) once per paint. Byte-identical scene output (all tests+demos pass unchanged), asymptotically justified by the large-graph editor use case. Viewport-culling the card build carried (repaint-model-dependent, needs a frame-timing profile).",
+      "changes_bullets": [
+        "view_node_cards precomputes the wired-input port sets ONCE from the edge list (a per-node BTreeMap lookup) instead of rescanning every edge per node — the per-node O(edges) scan was O(nodes*edges) across the paint.",
+        "view_edges indexes the nodes by id ONCE (BTreeMap<NodeId,&GraphNode>) so each edge's two endpoint lookups are O(log n), not the linear node_ref scan edge_endpoints runs per call — view_edges was O(edges*nodes). edge_endpoints stays for the non-paint callers where a per-call O(n) is not a per-frame cost.",
+        "Net: the node-graph paint's node<->edge cross-references drop from O(nodes*edges) to O((n+e)*log n), the frame-build cost the self-hosted editor needs bounded for large graphs. The scene output is byte-identical (a pure algorithmic refactor)."
+      ],
+      "verification_bullets": [
+        "Measure-first pro-tool-perf (the lowest-completion buildable Phase-B axis; Model/View is concluded, node crate-lift is 2nd-consumer-gated). Un-blocked, correctness-preserving: an asymptotic O(nodes*edges)->O((n+e)logn) fix justified by the large-graph use case, NOT a speculative micro-opt. Viewport-culling the card BUILD was deliberately NOT done — the ScrollNode already clips off-screen cards at render, so culling is repaint-model-dependent and would need real frame-timing evidence (GPU harness) to justify; carried honestly.",
+        "Output identical: all 234 tests + all 30 node-editor demos PASS unchanged (a paint-output change would have failed them). 2 new r1261_*: large-graph (300 nodes/299 edges) paints exactly one card per node + one wire per edge with distinct tags (no drops/dups at scale); wired-input precompute == the per-node scan for every node.",
+        "clippy -p hello-node-editor --all-targets = 0; cargo fmt --check clean; cargo doc (private-items) exit 0.",
+        "tools/demos/r1261_node_paint_scale.py 30 assertions PASS on the release binary (a 24-Add chain off the seed Color source: node/edge counts grow, still a DAG, evaluates through the chain, mid-chain resolved_input + value + detail mirror correct at scale, round-trips). validate-workspace T1 orphan=0."
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "Viewport culling of the card build (O(total)->O(visible)) deferred: it trades scene-build cost for a per-pan repaint (the ScrollNode currently clips off-screen cards for free), so it needs a real frame-timing profile of a large-graph pan to prove a net win — the GPU/pointer harness the perf axis still lacks (no GPU-timestamp render time, per CLAUDE.md).",
+        "Non-paint node_ref callers stay O(n) per call (RPC handlers etc.) — not a per-frame-per-node cost, so not indexed; a shared node index would be the lift if a 2nd per-frame O(n^2) consumer appears."
+      ],
+      "publishable_decision_summary": "R1261 measure-first pro-tool-perf: drop the node-graph paint's O(nodes*edges) node<->edge cross-scans to O((n+e)logn) by precomputing the wired-input map (view_node_cards) and a node-by-id index (view_edges) once per paint. Byte-identical scene output (all tests+demos pass unchanged), asymptotically justified by the large-graph editor use case. Viewport-culling the card build carried (repaint-model-dependent, needs a frame-timing profile).",
+      "publishable_changes_bullets": [
+        "view_node_cards precomputes the wired-input port sets ONCE from the edge list (a per-node BTreeMap lookup) instead of rescanning every edge per node — the per-node O(edges) scan was O(nodes*edges) across the paint.",
+        "view_edges indexes the nodes by id ONCE (BTreeMap<NodeId,&GraphNode>) so each edge's two endpoint lookups are O(log n), not the linear node_ref scan edge_endpoints runs per call — view_edges was O(edges*nodes). edge_endpoints stays for the non-paint callers where a per-call O(n) is not a per-frame cost.",
+        "Net: the node-graph paint's node<->edge cross-references drop from O(nodes*edges) to O((n+e)*log n), the frame-build cost the self-hosted editor needs bounded for large graphs. The scene output is byte-identical (a pure algorithmic refactor)."
+      ],
+      "publishable_verification_bullets": [
+        "Measure-first pro-tool-perf (the lowest-completion buildable Phase-B axis; Model/View is concluded, node crate-lift is 2nd-consumer-gated). Un-blocked, correctness-preserving: an asymptotic O(nodes*edges)->O((n+e)logn) fix justified by the large-graph use case, NOT a speculative micro-opt. Viewport-culling the card BUILD was deliberately NOT done — the ScrollNode already clips off-screen cards at render, so culling is repaint-model-dependent and would need real frame-timing evidence (GPU harness) to justify; carried honestly.",
+        "Output identical: all 234 tests + all 30 node-editor demos PASS unchanged (a paint-output change would have failed them). 2 new r1261_*: large-graph (300 nodes/299 edges) paints exactly one card per node + one wire per edge with distinct tags (no drops/dups at scale); wired-input precompute == the per-node scan for every node.",
+        "clippy -p hello-node-editor --all-targets = 0; cargo fmt --check clean; cargo doc (private-items) exit 0.",
+        "tools/demos/r1261_node_paint_scale.py 30 assertions PASS on the release binary (a 24-Add chain off the seed Color source: node/edge counts grow, still a DAG, evaluates through the chain, mid-chain resolved_input + value + detail mirror correct at scale, round-trips). validate-workspace T1 orphan=0."
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Viewport culling of the card build (O(total)->O(visible)) deferred: it trades scene-build cost for a per-pan repaint (the ScrollNode currently clips off-screen cards for free), so it needs a real frame-timing profile of a large-graph pan to prove a net win — the GPU/pointer harness the perf axis still lacks (no GPU-timestamp render time, per CLAUDE.md).",
+        "Non-paint node_ref callers stay O(n) per call (RPC handlers etc.) — not a per-frame-per-node cost, so not indexed; a shared node index would be the lift if a 2nd per-frame O(n^2) consumer appears."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

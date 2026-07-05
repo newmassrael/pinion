@@ -6913,10 +6913,16 @@ fn view_edges(
 ) -> Vec<Scene> {
     let color = theme.resolve(ColorRole::Accent);
     let hot = theme.resolve(ColorRole::OnSurface);
+    // R1261 — index the nodes by id ONCE (O(nodes)) so each edge's two endpoint
+    // lookups are O(log n), not the linear `node_ref` scan `edge_endpoints` runs
+    // (view_edges was O(edges · nodes)). `edge_endpoints` stays for the non-paint
+    // callers, where a per-call O(n) is not a per-frame cost.
+    let index: BTreeMap<NodeId, &GraphNode> = nodes.iter().map(|n| (n.id, n)).collect();
     edges
         .iter()
         .filter_map(|e| {
-            let (from, to) = edge_endpoints(nodes, e)?;
+            let from = output_port_center(index.get(&e.from_node)?, e.from_port);
+            let to = input_port_center(index.get(&e.to_node)?, e.to_port);
             let (c, w) = if selected_edge == Some(e.id) {
                 (hot, SELECTED_EDGE_W)
             } else {
@@ -7607,10 +7613,13 @@ fn view_details_panel(
 /// state + caret byte (the data-grid `RootState` shape).
 type RootState = (TextFieldState, u32);
 
-/// R899 — the node cards, one per node. Computes each node's wired input set
-/// (the ports whose default label is hidden because an edge supplies their
-/// value — the single source the paint and the `add_edge` open-port rule
-/// share) and lowers it to a [`view_node`] card.
+/// R899 — the node cards, one per node. Each node's wired input set (the ports
+/// whose default label is hidden because an edge supplies their value — the
+/// single source the paint and the `add_edge` open-port rule share) lowers to a
+/// [`view_node`] card. R1261 — the wired-port sets are precomputed ONCE from the
+/// edge list (O(edges)) into a per-node map, so the card build is a lookup, not
+/// the per-node O(edges) rescan it was (the paint was O(nodes · edges), a
+/// frame-time cost the self-hosted editor cannot afford at large-graph scale).
 fn view_node_cards(
     nodes: &[GraphNode],
     edges: &[Edge],
@@ -7625,14 +7634,18 @@ fn view_node_cards(
     let card_edit_target = active
         .filter(|a| a.surface == EditSurface::Card)
         .map(|a| a.target);
+    let mut wired_by_node: BTreeMap<NodeId, BTreeSet<usize>> = BTreeMap::new();
+    for e in edges {
+        wired_by_node
+            .entry(e.to_node)
+            .or_default()
+            .insert(e.to_port);
+    }
+    let no_wires = BTreeSet::new();
     nodes
         .iter()
         .map(|node| {
-            let wired_inputs: BTreeSet<usize> = edges
-                .iter()
-                .filter(|e| e.to_node == node.id)
-                .map(|e| e.to_port)
-                .collect();
+            let wired_inputs = wired_by_node.get(&node.id).unwrap_or(&no_wires);
             // R901 — only the card hosting the in-flight edit paints the shared
             // field (a title or one pin default); every other card paints
             // statically. `None` once the target's node is a different card.
@@ -7642,7 +7655,7 @@ fn view_node_cards(
                 selected.contains(&node.id),
                 card_edit,
                 edit_field,
-                &wired_inputs,
+                wired_inputs,
                 theme,
                 zoom,
             )
