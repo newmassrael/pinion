@@ -22714,6 +22714,52 @@
         "op keeps no serde default (a stale blob fails deserialize -> fresh, same outcome as the version-reject); documented, defensible, left as-is rather than reintroducing a placeholder smell."
       ]
     },
+    "R1257": {
+      "decision_summary": "R1257 authorable SOURCE constants: a source node carries an output_const (the output-side twin of the R899 pin default), AI-first via intervene node.<id>.value (ReadOnly on a derived op/sink) + is_source, so the material graph is author-able end to end and re-evaluates. Generalized the pin-default undo command into SetNodeValueCmd over a target enum (RenameCmd<T> lift). GUI editor + set_graph validation carried.",
+      "changes_bullets": [
+        "GraphNode.output_const: Option<CellValue> — a source node (no inputs, >=1 output, not a reroute) carries an authorable output constant, the output-side twin of the R899 input pin default; seeded at construction to output port 0's type default (Vector->grey, Float->0.0). Schema 6->7. is_source() = output_const.is_some().",
+        "Evaluator returns a source's output_const instead of a fixed type-constant (Texture and Color are no longer both grey); NodeOp::evaluate's source arms stay the documented fallback for an output_const-less hand-built source.",
+        "AI-first RPC: query node.<id>.is_source (+ detail.is_source), intervene node.<id>.value authors a source's constant (typed via with_intervene against output port 0, ReadOnly on a compute op / sink, undoable); the graph re-evaluates.",
+        "SSOT: generalized SetPortDefaultCmd + apply_set_default into SetNodeValueCmd + apply_set_node_value over a NodeValueTarget{InputDefault(port),OutputConst} enum — the pin-default and source-const writes are byte-identical but for the target field (the RenameCmd<T> 2nd-consumer lift precedent), so they share one command and one mutation SSOT."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor 217 pass / 0 fail (5 new r1257_*: sources-carry-constant/others-do-not, intervene-authors-and-reevaluates, ReadOnly-on-derived, one-undoable-step, Scalar-type-checked); pinion-core 2544 pass.",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean; cargo doc (private-items) exit 0 after retargeting the SetPortDefaultCmd/apply_set_default doc links to the generalized names.",
+        "tools/demos/r1257_node_source_value.py 35 assertions PASS on the release binary (is_source discovery, author-and-reevaluate, Multiply-by-white identity, ReadOnly on op/sink, Float vs hex type-check, disconnected-source terminal, one-undo/redo).",
+        "Swept ALL 28 node-editor demos PASS (the generalized undo command + schema 7 persistence are regression-clean: r899/r901 pin-default path, r852/r1227 persist); r1227 test+demo schema assertion bumped 6->7. validate-workspace T1 orphan=0."
+      ],
+      "impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Source-constant GUI authoring deferred (this round is the AI-first substrate, the R899->R901 model-then-editor split): painting the constant on the source card + a double-click inline editor is the follow-up.",
+        "set_graph structural validation still carried (R1256): an injected ill-typed edge / arity mismatch still evaluates to a silent null; the source-const path inherits the R1256 symmetric coercion for mistyped defaults.",
+        "Not independently audited this round (built on the R1255/R1256-audited eval foundation with the R1256 SSOT/introspection lessons applied proactively); a query-vs-intervene-symmetry audit is available on request."
+      ],
+      "publishable_decision_summary": "R1257 authorable SOURCE constants: a source node carries an output_const (the output-side twin of the R899 pin default), AI-first via intervene node.<id>.value (ReadOnly on a derived op/sink) + is_source, so the material graph is author-able end to end and re-evaluates. Generalized the pin-default undo command into SetNodeValueCmd over a target enum (RenameCmd<T> lift). GUI editor + set_graph validation carried.",
+      "publishable_changes_bullets": [
+        "GraphNode.output_const: Option<CellValue> — a source node (no inputs, >=1 output, not a reroute) carries an authorable output constant, the output-side twin of the R899 input pin default; seeded at construction to output port 0's type default (Vector->grey, Float->0.0). Schema 6->7. is_source() = output_const.is_some().",
+        "Evaluator returns a source's output_const instead of a fixed type-constant (Texture and Color are no longer both grey); NodeOp::evaluate's source arms stay the documented fallback for an output_const-less hand-built source.",
+        "AI-first RPC: query node.<id>.is_source (+ detail.is_source), intervene node.<id>.value authors a source's constant (typed via with_intervene against output port 0, ReadOnly on a compute op / sink, undoable); the graph re-evaluates.",
+        "SSOT: generalized SetPortDefaultCmd + apply_set_default into SetNodeValueCmd + apply_set_node_value over a NodeValueTarget{InputDefault(port),OutputConst} enum — the pin-default and source-const writes are byte-identical but for the target field (the RenameCmd<T> 2nd-consumer lift precedent), so they share one command and one mutation SSOT."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor 217 pass / 0 fail (5 new r1257_*: sources-carry-constant/others-do-not, intervene-authors-and-reevaluates, ReadOnly-on-derived, one-undoable-step, Scalar-type-checked); pinion-core 2544 pass.",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean; cargo doc (private-items) exit 0 after retargeting the SetPortDefaultCmd/apply_set_default doc links to the generalized names.",
+        "tools/demos/r1257_node_source_value.py 35 assertions PASS on the release binary (is_source discovery, author-and-reevaluate, Multiply-by-white identity, ReadOnly on op/sink, Float vs hex type-check, disconnected-source terminal, one-undo/redo).",
+        "Swept ALL 28 node-editor demos PASS (the generalized undo command + schema 7 persistence are regression-clean: r899/r901 pin-default path, r852/r1227 persist); r1227 test+demo schema assertion bumped 6->7. validate-workspace T1 orphan=0."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Source-constant GUI authoring deferred (this round is the AI-first substrate, the R899->R901 model-then-editor split): painting the constant on the source card + a double-click inline editor is the follow-up.",
+        "set_graph structural validation still carried (R1256): an injected ill-typed edge / arity mismatch still evaluates to a silent null; the source-const path inherits the R1256 symmetric coercion for mistyped defaults.",
+        "Not independently audited this round (built on the R1255/R1256-audited eval foundation with the R1256 SSOT/introspection lessons applied proactively); a query-vs-intervene-symmetry audit is available on request."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

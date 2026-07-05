@@ -573,11 +573,11 @@ fn r899_set_port_default_is_undoable() {
             .node_by_id(NodeId(2))
             .and_then(|n| n.input_default(0).cloned())
             .expect("default");
-        assert!(apply_set_default(
+        assert!(apply_set_node_value(
             &use_nodes(),
             &use_undo(),
             NodeId(2),
-            0,
+            NodeValueTarget::InputDefault(0),
             red.clone()
         ));
         assert_eq!(stack.len(), 1, "a default change is one undo step");
@@ -586,11 +586,11 @@ fn r899_set_port_default_is_undoable() {
             Some(&red)
         );
         // Re-setting the same value is a no-op (no extra undo step).
-        assert!(apply_set_default(
+        assert!(apply_set_node_value(
             &use_nodes(),
             &use_undo(),
             NodeId(2),
-            0,
+            NodeValueTarget::InputDefault(0),
             red.clone()
         ));
         assert_eq!(stack.len(), 1, "an unchanged write journals nothing");
@@ -620,12 +620,24 @@ fn r900_setting_a_nan_float_default_twice_is_idempotent() {
         let lerp = coord.add_node(6).expect("Lerp"); // input 2 is a Float port
         let nan = CellValue::Float(f64::NAN);
         assert!(
-            apply_set_default(&use_nodes(), &use_undo(), lerp, 2, nan.clone()),
+            apply_set_node_value(
+                &use_nodes(),
+                &use_undo(),
+                lerp,
+                NodeValueTarget::InputDefault(2),
+                nan.clone()
+            ),
             "first NaN set journals"
         );
         let after_first = stack.len();
         assert!(
-            apply_set_default(&use_nodes(), &use_undo(), lerp, 2, nan),
+            apply_set_node_value(
+                &use_nodes(),
+                &use_undo(),
+                lerp,
+                NodeValueTarget::InputDefault(2),
+                nan
+            ),
             "repeat NaN is a no-op"
         );
         assert_eq!(
@@ -5692,8 +5704,8 @@ fn r1227_frame_persists_and_paints_behind() {
         // Persistence: the frame round-trips through the current-schema blob.
         let json = coord.serialized_json();
         assert!(
-            json.contains("\"schema_version\":6"),
-            "schema bumped to 6 (R1255 op compute identity)"
+            json.contains("\"schema_version\":7"),
+            "schema bumped to 7 (R1257 source output_const)"
         );
         assert!(json.contains("Comment 1"), "the frame is in the blob");
         coord.frames.set(Vec::new());
@@ -7326,4 +7338,176 @@ fn r1256_a_mistyped_default_coerces_instead_of_evaluating_null() {
         Some(CellValue::Color(Color::rgb(255, 255, 255))),
         "the mistyped Float default coerces (broadcasts), not a null",
     );
+}
+
+// ── R1257 — authorable source constants (the output-side twin of R899) ───────
+
+#[test]
+fn r1257_sources_carry_an_authorable_constant_others_do_not() {
+    // Texture / Color / Scalar (no inputs, >=1 output) are sources; ops / sink /
+    // reroute are not. A source's constant seeds to output port 0's type default.
+    for kind in 0..PALETTE.len() {
+        let n = GraphNode::from_palette(kind, 0, 0, 0).unwrap();
+        let has_no_inputs = n.input_ports.is_empty();
+        let has_output = !n.output_ports.is_empty();
+        assert_eq!(
+            n.is_source(),
+            has_no_inputs && has_output,
+            "{} is_source",
+            n.title,
+        );
+        if n.is_source() {
+            assert_eq!(
+                n.output_const.as_ref(),
+                Some(&n.output_ports[0].default_value()),
+                "{} seeds its constant to the output type default",
+                n.title,
+            );
+        }
+    }
+    // A reroute (1 input, 1 output) is a passthrough, not a source.
+    let knot = GraphNode::new(
+        9,
+        "R",
+        0,
+        0,
+        &[PortType::Vector],
+        &[PortType::Vector],
+        NodeOp::Reroute,
+    );
+    assert!(!knot.is_source(), "a reroute is not a source");
+}
+
+#[test]
+fn r1257_intervene_source_value_authors_it_and_reevaluates() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        // Boot: Texture(grey) x Color(grey) -> Multiply -> Output; terminal grey64.
+        assert_eq!(
+            intro.query("node.0.is_source"),
+            Some(IntrospectValue::Bool(true))
+        );
+        let grey = Color::rgb(0x80, 0x80, 0x80);
+        assert_eq!(
+            intro.query("node.0.value"),
+            Some(CellValue::Color(grey).to_introspect()),
+            "the Texture source reads its (default) constant",
+        );
+        // Author the Texture source red; the whole graph re-evaluates.
+        intro
+            .intervene("node.0.value", IntrospectValue::Text("#ff0000".into()))
+            .expect("author the source constant");
+        let red = Color::rgb(0xff, 0, 0);
+        assert_eq!(
+            intro.query("node.0.value"),
+            Some(CellValue::Color(red).to_introspect()),
+            "the source now emits the authored red",
+        );
+        // Multiply(red, grey) = (255*128/255, 0, 0) = (128, 0, 0); terminal follows.
+        let expected = CellValue::Color(color_mul(red, grey)).to_introspect();
+        assert_eq!(
+            intro.query("node.2.value"),
+            Some(expected.clone()),
+            "Multiply re-evaluated"
+        );
+        assert_eq!(
+            intro.query("eval.output"),
+            Some(expected),
+            "the terminal followed the source edit"
+        );
+    });
+}
+
+#[test]
+fn r1257_value_write_is_readonly_on_a_derived_node() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        // A compute op (Multiply, node 2) and the sink (Output, node 3) have a
+        // DERIVED value — authoring it is rejected.
+        assert_eq!(
+            intro.query("node.2.is_source"),
+            Some(IntrospectValue::Bool(false))
+        );
+        assert_eq!(
+            intro.intervene("node.2.value", IntrospectValue::Text("#ff0000".into())),
+            Err(InterveneError::ReadOnly),
+            "a compute op's value is read-only",
+        );
+        assert_eq!(
+            intro.intervene("node.3.value", IntrospectValue::Text("#ff0000".into())),
+            Err(InterveneError::ReadOnly),
+            "the sink's value is read-only",
+        );
+    });
+}
+
+#[test]
+fn r1257_source_value_edit_is_one_undoable_step() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        let stack = use_undo();
+        let before = intro.query("node.1.value");
+        intro
+            .intervene("node.1.value", IntrospectValue::Text("#00ff00".into()))
+            .expect("author the Color source");
+        assert_eq!(
+            stack.len(),
+            1,
+            "one undoable step (shared apply_set_node_value)"
+        );
+        // A no-op re-write of the same value journals nothing.
+        intro
+            .intervene("node.1.value", IntrospectValue::Text("#00ff00".into()))
+            .expect("re-author the same value");
+        assert_eq!(stack.len(), 1, "an unchanged write journals nothing");
+        assert!(stack.undo(), "undo restores the prior constant");
+        assert_eq!(intro.query("node.1.value"), before, "the source reverted");
+    });
+}
+
+#[test]
+fn r1257_scalar_source_value_is_type_checked() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        let scalar = match intro.invoke("add_node", IntrospectValue::Text("Scalar".into())) {
+            Ok(IntrospectValue::Int(id)) => id,
+            other => panic!("add Scalar: {other:?}"),
+        };
+        // Scalar's output is Float — a float authors it, a hex (a Vector value)
+        // is a type mismatch.
+        assert!(
+            intro
+                .intervene(&format!("node.{scalar}.value"), IntrospectValue::Float(0.5))
+                .is_ok(),
+            "a Float authors the Scalar source",
+        );
+        assert_eq!(
+            intro.query(&format!("node.{scalar}.value")),
+            Some(IntrospectValue::Float(0.5))
+        );
+        assert_eq!(
+            intro.intervene(
+                &format!("node.{scalar}.value"),
+                IntrospectValue::Text("#ff0000".into())
+            ),
+            Err(InterveneError::TypeMismatch),
+            "a hex (Vector) value is rejected against a Float source",
+        );
+    });
 }

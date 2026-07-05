@@ -48,7 +48,7 @@
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
-//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,op,input_types,output_types,input_default.<port>,value}` (R1256: `op` = rename-stable compute identity) /
+//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,op,is_source,input_types,output_types,input_default.<port>,value}` (R1256: `op` = rename-stable compute identity; R1257: `is_source` + authorable `value` on sources) /
 //! `edge.<id>` / `dissolvable.<id>` / `dissolvable_ids` (R1241: dissolve
 //! eligibility) / `eval.{output,acyclic}` (R1255: the evaluated terminal value
 //! and the DAG check) / `selected` / `selected_ids` / `selected_edge`;
@@ -118,7 +118,7 @@
 //!   beside the pin (a wired port hides it; the value is retained); it is
 //!   AI-read/write (`query`/`intervene node.<id>.input_default.<port>`, typed —
 //!   a colour takes a `#RRGGBB[AA]` hex, the write journals an undoable
-//!   [`SetPortDefaultCmd`]). The painted default is **inline-editable on the
+//!   [`SetNodeValueCmd`]). The painted default is **inline-editable on the
 //!   canvas** (R901): a **double-click** on the default opens the shared inline
 //!   field (the same affordance the title rename uses, R878), while the input
 //!   port's *single*-click stays edge-connect (R742); the AI path is the
@@ -132,17 +132,22 @@
 //!   Vector` scalar-broadcast the type lattice permits), and applies the op —
 //!   a tiny material-graph vocabulary (`Add`/`Multiply`/`Lerp` colour ops,
 //!   `Texture`/`Color`/`Scalar` sources, the `Output` sink). It is pure derived
-//!   introspection (§2 #3-friendly, no write twin, no mutation): `query
+//!   introspection for the derived reads (§2 #3-friendly, no mutation): `query
 //!   node.<id>.value` reads a node's output (a `Float` float / a `Vector`
 //!   `{hex,r,g,b,a}` object / `null` on a cycle), `query eval.output` the
 //!   terminal value at the `Output` sink, `query eval.acyclic` the DAG check.
 //!   Authoring drives the result: `intervene`-ing a pin default or wiring a
-//!   source re-computes the reads. **Still deferred**: an *authorable* source
-//!   constant (the output-side twin of the R899 pin default — sources are their
-//!   port-type constant for now), multi-output ops, and the typed ports' AT
-//!   enrichment (the a11y name keeps the arity count: `pinion-a11y` has no
-//!   diagram / `graphics-document` role yet — an upstream substrate gap, the
-//!   same one the module-level a11y note records).
+//!   source re-computes the reads. **R1257** — a *source* node (`Texture` /
+//!   `Color` / `Scalar`) now carries an **authorable output constant** (the
+//!   output-side twin of the R899 pin default): `intervene node.<id>.value`
+//!   authors it (`node.<id>.is_source` flags which nodes accept the write; a
+//!   compute op / sink rejects it `ReadOnly`), and the graph re-evaluates.
+//!   **Still deferred**: painting the source constant on its card + an inline
+//!   editor (this round is the AI-first substrate — the GUI authoring affordance
+//!   is a follow-up, the R899→R901 split), multi-output ops, and the typed
+//!   ports' AT enrichment (the a11y name keeps the arity count: `pinion-a11y`
+//!   has no diagram / `graphics-document` role yet — an upstream substrate gap,
+//!   the same one the module-level a11y note records).
 //! - **Undo / redo** (R851 + R853): every edit is reversible on the shared
 //!   [`UndoStack`] — the **structural** edits (add node, delete node + its
 //!   incident edges, connect, disconnect) as [`GraphEdit`] deltas, and node
@@ -191,11 +196,11 @@
 //!   keymap is the lifted [`pinion_core::edit_field_keymap`] SSOT with the
 //!   target's typed [`CellKind`] gate (title = text, a `Float` port = a
 //!   number, a `Vector`/`Color` port = a `#RRGGBB[AA]` hex). A commit journals
-//!   an undoable [`RenameCmd`] / [`SetPortDefaultCmd`] through the
-//!   `apply_rename` / `apply_set_default` SSOT — the same path the AI-first
-//!   `intervene node.<id>.title` / `node.<id>.input_default.<port>` write-twins
-//!   drive (`query editing` is the in-flight read; `query renaming` survives as
-//!   its title-only projection).
+//!   an undoable [`RenameCmd`] / [`SetNodeValueCmd`] through the
+//!   `apply_rename` / `apply_set_node_value` SSOT — the same path the AI-first
+//!   `intervene node.<id>.title` / `node.<id>.input_default.<port>` (and R1257
+//!   `node.<id>.value` on a source) write-twins drive (`query editing` is the
+//!   in-flight read; `query renaming` survives as its title-only projection).
 //! - **Double-click a wire** (R1243): splices a reroute knot into the wire under
 //!   the cursor (`A -> R -> B`), the live gesture twin of `invoke add_reroute
 //!   <edge_id>`. Reads the background edge-hit probe the same in-place click
@@ -380,10 +385,10 @@ const STORAGE_KEY: &str = "node_graph.state";
 // (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists).
 // R899 -> 3: added per-port `input_defaults` (typed `CellValue`s). R1227 -> 4:
 // comment `frames`. R1242 -> 5: the `is_reroute` discriminator. R1255 -> 6: the
-// first-class `op` compute identity (no serde default, so a stale blob fails to
-// deserialize -> fresh). Each bump mismatch-rejects a stale blob so it starts
-// fresh rather than misreading.
-const PERSISTED_SCHEMA_VERSION: u32 = 6;
+// first-class `op` compute identity. R1257 -> 7: the source `output_const` (both
+// no serde default, so a stale blob fails to deserialize -> fresh). Each bump
+// mismatch-rejects a stale blob so it starts fresh rather than misreading.
+const PERSISTED_SCHEMA_VERSION: u32 = 7;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -653,9 +658,9 @@ impl PortType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 enum NodeOp {
-    /// Source — a texture sample. v1: a constant `Vector` (the port-type
-    /// default); an *authorable* source value is the deferred output-side twin
-    /// of the R899 pin default.
+    /// Source — a texture sample. Its output is the node's authorable
+    /// [`GraphNode::output_const`] (R1257 — an authorable `Vector`, seeded to the
+    /// port-type default), not a computed value.
     Texture,
     /// Source — a constant colour (`Vector`).
     Color,
@@ -860,6 +865,12 @@ fn eval_node(
         return None;
     }
     let value = nodes.iter().find(|n| n.id == id).and_then(|node| {
+        // R1257 — a source's output is its authored constant, not a computed
+        // value. (`NodeOp::evaluate`'s source arms remain the type-default
+        // fallback for a hand-built source that somehow lacks a constant.)
+        if let Some(constant) = &node.output_const {
+            return Some(constant.clone());
+        }
         let inputs: Vec<Option<CellValue>> = (0..node.inputs())
             .map(|port| resolve_input(nodes, edges, node, port, cache, visiting))
             .collect();
@@ -980,6 +991,16 @@ struct GraphNode {
     /// lacks the field and fails to deserialize, so the load falls back to a
     /// fresh graph — the same outcome as the explicit schema-version reject.
     op: NodeOp,
+    /// R1257 — for a **source** node (no inputs, ≥1 output, not a reroute) the
+    /// authored constant its output emits: the output-side twin of the R899
+    /// input pin default. `None` for a compute op / sink / reroute (their output
+    /// is *derived*, not authored). Typed by output port 0's [`PortType`]
+    /// (`Vector`→a `Color`, `Float`→an `f64`). The evaluator returns it for a
+    /// source; the AI-first `intervene node.<id>.value` authors it. Set once at
+    /// construction (schema 7, no serde `default` — a stale blob fails
+    /// deserialize → fresh, the `op` discipline). `Some` doubles as the
+    /// "is an authorable source" discriminator ([`GraphNode::is_source`]).
+    output_const: Option<CellValue>,
 }
 
 impl GraphNode {
@@ -1006,7 +1027,22 @@ impl GraphNode {
             // could diverge if a future ctor forgot the loose assignment).
             is_reroute: op == NodeOp::Reroute,
             op,
+            // R1257 — a source (no inputs, ≥1 output) seeds its output constant
+            // from output port 0's type default (`Vector`→grey, `Float`→0.0),
+            // authorable thereafter via `intervene node.<id>.value`. A compute
+            // op / sink / reroute has no authored constant (`None`).
+            output_const: outputs
+                .first()
+                .filter(|_| inputs.is_empty())
+                .map(|t| t.default_value()),
         }
+    }
+
+    /// R1257 — whether this node is an authorable **source** (its output is a
+    /// stored constant, not a derived value). The `intervene node.<id>.value`
+    /// write gate + the `node.<id>.is_source` read.
+    fn is_source(&self) -> bool {
+        self.output_const.is_some()
     }
 
     /// R1256 — construct a [`PALETTE`] node of `kind` at `(x, y)` with id `id`,
@@ -2674,83 +2710,108 @@ fn apply_rename<T: Titled>(
     true
 }
 
-/// R899 — one reversible edit to an input port's literal default value (a
-/// per-field, non-coalescing undo step: each committed default change is its own
-/// step). Stores the typed [`CellValue`] before / after, so undo / redo restore
-/// the exact value.
+/// R899 / R1257 — the value slot a [`SetNodeValueCmd`] writes: an input port's
+/// pin default (R899) or a source node's output constant (R1257). The two are
+/// the same undoable "write a typed [`CellValue`] to a node field" edit, so they
+/// share one command rather than two near-identical copies.
+#[derive(Clone, Copy)]
+enum NodeValueTarget {
+    /// Input port `n`'s pin default (`node.<id>.input_default.<n>`, R899).
+    InputDefault(usize),
+    /// A source node's output constant (`node.<id>.value`, R1257).
+    OutputConst,
+}
+
+/// R899 / R1257 — one reversible edit to a node's typed value slot (a pin
+/// default or a source output constant, per [`NodeValueTarget`]): a per-field,
+/// non-coalescing undo step storing the [`CellValue`] before / after, so
+/// undo / redo restore the exact value.
 ///
-/// R900 / R1232 — this is one of four node-editor [`UndoCommand`]s ([`GraphEdit`]
-/// / [`MoveNodesCmd`] / [`RenameCmd`] / this). Each owns the shape of the one
-/// mutation it reverses; a single closure-parameterised `FieldUndoCmd<T>` over
-/// ALL of them would be a behaviour-bifurcating wrong abstraction (R853) —
-/// `MoveNodesCmd` is multi-target + coalescing, this no-ops on a
-/// total-order-equal value. The rename command is the one that DID generalise:
-/// its node + frame copies were byte-identical, so R1232 lifted them to the
-/// generic [`RenameCmd<T>`](RenameCmd) (the 2nd-consumer rule), whereas Move /
-/// SetPortDefault genuinely differ and stay distinct.
-struct SetPortDefaultCmd {
+/// R900 / R1232 / R1257 — one of the node-editor [`UndoCommand`]s ([`GraphEdit`]
+/// / [`MoveNodesCmd`] / [`RenameCmd`] / this). R1257 folded the former
+/// `SetPortDefaultCmd` and a would-be `SetSourceConstCmd` into this single
+/// command via [`NodeValueTarget`] — they were byte-identical but for the target
+/// field, the same 2nd-consumer lift that produced [`RenameCmd<T>`](RenameCmd)
+/// from the node / frame rename copies. `MoveNodesCmd` genuinely differs
+/// (multi-target + coalescing) and stays distinct; a single `FieldUndoCmd<T>`
+/// over ALL of them would be a behaviour-bifurcating wrong abstraction (R853).
+struct SetNodeValueCmd {
     nodes: Rc<Signal<Vec<GraphNode>>>,
     id: NodeId,
-    port: usize,
+    target: NodeValueTarget,
     before: CellValue,
     after: CellValue,
 }
 
-impl SetPortDefaultCmd {
-    /// Write the port's default. A no-op if the node / port is absent (a LIFO
-    /// undo cannot reach it while deleted, but the write stays total — the
+impl SetNodeValueCmd {
+    /// Write the targeted value slot. A no-op if the node / slot is absent (a
+    /// LIFO undo cannot reach it while deleted, but the write stays total — the
     /// [`RenameCmd::set_title`] discipline).
-    fn set_default(&self, value: &CellValue) {
+    fn set_value(&self, value: &CellValue) {
         self.nodes.set_with(|prev| {
             let mut next = prev.clone();
-            if let Some(slot) = next
-                .iter_mut()
-                .find(|n| n.id == self.id)
-                .and_then(|n| n.input_defaults.get_mut(self.port))
-            {
-                *slot = value.clone();
+            if let Some(n) = next.iter_mut().find(|n| n.id == self.id) {
+                match self.target {
+                    NodeValueTarget::InputDefault(port) => {
+                        if let Some(slot) = n.input_defaults.get_mut(port) {
+                            *slot = value.clone();
+                        }
+                    }
+                    // Only overwrites an existing source constant (`Some`), so a
+                    // non-source node can never gain one through undo/redo.
+                    NodeValueTarget::OutputConst if n.output_const.is_some() => {
+                        n.output_const = Some(value.clone());
+                    }
+                    NodeValueTarget::OutputConst => {}
+                }
             }
             next
         });
     }
 }
 
-impl UndoCommand for SetPortDefaultCmd {
+impl UndoCommand for SetNodeValueCmd {
     fn label(&self) -> Cow<'static, str> {
-        Cow::Borrowed("Set port default")
+        Cow::Borrowed(match self.target {
+            NodeValueTarget::InputDefault(_) => "Set port default",
+            NodeValueTarget::OutputConst => "Set source value",
+        })
     }
 
     fn redo(&self) {
-        self.set_default(&self.after);
+        self.set_value(&self.after);
     }
 
     fn undo(&self) {
-        self.set_default(&self.before);
+        self.set_value(&self.before);
     }
 }
 
-/// R899 — apply an input-port default change undoably (the [`apply_rename`]
-/// peer): reject an unknown id / out-of-range port (graph unchanged, `false`),
-/// no-op (journal nothing) when the value is unchanged, else journal a
-/// [`SetPortDefaultCmd`]. The ONE port-default mutation path — the AI-first
-/// `intervene node.<id>.input_default.<port>` and the R901 interactive inline
-/// editor (via [`apply_edit_commit`]) both land here, so they cannot drift.
-/// The caller has already typed the value (an `intervene` against the port's
-/// kind via [`CellValue::with_intervene`], the editor via `CellKind::parse`),
-/// so a wrong type never reaches the journal.
-fn apply_set_default(
+/// R899 / R1257 — apply a node value change undoably (the [`apply_rename`]
+/// peer): reject an unknown id / absent slot (graph unchanged, `false`), no-op
+/// (journal nothing) when the value is unchanged, else journal a
+/// [`SetNodeValueCmd`]. The ONE node-value mutation path — the AI-first
+/// `intervene node.<id>.input_default.<port>` (R899) / `intervene node.<id>.value`
+/// (R1257) and the R901 interactive inline editor (via [`apply_edit_commit`])
+/// all land here, so they cannot drift. The caller has already typed the value
+/// ([`CellValue::with_intervene`] for an `intervene`, `CellKind::parse` for the
+/// editor), so a wrong type never reaches the journal.
+fn apply_set_node_value(
     nodes: &Rc<Signal<Vec<GraphNode>>>,
     undo: &UndoStack,
     id: NodeId,
-    port: usize,
+    target: NodeValueTarget,
     value: CellValue,
 ) -> bool {
-    let Some(before) = nodes
+    let before = nodes
         .get()
         .into_iter()
         .find(|n| n.id == id)
-        .and_then(|n| n.input_defaults.get(port).cloned())
-    else {
+        .and_then(|n| match target {
+            NodeValueTarget::InputDefault(port) => n.input_defaults.get(port).cloned(),
+            NodeValueTarget::OutputConst => n.output_const.clone(),
+        });
+    let Some(before) = before else {
         return false;
     };
     // R900 / R920 — the no-op guard compares by the substrate's NaN-safe value
@@ -2762,10 +2823,10 @@ fn apply_set_default(
     if before.value_eq(&value) {
         return true;
     }
-    let cmd = SetPortDefaultCmd {
+    let cmd = SetNodeValueCmd {
         nodes: Rc::clone(nodes),
         id,
-        port,
+        target,
         before,
         after: value,
     };
@@ -2893,7 +2954,7 @@ fn autopan_push(frac: f64) -> f64 {
 /// R918 — commit node `id`'s position to a clamped `(x, y)` and journal it as
 /// one *coalescable* [`MoveNodesCmd`], so a Details-panel `x` edit then `y` edit
 /// (or an arrow-nudge burst) fold into a single undo step. An unchanged position
-/// journals nothing (the [`apply_rename`] / [`apply_set_default`] no-op
+/// journals nothing (the [`apply_rename`] / [`apply_set_node_value`] no-op
 /// discipline). The ONE position-commit funnel the panel's PosX/PosY inline
 /// editor and the `intervene node.<id>.{x,y}` arm share, so a panel edit and an
 /// RPC move are one undoable mutation path ([[setter-wire-returns-read-outcome]]).
@@ -2932,7 +2993,7 @@ fn port_default_kind(nodes: &[GraphNode], node: NodeId, port: usize) -> Option<C
 /// R901 — commit inline-editor `text` into `target` through the matching
 /// field SSOT: a title routes to [`apply_rename`] (trim / reject-empty), a
 /// port default parses by the port's [`CellKind`] and routes to
-/// [`apply_set_default`] (a malformed numeric / hex keeps the prior value — no
+/// [`apply_set_node_value`] (a malformed numeric / hex keeps the prior value — no
 /// data loss, the `CellKind::parse` contract). The ONE place an inline commit
 /// dispatches by target, shared by the keyboard / blur [`commit_edit`] and the
 /// begin-edit migration (committing a different in-flight target before
@@ -2951,7 +3012,13 @@ fn apply_edit_commit(
             if let Some(value) =
                 port_default_kind(&nodes.get(), node, port).and_then(|k| k.parse(text))
             {
-                let _ = apply_set_default(nodes, undo, node, port, value);
+                let _ = apply_set_node_value(
+                    nodes,
+                    undo,
+                    node,
+                    NodeValueTarget::InputDefault(port),
+                    value,
+                );
             }
         }
         // R918 — a position edit parses the typed coordinate and routes to the
@@ -3872,8 +3939,8 @@ impl NodeGraphExternal {
     /// R899 — the `intervene node.<id>.input_default.<port>` write path. The
     /// value is type-checked against the port's kind by
     /// [`CellValue::with_intervene`] (a `Float` takes a float, a `Vector`/`Color`
-    /// a `#RRGGBB[AA]` hex), then routed through the `apply_set_default` SSOT, so
-    /// the AI write journals the same undoable [`SetPortDefaultCmd`] an inline
+    /// a `#RRGGBB[AA]` hex), then routed through the `apply_set_node_value` SSOT,
+    /// so the AI write journals the same undoable [`SetNodeValueCmd`] an inline
     /// editor would. An unknown field / out-of-range port is an `UnknownPath`.
     fn intervene_input_default(
         &mut self,
@@ -3896,7 +3963,44 @@ impl NodeGraphExternal {
         // the port existence is pre-checked above so `false` is currently
         // unreachable, but threading the funnel's success keeps the contract
         // explicit and total rather than silently swallowing a future failure.
-        if apply_set_default(&self.nodes, &self.undo, id, port, next) {
+        if apply_set_node_value(
+            &self.nodes,
+            &self.undo,
+            id,
+            NodeValueTarget::InputDefault(port),
+            next,
+        ) {
+            Ok(())
+        } else {
+            Err(InterveneError::UnknownPath)
+        }
+    }
+
+    /// R1257 — the `intervene node.<id>.value` write path: author a **source**
+    /// node's output constant (the output-side twin of
+    /// [`Self::intervene_input_default`]). Gated on [`GraphNode::is_source`] —
+    /// a compute op / sink / reroute has a *derived* value, so the write is
+    /// `ReadOnly`. The value is typed against the source's current constant by
+    /// [`CellValue::with_intervene`] (matching output port 0's kind) and routed
+    /// through the same `apply_set_node_value` SSOT, so it journals an undoable
+    /// [`SetNodeValueCmd`] just like a pin-default edit.
+    fn intervene_source_value(
+        &mut self,
+        id: NodeId,
+        node: &GraphNode,
+        value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        let Some(current) = &node.output_const else {
+            return Err(InterveneError::ReadOnly);
+        };
+        let next = current.with_intervene(value)?;
+        if apply_set_node_value(
+            &self.nodes,
+            &self.undo,
+            id,
+            NodeValueTarget::OutputConst,
+            next,
+        ) {
             Ok(())
         } else {
             Err(InterveneError::UnknownPath)
@@ -4239,6 +4343,9 @@ impl NodeGraphExternal {
                 // signature, and `title` is rewritable, so an AI enumeration
                 // reads `op` to predict/verify `value`.
                 "op" => Some(IntrospectValue::Text(node.op.name().to_owned())),
+                // R1257 — whether this node is an authorable SOURCE (its `value`
+                // is a stored, `intervene`-able constant vs a derived output).
+                "is_source" => Some(IntrospectValue::Bool(node.is_source())),
                 // R898 — the typed-port read twins: CSV of the port types in port
                 // order ("" for a source / sink). The arity reads stay the
                 // byte-stable count contract.
@@ -5540,6 +5647,8 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node.<id>.is_reroute", "bool"),
             // R1256 — the rename-stable compute identity (Add/Multiply/...).
             ("node.<id>.op", "string"),
+            // R1257 — is-authorable-source flag (its `value` is intervene-able).
+            ("node.<id>.is_source", "bool"),
             // R1241 — dissolve-eligibility reads (the twins of the dissolve verb).
             ("dissolvable_ids", "string"),
             ("dissolvable.<id>", "bool"),
@@ -5583,6 +5692,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("detail.node", "int"),
             ("detail.title", "string"),
             ("detail.op", "string"),
+            ("detail.is_source", "bool"),
             ("detail.x", "int"),
             ("detail.y", "int"),
             ("detail.inputs", "int"),
@@ -5880,9 +5990,16 @@ impl ExternalIntrospect for NodeGraphExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            // R898 — port arity and the typed-port lists are read-only: ports
-            // are defined by the node kind, edited only by add/remove edges.
-            "inputs" | "outputs" | "input_types" | "output_types" => Err(InterveneError::ReadOnly),
+            // R898 — port arity and the typed-port lists are read-only (ports
+            // are defined by the node kind, edited only by add/remove edges);
+            // R1256/R1257 — the compute identity + source flag are
+            // construction-time constants.
+            "inputs" | "outputs" | "input_types" | "output_types" | "op" | "is_reroute"
+            | "is_source" => Err(InterveneError::ReadOnly),
+            // R1257 — `value` is the node's output: authored for a SOURCE
+            // (write lands its output constant), derived for a compute op / sink
+            // (`ReadOnly`). Read via `query node.<id>.value` for every node.
+            "value" => self.intervene_source_value(id, &node, value),
             // R899 — set an input port's typed default (the write twin of
             // `query node.<id>.input_default.<port>`); routed through the
             // type-checking [`Self::intervene_input_default`] helper.
