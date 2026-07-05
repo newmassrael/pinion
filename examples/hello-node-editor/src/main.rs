@@ -4629,14 +4629,11 @@ impl NodeGraphExternal {
                 "acyclic" => Some(IntrospectValue::Bool(graph_is_acyclic(&nodes, &edges))),
                 // R1260 — LOCALISE a cycle: the ids of the nodes ON a cycle
                 // (not merely downstream), so a `null` value points at the knot
-                // to break. Empty for a DAG.
-                "cycle_nodes" => Some(IntrospectValue::Text(
-                    cycle_nodes(&nodes, &edges)
-                        .iter()
-                        .map(|id| id.raw().to_string())
-                        .collect::<Vec<_>>()
-                        .join(","),
-                )),
+                // to break. Empty for a DAG. R1262 — through the `csv_ids` SSOT
+                // (the 9th id-list-CSV consumer), not a hand-rolled join.
+                "cycle_nodes" => Some(IntrospectValue::Text(csv_ids(
+                    cycle_nodes(&nodes, &edges).iter().map(|id| id.raw()),
+                ))),
                 _ => None,
             };
         }
@@ -6888,17 +6885,32 @@ fn node_ref(nodes: &[GraphNode], id: NodeId) -> Option<&GraphNode> {
     nodes.iter().find(|n| n.id == id)
 }
 
-/// R1230 — resolve edge `e` to its `(from output-port, to input-port)` centres,
-/// dropping an edge whose endpoint node is absent. The ONE endpoint SSOT the
-/// edge paint ([`view_edges`]), the click hit-test ([`NodeGraphExternal::hit_test_edge`]),
-/// and the wire knife ([`NodeGraphExternal::cut_wires`]) all read — a port-anchor
-/// change (offset, multi-row ports) lands once, so the three can never disagree
-/// (the R1226 knife had copied `hit_test_edge`'s body verbatim as a third site).
-fn edge_endpoints(nodes: &[GraphNode], e: &Edge) -> Option<((i32, i32), (i32, i32))> {
+/// R1230 / R1262 — resolve edge `e` to its `(from output-port, to input-port)`
+/// centres via a caller-supplied node `lookup`, dropping an edge whose endpoint
+/// node is absent. **The ONE endpoint anchor body** the edge paint
+/// ([`view_edges`]), the click hit-test ([`NodeGraphExternal::hit_test_edge`]),
+/// and the wire knife ([`NodeGraphExternal::cut_wires`]) all resolve through — a
+/// port-anchor change (offset, multi-row ports) lands once, so the drawn /
+/// clicked / cut wire can never disagree (the R1226 knife had copied
+/// `hit_test_edge`'s body verbatim as a third site). R1262 restored this SSOT
+/// after R1261's paint-perf pass inlined a copy: the lookup is now a parameter,
+/// so [`edge_endpoints`] (linear `node_ref`, the cold callers) and `view_edges`
+/// (a per-paint `BTreeMap` index) share this one body instead of two.
+fn edge_endpoints_via<'a>(
+    lookup: impl Fn(NodeId) -> Option<&'a GraphNode>,
+    e: &Edge,
+) -> Option<((i32, i32), (i32, i32))> {
     Some((
-        output_port_center(node_ref(nodes, e.from_node)?, e.from_port),
-        input_port_center(node_ref(nodes, e.to_node)?, e.to_port),
+        output_port_center(lookup(e.from_node)?, e.from_port),
+        input_port_center(lookup(e.to_node)?, e.to_port),
     ))
+}
+
+/// R1230 — resolve edge `e`'s endpoint centres by a linear `node_ref` lookup
+/// (the [`edge_endpoints_via`] SSOT), for the cold callers (hit-test / knife /
+/// reroute) where a per-call O(n) is not a per-frame cost.
+fn edge_endpoints(nodes: &[GraphNode], e: &Edge) -> Option<((i32, i32), (i32, i32))> {
+    edge_endpoints_via(|id| node_ref(nodes, id), e)
 }
 
 /// All committed edges, resolved to their port centres. Painted behind the
@@ -6914,15 +6926,15 @@ fn view_edges(
     let color = theme.resolve(ColorRole::Accent);
     let hot = theme.resolve(ColorRole::OnSurface);
     // R1261 — index the nodes by id ONCE (O(nodes)) so each edge's two endpoint
-    // lookups are O(log n), not the linear `node_ref` scan `edge_endpoints` runs
-    // (view_edges was O(edges · nodes)). `edge_endpoints` stays for the non-paint
-    // callers, where a per-call O(n) is not a per-frame cost.
+    // lookups are O(log n), not the linear `node_ref` scan (view_edges was
+    // O(edges · nodes)). R1262 — the anchor math still routes through the ONE
+    // [`edge_endpoints_via`] body (only the lookup differs), so the drawn wire
+    // cannot drift from the hit-test / knife on a future port-anchor change.
     let index: BTreeMap<NodeId, &GraphNode> = nodes.iter().map(|n| (n.id, n)).collect();
     edges
         .iter()
         .filter_map(|e| {
-            let from = output_port_center(index.get(&e.from_node)?, e.from_port);
-            let to = input_port_center(index.get(&e.to_node)?, e.to_port);
+            let (from, to) = edge_endpoints_via(|id| index.get(&id).copied(), e)?;
             let (c, w) = if selected_edge == Some(e.id) {
                 (hot, SELECTED_EDGE_W)
             } else {

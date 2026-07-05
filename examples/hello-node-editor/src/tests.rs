@@ -8093,3 +8093,42 @@ fn r1261_wired_input_precompute_matches_the_per_node_scan() {
         .collect();
     assert_eq!(n2, BTreeSet::from([0, 2]), "aggregated wired ports");
 }
+
+// ── R1262 — audit-clearance of R1260/R1261 (restore the edge_endpoints SSOT) ──
+
+#[test]
+fn r1262_edge_endpoint_variants_share_one_body() {
+    // R1261's paint-perf index inlined a copy of the endpoint math; R1262 routes
+    // both the linear (cold-caller) and indexed (paint) resolves through the ONE
+    // `edge_endpoints_via` body, so they produce IDENTICAL anchors for every edge
+    // — a port-anchor change can't drift the drawn wire from the hit-test/knife.
+    let nodes = default_nodes();
+    let edges = default_edges();
+    let index: BTreeMap<NodeId, &GraphNode> = nodes.iter().map(|n| (n.id, n)).collect();
+    for e in &edges {
+        assert_eq!(
+            edge_endpoints(&nodes, e),
+            edge_endpoints_via(|id| index.get(&id).copied(), e),
+            "linear and indexed endpoint resolves agree for edge {}",
+            e.id.raw(),
+        );
+    }
+    // A dangling edge drops identically through both.
+    let dangling = Edge {
+        id: EdgeId(9),
+        from_node: NodeId(99),
+        from_port: 0,
+        to_node: NodeId(0),
+        to_port: 0,
+    };
+    assert_eq!(
+        edge_endpoints(&nodes, &dangling),
+        None,
+        "linear drops a dangling edge"
+    );
+    assert_eq!(
+        edge_endpoints_via(|id| index.get(&id).copied(), &dangling),
+        None,
+        "indexed drops it identically",
+    );
+}

@@ -22930,6 +22930,42 @@
         "Non-paint node_ref callers stay O(n) per call (RPC handlers etc.) — not a per-frame-per-node cost, so not indexed; a shared node index would be the lift if a 2nd per-frame O(n^2) consumer appears."
       ]
     },
+    "R1262": {
+      "decision_summary": "R1262 audit-clearance of R1260/R1261 (2 reviewers; 7th audit). Core claims held (byte-identical output, cycle correctness CONFIRMED sound) but 2 SSOT misses fixed: (1) R1261 inlined the edge_endpoints anchor body into view_edges, splitting the paint from the hit-test/knife SSOT -> lifted to edge_endpoints_via(lookup,e), both variants share one body; (2) R1260 hand-rolled the id-CSV join -> routed eval.cycle_nodes through the existing csv_ids helper. Output-identical.",
+      "changes_bullets": [
+        "Restored the edge_endpoints SSOT R1261 broke: R1261's paint-perf pass inlined a copy of the endpoint anchor math into view_edges (index lookup) instead of edge_endpoints (linear node_ref), so the drawn wire and the hit-test/knife read two bodies -- a future port-anchor change would drift them (the exact paint<->hit-test divergence edge_endpoints' docstring guards against). R1262 lifts the anchor body to edge_endpoints_via(lookup, e); edge_endpoints passes node_ref, view_edges passes the index -- one body, both variants, view_edges keeps its O(log n) index.",
+        "Routed eval.cycle_nodes (R1260) through the existing csv_ids SSOT (its 9th id-list-CSV consumer) instead of hand-rolling the .map(to_string).collect().join(\",\") body that helper already owns."
+      ],
+      "verification_bullets": [
+        "Audit-clearance of R1260+R1261 (2 independent adversarial reviewers, user-requested). This time the self-report's CORE claims held (reviewers CONFIRMED R1261 byte-identical output for all reachable graphs, R1260 cycle-localization sound incl. self-loop/downstream-exclusion/figure-8/diamond+back-edge, resolve_input_value out-of-range guard load-bearing, cell_or_null 3-site lift honest) -- but they found 2 real SSOT misses the self-report missed (7th audit): the edge_endpoints SSOT break + the cycle_nodes CSV hand-roll. Both are output-identical fixes.",
+        "235 tests pass (1 new r1262_: the linear + indexed endpoint resolves produce identical anchors for every edge + a dangling edge drops identically through both). clippy -p hello-node-editor --all-targets = 0; cargo fmt --check clean; cargo doc (private-items) exit 0.",
+        "ALL 30 node-editor demos PASS unchanged (byte-identical: r1260 exercises eval.cycle_nodes -> csv_ids same CSV; all paint tests -> view_edges via the shared body same anchors). validate-workspace T1 orphan=0."
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "Reviewers cleared as sound (no action): node_ref index not shared by other per-frame callers (all bounded <=2 lookups, not O(n^2)); evaluate/resolve_input_value fresh-memo wrappers fine at 2 sites; the two per-paint index builds (node-by-id vs wired-by-node) index different things.",
+        "Viewport card-culling still carried (R1261, needs a frame-timing profile / GPU harness)."
+      ],
+      "publishable_decision_summary": "R1262 audit-clearance of R1260/R1261 (2 reviewers; 7th audit). Core claims held (byte-identical output, cycle correctness CONFIRMED sound) but 2 SSOT misses fixed: (1) R1261 inlined the edge_endpoints anchor body into view_edges, splitting the paint from the hit-test/knife SSOT -> lifted to edge_endpoints_via(lookup,e), both variants share one body; (2) R1260 hand-rolled the id-CSV join -> routed eval.cycle_nodes through the existing csv_ids helper. Output-identical.",
+      "publishable_changes_bullets": [
+        "Restored the edge_endpoints SSOT R1261 broke: R1261's paint-perf pass inlined a copy of the endpoint anchor math into view_edges (index lookup) instead of edge_endpoints (linear node_ref), so the drawn wire and the hit-test/knife read two bodies -- a future port-anchor change would drift them (the exact paint<->hit-test divergence edge_endpoints' docstring guards against). R1262 lifts the anchor body to edge_endpoints_via(lookup, e); edge_endpoints passes node_ref, view_edges passes the index -- one body, both variants, view_edges keeps its O(log n) index.",
+        "Routed eval.cycle_nodes (R1260) through the existing csv_ids SSOT (its 9th id-list-CSV consumer) instead of hand-rolling the .map(to_string).collect().join(\",\") body that helper already owns."
+      ],
+      "publishable_verification_bullets": [
+        "Audit-clearance of R1260+R1261 (2 independent adversarial reviewers, user-requested). This time the self-report's CORE claims held (reviewers CONFIRMED R1261 byte-identical output for all reachable graphs, R1260 cycle-localization sound incl. self-loop/downstream-exclusion/figure-8/diamond+back-edge, resolve_input_value out-of-range guard load-bearing, cell_or_null 3-site lift honest) -- but they found 2 real SSOT misses the self-report missed (7th audit): the edge_endpoints SSOT break + the cycle_nodes CSV hand-roll. Both are output-identical fixes.",
+        "235 tests pass (1 new r1262_: the linear + indexed endpoint resolves produce identical anchors for every edge + a dangling edge drops identically through both). clippy -p hello-node-editor --all-targets = 0; cargo fmt --check clean; cargo doc (private-items) exit 0.",
+        "ALL 30 node-editor demos PASS unchanged (byte-identical: r1260 exercises eval.cycle_nodes -> csv_ids same CSV; all paint tests -> view_edges via the shared body same anchors). validate-workspace T1 orphan=0."
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Reviewers cleared as sound (no action): node_ref index not shared by other per-frame callers (all bounded <=2 lookups, not O(n^2)); evaluate/resolve_input_value fresh-memo wrappers fine at 2 sites; the two per-paint index builds (node-by-id vs wired-by-node) index different things.",
+        "Viewport card-culling still carried (R1261, needs a frame-timing profile / GPU harness)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
