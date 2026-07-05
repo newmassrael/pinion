@@ -22534,6 +22534,48 @@
         "step/cycle_property keep silent _=>None (relative writes cant use the absolute set_property_value SSOT)"
       ]
     },
+    "R1253": {
+      "decision_summary": "R1253: audit-clearance (§2 wire symmetry) — Color/Choice to_introspect emitted JSON that with_intervene rejected, breaking the query->intervene round-trip; with_intervene now accepts that JSON superset + trims the hex",
+      "changes_bullets": [
+        "§5.38 with_intervene accepts the JSON shape to_introspect emits (Color {hex}, Choice {selected})",
+        "§5.38 query value.<i> -> intervene value.<i> round-trips Color/Choice (§2#2 primary path fixed)",
+        "§5.38 with_intervene trims the Color hex to match CellKind::parse; no whitespace drift"
+      ],
+      "verification_bullets": [
+        "cell_value +3 tests: Color/Choice to_introspect->with_intervene round-trip + JSON/trim accept",
+        "workspace 199 test binaries pass 0 fail; clippy -D pedantic + rustfmt + cargo-doc green",
+        "runtime: r1251 demo writes the read Colour JSON back via intervene (was a TypeMismatch)",
+        "regression: r909/r869/r867/r943/r940 intervene demos PASS across 4 CellValue consumers"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "commit_edit_text still writes the parsed CellValue directly (correct); the round-trip is now ALSO valid",
+        "SEED round-trip-forbidden doctrine retracted: with_intervene now accepts the read JSON form"
+      ],
+      "publishable_decision_summary": "R1253: audit-clearance (§2 wire symmetry) — Color/Choice to_introspect emitted JSON that with_intervene rejected, breaking the query->intervene round-trip; with_intervene now accepts that JSON superset + trims the hex",
+      "publishable_changes_bullets": [
+        "§5.38 with_intervene accepts the JSON shape to_introspect emits (Color {hex}, Choice {selected})",
+        "§5.38 query value.<i> -> intervene value.<i> round-trips Color/Choice (§2#2 primary path fixed)",
+        "§5.38 with_intervene trims the Color hex to match CellKind::parse; no whitespace drift"
+      ],
+      "publishable_verification_bullets": [
+        "cell_value +3 tests: Color/Choice to_introspect->with_intervene round-trip + JSON/trim accept",
+        "workspace 199 test binaries pass 0 fail; clippy -D pedantic + rustfmt + cargo-doc green",
+        "runtime: r1251 demo writes the read Colour JSON back via intervene (was a TypeMismatch)",
+        "regression: r909/r869/r867/r943/r940 intervene demos PASS across 4 CellValue consumers"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "commit_edit_text still writes the parsed CellValue directly (correct); the round-trip is now ALSO valid",
+        "SEED round-trip-forbidden doctrine retracted: with_intervene now accepts the read JSON form"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

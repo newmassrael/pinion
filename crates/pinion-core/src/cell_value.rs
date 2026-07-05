@@ -253,8 +253,16 @@ impl CellValue {
     /// Apply an `intervene` payload, producing the updated value — the
     /// value-level write path (the kind-level [`CellKind::coerce`] cannot
     /// build a [`CellValue::Choice`] because the options live on the value).
-    /// Scalar kinds delegate to `coerce`; a `Choice` takes an
-    /// [`IntrospectValue::Int`] option **index** and preserves its options.
+    /// Scalar kinds delegate to `coerce`.
+    ///
+    /// R1253 — the write form is **read/write symmetric**: for the two rich
+    /// kinds whose [`to_introspect`](Self::to_introspect) emits a JSON object, a
+    /// `query value.<i>` -> `intervene value.<i>` round-trip now works. A
+    /// `Choice` accepts either the ergonomic bare [`IntrospectValue::Int`] index
+    /// OR the emitted `{selected,…}` JSON; a `Color` accepts either the bare hex
+    /// [`IntrospectValue::Text`] (trimmed, matching [`CellKind::parse`]) OR the
+    /// emitted `{hex,…}` JSON. Both preserve the value's own domain (a Choice
+    /// keeps its options).
     ///
     /// # Errors
     ///
@@ -265,10 +273,23 @@ impl CellValue {
     pub fn with_intervene(&self, value: IntrospectValue) -> Result<CellValue, InterveneError> {
         match self {
             CellValue::Choice { options, .. } => {
-                let IntrospectValue::Int(i) = value else {
-                    return Err(InterveneError::TypeMismatch);
+                // R1253 — accept the ergonomic bare `Int` index OR the JSON shape
+                // `to_introspect` emits (`{selected,label,options}`), so a
+                // `query value.<i>` -> `intervene value.<i>` round-trip works and
+                // the read/write wire forms are symmetric.
+                let idx = match value {
+                    IntrospectValue::Int(i) => {
+                        usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?
+                    }
+                    IntrospectValue::Json(v) => {
+                        let sel = v
+                            .get("selected")
+                            .and_then(serde_json::Value::as_u64)
+                            .ok_or(InterveneError::TypeMismatch)?;
+                        usize::try_from(sel).map_err(|_| InterveneError::OutOfRange)?
+                    }
+                    _ => return Err(InterveneError::TypeMismatch),
                 };
-                let idx = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
                 if idx >= options.len() {
                     return Err(InterveneError::OutOfRange);
                 }
@@ -278,10 +299,21 @@ impl CellValue {
                 })
             }
             CellValue::Color(_) => {
-                let IntrospectValue::Text(hex) = value else {
-                    return Err(InterveneError::TypeMismatch);
+                // R1253 — accept the ergonomic bare hex `Text` OR the JSON shape
+                // `to_introspect` emits (`{hex,r,g,b,a}`), so query -> intervene
+                // round-trips. Trim the hex to match [`CellKind::parse`] (the
+                // type-in commit path), so both AI-first colour-write surfaces
+                // share one acceptance set (no whitespace drift).
+                let hex = match value {
+                    IntrospectValue::Text(s) => s,
+                    IntrospectValue::Json(v) => v
+                        .get("hex")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                        .ok_or(InterveneError::TypeMismatch)?,
+                    _ => return Err(InterveneError::TypeMismatch),
                 };
-                Color::from_hex(&hex)
+                Color::from_hex(hex.trim())
                     .map(CellValue::Color)
                     .ok_or(InterveneError::OutOfRange)
             }
@@ -693,6 +725,70 @@ mod tests {
         assert_eq!(
             v.with_intervene(IntrospectValue::Int(5)),
             Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn r1253_color_intervene_round_trips_its_own_to_introspect() {
+        // The R1253 wire-symmetry fix: `query value.<i>` -> `intervene value.<i>`
+        // now round-trips. Before, `to_introspect` emitted JSON `{hex,r,g,b,a}`
+        // that `with_intervene` rejected (`TypeMismatch`) — the §2 primary path.
+        let v = CellValue::Color(Color::rgba(79, 157, 255, 200));
+        assert_eq!(
+            v.with_intervene(v.to_introspect()),
+            Ok(v.clone()),
+            "a read value (JSON) writes straight back, alpha preserved via the hex",
+        );
+    }
+
+    #[test]
+    fn r1253_color_intervene_accepts_json_or_trimmed_hex() {
+        let v = CellValue::Color(Color::rgb(0, 0, 0));
+        // The JSON `{hex}` shape `to_introspect` emits.
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Json(
+                serde_json::json!({ "hex": "#00ff00" })
+            )),
+            Ok(CellValue::Color(Color::rgb(0, 255, 0))),
+        );
+        // Bare hex `Text` with whitespace is now tolerated (matches
+        // `CellKind::parse`), closing the whitespace drift between `intervene`
+        // and the type-in commit.
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Text("  #00ff00 ".to_owned())),
+            Ok(CellValue::Color(Color::rgb(0, 255, 0))),
+        );
+        // A JSON object without a `hex` field is a type mismatch.
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Json(serde_json::json!({ "r": 1 }))),
+            Err(InterveneError::TypeMismatch),
+        );
+    }
+
+    #[test]
+    fn r1253_choice_intervene_round_trips_and_still_takes_a_bare_int() {
+        let v = CellValue::Choice {
+            selected: 1,
+            options: vec!["A".into(), "B".into(), "C".into()],
+        };
+        // Round-trips its own `to_introspect` (`{selected,label,options}`).
+        assert_eq!(v.with_intervene(v.to_introspect()), Ok(v.clone()));
+        // The ergonomic bare `Int` index still works.
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Int(2)),
+            Ok(CellValue::Choice {
+                selected: 2,
+                options: vec!["A".into(), "B".into(), "C".into()],
+            }),
+        );
+        // An out-of-range index via EITHER form is `OutOfRange`.
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Int(9)),
+            Err(InterveneError::OutOfRange),
+        );
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Json(serde_json::json!({ "selected": 9 }))),
+            Err(InterveneError::OutOfRange),
         );
     }
 

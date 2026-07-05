@@ -140,6 +140,22 @@ def body() -> None:
                   "begin_edit on a Bool (Visible) is a no-op false")
         assert_eq(q(tf, "editing"), None, "the reject did not open the editor")
 
+        # ── (H) R1253: query -> intervene wire read/write symmetry ───
+        # `query value.6` reads the rich Colour JSON `{hex,r,g,b,a}`. Pre-R1253,
+        # writing that same object back via `intervene value.6` was a TypeMismatch
+        # (with_intervene only took a bare hex Text) — the §2#2 primary AI path
+        # could not round-trip a read value. R1253 makes with_intervene accept the
+        # JSON shape to_introspect emits.
+        original = q(tf, f"value.{TINT}")            # the full {hex,r,g,b,a} object
+        assert isinstance(original, dict) and "hex" in original, "Colour reads as JSON"
+        tf.invoke("/external/begin_edit", TINT)
+        tf.invoke("/external/commit_edit", "#111111")
+        assert_eq(hex_of(tf), "#111111", "changed the colour away from the read value")
+        # Write the originally-READ JSON object straight back — no re-wrapping.
+        tf.intervene(f"/external/value.{TINT}", original)
+        assert_eq(hex_of(tf), original["hex"],
+                  "query -> intervene round-trips the read JSON object (R1253 fix)")
+
 
 if __name__ == "__main__":
     sys.exit(run_demo("R1251 inspector Colour hex type-in", body))
