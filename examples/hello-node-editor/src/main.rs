@@ -164,7 +164,11 @@
 //!   really reaches the file backend). The same snapshot is the AI-first
 //!   `query serialized` / `invoke set_graph` read-write pair, and `Ctrl+S` /
 //!   `Ctrl+O` drive save / open. Loading a graph clears the undo history (the
-//!   opened document is a fresh baseline — the `QUndoStack` model).
+//!   opened document is a fresh baseline — the `QUndoStack` model). R1258 — an
+//!   `set_graph` blob is **structurally validated** ([`graph_invariants_hold`])
+//!   before it is installed, so an untrusted AI-first write of a malformed graph
+//!   (ill-typed edge / wrong-arity op / duplicate id / mistyped default) is
+//!   rejected LOUD (the graph unchanged) rather than silently mis-evaluated.
 //! - ~~`add_node` over RPC~~ — landed R849 (the palette sidebar + the
 //!   `add_node` invoke verb; this bullet was stale until the R878 audit).
 //! - **Crate extraction**: the model + pure bezier geometry are example-local;
@@ -922,6 +926,110 @@ fn graph_is_acyclic(nodes: &[GraphNode], edges: &[Edge]) -> bool {
     }
     let mut state: BTreeMap<NodeId, u8> = BTreeMap::new();
     nodes.iter().all(|n| visit(n.id, edges, &mut state))
+}
+
+/// R1258 — the canonical `(input, output)` port shape a compute op must have,
+/// from the [`PALETTE`] SSOT. `None` for [`NodeOp::Reroute`] (a wire-typed
+/// passthrough, not a palette kind — validated as 1-in/1-out same-type instead).
+fn palette_shape(op: NodeOp) -> Option<(&'static [PortType], &'static [PortType])> {
+    PALETTE
+        .iter()
+        .find(|&&(_, _, _, o)| o == op)
+        .map(|&(_, inputs, outputs, _)| (inputs, outputs))
+}
+
+/// R1258 — whether one node's stored fields are self-consistent: the invariants
+/// every construction path upholds, but a `set_graph` / loaded blob (an
+/// *untrusted* input on the §2 #2 AI-first write path) could violate, silently
+/// mis-evaluating. Each check mirrors a construction guarantee: `is_reroute`
+/// tracks `op` (R1256); one typed pin default per input port; a source (and only
+/// a source) carries an `output_const` typed to output port 0 (R1257); and the
+/// `op` matches its canonical port arity (a palette op) or the reroute
+/// 1-in/1-out same-type passthrough — so an `Add` with one input (which would
+/// evaluate to a permanent `null`) is rejected here, not silently accepted.
+fn node_invariants_hold(node: &GraphNode) -> bool {
+    if node.is_reroute != (node.op == NodeOp::Reroute) {
+        return false;
+    }
+    if node.input_defaults.len() != node.input_ports.len() {
+        return false;
+    }
+    if node
+        .input_defaults
+        .iter()
+        .zip(&node.input_ports)
+        .any(|(d, p)| d.kind() != p.default_value().kind())
+    {
+        return false;
+    }
+    let is_source = node.input_ports.is_empty() && !node.output_ports.is_empty();
+    match &node.output_const {
+        Some(c) => {
+            if !is_source || c.kind() != node.output_ports[0].default_value().kind() {
+                return false;
+            }
+        }
+        None if is_source => return false,
+        None => {}
+    }
+    match palette_shape(node.op) {
+        Some((inputs, outputs)) => {
+            node.input_ports.as_slice() == inputs && node.output_ports.as_slice() == outputs
+        }
+        // Reroute: exactly one input + one output of the same wire type.
+        None => {
+            node.op == NodeOp::Reroute
+                && node.input_ports.len() == 1
+                && node.output_ports.len() == 1
+                && node.input_ports[0] == node.output_ports[0]
+        }
+    }
+}
+
+/// R1258 — whether the edge set is a valid wiring over `nodes`: every edge runs
+/// between existing, in-range, type-assignable ports (the `validate_connection`
+/// gate, applied to an injected graph the interactive gate never saw), and no
+/// input port takes more than one wire (the single-wire rule the evaluator's
+/// first-match `resolve_input` assumes). A self-loop is *allowed* — it is an
+/// eval-safe cycle (`value` = `null`, `eval.acyclic` = `false`), observable, not
+/// silently wrong.
+fn edges_invariants_hold(nodes: &[GraphNode], edges: &[Edge]) -> bool {
+    let node = |id: NodeId| nodes.iter().find(|n| n.id == id);
+    for e in edges {
+        let (Some(src), Some(dst)) = (node(e.from_node), node(e.to_node)) else {
+            return false;
+        };
+        let (Some(from_ty), Some(to_ty)) =
+            (src.output_type(e.from_port), dst.input_type(e.to_port))
+        else {
+            return false;
+        };
+        if !from_ty.is_assignable_to(to_ty) {
+            return false;
+        }
+    }
+    let mut wired_inputs = BTreeSet::new();
+    edges
+        .iter()
+        .all(|e| wired_inputs.insert((e.to_node, e.to_port)))
+}
+
+/// R1258 — whether an injected graph upholds every structural invariant the
+/// interactive editor maintains, so the `load_json` restore path can reject a
+/// malformed `set_graph` blob (graph unchanged, `false`) rather than silently
+/// evaluating it wrong. Checks: unique node / edge ids, per-node consistency
+/// ([`node_invariants_hold`]), and a valid wiring ([`edges_invariants_hold`]).
+/// A serialized *live* graph always passes (round-trip is total).
+fn graph_invariants_hold(nodes: &[GraphNode], edges: &[Edge]) -> bool {
+    let node_ids: BTreeSet<NodeId> = nodes.iter().map(|n| n.id).collect();
+    if node_ids.len() != nodes.len() {
+        return false;
+    }
+    let edge_ids: BTreeSet<u32> = edges.iter().map(|e| e.id.raw()).collect();
+    if edge_ids.len() != edges.len() {
+        return false;
+    }
+    nodes.iter().all(node_invariants_hold) && edges_invariants_hold(nodes, edges)
 }
 
 /// R1220 — the first input port index of [`PALETTE`] kind `kind` an output of
@@ -3403,12 +3511,27 @@ impl NodeGraphExternal {
 
     /// R852 — parse + apply a JSON snapshot (the AI-first `set_graph` write, the
     /// inverse of [`serialized_json`](Self::serialized_json)). Rejects malformed
-    /// JSON or a schema-version mismatch (`false`, the graph unchanged).
+    /// JSON or a schema-version mismatch (`false`, the graph unchanged). R1258 —
+    /// also rejects a **structurally-invalid** graph ([`graph_invariants_hold`] +
+    /// id counters ahead of every stored id), so an untrusted `set_graph` blob
+    /// (§2 #2 — RPC is the AI-first write path) fails LOUD (graph unchanged, the
+    /// AI sees `false`) rather than silently evaluating an ill-typed / malformed
+    /// graph to the wrong value or a permanent `null`.
     fn load_json(&self, json: &str) -> bool {
         let Ok(g) = serde_json::from_str::<SerializedGraph>(json) else {
             return false;
         };
         if g.schema_version != PERSISTED_SCHEMA_VERSION {
+            return false;
+        }
+        if !graph_invariants_hold(&g.nodes, &g.edges) {
+            return false;
+        }
+        // The monotonic id counters must lead every stored id, so a later mint
+        // never collides with a loaded node / edge.
+        if g.nodes.iter().any(|n| n.id.raw() >= g.next_node_id)
+            || g.edges.iter().any(|e| e.id.raw() >= g.next_edge_id)
+        {
             return false;
         }
         self.apply_snapshot(g);

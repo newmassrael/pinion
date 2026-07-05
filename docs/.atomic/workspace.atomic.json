@@ -22760,6 +22760,50 @@
         "Not independently audited this round (built on the R1255/R1256-audited eval foundation with the R1256 SSOT/introspection lessons applied proactively); a query-vs-intervene-symmetry audit is available on request."
       ]
     },
+    "R1258": {
+      "decision_summary": "R1258 set_graph structural validation (trust-boundary hardening, discharges the R1256+R1257-carried gap): graph_invariants_hold validates an injected graph's ids/typed-edges/op-arity/defaults/output_const/single-wire before load_json installs it, so the §2#2 AI-first write path rejects a malformed blob LOUD (unchanged) instead of silently mis-evaluating. A live graph always round-trips (reroutes incl.). Reason-string + cycle-localization carried.",
+      "changes_bullets": [
+        "graph_invariants_hold(nodes, edges): validates an injected/loaded graph upholds every structural invariant the interactive editor maintains — unique node/edge ids, per-node node_invariants_hold (is_reroute==op==Reroute / one typed pin default per input port / output_const present iff source and typed to output 0 / op matches its PALETTE port arity or the reroute 1-in-1-out same-type shape), and edges_invariants_hold (every edge between existing in-range type-assignable ports, at most one wire per input). palette_shape(op) reads the PALETTE SSOT.",
+        "load_json gates on graph_invariants_hold + id-counters-ahead-of-every-stored-id before apply_snapshot, so an untrusted set_graph blob (the §2 #2 AI-first WRITE path) that is ill-typed / wrong-arity / duplicate-id / mistyped-default is rejected LOUD (set_graph returns Rejected, graph unchanged) rather than silently mis-evaluated to the wrong value or a permanent null. Discharges the R1256+R1257-carried trust-boundary gap.",
+        "A serialized live graph always passes (round-trip is total, reroutes included); a self-loop is allowed (an eval-safe observable cycle, not silently wrong)."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor 226 pass / 0 fail (9 new r1258_*: live-graph-passes+round-trips / reroute-graph-passes / rejects ill-typed-edge / wrong-arity-op / duplicate-ids / multi-wire-into-one-input / mistyped-default+bad-endpoints / output_const+is_reroute inconsistency / stale-counters+malformed-json).",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean; cargo doc (private-items) exit 0 after retargeting the free-fn docstrings' coordinator-method links to plain spans.",
+        "tools/demos/r1258_node_set_graph_validation.py 30 assertions PASS on the release binary (round-trip accept / valid-rename accept / wrong-arity reject / is_reroute-mismatch reject / stale-counter reject / malformed+schema-mismatch reject, graph unchanged + still evaluating after every reject).",
+        "Swept ALL 29 node-editor demos PASS (validation never false-rejects a live graph: r852/r1227 persist round-trip, r929 reconnect, r898 typed ports, r1235/r1243 reroute). validate-workspace T1 orphan=0."
+      ],
+      "impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "set_graph rejection is opaque (Rejected error / false, no reason string): an AI cannot tell WHICH invariant failed. A validate_graph query returning the specific violation (or set_graph surfacing it) is a follow-up for richer AI debugging.",
+        "validate_connection (live-model single-edge validity + displacement) and edges_invariants_hold (candidate whole-edge-set invariant) share the is_assignable_to + port-lookup primitives but differ in shape (displacement vs invariant); not lifted (the primitives are already the shared SSOT).",
+        "Source-const GUI (paint + inline editor) still carried from R1257; cycle-localization + per-input resolved reads still carried from R1256."
+      ],
+      "publishable_decision_summary": "R1258 set_graph structural validation (trust-boundary hardening, discharges the R1256+R1257-carried gap): graph_invariants_hold validates an injected graph's ids/typed-edges/op-arity/defaults/output_const/single-wire before load_json installs it, so the §2#2 AI-first write path rejects a malformed blob LOUD (unchanged) instead of silently mis-evaluating. A live graph always round-trips (reroutes incl.). Reason-string + cycle-localization carried.",
+      "publishable_changes_bullets": [
+        "graph_invariants_hold(nodes, edges): validates an injected/loaded graph upholds every structural invariant the interactive editor maintains — unique node/edge ids, per-node node_invariants_hold (is_reroute==op==Reroute / one typed pin default per input port / output_const present iff source and typed to output 0 / op matches its PALETTE port arity or the reroute 1-in-1-out same-type shape), and edges_invariants_hold (every edge between existing in-range type-assignable ports, at most one wire per input). palette_shape(op) reads the PALETTE SSOT.",
+        "load_json gates on graph_invariants_hold + id-counters-ahead-of-every-stored-id before apply_snapshot, so an untrusted set_graph blob (the §2 #2 AI-first WRITE path) that is ill-typed / wrong-arity / duplicate-id / mistyped-default is rejected LOUD (set_graph returns Rejected, graph unchanged) rather than silently mis-evaluated to the wrong value or a permanent null. Discharges the R1256+R1257-carried trust-boundary gap.",
+        "A serialized live graph always passes (round-trip is total, reroutes included); a self-loop is allowed (an eval-safe observable cycle, not silently wrong)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor 226 pass / 0 fail (9 new r1258_*: live-graph-passes+round-trips / reroute-graph-passes / rejects ill-typed-edge / wrong-arity-op / duplicate-ids / multi-wire-into-one-input / mistyped-default+bad-endpoints / output_const+is_reroute inconsistency / stale-counters+malformed-json).",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean; cargo doc (private-items) exit 0 after retargeting the free-fn docstrings' coordinator-method links to plain spans.",
+        "tools/demos/r1258_node_set_graph_validation.py 30 assertions PASS on the release binary (round-trip accept / valid-rename accept / wrong-arity reject / is_reroute-mismatch reject / stale-counter reject / malformed+schema-mismatch reject, graph unchanged + still evaluating after every reject).",
+        "Swept ALL 29 node-editor demos PASS (validation never false-rejects a live graph: r852/r1227 persist round-trip, r929 reconnect, r898 typed ports, r1235/r1243 reroute). validate-workspace T1 orphan=0."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "set_graph rejection is opaque (Rejected error / false, no reason string): an AI cannot tell WHICH invariant failed. A validate_graph query returning the specific violation (or set_graph surfacing it) is a follow-up for richer AI debugging.",
+        "validate_connection (live-model single-edge validity + displacement) and edges_invariants_hold (candidate whole-edge-set invariant) share the is_assignable_to + port-lookup primitives but differ in shape (displacement vs invariant); not lifted (the primitives are already the shared SSOT).",
+        "Source-const GUI (paint + inline editor) still carried from R1257; cycle-localization + per-input resolved reads still carried from R1256."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

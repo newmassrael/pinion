@@ -7511,3 +7511,238 @@ fn r1257_scalar_source_value_is_type_checked() {
         );
     });
 }
+
+// ── R1258 — set_graph structural validation (trust-boundary hardening) ───────
+
+/// A minimal valid two-node graph (a Color source -> Output sink, wired), built
+/// through the honest constructors so every invariant holds; tests then mutate
+/// ONE field to prove the validator catches that specific violation.
+fn valid_pair() -> (Vec<GraphNode>, Vec<Edge>) {
+    let src = GraphNode::from_palette(1, 0, 0, 0).unwrap(); // Color: () -> Vector
+    let out = GraphNode::from_palette(4, 1, 200, 0).unwrap(); // Output: Vector -> ()
+    let edge = Edge {
+        id: EdgeId(0),
+        from_node: NodeId(0),
+        from_port: 0,
+        to_node: NodeId(1),
+        to_port: 0,
+    };
+    (vec![src, out], vec![edge])
+}
+
+#[test]
+fn r1258_a_live_graph_passes_and_round_trips() {
+    assert!(
+        graph_invariants_hold(&default_nodes(), &default_edges()),
+        "the seed graph is valid"
+    );
+    let (nodes, edges) = valid_pair();
+    assert!(
+        graph_invariants_hold(&nodes, &edges),
+        "a hand-built valid pair passes"
+    );
+    // The full round-trip through the real load path: serialize a live graph,
+    // then set_graph it back -> accepted (validation never rejects a live graph).
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let blob = coord.serialized_json();
+        assert!(
+            coord.load_json(&blob),
+            "a serialized live graph reloads (round-trip is total)"
+        );
+    });
+}
+
+#[test]
+fn r1258_rejects_an_ill_typed_edge() {
+    // Scalar (Float out) -> Output (Vector in) is a Float->Vector broadcast, VALID;
+    // but Output has no output, so wire Texture(Vector out) into a Float input to
+    // force a narrowing. Build a Lerp (…, Float factor) and wire a Vector into it.
+    let tex = GraphNode::from_palette(0, 0, 0, 0).unwrap(); // Texture -> Vector
+    let lerp = GraphNode::from_palette(6, 1, 0, 0).unwrap(); // Lerp: [V,V,Float] -> V
+    // Vector -> the Float factor input (port 2): narrowing, NOT assignable.
+    let bad = Edge {
+        id: EdgeId(0),
+        from_node: NodeId(0),
+        from_port: 0,
+        to_node: NodeId(1),
+        to_port: 2,
+    };
+    assert!(
+        !graph_invariants_hold(&[tex, lerp], &[bad]),
+        "a Vector->Float edge is rejected"
+    );
+}
+
+#[test]
+fn r1258_rejects_a_wrong_arity_op() {
+    // An "Add" with a single input port would evaluate to a permanent null
+    // (req(1)? fails); its op no longer matches the PALETTE shape.
+    let bad_add = GraphNode::new(
+        0,
+        "Add",
+        0,
+        0,
+        &[PortType::Vector],
+        &[PortType::Vector],
+        NodeOp::Add,
+    );
+    assert!(
+        !node_invariants_hold(&bad_add),
+        "op arity must match its PALETTE shape"
+    );
+    assert!(
+        !graph_invariants_hold(&[bad_add], &[]),
+        "and the graph is rejected"
+    );
+}
+
+#[test]
+fn r1258_rejects_duplicate_ids() {
+    let (mut nodes, edges) = valid_pair();
+    nodes[1].id = NodeId(0); // two nodes share id 0
+    assert!(
+        !graph_invariants_hold(&nodes, &edges),
+        "duplicate node ids are rejected"
+    );
+    let (nodes2, mut edges2) = valid_pair();
+    edges2.push(Edge {
+        id: EdgeId(0),
+        from_node: NodeId(0),
+        from_port: 0,
+        to_node: NodeId(1),
+        to_port: 0,
+    });
+    assert!(
+        !graph_invariants_hold(&nodes2, &edges2),
+        "duplicate edge ids are rejected"
+    );
+}
+
+#[test]
+fn r1258_rejects_multiple_wires_into_one_input() {
+    // Two sources both wired into Output.in0 — the evaluator's first-match
+    // resolve_input would silently pick one; the validator rejects the ambiguity.
+    let a = GraphNode::from_palette(1, 0, 0, 0).unwrap(); // Color
+    let b = GraphNode::from_palette(1, 1, 0, 0).unwrap(); // Color
+    let out = GraphNode::from_palette(4, 2, 0, 0).unwrap(); // Output
+    let edges = vec![
+        Edge {
+            id: EdgeId(0),
+            from_node: NodeId(0),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 0,
+        },
+        Edge {
+            id: EdgeId(1),
+            from_node: NodeId(1),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 0,
+        },
+    ];
+    assert!(
+        !graph_invariants_hold(&[a, b, out], &edges),
+        "one input takes at most one wire"
+    );
+}
+
+#[test]
+fn r1258_rejects_a_mistyped_default_and_bad_endpoints() {
+    // A Float default on a Vector input port (a mistyped blob).
+    let mut node = GraphNode::from_palette(2, 0, 0, 0).unwrap(); // Multiply: [V,V]->V
+    node.input_defaults[0] = CellValue::Float(1.0);
+    assert!(
+        !node_invariants_hold(&node),
+        "a default must match its port kind"
+    );
+    // An edge to a non-existent node.
+    let (nodes, _) = valid_pair();
+    let dangling = Edge {
+        id: EdgeId(0),
+        from_node: NodeId(0),
+        from_port: 0,
+        to_node: NodeId(99),
+        to_port: 0,
+    };
+    assert!(
+        !graph_invariants_hold(&nodes, &[dangling]),
+        "an edge to an absent node is rejected"
+    );
+}
+
+#[test]
+fn r1258_rejects_output_const_and_is_reroute_inconsistency() {
+    // A source with NO output constant (should be Some).
+    let mut src = GraphNode::from_palette(1, 0, 0, 0).unwrap(); // Color source
+    src.output_const = None;
+    assert!(
+        !node_invariants_hold(&src),
+        "a source must carry an output_const"
+    );
+    // A compute op WITH an output constant (should be None).
+    let mut op = GraphNode::from_palette(2, 0, 0, 0).unwrap(); // Multiply
+    op.output_const = Some(CellValue::Color(Color::rgb(0, 0, 0)));
+    assert!(
+        !node_invariants_hold(&op),
+        "a compute op must not carry an output_const"
+    );
+    // is_reroute set on a non-reroute op.
+    let mut fake = GraphNode::from_palette(3, 0, 0, 0).unwrap(); // Add
+    fake.is_reroute = true;
+    assert!(
+        !node_invariants_hold(&fake),
+        "is_reroute must track op == Reroute"
+    );
+}
+
+#[test]
+fn r1258_load_json_rejects_stale_counters() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        // A blob whose next_node_id is BEHIND an existing node id -> a later mint
+        // would collide. Hand-edit the counter in the serialized JSON.
+        let blob = coord
+            .serialized_json()
+            .replace("\"next_node_id\":4", "\"next_node_id\":1");
+        assert!(
+            !coord.load_json(&blob),
+            "a counter behind a stored id is rejected"
+        );
+        assert!(
+            !coord.load_json("{not valid json"),
+            "malformed JSON is rejected"
+        );
+    });
+}
+
+#[test]
+fn r1258_a_reroute_graph_passes_validation() {
+    // A reroute node is NOT a PALETTE kind (its ports are the wire's type), so
+    // it takes the validator's dedicated 1-in/1-out same-type branch — a graph
+    // with one must still round-trip, not be false-rejected.
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let rid = coord
+            .add_reroute(EdgeId(0))
+            .expect("splice a reroute into edge 0");
+        assert!(
+            coord.node_by_id(rid).unwrap().is_reroute,
+            "the knot is a reroute"
+        );
+        let blob = coord.serialized_json();
+        assert!(
+            coord.load_json(&blob),
+            "a reroute graph is valid and round-trips"
+        );
+        // And the invariant predicate accepts it directly.
+        assert!(
+            graph_invariants_hold(&coord.nodes.get(), &coord.edges.get()),
+            "graph_invariants_hold accepts a reroute node",
+        );
+    });
+}
