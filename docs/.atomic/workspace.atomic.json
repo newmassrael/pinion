@@ -22576,6 +22576,48 @@
         "SEED round-trip-forbidden doctrine retracted: with_intervene now accepts the read JSON form"
       ]
     },
+    "R1254": {
+      "decision_summary": "R1254: audit-clearance (a11y) — the type-in editor had no keyboard/AT open path (mouse+RPC only; a Colour had no AT edit at all); F2/Enter now open it via edit_property_at (keyboard + AT), Colour is a textbox, begin_edit places the cursor",
+      "changes_bullets": [
+        "§5.38 F2/Enter on the Details cursor opens the type-in editor (keyboard open; was mouse+RPC only)",
+        "§5.38 edit_property_at begin_edit arm serves BOTH the keyboard cursor + the R1228 AT prop_<i> route",
+        "§5.38 Colour row a11y = textbox (AT activate opens the hex editor); was listitem = no AT edit at all",
+        "§5.38 begin_edit places the Details cursor so the editing textbox focused-bool matches real focus"
+      ],
+      "verification_bullets": [
+        "hello-inspector 67 unit tests (62 + 5 new R1254: F2/Enter open, Bool-toggle, AT route, cursor, textbox)",
+        "runtime: r1249 demo drives F2 + Enter over scene/key to open the editor (the real keyboard path)",
+        "regression: r1251/r1224 inspector demos PASS; clippy -D pedantic + rustfmt + cargo-doc green"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "Colour textbox AT activates to open the shared field (2-step); direct char-input still needs it open",
+        "AT default-action->Enter routing is shell-side (R1228); verified via apply_key not a live screen reader"
+      ],
+      "publishable_decision_summary": "R1254: audit-clearance (a11y) — the type-in editor had no keyboard/AT open path (mouse+RPC only; a Colour had no AT edit at all); F2/Enter now open it via edit_property_at (keyboard + AT), Colour is a textbox, begin_edit places the cursor",
+      "publishable_changes_bullets": [
+        "§5.38 F2/Enter on the Details cursor opens the type-in editor (keyboard open; was mouse+RPC only)",
+        "§5.38 edit_property_at begin_edit arm serves BOTH the keyboard cursor + the R1228 AT prop_<i> route",
+        "§5.38 Colour row a11y = textbox (AT activate opens the hex editor); was listitem = no AT edit at all",
+        "§5.38 begin_edit places the Details cursor so the editing textbox focused-bool matches real focus"
+      ],
+      "publishable_verification_bullets": [
+        "hello-inspector 67 unit tests (62 + 5 new R1254: F2/Enter open, Bool-toggle, AT route, cursor, textbox)",
+        "runtime: r1249 demo drives F2 + Enter over scene/key to open the editor (the real keyboard path)",
+        "regression: r1251/r1224 inspector demos PASS; clippy -D pedantic + rustfmt + cargo-doc green"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Colour textbox AT activates to open the shared field (2-step); direct char-input still needs it open",
+        "AT default-action->Enter routing is shell-side (R1228); verified via apply_key not a live screen reader"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -1084,6 +1084,12 @@ impl InspectorExternal {
         // `seed` = set_text + caret-at-end (the lifted TextEditState pair).
         self.editor.seed(prop.value.edit_text());
         self.editing_prop.set(Some(idx));
+        // R1254 — the edit leads the Details cursor: place the keyboard cursor on
+        // the edited row + focus the Details pane (`set_prop_cursor` does both).
+        // So the editing textbox's a11y `focused` (sourced from `is_prop_cursor`)
+        // matches the field's real focus, and a mouse/RPC-opened edit lands the
+        // cursor where the user is typing (no divergence between the two rings).
+        self.set_prop_cursor(Some(idx));
         pinion_core::focus_request::request(EDIT_TF_TAG);
         true
     }
@@ -2391,8 +2397,21 @@ fn edit_property_at(
         return false;
     };
     let is_choice = kind == Some("choice");
+    // R1254 — the kinds the inline type-in editor opens on. `F2` (the universal
+    // "edit cell" key) or `Enter` on such a row opens the editor — the KEYBOARD
+    // and AT open path the R1249/R1251 type-in previously lacked (it was
+    // mouse-double-click + RPC only). `edit_property_at` is the shared dispatch
+    // for BOTH the Details-cursor keyboard funnel AND the R1228 AT `prop_<i>`
+    // route, so this one arm gives a screen-reader / keyboard user the editor —
+    // and, for a Colour, its ONLY non-mouse edit (step/toggle no-op on a Colour).
+    let is_field_editable = matches!(kind, Some("int" | "float" | "color"));
     let spec = |dir: i32| IntrospectValue::Text(format!("{idx},{dir}"));
     let (verb, arg) = match key {
+        // `F2` (universal edit key) or `Enter` on a field-editable row opens the
+        // editor. `Enter` on a Bool falls through to toggle (below) — on a numeric
+        // / colour `Enter` was a dead no-op (toggle_property short-circuits on a
+        // non-Bool), so opening the editor there repurposes a wasted key.
+        "F2" | "Enter" if is_field_editable => ("begin_edit", IntrospectValue::Int(i)),
         " " | "Enter" => ("toggle_property", IntrospectValue::Int(i)),
         "ArrowRight" if is_choice => ("cycle_property", spec(1)),
         "ArrowLeft" if is_choice => ("cycle_property", spec(-1)),
@@ -2565,7 +2584,19 @@ fn detail_access_node(
                 .with_value_text(common_value_label(prop))
                 .with_focused(focused)
         }
-        _ => AccessNode::new(tag, AriaRole::ListItem)
+        // R1254 — a Colour cell is a `textbox` (its `#RRGGBB` hex value): the AT
+        // reads the value AND can open the inline hex editor by activating it (the
+        // R1228 AT-Click -> "Enter" route reaches `edit_property_at` -> `begin_edit`
+        // for a field-editable kind). This is the AT/keyboard open path the R1251
+        // Colour cell lacked — step / toggle no-op on a Colour, so a `listitem`
+        // left it with NO non-mouse edit. Not a facade: the AT genuinely operates
+        // it (Enter opens the field). A Text cell (no shared inline field) stays a
+        // read-only `listitem`.
+        CellValue::Color(_) => AccessNode::new(tag, AriaRole::TextInput)
+            .with_name(prop.name.clone())
+            .with_value(AccessValue::Text(common_value_label(prop)))
+            .with_focused(focused),
+        CellValue::Text(_) => AccessNode::new(tag, AriaRole::ListItem)
             .with_name(format!("{}: {}", prop.name, common_value_label(prop)))
             .with_focused(focused),
     }
@@ -4202,5 +4233,135 @@ mod tests {
         for obj in 0..3 {
             assert_eq!(obj_value(&e, obj, "Layer"), CellValue::Int(7));
         }
+    }
+
+    // ── R1254 keyboard / AT open path for the type-in editor ──────────────
+
+    fn tagged_state_scene() -> Scene {
+        use pinion_core::external::External;
+        use pinion_core::scene::ExternalNode;
+        Scene::External(
+            ExternalNode::new(Box::new(make_inspector_external()) as Box<dyn External>)
+                .with_tag(INSPECTOR_TAG),
+        )
+    }
+
+    #[test]
+    fn r1254_f2_and_enter_open_the_editor_on_a_field_editable_cursor() {
+        Owner::new().run(|| {
+            let mut scene = tagged_state_scene();
+            let ext = make_inspector_external(); // shares the Owner-cached signals
+            ext.set_prop_cursor(Some(1)); // Details cursor on Layer (row 1, Int)
+            assert_eq!(use_editing_prop().get(), None, "editor closed to start");
+            // F2 on the Details cursor opens the type-in editor (was mouse+RPC only).
+            assert!(InspectorView::apply_key(
+                &mut scene,
+                Some(INSPECTOR_TAG),
+                "F2",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                use_editing_prop().get(),
+                Some(1),
+                "F2 opened the editor on Layer"
+            );
+            ext.close_edit(true);
+            ext.set_prop_cursor(Some(1));
+            // Enter also opens it on a field-editable row.
+            assert!(InspectorView::apply_key(
+                &mut scene,
+                Some(INSPECTOR_TAG),
+                "Enter",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                use_editing_prop().get(),
+                Some(1),
+                "Enter opened the editor on a numeric"
+            );
+        });
+    }
+
+    #[test]
+    fn r1254_enter_on_a_bool_toggles_it_does_not_open_an_editor() {
+        Owner::new().run(|| {
+            let mut scene = tagged_state_scene();
+            let ext = make_inspector_external();
+            ext.set_prop_cursor(Some(0)); // Visible (row 0) is a Bool
+            let before = obj_value(&ext, 0, "Visible");
+            assert!(InspectorView::apply_key(
+                &mut scene,
+                Some(INSPECTOR_TAG),
+                "Enter",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                use_editing_prop().get(),
+                None,
+                "Enter on a Bool does not open the editor"
+            );
+            assert_ne!(
+                obj_value(&ext, 0, "Visible"),
+                before,
+                "Enter toggled the Bool (kept its existing behaviour)"
+            );
+        });
+    }
+
+    #[test]
+    fn r1254_at_activate_opens_the_colour_editor_via_prop_tag() {
+        Owner::new().run(|| {
+            let mut scene = tagged_state_scene();
+            // The R1228 AT route: apply_key(Some("prop_6"), "Enter") — an AT
+            // activate on Player's Tint (Colour, row 6). Before R1254 a Colour had
+            // NO non-mouse edit (step/toggle no-op on it).
+            assert!(InspectorView::apply_key(
+                &mut scene,
+                Some("prop_6"),
+                "Enter",
+                Modifiers::empty()
+            ));
+            assert_eq!(
+                use_editing_prop().get(),
+                Some(6),
+                "an AT activate opened the Colour editor"
+            );
+        });
+    }
+
+    #[test]
+    fn r1254_begin_edit_places_the_details_cursor_on_the_edited_row() {
+        Owner::new().run(|| {
+            let ext = make_inspector_external();
+            assert!(ext.begin_edit(1), "open Layer");
+            let focus = use_focus().get();
+            assert_eq!(
+                focus.region,
+                FocusRegion::Details,
+                "begin_edit focuses the Details pane"
+            );
+            assert_eq!(
+                focus.prop_cursor,
+                Some(1),
+                "the keyboard cursor lands on the edited row (a11y focused-bool match)"
+            );
+        });
+    }
+
+    #[test]
+    fn r1254_colour_row_a11y_is_a_textbox_not_a_listitem() {
+        Owner::new().run(|| {
+            let state = InspectorState::from_parts(&[0], Some(0)); // Player
+            let nodes = <InspectorView as WidgetA11y>::access_node(&state, None);
+            let tint = nodes
+                .iter()
+                .find(|n| n.tag == "prop_6")
+                .expect("Tint emits an a11y node");
+            assert_eq!(
+                tint.role,
+                AriaRole::TextInput,
+                "a Colour row is an operable textbox (AT can activate to edit)"
+            );
+        });
     }
 }

@@ -176,6 +176,19 @@ def body() -> None:
         tf.invoke("/external/select", 1)
         assert_eq(q(tf, "value.3"), fov_before, "Field of View untouched too")
 
+        # ── (I) R1254: F2 opens the editor from the KEYBOARD (was mouse+RPC) ──
+        tf.invoke("/external/select", 0)          # Player
+        tf.invoke("/external/focus_property", 1)  # Details cursor on Layer (Int)
+        assert_eq(q(tf, "editing"), None, "editor closed before F2")
+        tf.key(path=INSPECTOR, name="F2")
+        wait_editing(tf, 1, desc="F2 opened the editor on Layer from the keyboard")
+        tf.invoke("/external/cancel_edit", None)
+        # Enter opens a numeric too (a dead key there before R1254).
+        tf.invoke("/external/focus_property", 1)
+        tf.key(path=INSPECTOR, name="Enter")
+        wait_editing(tf, 1, desc="Enter opened the numeric editor from the keyboard")
+        tf.invoke("/external/cancel_edit", None)
+
 
 if __name__ == "__main__":
     sys.exit(run_demo("R1249 inspector absolute numeric type-in", body))
