@@ -22804,6 +22804,50 @@
         "Source-const GUI (paint + inline editor) still carried from R1257; cycle-localization + per-input resolved reads still carried from R1256."
       ]
     },
+    "R1259": {
+      "decision_summary": "R1259 = session audit-clearance (user-requested 교과서적/SSOT/북극성 review; 3 independent reviewers). Fixed the CONFIRMED defects: doc overclaims (mechanism-shared/non_exhaustive-extensible corrected to single-consumer-prototype reality), a factually-wrong output_const serde doc, the frames-validation gap (load_json now gates frame ids/counter), and dropped the redundant STORED is_reroute field (derived from op). Architectural carries (crate-lift with trait-dispatch, §2#7 debugger completeness, value model) honestly documented, not overclaimed.",
+      "changes_bullets": [
+        "Doc honesty (the core defect a 3-reviewer session audit flagged): corrected the PortType/NodeOp/module-header docstrings that overclaimed \"the taxonomy is the consumer's, the mechanism is shared\" and #[non_exhaustive] extensibility. Reality documented: the whole eval+validation mechanism is a single-consumer prototype trapped in this example binary (0 external consumers), NodeOp::evaluate is a closed match fused ONTO the taxonomy, #[non_exhaustive] is inert within its own module; the trait/registry-dispatched pinion-node-graph crate is a future redesign, not today's shape.",
+        "output_const serde doc corrected: the \"no serde default -> fails deserialize -> fresh\" claim was factually wrong (an Option<T> is implicitly serde-default-None, it does not error on a missing field). Documented that node_invariants_hold (R1258), not deserialize-failure, is the SSOT enforcing the source/output_const invariant, and that the three post-R1242 fields use three different serde-evolution styles.",
+        "Frames validation gap closed (R1258 validated nodes+edges but NOT the frames in the same blob): load_json now checks unique FrameIds + next_frame_id ahead of every stored frame id, so a malformed set_graph frame set no longer installs a duplicate-id / lagging-counter that would collide on the next add_frame.",
+        "is_reroute SSOT: dropped the redundant STORED is_reroute: bool field (it was always == op == NodeOp::Reroute, a two-representations-of-one-fact smell) and DERIVED it as a method from op. Backward-compatible: an old blob's now-unknown is_reroute key is ignored on load, op derives the truth. Removed the now-vacuous validator cross-check."
+      ],
+      "verification_bullets": [
+        "Driven by a 3-reviewer independent session audit (correctness/SSOT/architecture, read-only) the user requested (\"교과서적?/SSOT?/북극성?\"). They CONFIRMED the doc overclaims, the factually-wrong output_const serde doc, the frames-validation gap, and the is_reroute redundancy — a 6th confirmation of the self-report-bias pattern (the overclaims were in the code DOCS this time). Credit CONFIRMED-sound: the eval core, SetNodeValueCmd lift, quantize_unit_byte reuse, deriving CellKind from default_value, no remaining hand-rolls.",
+        "cargo test -p hello-node-editor 228 pass / 0 fail (2 new r1259_* + updated r1256/r1258 tests for the derived is_reroute): frames-validation + is_reroute-not-serialized, old-blob-with-legacy-key-still-loads.",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean; cargo doc (private-items) exit 0.",
+        "ALL 29 node-editor demos PASS (is_reroute now derived, touches paint/reroute_ids: r1235/r1243/r1246 reroute demos + r852/r1227 persist round-trip green; r1258 demo's obsolete is_reroute-mismatch case replaced with a duplicate-node-id reject). validate-workspace T1 orphan=0."
+      ],
+      "impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Architectural carries the audit surfaced (NOT one-round fixes, now honestly documented in the corrected docstrings rather than overclaimed): a reusable pinion-node-graph crate with trait/registry-dispatched eval is the real substrate the self-hosted editor needs — a redesign gated on a 2nd consumer, not a move of the closed enum.",
+        "§2#7 debugger completeness for the Phase-D visual-scripting use: per-input resolved-value reads + cycle-localization + a set_graph rejection reason-string (InvokeError has no reason field — a framework-level change). The value model is two borrowed CellValue variants (Color/Float); exec/control-flow pins, custom ops without editing the closed enum, and sub-graphs are unstarted northern-star (Phase C/D) scope."
+      ],
+      "publishable_decision_summary": "R1259 = session audit-clearance (user-requested 교과서적/SSOT/북극성 review; 3 independent reviewers). Fixed the CONFIRMED defects: doc overclaims (mechanism-shared/non_exhaustive-extensible corrected to single-consumer-prototype reality), a factually-wrong output_const serde doc, the frames-validation gap (load_json now gates frame ids/counter), and dropped the redundant STORED is_reroute field (derived from op). Architectural carries (crate-lift with trait-dispatch, §2#7 debugger completeness, value model) honestly documented, not overclaimed.",
+      "publishable_changes_bullets": [
+        "Doc honesty (the core defect a 3-reviewer session audit flagged): corrected the PortType/NodeOp/module-header docstrings that overclaimed \"the taxonomy is the consumer's, the mechanism is shared\" and #[non_exhaustive] extensibility. Reality documented: the whole eval+validation mechanism is a single-consumer prototype trapped in this example binary (0 external consumers), NodeOp::evaluate is a closed match fused ONTO the taxonomy, #[non_exhaustive] is inert within its own module; the trait/registry-dispatched pinion-node-graph crate is a future redesign, not today's shape.",
+        "output_const serde doc corrected: the \"no serde default -> fails deserialize -> fresh\" claim was factually wrong (an Option<T> is implicitly serde-default-None, it does not error on a missing field). Documented that node_invariants_hold (R1258), not deserialize-failure, is the SSOT enforcing the source/output_const invariant, and that the three post-R1242 fields use three different serde-evolution styles.",
+        "Frames validation gap closed (R1258 validated nodes+edges but NOT the frames in the same blob): load_json now checks unique FrameIds + next_frame_id ahead of every stored frame id, so a malformed set_graph frame set no longer installs a duplicate-id / lagging-counter that would collide on the next add_frame.",
+        "is_reroute SSOT: dropped the redundant STORED is_reroute: bool field (it was always == op == NodeOp::Reroute, a two-representations-of-one-fact smell) and DERIVED it as a method from op. Backward-compatible: an old blob's now-unknown is_reroute key is ignored on load, op derives the truth. Removed the now-vacuous validator cross-check."
+      ],
+      "publishable_verification_bullets": [
+        "Driven by a 3-reviewer independent session audit (correctness/SSOT/architecture, read-only) the user requested (\"교과서적?/SSOT?/북극성?\"). They CONFIRMED the doc overclaims, the factually-wrong output_const serde doc, the frames-validation gap, and the is_reroute redundancy — a 6th confirmation of the self-report-bias pattern (the overclaims were in the code DOCS this time). Credit CONFIRMED-sound: the eval core, SetNodeValueCmd lift, quantize_unit_byte reuse, deriving CellKind from default_value, no remaining hand-rolls.",
+        "cargo test -p hello-node-editor 228 pass / 0 fail (2 new r1259_* + updated r1256/r1258 tests for the derived is_reroute): frames-validation + is_reroute-not-serialized, old-blob-with-legacy-key-still-loads.",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean; cargo doc (private-items) exit 0.",
+        "ALL 29 node-editor demos PASS (is_reroute now derived, touches paint/reroute_ids: r1235/r1243/r1246 reroute demos + r852/r1227 persist round-trip green; r1258 demo's obsolete is_reroute-mismatch case replaced with a duplicate-node-id reject). validate-workspace T1 orphan=0."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Architectural carries the audit surfaced (NOT one-round fixes, now honestly documented in the corrected docstrings rather than overclaimed): a reusable pinion-node-graph crate with trait/registry-dispatched eval is the real substrate the self-hosted editor needs — a redesign gated on a 2nd consumer, not a move of the closed enum.",
+        "§2#7 debugger completeness for the Phase-D visual-scripting use: per-input resolved-value reads + cycle-localization + a set_graph rejection reason-string (InvokeError has no reason field — a framework-level change). The value model is two borrowed CellValue variants (Color/Float); exec/control-flow pins, custom ops without editing the closed enum, and sub-graphs are unstarted northern-star (Phase C/D) scope."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

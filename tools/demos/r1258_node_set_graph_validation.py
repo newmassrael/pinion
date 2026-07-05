@@ -91,13 +91,14 @@ def body() -> None:
         assert_eq(q(tf, "node.2.inputs"), 2, "the surviving Multiply still has 2 inputs")
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "and it still evaluates")
 
-        # A compute node flagged is_reroute (op / is_reroute must agree, R1256):
-        # flip only the first node's flag (count=1).
-        fake_reroute = renamed.replace('"is_reroute":false', '"is_reroute":true', 1)
-        assert fake_reroute != renamed, "the is_reroute edit changed the blob"
-        reject(tf, fake_reroute, "is_reroute not matching op")
-        assert_eq(q(tf, "node.0.is_reroute"), False, "the surviving node 0 is not a reroute")
-        assert_eq(q(tf, "reroute_ids"), "", "no reroutes were installed")
+        # A duplicate node id: give the Output node (id 3) id 0 as well. The
+        # node object serializes `"id":N,"title":...` (edges are `"id":N,
+        # "from_node"`), so this edit hits exactly node 3.
+        dup_id = renamed.replace('"id":3,"title"', '"id":0,"title"')
+        assert dup_id != renamed, "the duplicate-id edit changed the blob"
+        reject(tf, dup_id, "a duplicate node id")
+        assert_eq(q(tf, "node_count"), 4, "no duplicate-id graph was installed")
+        assert_eq(q(tf, "node.0.op"), "Texture", "node 0 is still the Texture source")
 
         # ── (D) an id counter behind a stored id is rejected ─────────
         stale = renamed.replace('"next_node_id":4', '"next_node_id":1')

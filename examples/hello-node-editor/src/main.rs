@@ -107,10 +107,17 @@
 //!   broadcast). Ports paint in their type's signature colour (the
 //!   colour-coded-pin convention), and the types are AI-readable
 //!   (`query node.<id>.{input_types,output_types}`). Two material-graph types
-//!   for now (`Float`, `Vector`); `PortType` is `#[non_exhaustive]`, so a
-//!   blueprint consumer's `Exec` / `Bool` extend the lattice without a
-//!   re-spell ([[abstraction-needs-second-consumer]] — the taxonomy is the
-//!   consumer's, the mechanism is shared).
+//!   for now (`Float`, `Vector`). **Honest status (R1259)**: this is a
+//!   *single-consumer prototype* — the type lattice, the `NodeOp` taxonomy, AND
+//!   the eval/validation *mechanism* all live in THIS example binary; nothing
+//!   external depends on them, so none of it is yet the reusable substrate the
+//!   self-hosted editor (true north) would dogfood. `#[non_exhaustive]` is a
+//!   *forward-looking* marker: it constrains only a future downstream crate, so
+//!   it is inert within this module today. When a 2nd consumer materialises
+//!   ([[abstraction-needs-second-consumer]]) the lift is a **redesign** into a
+//!   `pinion-node-graph`-style crate with **trait/registry-dispatched** eval
+//!   (the taxonomy becoming the consumer's, the mechanism genuinely shared) —
+//!   NOT a move of today's closed `match`.
 //! - **Port default values** (R899): each input port carries a typed literal
 //!   default (the "pin default value"), typed by its [`PortType`] — a `Float`
 //!   port a scalar, a `Vector` port a colour — reusing the data-grid
@@ -388,10 +395,17 @@ const STORAGE_KEY: &str = "node_graph.state";
 // R898 -> 2: typed ports changed the `GraphNode` serialised shape
 // (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists).
 // R899 -> 3: added per-port `input_defaults` (typed `CellValue`s). R1227 -> 4:
-// comment `frames`. R1242 -> 5: the `is_reroute` discriminator. R1255 -> 6: the
-// first-class `op` compute identity. R1257 -> 7: the source `output_const` (both
-// no serde default, so a stale blob fails to deserialize -> fresh). Each bump
-// mismatch-rejects a stale blob so it starts fresh rather than misreading.
+// comment `frames`. R1242 -> 5: the `is_reroute` discriminator (R1259 dropped
+// the stored field — `is_reroute` is now DERIVED from `op`; an old blob's
+// now-unknown key is ignored on load). R1255 -> 6: the first-class `op` compute
+// identity. R1257 -> 7: the source `output_const`. Each bump mismatch-rejects a
+// stale blob (`schema_version` gate) so it starts fresh rather than misreading.
+// NOTE (R1259): the per-field serde-evolution styles differ and are NOT a
+// uniform "no default" doctrine — `op` (bare enum) hard-fails deserialize when
+// absent, `frames` carries `#[serde(default)]`, and `output_const` (an `Option`)
+// is implicitly default-`None`. The uniform
+// gate is the `schema_version` check + R1258 structural validation, not any
+// single field's absence.
 const PERSISTED_SCHEMA_VERSION: u32 = 7;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
@@ -579,10 +593,12 @@ impl core::fmt::Display for FrameId {
 /// output's type is assignable to the input's (see [`PortType::is_assignable_to`]),
 /// so the canvas rejects an ill-typed wire the way Unreal's blueprint /
 /// material graphs do. Two material-graph types for now (`Float` scalar,
-/// `Vector` colour/vec3); `#[non_exhaustive]` so a blueprint consumer's
-/// `Exec` / `Bool` extend it without re-spelling the match arms here
-/// ([[abstraction-needs-second-consumer]] — the type *taxonomy* is the
-/// consumer's, the *mechanism* is shared).
+/// `Vector` colour/vec3). `#[non_exhaustive]` is forward-looking — it would let
+/// a *future downstream crate* add `Exec` / `Bool`, but this example is the only
+/// consumer today, so the attribute is inert here and the lattice
+/// (`is_assignable_to`, `default_value`, `color`) is a closed in-module `match`.
+/// The genuinely-extensible form (the taxonomy the consumer's, the mechanism
+/// shared) is a future crate lift, not today's shape ([[abstraction-needs-second-consumer]]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 enum PortType {
@@ -653,10 +669,15 @@ impl PortType {
 /// evaluator keys off this, NOT the freely-rewritable `title` (the R1242 lesson
 /// — a node renamed "Foo" still multiplies), so an evaluator, a
 /// serialize/reload, and an AI enumeration all agree on what a node *does*.
-/// `#[non_exhaustive]` mirrors [`PortType`]: a blueprint consumer's `Branch` /
-/// `DotProduct` op extends the vocabulary without re-spelling the arms here
-/// ([[abstraction-needs-second-consumer]] — the op *taxonomy* is the consumer's,
-/// the eval *mechanism* is shared). Set once at construction from the canonical
+/// `#[non_exhaustive]` mirrors [`PortType`] as a forward-looking marker. **But
+/// note (R1259 audit)**: [`NodeOp::evaluate`] is a closed `match` *on this enum,
+/// in this module*, so op-taxonomy and eval-mechanism are currently FUSED — a
+/// new op edits the `NodeOp` variant + [`NodeOp::name`] + [`NodeOp::evaluate`] +
+/// a [`PALETTE`] row, and `#[non_exhaustive]` (which only affects downstream
+/// crates) changes nothing in-module. The "taxonomy is the consumer's, mechanism
+/// shared" design is what a *future* trait/registry-dispatched `pinion-node-graph`
+/// crate would provide ([[abstraction-needs-second-consumer]]); it is NOT the
+/// present single-consumer prototype. Set once at construction from the canonical
 /// [`PALETTE`] kind (or [`NodeOp::Reroute`] for a spliced knot); frozen
 /// thereafter, so a later rename never re-keys the compute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -941,16 +962,14 @@ fn palette_shape(op: NodeOp) -> Option<(&'static [PortType], &'static [PortType]
 /// R1258 — whether one node's stored fields are self-consistent: the invariants
 /// every construction path upholds, but a `set_graph` / loaded blob (an
 /// *untrusted* input on the §2 #2 AI-first write path) could violate, silently
-/// mis-evaluating. Each check mirrors a construction guarantee: `is_reroute`
-/// tracks `op` (R1256); one typed pin default per input port; a source (and only
-/// a source) carries an `output_const` typed to output port 0 (R1257); and the
-/// `op` matches its canonical port arity (a palette op) or the reroute
-/// 1-in/1-out same-type passthrough — so an `Add` with one input (which would
-/// evaluate to a permanent `null`) is rejected here, not silently accepted.
+/// mis-evaluating. Each check mirrors a construction guarantee: one typed pin
+/// default per input port; a source (and only a source) carries an
+/// `output_const` typed to output port 0 (R1257); and the `op` matches its
+/// canonical port arity (a palette op) or the reroute 1-in/1-out same-type
+/// passthrough — so an `Add` with one input (which would evaluate to a permanent
+/// `null`) is rejected here, not silently accepted. (R1259 — `is_reroute` is no
+/// longer a stored field to cross-check; it is *derived* from `op`.)
 fn node_invariants_hold(node: &GraphNode) -> bool {
-    if node.is_reroute != (node.op == NodeOp::Reroute) {
-        return false;
-    }
     if node.input_defaults.len() != node.input_ports.len() {
         return false;
     }
@@ -1081,15 +1100,6 @@ struct GraphNode {
     /// the port's [`PortType`]; retained while the port is wired (the Unreal
     /// model — wiring hides the editor, it does not discard the value).
     input_defaults: Vec<CellValue>,
-    /// R1242 — whether this node is a **reroute** knot (a wire-routing
-    /// passthrough spliced by `add_reroute`), not a compute op. A first-class
-    /// model identity — NOT the title string (which is freely rewritable) — so
-    /// the reroute survives a serialize / reload, an AI can enumerate reroutes
-    /// (`reroute_ids`), and the paint / future graph-eval can key off it. Serde
-    /// `default` (false) so a pre-R1242 (schema ≤ 4) blob's op nodes read as
-    /// non-reroute.
-    #[serde(default)]
-    is_reroute: bool,
     /// R1255 — the node's **compute identity** for graph evaluation (the SSOT
     /// the evaluator dispatches on). Set once from the [`PALETTE`] kind (or
     /// [`NodeOp::Reroute`]) at construction and frozen, NOT re-derived from the
@@ -1104,10 +1114,19 @@ struct GraphNode {
     /// input pin default. `None` for a compute op / sink / reroute (their output
     /// is *derived*, not authored). Typed by output port 0's [`PortType`]
     /// (`Vector`→a `Color`, `Float`→an `f64`). The evaluator returns it for a
-    /// source; the AI-first `intervene node.<id>.value` authors it. Set once at
-    /// construction (schema 7, no serde `default` — a stale blob fails
-    /// deserialize → fresh, the `op` discipline). `Some` doubles as the
-    /// "is an authorable source" discriminator ([`GraphNode::is_source`]).
+    /// source; the AI-first `intervene node.<id>.value` authors it. `Some`
+    /// doubles as the "is an authorable source" discriminator
+    /// ([`GraphNode::is_source`]).
+    ///
+    /// **Serde (R1259 correction)**: unlike `op` (a bare enum that hard-fails
+    /// deserialize when absent), an `Option<CellValue>` is *implicitly*
+    /// `#[serde(default)]` — serde reads a missing field as `None`, it does NOT
+    /// error. So a stale blob is NOT rejected by *this field's* absence (the
+    /// earlier claim was wrong); rejection comes from the schema-version gate
+    /// and, at the same version, from [`node_invariants_hold`], which requires a
+    /// source to carry `Some` and a non-source to carry `None`. That validator
+    /// is the SSOT for this invariant on the `set_graph` write path — not a
+    /// deserialize failure.
     output_const: Option<CellValue>,
 }
 
@@ -1129,11 +1148,6 @@ impl GraphNode {
             input_ports: inputs.to_vec(),
             output_ports: outputs.to_vec(),
             input_defaults: inputs.iter().map(|t| t.default_value()).collect(),
-            // R1256 — `is_reroute` is DERIVED from `op` at the single construction
-            // chokepoint, never set independently, so the two can never drift
-            // (an audit found `new(.., Reroute)` + a separate `is_reroute = true`
-            // could diverge if a future ctor forgot the loose assignment).
-            is_reroute: op == NodeOp::Reroute,
             op,
             // R1257 — a source (no inputs, ≥1 output) seeds its output constant
             // from output port 0's type default (`Vector`→grey, `Float`→0.0),
@@ -1144,6 +1158,18 @@ impl GraphNode {
                 .filter(|_| inputs.is_empty())
                 .map(|t| t.default_value()),
         }
+    }
+
+    /// R1242 / R1259 — whether this node is a **reroute** knot (a wire-routing
+    /// passthrough spliced by `add_reroute`), not a compute op. **DERIVED** from
+    /// the [`NodeOp`] compute identity, not a stored field — R1259 dropped the
+    /// redundant serialized `is_reroute: bool` (an audit flagged it as two
+    /// representations of one fact; it was always `== (op == Reroute)`). Old
+    /// blobs' now-unknown `is_reroute` key is ignored on load; `op` derives the
+    /// truth. The paint (compact knot vs card), the `reroute_ids` enumeration,
+    /// and the `node.<id>.is_reroute` read all key off this.
+    fn is_reroute(&self) -> bool {
+        self.op == NodeOp::Reroute
     }
 
     /// R1257 — whether this node is an authorable **source** (its output is a
@@ -1207,11 +1233,11 @@ impl GraphNode {
     /// stays on-world, merely can't reach the far-right 112px band), so it is the
     /// one width site NOT routed through here.
     fn width(&self) -> i32 {
-        if self.is_reroute { KNOT_SIZE } else { NODE_W }
+        if self.is_reroute() { KNOT_SIZE } else { NODE_W }
     }
 
     fn height(&self) -> i32 {
-        if self.is_reroute {
+        if self.is_reroute() {
             // R1243 — a reroute knot is a square dot: no header / port rows /
             // body pad, just the [`KNOT_SIZE`] the width also takes.
             KNOT_SIZE
@@ -1517,7 +1543,7 @@ fn knot_center(node: &GraphNode) -> (i32, i32) {
 
 /// Centre of input port `i` of `node`, in window coordinates.
 fn input_port_center(node: &GraphNode, i: usize) -> (i32, i32) {
-    if node.is_reroute {
+    if node.is_reroute() {
         // R1243 — a knot has no port rows; every incident wire anchors at its
         // centre, so the drawn wire terminates on the dot.
         return knot_center(node);
@@ -1530,7 +1556,7 @@ fn input_port_center(node: &GraphNode, i: usize) -> (i32, i32) {
 
 /// Centre of output port `j` of `node`, in window coordinates.
 fn output_port_center(node: &GraphNode, j: usize) -> (i32, i32) {
-    if node.is_reroute {
+    if node.is_reroute() {
         return knot_center(node);
     }
     (
@@ -3320,7 +3346,7 @@ impl NodeGraphExternal {
     /// [`GraphNode::is_reroute`]); a missing id reads `false`. Gates the
     /// double-click gesture: a knot dissolves, a compute node renames.
     fn is_reroute_node(&self, id: NodeId) -> bool {
-        self.node_by_id(id).is_some_and(|n| n.is_reroute)
+        self.node_by_id(id).is_some_and(|n| n.is_reroute())
     }
 
     /// R916 — the absolute `node.<id>.<field>` path the Details panel's
@@ -3511,12 +3537,13 @@ impl NodeGraphExternal {
 
     /// R852 — parse + apply a JSON snapshot (the AI-first `set_graph` write, the
     /// inverse of [`serialized_json`](Self::serialized_json)). Rejects malformed
-    /// JSON or a schema-version mismatch (`false`, the graph unchanged). R1258 —
-    /// also rejects a **structurally-invalid** graph ([`graph_invariants_hold`] +
-    /// id counters ahead of every stored id), so an untrusted `set_graph` blob
-    /// (§2 #2 — RPC is the AI-first write path) fails LOUD (graph unchanged, the
-    /// AI sees `false`) rather than silently evaluating an ill-typed / malformed
-    /// graph to the wrong value or a permanent `null`.
+    /// JSON or a schema-version mismatch (`false`, the graph unchanged). R1258 /
+    /// R1259 — also rejects a **structurally-invalid** blob: the nodes + edges
+    /// ([`graph_invariants_hold`]), unique frame ids, and every id counter ahead
+    /// of the ids it mints past (nodes, edges, AND frames). So an untrusted
+    /// `set_graph` blob (§2 #2 — RPC is the AI-first write path) fails LOUD
+    /// (graph unchanged, the AI sees `false`) rather than silently evaluating an
+    /// ill-typed / malformed graph to the wrong value or a permanent `null`.
     fn load_json(&self, json: &str) -> bool {
         let Ok(g) = serde_json::from_str::<SerializedGraph>(json) else {
             return false;
@@ -3527,10 +3554,19 @@ impl NodeGraphExternal {
         if !graph_invariants_hold(&g.nodes, &g.edges) {
             return false;
         }
+        // R1259 — the comment frames ride the same blob and are installed
+        // verbatim by `apply_snapshot`, so they get the same id-uniqueness gate
+        // (an audit found frames were unvalidated: a duplicate `FrameId` or a
+        // lagging counter would collide on the next `add_frame`).
+        let frame_ids: BTreeSet<u32> = g.frames.iter().map(|f| f.id.raw()).collect();
+        if frame_ids.len() != g.frames.len() {
+            return false;
+        }
         // The monotonic id counters must lead every stored id, so a later mint
-        // never collides with a loaded node / edge.
+        // never collides with a loaded node / edge / frame.
         if g.nodes.iter().any(|n| n.id.raw() >= g.next_node_id)
             || g.edges.iter().any(|e| e.id.raw() >= g.next_edge_id)
+            || g.frames.iter().any(|f| f.id.raw() >= g.next_frame_id)
         {
             return false;
         }
@@ -3994,12 +4030,11 @@ impl NodeGraphExternal {
             &[ty],
             NodeOp::Reroute,
         );
-        // R1256 — `new` derives `is_reroute` from `op == NodeOp::Reroute` (R1242
-        // first-class identity, not the title), so it is already `true` here — no
-        // separate assignment to drift from `op`.
-        // R1243 — centre the compact knot on the wire midpoint: `is_reroute` is
-        // true, so `width()`/`height()` are both `KNOT_SIZE` and the dot sits
-        // exactly on the old wire (the double-click point).
+        // R1259 — `op == NodeOp::Reroute`, so `is_reroute()` derives `true` (no
+        // stored field to set); R1243 — centre the compact knot on the wire
+        // midpoint: `width()`/`height()` are both `KNOT_SIZE` (they key off
+        // `is_reroute()`), so the dot sits exactly on the old wire (the
+        // double-click point).
         reroute.x = clamp_node_x(mid_x - reroute.width() / 2);
         reroute.y = clamp_node_y(mid_y - reroute.height() / 2);
         // Mint the two replacement edges (A -> R, R -> B).
@@ -4458,7 +4493,7 @@ impl NodeGraphExternal {
                 // R1242 — the reroute discriminator (a first-class model read, not
                 // a title match — a user-renamed knot still reads true, a node
                 // renamed "Reroute" reads false).
-                "is_reroute" => Some(IntrospectValue::Bool(node.is_reroute)),
+                "is_reroute" => Some(IntrospectValue::Bool(node.is_reroute())),
                 // R1256 — the first-class compute identity (the rename-stable
                 // `Add`/`Multiply`/... the evaluator dispatches on). The AI-first
                 // answer to "what does this node compute" — the structural reads
@@ -5905,7 +5940,7 @@ impl ExternalIntrospect for NodeGraphExternal {
                 self.nodes
                     .get()
                     .iter()
-                    .filter(|n| n.is_reroute)
+                    .filter(|n| n.is_reroute())
                     .map(|n| n.id.raw()),
             ))),
             // R1227 — the comment-frame enumeration handles (the annotation
@@ -6940,7 +6975,7 @@ fn view_node(
     // R1243 — a reroute paints as a compact knot (a wire passthrough), not a
     // card: no header, port rows, or inline editors. It still selects / drags
     // via its `#node_{id}` tag like any node.
-    if node.is_reroute {
+    if node.is_reroute() {
         return view_reroute_knot(node, selected, theme, zoom);
     }
     let id = node.id;

@@ -6392,7 +6392,7 @@ fn r1242_reroute_is_a_first_class_model_identity_not_a_title() {
         let rid = coord.add_reroute(EdgeId(0)).unwrap();
         // The flag is set on the model, and the read twin reports it.
         assert!(
-            coord.node_by_id(rid).unwrap().is_reroute,
+            coord.node_by_id(rid).unwrap().is_reroute(),
             "the model flag is set"
         );
         assert_eq!(
@@ -6413,14 +6413,14 @@ fn r1242_reroute_is_a_first_class_model_identity_not_a_title() {
             )
             .unwrap();
         assert!(
-            coord.node_by_id(rid).unwrap().is_reroute,
+            coord.node_by_id(rid).unwrap().is_reroute(),
             "renamed knot stays a reroute"
         );
         coord
             .intervene("node.2.title", IntrospectValue::Text("Reroute".to_owned()))
             .unwrap();
         assert!(
-            !coord.node_by_id(NodeId(2)).unwrap().is_reroute,
+            !coord.node_by_id(NodeId(2)).unwrap().is_reroute(),
             "a node named Reroute is not one"
         );
         // The enumeration finds exactly the reroute.
@@ -6442,7 +6442,7 @@ fn r1242_reroute_identity_survives_serialize_reload() {
         coord.nodes.set(Vec::new());
         assert!(coord.load_json(&json), "reload the snapshot");
         assert!(
-            coord.node_by_id(rid).unwrap().is_reroute,
+            coord.node_by_id(rid).unwrap().is_reroute(),
             "the reroute flag persisted through serialize/reload (not just the title)"
         );
         assert_eq!(
@@ -7260,8 +7260,9 @@ fn r1256_node_op_read_distinguishes_same_signature_ops() {
 
 #[test]
 fn r1256_is_reroute_is_derived_from_op_at_construction() {
-    // `new` sets is_reroute purely from `op == Reroute` — no independent field
-    // to drift. A Reroute node is a knot; any compute op is not.
+    // R1259 — `is_reroute()` is a pure derivation of `op == Reroute` (no stored
+    // field to drift), keyed off the compute identity NOT the title. A Reroute
+    // node is a knot; any compute op is not.
     let knot = GraphNode::new(
         9,
         "renamed",
@@ -7272,7 +7273,7 @@ fn r1256_is_reroute_is_derived_from_op_at_construction() {
         NodeOp::Reroute,
     );
     assert!(
-        knot.is_reroute,
+        knot.is_reroute(),
         "op=Reroute derives is_reroute=true (even with a non-'Reroute' title)"
     );
     let add = GraphNode::new(
@@ -7285,7 +7286,7 @@ fn r1256_is_reroute_is_derived_from_op_at_construction() {
         NodeOp::Add,
     );
     assert!(
-        !add.is_reroute,
+        !add.is_reroute(),
         "op=Add derives is_reroute=false (even titled 'Reroute')"
     );
 }
@@ -7689,12 +7690,13 @@ fn r1258_rejects_output_const_and_is_reroute_inconsistency() {
         !node_invariants_hold(&op),
         "a compute op must not carry an output_const"
     );
-    // is_reroute set on a non-reroute op.
-    let mut fake = GraphNode::from_palette(3, 0, 0, 0).unwrap(); // Add
-    fake.is_reroute = true;
-    assert!(
-        !node_invariants_hold(&fake),
-        "is_reroute must track op == Reroute"
+    // R1259 — is_reroute/op inconsistency is no longer representable: is_reroute
+    // is DERIVED from op (not a stored field), so there is nothing to mutate out
+    // of sync. The `is_reroute() == (op == Reroute)` identity holds by definition.
+    assert_eq!(
+        op.is_reroute(),
+        op.op == NodeOp::Reroute,
+        "is_reroute derives from op"
     );
 }
 
@@ -7731,7 +7733,7 @@ fn r1258_a_reroute_graph_passes_validation() {
             .add_reroute(EdgeId(0))
             .expect("splice a reroute into edge 0");
         assert!(
-            coord.node_by_id(rid).unwrap().is_reroute,
+            coord.node_by_id(rid).unwrap().is_reroute(),
             "the knot is a reroute"
         );
         let blob = coord.serialized_json();
@@ -7743,6 +7745,72 @@ fn r1258_a_reroute_graph_passes_validation() {
         assert!(
             graph_invariants_hold(&coord.nodes.get(), &coord.edges.get()),
             "graph_invariants_hold accepts a reroute node",
+        );
+    });
+}
+
+// ── R1259 — session audit-clearance (frames validation + is_reroute derived) ──
+
+#[test]
+fn r1259_load_json_validates_frames_and_omits_is_reroute() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        coord.select_all();
+        coord
+            .add_frame()
+            .expect("a comment frame around the selection");
+        let blob = coord.serialized_json();
+        assert!(
+            coord.load_json(&blob),
+            "a graph with a valid frame round-trips"
+        );
+        // R1259 — is_reroute is no longer a stored field (derived from op).
+        assert!(
+            !blob.contains("is_reroute"),
+            "is_reroute is not serialized (derived from op == Reroute)"
+        );
+        // A frame counter behind the stored frame id would collide on the next
+        // add_frame -> rejected (the frames now get the same gate as nodes/edges).
+        let stale = blob.replace("\"next_frame_id\":1", "\"next_frame_id\":0");
+        assert_ne!(stale, blob, "the frame-counter edit changed the blob");
+        assert!(
+            !coord.load_json(&stale),
+            "a frame counter behind a stored frame id is rejected"
+        );
+        // The graph is unchanged after the reject.
+        assert_eq!(
+            coord.frames.get().len(),
+            1,
+            "still one frame after the reject"
+        );
+    });
+}
+
+#[test]
+fn r1259_old_blob_with_is_reroute_key_still_loads() {
+    // Backward-compat: a schema-7 blob written before R1259 carries an
+    // "is_reroute" key; serde ignores the now-unknown field and op derives the
+    // truth, so the reroute identity survives the field removal.
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let rid = coord.add_reroute(EdgeId(0)).expect("splice a reroute");
+        let blob = coord.serialized_json();
+        // Re-introduce the legacy key on the reroute node's object (it serializes
+        // op:"Reroute"); a pre-R1259 blob would have had "is_reroute":true too.
+        let legacy = blob.replace(
+            "\"op\":\"Reroute\"",
+            "\"op\":\"Reroute\",\"is_reroute\":true",
+        );
+        assert_ne!(legacy, blob, "the legacy-key edit changed the blob");
+        assert!(
+            coord.load_json(&legacy),
+            "a blob with the legacy is_reroute key still loads"
+        );
+        assert!(
+            coord.node_by_id(rid).unwrap().is_reroute(),
+            "op derives the reroute identity after reload"
         );
     });
 }
