@@ -79,11 +79,18 @@ def body() -> None:
         assert_eq(node_rgb(tf, 2), (64, 64, 64), "Multiply(grey, grey) = grey*grey/255")
         assert_eq(node_rgb(tf, 3), (64, 64, 64), "Output.value = the Multiply result")
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "eval.output = the terminal")
+        # The rename-stable compute identity (R1256) — the AI reads `op` to know
+        # what a node computes; Texture vs Color (both ()->Vector) are otherwise
+        # structurally identical, and title is rewritable.
+        assert_eq(q(tf, "node.0.op"), "Texture", "node 0 op = Texture")
+        assert_eq(q(tf, "node.1.op"), "Color", "node 1 op = Color (same signature as Texture)")
+        assert_eq(q(tf, "node.2.op"), "Multiply", "node 2 op = Multiply")
 
         # ── (B) a fresh unwired Add computes over its pin defaults ────
         add = inv(tf, "add_node", "Add")
         assert_eq(add, 4, "add_node minted node 4")
         assert_eq(q(tf, "node_count"), 5, "one node added")
+        assert_eq(q(tf, "node.4.op"), "Add", "op=Add (not derivable from its (V,V)->V signature)")
         # Both inputs unconnected -> both grey defaults; 128+128 saturates at 255.
         assert_eq(node_rgb(tf, 4), (255, 255, 255), "Add(grey, grey) saturates to white")
 

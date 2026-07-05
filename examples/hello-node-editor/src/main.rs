@@ -48,7 +48,7 @@
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
-//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,input_types,output_types,input_default.<port>,value}` /
+//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,op,input_types,output_types,input_default.<port>,value}` (R1256: `op` = rename-stable compute identity) /
 //! `edge.<id>` / `dissolvable.<id>` / `dissolvable_ids` (R1241: dissolve
 //! eligibility) / `eval.{output,acyclic}` (R1255: the evaluated terminal value
 //! and the DAG check) / `selected` / `selected_ids` / `selected_edge`;
@@ -245,7 +245,7 @@ use pinion_core::scene::{
 use pinion_core::storage::Storage;
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, PathStyle, Size,
-    Stroke, StrokeCap, TextStyle,
+    Stroke, StrokeCap, TextStyle, quantize_unit_byte,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::undo::{
@@ -676,6 +676,26 @@ enum NodeOp {
 }
 
 impl NodeOp {
+    /// R1256 — the op's canonical, rename-stable identity token (the `Add`/
+    /// `Multiply`/... a `query node.<id>.op` reports). This is the AI-legible
+    /// answer to "what does this node compute" — needed because the structural
+    /// reads cannot distinguish ops that share a signature (`Add` and `Multiply`
+    /// are both `(Vector,Vector)→Vector`; `Texture` and `Color` both
+    /// `()→Vector`) and the `title` is freely rewritable. Matches the
+    /// [`PALETTE`] title for a palette op; `Reroute` for a knot.
+    const fn name(self) -> &'static str {
+        match self {
+            NodeOp::Texture => "Texture",
+            NodeOp::Color => "Color",
+            NodeOp::Multiply => "Multiply",
+            NodeOp::Add => "Add",
+            NodeOp::Output => "Output",
+            NodeOp::Scalar => "Scalar",
+            NodeOp::Lerp => "Lerp",
+            NodeOp::Reroute => "Reroute",
+        }
+    }
+
     /// R1255 — compute this op's output from its already-resolved, port-typed
     /// `inputs` (each coerced to the op's declared input [`PortType`] by
     /// [`resolve_input`], so a `Vector` input is a [`CellValue::Color`] and a
@@ -727,15 +747,6 @@ fn as_float(value: &CellValue) -> Option<f64> {
     }
 }
 
-/// R1255 — clamp a computed channel to the `0..=255` sRGB byte range. The
-/// colour ops compute in `f64` (lerp, scalar broadcast) then land here; the
-/// cast is truncation- and sign-safe because the value is `round`ed and clamped
-/// into `0.0..=255.0` first.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn channel_u8(x: f64) -> u8 {
-    x.clamp(0.0, 255.0).round() as u8
-}
-
 // R1255 — the material-graph colour ops (`Add` / `Multiply` / `Lerp`) work in
 // **raw sRGB-byte component space** (arithmetic straight on the `0..=255`
 // channels), the transparent shader-authoring convention for this illustrative
@@ -769,7 +780,7 @@ fn color_mul(a: Color, b: Color) -> Color {
 /// not an extrapolation here). Alpha stays opaque.
 fn color_lerp(a: Color, b: Color, t: f64) -> Color {
     let t = t.clamp(0.0, 1.0);
-    let mix = |x: u8, y: u8| channel_u8(f64::from(x) + (f64::from(y) - f64::from(x)) * t);
+    let mix = |x: u8, y: u8| quantize_unit_byte(f64::from(x) + (f64::from(y) - f64::from(x)) * t);
     Color::rgb(mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b))
 }
 
@@ -778,7 +789,7 @@ fn color_lerp(a: Color, b: Color, t: f64) -> Color {
 /// Vector`). The scalar is treated as a normalized `0..=1` channel — `f·255`
 /// per channel — so `0.0 →` black, `1.0 →` white, `0.5 →` mid-grey.
 fn broadcast_scalar(f: f64) -> Color {
-    let c = channel_u8(f.clamp(0.0, 1.0) * 255.0);
+    let c = quantize_unit_byte(f.clamp(0.0, 1.0) * 255.0);
     Color::rgb(c, c, c)
 }
 
@@ -809,15 +820,19 @@ fn resolve_input(
     visiting: &mut BTreeSet<NodeId>,
 ) -> Option<CellValue> {
     let target = node.input_type(port)?;
-    if let Some(edge) = edges
+    // R1256 — coerce BOTH branches to the port type: a palette-built default
+    // already matches, but a `set_graph`/loaded blob can carry a mistyped
+    // default (a `Float` on a `Vector` port), and coercing it symmetrically with
+    // the wired branch keeps the value resolvable instead of a silent `null`.
+    let value = if let Some(edge) = edges
         .iter()
         .find(|e| e.to_node == node.id && e.to_port == port)
     {
-        let src = eval_node(nodes, edges, edge.from_node, cache, visiting)?;
-        Some(coerce_to(src, target))
+        eval_node(nodes, edges, edge.from_node, cache, visiting)?
     } else {
-        node.input_default(port).cloned()
-    }
+        node.input_default(port).cloned()?
+    };
+    Some(coerce_to(value, target))
 }
 
 /// R1255 §5.38 §5.52 — evaluate node `id`'s output over the graph
@@ -985,9 +1000,25 @@ impl GraphNode {
             input_ports: inputs.to_vec(),
             output_ports: outputs.to_vec(),
             input_defaults: inputs.iter().map(|t| t.default_value()).collect(),
-            is_reroute: false,
+            // R1256 — `is_reroute` is DERIVED from `op` at the single construction
+            // chokepoint, never set independently, so the two can never drift
+            // (an audit found `new(.., Reroute)` + a separate `is_reroute = true`
+            // could diverge if a future ctor forgot the loose assignment).
+            is_reroute: op == NodeOp::Reroute,
             op,
         }
+    }
+
+    /// R1256 — construct a [`PALETTE`] node of `kind` at `(x, y)` with id `id`,
+    /// reading `(title, ports, op)` from the palette SSOT rather than
+    /// re-spelling them. The single palette-node constructor behind
+    /// [`default_nodes`] / `add_node` / `commit_pin_create_kind`, so a kind's
+    /// title / ports / op live in exactly one place (an audit found
+    /// `default_nodes` hand-spelled `op` literals that could drift from
+    /// `PALETTE`). `None` for an out-of-range kind.
+    fn from_palette(kind: usize, id: u32, x: i32, y: i32) -> Option<Self> {
+        let &(title, inputs, outputs, op) = PALETTE.get(kind)?;
+        Some(Self::new(id, title, x, y, inputs, outputs, op))
     }
 
     /// R899 — the literal default of input port `port` (`None` out of range).
@@ -1255,23 +1286,20 @@ fn first_dynamic_node_id() -> u32 {
 }
 
 /// First-paint graph — a tiny material graph (`Texture` × `Color` →
-/// `Multiply` → `Output`). Node ids 0..=3, edge ids 0..=2.
+/// `Multiply` → `Output`). Node ids 0..=3, edge ids 0..=2. R1256 — built from
+/// the `PALETTE` SSOT (`(kind, id, x, y)`) via [`GraphNode::from_palette`], so
+/// the seed's titles / ports / ops cannot drift from the palette.
 fn default_nodes() -> Vec<GraphNode> {
-    use PortType::Vector;
-    vec![
-        GraphNode::new(0, "Texture", 40, 70, &[], &[Vector], NodeOp::Texture),
-        GraphNode::new(1, "Color", 40, 210, &[], &[Vector], NodeOp::Color),
-        GraphNode::new(
-            2,
-            "Multiply",
-            250,
-            110,
-            &[Vector, Vector],
-            &[Vector],
-            NodeOp::Multiply,
-        ),
-        GraphNode::new(3, "Output", 470, 150, &[Vector], &[], NodeOp::Output),
+    // (palette kind, node id, x, y): Texture(0) x Color(1) -> Multiply(2) -> Output(4).
+    [
+        (0, 0, 40, 70),
+        (1, 1, 40, 210),
+        (2, 2, 250, 110),
+        (4, 3, 470, 150),
     ]
+    .into_iter()
+    .map(|(kind, id, x, y)| GraphNode::from_palette(kind, id, x, y).expect("PALETTE kind in range"))
+    .collect()
 }
 
 fn default_edges() -> Vec<Edge> {
@@ -3361,7 +3389,7 @@ impl NodeGraphExternal {
     /// rearranged. A new node has no edges, so no edge / selection bookkeeping
     /// is needed (the stable-id model: adding is purely additive).
     fn add_node(&self, kind: usize) -> Option<NodeId> {
-        let &(title, input_ports, output_ports, op) = PALETTE.get(kind)?;
+        let &(title, ..) = PALETTE.get(kind)?;
         let id = self.mint_node_id();
         let raw = id.raw();
         // Cascade in minted order from the spawn point so repeated adds fan out
@@ -3377,17 +3405,8 @@ impl NodeGraphExternal {
         );
         let x = clamp_node_x(round_i32(gx) + step * SPAWN_STEP);
         let y = clamp_node_y(round_i32(gy) + step * SPAWN_STEP);
-        let node = GraphNode {
-            id,
-            title: title.to_owned(),
-            x,
-            y,
-            input_ports: input_ports.to_vec(),
-            output_ports: output_ports.to_vec(),
-            input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
-            is_reroute: false,
-            op,
-        };
+        // R1256 — one palette-node constructor SSOT (derives `is_reroute` from op).
+        let node = GraphNode::from_palette(kind, raw, x, y)?;
         let sel_before = self.selection.get();
         // `record` applies the edit forward — pushing the node and selecting it
         // (the prior direct writes) — so a single Ctrl+Z removes it again.
@@ -3499,19 +3518,10 @@ impl NodeGraphExternal {
             return None;
         }
         let target_port = first_compatible_input(kind, from_ty)?;
-        let &(title, input_ports, output_ports, op) = PALETTE.get(kind)?;
+        let &(title, ..) = PALETTE.get(kind)?;
         let node_id = self.mint_node_id();
-        let node = GraphNode {
-            id: node_id,
-            title: title.to_owned(),
-            x: pc.at_graph.0,
-            y: pc.at_graph.1,
-            input_ports: input_ports.to_vec(),
-            output_ports: output_ports.to_vec(),
-            input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
-            is_reroute: false,
-            op,
-        };
+        // R1256 — one palette-node constructor SSOT (derives `is_reroute` from op).
+        let node = GraphNode::from_palette(kind, node_id.raw(), pc.at_graph.0, pc.at_graph.1)?;
         let edge = Edge {
             id: self.mint_edge_id(),
             from_node: pc.from_node,
@@ -3794,10 +3804,12 @@ impl NodeGraphExternal {
             &[ty],
             NodeOp::Reroute,
         );
-        reroute.is_reroute = true; // R1242 — a first-class model identity, not the title
+        // R1256 — `new` derives `is_reroute` from `op == NodeOp::Reroute` (R1242
+        // first-class identity, not the title), so it is already `true` here — no
+        // separate assignment to drift from `op`.
         // R1243 — centre the compact knot on the wire midpoint: `is_reroute` is
-        // set above, so `width()`/`height()` are both `KNOT_SIZE` and the dot
-        // sits exactly on the old wire (the double-click point).
+        // true, so `width()`/`height()` are both `KNOT_SIZE` and the dot sits
+        // exactly on the old wire (the double-click point).
         reroute.x = clamp_node_x(mid_x - reroute.width() / 2);
         reroute.y = clamp_node_y(mid_y - reroute.height() / 2);
         // Mint the two replacement edges (A -> R, R -> B).
@@ -4220,6 +4232,13 @@ impl NodeGraphExternal {
                 // a title match — a user-renamed knot still reads true, a node
                 // renamed "Reroute" reads false).
                 "is_reroute" => Some(IntrospectValue::Bool(node.is_reroute)),
+                // R1256 — the first-class compute identity (the rename-stable
+                // `Add`/`Multiply`/... the evaluator dispatches on). The AI-first
+                // answer to "what does this node compute" — the structural reads
+                // (`input_types`/arity) cannot separate ops that share a
+                // signature, and `title` is rewritable, so an AI enumeration
+                // reads `op` to predict/verify `value`.
+                "op" => Some(IntrospectValue::Text(node.op.name().to_owned())),
                 // R898 — the typed-port read twins: CSV of the port types in port
                 // order ("" for a source / sink). The arity reads stay the
                 // byte-stable count contract.
@@ -5519,6 +5538,8 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R1242 — the reroute-knot discriminator + enumeration.
             ("reroute_ids", "string"),
             ("node.<id>.is_reroute", "bool"),
+            // R1256 — the rename-stable compute identity (Add/Multiply/...).
+            ("node.<id>.op", "string"),
             // R1241 — dissolve-eligibility reads (the twins of the dissolve verb).
             ("dissolvable_ids", "string"),
             ("dissolvable.<id>", "bool"),
@@ -5561,6 +5582,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // `selected_ids`); the rest are read + intervene.
             ("detail.node", "int"),
             ("detail.title", "string"),
+            ("detail.op", "string"),
             ("detail.x", "int"),
             ("detail.y", "int"),
             ("detail.inputs", "int"),

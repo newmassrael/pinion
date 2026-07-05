@@ -7187,3 +7187,143 @@ fn r1255_detail_value_mirrors_the_selected_node() {
         );
     });
 }
+
+// ── R1256 — audit-clearance of R1255 (op read / derived is_reroute /
+//    from_palette SSOT / symmetric default coercion) ─────────────────────────
+
+#[test]
+fn r1256_node_op_read_distinguishes_same_signature_ops() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        // The seed nodes: Texture and Color share ()->Vector; the structural
+        // reads cannot tell them apart, but `op` can.
+        assert_eq!(
+            intro.query("node.0.op"),
+            Some(IntrospectValue::Text("Texture".into()))
+        );
+        assert_eq!(
+            intro.query("node.1.op"),
+            Some(IntrospectValue::Text("Color".into()))
+        );
+        assert_eq!(
+            intro.query("node.0.input_types"),
+            intro.query("node.1.input_types"),
+            "Texture and Color are structurally identical...",
+        );
+        assert_ne!(
+            intro.query("node.0.op"),
+            intro.query("node.1.op"),
+            "...but `op` separates them"
+        );
+        // Multiply (node 2) vs a fresh Add: identical (Vector,Vector)->Vector.
+        assert_eq!(
+            intro.query("node.2.op"),
+            Some(IntrospectValue::Text("Multiply".into()))
+        );
+        let add = intro
+            .invoke("add_node", IntrospectValue::Text("Add".into()))
+            .expect("add");
+        let IntrospectValue::Int(add_id) = add else {
+            panic!("add id")
+        };
+        assert_eq!(
+            intro.query(&format!("node.{add_id}.op")),
+            Some(IntrospectValue::Text("Add".into())),
+            "the new node reads op=Add (not derivable from its signature)",
+        );
+        // detail.op mirrors the selected node.
+        intro
+            .intervene("selected_ids", IntrospectValue::Text("2".into()))
+            .expect("select");
+        assert_eq!(
+            intro.query("detail.op"),
+            Some(IntrospectValue::Text("Multiply".into()))
+        );
+    });
+}
+
+#[test]
+fn r1256_is_reroute_is_derived_from_op_at_construction() {
+    // `new` sets is_reroute purely from `op == Reroute` — no independent field
+    // to drift. A Reroute node is a knot; any compute op is not.
+    let knot = GraphNode::new(
+        9,
+        "renamed",
+        0,
+        0,
+        &[PortType::Vector],
+        &[PortType::Vector],
+        NodeOp::Reroute,
+    );
+    assert!(
+        knot.is_reroute,
+        "op=Reroute derives is_reroute=true (even with a non-'Reroute' title)"
+    );
+    let add = GraphNode::new(
+        9,
+        "Reroute",
+        0,
+        0,
+        &[PortType::Vector],
+        &[PortType::Vector],
+        NodeOp::Add,
+    );
+    assert!(
+        !add.is_reroute,
+        "op=Add derives is_reroute=false (even titled 'Reroute')"
+    );
+}
+
+#[test]
+fn r1256_from_palette_matches_the_palette_ssot() {
+    for (kind, &(title, inputs, outputs, op)) in PALETTE.iter().enumerate() {
+        let n = GraphNode::from_palette(kind, 0, 5, 6).expect("in-range kind");
+        assert_eq!(n.title, title, "title from PALETTE");
+        assert_eq!(n.input_ports, inputs, "input ports from PALETTE");
+        assert_eq!(n.output_ports, outputs, "output ports from PALETTE");
+        assert_eq!(n.op, op, "op from PALETTE (no drift)");
+        assert_eq!(
+            n.input_defaults.len(),
+            inputs.len(),
+            "one default per input port"
+        );
+    }
+    assert!(
+        GraphNode::from_palette(PALETTE.len(), 0, 0, 0).is_none(),
+        "out-of-range kind = None"
+    );
+    // The seed graph is the palette SSOT too — its op/title cannot drift.
+    let seed = default_nodes();
+    assert_eq!(
+        seed.iter().map(|n| n.op).collect::<Vec<_>>(),
+        vec![
+            NodeOp::Texture,
+            NodeOp::Color,
+            NodeOp::Multiply,
+            NodeOp::Output
+        ]
+    );
+}
+
+#[test]
+fn r1256_a_mistyped_default_coerces_instead_of_evaluating_null() {
+    // A `set_graph`/loaded blob can carry a Float default on a Vector input port
+    // (the interactive path constructs matching defaults, but nothing validates
+    // an injected graph). R1256 coerces the default branch symmetrically with
+    // the wired branch, so the Float broadcasts instead of yielding a silent null.
+    let mut add = eval_node_of(0, NodeOp::Add, 2, true);
+    add.input_defaults = vec![
+        CellValue::Float(1.0),                 // mistyped: a Float on a Vector port
+        CellValue::Color(Color::rgb(0, 0, 0)), // black
+    ];
+    // in0 broadcasts 1.0 -> white; white + black = white.
+    assert_eq!(
+        evaluate(&[add], &[], NodeId(0)),
+        Some(CellValue::Color(Color::rgb(255, 255, 255))),
+        "the mistyped Float default coerces (broadcasts), not a null",
+    );
+}

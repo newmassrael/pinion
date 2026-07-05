@@ -555,14 +555,16 @@ pub fn scale_normalized_to_px(value: f32, total: u32) -> u32 {
 /// Single-site `clippy::cast_possible_truncation` / `cast_sign_loss`
 /// allow that absorbs four pre-R628 inline copies:
 ///
-/// 1. [`Color::from_rgb_function`] percent branch (`n * 2.55`)
-/// 2. [`Color::from_rgb_function`] alpha branch (`a * 255.0`)
-/// 3. [`srgb_encode`] inverse-EOTF tail (`n * 255.0`)
-/// 4. [`linear_alpha_encode`] tail (`a * 255.0`)
+/// 1. `Color::from_rgb_function` percent branch (`n * 2.55`)
+/// 2. `Color::from_rgb_function` alpha branch (`a * 255.0`)
+/// 3. `srgb_encode` inverse-EOTF tail (`n * 255.0`)
+/// 4. `linear_alpha_encode` tail (`a * 255.0`)
 ///
-/// Each call site bounded the input before the cast; the lint fires
-/// because clippy does not analyse range. The internal
-/// [`f32::clamp`] to `[0.0, 255.0]` makes the `as` cast exact even
+/// (Those callers are module-private, so the list is plain code spans,
+/// not intra-doc links, now that this helper is `pub`.) Each call site
+/// bounded the input before the cast; the lint fires because clippy does
+/// not analyse range. The internal
+/// [`f64::clamp`] to `[0.0, 255.0]` makes the `as` cast exact even
 /// if the caller's pre-cast multiplication drifted slightly outside
 /// the nominal range (e.g. `1.055 * x^(1/2.4) - 0.055` for `x` at
 /// the unit boundary). Per
@@ -570,17 +572,24 @@ pub fn scale_normalized_to_px(value: f32, total: u32) -> u32 {
 /// crosses the rule-of-three threshold; the helper concentrates the
 /// allow in one documented location.
 ///
-/// `f32::NaN` reaches [`f32::clamp`] only when the caller's contract
-/// is violated (no call site passes NaN). `clamp` panics on `NaN`
-/// per stdlib — matches the [[clamp-frame-dt-anchor-nan-guard]]
-/// fail-fast policy.
+/// R1256 — `pub` + generic over `Into<f64>` so the second consumer (the
+/// `hello-node-editor` material-graph evaluator's byte-space colour ops) reuses
+/// this single documented allow instead of hand-rolling a fifth copy
+/// ([[use-substrate-not-hand-rolled-equivalent]]). An `f32` caller's argument
+/// widens losslessly; an `f64` caller (the graph eval's lerp / scalar-broadcast)
+/// passes directly. The clamp-round-cast body stays the one place the allow
+/// lives.
+///
+/// A `NaN` argument reaches the clamp only when the caller's contract is
+/// violated (no call site passes NaN); `f64::clamp` returns `NaN` unchanged and
+/// the saturating `as u8` cast then yields `0` — a benign floor, not a panic.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "input clamped to [0.0, 255.0] above; cast is exact within u8 range"
 )]
-fn quantize_unit_byte(scaled: f32) -> u8 {
-    scaled.clamp(0.0, 255.0).round() as u8
+pub fn quantize_unit_byte<F: Into<f64>>(scaled: F) -> u8 {
+    scaled.into().clamp(0.0, 255.0).round() as u8
 }
 
 /// R630 §5.50 — parse the body of a legacy comma-form

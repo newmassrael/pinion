@@ -22666,6 +22666,54 @@
         "Evaluation is recomputed per query (fresh memo each call) — no incremental/dirty cache; measure-first before optimising (native-perf-gap-philosophy)."
       ]
     },
+    "R1256": {
+      "decision_summary": "R1256 = independent-audit-clearance of R1255 (3 adversarial reviewers CONFIRMED 5 defects the self-report missed, 5th self-report-bias confirmation): reuse quantize_unit_byte (drop the 5th channel_u8 copy), expose node.<id>.op (the §2#7 AI-identity read the docstring promised), derive is_reroute from op + from_palette SSOT (kill two drift paths), coerce the default branch symmetrically. set_graph validation + cycle localization carried.",
+      "changes_bullets": [
+        "SSOT: removed channel_u8 (a 5th hand-rolled copy of pinion-core quantize_unit_byte, the R628-lifted clamp-round-cast that concentrates the cast_possible_truncation/sign_loss allow); promoted quantize_unit_byte to pub + generic Into<f64> (zero caller edits, f32 widens losslessly) and reused it.",
+        "node.<id>.op (+ detail.op) read via NodeOp::name: the rename-stable compute identity the AI needs to tell same-signature ops apart (Add vs Multiply, Texture vs Color) — closes the §2 #7 hole that contradicted NodeOp's own \"an AI enumeration agrees on what a node does\" docstring.",
+        "is_reroute is now DERIVED from op == NodeOp::Reroute at the single GraphNode::new chokepoint (removed the loose add_reroute assignment that could drift op vs is_reroute); GraphNode::from_palette SSOT constructor routes default_nodes/add_node/commit_pin_create_kind so titles/ports/op cannot drift from PALETTE.",
+        "resolve_input coerces the pin-default branch symmetrically with the wired branch, so a mistyped default on a set_graph/loaded graph broadcasts instead of a silent null."
+      ],
+      "verification_bullets": [
+        "Independent adversarial audit (3 reviewers: correctness/SSOT/architecture) drove the round: they CONFIRMED 5 defects the R1255 self-report called clean (5th confirmation of the self-report-bias pattern) — channel_u8 dup, op-not-introspectable, is_reroute/op drift, default_nodes op-literal drift, coercion asymmetry.",
+        "cargo test -p hello-node-editor 212 pass / 0 fail (4 new r1256_*: op read distinguishes same-signature ops, is_reroute derived from op, from_palette matches PALETTE, mistyped default coerces); pinion-core 2544 pass (quantize_unit_byte widening).",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean; cargo doc (private-items) exit 0 after fixing the now-public quantize_unit_byte's private-item doc links.",
+        "Swept ALL 26 node-editor demos PASS (construction/is_reroute/coercion regression-clean); r1255_node_eval.py extended with node.<id>.op reads; fixed r1227 demo's hardcoded schema-5 assertion (missed in R1255's narrower sweep). validate-workspace T1 orphan=0."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.50",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "set_graph/load_json full structural validation deferred (a distinct trust-boundary hardening round): the symmetric-coercion fix covers the mistyped-default sub-case, but an injected Vector->Float edge or op-arity != port-count still evaluates to a silent null; validate-on-load is the textbook fix.",
+        "Cycle localization + per-input resolved reads deferred (a visual-scripting debugging-affordance round): eval.acyclic is whole-graph, and null conflates on-cycle vs downstream-of-cycle; a materials/blueprint debugger wants which nodes/edges form the cycle and each input's resolved value.",
+        "op keeps no serde default (a stale blob fails deserialize -> fresh, same outcome as the version-reject); documented, defensible, left as-is rather than reintroducing a placeholder smell."
+      ],
+      "publishable_decision_summary": "R1256 = independent-audit-clearance of R1255 (3 adversarial reviewers CONFIRMED 5 defects the self-report missed, 5th self-report-bias confirmation): reuse quantize_unit_byte (drop the 5th channel_u8 copy), expose node.<id>.op (the §2#7 AI-identity read the docstring promised), derive is_reroute from op + from_palette SSOT (kill two drift paths), coerce the default branch symmetrically. set_graph validation + cycle localization carried.",
+      "publishable_changes_bullets": [
+        "SSOT: removed channel_u8 (a 5th hand-rolled copy of pinion-core quantize_unit_byte, the R628-lifted clamp-round-cast that concentrates the cast_possible_truncation/sign_loss allow); promoted quantize_unit_byte to pub + generic Into<f64> (zero caller edits, f32 widens losslessly) and reused it.",
+        "node.<id>.op (+ detail.op) read via NodeOp::name: the rename-stable compute identity the AI needs to tell same-signature ops apart (Add vs Multiply, Texture vs Color) — closes the §2 #7 hole that contradicted NodeOp's own \"an AI enumeration agrees on what a node does\" docstring.",
+        "is_reroute is now DERIVED from op == NodeOp::Reroute at the single GraphNode::new chokepoint (removed the loose add_reroute assignment that could drift op vs is_reroute); GraphNode::from_palette SSOT constructor routes default_nodes/add_node/commit_pin_create_kind so titles/ports/op cannot drift from PALETTE.",
+        "resolve_input coerces the pin-default branch symmetrically with the wired branch, so a mistyped default on a set_graph/loaded graph broadcasts instead of a silent null."
+      ],
+      "publishable_verification_bullets": [
+        "Independent adversarial audit (3 reviewers: correctness/SSOT/architecture) drove the round: they CONFIRMED 5 defects the R1255 self-report called clean (5th confirmation of the self-report-bias pattern) — channel_u8 dup, op-not-introspectable, is_reroute/op drift, default_nodes op-literal drift, coercion asymmetry.",
+        "cargo test -p hello-node-editor 212 pass / 0 fail (4 new r1256_*: op read distinguishes same-signature ops, is_reroute derived from op, from_palette matches PALETTE, mistyped default coerces); pinion-core 2544 pass (quantize_unit_byte widening).",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0; cargo fmt --check clean; cargo doc (private-items) exit 0 after fixing the now-public quantize_unit_byte's private-item doc links.",
+        "Swept ALL 26 node-editor demos PASS (construction/is_reroute/coercion regression-clean); r1255_node_eval.py extended with node.<id>.op reads; fixed r1227 demo's hardcoded schema-5 assertion (missed in R1255's narrower sweep). validate-workspace T1 orphan=0."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.50",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "set_graph/load_json full structural validation deferred (a distinct trust-boundary hardening round): the symmetric-coercion fix covers the mistyped-default sub-case, but an injected Vector->Float edge or op-arity != port-count still evaluates to a silent null; validate-on-load is the textbook fix.",
+        "Cycle localization + per-input resolved reads deferred (a visual-scripting debugging-affordance round): eval.acyclic is whole-graph, and null conflates on-cycle vs downstream-of-cycle; a materials/blueprint debugger wants which nodes/edges form the cycle and each input's resolved value.",
+        "op keeps no serde default (a stale blob fails deserialize -> fresh, same outcome as the version-reject); documented, defensible, left as-is rather than reintroducing a placeholder smell."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
