@@ -5689,11 +5689,11 @@ fn r1227_frame_persists_and_paints_behind() {
         let coord = coordinator();
         coord.select_all();
         coord.add_frame().unwrap();
-        // Persistence: the frame round-trips through the schema-4 blob.
+        // Persistence: the frame round-trips through the current-schema blob.
         let json = coord.serialized_json();
         assert!(
-            json.contains("\"schema_version\":5"),
-            "schema bumped to 5 (R1242 is_reroute)"
+            json.contains("\"schema_version\":6"),
+            "schema bumped to 6 (R1255 op compute identity)"
         );
         assert!(json.contains("Comment 1"), "the frame is in the blob");
         coord.frames.set(Vec::new());
@@ -6902,6 +6902,288 @@ fn r1248_open_pin_create_on_a_knot_uses_its_dot_right_edge() {
             new_node.x,
             clamp_node_x(knot.x + NODE_W + PIN_CREATE_GAP),
             "NOT placed ~112px off as if the 18px knot were a 130px card",
+        );
+    });
+}
+
+// ── R1255 — dataflow evaluation (the Phase-C entry) ─────────────────────────
+
+/// R1255 — a hand-built node of `op` with `n_in` `Vector` inputs and (for a
+/// non-sink) one `Vector` output, at the origin. Its pin defaults start at the
+/// port-type constant (grey); a test overrides them to author input values.
+fn eval_node_of(id: u32, op: NodeOp, n_in: usize, has_out: bool) -> GraphNode {
+    let inputs = vec![PortType::Vector; n_in];
+    let outputs = if has_out {
+        vec![PortType::Vector]
+    } else {
+        vec![]
+    };
+    GraphNode::new(id, "n", 0, 0, &inputs, &outputs, op)
+}
+
+#[test]
+fn r1255_colour_arithmetic_is_component_wise_and_clamped() {
+    // Add saturates each channel at 255 (200+100, 100+200, 0+50).
+    assert_eq!(
+        color_add(Color::rgb(200, 100, 0), Color::rgb(100, 200, 50)),
+        Color::rgb(255, 255, 50),
+    );
+    // Multiply blend is `a·b/255` per channel (the 0..255 multiply).
+    assert_eq!(
+        color_mul(Color::rgb(255, 128, 0), Color::rgb(128, 255, 255)),
+        Color::rgb(128, 128, 0),
+    );
+    // Lerp hits its endpoints exactly and rounds the midpoint (127.5 -> 128);
+    // a factor outside 0..=1 clamps (no extrapolation).
+    let (black, white) = (Color::rgb(0, 0, 0), Color::rgb(255, 255, 255));
+    assert_eq!(color_lerp(black, white, 0.0), black, "t=0 -> a");
+    assert_eq!(color_lerp(black, white, 1.0), white, "t=1 -> b");
+    assert_eq!(
+        color_lerp(black, white, 0.5),
+        Color::rgb(128, 128, 128),
+        "t=0.5 midpoint"
+    );
+    assert_eq!(color_lerp(black, white, 2.0), white, "t>1 clamps to b");
+    // Scalar broadcast treats the Float as a normalized 0..=1 channel.
+    assert_eq!(broadcast_scalar(0.0), black, "0.0 -> black");
+    assert_eq!(broadcast_scalar(1.0), white, "1.0 -> white");
+    assert_eq!(
+        broadcast_scalar(0.5),
+        Color::rgb(128, 128, 128),
+        "0.5 -> mid-grey"
+    );
+    assert_eq!(broadcast_scalar(2.0), white, "clamps above 1.0");
+}
+
+#[test]
+fn r1255_float_broadcasts_into_a_vector_input_but_never_narrows() {
+    // The only coercion the lattice permits: a scalar Float promotes to a Vector.
+    assert_eq!(
+        coerce_to(CellValue::Float(0.5), PortType::Vector),
+        CellValue::Color(Color::rgb(128, 128, 128)),
+    );
+    // An exact-type value passes through unchanged (no coercion).
+    let c = CellValue::Color(Color::rgb(10, 20, 30));
+    assert_eq!(coerce_to(c.clone(), PortType::Vector), c);
+    assert_eq!(
+        coerce_to(CellValue::Float(0.25), PortType::Float),
+        CellValue::Float(0.25),
+    );
+}
+
+#[test]
+fn r1255_source_ops_yield_their_port_type_constant() {
+    // Sources ignore inputs and produce their type default (v1: not authorable).
+    assert_eq!(
+        NodeOp::Texture.evaluate(&[]),
+        Some(PortType::Vector.default_value()),
+    );
+    assert_eq!(
+        NodeOp::Color.evaluate(&[]),
+        Some(PortType::Vector.default_value()),
+    );
+    assert_eq!(NodeOp::Scalar.evaluate(&[]), Some(CellValue::Float(0.0)));
+}
+
+#[test]
+fn r1255_add_evaluates_over_its_pin_defaults_when_unconnected() {
+    // An Add node with both inputs UNCONNECTED evaluates its authored pin
+    // defaults (the R899 substrate drives the compute) — red + green = yellow.
+    let mut add = eval_node_of(0, NodeOp::Add, 2, true);
+    add.input_defaults = vec![
+        CellValue::Color(Color::rgb(200, 0, 0)),
+        CellValue::Color(Color::rgb(0, 200, 0)),
+    ];
+    assert_eq!(
+        evaluate(&[add], &[], NodeId(0)),
+        Some(CellValue::Color(Color::rgb(200, 200, 0))),
+    );
+}
+
+#[test]
+fn r1255_a_wired_source_propagates_and_overrides_the_pin_default() {
+    // Color source (grey) -> Add.in0; Add.in1 keeps a red pin default.
+    let src = eval_node_of(0, NodeOp::Color, 0, true); // outputs grey128
+    let mut add = eval_node_of(1, NodeOp::Add, 2, true);
+    add.input_defaults = vec![
+        CellValue::Color(Color::rgb(255, 255, 255)), // hidden: in0 is wired
+        CellValue::Color(Color::rgb(90, 0, 0)),
+    ];
+    let edges = vec![Edge {
+        id: EdgeId(0),
+        from_node: NodeId(0),
+        from_port: 0,
+        to_node: NodeId(1),
+        to_port: 0,
+    }];
+    // in0 = the wired grey (NOT its 255 default), in1 = its red default.
+    let grey = 0x80;
+    assert_eq!(
+        evaluate(&[src, add], &edges, NodeId(1)),
+        Some(CellValue::Color(Color::rgb(grey + 90, grey, grey))),
+    );
+}
+
+#[test]
+fn r1255_output_sink_reports_the_value_flowing_into_it() {
+    // Multiply(grey, grey) -> Output; the sink's "value" is its resolved input.
+    let a = eval_node_of(0, NodeOp::Color, 0, true);
+    let b = eval_node_of(1, NodeOp::Color, 0, true);
+    let mul = eval_node_of(2, NodeOp::Multiply, 2, true);
+    let out = eval_node_of(3, NodeOp::Output, 1, false);
+    let nodes = vec![a, b, mul, out];
+    let edges = vec![
+        Edge {
+            id: EdgeId(0),
+            from_node: NodeId(0),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 0,
+        },
+        Edge {
+            id: EdgeId(1),
+            from_node: NodeId(1),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 1,
+        },
+        Edge {
+            id: EdgeId(2),
+            from_node: NodeId(2),
+            from_port: 0,
+            to_node: NodeId(3),
+            to_port: 0,
+        },
+    ];
+    let expected = CellValue::Color(color_mul(
+        Color::rgb(0x80, 0x80, 0x80),
+        Color::rgb(0x80, 0x80, 0x80),
+    ));
+    assert_eq!(
+        evaluate(&nodes, &edges, NodeId(3)),
+        Some(expected.clone()),
+        "Output.value = its input"
+    );
+    assert_eq!(
+        eval_terminal(&nodes, &edges),
+        Some(expected),
+        "eval.output = the Output sink's input"
+    );
+}
+
+#[test]
+fn r1255_a_cycle_is_uncomputable_and_detected() {
+    // A -> B -> A: both nodes sit on a cycle, so neither evaluates.
+    let a = eval_node_of(0, NodeOp::Add, 1, true);
+    let b = eval_node_of(1, NodeOp::Add, 1, true);
+    let edges = vec![
+        Edge {
+            id: EdgeId(0),
+            from_node: NodeId(0),
+            from_port: 0,
+            to_node: NodeId(1),
+            to_port: 0,
+        },
+        Edge {
+            id: EdgeId(1),
+            from_node: NodeId(1),
+            from_port: 0,
+            to_node: NodeId(0),
+            to_port: 0,
+        },
+    ];
+    let nodes = vec![a, b];
+    assert_eq!(
+        evaluate(&nodes, &edges, NodeId(0)),
+        None,
+        "a cycle node is None"
+    );
+    assert!(!graph_is_acyclic(&nodes, &edges), "the graph is not a DAG");
+    // The seed graph, by contrast, is a DAG.
+    assert!(
+        graph_is_acyclic(&default_nodes(), &default_edges()),
+        "the seed graph is acyclic"
+    );
+}
+
+#[test]
+fn r1255_query_reads_the_evaluated_graph() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        let grey = Color::rgb(0x80, 0x80, 0x80);
+        let terminal = CellValue::Color(color_mul(grey, grey)).to_introspect();
+        // Output (node 3) reports its resolved input = the Multiply result.
+        assert_eq!(
+            intro.query("node.3.value"),
+            Some(terminal.clone()),
+            "node.3.value"
+        );
+        assert_eq!(
+            intro.query("eval.output"),
+            Some(terminal),
+            "eval.output = terminal"
+        );
+        assert_eq!(
+            intro.query("eval.acyclic"),
+            Some(IntrospectValue::Bool(true)),
+            "seed graph is a DAG"
+        );
+        // A source (Texture, node 0) reports its Vector constant.
+        assert_eq!(
+            intro.query("node.0.value"),
+            Some(PortType::Vector.default_value().to_introspect()),
+            "a source reads its constant",
+        );
+    });
+}
+
+#[test]
+fn r1255_a_wired_port_ignores_its_retained_pin_default() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        let before = intro.query("node.2.value"); // Multiply, both inputs wired
+        // Intervene Multiply.in0's (retained-but-hidden) pin default. The wire,
+        // not the default, feeds a connected port, so the value is unchanged.
+        assert!(
+            intro
+                .intervene(
+                    "node.2.input_default.0",
+                    IntrospectValue::Text("#ff0000".to_owned())
+                )
+                .is_ok(),
+            "the write lands on the retained default",
+        );
+        assert_eq!(
+            intro.query("node.2.value"),
+            before,
+            "a wired port uses the wire, not the default"
+        );
+    });
+}
+
+#[test]
+fn r1255_detail_value_mirrors_the_selected_node() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        intro
+            .intervene("selected_ids", IntrospectValue::Text("3".to_owned()))
+            .expect("select the Output node");
+        assert_eq!(
+            intro.query("detail.value"),
+            intro.query("node.3.value"),
+            "detail.value is the selection-relative alias",
         );
     });
 }

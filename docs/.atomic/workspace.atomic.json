@@ -22618,6 +22618,54 @@
         "AT default-action->Enter routing is shell-side (R1228); verified via apply_key not a live screen reader"
       ]
     },
+    "R1255": {
+      "decision_summary": "R1255 node-graph dataflow EVALUATION (Phase-C entry): a first-class NodeOp compute identity + topological cycle-safe memoised evaluator over the existing typed authoring substrate (wired source else R899 pin default, Float->Vector broadcast), exposed as pure AI-first introspection (node.<id>.value / eval.output / eval.acyclic). Crosses the module's own authoring-not-compute line; source constants + incremental cache deferred.",
+      "changes_bullets": [
+        "NodeOp compute-identity enum (7 palette ops + Reroute, non_exhaustive), a fourth PALETTE tuple element as the kind->op SSOT; op is a first-class GraphNode field set once at construction, keyed off for eval NOT the rewritable title (R1242 identity lesson generalised). Schema 5->6.",
+        "Topological, cycle-safe, memoised evaluator: resolve_input (wired source output else R899 pin default) + Float->Vector scalar broadcast coercion + per-op compute (color_add saturating / color_mul a*b/255 / color_lerp / source constants) + eval_node memo DFS + graph_is_acyclic 3-colour DFS.",
+        "AI-first introspection (§2 #7, pure derived, no write twin): node.<id>.value, detail.value mirror, eval.output (Output sink terminal), eval.acyclic (DAG check); schema() declarations + module docstring cross the \"authoring not compute\" line R1255 closes.",
+        "Material-graph colour math deliberately in raw sRGB-byte component space, NOT pinion-core Color::lerp perceptual linear space (different operation, keeps the eval mechanism transparent + unit-oracle testable); documented to preempt the SSOT audit."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-editor: 208 pass / 0 fail (10 new r1255_* covering colour arithmetic, Float->Vector broadcast, source constants, pin-default eval, wired propagation, Output terminal, cycle=None+acyclic-false, query/detail.value, wired-port-ignores-default).",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 findings; cargo fmt --check clean; cargo doc -p hello-node-editor --document-private-items exit 0 (no broken intra-doc links).",
+        "tools/demos/r1255_node_eval.py: 34 assertions PASS on the release binary (boot eval, unwired-Add over pin defaults, intervene->recompute, wire displaces + terminal moves, Scalar Float->Vector broadcast, 2-node cycle null + self-loop rejected + disconnected-cycle terminal intact, delete restores DAG).",
+        "Regression demos PASS: r1235_node_reroute, r1236_node_dissolve, r1243_node_reroute_render, r1220_node_pin_drop_create. validate-workspace T1 orphan=0 preserved."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Authorable SOURCE constants deferred (v1 sources = port-type constant): the output-side twin of the R899 pin default (node.<id>.value WRITE + a UI cell) is the natural R1256 slice; Texture vs Color are indistinguishable until then.",
+        "Multi-output ops unsupported (eval returns output port 0); all palette ops are <=1 output, so an edge from_port is always 0.",
+        "Evaluation is recomputed per query (fresh memo each call) — no incremental/dirty cache; measure-first before optimising (native-perf-gap-philosophy)."
+      ],
+      "publishable_decision_summary": "R1255 node-graph dataflow EVALUATION (Phase-C entry): a first-class NodeOp compute identity + topological cycle-safe memoised evaluator over the existing typed authoring substrate (wired source else R899 pin default, Float->Vector broadcast), exposed as pure AI-first introspection (node.<id>.value / eval.output / eval.acyclic). Crosses the module's own authoring-not-compute line; source constants + incremental cache deferred.",
+      "publishable_changes_bullets": [
+        "NodeOp compute-identity enum (7 palette ops + Reroute, non_exhaustive), a fourth PALETTE tuple element as the kind->op SSOT; op is a first-class GraphNode field set once at construction, keyed off for eval NOT the rewritable title (R1242 identity lesson generalised). Schema 5->6.",
+        "Topological, cycle-safe, memoised evaluator: resolve_input (wired source output else R899 pin default) + Float->Vector scalar broadcast coercion + per-op compute (color_add saturating / color_mul a*b/255 / color_lerp / source constants) + eval_node memo DFS + graph_is_acyclic 3-colour DFS.",
+        "AI-first introspection (§2 #7, pure derived, no write twin): node.<id>.value, detail.value mirror, eval.output (Output sink terminal), eval.acyclic (DAG check); schema() declarations + module docstring cross the \"authoring not compute\" line R1255 closes.",
+        "Material-graph colour math deliberately in raw sRGB-byte component space, NOT pinion-core Color::lerp perceptual linear space (different operation, keeps the eval mechanism transparent + unit-oracle testable); documented to preempt the SSOT audit."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-editor: 208 pass / 0 fail (10 new r1255_* covering colour arithmetic, Float->Vector broadcast, source constants, pin-default eval, wired propagation, Output terminal, cycle=None+acyclic-false, query/detail.value, wired-port-ignores-default).",
+        "clippy --workspace --all-targets --features pinion-runtime/vello = 0 findings; cargo fmt --check clean; cargo doc -p hello-node-editor --document-private-items exit 0 (no broken intra-doc links).",
+        "tools/demos/r1255_node_eval.py: 34 assertions PASS on the release binary (boot eval, unwired-Add over pin defaults, intervene->recompute, wire displaces + terminal moves, Scalar Float->Vector broadcast, 2-node cycle null + self-loop rejected + disconnected-cycle terminal intact, delete restores DAG).",
+        "Regression demos PASS: r1235_node_reroute, r1236_node_dissolve, r1243_node_reroute_render, r1220_node_pin_drop_create. validate-workspace T1 orphan=0 preserved."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Authorable SOURCE constants deferred (v1 sources = port-type constant): the output-side twin of the R899 pin default (node.<id>.value WRITE + a UI cell) is the natural R1256 slice; Texture vs Color are indistinguishable until then.",
+        "Multi-output ops unsupported (eval returns output port 0); all palette ops are <=1 output, so an edge from_port is always 0.",
+        "Evaluation is recomputed per query (fresh memo each call) — no incremental/dirty cache; measure-first before optimising (native-perf-gap-philosophy)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

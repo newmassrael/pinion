@@ -48,9 +48,10 @@
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
-//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,input_types,output_types,input_default.<port>}` /
+//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,input_types,output_types,input_default.<port>,value}` /
 //! `edge.<id>` / `dissolvable.<id>` / `dissolvable_ids` (R1241: dissolve
-//! eligibility) / `selected` / `selected_ids` / `selected_edge`;
+//! eligibility) / `eval.{output,acyclic}` (R1255: the evaluated terminal value
+//! and the DAG check) / `selected` / `selected_ids` / `selected_edge`;
 //! `intervene node.<id>.x` / `node.<id>.y` / `node.<id>.title` /
 //! `node.<id>.input_default.<port>` / `frame.<id>.{title,x,y,w,h}` (R1234:
 //! `x`/`y` move the frame + its contents, `w`/`h` resize it) /
@@ -122,11 +123,26 @@
 //!   field (the same affordance the title rename uses, R878), while the input
 //!   port's *single*-click stays edge-connect (R742); the AI path is the
 //!   `intervene node.<id>.input_default.<port>` write above.
-//!   Genuinely-separate axes still deferred: dataflow **evaluation** (a Phase-C
-//!   *runtime* concern — this is the *authoring* substrate, not the compute
-//!   engine) and the typed ports' AT enrichment (the a11y name keeps the arity
-//!   count: `pinion-a11y` has no diagram / `graphics-document` role yet — an
-//!   upstream substrate gap, the same one the module-level a11y note records).
+//! - **Dataflow evaluation** (R1255 — the Phase-C entry): the authored graph is
+//!   now *computed*, not only edited. Each node carries a first-class
+//!   [`NodeOp`] compute identity (the SSOT the evaluator dispatches on — NOT the
+//!   rewritable title, the R1242 identity lesson generalised); a topological,
+//!   cycle-safe, memoised pass resolves each input (a wired source's output,
+//!   else its R899 pin default), coerces it to the port type (the `Float →
+//!   Vector` scalar-broadcast the type lattice permits), and applies the op —
+//!   a tiny material-graph vocabulary (`Add`/`Multiply`/`Lerp` colour ops,
+//!   `Texture`/`Color`/`Scalar` sources, the `Output` sink). It is pure derived
+//!   introspection (§2 #3-friendly, no write twin, no mutation): `query
+//!   node.<id>.value` reads a node's output (a `Float` float / a `Vector`
+//!   `{hex,r,g,b,a}` object / `null` on a cycle), `query eval.output` the
+//!   terminal value at the `Output` sink, `query eval.acyclic` the DAG check.
+//!   Authoring drives the result: `intervene`-ing a pin default or wiring a
+//!   source re-computes the reads. **Still deferred**: an *authorable* source
+//!   constant (the output-side twin of the R899 pin default — sources are their
+//!   port-type constant for now), multi-output ops, and the typed ports' AT
+//!   enrichment (the a11y name keeps the arity count: `pinion-a11y` has no
+//!   diagram / `graphics-document` role yet — an upstream substrate gap, the
+//!   same one the module-level a11y note records).
 //! - **Undo / redo** (R851 + R853): every edit is reversible on the shared
 //!   [`UndoStack`] — the **structural** edits (add node, delete node + its
 //!   incident edges, connect, disconnect) as [`GraphEdit`] deltas, and node
@@ -259,36 +275,41 @@ const THEME_TAG: &str = "app";
 const GRAPH_TAG: &str = "node_graph";
 
 /// R849 — the "add node" palette: the node kinds a sidebar click (or the
-/// `add_node` RPC verb) can create, as `(title, input_types, output_types)`.
-/// A tiny material-graph vocabulary (sources / ops / sink), the same typed
-/// port shapes [`default_nodes`] seeds. R898 — the entries are now
+/// `add_node` RPC verb) can create, as `(title, input_types, output_types,
+/// op)`. A tiny material-graph vocabulary (sources / ops / sink), the same typed
+/// port shapes [`default_nodes`] seeds. R898 — the entries are
 /// [`PortType`]-typed; the first five keep their pre-R898 indices (0..=4) so
 /// the index-addressed `add_node(kind)` callers are unmoved, and the typed
 /// sources/ops (`Scalar`, `Lerp`) that exercise the type lattice are
-/// *appended* (5, 6).
-const PALETTE: &[(&str, &[PortType], &[PortType])] = &[
-    ("Texture", &[], &[PortType::Vector]),
-    ("Color", &[], &[PortType::Vector]),
+/// *appended* (5, 6). R1255 — a fourth element pins each kind's [`NodeOp`]
+/// (the compute identity the evaluator keys off), so kind → op lives in this
+/// one SSOT rather than a parallel `match` that could drift from the ordering.
+const PALETTE: &[(&str, &[PortType], &[PortType], NodeOp)] = &[
+    ("Texture", &[], &[PortType::Vector], NodeOp::Texture),
+    ("Color", &[], &[PortType::Vector], NodeOp::Color),
     (
         "Multiply",
         &[PortType::Vector, PortType::Vector],
         &[PortType::Vector],
+        NodeOp::Multiply,
     ),
     (
         "Add",
         &[PortType::Vector, PortType::Vector],
         &[PortType::Vector],
+        NodeOp::Add,
     ),
-    ("Output", &[PortType::Vector], &[]),
+    ("Output", &[PortType::Vector], &[], NodeOp::Output),
     // R898 — a scalar source: its `Float` output broadcasts into a `Vector`
     // input (accepted) but a `Vector` never narrows into it (rejected).
-    ("Scalar", &[], &[PortType::Float]),
+    ("Scalar", &[], &[PortType::Float], NodeOp::Scalar),
     // R898 — a 3-input op whose last input is a `Float` factor, so a
     // `Color`/`Texture` (`Vector`) wired to it is type-rejected.
     (
         "Lerp",
         &[PortType::Vector, PortType::Vector, PortType::Float],
         &[PortType::Vector],
+        NodeOp::Lerp,
     ),
 ];
 
@@ -357,9 +378,12 @@ const STORAGE_KEY: &str = "node_graph.state";
 /// mismatched version starts fresh (silent fall-through, the todomvc precedent).
 // R898 -> 2: typed ports changed the `GraphNode` serialised shape
 // (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists).
-// R899 -> 3: added per-port `input_defaults` (typed `CellValue`s). Each bump
-// mismatch-rejects a stale blob so it starts fresh rather than misreading.
-const PERSISTED_SCHEMA_VERSION: u32 = 5;
+// R899 -> 3: added per-port `input_defaults` (typed `CellValue`s). R1227 -> 4:
+// comment `frames`. R1242 -> 5: the `is_reroute` discriminator. R1255 -> 6: the
+// first-class `op` compute identity (no serde default, so a stale blob fails to
+// deserialize -> fresh). Each bump mismatch-rejects a stale blob so it starts
+// fresh rather than misreading.
+const PERSISTED_SCHEMA_VERSION: u32 = 6;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -615,13 +639,272 @@ impl PortType {
     }
 }
 
+/// R1255 §5.38 §5.52 — a node's **compute operation**: its first-class identity
+/// for graph *evaluation*, the compute twin of [`GraphNode::is_reroute`]. The
+/// evaluator keys off this, NOT the freely-rewritable `title` (the R1242 lesson
+/// — a node renamed "Foo" still multiplies), so an evaluator, a
+/// serialize/reload, and an AI enumeration all agree on what a node *does*.
+/// `#[non_exhaustive]` mirrors [`PortType`]: a blueprint consumer's `Branch` /
+/// `DotProduct` op extends the vocabulary without re-spelling the arms here
+/// ([[abstraction-needs-second-consumer]] — the op *taxonomy* is the consumer's,
+/// the eval *mechanism* is shared). Set once at construction from the canonical
+/// [`PALETTE`] kind (or [`NodeOp::Reroute`] for a spliced knot); frozen
+/// thereafter, so a later rename never re-keys the compute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+enum NodeOp {
+    /// Source — a texture sample. v1: a constant `Vector` (the port-type
+    /// default); an *authorable* source value is the deferred output-side twin
+    /// of the R899 pin default.
+    Texture,
+    /// Source — a constant colour (`Vector`).
+    Color,
+    /// `Vector × Vector → Vector`: component-wise multiply blend (`a·b/255`).
+    Multiply,
+    /// `Vector + Vector → Vector`: component-wise add (saturating at 255).
+    Add,
+    /// Sink — no output; its resolved input 0 is the graph's terminal value.
+    Output,
+    /// Source — a constant scalar (`Float`).
+    Scalar,
+    /// `lerp(Vector, Vector, Float) → Vector`: component-wise, factor clamped
+    /// to `0..=1`.
+    Lerp,
+    /// R1242 — a wire-routing passthrough: its resolved input 0 is forwarded to
+    /// its output unchanged (in-type == out-type).
+    Reroute,
+}
+
+impl NodeOp {
+    /// R1255 — compute this op's output from its already-resolved, port-typed
+    /// `inputs` (each coerced to the op's declared input [`PortType`] by
+    /// [`resolve_input`], so a `Vector` input is a [`CellValue::Color`] and a
+    /// `Float` input a [`CellValue::Float`]). A `None` slot is an *unresolvable*
+    /// input (a cycle upstream); a compute op that needs it yields `None` (it
+    /// cannot compute from a missing operand). A source op ignores `inputs` and
+    /// yields its constant.
+    fn evaluate(self, inputs: &[Option<CellValue>]) -> Option<CellValue> {
+        // A required input at position `i` (present *and* resolved).
+        let req = |i: usize| inputs.get(i).and_then(Option::as_ref);
+        match self {
+            NodeOp::Texture | NodeOp::Color => Some(PortType::Vector.default_value()),
+            NodeOp::Scalar => Some(PortType::Float.default_value()),
+            NodeOp::Add => Some(CellValue::Color(color_add(
+                as_color(req(0)?)?,
+                as_color(req(1)?)?,
+            ))),
+            NodeOp::Multiply => Some(CellValue::Color(color_mul(
+                as_color(req(0)?)?,
+                as_color(req(1)?)?,
+            ))),
+            NodeOp::Lerp => Some(CellValue::Color(color_lerp(
+                as_color(req(0)?)?,
+                as_color(req(1)?)?,
+                as_float(req(2)?)?,
+            ))),
+            // Passthrough / sink: the resolved input 0 (already the right type).
+            NodeOp::Output | NodeOp::Reroute => req(0).cloned(),
+        }
+    }
+}
+
+/// R1255 — the `Color` (`Vector`) payload of `value`, or `None` if it is not a
+/// colour (a defensive guard — [`resolve_input`] coerces to the port type, so a
+/// well-typed graph always matches).
+fn as_color(value: &CellValue) -> Option<Color> {
+    match value {
+        CellValue::Color(c) => Some(*c),
+        _ => None,
+    }
+}
+
+/// R1255 — the `f64` (`Float`) payload of `value`, or `None` if it is not a
+/// float (the `Float`-input twin of [`as_color`]).
+fn as_float(value: &CellValue) -> Option<f64> {
+    match value {
+        CellValue::Float(f) => Some(*f),
+        _ => None,
+    }
+}
+
+/// R1255 — clamp a computed channel to the `0..=255` sRGB byte range. The
+/// colour ops compute in `f64` (lerp, scalar broadcast) then land here; the
+/// cast is truncation- and sign-safe because the value is `round`ed and clamped
+/// into `0.0..=255.0` first.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn channel_u8(x: f64) -> u8 {
+    x.clamp(0.0, 255.0).round() as u8
+}
+
+// R1255 — the material-graph colour ops (`Add` / `Multiply` / `Lerp`) work in
+// **raw sRGB-byte component space** (arithmetic straight on the `0..=255`
+// channels), the transparent shader-authoring convention for this illustrative
+// substrate — NOT [`pinion_core::style::Color::lerp`]'s perceptual
+// **linear-space** interpolation (`to_linear → mix → from_linear`), which is the
+// right model for UI animation but would make the eval values non-round and the
+// mechanism harder to read/pin (`grey·grey/255 = 64` is a clean unit oracle).
+// Photometric linear-space colour math is a Phase-C *renderer* concern, not this
+// authoring-graph illustration ([[use-substrate-audit-contract-vs-glue]] — the
+// substrate lerp is a *different operation*, not the same one hand-rolled).
+
+/// R1255 — component-wise saturating add (the `Add` op). Alpha stays opaque.
+fn color_add(a: Color, b: Color) -> Color {
+    Color::rgb(
+        a.r.saturating_add(b.r),
+        a.g.saturating_add(b.g),
+        a.b.saturating_add(b.b),
+    )
+}
+
+/// R1255 — component-wise multiply blend (the `Multiply` op): `a·b/255` per
+/// channel, the standard 0..255 multiply. `a·b ≤ 255·255` fits `u16`, and the
+/// `/255` result is `≤ 255`, so the byte conversion never saturates in practice.
+fn color_mul(a: Color, b: Color) -> Color {
+    let ch = |x: u8, y: u8| u8::try_from(u16::from(x) * u16::from(y) / 255).unwrap_or(255);
+    Color::rgb(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b))
+}
+
+/// R1255 — component-wise linear interpolation (the `Lerp` op): `a + (b−a)·t`
+/// per channel, `t` clamped to `0..=1` (a factor outside the unit interval is
+/// not an extrapolation here). Alpha stays opaque.
+fn color_lerp(a: Color, b: Color, t: f64) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |x: u8, y: u8| channel_u8(f64::from(x) + (f64::from(y) - f64::from(x)) * t);
+    Color::rgb(mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b))
+}
+
+/// R1255 — broadcast a scalar `Float` to a `Vector` (`Color`): the shader-graph
+/// scalar-promote coercion ([`PortType::is_assignable_to`] permits `Float →
+/// Vector`). The scalar is treated as a normalized `0..=1` channel — `f·255`
+/// per channel — so `0.0 →` black, `1.0 →` white, `0.5 →` mid-grey.
+fn broadcast_scalar(f: f64) -> Color {
+    let c = channel_u8(f.clamp(0.0, 1.0) * 255.0);
+    Color::rgb(c, c, c)
+}
+
+/// R1255 — coerce `value` to the declared `target` port type. The only coercion
+/// the type lattice permits is `Float → Vector` (the scalar-promote broadcast,
+/// [`broadcast_scalar`]); an exact-type value passes through, and a `Vector`
+/// never narrows to a `Float` (the lattice forbids that wire, so it never
+/// reaches here).
+fn coerce_to(value: CellValue, target: PortType) -> CellValue {
+    match (target, &value) {
+        (PortType::Vector, CellValue::Float(f)) => CellValue::Color(broadcast_scalar(*f)),
+        _ => value,
+    }
+}
+
+/// R1255 — resolve the value flowing into `node`'s input `port`: the wired
+/// source output's value (coerced to the port's type) if a source is connected,
+/// else the R899 pin default (already the port's type). `None` when a wired
+/// source is itself unresolvable (a cycle upstream) — the missing value
+/// propagates rather than silently falling back to the default (which would
+/// mask the cycle).
+fn resolve_input(
+    nodes: &[GraphNode],
+    edges: &[Edge],
+    node: &GraphNode,
+    port: usize,
+    cache: &mut BTreeMap<NodeId, Option<CellValue>>,
+    visiting: &mut BTreeSet<NodeId>,
+) -> Option<CellValue> {
+    let target = node.input_type(port)?;
+    if let Some(edge) = edges
+        .iter()
+        .find(|e| e.to_node == node.id && e.to_port == port)
+    {
+        let src = eval_node(nodes, edges, edge.from_node, cache, visiting)?;
+        Some(coerce_to(src, target))
+    } else {
+        node.input_default(port).cloned()
+    }
+}
+
+/// R1255 §5.38 §5.52 — evaluate node `id`'s output over the graph
+/// `(nodes, edges)`: resolve each input ([`resolve_input`]), then apply the
+/// node's [`NodeOp`]. `None` when a cycle sits in the node's input cone (the
+/// value is undefined) — the on-stack `visiting` set catches the re-entry.
+/// `cache` memoises so a diamond (two paths to one source, like the seed
+/// `Texture`/`Color → Multiply`) evaluates each node once. A sink
+/// ([`NodeOp::Output`]) reports the value flowing INTO it (its resolved input 0)
+/// as its "output". Every palette op has ≤1 output, so an edge's `from_port` is
+/// always 0 and the node's single output is returned.
+fn eval_node(
+    nodes: &[GraphNode],
+    edges: &[Edge],
+    id: NodeId,
+    cache: &mut BTreeMap<NodeId, Option<CellValue>>,
+    visiting: &mut BTreeSet<NodeId>,
+) -> Option<CellValue> {
+    if let Some(cached) = cache.get(&id) {
+        return cached.clone();
+    }
+    if !visiting.insert(id) {
+        // Re-entered while still on the stack -> a cycle. Uncomputable; do NOT
+        // cache here (the outer frame owns `id`'s real memo entry).
+        return None;
+    }
+    let value = nodes.iter().find(|n| n.id == id).and_then(|node| {
+        let inputs: Vec<Option<CellValue>> = (0..node.inputs())
+            .map(|port| resolve_input(nodes, edges, node, port, cache, visiting))
+            .collect();
+        node.op.evaluate(&inputs)
+    });
+    visiting.remove(&id);
+    cache.insert(id, value.clone());
+    value
+}
+
+/// R1255 — evaluate node `id` from a fresh memo (the single-node introspection
+/// entry point behind `query node.<id>.value`).
+fn evaluate(nodes: &[GraphNode], edges: &[Edge], id: NodeId) -> Option<CellValue> {
+    eval_node(nodes, edges, id, &mut BTreeMap::new(), &mut BTreeSet::new())
+}
+
+/// R1255 — the graph's terminal value: the resolved input of the [`NodeOp::Output`]
+/// sink (lowest id when several exist, so the read is deterministic). `None`
+/// when there is no `Output` node, or its input cone has a cycle. Behind
+/// `query eval.output`.
+fn eval_terminal(nodes: &[GraphNode], edges: &[Edge]) -> Option<CellValue> {
+    let sink = nodes
+        .iter()
+        .filter(|n| n.op == NodeOp::Output)
+        .min_by_key(|n| n.id.raw())?;
+    evaluate(nodes, edges, sink.id)
+}
+
+/// R1255 — whether the whole graph is a DAG (no dependency cycle). A structural
+/// 3-colour DFS over the `input ← source` dependency edges, independent of the
+/// value semantics: `1` = on the current stack (a back-edge to it is a cycle),
+/// `2` = fully explored. Behind `query eval.acyclic`, so an AI can distinguish a
+/// `null` `value` caused by a cycle from a genuinely absent node.
+fn graph_is_acyclic(nodes: &[GraphNode], edges: &[Edge]) -> bool {
+    fn visit(id: NodeId, edges: &[Edge], state: &mut BTreeMap<NodeId, u8>) -> bool {
+        match state.get(&id) {
+            Some(2) => return true,
+            Some(_) => return false, // back-edge to an on-stack node -> cycle
+            None => {}
+        }
+        state.insert(id, 1);
+        for e in edges.iter().filter(|e| e.to_node == id) {
+            if !visit(e.from_node, edges, state) {
+                return false;
+            }
+        }
+        state.insert(id, 2);
+        true
+    }
+    let mut state: BTreeMap<NodeId, u8> = BTreeMap::new();
+    nodes.iter().all(|n| visit(n.id, edges, &mut state))
+}
+
 /// R1220 — the first input port index of [`PALETTE`] kind `kind` an output of
 /// type `from` may feed (the auto-wire target when a pin-drop creates that
 /// node). `None` when the kind has no input assignable from `from` — the exact
 /// gate [`pin_create_candidates`] filters on, so a returned candidate always
 /// resolves a wire target here.
 fn first_compatible_input(kind: usize, from: PortType) -> Option<usize> {
-    let &(_, input_ports, _) = PALETTE.get(kind)?;
+    let &(_, input_ports, _, _) = PALETTE.get(kind)?;
     input_ports.iter().position(|&t| from.is_assignable_to(t))
 }
 
@@ -673,6 +956,15 @@ struct GraphNode {
     /// non-reroute.
     #[serde(default)]
     is_reroute: bool,
+    /// R1255 — the node's **compute identity** for graph evaluation (the SSOT
+    /// the evaluator dispatches on). Set once from the [`PALETTE`] kind (or
+    /// [`NodeOp::Reroute`]) at construction and frozen, NOT re-derived from the
+    /// rewritable `title` — a renamed `Add` still adds ([[abstraction-needs-second-consumer]]
+    /// R1242 identity lesson, generalised from `is_reroute` to every op). Schema
+    /// 6 always serializes it (no serde `default`); a pre-R1255 (schema ≤ 5) blob
+    /// lacks the field and fails to deserialize, so the load falls back to a
+    /// fresh graph — the same outcome as the explicit schema-version reject.
+    op: NodeOp,
 }
 
 impl GraphNode {
@@ -683,6 +975,7 @@ impl GraphNode {
         y: i32,
         inputs: &[PortType],
         outputs: &[PortType],
+        op: NodeOp,
     ) -> Self {
         Self {
             id: NodeId(id),
@@ -693,6 +986,7 @@ impl GraphNode {
             output_ports: outputs.to_vec(),
             input_defaults: inputs.iter().map(|t| t.default_value()).collect(),
             is_reroute: false,
+            op,
         }
     }
 
@@ -965,10 +1259,18 @@ fn first_dynamic_node_id() -> u32 {
 fn default_nodes() -> Vec<GraphNode> {
     use PortType::Vector;
     vec![
-        GraphNode::new(0, "Texture", 40, 70, &[], &[Vector]),
-        GraphNode::new(1, "Color", 40, 210, &[], &[Vector]),
-        GraphNode::new(2, "Multiply", 250, 110, &[Vector, Vector], &[Vector]),
-        GraphNode::new(3, "Output", 470, 150, &[Vector], &[]),
+        GraphNode::new(0, "Texture", 40, 70, &[], &[Vector], NodeOp::Texture),
+        GraphNode::new(1, "Color", 40, 210, &[], &[Vector], NodeOp::Color),
+        GraphNode::new(
+            2,
+            "Multiply",
+            250,
+            110,
+            &[Vector, Vector],
+            &[Vector],
+            NodeOp::Multiply,
+        ),
+        GraphNode::new(3, "Output", 470, 150, &[Vector], &[], NodeOp::Output),
     ]
 }
 
@@ -3059,7 +3361,7 @@ impl NodeGraphExternal {
     /// rearranged. A new node has no edges, so no edge / selection bookkeeping
     /// is needed (the stable-id model: adding is purely additive).
     fn add_node(&self, kind: usize) -> Option<NodeId> {
-        let &(title, input_ports, output_ports) = PALETTE.get(kind)?;
+        let &(title, input_ports, output_ports, op) = PALETTE.get(kind)?;
         let id = self.mint_node_id();
         let raw = id.raw();
         // Cascade in minted order from the spawn point so repeated adds fan out
@@ -3084,6 +3386,7 @@ impl NodeGraphExternal {
             output_ports: output_ports.to_vec(),
             input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
             is_reroute: false,
+            op,
         };
         let sel_before = self.selection.get();
         // `record` applies the edit forward — pushing the node and selecting it
@@ -3196,7 +3499,7 @@ impl NodeGraphExternal {
             return None;
         }
         let target_port = first_compatible_input(kind, from_ty)?;
-        let &(title, input_ports, output_ports) = PALETTE.get(kind)?;
+        let &(title, input_ports, output_ports, op) = PALETTE.get(kind)?;
         let node_id = self.mint_node_id();
         let node = GraphNode {
             id: node_id,
@@ -3207,6 +3510,7 @@ impl NodeGraphExternal {
             output_ports: output_ports.to_vec(),
             input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
             is_reroute: false,
+            op,
         };
         let edge = Edge {
             id: self.mint_edge_id(),
@@ -3481,7 +3785,15 @@ impl NodeGraphExternal {
         let mid_x = i32::midpoint(from.0, to.0);
         let mid_y = i32::midpoint(from.1, to.1);
         let node_id = self.mint_node_id();
-        let mut reroute = GraphNode::new(node_id.raw(), "Reroute", 0, 0, &[ty], &[ty]);
+        let mut reroute = GraphNode::new(
+            node_id.raw(),
+            "Reroute",
+            0,
+            0,
+            &[ty],
+            &[ty],
+            NodeOp::Reroute,
+        );
         reroute.is_reroute = true; // R1242 — a first-class model identity, not the title
         // R1243 — centre the compact knot on the wire midpoint: `is_reroute` is
         // set above, so `width()`/`height()` are both `KNOT_SIZE` and the dot
@@ -3823,7 +4135,7 @@ impl NodeGraphExternal {
         };
         let kind = PALETTE
             .iter()
-            .position(|&(name, _, _)| name == *s)
+            .position(|&(name, _, _, _)| name == *s)
             .ok_or(InvokeError::Rejected)?;
         let id = self.add_node(kind).ok_or(InvokeError::Rejected)?;
         Ok(IntrospectValue::Int(i64::from(id.raw())))
@@ -3913,6 +4225,20 @@ impl NodeGraphExternal {
                 // byte-stable count contract.
                 "input_types" => Some(IntrospectValue::Text(port_types_csv(&node.input_ports))),
                 "output_types" => Some(IntrospectValue::Text(port_types_csv(&node.output_ports))),
+                // R1255 — the node's *evaluated* output value (the compute twin
+                // of the authoring reads above): topo-eval over the graph, an
+                // unconnected input taking its R899 pin default and a source op
+                // its constant. `Null` when a cycle in the input cone leaves the
+                // value undefined (distinguish via `eval.acyclic`). A `Float`
+                // reads as a float, a `Vector` (`Color`) as a `{hex,r,g,b,a}`
+                // object — the same wire form as `input_default.<port>`.
+                "value" => {
+                    let edges = self.edges.get();
+                    Some(
+                        evaluate(&nodes, &edges, id)
+                            .map_or(IntrospectValue::Null, |v| v.to_introspect()),
+                    )
+                }
                 // R899 — the typed default of an input port (the write twin is
                 // `intervene node.<id>.input_default.<port>`); a `Float` reads as a
                 // float, a `Vector` (`Color`) as a `{hex,r,g,b,a}` object.
@@ -3930,6 +4256,23 @@ impl NodeGraphExternal {
                 "{}:{}->{}:{}",
                 e.from_node, e.from_port, e.to_node, e.to_port
             )));
+        }
+        // R1255 — the graph-evaluation reads: pure derived introspection over
+        // the authored graph (no write twin — the value is computed, not
+        // stored). `eval.output` is the terminal value at the `Output` sink;
+        // `eval.acyclic` tells a client whether a `null` value is a cycle vs a
+        // genuinely absent node.
+        if let Some(field) = path.strip_prefix("eval.") {
+            let nodes = self.nodes.get();
+            let edges = self.edges.get();
+            return match field {
+                "output" => Some(
+                    eval_terminal(&nodes, &edges)
+                        .map_or(IntrospectValue::Null, |v| v.to_introspect()),
+                ),
+                "acyclic" => Some(IntrospectValue::Bool(graph_is_acyclic(&nodes, &edges))),
+                _ => None,
+            };
         }
         // R1241 — the per-node dissolve-eligibility read (the twin of the
         // `dissolve_node` verb; shares the `dissolve_plan` predicate).
@@ -5204,6 +5547,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node.<id>.input_types", "string"),
             ("node.<id>.output_types", "string"),
             ("node.<id>.input_default.<port>", "json"),
+            // R1255 — the evaluated output value (a `Float` reads float, a
+            // `Vector` a `{hex,r,g,b,a}` object, `null` on a cycle) — hence json.
+            ("node.<id>.value", "json"),
             // R916 — the Details panel's selection-relative addressing: each
             // `detail.<field>` resolves against the *single* selected node (the
             // R909 inspector pattern, now inside the node-graph editor). `Null`
@@ -5222,7 +5568,11 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("detail.input_types", "string"),
             ("detail.output_types", "string"),
             ("detail.input_default.<port>", "json"),
+            ("detail.value", "json"),
             ("edge.<id>", "string"),
+            // R1255 — the graph-evaluation reads (no write twin — derived).
+            ("eval.output", "json"),
+            ("eval.acyclic", "bool"),
             ("viewport.x", "float"),
             ("viewport.y", "float"),
             ("viewport.zoom", "float"),
@@ -5745,7 +6095,7 @@ impl NodeGraphExternal {
             "commit_pin_create" => {
                 let committed = match args {
                     IntrospectValue::Text(s) => {
-                        match PALETTE.iter().position(|&(name, _, _)| name == s) {
+                        match PALETTE.iter().position(|&(name, _, _, _)| name == s) {
                             Some(kind) => self.commit_pin_create_kind(kind),
                             None => return Some(Err(InvokeError::Rejected)),
                         }
@@ -6557,7 +6907,7 @@ fn view_palette(theme: &Theme) -> Scene {
         )
         .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 12, 12, 4))),
     ));
-    for (idx, &(title, input_ports, output_ports)) in PALETTE.iter().enumerate() {
+    for (idx, &(title, input_ports, output_ports, _)) in PALETTE.iter().enumerate() {
         let label = Scene::Text(TextNode::styled(
             format!("{title} ({}/{})", input_ports.len(), output_ports.len()),
             Rect::default(),
@@ -6635,7 +6985,7 @@ fn view_pin_create_menu(pc: &PinCreate, nodes: &[GraphNode], theme: &Theme) -> O
         ));
     }
     for (row, &kind) in candidates.iter().enumerate() {
-        let &(title, input_ports, output_ports) = &PALETTE[kind];
+        let &(title, input_ports, output_ports, _) = &PALETTE[kind];
         let label = Scene::Text(TextNode::styled(
             format!("{title} ({}/{})", input_ports.len(), output_ports.len()),
             Rect::default(),
@@ -7291,7 +7641,7 @@ impl WidgetA11y for NodeEditorView {
             .collect();
         let palette_names: Vec<String> = PALETTE
             .iter()
-            .map(|&(t, _, _)| format!("Add {t}"))
+            .map(|&(t, _, _, _)| format!("Add {t}"))
             .collect();
         let controls: Vec<ToolbarControl> = palette_tags
             .iter()
