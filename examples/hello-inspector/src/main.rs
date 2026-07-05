@@ -1043,25 +1043,30 @@ impl InspectorExternal {
         true
     }
 
-    /// R1249 — open the inline ABSOLUTE type-in editor on common property `idx`.
-    /// Gated to the text-editable NUMERIC kinds (`Int` / `Float`) — the only
-    /// gap the steppers left (a value could be STEPPED but never TYPED). A
-    /// `Bool` has its click-toggle, a `Choice` its click-cycle, a `Color` /
-    /// `Text` its read-only display (still RPC-editable via `intervene value.<i>`;
-    /// a shared inline delegate for those is the property-grid's, reusable when a
-    /// shared such property arises). Seeds the shared editor with the
-    /// representative value's [`edit_text`](CellValue::edit_text) (a mixed
-    /// selection anchors on the first object's value — a concrete number to type
+    /// R1249/R1251 — open the inline ABSOLUTE type-in editor on common property
+    /// `idx`. Gated to the field-editable kinds — `Int` / `Float` (R1249, the
+    /// gap the steppers left) and `Color` (R1251, its `#RRGGBB` hex, the
+    /// property-grid colour-popup's hex-field precedent). A `Bool` has its
+    /// click-toggle, a `Choice` its click-cycle — those never open the field.
+    /// Each field-editable kind rides the SAME editor: the [`CellKind`]
+    /// keystroke gate accepts digits for a numeric and hex digits + `#` for a
+    /// Colour, and [`CellKind::parse`] turns the committed text back into the
+    /// typed value. Seeds the shared editor with the representative value's
+    /// [`edit_text`](CellValue::edit_text) (a Colour seeds its hex; a mixed
+    /// selection anchors on the first object's value — a concrete value to type
     /// over), latches `editing_prop`, and focuses the field. Uses the CAPTURED
     /// `Rc`s (not `use_*` hooks) so the RPC-invoke / double-click paths open it
     /// whether or not they run inside an `Owner` scope. Returns `false` (no-op)
-    /// for a non-numeric or out-of-range row.
+    /// for a non-field-editable or out-of-range row.
     fn begin_edit(&self, idx: usize) -> bool {
         let common = self.common();
         let Some(prop) = common.get(idx) else {
             return false;
         };
-        if !matches!(prop.value, CellValue::Int(_) | CellValue::Float(_)) {
+        if !matches!(
+            prop.value,
+            CellValue::Int(_) | CellValue::Float(_) | CellValue::Color(_)
+        ) {
             return false;
         }
         // `seed` = set_text + caret-at-end (the lifted TextEditState pair).
@@ -1071,24 +1076,33 @@ impl InspectorExternal {
         true
     }
 
-    /// R1249 — parse `text` by the editing row's [`CellKind`] and write the
-    /// ABSOLUTE value across the WHOLE selection through the
-    /// [`set_property`](Self::set_property) funnel (the same multi-object path
-    /// `intervene value.<i>` drives), then tear the editor down. A malformed
-    /// numeric keeps the prior value (the `parse` gate — no data loss). Returns
-    /// `true` iff a value was written. This is the write SSOT both the RPC
-    /// `commit_edit` verb (with the wire text) and the free-fn keyboard/blur
-    /// [`commit_edit`] (with the live buffer) route through; it uses the CAPTURED
-    /// `Rc`s so the RPC-invoke path commits with no `Owner` scope.
+    /// R1249/R1251 — parse `text` by the editing row's [`CellKind`] and write the
+    /// parsed value ABSOLUTELY across the WHOLE selection through the shared
+    /// [`mutate_selected`](Self::mutate_selected) funnel (the multi-object path
+    /// [`step_property`](Self::step_property) uses), then tear the editor down.
+    /// A malformed commit keeps the prior value (the `parse` gate — no data
+    /// loss). Returns `true` iff a value was written.
+    ///
+    /// R1251 — writes the PARSED [`CellValue`] directly, NOT via
+    /// `set_property(&parsed.to_introspect())`: a Colour's `to_introspect` is
+    /// rich JSON (`{hex,r,g,b}`) while [`CellValue::with_intervene`] wants the
+    /// bare hex `Text`, so the round-trip would `TypeMismatch`. The parsed value
+    /// is already the authority; the representative `same_property_shape` gate
+    /// gives the whole-selection verdict (every common member has the same shape).
+    /// The CAPTURED `Rc`s let the RPC-invoke path commit with no `Owner` scope.
     fn commit_edit_text(&self, text: &str, restore_focus: bool) -> bool {
-        let Some(idx) = self.editing_prop.get() else {
-            return false;
-        };
-        let written = self
-            .common()
-            .get(idx)
-            .and_then(|prop| prop.value.kind().parse(text))
-            .is_some_and(|parsed| self.set_property(idx, &parsed.to_introspect()).is_ok());
+        let write = self.editing_prop.get().and_then(|idx| {
+            let common = self.common();
+            let prop = common.get(idx)?;
+            let parsed = prop.value.kind().parse(text)?;
+            same_property_shape(&prop.value, &parsed).then(|| (prop.name.clone(), parsed))
+        });
+        let written = write.is_some();
+        if let Some((name, parsed)) = write {
+            self.mutate_selected(&name, move |_j, cur| {
+                same_property_shape(cur, &parsed).then(|| parsed.clone())
+            });
+        }
         self.close_edit(restore_focus);
         written
     }
@@ -1714,22 +1728,47 @@ fn stepper_button(glyph: &str, tag: String, accent: Color) -> Scene {
     )
 }
 
+/// R1251 — a read-only value visual (Bool pill / Choice / Colour swatch)
+/// wrapped in a click / double-click target `tag` with the shared value-cell
+/// layout. The Bool (`inspector#toggle<i>`), Choice (`inspector#cycle<i>`), and
+/// Colour (`inspector#typein<i>`) cells were three byte-identical container
+/// wraps differing only in the tag — lifted here (R727/R732 3b, the 3rd site).
+fn tagged_value_cell(
+    prop: &CommonProperty,
+    fg: Color,
+    accent: Color,
+    muted: Color,
+    tag: String,
+) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![detail_value_visual(prop, fg, accent, muted)])
+            .with_tag(tag)
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_margin(Rect::new(0, 0, RESET_GUTTER, 0)),
+            ),
+    )
+}
+
 /// R1221 — the interactive Details value cell. A **Bool** paints its pill (or
 /// the mixed placeholder) inside a `inspector#toggle<i>` click target (flip
 /// across the whole selection, resolving a mixed Bool to uniform); an **Int** /
 /// **Float** paints `[-] value [+]` steppers (`inspector#dec<i>` /
 /// `inspector#inc<i>`, a mix-preserving relative shift) wrapped in a
 /// `inspector#typein<i>` double-click target (R1249 — a double-click opens the
-/// inline absolute type-in editor). Every other kind (Choice / Color / Text)
-/// keeps the read-only [`detail_value_visual`] display (still RPC-editable via
-/// `intervene value.<i>` — inline delegates for those kinds are the
-/// property-grid's, reusable when a shared such property arises). R1225 — a
-/// **Choice** cell is a `inspector#cycle<i>` click target.
+/// inline absolute type-in editor). R1251 — a **Colour** cell is likewise a
+/// `inspector#typein<i>` double-click target (its swatch + hex over the hex
+/// editor). A **Choice** keeps its `inspector#cycle<i>` click target (R1225); a
+/// **Text** keeps the read-only [`detail_value_visual`] display (no shared Text
+/// property in the model — still RPC-editable via `intervene value.<i>`).
 ///
-/// R1249 — when `editing` (this row is the one [`use_editing_prop`] points at)
-/// the Int/Float arm paints the shared inline [`EDIT_TF_TAG`] field in place of
-/// the steppers, seeded + focused by [`InspectorExternal::begin_edit`]. Colours
-/// derive from `theme` so the value column and the field share one palette.
+/// R1249/R1251 — when `editing` (this row is the one [`use_editing_prop`] points
+/// at) the Int/Float/Colour arm paints the shared inline [`EDIT_TF_TAG`] field in
+/// place of the steppers / swatch, seeded + focused by
+/// [`InspectorExternal::begin_edit`]. Colours derive from `theme` so the value
+/// column and the field share one palette.
 fn detail_value_cell(
     index: usize,
     prop: &CommonProperty,
@@ -1741,22 +1780,19 @@ fn detail_value_cell(
     let accent = theme.resolve(ColorRole::Accent);
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
     match prop.value {
-        CellValue::Bool(_) => Scene::Container(
-            ContainerNode::new(vec![detail_value_visual(prop, fg, accent, muted)])
-                .with_tag(format!("{INSPECTOR_TAG}#{TOGGLE_PREFIX}{index}"))
-                .with_layout(
-                    LayoutStyle::new()
-                        .flex(FlexDirection::Row)
-                        .with_align_items(AlignItems::Center)
-                        .with_margin(Rect::new(0, 0, RESET_GUTTER, 0)),
-                ),
+        CellValue::Bool(_) => tagged_value_cell(
+            prop,
+            fg,
+            accent,
+            muted,
+            format!("{INSPECTOR_TAG}#{TOGGLE_PREFIX}{index}"),
         ),
-        CellValue::Int(_) | CellValue::Float(_) if editing => {
-            // R1249 — the inline absolute type-in editor replaces the steppers on
-            // the edited row. `view_field` tags its node `EDIT_TF_TAG`, so the
-            // router routes clicks / focus to the sibling `inspector_edit`
-            // External. The reset gutter is preserved so a modified row's reset
-            // dot still clears the field.
+        CellValue::Int(_) | CellValue::Float(_) | CellValue::Color(_) if editing => {
+            // R1249/R1251 — the inline absolute type-in editor replaces the
+            // steppers (numeric) / swatch (colour) on the edited row. `view_field`
+            // tags its node `EDIT_TF_TAG`, so the router routes clicks / focus to
+            // the sibling `inspector_edit` External. The reset gutter is preserved
+            // so a modified row's reset dot still clears the field.
             let style = tf_paint::TextFieldStyle {
                 field_w: EDIT_FIELD_W,
                 field_h: ROW_H - 8,
@@ -1806,17 +1842,27 @@ fn detail_value_cell(
                 ),
             )
         }
-        CellValue::Choice { .. } => Scene::Container(
-            ContainerNode::new(vec![detail_value_visual(prop, fg, accent, muted)])
-                .with_tag(format!("{INSPECTOR_TAG}#{CYCLE_PREFIX}{index}"))
-                .with_layout(
-                    LayoutStyle::new()
-                        .flex(FlexDirection::Row)
-                        .with_align_items(AlignItems::Center)
-                        .with_margin(Rect::new(0, 0, RESET_GUTTER, 0)),
-                ),
+        CellValue::Choice { .. } => tagged_value_cell(
+            prop,
+            fg,
+            accent,
+            muted,
+            format!("{INSPECTOR_TAG}#{CYCLE_PREFIX}{index}"),
         ),
-        _ => detail_value_visual(prop, fg, accent, muted),
+        // R1251 — a Colour cell paints its swatch + hex, wrapped in a
+        // `inspector#typein<i>` double-click target that opens the same inline
+        // editor to type a new `#RRGGBB` hex (the property-grid colour hex-field,
+        // without the swatch popup — the type-in is the inspector's affordance).
+        CellValue::Color(_) => tagged_value_cell(
+            prop,
+            fg,
+            accent,
+            muted,
+            format!("{INSPECTOR_TAG}#{TYPEIN_PREFIX}{index}"),
+        ),
+        // A Text cell keeps the read-only display (no shared Text property in the
+        // model; RPC-editable via `intervene value.<i>`).
+        CellValue::Text(_) => detail_value_visual(prop, fg, accent, muted),
     }
 }
 
@@ -3981,6 +4027,97 @@ mod tests {
             assert!(
                 !nodes.iter().any(|n| n.tag == "prop_1"),
                 "the spinbutton yields to the textbox while editing"
+            );
+        });
+    }
+
+    // ── R1251 Colour hex type-in ─────────────────────────────────────────
+    // Player's Tint (Color) is common row 6 in the boot single-selection
+    // (Visible/Layer/Locked/Health/Speed/Team/Tint). The SAME inline field
+    // edits it as a `#RRGGBB` hex — the CellKind::Color keystroke gate + parse.
+
+    const TINT: usize = 6;
+
+    fn color_hex(e: &InspectorExternal, idx: usize) -> String {
+        match e.query(&format!("value.{idx}")) {
+            Some(IntrospectValue::Json(v)) => v["hex"].as_str().unwrap().to_owned(),
+            other => panic!("expected a Colour json, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r1251_begin_edit_opens_a_colour_row_seeded_with_the_hex() {
+        let e = ext(); // boot: Player single-selected
+        assert_eq!(
+            e.query("name.6"),
+            Some(IntrospectValue::Text("Tint".to_owned()))
+        );
+        assert_eq!(
+            e.query("kind.6"),
+            Some(IntrospectValue::Text("color".to_owned()))
+        );
+        assert!(e.begin_edit(TINT), "a Colour row opens the type-in editor");
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(6)));
+        // Seeded with the current hex (the property's edit_text).
+        assert_eq!(e.editor.text(), color_hex(&e, TINT), "seeded with the hex");
+    }
+
+    #[test]
+    fn r1251_commit_writes_the_new_colour_from_the_typed_hex() {
+        let e = ext();
+        assert!(e.begin_edit(TINT));
+        // This is the path R1249's `set_property(&to_introspect())` could NOT
+        // take: a Colour's to_introspect is rich JSON, not the hex `Text`
+        // with_intervene wants. The direct mutate_selected write makes it work.
+        assert!(e.commit_edit_text("#ff0000", true), "a valid hex commits");
+        assert_eq!(color_hex(&e, TINT), "#ff0000", "Tint is now red");
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r1251_commit_of_a_malformed_hex_keeps_the_prior_colour() {
+        let e = ext();
+        let before = color_hex(&e, TINT);
+        assert!(e.begin_edit(TINT));
+        assert!(
+            !e.commit_edit_text("not-a-hex", true),
+            "a malformed hex is not written (no data loss)"
+        );
+        assert_eq!(color_hex(&e, TINT), before, "the prior colour is kept");
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r1251_rpc_colour_edit_via_begin_and_commit_verbs() {
+        let mut e = ext();
+        assert_eq!(
+            e.invoke("begin_edit", IntrospectValue::Int(6)).unwrap(),
+            IntrospectValue::Bool(true)
+        );
+        assert_eq!(
+            e.invoke("commit_edit", IntrospectValue::Text("#00ff00".to_owned()))
+                .unwrap(),
+            IntrospectValue::Bool(true)
+        );
+        assert_eq!(color_hex(&e, TINT), "#00ff00");
+    }
+
+    #[test]
+    fn r1251_colour_row_is_a_typein_target_and_paints_the_field_when_editing() {
+        Owner::new().run(|| {
+            let e = make_inspector_external(); // Player single-selected (boot)
+            let state = InspectorState::from_parts(&[0], Some(0));
+            let idle = view(&state, &Frame::new());
+            assert!(
+                idle.contains_tag(&format!("{INSPECTOR_TAG}#{TYPEIN_PREFIX}6")),
+                "the Colour cell is a double-click type-in target"
+            );
+            assert!(!idle.contains_tag(EDIT_TF_TAG), "no field until editing");
+            e.begin_edit(TINT);
+            let editing = view(&state, &Frame::new());
+            assert!(
+                editing.contains_tag(EDIT_TF_TAG),
+                "editing the Colour row paints the hex field"
             );
         });
     }

@@ -22444,6 +22444,52 @@
         "property-grid search-box field stays custom (no blur intent, live filter = different decision)"
       ]
     },
+    "R1251": {
+      "decision_summary": "R1251: inspector Colour cell hex type-in — the R1249 inline field extended to Colour (#RRGGBB via the CellKind::Color keystroke gate + parse); commit writes the parsed CellValue directly, fixing Color to_introspect != with_intervene",
+      "changes_bullets": [
+        "§5.38 inspector Colour cell = inline #RRGGBB type-in (double-click/begin_edit opens R1249 field)",
+        "§5.38 begin_edit gate Int|Float -> +Color; CellKind::Color keystroke gate + hex parse",
+        "§5.38 commit writes parsed CellValue via mutate_selected not to_introspect (Color round-trip fix)",
+        "§5.38 tagged_value_cell helper: Bool/Choice/Colour 3-site container-wrap lift (3b)"
+      ],
+      "verification_bullets": [
+        "hello-inspector 59 unit tests (54 + 5 new Colour); r1251 demo 37 asserts PASS",
+        "keyboard hex gate proven: non-hex z/g rejected, hex digits + '#' land + Enter commits",
+        "regression: r1249/r1221/r1225 demos PASS; clippy/rustfmt/cargo-doc green",
+        "no row-count change (Tint/Color rows pre-exist) = zero blast radius on existing assertions"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "no COMMON Colour across the 3 objects (Player Tint vs Light Color) = single-select edit for now",
+        "no swatch-palette popup (hex-only type-in); the full colour picker is a separate larger round",
+        "AT-open of a Colour cell (activate->edit) not wired; the editing textbox a11y is generic/covered"
+      ],
+      "publishable_decision_summary": "R1251: inspector Colour cell hex type-in — the R1249 inline field extended to Colour (#RRGGBB via the CellKind::Color keystroke gate + parse); commit writes the parsed CellValue directly, fixing Color to_introspect != with_intervene",
+      "publishable_changes_bullets": [
+        "§5.38 inspector Colour cell = inline #RRGGBB type-in (double-click/begin_edit opens R1249 field)",
+        "§5.38 begin_edit gate Int|Float -> +Color; CellKind::Color keystroke gate + hex parse",
+        "§5.38 commit writes parsed CellValue via mutate_selected not to_introspect (Color round-trip fix)",
+        "§5.38 tagged_value_cell helper: Bool/Choice/Colour 3-site container-wrap lift (3b)"
+      ],
+      "publishable_verification_bullets": [
+        "hello-inspector 59 unit tests (54 + 5 new Colour); r1251 demo 37 asserts PASS",
+        "keyboard hex gate proven: non-hex z/g rejected, hex digits + '#' land + Enter commits",
+        "regression: r1249/r1221/r1225 demos PASS; clippy/rustfmt/cargo-doc green",
+        "no row-count change (Tint/Color rows pre-exist) = zero blast radius on existing assertions"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "no COMMON Colour across the 3 objects (Player Tint vs Light Color) = single-select edit for now",
+        "no swatch-palette popup (hex-only type-in); the full colour picker is a separate larger round",
+        "AT-open of a Colour cell (activate->edit) not wired; the editing textbox a11y is generic/covered"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
