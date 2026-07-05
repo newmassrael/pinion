@@ -760,51 +760,59 @@ impl InspectorExternal {
 
     // ─── selection funnel (keyboard / pointer / RPC all converge here) ──
 
-    fn select(&self, index: usize) {
-        self.selection.set_with(|prev| {
+    /// R1252 — the single selection-mutation chokepoint. Every selection change
+    /// (select / toggle / extend / select-all / clear) routes here, and it
+    /// **closes any open inline editor FIRST**. The editor's `editing_prop`
+    /// index addresses the selection-DERIVED `common_properties` list, so a
+    /// mid-edit selection change would silently retarget it to a *different*
+    /// property (the R1252 wrong-property-write bug). The edit is semantically
+    /// bound to a stable selection ("the common Layer of {Player, Camera}");
+    /// changing the selection ends it. `false` = do not steal focus back (the
+    /// selection gesture already moved it).
+    fn mutate_selection(&self, f: impl FnOnce(&mut VirtualSelect)) {
+        if self.editing_prop.get().is_some() {
+            self.close_edit(false);
+        }
+        self.selection.set_with(move |prev| {
             let mut next = prev.clone();
-            next.select(index);
+            f(&mut next);
             next
+        });
+    }
+
+    fn select(&self, index: usize) {
+        self.mutate_selection(|s| {
+            s.select(index);
         });
     }
 
     fn toggle(&self, index: usize) {
-        self.selection.set_with(|prev| {
-            let mut next = prev.clone();
-            next.toggle(index);
-            next
+        self.mutate_selection(|s| {
+            s.toggle(index);
         });
     }
 
     fn extend_to(&self, index: usize) {
-        self.selection.set_with(|prev| {
-            let mut next = prev.clone();
-            next.extend_to(index);
-            next
+        self.mutate_selection(|s| {
+            s.extend_to(index);
         });
     }
 
     fn select_all(&self) {
-        self.selection.set_with(|prev| {
-            let mut next = prev.clone();
-            next.select_all();
-            next
+        self.mutate_selection(|s| {
+            s.select_all();
         });
     }
 
     fn clear(&self) {
-        self.selection.set_with(|prev| {
-            let mut next = prev.clone();
-            next.clear();
-            next
+        self.mutate_selection(|s| {
+            s.clear();
         });
     }
 
     fn set_selection(&self, indices: BTreeSet<usize>) {
-        self.selection.set_with(move |prev| {
-            let mut next = prev.clone();
-            next.set_selection(&indices);
-            next
+        self.mutate_selection(move |s| {
+            s.set_selection(&indices);
         });
     }
 
@@ -923,39 +931,43 @@ impl InspectorExternal {
         });
     }
 
+    /// R1252 — the typed multi-object write SSOT: set the common property named
+    /// `name` to `value` (an already-typed, already-validated [`CellValue`]) on
+    /// EVERY selected object. Both the wire path
+    /// ([`set_property`](Self::set_property), after `with_intervene` converts the
+    /// `IntrospectValue`) and the type-in commit
+    /// ([`commit_edit_text`](Self::commit_edit_text), after `CellKind` parses the
+    /// text) funnel here — so the per-object shape gate + the R906 loud-fail live
+    /// in ONE place, not three divergent copies. Under the common-property
+    /// invariant every selected object shares the target's shape, so the gate
+    /// never rejects; a rejection is a should-be-impossible bug (loud in dev, no
+    /// silent clobber in release).
+    fn set_property_value(&self, name: &str, value: &CellValue) {
+        let value = value.clone();
+        self.mutate_selected(name, move |_j, cur| {
+            if same_property_shape(cur, &value) {
+                Some(value.clone())
+            } else {
+                debug_assert!(
+                    false,
+                    "multi-write: the same-shape gate rejected a typed value \
+                     (the common-property invariant was violated)"
+                );
+                None
+            }
+        });
+    }
+
     fn set_property(&self, idx: usize, value: &IntrospectValue) -> Result<(), InterveneError> {
         let common = self.common();
         let target = common.get(idx).ok_or(InterveneError::UnknownPath)?;
-        // Validate against the representative once. Every selected object's
-        // matching property has the SAME shape (`same_property_shape` — kind
-        // plus a Choice's option list), so this accept/reject is the verdict
-        // for the whole write: a value the representative accepts cannot be
-        // rejected by a same-shape property.
-        target.value.with_intervene(value.clone())?;
-        let shape = target.value.clone();
-        let value = value.clone();
-        self.mutate_selected(&target.name.clone(), move |_j, cur| {
-            // The shape gate the pre-R1223 find-predicate carried, now in the
-            // per-object closure. Under the unique-name invariant this matches
-            // the representative for every selected object.
-            if !same_property_shape(cur, &shape) {
-                return None;
-            }
-            match cur.with_intervene(value.clone()) {
-                Ok(updated) => Some(updated),
-                // Unreachable: same shape as the representative, which accepted
-                // `value`. Fail loud in dev, no-op (not a silent clobber) in
-                // release (R906 — no silent fallback on a should-be-impossible
-                // branch).
-                Err(e) => {
-                    debug_assert!(
-                        false,
-                        "multi-write: a value valid for the representative was rejected by a same-shape property: {e:?}"
-                    );
-                    None
-                }
-            }
-        });
+        // Validate + convert the wire value ONCE against the representative. Every
+        // selected object's matching property has the SAME shape
+        // (`same_property_shape` — kind plus a Choice's option list), so the
+        // typed value the representative yields is the verdict for the whole
+        // write; a same-shape property cannot reject it.
+        let typed = target.value.with_intervene(value.clone())?;
+        self.set_property_value(&target.name.clone(), &typed);
         Ok(())
     }
 
@@ -1077,31 +1089,31 @@ impl InspectorExternal {
     }
 
     /// R1249/R1251 — parse `text` by the editing row's [`CellKind`] and write the
-    /// parsed value ABSOLUTELY across the WHOLE selection through the shared
-    /// [`mutate_selected`](Self::mutate_selected) funnel (the multi-object path
-    /// [`step_property`](Self::step_property) uses), then tear the editor down.
-    /// A malformed commit keeps the prior value (the `parse` gate — no data
-    /// loss). Returns `true` iff a value was written.
+    /// parsed value ABSOLUTELY across the WHOLE selection through the typed
+    /// [`set_property_value`](Self::set_property_value) SSOT (the same funnel the
+    /// wire `intervene value.<i>` path reaches), then tear the editor down. A
+    /// malformed commit keeps the prior value (the `parse` gate — no data loss).
+    /// Returns `true` iff a value was written.
     ///
-    /// R1251 — writes the PARSED [`CellValue`] directly, NOT via
-    /// `set_property(&parsed.to_introspect())`: a Colour's `to_introspect` is
-    /// rich JSON (`{hex,r,g,b}`) while [`CellValue::with_intervene`] wants the
-    /// bare hex `Text`, so the round-trip would `TypeMismatch`. The parsed value
-    /// is already the authority; the representative `same_property_shape` gate
-    /// gives the whole-selection verdict (every common member has the same shape).
-    /// The CAPTURED `Rc`s let the RPC-invoke path commit with no `Owner` scope.
+    /// R1251 — writes the PARSED [`CellValue`], NOT `parsed.to_introspect()`: a
+    /// Colour's `to_introspect` is rich JSON while the write funnel takes the
+    /// typed value directly (the read/write wire asymmetry is fixed in
+    /// `cell_value.rs`, but the already-parsed value is the authority here — no
+    /// round-trip through the wire forms). R1252 — the editor is closed on any
+    /// selection change ([`mutate_selection`](Self::mutate_selection)), so
+    /// `editing_prop` addresses the SAME `common_properties` list `begin_edit`
+    /// seeded from; the index cannot have silently retargeted. The CAPTURED `Rc`s
+    /// let the RPC-invoke path commit with no `Owner` scope.
     fn commit_edit_text(&self, text: &str, restore_focus: bool) -> bool {
         let write = self.editing_prop.get().and_then(|idx| {
             let common = self.common();
             let prop = common.get(idx)?;
             let parsed = prop.value.kind().parse(text)?;
-            same_property_shape(&prop.value, &parsed).then(|| (prop.name.clone(), parsed))
+            Some((prop.name.clone(), parsed))
         });
         let written = write.is_some();
         if let Some((name, parsed)) = write {
-            self.mutate_selected(&name, move |_j, cur| {
-                same_property_shape(cur, &parsed).then(|| parsed.clone())
-            });
+            self.set_property_value(&name, &parsed);
         }
         self.close_edit(restore_focus);
         written
@@ -4120,5 +4132,75 @@ mod tests {
                 "editing the Colour row paints the hex field"
             );
         });
+    }
+
+    // ── R1252 selection change mid-edit closes the editor (no wrong-write) ──
+
+    #[test]
+    fn r1252_selection_change_mid_edit_closes_the_editor_no_wrong_property_write() {
+        // The execution-proven data-corruption repro: `editing_prop` is a
+        // positional index into the selection-DERIVED common list, so a mid-edit
+        // selection change used to retarget it to a DIFFERENT property.
+        let mut e = ext();
+        // Single-select Camera (obj 1): common idx3 = "Field of View" (Float 60).
+        e.invoke("select", IntrospectValue::Int(1)).unwrap();
+        assert_eq!(
+            e.query("name.3"),
+            Some(IntrospectValue::Text("Field of View".to_owned()))
+        );
+        assert!(e.begin_edit(3), "open the Field of View editor");
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(3)));
+        // Switch to Sun Light (obj 2): common idx3 = "Intensity" (Float 1.2). This
+        // MUST close the editor so the stale index cannot retarget Intensity.
+        e.invoke("select", IntrospectValue::Int(2)).unwrap();
+        assert_eq!(
+            e.query("editing"),
+            Some(IntrospectValue::Null),
+            "the selection change closed the editor"
+        );
+        assert_eq!(
+            e.query("name.3"),
+            Some(IntrospectValue::Text("Intensity".to_owned()))
+        );
+        // A commit now writes nothing (no open editor); BOTH properties untouched.
+        assert!(
+            !e.commit_edit_text("45", true),
+            "commit with a closed editor writes nothing"
+        );
+        assert_eq!(obj_value(&e, 1, "Field of View"), CellValue::Float(60.0));
+        assert_eq!(
+            obj_value(&e, 2, "Intensity"),
+            CellValue::Float(1.2),
+            "Intensity was NOT clobbered (the R1252 fix)"
+        );
+    }
+
+    #[test]
+    fn r1252_select_all_mid_edit_closes_the_editor() {
+        let mut e = ext(); // boot: Player single-selected
+        assert!(e.begin_edit(1), "open the Layer editor on Player");
+        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(1)));
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert_eq!(
+            e.query("editing"),
+            Some(IntrospectValue::Null),
+            "select_all closed the open editor"
+        );
+    }
+
+    #[test]
+    fn r1252_a_stable_selection_still_commits_normally() {
+        // The fix must NOT break the normal path: no selection change between
+        // begin and commit -> the edit commits across the (stable) selection.
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert!(e.begin_edit(1), "Layer is common across all three");
+        assert!(
+            e.commit_edit_text("7", true),
+            "a stable-selection commit writes"
+        );
+        for obj in 0..3 {
+            assert_eq!(obj_value(&e, obj, "Layer"), CellValue::Int(7));
+        }
     }
 }

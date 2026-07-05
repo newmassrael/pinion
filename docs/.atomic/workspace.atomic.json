@@ -22490,6 +22490,50 @@
         "AT-open of a Colour cell (activate->edit) not wired; the editing textbox a11y is generic/covered"
       ]
     },
+    "R1252": {
+      "decision_summary": "R1252: audit-clearance (data corruption) — a mid-edit selection change silently retargeted editing_prop (positional index into the derived common list) to a different property; now every selection change closes the editor + a typed set_property_value SSOT",
+      "changes_bullets": [
+        "§5.38 selection mutators close any open editor first (mutate_selection chokepoint)",
+        "§5.38 mid-edit selection change can no longer retarget editing_prop to a different property",
+        "§5.38 typed set_property_value(name, CellValue) SSOT: set_property + commit both funnel it",
+        "§5.38 removed the tautological representative same_property_shape gate; one R906 loud-fail"
+      ],
+      "verification_bullets": [
+        "regression proven: begin_edit(FieldOfView)->select(Light)->commit does NOT clobber Intensity",
+        "hello-inspector 62 unit tests (59 + 3 new R1252); r1249 demo +section H PASS (real runtime)",
+        "regression: r1251/r1221/r1224/r1225/r922 inspector demos PASS; clippy/rustfmt/cargo-doc green",
+        "59 pre-existing inspector tests unchanged = set_property/commit refactor behavior-preserving"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "another-object-row click mid-edit discards the edit (close-on-select); empty-space click still commits",
+        "step/cycle_property keep silent _=>None (relative writes cant use the absolute set_property_value SSOT)"
+      ],
+      "publishable_decision_summary": "R1252: audit-clearance (data corruption) — a mid-edit selection change silently retargeted editing_prop (positional index into the derived common list) to a different property; now every selection change closes the editor + a typed set_property_value SSOT",
+      "publishable_changes_bullets": [
+        "§5.38 selection mutators close any open editor first (mutate_selection chokepoint)",
+        "§5.38 mid-edit selection change can no longer retarget editing_prop to a different property",
+        "§5.38 typed set_property_value(name, CellValue) SSOT: set_property + commit both funnel it",
+        "§5.38 removed the tautological representative same_property_shape gate; one R906 loud-fail"
+      ],
+      "publishable_verification_bullets": [
+        "regression proven: begin_edit(FieldOfView)->select(Light)->commit does NOT clobber Intensity",
+        "hello-inspector 62 unit tests (59 + 3 new R1252); r1249 demo +section H PASS (real runtime)",
+        "regression: r1251/r1221/r1224/r1225/r922 inspector demos PASS; clippy/rustfmt/cargo-doc green",
+        "59 pre-existing inspector tests unchanged = set_property/commit refactor behavior-preserving"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "another-object-row click mid-edit discards the edit (close-on-select); empty-space click still commits",
+        "step/cycle_property keep silent _=>None (relative writes cant use the absolute set_property_value SSOT)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -154,6 +154,28 @@ def body() -> None:
         assert_eq(tf.invoke("/external/commit_edit", "5"), False,
                   "commit_edit with no open editor returns false")
 
+        # ── (H) R1252: a selection change mid-edit closes the editor ──
+        # `editing_prop` is a positional index into the selection-DERIVED common
+        # list; a mid-edit selection change used to retarget it to a DIFFERENT
+        # property (wrong-property write). Now any selection change closes the
+        # editor, so the stale index can never commit.
+        tf.invoke("/external/select", 1)   # Camera: common idx3 = "Field of View"
+        wait_until(lambda: True if q(tf, "name.3") == "Field of View" else None,
+                   desc="Camera row 3 is Field of View")
+        fov_before = q(tf, "value.3")
+        assert_eq(tf.invoke("/external/begin_edit", 3), True, "open the FoV editor")
+        wait_editing(tf, 3, desc="editing -> Field of View")
+        tf.invoke("/external/select", 2)   # Sun Light: common idx3 = "Intensity"
+        wait_editing(tf, None, desc="the selection change closed the editor")
+        assert_eq(q(tf, "name.3"), "Intensity", "row 3 is now Intensity")
+        intensity_before = q(tf, "value.3")
+        assert_eq(tf.invoke("/external/commit_edit", "45"), False,
+                  "commit with a closed editor writes nothing")
+        assert_eq(q(tf, "value.3"), intensity_before,
+                  "Intensity was NOT clobbered by the stale index (R1252 fix)")
+        tf.invoke("/external/select", 1)
+        assert_eq(q(tf, "value.3"), fov_before, "Field of View untouched too")
+
 
 if __name__ == "__main__":
     sys.exit(run_demo("R1249 inspector absolute numeric type-in", body))
