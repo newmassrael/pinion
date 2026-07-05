@@ -22848,6 +22848,48 @@
         "§2#7 debugger completeness for the Phase-D visual-scripting use: per-input resolved-value reads + cycle-localization + a set_graph rejection reason-string (InvokeError has no reason field — a framework-level change). The value model is two borrowed CellValue variants (Color/Float); exec/control-flow pins, custom ops without editing the closed enum, and sub-graphs are unstarted northern-star (Phase C/D) scope."
       ]
     },
+    "R1260": {
+      "decision_summary": "R1260 §2#7 node-graph DEBUGGER reads: query node.<id>.resolved_input.<port> (the value that actually flows in, coercion visible, null on cycle) + eval.cycle_nodes (localises which nodes are ON a cycle, not just whether one exists). Discharges the audit-flagged debugger-completeness carry; pure AI-introspection, no paint/framework change. The crate-lift is deliberately deferred (2nd-consumer-gated). Lifted the 3rd map_or-null site to cell_or_null.",
+      "changes_bullets": [
+        "query node.<id>.resolved_input.<port> — the value that ACTUALLY resolves into an input port: a wired source's output COERCED to the port type (so the Float->Vector broadcast is visible), else the R899 pin default, null on a cycle upstream. The eval-internal resolve_input value surfaced as a debugger read (+ detail.resolved_input mirror), so debugging \"why is this grey\" no longer requires the AI to find the edge, read the source, and re-apply the coercion by hand.",
+        "query eval.cycle_nodes — the ids of the nodes ON a dependency cycle (not merely downstream), sorted CSV, so a null value points at the exact knot to break. eval.acyclic says WHETHER a cycle exists; this LOCALISES it. A node is on a cycle iff reachable from itself along the input<-source edges (self-loop counts); the seen set excludes downstream-of-cycle nodes.",
+        "SSOT (mandatory 3b lift): the value / resolved_input / eval.output reads shared a .map_or(Null, to_introspect) mapping — a 3rd consumer crossed the rule-of-three threshold at R1260, lifted to cell_or_null()."
+      ],
+      "verification_bullets": [
+        "Discharges the §2#7 debugger-completeness carry the R1256/R1258/R1259 audits flagged (per-input resolved reads + cycle-localization). The crate-lift the R1259 audit named is deliberately NOT done — it is 2nd-consumer-gated (premature-abstraction otherwise); this round is pure AI-introspection reads, no paint, no framework change, no architectural churn.",
+        "cargo test -p hello-node-editor 232 pass / 0 fail (4 new r1260_*: cycle_nodes localises only members / resolved_input wired-else-default / Float->Vector broadcast visible / query+cycle integration incl. detail mirror + out-of-range UnknownPath + cycle-fed null).",
+        "clippy -p hello-node-editor --all-targets = 0; cargo fmt --check clean; cargo doc (private-items) exit 0.",
+        "tools/demos/r1260_node_debugger_reads.py 30 assertions PASS on the release binary (resolved_input propagation, broadcast visibility, cycle localisation excludes downstream/disconnected nodes, break-cycle clears it). ALL 30 node-editor demos PASS. validate-workspace T1 orphan=0."
+      ],
+      "impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Still carried (architectural, honestly documented not overclaimed): the reusable pinion-node-graph crate with trait/registry-dispatched eval (2nd-consumer-gated redesign); a set_graph rejection reason-string (needs an InvokeError diagnostic payload = framework change); the value model (Color/Float only), exec/control-flow pins, and sub-graphs (Phase C/D scope).",
+        "resolved_input recomputes per query (fresh memo per port); no incremental cache -- measure-first at editor scale."
+      ],
+      "publishable_decision_summary": "R1260 §2#7 node-graph DEBUGGER reads: query node.<id>.resolved_input.<port> (the value that actually flows in, coercion visible, null on cycle) + eval.cycle_nodes (localises which nodes are ON a cycle, not just whether one exists). Discharges the audit-flagged debugger-completeness carry; pure AI-introspection, no paint/framework change. The crate-lift is deliberately deferred (2nd-consumer-gated). Lifted the 3rd map_or-null site to cell_or_null.",
+      "publishable_changes_bullets": [
+        "query node.<id>.resolved_input.<port> — the value that ACTUALLY resolves into an input port: a wired source's output COERCED to the port type (so the Float->Vector broadcast is visible), else the R899 pin default, null on a cycle upstream. The eval-internal resolve_input value surfaced as a debugger read (+ detail.resolved_input mirror), so debugging \"why is this grey\" no longer requires the AI to find the edge, read the source, and re-apply the coercion by hand.",
+        "query eval.cycle_nodes — the ids of the nodes ON a dependency cycle (not merely downstream), sorted CSV, so a null value points at the exact knot to break. eval.acyclic says WHETHER a cycle exists; this LOCALISES it. A node is on a cycle iff reachable from itself along the input<-source edges (self-loop counts); the seen set excludes downstream-of-cycle nodes.",
+        "SSOT (mandatory 3b lift): the value / resolved_input / eval.output reads shared a .map_or(Null, to_introspect) mapping — a 3rd consumer crossed the rule-of-three threshold at R1260, lifted to cell_or_null()."
+      ],
+      "publishable_verification_bullets": [
+        "Discharges the §2#7 debugger-completeness carry the R1256/R1258/R1259 audits flagged (per-input resolved reads + cycle-localization). The crate-lift the R1259 audit named is deliberately NOT done — it is 2nd-consumer-gated (premature-abstraction otherwise); this round is pure AI-introspection reads, no paint, no framework change, no architectural churn.",
+        "cargo test -p hello-node-editor 232 pass / 0 fail (4 new r1260_*: cycle_nodes localises only members / resolved_input wired-else-default / Float->Vector broadcast visible / query+cycle integration incl. detail mirror + out-of-range UnknownPath + cycle-fed null).",
+        "clippy -p hello-node-editor --all-targets = 0; cargo fmt --check clean; cargo doc (private-items) exit 0.",
+        "tools/demos/r1260_node_debugger_reads.py 30 assertions PASS on the release binary (resolved_input propagation, broadcast visibility, cycle localisation excludes downstream/disconnected nodes, break-cycle clears it). ALL 30 node-editor demos PASS. validate-workspace T1 orphan=0."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Still carried (architectural, honestly documented not overclaimed): the reusable pinion-node-graph crate with trait/registry-dispatched eval (2nd-consumer-gated redesign); a set_graph rejection reason-string (needs an InvokeError diagnostic payload = framework change); the value model (Color/Float only), exec/control-flow pins, and sub-graphs (Phase C/D scope).",
+        "resolved_input recomputes per query (fresh memo per port); no incremental cache -- measure-first at editor scale."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

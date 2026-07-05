@@ -48,10 +48,11 @@
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
-//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,op,is_source,input_types,output_types,input_default.<port>,value}` (R1256: `op` = rename-stable compute identity; R1257: `is_source` + authorable `value` on sources) /
+//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,op,is_source,input_types,output_types,input_default.<port>,value,resolved_input.<port>}` (R1256: `op` = rename-stable compute identity; R1257: `is_source` + authorable `value` on sources; R1260: `resolved_input.<port>` = the value that actually flows in, a debugger read) /
 //! `edge.<id>` / `dissolvable.<id>` / `dissolvable_ids` (R1241: dissolve
-//! eligibility) / `eval.{output,acyclic}` (R1255: the evaluated terminal value
-//! and the DAG check) / `selected` / `selected_ids` / `selected_edge`;
+//! eligibility) / `eval.{output,acyclic,cycle_nodes}` (R1255: terminal value +
+//! DAG check; R1260: `cycle_nodes` localises a cycle) / `selected` /
+//! `selected_ids` / `selected_edge`;
 //! `intervene node.<id>.x` / `node.<id>.y` / `node.<id>.title` /
 //! `node.<id>.input_default.<port>` / `frame.<id>.{title,x,y,w,h}` (R1234:
 //! `x`/`y` move the frame + its contents, `w`/`h` resize it) /
@@ -912,6 +913,15 @@ fn evaluate(nodes: &[GraphNode], edges: &[Edge], id: NodeId) -> Option<CellValue
     eval_node(nodes, edges, id, &mut BTreeMap::new(), &mut BTreeSet::new())
 }
 
+/// R1260 — an evaluated `CellValue` as its introspection wire form, or
+/// [`IntrospectValue::Null`] when it is absent (a cycle upstream / no value).
+/// The one home for the `value` / `resolved_input.<port>` / `eval.output` reads'
+/// shared "computed value else null" mapping (a 3rd consumer crossed the lift
+/// threshold at R1260).
+fn cell_or_null(value: Option<CellValue>) -> IntrospectValue {
+    value.map_or(IntrospectValue::Null, |v| v.to_introspect())
+}
+
 /// R1255 — the graph's terminal value: the resolved input of the [`NodeOp::Output`]
 /// sink (lowest id when several exist, so the read is deterministic). `None`
 /// when there is no `Output` node, or its input cone has a cycle. Behind
@@ -947,6 +957,54 @@ fn graph_is_acyclic(nodes: &[GraphNode], edges: &[Edge]) -> bool {
     }
     let mut state: BTreeMap<NodeId, u8> = BTreeMap::new();
     nodes.iter().all(|n| visit(n.id, edges, &mut state))
+}
+
+/// R1260 — the value that actually RESOLVES into `node`'s input `port` (the
+/// debugger read behind `query node.<id>.resolved_input.<port>`): the wired
+/// source's output **coerced to the port type** if a source is connected, else
+/// the R899 pin default. The eval-internal [`resolve_input`] value, surfaced for
+/// AI introspection — so debugging "why is this grey" no longer requires the AI
+/// to find the edge, read the source's `value`, and re-apply the `Float→Vector`
+/// broadcast by hand. `None` for an out-of-range port or an unresolvable input (a
+/// cycle upstream). Evaluated from a fresh memo (§2 #3 pure).
+fn resolve_input_value(
+    nodes: &[GraphNode],
+    edges: &[Edge],
+    node: &GraphNode,
+    port: usize,
+) -> Option<CellValue> {
+    resolve_input(
+        nodes,
+        edges,
+        node,
+        port,
+        &mut BTreeMap::new(),
+        &mut BTreeSet::new(),
+    )
+}
+
+/// R1260 — the ids of the nodes that lie **ON** a dependency cycle (not merely
+/// downstream of one), sorted, behind `query eval.cycle_nodes`. `eval.acyclic`
+/// says *whether* a cycle exists; this *localises* it, so an AI reading a `null`
+/// `value` can point at the exact knot to break (the visual-scripting-debugger
+/// affordance). A node is on a cycle iff it is reachable from itself along the
+/// `input ← source` dependency edges (a self-loop counts); the `seen` set both
+/// terminates the walk and excludes downstream-of-cycle nodes (which cannot
+/// reach *themselves*).
+fn cycle_nodes(nodes: &[GraphNode], edges: &[Edge]) -> Vec<NodeId> {
+    fn reaches(from: NodeId, target: NodeId, edges: &[Edge], seen: &mut BTreeSet<NodeId>) -> bool {
+        edges.iter().filter(|e| e.to_node == from).any(|e| {
+            e.from_node == target
+                || (seen.insert(e.from_node) && reaches(e.from_node, target, edges, seen))
+        })
+    }
+    let mut on_cycle: Vec<NodeId> = nodes
+        .iter()
+        .filter(|n| reaches(n.id, n.id, edges, &mut BTreeSet::new()))
+        .map(|n| n.id)
+        .collect();
+    on_cycle.sort_by_key(|id| id.raw());
+    on_cycle
 }
 
 /// R1258 — the canonical `(input, output)` port shape a compute op must have,
@@ -4518,18 +4576,35 @@ impl NodeGraphExternal {
                 // object — the same wire form as `input_default.<port>`.
                 "value" => {
                     let edges = self.edges.get();
-                    Some(
-                        evaluate(&nodes, &edges, id)
-                            .map_or(IntrospectValue::Null, |v| v.to_introspect()),
-                    )
+                    Some(cell_or_null(evaluate(&nodes, &edges, id)))
                 }
                 // R899 — the typed default of an input port (the write twin is
                 // `intervene node.<id>.input_default.<port>`); a `Float` reads as a
-                // float, a `Vector` (`Color`) as a `{hex,r,g,b,a}` object.
-                other => other
-                    .strip_prefix("input_default.")
-                    .and_then(|p| p.parse::<usize>().ok())
-                    .and_then(|port| node.input_default(port).map(CellValue::to_introspect)),
+                // float, a `Vector` (`Color`) as a `{hex,r,g,b,a}` object. R1260 —
+                // `resolved_input.<port>` is the *debugger* read: the value that
+                // actually flows in (a wired source's output coerced to the port
+                // type, else the default), `Null` on a cycle upstream.
+                other => {
+                    if let Some(port) = other
+                        .strip_prefix("input_default.")
+                        .and_then(|p| p.parse::<usize>().ok())
+                    {
+                        node.input_default(port).map(CellValue::to_introspect)
+                    } else if let Some(port) = other
+                        .strip_prefix("resolved_input.")
+                        .and_then(|p| p.parse::<usize>().ok())
+                    {
+                        // Out-of-range port -> UnknownPath (`None`); an in-range
+                        // input fed by a cycle -> `Null`.
+                        node.input_type(port)?;
+                        let edges = self.edges.get();
+                        Some(cell_or_null(resolve_input_value(
+                            &nodes, &edges, node, port,
+                        )))
+                    } else {
+                        None
+                    }
+                }
             };
         }
         if let Some(id_str) = path.strip_prefix("edge.") {
@@ -4550,11 +4625,18 @@ impl NodeGraphExternal {
             let nodes = self.nodes.get();
             let edges = self.edges.get();
             return match field {
-                "output" => Some(
-                    eval_terminal(&nodes, &edges)
-                        .map_or(IntrospectValue::Null, |v| v.to_introspect()),
-                ),
+                "output" => Some(cell_or_null(eval_terminal(&nodes, &edges))),
                 "acyclic" => Some(IntrospectValue::Bool(graph_is_acyclic(&nodes, &edges))),
+                // R1260 — LOCALISE a cycle: the ids of the nodes ON a cycle
+                // (not merely downstream), so a `null` value points at the knot
+                // to break. Empty for a DAG.
+                "cycle_nodes" => Some(IntrospectValue::Text(
+                    cycle_nodes(&nodes, &edges)
+                        .iter()
+                        .map(|id| id.raw().to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )),
                 _ => None,
             };
         }
@@ -5835,6 +5917,10 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node.<id>.input_types", "string"),
             ("node.<id>.output_types", "string"),
             ("node.<id>.input_default.<port>", "json"),
+            // R1260 — the debugger read: the value that actually resolves into
+            // an input port (wired source coerced, else the default; null on a
+            // cycle).
+            ("node.<id>.resolved_input.<port>", "json"),
             // R1255 — the evaluated output value (a `Float` reads float, a
             // `Vector` a `{hex,r,g,b,a}` object, `null` on a cycle) — hence json.
             ("node.<id>.value", "json"),
@@ -5858,11 +5944,14 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("detail.input_types", "string"),
             ("detail.output_types", "string"),
             ("detail.input_default.<port>", "json"),
+            ("detail.resolved_input.<port>", "json"),
             ("detail.value", "json"),
             ("edge.<id>", "string"),
             // R1255 — the graph-evaluation reads (no write twin — derived).
             ("eval.output", "json"),
             ("eval.acyclic", "bool"),
+            // R1260 — the ids of the nodes ON a cycle (CSV), localising a null.
+            ("eval.cycle_nodes", "string"),
             ("viewport.x", "float"),
             ("viewport.y", "float"),
             ("viewport.zoom", "float"),

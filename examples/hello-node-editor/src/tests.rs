@@ -7814,3 +7814,189 @@ fn r1259_old_blob_with_is_reroute_key_still_loads() {
         );
     });
 }
+
+// ── R1260 — §2#7 debugger reads (per-input resolved values + cycle localisation) ──
+
+#[test]
+fn r1260_cycle_nodes_localises_only_the_cycle_members() {
+    // A 2-cycle A(0) <-> B(1), plus a downstream C(2) fed by B. Only A and B are
+    // ON the cycle; C is downstream but NOT on it.
+    let nodes = vec![
+        eval_node_of(0, NodeOp::Add, 2, true),
+        eval_node_of(1, NodeOp::Add, 2, true),
+        eval_node_of(2, NodeOp::Add, 2, true),
+    ];
+    let edges = vec![
+        Edge {
+            id: EdgeId(0),
+            from_node: NodeId(0),
+            from_port: 0,
+            to_node: NodeId(1),
+            to_port: 0,
+        },
+        Edge {
+            id: EdgeId(1),
+            from_node: NodeId(1),
+            from_port: 0,
+            to_node: NodeId(0),
+            to_port: 0,
+        },
+        Edge {
+            id: EdgeId(2),
+            from_node: NodeId(1),
+            from_port: 0,
+            to_node: NodeId(2),
+            to_port: 0,
+        },
+    ];
+    assert_eq!(
+        cycle_nodes(&nodes, &edges),
+        vec![NodeId(0), NodeId(1)],
+        "only the cycle members, sorted (C is downstream, not on the cycle)",
+    );
+    // A self-loop counts as a cycle.
+    let sl = vec![eval_node_of(5, NodeOp::Add, 1, true)];
+    let sl_edge = vec![Edge {
+        id: EdgeId(0),
+        from_node: NodeId(5),
+        from_port: 0,
+        to_node: NodeId(5),
+        to_port: 0,
+    }];
+    assert_eq!(
+        cycle_nodes(&sl, &sl_edge),
+        vec![NodeId(5)],
+        "a self-loop is a cycle"
+    );
+    // A DAG has no cycle nodes.
+    assert!(
+        cycle_nodes(&default_nodes(), &default_edges()).is_empty(),
+        "the seed graph has none"
+    );
+}
+
+#[test]
+fn r1260_resolved_input_shows_the_wired_value_else_the_default() {
+    let src = eval_node_of(0, NodeOp::Color, 0, true); // grey source
+    let mul = eval_node_of(1, NodeOp::Multiply, 2, true);
+    let edges = vec![Edge {
+        id: EdgeId(0),
+        from_node: NodeId(0),
+        from_port: 0,
+        to_node: NodeId(1),
+        to_port: 0,
+    }];
+    let nodes = vec![src, mul];
+    let grey = CellValue::Color(Color::rgb(0x80, 0x80, 0x80));
+    assert_eq!(
+        resolve_input_value(&nodes, &edges, &nodes[1], 0),
+        Some(grey.clone()),
+        "wired input resolves the source"
+    );
+    assert_eq!(
+        resolve_input_value(&nodes, &edges, &nodes[1], 1),
+        Some(grey),
+        "unwired input resolves its default"
+    );
+    assert_eq!(
+        resolve_input_value(&nodes, &edges, &nodes[1], 9),
+        None,
+        "out-of-range port is None"
+    );
+}
+
+#[test]
+fn r1260_resolved_input_shows_the_float_to_vector_broadcast() {
+    // A Scalar (Float 0.0) wired into an Add's Vector input: resolved_input shows
+    // the POST-coercion value (black), not the raw Float -- the exact broadcast
+    // an AI would otherwise re-derive by hand.
+    let scalar = GraphNode::from_palette(5, 0, 0, 0).unwrap(); // Scalar -> Float
+    let add = eval_node_of(1, NodeOp::Add, 2, true);
+    let edges = vec![Edge {
+        id: EdgeId(0),
+        from_node: NodeId(0),
+        from_port: 0,
+        to_node: NodeId(1),
+        to_port: 0,
+    }];
+    let nodes = vec![scalar, add];
+    assert_eq!(
+        resolve_input_value(&nodes, &edges, &nodes[1], 0),
+        Some(CellValue::Color(Color::rgb(0, 0, 0))),
+        "the Float source broadcast to black at the Vector input",
+    );
+}
+
+#[test]
+fn r1260_query_resolved_input_and_localises_a_cycle() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let node = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .expect("present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        // Multiply (node 2) inputs are both wired from grey sources.
+        let grey = CellValue::Color(Color::rgb(0x80, 0x80, 0x80)).to_introspect();
+        assert_eq!(
+            intro.query("node.2.resolved_input.0"),
+            Some(grey.clone()),
+            "in0 resolves the wired grey"
+        );
+        assert_eq!(
+            intro.query("node.2.resolved_input.1"),
+            Some(grey),
+            "in1 too"
+        );
+        assert_eq!(
+            intro.query("node.2.resolved_input.9"),
+            None,
+            "an out-of-range port is UnknownPath"
+        );
+        // detail.resolved_input mirrors the selected node.
+        intro
+            .intervene("selected_ids", IntrospectValue::Text("2".into()))
+            .unwrap();
+        assert_eq!(
+            intro.query("detail.resolved_input.0"),
+            intro.query("node.2.resolved_input.0"),
+            "detail mirror"
+        );
+        // The seed graph is a DAG: cycle_nodes is empty.
+        assert_eq!(
+            intro.query("eval.cycle_nodes"),
+            Some(IntrospectValue::Text(String::new())),
+            "no cycle at boot"
+        );
+        // Author a 2-cycle from two fresh Adds (self-loops are rejected by add_edge).
+        let a = match intro.invoke("add_node", IntrospectValue::Text("Add".into())) {
+            Ok(IntrospectValue::Int(i)) => i,
+            o => panic!("{o:?}"),
+        };
+        let b = match intro.invoke("add_node", IntrospectValue::Text("Add".into())) {
+            Ok(IntrospectValue::Int(i)) => i,
+            o => panic!("{o:?}"),
+        };
+        intro
+            .invoke("add_edge", IntrospectValue::Text(format!("{a},0,{b},0")))
+            .unwrap();
+        intro
+            .invoke("add_edge", IntrospectValue::Text(format!("{b},0,{a},0")))
+            .unwrap();
+        assert_eq!(
+            intro.query("eval.acyclic"),
+            Some(IntrospectValue::Bool(false)),
+            "now cyclic"
+        );
+        assert_eq!(
+            intro.query("eval.cycle_nodes"),
+            Some(IntrospectValue::Text(format!("{a},{b}"))),
+            "cycle_nodes localises exactly the two knots",
+        );
+        // A cycle node's resolved input is null (uncomputable).
+        assert_eq!(
+            intro.query(&format!("node.{a}.resolved_input.0")),
+            Some(IntrospectValue::Null),
+            "a cycle-fed input reads null",
+        );
+    });
+}
