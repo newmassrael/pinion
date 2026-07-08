@@ -36,6 +36,7 @@ use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
 use pinion_core::style::CursorHint;
+use pinion_rpc::{RpcFrame, RpcIngress, RpcReply};
 use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
 use vello::kurbo::Affine;
@@ -1045,9 +1046,16 @@ impl<V: WidgetView> AppShell<V> {
 
     /// R51.76 §5.40 — thin wrapper around [`ShellCore::dispatch_rpc`]
     /// that builds the production `resize_request` closure from the
-    /// live winit `Window` and writes the JSON-RPC response to
-    /// stdout. Headless tests call `ShellCore::dispatch_rpc` directly
-    /// with a no-op closure.
+    /// live winit `Window` and routes the JSON-RPC response through the
+    /// frame's [`RpcReply`] sink. Headless tests call
+    /// `ShellCore::dispatch_rpc` directly with a no-op closure.
+    ///
+    /// R-PR47 §5.7 — the response used to be hard-written to
+    /// `std::io::stdout` here; now it goes to `frame.reply`, so a frame
+    /// that arrived over a socket is answered on that socket. The
+    /// built-in stdin producer supplies a stdout-writing reply
+    /// ([`stdout_reply`]), keeping the `stdin → stdout` path
+    /// byte-identical.
     ///
     /// R1188 §5.16 §5.49 §2 #2 — a `scene/click` on a window-control tag queues
     /// a control on `ShellCore` (winit handles + the event-loop exit live HERE,
@@ -1060,7 +1068,12 @@ impl<V: WidgetView> AppShell<V> {
     /// the drain is now INSIDE the one method that owns the window-control RPC
     /// path, and taking `event_loop` makes the requirement compiler-enforced
     /// (a caller cannot invoke this without the handle the close/app-exit needs).
-    fn dispatch_rpc(&mut self, request: &str, event_loop: &ActiveEventLoop) {
+    fn dispatch_rpc(&mut self, frame: RpcFrame, event_loop: &ActiveEventLoop) {
+        // R-PR47 §5.7 — split the frame into its raw request + the reply
+        // sink that routes the response back to the originating
+        // transport. `reply` is consumed on exactly one path below: the
+        // parse-error short-circuit, or the post-dispatch response write.
+        let RpcFrame { request, reply } = frame;
         // R671 §5.7 §5.16 — single-parse per-window RPC dispatch.
         // Pre-R671 (R670.B) AppShell parsed the JSON-RPC envelope
         // *twice*: once to sniff `params.window` (the per-window
@@ -1069,12 +1082,11 @@ impl<V: WidgetView> AppShell<V> {
         // + extracts the window scope from `Request.params` + hands
         // the same `Request` to the substrate which forwards to
         // `pinion_rpc::dispatch_parsed`. Parse errors short-circuit
-        // here + we write the canonical -32700 frame to stdout.
-        let parsed_request = match pinion_rpc::parse_request(request) {
+        // here + we return the canonical -32700 frame through the reply.
+        let parsed_request = match pinion_rpc::parse_request(&request) {
             Ok(r) => r,
             Err(err_resp) => {
-                let mut out = std::io::stdout().lock();
-                let _ = writeln!(out, "{err_resp}");
+                reply.send(err_resp);
                 return;
             }
         };
@@ -1149,12 +1161,12 @@ impl<V: WidgetView> AppShell<V> {
         let resp = self
             .core
             .dispatch_rpc_scoped(parsed_request, &mut resize_req, screenshot);
+        // R-PR47 §5.7 — route the response (if any) back through the
+        // frame's reply sink. A JSON-RPC notification produces `None`:
+        // `reply` is then dropped unused, sending nothing — identical to
+        // the pre-PR47 `if let Some` guard that skipped the stdout write.
         if let Some(resp) = resp {
-            let mut out = std::io::stdout().lock();
-            if writeln!(out, "{resp}").is_err() {
-                // stdout closed (downstream consumer gone) — silently
-                // skip; do not abort the GUI loop on a broken pipe.
-            }
+            reply.send(resp);
         }
         // R1190 §5.16 §5.49 §2 #2 — execute the window-control presses the RPC
         // click drain queued during this dispatch (`ShellCore` is headless, so
@@ -3010,7 +3022,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // R1190 §5.16 §5.49 §2 #2 — `dispatch_rpc` now drains the window-control
             // queue itself (it takes `event_loop`), so the drive-half is
             // compiler-enforced, not a caller-remembered step.
-            AppEvent::RpcRequest(json) => self.dispatch_rpc(&json, event_loop),
+            AppEvent::RpcRequest(frame) => self.dispatch_rpc(frame, event_loop),
             AppEvent::AccessKit(ak) => self.handle_accesskit_event(ak),
             // R51.159 §5.23 — re-feed an Intent produced by a resolved
             // Command future back into the SCXML `send` channel via
@@ -3248,16 +3260,34 @@ fn dispatch_named_key_str(named: NamedKey) -> Option<&'static str> {
     }
 }
 
-/// Background thread: read JSON-RPC 2.0 lines from stdin and forward
-/// each as an `AppEvent::RpcRequest` user event. Blank lines are
-/// skipped; EOF or any read error terminates the thread quietly (the
-/// GUI loop keeps running). The proxy `send_event` fails only after
-/// the event loop has shut down, in which case we also exit the
-/// thread.
+/// R-PR47 §5.7 — build the reply sink for a frame that arrived on the
+/// process's own stdin: its response is written to stdout, one line,
+/// exactly as the pre-PR47 inline `AppShell::dispatch_rpc` write did (so
+/// the built-in `stdin → stdout` transport stays byte-identical — a
+/// broken pipe silently skips rather than aborting the loop). The closure
+/// runs on the UI thread, where dispatch invokes the reply.
+fn stdout_reply() -> RpcReply {
+    RpcReply::new(|response: String| {
+        let mut out = std::io::stdout().lock();
+        // stdout closed (downstream consumer gone) — silently skip; do
+        // not abort the GUI loop on a broken pipe.
+        let _ = writeln!(out, "{response}");
+    })
+}
+
+/// The built-in stdin transport: a background thread that reads JSON-RPC
+/// 2.0 lines from stdin and submits each through the [`RpcIngress`] seam
+/// with a [`stdout_reply`]. Blank lines are skipped; EOF or any read
+/// error terminates the thread quietly (the GUI loop keeps running).
+/// [`RpcIngress::submit`] becomes a no-op after the event loop has shut
+/// down, so a post-shutdown line is simply dropped.
 ///
-/// R51.92.1 §5.40 — module-local helper (sole caller is [`run`]
-/// below).
-fn spawn_stdin_rpc_reader(proxy: EventLoopProxy<AppEvent>) {
+/// R-PR47 — this is now one *producer* over the same seam an injected
+/// transport uses (the socket adapter, a test harness, ...), not a
+/// privileged stdin-only path. Sole in-crate caller is
+/// [`run_with_config`], which builds it from the GUI backend's
+/// [`ProxyRpcIngress`].
+fn spawn_stdin_rpc_reader(ingress: Arc<dyn RpcIngress>) {
     thread::spawn(move || {
         let stdin = std::io::stdin();
         let handle = stdin.lock();
@@ -3268,11 +3298,35 @@ fn spawn_stdin_rpc_reader(proxy: EventLoopProxy<AppEvent>) {
             if text.trim().is_empty() {
                 continue;
             }
-            if proxy.send_event(AppEvent::RpcRequest(text)).is_err() {
-                break;
-            }
+            ingress.submit(RpcFrame::new(text, stdout_reply()));
         }
     });
+}
+
+/// R-PR47 §5.7 §2 #6 — the GUI backend's [`RpcIngress`] implementation:
+/// wraps the winit [`EventLoopProxy`] so a frame becomes an
+/// [`AppEvent::RpcRequest`] user event on the UI thread. This is the ONE
+/// place the winit proxy is adapted to the winit-free seam — the raw
+/// `EventLoopProxy` is never handed to a consumer (that would leak winit
+/// across the transport boundary and be un-implementable for the TUI
+/// backend, breaking §2 #6).
+struct ProxyRpcIngress {
+    proxy: EventLoopProxy<AppEvent>,
+}
+
+impl ProxyRpcIngress {
+    fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+        Self { proxy }
+    }
+}
+
+impl RpcIngress for ProxyRpcIngress {
+    fn submit(&self, frame: RpcFrame) {
+        // `send_event` errors only once the event loop has shut down;
+        // the frame (and its reply) are then dropped — matching the old
+        // reader's "break on send failure" behaviour.
+        let _ = self.proxy.send_event(AppEvent::RpcRequest(frame));
+    }
 }
 
 /// R51.108 §5.41 — convert a `winit::event::Touch` to the
@@ -4202,99 +4256,176 @@ fn init_tracing() {
         .try_init();
 }
 
-/// Run the visual binary end-to-end: build the winit event loop with
-/// the [`AppEvent`] user-event slot, spawn the stdin RPC reader, run
-/// the [`AppShell<V>`] until quit. The single line every shell
-/// consumer needs in `fn main()`.
+/// R-PR47 §5.7 — startup configuration for [`run_with_config`], the
+/// general GUI entry point that [`run`] and [`run_with_handlers`] are thin
+/// wrappers over.
 ///
-/// R51.159 §5.23 — no [`CommandExecutor`] is installed by this entry
-/// point; pending [`pinion_core::Command`] queues stay parked on the
-/// owner side and never fire. Use [`run_with_handlers`] to register
-/// async [`Handler`](pinion_runtime::Handler)s and bind a tokio
-/// runtime + intent-arrival event channel.
+/// The two knobs are orthogonal:
+///
+/// - `handlers` — an optional [`HandlerRegistry`] whose presence installs
+///   the async [`CommandExecutor`] (the [`run_with_handlers`] behaviour);
+///   absent, no executor is installed (the [`run`] behaviour).
+/// - `on_ingress` — an optional hook handed the winit-free
+///   [`RpcIngress`] seam once the event loop
+///   exists but before it starts blocking. This is where a consumer
+///   mounts its own transport (e.g. the Unix-socket adapter in
+///   `pinion-rpc-transport`) to get an always-on, execution-independent
+///   RPC endpoint. The consumer owns whatever it spawns — including its
+///   lifetime, so runtime on/off is the consumer toggling its own
+///   transport, with no framework-side toggle mechanism. pinion never
+///   owns transport *policy*; it only exposes the seam.
+///
+/// The built-in `stdin → stdout` transport is always installed regardless
+/// of `on_ingress`, so the pre-PR47 pipe-driven workflow is unchanged.
+/// R-PR47 §5.7 — the [`ShellConfig::on_rpc_ingress`] hook: a one-shot,
+/// main-thread callback handed the winit-free ingress seam so a consumer
+/// can mount its own transport before the loop starts.
+type RpcIngressHook = Box<dyn FnOnce(Arc<dyn RpcIngress>)>;
+
+#[derive(Default)]
+pub struct ShellConfig {
+    handlers: Option<HandlerRegistry>,
+    on_ingress: Option<RpcIngressHook>,
+}
+
+impl ShellConfig {
+    /// A config with no async handlers and no injected transport —
+    /// equivalent to bare [`run`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Install an async [`CommandExecutor`] backed by `registry` at boot
+    /// (the [`run_with_handlers`] behaviour).
+    #[must_use]
+    pub fn with_handlers(mut self, registry: HandlerRegistry) -> Self {
+        self.handlers = Some(registry);
+        self
+    }
+
+    /// Register a hook invoked with the winit-free
+    /// [`RpcIngress`] seam after the event loop is
+    /// built but before it starts. Mount an injected transport here. The
+    /// hook runs on the main thread; the transport it spawns owns its own
+    /// threads and lifetime.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use pinion_shell::{RpcIngress, ShellConfig};
+    ///
+    /// let _config = ShellConfig::new().on_rpc_ingress(|ingress: Arc<dyn RpcIngress>| {
+    ///     // Mount any transport here and drive `ingress`. For an
+    ///     // always-on Unix socket:
+    ///     //   let control = pinion_rpc_transport::UnixSocketTransport
+    ///     //       ::serve("/run/user/1000/app.sock", ingress)?;
+    ///     // Keep `control` alive for the endpoint's lifetime; toggle
+    ///     // `control.set_enabled(..)` for runtime on/off; drop it to stop.
+    ///     let _ = ingress;
+    /// });
+    /// ```
+    #[must_use]
+    pub fn on_rpc_ingress(mut self, hook: impl FnOnce(Arc<dyn RpcIngress>) + 'static) -> Self {
+        self.on_ingress = Some(Box::new(hook));
+        self
+    }
+}
+
+/// Run the visual binary end-to-end: build the winit event loop with the
+/// [`AppEvent`] user-event slot, install the built-in stdin RPC reader
+/// (and any [`ShellConfig::on_rpc_ingress`] transport), optionally install
+/// the async [`CommandExecutor`], run the [`AppShell<V>`] until quit.
+///
+/// R-PR47 §5.7 — the single general entry point. [`run`] and
+/// [`run_with_handlers`] delegate here; a consumer that wants an injected
+/// transport (e.g. an always-on RPC socket) calls this directly with a
+/// [`ShellConfig::on_rpc_ingress`] hook.
 ///
 /// # Panics
 /// Panics if `winit::event_loop::EventLoop::with_user_event().build()`
-/// fails — that constructor only errors on platforms that cannot
-/// supply a user-event loop (none of the desktop / mobile targets
-/// pinion supports), so this is treated as an unrecoverable setup
-/// fault rather than a propagated error.
-pub fn run<V: WidgetView>() {
+/// fails (only on platforms that cannot supply a user-event loop — none
+/// of the desktop targets pinion supports), or, when `config.handlers` is
+/// set, if the tokio runtime cannot spin up its worker thread (the
+/// OS-level thread-spawn failure that
+/// [`TokioExecutor::new`](crate::TokioExecutor) wraps).
+pub fn run_with_config<V: WidgetView>(config: ShellConfig) {
     init_tracing();
-    // R637 §5.16 §5.7 — `PINION_SCREENSHOT=<path>` env hook. When
-    // set, the binary bypasses winit entirely: build the initial
-    // paint scene through the same `ShellCore` substrate the live
-    // path uses, render it through `HeadlessScreenshot` (wgpu +
-    // vello, no surface), write the PNG, exit cleanly. See
-    // [`crate::headless_screenshot`] for the substrate rationale.
+    // R637 §5.16 §5.7 — `PINION_SCREENSHOT=<path>` env hook. When set, the
+    // binary bypasses winit entirely: build the initial paint scene
+    // through the same `ShellCore` substrate the live path uses, render it
+    // through `HeadlessScreenshot`, write the PNG, exit. No event loop, so
+    // neither the stdin reader nor an injected transport is installed —
+    // there is no live loop to feed. See [`crate::headless_screenshot`].
     if try_headless_screenshot::<V>() {
+        drop(config);
         return;
     }
     let event_loop = EventLoop::<AppEvent>::with_user_event()
         .build()
         .expect("winit EventLoop::with_user_event failed");
     event_loop.set_control_flow(ControlFlow::Wait);
-    spawn_stdin_rpc_reader(event_loop.create_proxy());
+
+    // R-PR47 §5.7 — build the winit-free ingress seam once, then feed it
+    // to every producer: the built-in stdin reader AND the consumer's
+    // optional injected transport share the identical dispatch path.
+    let ingress: Arc<dyn RpcIngress> = Arc::new(ProxyRpcIngress::new(event_loop.create_proxy()));
+    spawn_stdin_rpc_reader(Arc::clone(&ingress));
+    if let Some(hook) = config.on_ingress {
+        hook(Arc::clone(&ingress));
+    }
+
     let mut app = AppShell::<V>::new(event_loop.create_proxy());
+
+    // R51.159 §5.23 — when handlers are supplied, assemble the
+    // CommandExecutor and inject it before the loop starts so the first
+    // dispatch tail can already drain pending commands. Absent handlers,
+    // pending Command queues stay parked (the bare `run` behaviour).
+    if let Some(registry) = config.handlers {
+        let (executor, sink) =
+            build_executor_and_sink(event_loop.create_proxy()).expect("tokio runtime build failed");
+        let cmd_exec = Arc::new(CommandExecutor::new(registry, executor, sink));
+        let _prior = app.core.set_command_executor(cmd_exec);
+    }
+
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("shell: event loop error: {e}");
     }
 }
 
-/// R51.159 §5.23 — variant of [`run`] that installs a
-/// [`CommandExecutor`] at boot so
-/// pending [`pinion_core::Command`]s queued by reducer fallout or
-/// SCXML / Update steps reach their registered
-/// [`Handler`](pinion_runtime::Handler)s asynchronously.
+/// Run the visual binary end-to-end. The single line every shell consumer
+/// needs in `fn main()`.
 ///
-/// Composes:
-///
-/// - A tokio multi-thread [`TokioExecutor`](crate::TokioExecutor) (1
-///   worker thread, `enable_all`) backing
-///   [`Executor::spawn`](pinion_runtime::Executor).
-/// - A [`ProxyIntentSink`](crate::ProxyIntentSink) wrapping the
-///   winit [`EventLoopProxy`] so resolved [`pinion_core::Intent`]s
-///   arrive on the UI thread through
-///   [`AppEvent::IntentArrived`] for re-feed.
-/// - The supplied `registry` of [`Handler`](pinion_runtime::Handler)
-///   impls keyed by [`pinion_core::Command::kind_str`].
+/// R51.159 §5.23 — no [`CommandExecutor`] is installed by this entry
+/// point; pending [`pinion_core::Command`] queues stay parked on the
+/// owner side and never fire. Use [`run_with_handlers`] to register async
+/// [`Handler`](pinion_runtime::Handler)s, or [`run_with_config`] for full
+/// control including an injected RPC transport.
 ///
 /// # Panics
-/// Panics if the winit event loop cannot be built (same condition as
-/// [`run`]) or if the tokio runtime cannot spin up its worker
-/// thread (the OS-level thread-spawn failure that
-/// [`TokioExecutor::new`](crate::TokioExecutor) wraps).
+/// Panics if the winit event loop cannot be built (see
+/// [`run_with_config`]).
+pub fn run<V: WidgetView>() {
+    run_with_config::<V>(ShellConfig::new());
+}
+
+/// R51.159 §5.23 — variant of [`run`] that installs a [`CommandExecutor`]
+/// at boot so pending [`pinion_core::Command`]s queued by reducer fallout
+/// or SCXML / Update steps reach their registered
+/// [`Handler`](pinion_runtime::Handler)s asynchronously.
+///
+/// Composes a tokio multi-thread [`TokioExecutor`](crate::TokioExecutor)
+/// (1 worker, `enable_all`), a [`ProxyIntentSink`](crate::ProxyIntentSink)
+/// wrapping the winit [`EventLoopProxy`] so resolved
+/// [`pinion_core::Intent`]s arrive through [`AppEvent::IntentArrived`],
+/// and the supplied `registry` keyed by
+/// [`pinion_core::Command::kind_str`]. Equivalent to
+/// `run_with_config(ShellConfig::new().with_handlers(registry))`.
+///
+/// # Panics
+/// Panics if the winit event loop cannot be built or if the tokio runtime
+/// cannot spin up its worker thread (see [`run_with_config`]).
 pub fn run_with_handlers<V: WidgetView>(registry: HandlerRegistry) {
-    init_tracing();
-    // R637 §5.16 §5.7 — see `run::<V>` for the headless screenshot
-    // env contract; the handler-installing variant respects the
-    // same hook so design-parity verification works for command-
-    // driven examples too. Handlers are not invoked during the
-    // screenshot path — the substrate captures the initial paint
-    // scene only, no async resolution cycle runs.
-    if try_headless_screenshot::<V>() {
-        let _ = registry;
-        return;
-    }
-    let event_loop = EventLoop::<AppEvent>::with_user_event()
-        .build()
-        .expect("winit EventLoop::with_user_event failed");
-    event_loop.set_control_flow(ControlFlow::Wait);
-    spawn_stdin_rpc_reader(event_loop.create_proxy());
-
-    // R51.159 §5.23 — assemble the CommandExecutor and inject it
-    // before the event loop starts so the first dispatch tail can
-    // already drain pending commands.
-    let (executor, sink) =
-        build_executor_and_sink(event_loop.create_proxy()).expect("tokio runtime build failed");
-    let cmd_exec = Arc::new(CommandExecutor::new(registry, executor, sink));
-
-    let mut app = AppShell::<V>::new(event_loop.create_proxy());
-    let _prior = app.core.set_command_executor(cmd_exec);
-
-    if let Err(e) = event_loop.run_app(&mut app) {
-        eprintln!("shell: event loop error: {e}");
-    }
+    run_with_config::<V>(ShellConfig::new().with_handlers(registry));
 }
 
 /// R835 §5.16 — `true` when `PINION_HIDDEN_WINDOW` requests the

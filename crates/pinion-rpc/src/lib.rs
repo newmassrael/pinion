@@ -43,6 +43,7 @@ pub mod substrate_introspect;
 pub mod text;
 pub mod text_state;
 pub mod theme;
+pub mod transport;
 pub mod wait_for;
 pub mod window_move;
 
@@ -130,5 +131,6 @@ pub use theme::{
     SetThemeModeParams, ThemeTokenView, ThemeTokensError, ThemeTokensOutcome, set_theme_mode,
     theme_tokens,
 };
+pub use transport::{RpcFrame, RpcIngress, RpcReply};
 pub use wait_for::{WaitForError, WaitOutcome, wait_for};
 pub use window_move::{WindowMoveError, WindowMoveOutcome, WindowMoveParams, window_move};

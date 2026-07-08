@@ -5,6 +5,7 @@ members = [
     "crates/pinion-derive",
     "crates/pinion-runtime",
     "crates/pinion-rpc",
+    "crates/pinion-rpc-transport",
     "crates/pinion-cli",
     "crates/pinion-forge",
     "crates/pinion-overlay",

@@ -4680,6 +4680,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinion-rpc-transport"
+version = "0.0.1"
+dependencies = [
+ "pinion-rpc",
+]
+
+[[package]]
 name = "pinion-runtime"
 version = "0.0.1"
 dependencies = [

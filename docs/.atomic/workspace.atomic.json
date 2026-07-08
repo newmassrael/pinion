@@ -22966,6 +22966,50 @@
         "Viewport card-culling still carried (R1261, needs a frame-timing profile / GPU harness)."
       ]
     },
+    "R1263": {
+      "decision_summary": "R1263 PR-47 (sprag-forced consumer seam; reviewed 6/6 code claims against HEAD, then built on user directive). Decouples the RPC transport from stdin/stdout via a winit-free injection seam so an execution-independent, runtime-toggleable RPC endpoint is possible. New pinion-rpc transport.rs: RpcReply (one-shot FnOnce response sink), RpcFrame{request,reply}, trait RpcIngress: Send+Sync -- winit-free so ONE seam serves both GUI and TUI (a raw EventLoopProxy seam is un-implementable for the TUI backend, §2 #6). AppEvent::RpcRequest now carries RpcFrame; AppShell::dispatch_rpc routes the response through frame.reply, and the stdin reader supplies a stdout reply so stdin->stdout is byte-identical. ShellConfig + run_with_config expose an on_rpc_ingress hook; run/run_with_handlers become thin wrappers. New crate pinion-rpc-transport ships a reusable UnixSocketTransport + TransportControl -- runtime on/off falls out of the consumer owning the transport lifetime, with no framework-side toggle (the (A)-over-(B) design proven). TUI migrated to the same RpcFrame seam, collapsing the per-backend stderr hardcode into a per-frame reply. Breaks no §2 invariant (additive seam, not a spec round).",
+      "changes_bullets": [
+        "pinion-rpc: new transport.rs seam -- RpcReply(Box<dyn FnOnce(String)+Send>, manual Debug so AppEvent keeps its derive), RpcFrame{request,reply}, trait RpcIngress: Send+Sync. The dispatch core (dispatch_rpc_scoped -> Option<String>) was already transport-agnostic; the coupling was only the stdin read + stdout/stderr write, now lifted behind this seam.",
+        "pinion-shell: AppEvent::RpcRequest(String) -> RpcRequest(RpcFrame); ProxyRpcIngress wraps EventLoopProxy (Send+Sync, no Mutex needed); AppShell::dispatch_rpc consumes the frame and sends the response through frame.reply -- the stdin reader attaches stdout_reply() so the stdin->stdout path is byte-identical. Added ShellConfig{handlers,on_ingress} + run_with_config + ShellConfig::on_rpc_ingress; run/run_with_handlers delegate.",
+        "New crate pinion-rpc-transport (deps: pinion-rpc only): UnixSocketTransport::serve(path,ingress) -> TransportControl. Per-connection reader builds RpcFrame(reply -> per-conn writer channel) and submits; a dedicated writer thread serializes responses. TransportControl set_enabled/enable/disable (runtime on/off = refuse-service while bound), path(), shutdown()/Drop unbind + unlink. Non-blocking listener + 50ms accept poll (control-plane, not hot path).",
+        "pinion-tui: RPC channel migrated Sender<String> -> Sender<RpcFrame>; stdin reader attaches stderr_reply(); drain routes via frame.reply. The per-backend stderr response wire is no longer hardcoded in the drain -- it is chosen per frame by the reply."
+      ],
+      "verification_bullets": [
+        "pinion-rpc-transport: 5 integration tests ZERO-FLAKE x3 runs -- roundtrip; two-connection response correlation (no cross-talk); notification-produces-no-response; disabled endpoint refuses new connections then re-enable serves; drop unbinds the socket path.",
+        "Regression 0: pinion-shell dispatch_core 148 + unit 154, pinion-tui rpc_ingress 18 + unit 90, pinion-rpc 886 all pass. Both new doctests (ShellConfig::on_rpc_ingress, transport crate) compile.",
+        "Workspace clippy --workspace --all-targets --features pinion-runtime/vello CLEAN (every example + crate). Reviewed first: the R1200-pinned handoff's 6/6 code claims (stdin reader unconditional/private, stdout write in the AppShell wrapper, transport-agnostic core, EventLoopProxy owner-internal, no alt transport) verified against HEAD before building."
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "Runnable GUI example mounting the socket (heavy pinion-forge scaffolding) + its lavapipe e2e is the only path not covered by an automated test: the full socket -> ProxyRpcIngress -> winit -> dispatch -> reply -> socket composition (each piece is verified; the winit-forward hop is a 1-line send_event). Consumer-gated, deferred.",
+        "TUI socket-mount hook (TuiRpcIngress + TuiConfig) deferred -- no TUI consumer yet, so it would be dead code / violate the 2nd-consumer gate. Note: std::sync::mpsc::Sender is !Sync, so a TuiRpcIngress needs a Mutex wrap.",
+        "sprag consumes run_with_config().on_rpc_ingress(|i| UnixSocketTransport::serve(path, i)) + owns the on/off policy (env/signal) in a sprag-native session; the pinion side (this round) is complete. Cross-repo rule: not edited from here.",
+        "Viewport card-culling still carried (R1261, needs a frame-timing profile / GPU harness)."
+      ],
+      "publishable_decision_summary": "R1263 PR-47 (sprag-forced consumer seam; reviewed 6/6 code claims against HEAD, then built on user directive). Decouples the RPC transport from stdin/stdout via a winit-free injection seam so an execution-independent, runtime-toggleable RPC endpoint is possible. New pinion-rpc transport.rs: RpcReply (one-shot FnOnce response sink), RpcFrame{request,reply}, trait RpcIngress: Send+Sync -- winit-free so ONE seam serves both GUI and TUI (a raw EventLoopProxy seam is un-implementable for the TUI backend, §2 #6). AppEvent::RpcRequest now carries RpcFrame; AppShell::dispatch_rpc routes the response through frame.reply, and the stdin reader supplies a stdout reply so stdin->stdout is byte-identical. ShellConfig + run_with_config expose an on_rpc_ingress hook; run/run_with_handlers become thin wrappers. New crate pinion-rpc-transport ships a reusable UnixSocketTransport + TransportControl -- runtime on/off falls out of the consumer owning the transport lifetime, with no framework-side toggle (the (A)-over-(B) design proven). TUI migrated to the same RpcFrame seam, collapsing the per-backend stderr hardcode into a per-frame reply. Breaks no §2 invariant (additive seam, not a spec round).",
+      "publishable_changes_bullets": [
+        "pinion-rpc: new transport.rs seam -- RpcReply(Box<dyn FnOnce(String)+Send>, manual Debug so AppEvent keeps its derive), RpcFrame{request,reply}, trait RpcIngress: Send+Sync. The dispatch core (dispatch_rpc_scoped -> Option<String>) was already transport-agnostic; the coupling was only the stdin read + stdout/stderr write, now lifted behind this seam.",
+        "pinion-shell: AppEvent::RpcRequest(String) -> RpcRequest(RpcFrame); ProxyRpcIngress wraps EventLoopProxy (Send+Sync, no Mutex needed); AppShell::dispatch_rpc consumes the frame and sends the response through frame.reply -- the stdin reader attaches stdout_reply() so the stdin->stdout path is byte-identical. Added ShellConfig{handlers,on_ingress} + run_with_config + ShellConfig::on_rpc_ingress; run/run_with_handlers delegate.",
+        "New crate pinion-rpc-transport (deps: pinion-rpc only): UnixSocketTransport::serve(path,ingress) -> TransportControl. Per-connection reader builds RpcFrame(reply -> per-conn writer channel) and submits; a dedicated writer thread serializes responses. TransportControl set_enabled/enable/disable (runtime on/off = refuse-service while bound), path(), shutdown()/Drop unbind + unlink. Non-blocking listener + 50ms accept poll (control-plane, not hot path).",
+        "pinion-tui: RPC channel migrated Sender<String> -> Sender<RpcFrame>; stdin reader attaches stderr_reply(); drain routes via frame.reply. The per-backend stderr response wire is no longer hardcoded in the drain -- it is chosen per frame by the reply."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-rpc-transport: 5 integration tests ZERO-FLAKE x3 runs -- roundtrip; two-connection response correlation (no cross-talk); notification-produces-no-response; disabled endpoint refuses new connections then re-enable serves; drop unbinds the socket path.",
+        "Regression 0: pinion-shell dispatch_core 148 + unit 154, pinion-tui rpc_ingress 18 + unit 90, pinion-rpc 886 all pass. Both new doctests (ShellConfig::on_rpc_ingress, transport crate) compile.",
+        "Workspace clippy --workspace --all-targets --features pinion-runtime/vello CLEAN (every example + crate). Reviewed first: the R1200-pinned handoff's 6/6 code claims (stdin reader unconditional/private, stdout write in the AppShell wrapper, transport-agnostic core, EventLoopProxy owner-internal, no alt transport) verified against HEAD before building."
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Runnable GUI example mounting the socket (heavy pinion-forge scaffolding) + its lavapipe e2e is the only path not covered by an automated test: the full socket -> ProxyRpcIngress -> winit -> dispatch -> reply -> socket composition (each piece is verified; the winit-forward hop is a 1-line send_event). Consumer-gated, deferred.",
+        "TUI socket-mount hook (TuiRpcIngress + TuiConfig) deferred -- no TUI consumer yet, so it would be dead code / violate the 2nd-consumer gate. Note: std::sync::mpsc::Sender is !Sync, so a TuiRpcIngress needs a Mutex wrap.",
+        "sprag consumes run_with_config().on_rpc_ingress(|i| UnixSocketTransport::serve(path, i)) + owns the on/off policy (env/signal) in a sprag-native session; the pinion side (this round) is complete. Cross-repo rule: not edited from here.",
+        "Viewport card-culling still carried (R1261, needs a frame-timing profile / GPU harness)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

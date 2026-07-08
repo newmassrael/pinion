@@ -96,6 +96,7 @@ use std::time::Duration;
 use pinion_core::event::WheelDelta;
 use pinion_core::renderer::WidgetRenderer;
 use pinion_core::{Intent, Scene};
+use pinion_rpc::{RpcFrame, RpcReply};
 use pinion_runtime::{CommandExecutor, HandlerRegistry};
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
@@ -266,14 +267,23 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
     // R670 §5.41 §5.40 — JSON-RPC stdin ingress, mirror of
     // `pinion_shell::spawn_stdin_rpc_reader`. A background thread
     // reads `BufRead::lines` off stdin and forwards each non-blank
-    // frame through an `mpsc::Sender<String>`; the event loop drains
-    // the matching `mpsc::Receiver<String>` on every tick with
+    // frame through an `mpsc::Sender<RpcFrame>`; the event loop drains
+    // the matching `mpsc::Receiver<RpcFrame>` on every tick with
     // `try_recv` so AI-injected RPC frames reach the substrate
     // alongside live crossterm events. The §2 #6 GUI/TUI dual
     // invariant requires identical RPC ingress shape on both
     // backends — see [`crate::ShellCoreTui::dispatch_rpc`] for the
     // dispatch path the drained frames feed into.
-    let (rpc_tx, rpc_rx) = mpsc::channel::<String>();
+    //
+    // R-PR47 §5.7 — the channel now carries `pinion_rpc::RpcFrame`
+    // (request + reply sink), the SAME winit-free seam the GUI backend
+    // uses, instead of a bare `String`. The per-backend response wire
+    // (stderr here, stdout on the GUI) is no longer hard-coded in the
+    // drain: it is chosen per frame by the reply the producer attaches.
+    // The built-in stdin reader attaches a stderr reply
+    // ([`stderr_reply`]); a future injected transport would attach its
+    // own, with no change to the drain.
+    let (rpc_tx, rpc_rx) = mpsc::channel::<RpcFrame>();
     spawn_stdin_rpc_reader_tui(rpc_tx);
 
     let (mut cols, mut rows) = V::initial_size();
@@ -591,15 +601,18 @@ fn drain_intents_into_substrate<V: WidgetViewTui>(
 /// surface any AI-driven transition before the next user event).
 fn drain_rpc_into_substrate<V: WidgetViewTui>(
     core: &mut ShellCoreTui<V>,
-    rx: &mpsc::Receiver<String>,
+    rx: &mpsc::Receiver<RpcFrame>,
 ) -> bool {
     let mut any_frame = false;
-    while let Ok(request) = rx.try_recv() {
+    while let Ok(RpcFrame { request, reply }) = rx.try_recv() {
+        // R-PR47 §5.7 — dispatch through the identical transport-agnostic
+        // core, then route the response (if any) through the frame's own
+        // reply sink rather than a hard-coded stderr write. For the
+        // built-in stdin reader that reply IS a stderr write
+        // ([`stderr_reply`]), so the drained bytes are unchanged; a
+        // notification (no response) drops the reply, writing nothing.
         if let Some(response) = core.dispatch_rpc(&request) {
-            let mut err = stderr().lock();
-            // Silently swallow broken-pipe errors — downstream
-            // consumer gone, the TUI loop keeps running.
-            let _ = writeln!(err, "{response}");
+            reply.send(response);
         }
         any_frame = true;
     }
@@ -610,8 +623,10 @@ fn drain_rpc_into_substrate<V: WidgetViewTui>(
 /// shell. Background-spawned mirror of
 /// `pinion_shell::spawn_stdin_rpc_reader` — reads line-delimited
 /// JSON-RPC 2.0 frames off stdin and forwards each non-blank line
-/// through the supplied `mpsc::Sender<String>` so the crossterm
-/// event loop drains them on every tick. Blank lines are skipped
+/// through the supplied `mpsc::Sender<RpcFrame>` (R-PR47 §5.7 — each
+/// line paired with a [`stderr_reply`] so the response routes back to
+/// the TUI diagnostic wire) so the crossterm event loop drains them on
+/// every tick. Blank lines are skipped
 /// (so a trailing newline in a piped JSON file does not enqueue an
 /// empty frame); EOF or any read error terminates the thread
 /// quietly (the TUI loop keeps running so a finite RPC scenario
@@ -625,7 +640,7 @@ fn drain_rpc_into_substrate<V: WidgetViewTui>(
 /// crossterm does not read stdin itself; mouse / keyboard events
 /// arrive through the kernel's terminal driver routed by
 /// `crossterm::event::poll`/`read`).
-fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<String>) {
+fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<RpcFrame>) {
     thread::spawn(move || {
         let stdin = std::io::stdin();
         let handle = stdin.lock();
@@ -636,11 +651,28 @@ fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<String>) {
             if text.trim().is_empty() {
                 continue;
             }
-            if tx.send(text).is_err() {
+            if tx.send(RpcFrame::new(text, stderr_reply())).is_err() {
                 break;
             }
         }
     });
+}
+
+/// R-PR47 §5.7 — the reply sink for a frame that arrived on the process's
+/// own stdin under the TUI backend: its response is written to **stderr**,
+/// one line. The alternate-screen + raw-mode terminal owns stdout (ratatui
+/// commits cells through that fd; any byte written there would corrupt the
+/// visible frame), so the JSON-RPC response wire pairs with the diagnostic
+/// stream — the same rationale that routes `PINION_TUI_LOG` to
+/// stderr-or-file. A broken-pipe write silently skips so a disconnecting
+/// consumer does not abort the TUI loop. Pre-PR47 this stderr write was
+/// hard-coded in the drain; making it the stdin reader's reply is what
+/// lets an injected transport route its own responses elsewhere.
+fn stderr_reply() -> RpcReply {
+    RpcReply::new(|response: String| {
+        let mut err = stderr().lock();
+        let _ = writeln!(err, "{response}");
+    })
 }
 
 #[cfg(test)]

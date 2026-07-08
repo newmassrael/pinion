@@ -1,0 +1,18 @@
+[package]
+name = "pinion-rpc-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Reusable RPC transport adapters over the pinion-rpc injection seam (Unix domain socket)"
+
+[dependencies]
+# R-PR47 §5.7 — the winit-free transport seam (RpcFrame / RpcReply /
+# RpcIngress). This crate depends ONLY on that seam, not on any backend
+# (pinion-shell / pinion-tui), so a GUI or a TUI consumer mounts the same
+# adapter through its own `RpcIngress`.
+pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
+
+[lints]
+workspace = true

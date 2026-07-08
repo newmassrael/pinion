@@ -79,9 +79,12 @@ pub mod vello_capture;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod test_fixtures;
 
-pub use app::{AppShell, run, run_with_handlers};
+pub use app::{AppShell, ShellConfig, run, run_with_config, run_with_handlers};
+// R-PR47 §5.7 — re-export the winit-free transport seam so a consumer can
+// name the `on_rpc_ingress` hook argument without a direct pinion-rpc dep.
 pub use executor::{ProxyIntentSink, ProxyRepaintSink, TokioExecutor, build_executor_and_sink};
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
+pub use pinion_rpc::{RpcFrame, RpcIngress, RpcReply};
 pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 
 /// Winit user-event variants that reach the UI thread out-of-band.
@@ -97,8 +100,16 @@ pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 /// `Clone`, and the shell never duplicates a user event in-flight.
 #[derive(Debug)]
 pub enum AppEvent {
-    /// One JSON-RPC 2.0 frame read from stdin, awaiting dispatch.
-    RpcRequest(String),
+    /// R-PR47 §5.7 — one JSON-RPC 2.0 frame awaiting dispatch, paired
+    /// with the [`RpcReply`] sink that routes its
+    /// response back to the transport it arrived on. Produced by the
+    /// built-in stdin reader (`spawn_stdin_rpc_reader`, reply → stdout)
+    /// or by any injected transport driving the winit-free
+    /// [`RpcIngress`] seam (reply → that
+    /// transport's connection). Pre-PR47 this carried a bare `String`
+    /// and the response was hard-wired to `stdout`; the reply sink is
+    /// what lets a response reach a specific socket connection instead.
+    RpcRequest(pinion_rpc::RpcFrame),
     /// R51.62 §5.40 — AT-side accessibility event delivered by
     /// `accesskit_winit`. Carries `InitialTreeRequested` (AT first
     /// connected — shell answers with a redraw, which calls
