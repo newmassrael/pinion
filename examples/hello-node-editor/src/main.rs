@@ -1918,6 +1918,14 @@ enum EditTarget {
     /// R918 — editing node `id`'s `y` position (the Details panel's "Position Y"
     /// row). Panel-only, like [`EditTarget::PosX`].
     PosY(NodeId),
+    /// R1264 — editing node `id`'s authored output constant (a **source** node's
+    /// [`GraphNode::output_const`], the output-side twin of the
+    /// [`EditTarget::PortDefault`] pin default). Card-only: the constant paints
+    /// on the source card's output row, which is the only surface hosting the
+    /// field. The write funnels through the same [`apply_set_node_value`] /
+    /// [`NodeValueTarget::OutputConst`] SSOT the AI-first `intervene
+    /// node.<id>.value` uses (R1257).
+    SourceConst(NodeId),
 }
 
 impl EditTarget {
@@ -1928,7 +1936,8 @@ impl EditTarget {
             EditTarget::Title(id)
             | EditTarget::PortDefault { node: id, .. }
             | EditTarget::PosX(id)
-            | EditTarget::PosY(id) => id,
+            | EditTarget::PosY(id)
+            | EditTarget::SourceConst(id) => id,
         }
     }
 }
@@ -2206,11 +2215,20 @@ fn parse_iport_sub(sub: &str) -> Option<(NodeId, usize)> {
 }
 
 /// R901 — `idefault_<id>_<i>` → (node id, input port): the pin-default label's
-/// composite sub-tag (the [`view_input_default`] hit target). Double-clicking
+/// composite sub-tag (the [`view_pin_value_label`] hit target). Double-clicking
 /// it opens the inline default editor (the [`parse_oport_sub`] peer over the
 /// `idefault_` prefix).
 fn parse_idefault_sub(sub: &str) -> Option<(NodeId, usize)> {
     split_node_port(sub.strip_prefix("idefault_")?)
+}
+
+/// R1264 — `oconst_<id>` → node id: a **source** node's output-constant label
+/// (the [`view_pin_value_label`] hit target on the output row). Double-clicking
+/// it opens the inline source-value editor — the output-side twin of the R901
+/// `idefault_` pin-default gesture. One id, no port index (the constant is
+/// output port 0's), so it does not go through [`split_node_port`].
+fn parse_oconst_sub(sub: &str) -> Option<NodeId> {
+    Some(NodeId(sub.strip_prefix("oconst_")?.parse().ok()?))
 }
 
 /// A full drop tag `node_graph#iport_<id>_<i>` → (node id, input port). Uses
@@ -3182,6 +3200,21 @@ fn port_default_kind(nodes: &[GraphNode], node: NodeId, port: usize) -> Option<C
         .map(CellValue::kind)
 }
 
+/// R1264 — the [`CellKind`] of node `node`'s authored output constant, or `None`
+/// when the node is absent / not a source. The output-side twin of
+/// [`port_default_kind`]: it drives the source-value editor's keystroke gate and
+/// its commit parse (a `Float` source accepts digits / sign / `.`, a `Color`
+/// source hex digits + `#`). Read straight off the stored [`CellValue`], not a
+/// port lookup — the constant *is* the typed value.
+fn source_const_kind(nodes: &[GraphNode], node: NodeId) -> Option<CellKind> {
+    nodes
+        .iter()
+        .find(|n| n.id == node)?
+        .output_const
+        .as_ref()
+        .map(CellValue::kind)
+}
+
 /// R901 — commit inline-editor `text` into `target` through the matching
 /// field SSOT: a title routes to [`apply_rename`] (trim / reject-empty), a
 /// port default parses by the port's [`CellKind`] and routes to
@@ -3231,6 +3264,17 @@ fn apply_edit_commit(
                 nodes.get().into_iter().find(|n| n.id == id),
             ) {
                 let _ = apply_set_pos(nodes, undo, id, node.x, coord);
+            }
+        }
+        // R1264 — a source-const edit parses by the constant's own [`CellKind`]
+        // and routes through the SAME [`apply_set_node_value`] /
+        // [`NodeValueTarget::OutputConst`] funnel the AI-first `intervene
+        // node.<id>.value` uses (R1257), so the card editor and the RPC write can
+        // never drift. A malformed numeric / hex keeps the prior value — the
+        // `CellKind::parse` no-data-loss contract.
+        EditTarget::SourceConst(id) => {
+            if let Some(value) = source_const_kind(&nodes.get(), id).and_then(|k| k.parse(text)) {
+                let _ = apply_set_node_value(nodes, undo, id, NodeValueTarget::OutputConst, value);
             }
         }
     }
@@ -4150,6 +4194,32 @@ impl NodeGraphExternal {
         };
         let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
         Ok(IntrospectValue::Bool(self.dissolve_node(NodeId(id))))
+    }
+
+    /// R1264 — the `begin_edit_value` verb arm: open the inline editor on a
+    /// source node's output constant (the AI-first / test twin of double-clicking
+    /// the source-value label; the output-side peer of `begin_edit_default`). Arg
+    /// = the node `<int>`, or `Null` for the single selected node (mirroring
+    /// `begin_rename`). `false` on an unknown / non-source node (graph unchanged);
+    /// a non-`Int`/`Null` arg is a `TypeMismatch`. Extracted to keep `invoke`
+    /// within the line ceiling.
+    fn invoke_begin_edit_value(
+        &self,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let id = match args {
+            &IntrospectValue::Int(i) => {
+                NodeId(u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?)
+            }
+            IntrospectValue::Null => {
+                let Some(id) = self.selection.get().node() else {
+                    return Ok(IntrospectValue::Bool(false));
+                };
+                id
+            }
+            _ => return Err(InvokeError::TypeMismatch),
+        };
+        Ok(IntrospectValue::Bool(self.begin_edit_source_value(id)))
     }
 
     /// R899 — the `intervene node.<id>.input_default.<port>` write path. The
@@ -5250,6 +5320,9 @@ impl NodeGraphExternal {
             EditTarget::PortDefault { port, .. } => node.input_default(port)?.edit_text(),
             EditTarget::PosX(_) => node.x.to_string(),
             EditTarget::PosY(_) => node.y.to_string(),
+            // R1264 — seed with the source constant's round-trip text (`None`
+            // when the node is not a source, the begin-edit validity gate).
+            EditTarget::SourceConst(_) => node.output_const.as_ref()?.edit_text(),
         })
     }
 
@@ -5277,6 +5350,21 @@ impl NodeGraphExternal {
             return false;
         }
         self.begin_edit(EditTarget::PortDefault { node, port }, EditSurface::Card)
+    }
+
+    /// R1264 — open the inline editor on `id`'s authored output constant (the
+    /// double-click-on-source-value / `invoke begin_edit_value` entry). The
+    /// output-side twin of [`Self::begin_edit_default`]. Rejects a **non-source**
+    /// node: only a source paints an `oconst_` label to anchor the field, so
+    /// opening it on a compute op / sink / reroute would steal focus and advertise
+    /// an a11y textbox with no painted peer (the same paint==a11y gate the
+    /// R901.1 wired-port reject guards). A compute op's / sink's `value` is
+    /// derived — settable only via wiring, not this editor.
+    fn begin_edit_source_value(&self, id: NodeId) -> bool {
+        if !self.nodes.get().iter().any(|n| n.id == id && n.is_source()) {
+            return false;
+        }
+        self.begin_edit(EditTarget::SourceConst(id), EditSurface::Card)
     }
 
     /// R918 — open the inline editor on the Details panel's `field` row of the
@@ -5477,6 +5565,11 @@ impl NodeGraphExternal {
                     self.begin_rename(n);
                 } else if let Some((n, port)) = parse_idefault_sub(s) {
                     self.begin_edit_default(n, port);
+                } else if let Some(n) = parse_oconst_sub(s) {
+                    // R1264 — a double-click on a source node's output-constant
+                    // label opens its inline value editor (the output-side twin
+                    // of the R901 pin-default double-click).
+                    self.begin_edit_source_value(n);
                 }
             }
             // R1243 — a double-click on empty canvas that lands on a WIRE splices
@@ -5905,6 +5998,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("editing", "json"),
             ("begin_rename", "int"),
             ("begin_edit_default", "string"),
+            ("begin_edit_value", "int"),
             ("begin_edit_detail", "string"),
             ("node.<id>.title", "string"),
             ("node.<id>.x", "int"),
@@ -6317,6 +6411,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // `dissolve_selected` (the Alt+Delete gesture) targets the lone
             // selected node.
             "dissolve_node" => self.invoke_dissolve_node(&args),
+            "begin_edit_value" => self.invoke_begin_edit_value(&args),
             "dissolve_selected" => Ok(IntrospectValue::Bool(self.dissolve_selected())),
             // R880 — select every node (the keyboard `Ctrl`+`A` twin).
             // `false` on an empty graph.
@@ -6627,6 +6722,11 @@ fn edit_target_kind(target: EditTarget) -> CellKind {
         // R918 — a position is an integer: the gate accepts digits and a leading
         // sign, the same `CellKind::Int` the data-grid / property-grid use.
         EditTarget::PosX(_) | EditTarget::PosY(_) => CellKind::Int,
+        // R1264 — a source constant is gated by its own typed kind (a `Float`
+        // source accepts digits / sign / `.`, a `Color` source hex digits + `#`).
+        EditTarget::SourceConst(id) => {
+            source_const_kind(&use_nodes().get(), id).unwrap_or(CellKind::Text)
+        }
     }
 }
 
@@ -6643,6 +6743,9 @@ fn active_edit_introspect(active: ActiveEdit) -> IntrospectValue {
         }
         EditTarget::PosX(id) => serde_json::json!({ "kind": "pos_x", "node": id.raw() }),
         EditTarget::PosY(id) => serde_json::json!({ "kind": "pos_y", "node": id.raw() }),
+        EditTarget::SourceConst(id) => {
+            serde_json::json!({ "kind": "source_value", "node": id.raw() })
+        }
     };
     obj["surface"] = serde_json::Value::from(match active.surface {
         EditSurface::Card => "card",
@@ -6968,12 +7071,16 @@ fn view_port(tag: String, left: i32, top: i32, color: Color, zoom: f64) -> Scene
     )
 }
 
-/// R899 — the literal default value shown beside an *unconnected* input port
-/// (the "pin default" label). A tagged container so an AI client can observe
-/// the painted default through `scene/snapshot` (the value is also the
-/// `query node.<id>.input_default.<port>` read); its `Text` child carries the
-/// `CellValue::display` string. Placed just right of the port square, node-local.
-fn view_input_default(tag: String, text: &str, top: i32, theme: &Theme, zoom: f64) -> Scene {
+/// R899 / R1264 — a typed constant **value label** anchored to a pin row: an
+/// *unconnected* input port's literal default (the "pin default", tagged
+/// `idefault_<id>_<port>`, R899) OR a **source** node's authored output constant
+/// (tagged `oconst_<id>`, R1264). A tagged container so an AI client can observe
+/// the painted value through `scene/snapshot` (the value is also the
+/// `query node.<id>.input_default.<port>` / `node.<id>.value` read); its `Text`
+/// child carries the `CellValue::display` string. Placed just right of the port
+/// square, node-local. Double-clicking it opens the shared inline editor
+/// ([`view_pin_edit_field`]).
+fn view_pin_value_label(tag: String, text: &str, top: i32, theme: &Theme, zoom: f64) -> Scene {
     let label = Scene::Text(TextNode::styled(
         text.to_owned(),
         Rect::default(),
@@ -6991,13 +7098,14 @@ fn view_input_default(tag: String, text: &str, top: i32, theme: &Theme, zoom: f6
     )
 }
 
-/// R901 — the ONE shared inline field painted over a pin's default label while
-/// that port default is being edited (the [`view_input_default`] swap, the
-/// pin-row twin of the header's title-or-field switch). Tagged
+/// R901 / R1264 — the ONE shared inline field painted over a pin-row value label
+/// while it is being edited (the [`view_pin_value_label`] swap, the pin-row twin
+/// of the header's title-or-field switch): an input port's default (R901) or a
+/// source node's output constant (R1264) both host this same field. Tagged
 /// [`EDIT_TF_TAG`] by [`tf_paint::view_field`] — the field owns the hit target
 /// and focus while open — and positioned where the static label sat, projected
 /// through the zoom like every world coordinate.
-fn view_port_default_field(edit_field: RootState, top: i32, theme: &Theme, zoom: f64) -> Scene {
+fn view_pin_edit_field(edit_field: RootState, top: i32, theme: &Theme, zoom: f64) -> Scene {
     let style = tf_paint::TextFieldStyle {
         field_w: upx(wpx(NODE_W - PORT_SIZE - 8, zoom)),
         field_h: upx(wpx(PORT_SIZE + 4, zoom)),
@@ -7068,6 +7176,55 @@ fn view_reroute_knot(node: &GraphNode, selected: bool, theme: &Theme, zoom: f64)
                     .with_size(Size::px(size, size)),
             ),
     )
+}
+
+/// R898 / R1264 — the output-port column of a node card: each output port's
+/// colour-coded pin, and — for a **source** node — output port 0's authored
+/// output constant, either as a static value label ([`view_pin_value_label`],
+/// tagged `oconst_<id>`) or the shared inline field while it is being edited.
+/// The constant paints BEFORE its pin so the pin dot draws on top of the label /
+/// field edge. A compute op / sink has `output_const == None` (its output is
+/// derived), so only the pins paint. Extracted from [`view_node`] to keep it
+/// under the line ceiling once the source-const branch landed.
+fn view_output_ports(
+    node: &GraphNode,
+    card_edit: Option<EditTarget>,
+    edit_field: RootState,
+    theme: &Theme,
+    zoom: f64,
+) -> Vec<Scene> {
+    let id = node.id;
+    let mut out = Vec::new();
+    for (j, ty) in node.output_ports.iter().enumerate() {
+        if j == 0 {
+            if let Some(val) = &node.output_const {
+                if card_edit == Some(EditTarget::SourceConst(id)) {
+                    out.push(view_pin_edit_field(
+                        edit_field,
+                        port_row_top(j),
+                        theme,
+                        zoom,
+                    ));
+                } else {
+                    out.push(view_pin_value_label(
+                        format!("{GRAPH_TAG}#oconst_{id}"),
+                        &val.display(),
+                        port_row_top(j),
+                        theme,
+                        zoom,
+                    ));
+                }
+            }
+        }
+        out.push(view_port(
+            format!("{GRAPH_TAG}#oport_{id}_{j}"),
+            NODE_W - PORT_SIZE,
+            port_row_top(j),
+            ty.color(),
+            zoom,
+        ));
+    }
+    out
 }
 
 fn view_node(
@@ -7151,14 +7308,14 @@ fn view_node(
             // its static value label for the ONE shared inline field (the
             // header's title-or-field switch, applied to the pin default).
             if card_edit == Some(EditTarget::PortDefault { node: id, port: i }) {
-                children.push(view_port_default_field(
+                children.push(view_pin_edit_field(
                     edit_field,
                     port_row_top(i),
                     theme,
                     zoom,
                 ));
             } else if let Some(val) = node.input_default(i) {
-                children.push(view_input_default(
+                children.push(view_pin_value_label(
                     format!("{GRAPH_TAG}#idefault_{id}_{i}"),
                     &val.display(),
                     port_row_top(i),
@@ -7168,15 +7325,7 @@ fn view_node(
             }
         }
     }
-    for (j, ty) in node.output_ports.iter().enumerate() {
-        children.push(view_port(
-            format!("{GRAPH_TAG}#oport_{id}_{j}"),
-            NODE_W - PORT_SIZE,
-            port_row_top(j),
-            ty.color(),
-            zoom,
-        ));
-    }
+    children.extend(view_output_ports(node, card_edit, edit_field, theme, zoom));
 
     let border = node_border(selected, theme);
     Scene::Container(
@@ -8124,6 +8273,7 @@ impl WidgetA11y for NodeEditorView {
             if card_edit.is_some_and(|t| t.node() == node.id) {
                 let name = match card_edit {
                     Some(EditTarget::PortDefault { .. }) => "Port default",
+                    Some(EditTarget::SourceConst(_)) => "Source value",
                     _ => "Rename node",
                 };
                 entry = entry.with_child(EDIT_TF_TAG);

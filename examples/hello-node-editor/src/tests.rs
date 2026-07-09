@@ -7513,6 +7513,254 @@ fn r1257_scalar_source_value_is_type_checked() {
     });
 }
 
+// ── R1264 — source-const GUI authoring (paint the constant + inline edit) ────
+
+/// R1264 — the inline editor opens on a SOURCE node's output constant, seeds
+/// from its `edit_text`, paints + lowers to a "Source value" textbox, and
+/// commits the typed value through the SAME `apply_set_node_value` /
+/// `NodeValueTarget::OutputConst` SSOT the AI-first `intervene node.<id>.value`
+/// uses (R1257) — one undoable step, then the field wipes. Node 1 is a Color
+/// source (Vector output), edited as a `#RRGGBB` hex.
+#[test]
+fn r1264_source_const_inline_editor_begins_seeds_and_commits() {
+    Owner::new().run(|| {
+        let scene = boot_scene();
+        let coord = coordinator();
+        let stack = use_undo();
+        assert!(
+            coord.begin_edit_source_value(NodeId(1)),
+            "the Color source's constant opens for edit",
+        );
+        assert_eq!(
+            use_active_edit().get(),
+            card(EditTarget::SourceConst(NodeId(1))),
+            "the editor targets the source constant",
+        );
+        assert_eq!(
+            use_text_edit_state(EDIT_TF_TAG).text(),
+            "#808080",
+            "seeded with the current constant's hex",
+        );
+        // The open field paints over the output row and lowers to a textbox
+        // named "Source value" (the paint gate == the a11y gate).
+        let painted = view((TextFieldState::Editing, 0), &Frame::new());
+        assert!(
+            painted.contains_tag(EDIT_TF_TAG),
+            "the shared field paints over the source constant",
+        );
+        let a11y = NodeEditorView::access_node(&(TextFieldState::Editing, 0), Some(EDIT_TF_TAG));
+        let textbox = a11y
+            .iter()
+            .find(|n| n.tag == EDIT_TF_TAG)
+            .expect("the source constant lowers to a textbox");
+        assert_eq!(textbox.role, AriaRole::TextInput);
+        assert_eq!(
+            textbox.name.as_deref(),
+            Some("Source value"),
+            "named for the source-value edit kind",
+        );
+        // `query editing` reports the source-value target on the card surface.
+        assert_eq!(
+            graph_intro(&scene).query("editing"),
+            Some(IntrospectValue::Json(serde_json::json!({
+                "kind": "source_value", "node": 1, "surface": "card"
+            }))),
+        );
+        use_text_edit_state(EDIT_TF_TAG).set_text("#3366cc".to_owned());
+        commit_edit(true);
+        assert_eq!(use_active_edit().get(), None, "commit leaves edit mode");
+        assert_eq!(
+            coord.node_by_id(NodeId(1)).and_then(|n| n.output_const),
+            Some(CellValue::Color(Color::rgb(0x33, 0x66, 0xcc))),
+            "the typed hex parsed into the source constant",
+        );
+        assert_eq!(
+            graph_intro(&scene).query("node.1.value"),
+            Some(CellValue::Color(Color::rgb(0x33, 0x66, 0xcc)).to_introspect()),
+            "the source now evaluates to the authored colour",
+        );
+        assert_eq!(
+            use_text_edit_state(EDIT_TF_TAG).text(),
+            "",
+            "field wiped for the next edit",
+        );
+        assert_eq!(
+            stack.undo_label().as_deref(),
+            Some("Set source value"),
+            "journaled through the shared OutputConst command",
+        );
+        assert!(stack.undo());
+        assert_eq!(
+            coord.node_by_id(NodeId(1)).and_then(|n| n.output_const),
+            Some(CellValue::Color(Color::rgb(0x80, 0x80, 0x80))),
+            "undo restores the prior constant",
+        );
+    });
+}
+
+/// R1264 — the source-value editor's keystroke gate is the constant's OWN
+/// `CellKind` (the output-side twin of the R901 pin-default gate): a `Color`
+/// source is hex-gated, a `Scalar` (Float output) source is number-gated. The
+/// single funnel that keeps the keyboard editor and the AI write from drifting.
+#[test]
+fn r1264_source_const_editor_uses_the_typed_keystroke_gate() {
+    Owner::new().run(|| {
+        let _scene = boot_scene();
+        let coord = coordinator();
+        assert_eq!(
+            edit_target_kind(EditTarget::SourceConst(NodeId(1))),
+            CellKind::Color,
+            "a Color source is hex-gated",
+        );
+        let scalar = coord.add_node(5).expect("Scalar"); // Float output source
+        assert_eq!(
+            edit_target_kind(EditTarget::SourceConst(scalar)),
+            CellKind::Float,
+            "a Scalar (Float) source is number-gated",
+        );
+        // Seed + commit the Float source through the same funnel.
+        assert!(coord.begin_edit_source_value(scalar));
+        assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "0");
+        use_text_edit_state(EDIT_TF_TAG).set_text("0.5".to_owned());
+        commit_edit(true);
+        assert_eq!(
+            coord.node_by_id(scalar).and_then(|n| n.output_const),
+            Some(CellValue::Float(0.5)),
+            "the typed float parsed into the source constant",
+        );
+    });
+}
+
+/// R1264 — the editor refuses a NON-source node: a compute op's / sink's value
+/// is derived (no `output_const`, no painted `oconst_` label to anchor the
+/// field), so opening it would steal focus and advertise an unpainted textbox
+/// (the R901.1 wired-port class). The reject holds across every entry — the
+/// `begin_edit_source_value` method AND the `begin_edit_value` invoke.
+#[test]
+fn r1264_source_const_editor_rejects_a_non_source_node() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        let coord = coordinator();
+        assert!(
+            !coord.begin_edit_source_value(NodeId(2)),
+            "a compute op (Multiply) has no constant to edit",
+        );
+        assert!(
+            !coord.begin_edit_source_value(NodeId(3)),
+            "the sink (Output) has no constant to edit",
+        );
+        assert_eq!(use_active_edit().get(), None, "nothing opened");
+        let intro = scene
+            .find_external_with_tag_mut(GRAPH_TAG)
+            .unwrap()
+            .handle
+            .introspect_mut()
+            .unwrap();
+        assert_eq!(
+            intro.invoke("begin_edit_value", IntrospectValue::Int(2)),
+            Ok(IntrospectValue::Bool(false)),
+            "the invoke twin also rejects a compute op",
+        );
+    });
+}
+
+/// R1264 — the editor opens from BOTH the AI-first `invoke begin_edit_value`
+/// (an unknown node is rejected, graph unchanged) and a double-click on the
+/// source card's `oconst_<id>` value label — the output-side twin of the R901
+/// `idefault_` pin-default gesture.
+#[test]
+fn r1264_begin_edit_value_via_invoke_and_double_click() {
+    Owner::new().run(|| {
+        let mut scene = boot_scene();
+        {
+            let intro = scene
+                .find_external_with_tag_mut(GRAPH_TAG)
+                .unwrap()
+                .handle
+                .introspect_mut()
+                .unwrap();
+            assert_eq!(
+                intro.invoke("begin_edit_value", IntrospectValue::Int(1)),
+                Ok(IntrospectValue::Bool(true)),
+                "a source node opens by id",
+            );
+            assert_eq!(
+                intro.invoke("begin_edit_value", IntrospectValue::Int(999)),
+                Ok(IntrospectValue::Bool(false)),
+                "an unknown node is rejected",
+            );
+        }
+        cancel_edit();
+        assert_eq!(use_active_edit().get(), None);
+        // A double-click on the source card's constant label re-opens it.
+        send(&mut scene, "oconst_1:DoubleClick");
+        assert_eq!(
+            use_active_edit().get(),
+            card(EditTarget::SourceConst(NodeId(1))),
+            "double-clicking the source constant opens its editor",
+        );
+    });
+}
+
+/// R1264 — an IDLE source card paints its authored constant as a static value
+/// label tagged `oconst_<id>` (the output-side twin of the R899 `idefault_`
+/// label), observable through `scene/snapshot`; a compute op / sink paints no
+/// such label (its output is derived).
+#[test]
+fn r1264_source_card_paints_its_constant_label() {
+    Owner::new().run(|| {
+        let _scene = boot_scene();
+        let painted = view((TextFieldState::Editing, 0), &Frame::new());
+        assert!(
+            painted.contains_tag(&format!("{GRAPH_TAG}#oconst_0")),
+            "the Texture source paints its constant label",
+        );
+        assert!(
+            painted.contains_tag(&format!("{GRAPH_TAG}#oconst_1")),
+            "the Color source paints its constant label",
+        );
+        assert!(
+            !painted.contains_tag(&format!("{GRAPH_TAG}#oconst_2")),
+            "the Multiply compute op paints no constant label",
+        );
+        assert!(
+            !painted.contains_tag(&format!("{GRAPH_TAG}#oconst_3")),
+            "the Output sink paints no constant label",
+        );
+    });
+}
+
+/// R1264 — a malformed hex commit keeps the prior constant (no data loss, no
+/// spurious undo step — the `CellKind::parse` contract shared with the R901 pin
+/// editor); a subsequent valid edit is exactly one undoable step.
+#[test]
+fn r1264_malformed_source_const_commit_keeps_prior_value() {
+    Owner::new().run(|| {
+        let _scene = boot_scene();
+        let coord = coordinator();
+        let stack = use_undo();
+        assert!(coord.begin_edit_source_value(NodeId(1)));
+        let before = stack.len();
+        use_text_edit_state(EDIT_TF_TAG).set_text("nothex".to_owned());
+        commit_edit(true);
+        assert_eq!(
+            coord.node_by_id(NodeId(1)).and_then(|n| n.output_const),
+            Some(CellValue::Color(Color::rgb(0x80, 0x80, 0x80))),
+            "a malformed commit keeps the prior constant",
+        );
+        assert_eq!(stack.len(), before, "no undo step for a rejected parse");
+        // A valid edit journals exactly one step.
+        assert!(coord.begin_edit_source_value(NodeId(1)));
+        use_text_edit_state(EDIT_TF_TAG).set_text("#112233".to_owned());
+        commit_edit(true);
+        assert_eq!(
+            stack.len(),
+            before + 1,
+            "one undoable step for a valid edit"
+        );
+    });
+}
+
 // ── R1258 — set_graph structural validation (trust-boundary hardening) ───────
 
 /// A minimal valid two-node graph (a Color source -> Output sink, wired), built

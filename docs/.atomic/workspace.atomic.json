@@ -23010,6 +23010,58 @@
         "Viewport card-culling still carried (R1261, needs a frame-timing profile / GPU harness)."
       ]
     },
+    "R1264": {
+      "decision_summary": "R1264 §5.38 §2 #2 #7 — node-graph source-constant GUI authoring: the deferred GUI half of R1257. Paint each SOURCE card's authored output_const as an oconst_<id> value label (the output-side twin of the R899 idefault_ pin-default label) and make it inline-editable, reusing the R901 shared-field machinery and committing through the SAME apply_set_node_value / NodeValueTarget::OutputConst SSOT the AI-first intervene node.<id>.value uses — the card editor and the RPC write cannot drift. Non-source nodes (compute op / sink) reject at every entry. No schema / persistence change.",
+      "changes_bullets": [
+        "hello-node-editor: new EditTarget::SourceConst(NodeId) threaded through node() / edit_seed_text / edit_target_kind / active_edit_introspect (\"source_value\") / apply_edit_commit + the \"Source value\" card a11y textbox name",
+        "hello-node-editor: begin_edit_source_value method (is_source gate — the output-side twin of begin_edit_default's wired-port gate) + invoke_begin_edit_value verb (Int id / Null = selection, a non-source / unknown node rejected false) + \"begin_edit_value\" added to the schema-declared verb list",
+        "hello-node-editor: source_const_kind helper (output-side twin of port_default_kind, read off the stored CellValue) + parse_oconst_sub gesture parser; a double-click on the oconst_<id> label opens the editor (the twin of the R901 idefault_ pin-default double-click)",
+        "hello-node-editor: view_output_ports paints output port 0's output_const as an oconst_<id> value label (or the shared inline field while card_edit == SourceConst), extracted from view_node to hold it under the 100-line ceiling",
+        "hello-node-editor: renamed the now-shared pin-row paint helpers view_input_default -> view_pin_value_label and view_port_default_field -> view_pin_edit_field (each now serves BOTH the R899 input default and the R1264 source constant — one SSOT, honest name)",
+        "hello-node-editor: a SourceConst commit routes through apply_set_node_value(NodeValueTarget::OutputConst) — the R1257 write SSOT the AI-first intervene node.<id>.value already uses, so the card editor and the RPC write cannot drift (no new command); no schema/persistence change (output_const already schema 7)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 8143 passed / 0 failed (hello-node-editor 241, +6 new r1264_* covering begin/seed/commit through the OutputConst SSOT, typed keystroke gate for Color+Float sources, non-source reject at both entries, idle-card oconst label paint, malformed-keep + one-undoable-step). clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) + cargo doc --workspace --document-private-items green.",
+        "r1264_node_source_value_gui.py 39 assertions PASS (release binary): source cards paint oconst labels (compute op / sink paint none); begin_edit_value opens + seeds + owns focus; type + Enter commits through OutputConst (paint + node.value + eval.output + eval.acyclic follow); one undoable \"Set source value\" step (undo/redo); double-click the oconst label reopens; the keystroke gate is the constant's own CellKind (a non-hex letter gated out of a Color source, a letter out of a Scalar Float source); a Scalar float authors; non-source / unknown / non-Int rejects.",
+        "Regression demos PASS: r899 / r901 / r918 (renamed helpers behaviour-preserving), r1257 (AI-first source path unchanged), r838 / r1255 / r1243 / r1261 (paint snapshots), r852 / r1227 (persistence unchanged — no schema bump), r1258 / r1260. validate-workspace T1 orphan=0 (new +0)."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "(1) A Details PANEL source-value row is NOT added — the card editor + RPC verb are the §2 #2 primary paths and are the R1257-named carry (\"paint the constant on the source card + inline editor\"); a panel row is optional parity beyond that scope, not owed debt.",
+        "(2) The source-const label is left-positioned (reuses view_pin_value_label at PORT_SIZE+4) rather than hugging the output pin: a right-aligned full-width container would make a large inert hit zone that breaks card selection, and a body-left value is the conventional value/RGB-node placement.",
+        "(3) No swatch for a Color source constant (text hex only), mirroring the R899 input-default label — cell paint is per-binding by design (cell_value.rs), so a swatch would be a fresh per-binding copy; deferred until a 3rd consumer justifies lifting the inspector's value_visual.",
+        "(4) view_pin_value_label / view_pin_edit_field are 2-consumer shared (input default + source const); a 3rd pin-value consumer confirms the lift. source_const_kind vs port_default_kind stay separate (differing slot: indexed port vs the const, 2 consumers)."
+      ],
+      "publishable_decision_summary": "R1264 §5.38 §2 #2 #7 — node-graph source-constant GUI authoring: the deferred GUI half of R1257. Paint each SOURCE card's authored output_const as an oconst_<id> value label (the output-side twin of the R899 idefault_ pin-default label) and make it inline-editable, reusing the R901 shared-field machinery and committing through the SAME apply_set_node_value / NodeValueTarget::OutputConst SSOT the AI-first intervene node.<id>.value uses — the card editor and the RPC write cannot drift. Non-source nodes (compute op / sink) reject at every entry. No schema / persistence change.",
+      "publishable_changes_bullets": [
+        "hello-node-editor: new EditTarget::SourceConst(NodeId) threaded through node() / edit_seed_text / edit_target_kind / active_edit_introspect (\"source_value\") / apply_edit_commit + the \"Source value\" card a11y textbox name",
+        "hello-node-editor: begin_edit_source_value method (is_source gate — the output-side twin of begin_edit_default's wired-port gate) + invoke_begin_edit_value verb (Int id / Null = selection, a non-source / unknown node rejected false) + \"begin_edit_value\" added to the schema-declared verb list",
+        "hello-node-editor: source_const_kind helper (output-side twin of port_default_kind, read off the stored CellValue) + parse_oconst_sub gesture parser; a double-click on the oconst_<id> label opens the editor (the twin of the R901 idefault_ pin-default double-click)",
+        "hello-node-editor: view_output_ports paints output port 0's output_const as an oconst_<id> value label (or the shared inline field while card_edit == SourceConst), extracted from view_node to hold it under the 100-line ceiling",
+        "hello-node-editor: renamed the now-shared pin-row paint helpers view_input_default -> view_pin_value_label and view_port_default_field -> view_pin_edit_field (each now serves BOTH the R899 input default and the R1264 source constant — one SSOT, honest name)",
+        "hello-node-editor: a SourceConst commit routes through apply_set_node_value(NodeValueTarget::OutputConst) — the R1257 write SSOT the AI-first intervene node.<id>.value already uses, so the card editor and the RPC write cannot drift (no new command); no schema/persistence change (output_const already schema 7)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 8143 passed / 0 failed (hello-node-editor 241, +6 new r1264_* covering begin/seed/commit through the OutputConst SSOT, typed keystroke gate for Color+Float sources, non-source reject at both entries, idle-card oconst label paint, malformed-keep + one-undoable-step). clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) + cargo doc --workspace --document-private-items green.",
+        "r1264_node_source_value_gui.py 39 assertions PASS (release binary): source cards paint oconst labels (compute op / sink paint none); begin_edit_value opens + seeds + owns focus; type + Enter commits through OutputConst (paint + node.value + eval.output + eval.acyclic follow); one undoable \"Set source value\" step (undo/redo); double-click the oconst label reopens; the keystroke gate is the constant's own CellKind (a non-hex letter gated out of a Color source, a letter out of a Scalar Float source); a Scalar float authors; non-source / unknown / non-Int rejects.",
+        "Regression demos PASS: r899 / r901 / r918 (renamed helpers behaviour-preserving), r1257 (AI-first source path unchanged), r838 / r1255 / r1243 / r1261 (paint snapshots), r852 / r1227 (persistence unchanged — no schema bump), r1258 / r1260. validate-workspace T1 orphan=0 (new +0)."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(1) A Details PANEL source-value row is NOT added — the card editor + RPC verb are the §2 #2 primary paths and are the R1257-named carry (\"paint the constant on the source card + inline editor\"); a panel row is optional parity beyond that scope, not owed debt.",
+        "(2) The source-const label is left-positioned (reuses view_pin_value_label at PORT_SIZE+4) rather than hugging the output pin: a right-aligned full-width container would make a large inert hit zone that breaks card selection, and a body-left value is the conventional value/RGB-node placement.",
+        "(3) No swatch for a Color source constant (text hex only), mirroring the R899 input-default label — cell paint is per-binding by design (cell_value.rs), so a swatch would be a fresh per-binding copy; deferred until a 3rd consumer justifies lifting the inspector's value_visual.",
+        "(4) view_pin_value_label / view_pin_edit_field are 2-consumer shared (input default + source const); a 3rd pin-value consumer confirms the lift. source_const_kind vs port_default_kind stay separate (differing slot: indexed port vs the const, 2 consumers)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
