@@ -23062,6 +23062,46 @@
         "(4) view_pin_value_label / view_pin_edit_field are 2-consumer shared (input default + source const); a 3rd pin-value consumer confirms the lift. source_const_kind vs port_default_kind stay separate (differing slot: indexed port vs the const, 2 consumers)."
       ]
     },
+    "R1265": {
+      "decision_summary": "R1265 §5.40 — grouped data-grid flatten O(rows*groups) -> O(rows*log groups): the R1261 precompute-an-index-once perf lesson applied to hello-data-grid. group_of linear-scanned the label table per source row (O(groups)) and group_rows calls it once per row, so grouping by a high-cardinality column made the per-frame flatten quadratic in the row count (the grid's 10k-row target). Precompute a label->id index once (group_index_of) -> O(log groups) per row; dedup group_table via a BTreeSet seen-guard -> O(rows*log groups). Byte-identical scene output (a pure algorithmic refactor, asymptotic-and-strictly-better, so it qualifies without a profiler per the R1261 rule).",
+      "changes_bullets": [
+        "hello-data-grid: group_table dedups through a BTreeSet seen-guard instead of the O(groups) labels.contains scan, so it is O(rows * log groups) with a byte-identical source-order first-appearance label list; this fixes the O(rows * groups) cost at all 7 group_table call sites",
+        "hello-data-grid: group_of now reads a label -> id index (new group_index_of, the inverse of group_table) in O(log groups), replacing the O(groups) table.iter().position scan; group_rows calls it once per source row, so the grouped flatten drops from O(rows * groups) to O(rows * log groups) per paint (grouping by a high-cardinality column was quadratic in the row count on the grid's 10k-row target)",
+        "hello-data-grid: visible_rows builds the label -> id index ONCE per grouped paint (group_index_of) and hands it to the per-row group_of closure; BTreeMap added to the std::collections import"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 = 8145 passed / 0 failed (hello-data-grid 127, +2 new r1265_*: the grouped flatten scales to n=300 distinct-key rows with exactly n headers + n data and no drop/dup, and group_of via group_index_of is byte-identical to the old table.iter().position scan for every row including out-of-order repeats and the group-0 fallback). clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) + cargo doc --workspace --document-private-items green.",
+        "Output-preservation is proven by the untouched suite: ALL r892_* editable-grouping tests + the r845/r846 read-only grouped grids (which share the pinion-core group_rows SSOT, unmodified) pass — a changed group flatten would fail them.",
+        "r1265_data_grid_group_scale.py 34 assertions PASS (release binary): grow to 40 distinct-Asset rows via one paste, group by Asset => 40 one-member groups / 80 visible rows / correct header-data interleave across the range / collapse + collapse_all + expand_all track exactly / ungroup returns the flat 40-row view. Regression demos PASS: r892 (editable grouping), r845 / r846 (read-only grouped), r983, r1237 / r1244 (paste auto-grow), r837. validate-workspace T1 orphan=0."
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "(1) view still calls group_table twice per grouped frame (once inside visible_rows, once at line 4366 for the header labels) — now 2x O(rows * log groups), a CONSTANT factor, not asymptotic; by the R1261 rule (constant-factor + tradeoff = measure-first) it is left alone. Folding them would change visible_rows' signature to also return the label table; deferred until a profiler shows it matters.",
+        "(2) The other 5 group_table sites (group_count via .len(), single-label .get()) each rebuild the whole label table for one lookup — O(rows * log groups) each, but called per-query / per-a11y, not per-frame-per-row, so none is quadratic. A shared per-frame group-index memo (the pattern grid_sort's OrderMemo uses to recompute the order only on a config-key change) is the next step ONLY if a profile shows these per-query rebuilds hurt.",
+        "(3) The audit that surfaced this (an independent read-only sweep) found the pinion-core Model/View proxy family already clean (memoized order, BTreeSet selection, windowed a11y) and only this one example-level asymptotic hot-path — so R1265 is a single, bounded, output-preserving win, not a campaign."
+      ],
+      "publishable_decision_summary": "R1265 §5.40 — grouped data-grid flatten O(rows*groups) -> O(rows*log groups): the R1261 precompute-an-index-once perf lesson applied to hello-data-grid. group_of linear-scanned the label table per source row (O(groups)) and group_rows calls it once per row, so grouping by a high-cardinality column made the per-frame flatten quadratic in the row count (the grid's 10k-row target). Precompute a label->id index once (group_index_of) -> O(log groups) per row; dedup group_table via a BTreeSet seen-guard -> O(rows*log groups). Byte-identical scene output (a pure algorithmic refactor, asymptotic-and-strictly-better, so it qualifies without a profiler per the R1261 rule).",
+      "publishable_changes_bullets": [
+        "hello-data-grid: group_table dedups through a BTreeSet seen-guard instead of the O(groups) labels.contains scan, so it is O(rows * log groups) with a byte-identical source-order first-appearance label list; this fixes the O(rows * groups) cost at all 7 group_table call sites",
+        "hello-data-grid: group_of now reads a label -> id index (new group_index_of, the inverse of group_table) in O(log groups), replacing the O(groups) table.iter().position scan; group_rows calls it once per source row, so the grouped flatten drops from O(rows * groups) to O(rows * log groups) per paint (grouping by a high-cardinality column was quadratic in the row count on the grid's 10k-row target)",
+        "hello-data-grid: visible_rows builds the label -> id index ONCE per grouped paint (group_index_of) and hands it to the per-row group_of closure; BTreeMap added to the std::collections import"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 = 8145 passed / 0 failed (hello-data-grid 127, +2 new r1265_*: the grouped flatten scales to n=300 distinct-key rows with exactly n headers + n data and no drop/dup, and group_of via group_index_of is byte-identical to the old table.iter().position scan for every row including out-of-order repeats and the group-0 fallback). clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) + cargo doc --workspace --document-private-items green.",
+        "Output-preservation is proven by the untouched suite: ALL r892_* editable-grouping tests + the r845/r846 read-only grouped grids (which share the pinion-core group_rows SSOT, unmodified) pass — a changed group flatten would fail them.",
+        "r1265_data_grid_group_scale.py 34 assertions PASS (release binary): grow to 40 distinct-Asset rows via one paste, group by Asset => 40 one-member groups / 80 visible rows / correct header-data interleave across the range / collapse + collapse_all + expand_all track exactly / ungroup returns the flat 40-row view. Regression demos PASS: r892 (editable grouping), r845 / r846 (read-only grouped), r983, r1237 / r1244 (paste auto-grow), r837. validate-workspace T1 orphan=0."
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(1) view still calls group_table twice per grouped frame (once inside visible_rows, once at line 4366 for the header labels) — now 2x O(rows * log groups), a CONSTANT factor, not asymptotic; by the R1261 rule (constant-factor + tradeoff = measure-first) it is left alone. Folding them would change visible_rows' signature to also return the label table; deferred until a profiler shows it matters.",
+        "(2) The other 5 group_table sites (group_count via .len(), single-label .get()) each rebuild the whole label table for one lookup — O(rows * log groups) each, but called per-query / per-a11y, not per-frame-per-row, so none is quadratic. A shared per-frame group-index memo (the pattern grid_sort's OrderMemo uses to recompute the order only on a config-key change) is the next step ONLY if a profile shows these per-query rebuilds hurt.",
+        "(3) The audit that surfaced this (an independent read-only sweep) found the pinion-core Model/View proxy family already clean (memoized order, BTreeSet selection, windowed a11y) and only this one example-level asymptotic hot-path — so R1265 is a single, bounded, output-preserving win, not a campaign."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

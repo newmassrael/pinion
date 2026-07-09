@@ -166,7 +166,7 @@ use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, AriaRole, GridCell, GridColumn, GridRow,
@@ -920,11 +920,21 @@ fn use_undo() -> Rc<UndoStack> {
 /// `col` in SOURCE-order first appearance, so a group's id is STABLE across
 /// sort / filter / edits (the collapse set keys on it). `labels[id]` is the
 /// header's display name; [`group_of`] maps a source row to its id.
+///
+/// R1265 — dedup through a `BTreeSet` seen-guard, not the old `labels.contains`
+/// linear scan: that made this O(rows · groups) per call, and `view` calls it
+/// every frame (once via [`visible_rows`], once for the header labels). The
+/// `seen` set gives O(rows · log groups) with a byte-identical first-appearance
+/// `labels` (the R1261 precompute-an-index-once lesson, applied to the grid).
 fn group_table(model: &[CellValue], col: usize) -> Vec<String> {
     let mut labels: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     for row in 0..nrows(model) {
         if let Some(key) = model.get(idx(row, col)).map(CellValue::display) {
-            if !labels.contains(&key) {
+            // `insert` returns `true` only on first appearance, so `labels`
+            // keeps the exact source-order-first-appearance sequence the old
+            // `!contains` guard produced.
+            if seen.insert(key.clone()) {
                 labels.push(key);
             }
         }
@@ -936,12 +946,32 @@ fn group_table(model: &[CellValue], col: usize) -> Vec<String> {
 /// position in the [`group_table`]. Same display value ⇒ same group (Excel
 /// groups by the shown value; for a homogeneous typed column display equality
 /// is value equality, so no `sort_cmp`-style typed key is needed).
-fn group_of(model: &[CellValue], row: usize, col: usize, table: &[String]) -> usize {
+///
+/// R1265 — the id comes from the inverse `ids` index ([`group_index_of`]) in
+/// O(log groups), not an O(groups) `table.iter().position` scan. [`group_rows`]
+/// calls this once per source row, so the old scan was O(rows · groups) per
+/// paint; the map lookup makes the grouped flatten O(rows · log groups). A key
+/// absent from the index (only the empty display of a missing cell, which
+/// [`group_table`] never records) falls back to group 0 — exactly as the old
+/// `position(...).unwrap_or(0)` did.
+fn group_of(model: &[CellValue], row: usize, col: usize, ids: &BTreeMap<String, usize>) -> usize {
     let key = model
         .get(idx(row, col))
         .map(CellValue::display)
         .unwrap_or_default();
-    table.iter().position(|l| *l == key).unwrap_or(0)
+    ids.get(&key).copied().unwrap_or(0)
+}
+
+/// R1265 — the inverse of [`group_table`]: display label → its group id, so a
+/// source row's group is an O(log groups) lookup ([`group_of`]) instead of a
+/// linear scan of the label table. Built once per grouped paint from the table
+/// (the table stays the id → label SSOT; this is its label → id twin).
+fn group_index_of(table: &[String]) -> BTreeMap<String, usize> {
+    table
+        .iter()
+        .enumerate()
+        .map(|(id, label)| (label.clone(), id))
+        .collect()
 }
 
 /// R892 — the visible row sequence: the filtered+sorted [`current_order`]
@@ -965,9 +995,15 @@ fn visible_rows(
             .collect(),
         Some(col) => {
             let table = group_table(model, col);
+            // R1265 — the label -> id index, built ONCE, so the per-row
+            // `group_of` closure is an O(log groups) map lookup instead of an
+            // O(groups) linear scan of `table` (the old code was O(rows *
+            // groups) per paint; grouping by a high-cardinality column made it
+            // quadratic in the row count).
+            let ids = group_index_of(&table);
             group_rows(
                 &order,
-                |row| group_of(model, row, col, &table),
+                |row| group_of(model, row, col, &ids),
                 // R893 — collapse is keyed on the group LABEL, so map the id
                 // group_rows hands us back to its label before the lookup.
                 |group| {
@@ -6553,6 +6589,107 @@ mod tests {
                 "data row has no label"
             );
         });
+    }
+
+    // ── R1265 — grouped flatten is O(rows · log groups), not O(rows · groups) ──
+
+    /// R1265 — a model whose col-0 `Asset` values are all distinct (`n` rows),
+    /// so grouping by col 0 is the high-cardinality case the old O(rows·groups)
+    /// scan made quadratic. Every col-0 value is unique => one member per group.
+    fn distinct_asset_model(n: usize) -> Vec<CellValue> {
+        (0..n)
+            .flat_map(|i| {
+                vec![
+                    CellValue::Text(format!("Asset{i}")),
+                    choice_cell(TYPE_COL, i % 2),
+                    CellValue::Int(i64::try_from(i).expect("row index fits i64")),
+                    CellValue::Float(1.0),
+                    CellValue::Bool(true),
+                    swatch_cell(0),
+                ]
+            })
+            .collect()
+    }
+
+    /// R1265 — the grouped flatten scales without dropping or duplicating a row:
+    /// `n` distinct-key rows => exactly `n` headers (first-appearance order,
+    /// one member each) interleaved with `n` data rows in source order. The
+    /// output-preserving proof at a scale (n = 300, so groups = rows) where the
+    /// old linear `group_of` scan was O(rows²) per paint — the grid's real
+    /// 10k-row target.
+    #[test]
+    fn r1265_grouped_flatten_scales_without_drop_or_dup() {
+        let n = 300;
+        let model = distinct_asset_model(n);
+        assert_eq!(nrows(&model), n, "the scale model has n rows");
+        let table = group_table(&model, 0);
+        assert_eq!(table.len(), n, "n distinct Asset values => n groups");
+        assert_eq!(
+            table,
+            (0..n).map(|i| format!("Asset{i}")).collect::<Vec<_>>(),
+            "labels stay in source-order first appearance",
+        );
+        let rows = visible_rows(&model, None, None, Some(0), &BTreeSet::new());
+        assert_eq!(
+            rows.len(),
+            2 * n,
+            "n headers + n data, nothing dropped/duped"
+        );
+        for i in 0..n {
+            assert_eq!(
+                rows[2 * i],
+                GroupRow::Header {
+                    group: i,
+                    member_count: 1,
+                    collapsed: false,
+                },
+                "header {i} sits at its interleaved slot with one member",
+            );
+            assert_eq!(
+                rows[2 * i + 1],
+                GroupRow::Data { source: i },
+                "data row {i} carries its source identity in order",
+            );
+        }
+    }
+
+    /// R1265 — the `group_index_of` map lookup is byte-identical to the old
+    /// `table.iter().position(...)` linear scan for EVERY row, including
+    /// repeats: same first-appearance id, same group-0 fallback. This pins the
+    /// asymptotic refactor as output-preserving, not just faster.
+    #[test]
+    fn r1265_group_index_matches_the_linear_scan() {
+        // Out-of-order repeats: A, B, A, C, B, A => 3 groups {A:0, B:1, C:2}.
+        let assets = ["A", "B", "A", "C", "B", "A"];
+        let model: Vec<CellValue> = assets
+            .iter()
+            .flat_map(|a| {
+                vec![
+                    CellValue::Text((*a).to_owned()),
+                    choice_cell(TYPE_COL, 0),
+                    CellValue::Int(0),
+                    CellValue::Float(0.0),
+                    CellValue::Bool(true),
+                    swatch_cell(0),
+                ]
+            })
+            .collect();
+        let table = group_table(&model, 0);
+        assert_eq!(
+            table,
+            vec!["A", "B", "C"],
+            "first-appearance order preserved with out-of-order repeats",
+        );
+        let ids = group_index_of(&table);
+        for row in 0..nrows(&model) {
+            let via_map = group_of(&model, row, 0, &ids);
+            let key = model
+                .get(idx(row, 0))
+                .map(CellValue::display)
+                .unwrap_or_default();
+            let via_scan = table.iter().position(|l| *l == key).unwrap_or(0);
+            assert_eq!(via_map, via_scan, "map lookup == linear scan for row {row}");
+        }
     }
 
     #[test]
