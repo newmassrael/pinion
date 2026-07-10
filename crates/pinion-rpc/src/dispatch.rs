@@ -239,7 +239,7 @@ impl RpcError {
     }
 }
 
-const JSONRPC_V2: &str = "2.0";
+pub(crate) const JSONRPC_V2: &str = "2.0";
 
 /// Bundle of all the runtime state a dispatch call needs (§5.34 R40.7).
 ///
@@ -6659,7 +6659,7 @@ fn error_response(
     }
 }
 
-fn serialize(resp: &Response) -> String {
+pub(crate) fn serialize(resp: &Response) -> String {
     // serde_json on a well-formed Response cannot fail in practice.
     serde_json::to_string(resp).unwrap_or_else(|e| {
         format!(

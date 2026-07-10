@@ -67,6 +67,7 @@ pub mod headless_screenshot;
 mod substrate;
 pub mod typeahead;
 pub mod vello_capture;
+pub mod waiter;
 
 // R51.175 §5.41 — shared Vello-side test fixture surface. Exposes a
 // minimal `VelloRenderer`-conforming `TestRenderer` plus
@@ -84,8 +85,9 @@ pub use app::{AppShell, ShellConfig, run, run_with_config, run_with_handlers};
 // name the `on_rpc_ingress` hook argument without a direct pinion-rpc dep.
 pub use executor::{ProxyIntentSink, ProxyRepaintSink, TokioExecutor, build_executor_and_sink};
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
-pub use pinion_rpc::{RpcFrame, RpcIngress, RpcReply};
+pub use pinion_rpc::{RpcFrame, RpcIngress, RpcReply, WaiterRegistry};
 pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
+pub use waiter::use_waiter_registry;
 
 /// Winit user-event variants that reach the UI thread out-of-band.
 ///

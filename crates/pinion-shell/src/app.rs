@@ -36,7 +36,7 @@ use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
 use pinion_core::style::CursorHint;
-use pinion_rpc::{RpcFrame, RpcIngress, RpcReply};
+use pinion_rpc::{RpcFrame, RpcIngress, RpcReply, WaiterRegistry, try_async_wait_for};
 use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
 use vello::kurbo::Affine;
@@ -1088,6 +1088,29 @@ impl<V: WidgetView> AppShell<V> {
             Err(err_resp) => {
                 reply.send(err_resp);
                 return;
+            }
+        };
+        // R1269 PR-50 §6.3 — async `scene/waitFor`: park or answer the frame
+        // before normal dispatch. The registry lives in the ONE root-Owner
+        // cache slot a binding's producer also resolves (`use_waiter_registry`),
+        // so a wait parked here and the `notify_changed` that wakes it share a
+        // single instance. `try_async_wait_for` claims only a `scene/waitFor`
+        // carrying a numeric `since` — every other frame (and the v0 busy-poll
+        // waitFor) hands the reply back for the normal path below, byte-unchanged.
+        let reply = {
+            let holder = self
+                .core
+                .root_owner()
+                .cache(crate::waiter::WAITER_REGISTRY_KEY, || {
+                    Arc::new(WaiterRegistry::new())
+                });
+            let registry = Arc::clone(&holder);
+            match try_async_wait_for(&parsed_request, &registry, reply) {
+                // Parked (fires later on notify) or answered immediately — a
+                // waitFor dispatches nothing and queues no window controls, so
+                // there is nothing further to do this frame.
+                Ok(()) => return,
+                Err(reply) => reply,
             }
         };
         // R1149 §5.51 §2 #7 §2 #2 — stamp every window's ACTUAL outer origin so a

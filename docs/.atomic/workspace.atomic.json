@@ -23154,6 +23154,62 @@
         "R1266/R1267 have no atomic changelog entry (git+memory record them); backfill a separate call"
       ]
     },
+    "R1269": {
+      "decision_summary": "R1269 §6.3 PR-50 async scene/waitFor: WaiterRegistry parks a reply until notify_changed wakes it; shell dispatch park path + use_waiter_registry hook; hello-live-data producer wakes waiters",
+      "changes_bullets": [
+        "pinion-rpc WaiterRegistry: own change-gen counter, park(since,id,reply) + notify_changed() wake",
+        "try_async_wait_for SSOT: waitFor{since} parks or answers now; no-since frame falls to v0 busy-poll",
+        "waiter_response via dispatch serialize SSOT (Response->String); {changed,revision} wire shape",
+        "shell AppShell::dispatch_rpc routes waitFor before dispatch; registry in one root-Owner cache slot",
+        "use_waiter_registry hook (wake sibling of use_repaint_sink); pinion-shell re-exports it",
+        "hello-live-data producer thread calls notify_changed() next to request_repaint() (forcing consumer)"
+      ],
+      "verification_bullets": [
+        "9 waiter unit tests: park/notify/since-boundary/immediate/notification-drop/decision hand-back",
+        "r1269_async_wait_for.py 30 asserts PASS: click->producer notify->parked waitFor wakes->new line",
+        "clippy -D pedantic + cargo doc private green; pinion-rpc 895 + pinion-shell 154 tests pass",
+        "r1000 live-data regression PASS (only ADDED notify_changed); v0 waitFor path byte-unchanged",
+        "3b: serialize() lifted to pub(crate) SSOT (was a 2nd Response->String path in waiter_response)"
+      ],
+      "impact_refs": [
+        "6.3",
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "tui ingress not wired to try_async_wait_for (SSOT ready; GUI is sprag consumer) = follow-up",
+        "no waiter timeout/disconnect-GC: a parked reply drops when the connection closes; bounded-park later",
+        "dispatch-driven mutations do not advance the waitFor gen (external-arrival model); refine if needed",
+        "sprag R4 wire client consumes this in a sprag-native session (pinion delivers the seam here)"
+      ],
+      "publishable_decision_summary": "R1269 §6.3 PR-50 async scene/waitFor: WaiterRegistry parks a reply until notify_changed wakes it; shell dispatch park path + use_waiter_registry hook; hello-live-data producer wakes waiters",
+      "publishable_changes_bullets": [
+        "pinion-rpc WaiterRegistry: own change-gen counter, park(since,id,reply) + notify_changed() wake",
+        "try_async_wait_for SSOT: waitFor{since} parks or answers now; no-since frame falls to v0 busy-poll",
+        "waiter_response via dispatch serialize SSOT (Response->String); {changed,revision} wire shape",
+        "shell AppShell::dispatch_rpc routes waitFor before dispatch; registry in one root-Owner cache slot",
+        "use_waiter_registry hook (wake sibling of use_repaint_sink); pinion-shell re-exports it",
+        "hello-live-data producer thread calls notify_changed() next to request_repaint() (forcing consumer)"
+      ],
+      "publishable_verification_bullets": [
+        "9 waiter unit tests: park/notify/since-boundary/immediate/notification-drop/decision hand-back",
+        "r1269_async_wait_for.py 30 asserts PASS: click->producer notify->parked waitFor wakes->new line",
+        "clippy -D pedantic + cargo doc private green; pinion-rpc 895 + pinion-shell 154 tests pass",
+        "r1000 live-data regression PASS (only ADDED notify_changed); v0 waitFor path byte-unchanged",
+        "3b: serialize() lifted to pub(crate) SSOT (was a 2nd Response->String path in waiter_response)"
+      ],
+      "publishable_impact_refs": [
+        "6.3",
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "tui ingress not wired to try_async_wait_for (SSOT ready; GUI is sprag consumer) = follow-up",
+        "no waiter timeout/disconnect-GC: a parked reply drops when the connection closes; bounded-park later",
+        "dispatch-driven mutations do not advance the waitFor gen (external-arrival model); refine if needed",
+        "sprag R4 wire client consumes this in a sprag-native session (pinion delivers the seam here)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
