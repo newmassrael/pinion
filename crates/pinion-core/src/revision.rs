@@ -25,22 +25,46 @@
 //! missed bump causes false-negative apply success, applying stale
 //! proposals against a scene that has silently moved on.
 
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// A wake observer fired after every [`SceneRevision::bump`] with the new
+/// value — the seam a change-driven consumer (an async `scene/waitFor`
+/// registry) hooks so that **every** revision advance, from any bump site,
+/// reaches it (R1270 §6.3). `Send + Sync` because a bump can happen on any
+/// thread (dispatch's UI thread, an external-data producer thread).
+pub type RevisionObserver = Box<dyn Fn(u64) + Send + Sync>;
 
 /// Monotonic version counter attached to the live scene (§5.34 R40.4).
 ///
 /// Thread-safe — backed by a single [`AtomicU64`]. Cloning is *not*
 /// implemented because the revision is a per-scene singleton; the
-/// embedder owns one and shares `&SceneRevision` references to it.
-#[derive(Debug)]
-pub struct SceneRevision(AtomicU64);
+/// embedder owns one and shares `&SceneRevision` references to it (or an
+/// `Arc<SceneRevision>` when a producer thread must bump the same token).
+///
+/// R1270 §6.3 — carries an optional [`RevisionObserver`] installed **once** by
+/// the embedder ([`set_observer`](Self::set_observer)): [`bump`](Self::bump)
+/// fires it with the new value, so a change-driven consumer (the async
+/// `scene/waitFor` waiter registry)
+/// wakes on **one** token — the same one the OCC preview lifecycle guards —
+/// no matter which site bumped it (a dispatched mutation, shell input, or an
+/// external-data arrival). This is why external arrival must bump *this*
+/// revision rather than a private counter: one scene, one version.
+pub struct SceneRevision {
+    counter: AtomicU64,
+    /// Set once at wiring time; read lock-free on the bump hot path.
+    observer: OnceLock<RevisionObserver>,
+}
 
 impl SceneRevision {
-    /// Construct a fresh revision starting at `0`. The first
-    /// [`bump`](Self::bump) yields `1`.
+    /// Construct a fresh revision starting at `0`, with no observer. The
+    /// first [`bump`](Self::bump) yields `1`.
     #[must_use]
     pub fn new() -> Self {
-        Self(AtomicU64::new(0))
+        Self {
+            counter: AtomicU64::new(0),
+            observer: OnceLock::new(),
+        }
     }
 
     /// Read the current revision value.
@@ -50,15 +74,50 @@ impl SceneRevision {
     /// mutations it ordered behind.
     #[must_use]
     pub fn current(&self) -> u64 {
-        self.0.load(Ordering::Acquire)
+        self.counter.load(Ordering::Acquire)
     }
 
-    /// Increment the revision and return the new value.
+    /// Increment the revision and return the new value, then fire the
+    /// installed [observer](Self::set_observer) (if any) with it.
     ///
     /// Uses `AcqRel` ordering so a subsequent [`current`](Self::current)
-    /// on another thread is guaranteed to see this bump.
+    /// on another thread is guaranteed to see this bump. The observer is
+    /// invoked **after** the counter advance and read lock-free (an
+    /// [`OnceLock`] get), so a consumer waking off the bump sees the new
+    /// value; it runs on whatever thread called `bump` (the observer must be
+    /// `Send + Sync` for exactly that reason).
     pub fn bump(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::AcqRel) + 1
+        let new = self.counter.fetch_add(1, Ordering::AcqRel) + 1;
+        if let Some(observer) = self.observer.get() {
+            observer(new);
+        }
+        new
+    }
+
+    /// Install the wake [observer](RevisionObserver), fired by every future
+    /// [`bump`](Self::bump). Idempotent-once: the first call wins and any
+    /// later call is a no-op (the embedder installs exactly one wake seam at
+    /// boot; there is no unset). Returns whether this call installed it.
+    pub fn set_observer(&self, observer: impl Fn(u64) + Send + Sync + 'static) -> bool {
+        self.observer.set(Box::new(observer)).is_ok()
+    }
+
+    /// Whether an [observer](Self::set_observer) is installed — for the
+    /// embedder's boot wiring and tests.
+    #[must_use]
+    pub fn has_observer(&self) -> bool {
+        self.observer.get().is_some()
+    }
+}
+
+impl core::fmt::Debug for SceneRevision {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // The observer closure is not `Debug`; report the counter + whether a
+        // wake seam is installed (keeps `#[derive(Debug)]` working on holders).
+        f.debug_struct("SceneRevision")
+            .field("current", &self.current())
+            .field("has_observer", &self.has_observer())
+            .finish()
     }
 }
 
@@ -101,6 +160,64 @@ mod tests {
     fn default_starts_at_zero() {
         let rev = SceneRevision::default();
         assert_eq!(rev.current(), 0);
+    }
+
+    #[test]
+    fn bump_fires_the_installed_observer_with_the_new_value() {
+        use std::sync::Mutex;
+        let rev = SceneRevision::new();
+        assert!(!rev.has_observer(), "no observer by default");
+        let seen: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let s = Arc::clone(&seen);
+        assert!(rev.set_observer(move |n| s.lock().unwrap().push(n)));
+        assert!(rev.has_observer());
+        assert_eq!(rev.bump(), 1);
+        assert_eq!(rev.bump(), 2);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![1, 2],
+            "observer saw every new value"
+        );
+    }
+
+    #[test]
+    fn set_observer_is_install_once() {
+        let rev = SceneRevision::new();
+        assert!(rev.set_observer(|_| {}), "first install wins");
+        assert!(!rev.set_observer(|_| {}), "a second install is a no-op");
+    }
+
+    #[test]
+    fn no_observer_bump_is_side_effect_free() {
+        let rev = SceneRevision::new();
+        assert_eq!(
+            rev.bump(),
+            1,
+            "a bump with no observer just advances the counter"
+        );
+    }
+
+    #[test]
+    fn observer_fires_from_the_bumping_thread() {
+        use std::sync::Mutex;
+        // A bump on a spawned thread fires the observer there — the
+        // external-arrival path (a producer thread bumping the shared token).
+        let rev = Arc::new(SceneRevision::new());
+        let count = Arc::new(Mutex::new(0u64));
+        let c = Arc::clone(&count);
+        rev.set_observer(move |_| *c.lock().unwrap() += 1);
+        let r = Arc::clone(&rev);
+        thread::spawn(move || {
+            r.bump();
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            *count.lock().unwrap(),
+            1,
+            "the observer fired on the producer thread"
+        );
+        assert_eq!(rev.current(), 1);
     }
 
     #[test]

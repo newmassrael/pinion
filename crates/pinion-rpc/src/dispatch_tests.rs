@@ -377,6 +377,30 @@ fn dispatch_full(
     dispatch(&mut ctx, req)
 }
 
+#[test]
+fn r1270_scene_revision_reports_and_tracks_the_one_token() {
+    // F3 §6.3 — the non-blocking read of the single scene version token, and
+    // F1 — it reports the SAME `SceneRevision` every mutation bumps (the token
+    // an async `scene/waitFor` waits on), so a client bootstraps `since`.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let read = |scene: &mut Scene, id: u32| -> u64 {
+        let req = format!(r#"{{"jsonrpc":"2.0","method":"scene/revision","id":{id}}}"#);
+        let resp = parse_response(&dispatch_full(scene, &previews, &revision, &req).unwrap());
+        assert!(resp.error.is_none(), "scene/revision never errors");
+        resp.result.unwrap()["revision"].as_u64().unwrap()
+    };
+    assert_eq!(read(&mut scene, 1), 0, "a fresh scene reports revision 0");
+    revision.bump();
+    revision.bump();
+    assert_eq!(
+        read(&mut scene, 2),
+        2,
+        "reads the advanced token (one shared version)"
+    );
+}
+
 // ---- R889 §5.49 — unknown-window gate (dispatch-entry rejection) ----
 
 #[test]

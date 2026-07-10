@@ -55,7 +55,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::use_waiter_registry;
+use pinion_shell::use_scene_revision;
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
     ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
@@ -122,11 +122,12 @@ fn use_live_log() -> Rc<LiveLog> {
     // The public binding-facing hook; resolved here, before the `Owner::cache`
     // factory below, so the factory never re-enters `Owner::cache`.
     let sink = use_repaint_sink();
-    // R1269 PR-50 §6.3 — the wake sibling of the repaint sink: the producer
-    // thread's data arrival (a pane's `on_dirty` analog) also wakes any parked
-    // async `scene/waitFor`, so a wire client repaints on output it did not
-    // cause. Resolved before the cache factory, same as `sink`.
-    let waiter = use_waiter_registry();
+    // R1270 §6.3 — the wake sibling of the repaint sink: the ONE shared scene
+    // revision. The producer bumps it on arrival, which advances the OCC token
+    // (a pane's `on_dirty` analog) AND wakes any parked async `scene/waitFor`
+    // (the shell's revision observer), so a wire client repaints on output it
+    // did not cause. Resolved before the cache factory, same as `sink`.
+    let scene_revision = use_scene_revision();
     owner.cache(LOG_KEY, move || {
         let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel::<()>();
@@ -149,9 +150,11 @@ fn use_live_log() -> Rc<LiveLog> {
                         }
                     }
                     sink.request_repaint();
-                    // The same dirty edge wakes parked async waitFor waiters
-                    // (advances the change generation + fires their replies).
-                    waiter.notify_changed();
+                    // The same dirty edge bumps the ONE scene revision: the OCC
+                    // token advances (so a preview's base_revision detects this
+                    // external change) AND any parked async scene/waitFor wakes
+                    // (the shell installed a wake observer on this revision).
+                    scene_revision.bump();
                 }
             })
             .expect("spawn hello-live-data producer thread");

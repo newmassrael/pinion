@@ -241,7 +241,13 @@ pub struct ShellCore<V: WidgetView> {
     /// R51.83 §5.40 — private. Read-only access via
     /// [`Self::revision`] (returns the current `u64`); mutation
     /// happens through the substrate dispatch methods only.
-    revision: SceneRevision,
+    ///
+    /// R1270 §6.3 — an `Arc` so an external-data producer thread can bump the
+    /// SAME single scene version token (resolved from the root `Owner` cache
+    /// via [`resolve_scene_revision`](crate::waiter::resolve_scene_revision)),
+    /// and so the boot-installed wake observer wakes parked async
+    /// `scene/waitFor` waiters on every bump — one scene, one version.
+    revision: Arc<SceneRevision>,
     /// R51.53 §5.39 framework-side focus state owner. Tab/Shift+Tab
     /// traverses [`FocusManager::tab_order`] (R1020: re-derived from the
     /// paint scene every frame via `Scene::collect_focusable_tags`); click
@@ -580,10 +586,14 @@ impl<V: WidgetView> ShellCore<V> {
             "shell: initial state = {}",
             V::fmt_state_log(core.cached_state()),
         );
+        // R1270 §6.3 — resolve the ONE shared scene revision (an external-data
+        // producer resolves the same `Arc` to bump it on arrival) before `core`
+        // moves into the struct.
+        let revision = crate::waiter::resolve_scene_revision(core.root_owner());
         let mut shell = Self {
             core,
             previews: PreviewLedger::default(),
-            revision: SceneRevision::default(),
+            revision,
             focus: FocusManager::new(),
             modifiers: Modifiers::empty(),
             text_cache: LayoutCache::new(),
@@ -605,6 +615,15 @@ impl<V: WidgetView> ShellCore<V> {
         // so an RPC `focus/set` or the first Tab resolves a current
         // enumeration before the first live paint. (Replaces the pre-R1020
         // `V::focusable_tags()` boot seed; the method is retired.)
+        // R1270 §6.3 — install the async `scene/waitFor` wake seam on the ONE
+        // scene revision (install-once): every future bump — a dispatched
+        // mutation, shell input, or an external-data producer's arrival bump —
+        // wakes parked waiters through this one observer, so the registry needs
+        // no version counter of its own.
+        let waiters = crate::waiter::resolve_waiter_registry(shell.core.root_owner());
+        shell.revision.set_observer(move |new| {
+            waiters.wake(new);
+        });
         shell.refresh_focusable_from_view();
         shell
     }
@@ -947,6 +966,15 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn revision(&self) -> u64 {
         self.revision.current()
+    }
+
+    /// R1270 §6.3 — borrow the single scene [`SceneRevision`] token for the
+    /// async `scene/waitFor` decision (the ingress reads `since` against it and
+    /// parks; the `scene/revision` read method reports its value). The `u64`
+    /// peer [`revision`](Self::revision) is the common read.
+    #[must_use]
+    pub fn revision_token(&self) -> &SceneRevision {
+        self.revision.as_ref()
     }
 
     /// R51.76 §5.40 — borrow the live state scene. Tests reach the
@@ -4655,7 +4683,7 @@ impl<V: WidgetView> ShellCore<V> {
                 .core
                 .scene_mut_and_last_paint_for_window(paint_window_key);
             let previews = &self.previews;
-            let revision = &self.revision;
+            let revision = self.revision.as_ref();
             let focus_ptr = &mut self.focus;
             let text_cache_ptr = &mut self.text_cache;
             // R1072 §5.37 — the opt-in engine measure for the RPC-side producer,

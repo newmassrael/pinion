@@ -36,7 +36,7 @@ use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
 use pinion_core::style::CursorHint;
-use pinion_rpc::{RpcFrame, RpcIngress, RpcReply, WaiterRegistry, try_async_wait_for};
+use pinion_rpc::{RpcFrame, RpcIngress, RpcReply, try_async_wait_for};
 use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
 use vello::kurbo::Affine;
@@ -1098,19 +1098,18 @@ impl<V: WidgetView> AppShell<V> {
         // carrying a numeric `since` — every other frame (and the v0 busy-poll
         // waitFor) hands the reply back for the normal path below, byte-unchanged.
         let reply = {
-            let holder = self
-                .core
-                .root_owner()
-                .cache(crate::waiter::WAITER_REGISTRY_KEY, || {
-                    Arc::new(WaiterRegistry::new())
-                });
-            let registry = Arc::clone(&holder);
-            match try_async_wait_for(&parsed_request, &registry, reply) {
-                // Parked (fires later on notify) or answered immediately — a
-                // waitFor dispatches nothing and queues no window controls, so
-                // there is nothing further to do this frame.
-                Ok(()) => return,
-                Err(reply) => reply,
+            let registry = crate::waiter::resolve_waiter_registry(self.core.root_owner());
+            match try_async_wait_for(
+                &parsed_request,
+                self.core.revision_token(),
+                &registry,
+                reply,
+            ) {
+                // Parked (fires later when a bump wakes it) or answered
+                // immediately — a waitFor dispatches nothing and queues no
+                // window controls, so there is nothing further to do this frame.
+                std::ops::ControlFlow::Break(()) => return,
+                std::ops::ControlFlow::Continue(reply) => reply,
             }
         };
         // R1149 §5.51 §2 #7 §2 #2 — stamp every window's ACTUAL outer origin so a

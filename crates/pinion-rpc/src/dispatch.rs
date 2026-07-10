@@ -1820,6 +1820,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             handle_scene_wait_for(scene, request.params.as_ref()),
             HandlerKind::Read,
         ),
+        "scene/revision" => (Ok(handle_scene_revision(revision)), HandlerKind::Read),
         "scene/screenshot" => (
             handle_scene_screenshot(screenshot, request.params.as_ref()),
             HandlerKind::Read,
@@ -4289,6 +4290,15 @@ fn simulate_error_to_rpc(err: &SimulateError) -> RpcError {
         SimulateError::EmptySteps => "EmptySteps",
     };
     RpcError::invalid_params(variant)
+}
+
+/// R1270 §6.3 — `scene/revision`: the current single scene version token
+/// ([`SceneRevision`]), the **non-blocking** read a client uses to bootstrap
+/// the `since` of an async `scene/waitFor` (the same token `base_revision`
+/// carries in a preview response). No params. §2 #7 — a queryable text
+/// observation of live scene state, no pixels.
+fn handle_scene_revision(revision: &SceneRevision) -> Value {
+    serde_json::json!({ "revision": revision.current() })
 }
 
 fn handle_scene_wait_for(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {

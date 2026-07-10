@@ -87,7 +87,7 @@ pub use executor::{ProxyIntentSink, ProxyRepaintSink, TokioExecutor, build_execu
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
 pub use pinion_rpc::{RpcFrame, RpcIngress, RpcReply, WaiterRegistry};
 pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
-pub use waiter::use_waiter_registry;
+pub use waiter::use_scene_revision;
 
 /// Winit user-event variants that reach the UI thread out-of-band.
 ///

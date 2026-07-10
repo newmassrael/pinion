@@ -131,6 +131,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/query", MethodOcc::Read),
     ("scene/render_fidelity", MethodOcc::Read),
     ("scene/resize", MethodOcc::Read),
+    ("scene/revision", MethodOcc::Read),
     ("scene/rewind", MethodOcc::Mutate),
     ("scene/screenshot", MethodOcc::Read),
     ("scene/scroll", MethodOcc::Read),

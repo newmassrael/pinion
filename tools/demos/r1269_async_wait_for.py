@@ -1,35 +1,34 @@
 #!/usr/bin/env python3
-"""R1269 PR-50 §6.3 — async `scene/waitFor`: block until the scene changes,
-woken by external output the client did not cause.
+"""R1269/R1270 §6.3 — async `scene/waitFor` over the single scene revision.
 
 The v0 `scene/waitFor` busy-polls a constant scene inside one synchronous
-dispatch — it can never observe a change that arrives *between* polls, because
-dispatch returns before any external state can land. This round lands the async
-form: a `scene/waitFor { since: <generation> }` whose baseline is current
-**parks** its one-shot reply in a `WaiterRegistry` (the dispatch thread returns
-without blocking) and the embedder's external-data observer wakes it via
-`WaiterRegistry::notify_changed`.
+dispatch — it can never observe a change between polls. R1269 landed the async
+form; R1270 hardened it after an adversarial audit:
 
-hello-live-data is the forcing consumer: its `Tick` button pokes a producer
-THREAD that appends a line off-thread and — the R1269 wiring — calls
-`notify_changed()` alongside its existing `request_repaint()` (the same dirty
-edge, two consumers). So the wake is SERVER-side: a single-threaded RPC client
-can send the poke, then a `waitFor` that parks and is woken by the producer —
-exactly the "repaint on output without user input" a wire GUI needs.
+  * **One token** (F1): the wait keys off the *single* OCC `SceneRevision` the
+    whole app shares — not a private counter. Every bump advances it: a
+    dispatched mutation, shell input, AND an external-data producer's arrival
+    (which now also advances the OCC token, so a preview's `base_revision`
+    detects the change). The shell installs a wake observer on that one token.
+  * **No lost wakeup** (L1): the park decision reads the revision *under* the
+    same lock the waker drains under.
+  * **Non-blocking read** (F3): `scene/revision` returns the current token so a
+    client bootstraps `since` without a blind blocking call.
+
+hello-live-data is the forcing consumer: its `Tick` pokes a producer THREAD
+that appends a line and bumps the shared `SceneRevision` — a server-side wake,
+so a single-threaded client can `click` then `waitFor` and be woken.
 
 This demo drives it over RPC and verifies, all without OCR:
 
-  (A) After a `Tick`, a `waitFor { since: <prev gen> }` returns `{ changed:
-      true, revision: <new> }` — the async wait resolved (parked-then-woken by
-      the producer, or immediate if the notify beat the request), and the
-      change generation strictly advances every round.
-  (B) The woken client re-reads the pane and sees the new producer line in the
-      paint scene (the data the wait announced is observable).
-  (C) The immediate-satisfaction path: a `waitFor { since: 0 }` when the
-      generation is already high answers at once with the current generation,
-      adding no line (a read, not a poke) — same wire shape as a woken wait.
-  (D) The response echoes the request id (a normal JSON-RPC round-trip, just
-      fired late).
+  (A) `scene/revision` reads the current token non-blockingly, and a dispatched
+      mutation (the Tick click) advances that SAME token — proving one shared
+      version, not a private waitFor counter (F1).
+  (B) `waitFor { since: <before the tick> }` returns `{ changed: true,
+      revision: <advanced> }` — the wait resolved (woken by the change), and
+      the new line is observable in the paint scene afterwards.
+  (C) The immediate-satisfaction path: `waitFor { since: 0 }` on an
+      already-advanced scene answers at once with the current revision.
 
 Run from the workspace root:
     cargo build -p hello-live-data --release
@@ -55,7 +54,7 @@ VIEWPORT = (440, 360)
 TICK_TAG = "tick"
 STATUS_TAG = "log_status"
 LIST_TAG = "log_list"
-EMDASH = "—"  # mirrors the binding's em-dash
+EMDASH = "—"
 ROUNDS = 6  # MAX_LINES = 8, so no oldest-line eviction inside the loop
 
 
@@ -105,10 +104,19 @@ def wait_status(d, expected: str, where: str):
     )
 
 
+def scene_revision(d) -> int:
+    """`scene/revision` — the non-blocking read of the single scene token."""
+    resp = d.request("scene/revision")
+    assert resp is not None, "scene/revision answered"
+    rev = resp.result["revision"]
+    assert isinstance(rev, int), f"revision is an int, got {rev!r}"
+    return rev
+
+
 def scene_wait_for(d, since: int):
-    """Issue `scene/waitFor { since }` and return its `result` dict. Blocks
-    (parks server-side) until the change generation advances past `since`, so
-    a broken wake path surfaces as a request timeout, not a silent pass."""
+    """`scene/waitFor { since }` — blocks (parks server-side) until the scene
+    revision advances past `since`, then returns its `result` dict. A broken
+    wake path surfaces as a request timeout, not a silent pass."""
     resp = d.request("scene/waitFor", {"since": since})
     assert resp is not None, "waitFor returned no response"
     assert isinstance(resp.result, dict), f"waitFor result must be an object, got {resp.result!r}"
@@ -121,27 +129,36 @@ def body() -> None:
         snap = wait_status(d, f"No events yet {EMDASH} press Tick", "boot")
         assert find_by_tag(snap, LIST_TAG) is not None, "log list present at boot"
         assert find_by_tag(snap, TICK_TAG) is not None, "Tick button present at boot"
-        assert_eq(status_of(snap), f"No events yet {EMDASH} press Tick", "boot status text")
 
-        gen = 0
+        # (A) scene/revision reads the single token non-blockingly.
+        boot_rev = scene_revision(d)
+        assert boot_rev >= 0, "boot revision is a non-negative token"
+
         for i in range(1, ROUNDS + 1):
-            # (poke) The Tick emits tick.click; the producer thread appends a
-            # line off-thread and calls notify_changed() — an external-output
-            # analog the client did NOT paint itself.
+            before = scene_revision(d)
+            # The Tick emits tick.click (a dispatched mutation → bumps the ONE
+            # token) and pokes the producer thread, which appends a line and
+            # bumps the SAME token on arrival (an external change the client did
+            # not paint itself).
             d.click(path=TICK_TAG)
 
-            # (A) Block until the scene changes. The reply parks in the
-            # WaiterRegistry and the producer's notify wakes it (or answers
-            # immediately if the notify already landed) — either way it returns
-            # the advanced generation.
-            res = scene_wait_for(d, since=gen)
+            # (B) Block until the scene changes. `try_async_wait_for` parks under
+            # one lock (or answers immediately if the bump already landed) and
+            # returns the advanced token.
+            res = scene_wait_for(d, since=before)
             assert_eq(res["changed"], True, f"round {i}: waitFor reports changed")
             assert isinstance(res["revision"], int), f"round {i}: revision is an int"
-            new_gen = res["revision"]
-            assert new_gen > gen, f"round {i}: generation advanced ({gen} -> {new_gen})"
-            gen = new_gen
+            assert res["revision"] > before, f"round {i}: token advanced past {before}"
 
-            # (B) The woken client re-reads the pane: the new line is in paint.
+            # (A cont.) the SAME token the dispatched click advanced is the one
+            # waitFor woke on — read it back, monotonic, and strictly greater
+            # than the pre-tick value (a private waitFor counter bumped only by
+            # the producer would NOT have moved on the click).
+            after = scene_revision(d)
+            assert after >= res["revision"], f"round {i}: token monotonic"
+            assert after > before, f"round {i}: the dispatched click advanced the shared token"
+
+            # (B cont.) the woken client re-reads the pane: the new line is in paint.
             snap = wait_status(d, events_status(i), f"round {i} line landed in paint")
             assert_eq(status_of(snap), events_status(i), f"round {i}: status count")
             assert_eq(
@@ -155,7 +172,9 @@ def body() -> None:
                 f"round {i}: oldest line stays resident (oldest-first)",
             )
 
-        # ── full resident pane after the async rounds (oldest-first) ────────
+        # ── the single token advanced across the whole session (F1) ─────────
+        final_rev = scene_revision(d)
+        assert final_rev > boot_rev, "the ONE shared revision advanced across the session"
         final = wait_status(d, events_status(ROUNDS), "final resident pane")
         assert find_by_tag(final, LIST_TAG) is not None, "log list still present"
         assert_eq(text_under(final, row_tag(0)), producer_line(1), "line 1 resident (oldest)")
@@ -164,22 +183,17 @@ def body() -> None:
         assert_eq(text_under(final, row_tag(3)), producer_line(4), "line 4 resident")
         assert_eq(text_under(final, row_tag(4)), producer_line(5), "line 5 resident")
         assert_eq(text_under(final, row_tag(5)), producer_line(6), "line 6 resident (newest)")
-        assert gen == ROUNDS, f"one change generation per Tick: gen={gen} == {ROUNDS} ticks"
 
         # ── (C) immediate-satisfaction path ────────────────────────────────
-        # A baseline older than the current generation answers at once with the
-        # current generation — no new Tick, no new line.
+        # A baseline of 0 is stale (the scene has advanced), so this answers at
+        # once with the current token — no Tick, no new line.
+        cur = scene_revision(d)
         imm = scene_wait_for(d, since=0)
         assert_eq(imm["changed"], True, "immediate: changed=true")
         assert isinstance(imm["revision"], int), "immediate: revision is an int"
-        assert_eq(imm["revision"], gen, "immediate: carries the current generation")
+        assert imm["revision"] >= cur, "immediate: carries a current-or-newer token"
         snap = wait_status(d, events_status(ROUNDS), "immediate waitFor added no line")
         assert_eq(status_of(snap), events_status(ROUNDS), "a read did not poke the producer")
-
-        # A baseline one below the current generation is also already stale.
-        imm2 = scene_wait_for(d, since=gen - 1)
-        assert_eq(imm2["changed"], True, "since=gen-1: changed=true")
-        assert_eq(imm2["revision"], gen, "since=gen-1 is stale → immediate at the current gen")
 
         # ── (D) the response is a normal JSON-RPC round-trip, id echoed ─────
         resp = d.request("scene/waitFor", {"since": 0})
@@ -187,8 +201,7 @@ def body() -> None:
         assert resp.id is not None, "the response echoes the request id"
         assert isinstance(resp.result, dict), "id-addressed result is a JSON object"
         assert_eq(resp.result["changed"], True, "id-addressed reports changed")
-        assert_eq(resp.result["revision"], gen, "id-addressed immediate carries the current gen")
 
 
 if __name__ == "__main__":
-    sys.exit(run_demo("R1269 async scene/waitFor", body))
+    sys.exit(run_demo("R1270 async scene/waitFor over one revision", body))

@@ -23210,6 +23210,62 @@
         "sprag R4 wire client consumes this in a sprag-native session (pinion delivers the seam here)"
       ]
     },
+    "R1270": {
+      "decision_summary": "R1270 audit-clearance R1269 async waitFor: one OCC SceneRevision (bump observer) not a private counter; lost-wakeup fixed (check+park one lock); scene/revision verb; ControlFlow; notify symmetry",
+      "changes_bullets": [
+        "F1: WaiterRegistry wakes off the ONE OCC SceneRevision (bump observer); dropped its private counter",
+        "L1: park_if_current reads the revision UNDER the parked lock (bump-before-lock) = no lost wakeup",
+        "SceneRevision gains an install-once wake observer; every bump (dispatch/input/arrival) wakes waiters",
+        "external arrival bumps the shared SceneRevision (OCC token no longer stale); hello-live-data uses it",
+        "F3: scene/revision read verb — non-blocking token read to bootstrap a waitFor since (§2 #7)",
+        "C2 notification symmetry + S3 ControlFlow decision + F4 resolve_* accessors (one key+factory home)"
+      ],
+      "verification_bullets": [
+        "3000-iter concurrent lost-wakeup guard PASS (fails on old read-then-park race); 12 revision tests",
+        "scene/revision dispatch test + catalog sorted; r1269 demo 31 asserts PASS (release, one-token)",
+        "full workspace test exit 0; clippy -D pedantic; cargo doc private green; r1000 regression PASS; T1=0",
+        "3b: resolve_waiter_registry/resolve_scene_revision one home (F4 factory-dup + magic-string fixed)",
+        "audit: 3 reviewers (correctness/SSOT/arch); 9/9 clearance-campaign audits found real defects"
+      ],
+      "impact_refs": [
+        "6.3",
+        "5.34",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "F2: TUI not yet routed through try_async_wait_for (GUI wired; doc overclaim retracted) = R1271",
+        "R1272: R1268 C3 undo-boundary (Enter merges into the prior typing run) + F5 Enter-policy modeling",
+        "no waiter timeout / disconnect-GC (bounded-park later); parked_count has no RPC read verb yet",
+        "sprag R4 wire client consumes PR-50 in a sprag-native session ([[no-direct-edits-to-other-repos]])"
+      ],
+      "publishable_decision_summary": "R1270 audit-clearance R1269 async waitFor: one OCC SceneRevision (bump observer) not a private counter; lost-wakeup fixed (check+park one lock); scene/revision verb; ControlFlow; notify symmetry",
+      "publishable_changes_bullets": [
+        "F1: WaiterRegistry wakes off the ONE OCC SceneRevision (bump observer); dropped its private counter",
+        "L1: park_if_current reads the revision UNDER the parked lock (bump-before-lock) = no lost wakeup",
+        "SceneRevision gains an install-once wake observer; every bump (dispatch/input/arrival) wakes waiters",
+        "external arrival bumps the shared SceneRevision (OCC token no longer stale); hello-live-data uses it",
+        "F3: scene/revision read verb — non-blocking token read to bootstrap a waitFor since (§2 #7)",
+        "C2 notification symmetry + S3 ControlFlow decision + F4 resolve_* accessors (one key+factory home)"
+      ],
+      "publishable_verification_bullets": [
+        "3000-iter concurrent lost-wakeup guard PASS (fails on old read-then-park race); 12 revision tests",
+        "scene/revision dispatch test + catalog sorted; r1269 demo 31 asserts PASS (release, one-token)",
+        "full workspace test exit 0; clippy -D pedantic; cargo doc private green; r1000 regression PASS; T1=0",
+        "3b: resolve_waiter_registry/resolve_scene_revision one home (F4 factory-dup + magic-string fixed)",
+        "audit: 3 reviewers (correctness/SSOT/arch); 9/9 clearance-campaign audits found real defects"
+      ],
+      "publishable_impact_refs": [
+        "6.3",
+        "5.34",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "F2: TUI not yet routed through try_async_wait_for (GUI wired; doc overclaim retracted) = R1271",
+        "R1272: R1268 C3 undo-boundary (Enter merges into the prior typing run) + F5 Enter-policy modeling",
+        "no waiter timeout / disconnect-GC (bounded-park later); parked_count has no RPC read verb yet",
+        "sprag R4 wire client consumes PR-50 in a sprag-native session ([[no-direct-edits-to-other-repos]])"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
