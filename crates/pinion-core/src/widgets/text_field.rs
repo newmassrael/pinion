@@ -353,6 +353,17 @@ pub fn apply_key(state: &TextEditState, key: &str, modifiers: crate::input::Modi
         // pre-R1268 field is byte-unchanged. The modifier state is intentionally
         // ignored: Shift+Enter is the same indent-aware newline (a hard newline;
         // a soft-break variant is a later slice, not a missed case here).
+        //
+        // R1270 F5 (audit — honest boundary): `auto_indent` deliberately
+        // doubles here as "capture Enter in the shared keymap", because the
+        // ONLY shared-keymap Enter consumer today IS an auto-indenting code
+        // editor. Enter's full policy is 3-way — single-line submit / prose
+        // plain-newline / code auto-indent-newline — but modelling that as a
+        // first-class `EnterAction` is 2nd-consumer-gated: a prose multi-line
+        // field that wants *keymap-driven* plain newline (rather than its own
+        // handler, as hello-textarea does) is the missing consumer that would
+        // force the split. Until then the `tab_indents`-style single opt-in is
+        // the honest shape, not a conflation to abstract away speculatively.
         "Enter" => {
             if !state.auto_indent() {
                 return false;

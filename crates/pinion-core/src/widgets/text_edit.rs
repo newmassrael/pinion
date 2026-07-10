@@ -2953,37 +2953,46 @@ impl TextEditState {
     /// R1268 §5.22 — insert a newline, copying the current line's leading
     /// indentation when [`auto_indent`](Self::auto_indent) is set (the
     /// code-editor "keep indentation" behaviour). The single newline-insert
-    /// entry point every `Enter` handler routes through: with `auto_indent`
-    /// off it is exactly `insert("\n")` (so a prose textarea is byte-unchanged);
-    /// with it on it inserts `"\n"` + the copied indent as **one** insert (one
-    /// undo step, since a whitespace insert never coalesces with the typing
-    /// run), leaving the caret past the copied indent on the new line.
+    /// entry point a handler that turns `Enter` into a newline routes through
+    /// (a single-line field's `Enter` submits and never reaches here); with
+    /// `auto_indent` off it is a plain `\n`, with it on it inserts `"\n"` + the
+    /// copied indent, leaving the caret past the copied indent on the new line.
+    ///
+    /// R1270 §5.22 — the newline is an undo **boundary** (the VS Code / Sublime
+    /// model, C3 audit fix): `Ctrl+Z` after `Enter` removes just the `\n` +
+    /// copied indent, and never merges into the preceding typing run — so
+    /// `Enter` is its own undo step whether or not indentation was copied.
+    /// (Delegating to [`insert`](Self::insert) coalesced the whitespace insert
+    /// *backward* into a prior character run, so undo wiped the preceding word.)
     ///
     /// The copied indent is the run of ASCII space / tab bytes at the insertion
     /// line's start, up to the insertion point (the selection start when a
-    /// selection is being replaced, else the caret — the byte [`insert`](Self::insert)
-    /// lands `s` at). Clamping to the insertion point means a caret parked
-    /// inside the indent copies only the indentation before it, and a caret
-    /// past the indent copies the whole indent but never any code; only ` ` /
-    /// `\t` are copied (never a trailing `\r` or content), so the new line
-    /// carries a clean indent prefix.
+    /// selection is being replaced, else the caret — where the text is
+    /// spliced). Clamping to the insertion point means a caret parked inside
+    /// the indent copies only the indentation before it, and a caret past the
+    /// indent copies the whole indent but never any code; only ` ` / `\t` are
+    /// copied (never a trailing `\r` or content).
     pub fn insert_newline(&self) {
-        if !self.auto_indent.get() {
-            self.insert("\n");
-            return;
-        }
         let text = self.text.get();
-        // The byte `insert` will splice at: the selection start when replacing
-        // a selection, else the (clamped) caret.
+        // The byte the newline splices at: the selection start when replacing a
+        // selection, else the (clamped) caret.
         let at = self
             .selection_range()
             .map_or_else(|| self.caret_pos.get().min(text.len()), |(start, _)| start);
-        let starts = line_starts(&text);
-        let ls = starts[line_of(&starts, at)];
-        let indent_end = line_indent_end(&text, ls, at);
-        // `\n` + the leading-indent slice (empty when the line has no indent up
-        // to `at`, degenerating to a plain newline). One `insert` = one edit.
-        self.insert(&format!("\n{}", &text[ls..indent_end]));
+        let indent = if self.auto_indent.get() {
+            let starts = line_starts(&text);
+            let ls = starts[line_of(&starts, at)];
+            &text[ls..line_indent_end(&text, ls, at)]
+        } else {
+            ""
+        };
+        let inserted = format!("\n{indent}");
+        // A newline is an undo BOUNDARY — its own step, never coalesced into a
+        // prior typing run (unlike the character-insert coalescing `insert`
+        // uses). `insert_inner` still drains an active selection first.
+        self.record_edit(CoalesceGroup::Boundary, false, "New line", || {
+            self.insert_inner(&inserted);
+        });
     }
 
     /// Delete the `char` immediately preceding the caret and move
@@ -6627,6 +6636,30 @@ mod tests {
                 "    x",
                 "the \\n and the copied indent vanish together"
             );
+        });
+    }
+
+    #[test]
+    fn r1270_insert_newline_is_an_undo_boundary_not_merged_into_typing() {
+        // C3 audit fix: Enter is its own undo step. Typing a word then Enter,
+        // one Ctrl+Z removes ONLY the newline — never the preceding word (the
+        // pre-R1270 delegation to `insert` coalesced the `\n` backward into the
+        // typing run, so undo wiped "foo" too).
+        Owner::new().run(|| {
+            let st = TextEditState::new();
+            st.set_auto_indent(true);
+            st.attach_undo(Rc::new(crate::undo::UndoStack::new()));
+            st.insert("foo"); // a coalescable typing run (one Insert command)
+            st.insert_newline(); // its own boundary step (flush-left: plain "\n")
+            assert_eq!(st.text(), "foo\n");
+            assert!(st.undo(), "one undo removes the newline");
+            assert_eq!(
+                st.text(),
+                "foo",
+                "the preceding typed word survives the boundary"
+            );
+            assert!(st.undo(), "a second undo removes the typed word");
+            assert_eq!(st.text(), "");
         });
     }
 
