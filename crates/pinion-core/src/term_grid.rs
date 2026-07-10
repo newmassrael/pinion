@@ -67,7 +67,7 @@ pub enum ColorTarget {
 /// (default / indexed / direct) are the complete, closed terminal colour
 /// model — there is no fourth kind of colour a cell can carry, so callers
 /// may exhaustively match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum TermColor {
     /// The terminal's configured default colour for this slot — resolved
     /// via [`Palette::default_fg`] / [`Palette::default_bg`] by
@@ -240,7 +240,7 @@ impl Default for Palette {
 /// hedge is free (matching the [`TextDecoration`] sibling).
 ///
 /// [`TextDecoration`]: crate::style::TextDecoration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
 #[non_exhaustive]
 pub struct CellAttrs {
@@ -369,7 +369,7 @@ impl CellAttrs {
 /// tracks during reflow is resolved producer-side into a blank
 /// [`Narrow`](Self::Narrow) cell before projection — it is not a fourth
 /// display state.)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CellWidth {
     /// A single-column cluster — the default for every cell.
     #[default]
@@ -400,7 +400,7 @@ pub enum CellWidth {
 /// refinements add fields (e.g. an OSC-8 hyperlink target), and
 /// construction routes through [`Self::new`] / [`Self::blank`] + the
 /// builders, so the hedge is free (matching [`crate::scene::TextGridNode`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct TermCell {
     /// The grapheme cluster painted in this cell. `" "` for a blank cell,
@@ -494,7 +494,7 @@ impl Default for TermCell {
 /// deliberately **not** applied and callers may match exhaustively. (The
 /// DECSCUSR blink-vs-steady axis is a separate concern and is not folded
 /// into the shape.)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CursorShape {
     /// A filled full-cell block — the conventional terminal default.
     #[default]
@@ -530,7 +530,7 @@ pub enum CursorShape {
 /// [`TermCell`] / [`CellAttrs`]): later refinements add fields (e.g. a
 /// blink flag or an explicit cursor colour), and construction routes
 /// through [`Self::new`] / [`Self::default`], so the hedge is free.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct GridCursor {
     /// Cursor column (cell coordinate).
@@ -579,7 +579,7 @@ impl GridCursor {
 /// This is distinct from the OS terminal's alternate screen that the
 /// `pinion-tui` backend itself enters to render — that is pinion's own
 /// output surface; this is the *projected* terminal's screen mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ScreenKind {
     /// The main screen — the conventional shell surface (with scrollback),
     /// and the default a fresh projection represents.
@@ -619,7 +619,8 @@ pub enum ScreenKind {
 /// that high-water mark — an incremental update that survives an arbitrary
 /// polling cadence (unlike a frame-reset dirty flag). pinion stores and
 /// reports the producer's stamps; it does not diff buffers itself.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "GridBufferWire")]
 pub struct GridBuffer {
     cols: u16,
     rows: u16,
@@ -630,7 +631,65 @@ pub struct GridBuffer {
     row_generations: Vec<u64>,
 }
 
+/// The unvalidated wire shape [`GridBuffer`] deserializes through
+/// (`#[serde(try_from)]`) — a field-for-field mirror of the private fields.
+/// Deserializing into this shadow first lets [`TryFrom`] enforce the length
+/// invariants the public constructors always uphold (`cells.len() ==
+/// cols * rows`, one generation per row) *before* a [`GridBuffer`] — whose
+/// [`cell`](GridBuffer::cell) indexes `cells` unchecked — is handed out, so
+/// a malformed payload fails fast with a clear error instead of panicking on
+/// a later read. `Serialize` is derived directly on [`GridBuffer`] (reading
+/// the fields can never break an invariant), so only the deserialize side
+/// routes through here.
+#[derive(serde::Deserialize)]
+struct GridBufferWire {
+    cols: u16,
+    rows: u16,
+    cells: Vec<TermCell>,
+    cursor: GridCursor,
+    screen: ScreenKind,
+    row_generations: Vec<u64>,
+}
+
+impl TryFrom<GridBufferWire> for GridBuffer {
+    type Error = String;
+
+    fn try_from(wire: GridBufferWire) -> Result<Self, Self::Error> {
+        let expected_cells = Self::cell_count(wire.cols, wire.rows);
+        if wire.cells.len() != expected_cells {
+            return Err(format!(
+                "GridBuffer cell count {} does not match cols*rows = {expected_cells}",
+                wire.cells.len(),
+            ));
+        }
+        if wire.row_generations.len() != usize::from(wire.rows) {
+            return Err(format!(
+                "GridBuffer row generation count {} does not match rows = {}",
+                wire.row_generations.len(),
+                wire.rows,
+            ));
+        }
+        Ok(Self {
+            cols: wire.cols,
+            rows: wire.rows,
+            cells: wire.cells,
+            cursor: wire.cursor,
+            screen: wire.screen,
+            row_generations: wire.row_generations,
+        })
+    }
+}
+
 impl GridBuffer {
+    /// The flat `cells` length a `cols × rows` buffer holds — the single
+    /// home of the row-major sizing invariant, called both to allocate a
+    /// fresh buffer ([`Self::new`]) and to validate a deserialized one (the
+    /// [`TryFrom`] impl), so the producer and the verifier can never encode
+    /// `cols * rows` differently.
+    fn cell_count(cols: u16, rows: u16) -> usize {
+        usize::from(cols) * usize::from(rows)
+    }
+
     /// A `cols × rows` buffer filled with [`TermCell::blank`], on the
     /// [`ScreenKind::Main`] screen, carrying the default
     /// ([`GridCursor::default`]: hidden, home, block) cursor and every
@@ -638,7 +697,7 @@ impl GridBuffer {
     /// builders.
     #[must_use]
     pub fn new(cols: u16, rows: u16) -> Self {
-        let count = usize::from(cols) * usize::from(rows);
+        let count = Self::cell_count(cols, rows);
         Self {
             cols,
             rows,
@@ -1070,5 +1129,73 @@ mod tests {
         // An out-of-bounds stamp is ignored, not a panic.
         let same = b.clone().with_row_generation(9, 99);
         assert_eq!(same, b);
+    }
+
+    #[test]
+    fn grid_buffer_round_trips_through_serde_json() {
+        // R1266 §5.41 — a buffer exercising every field the wire must carry:
+        // a wide head + trailer, all three TermColor variants, non-empty
+        // attrs, a visible bar cursor, the alternate screen, and non-zero
+        // per-row generations.
+        let head = TermCell::new(
+            WIDE_CLUSTER,
+            TermColor::Rgb(Color::rgb(0x12, 0x34, 0x56)),
+            TermColor::Indexed(4),
+        )
+        .with_attrs(CellAttrs::empty().with_reverse(true).with_bold(true))
+        .wide();
+        let buf = GridBuffer::new(3, 2)
+            .with_row(
+                0,
+                [
+                    head.clone(),
+                    head.trailer(),
+                    TermCell::new("x", TermColor::Default, TermColor::Indexed(2)),
+                ],
+            )
+            .with_cursor(GridCursor::new(1, 0, CursorShape::Bar, true))
+            .with_screen(ScreenKind::Alternate)
+            .with_row_generation(0, 7)
+            .with_row_generation(1, 42);
+
+        let json = serde_json::to_string(&buf).unwrap();
+        let back: GridBuffer = serde_json::from_str(&json).unwrap();
+        assert_eq!(buf, back);
+
+        // Spot-check the enumerated fields survived the round trip.
+        assert_eq!(back.cell(0, 0).unwrap().width, CellWidth::Wide);
+        assert_eq!(back.cell(1, 0).unwrap().width, CellWidth::Trailer);
+        assert_eq!(
+            back.cell(0, 0).unwrap().fg,
+            TermColor::Rgb(Color::rgb(0x12, 0x34, 0x56))
+        );
+        assert_eq!(back.cell(0, 0).unwrap().bg, TermColor::Indexed(4));
+        assert_eq!(back.cell(2, 0).unwrap().fg, TermColor::Default);
+        let a = back.cell(0, 0).unwrap().attrs;
+        assert!(a.reverse && a.bold);
+        assert_eq!(back.cursor(), GridCursor::new(1, 0, CursorShape::Bar, true));
+        assert_eq!(back.screen(), ScreenKind::Alternate);
+        assert_eq!(back.row_generation(1), Some(42));
+    }
+
+    #[test]
+    fn grid_buffer_deserialize_rejects_inconsistent_dimensions() {
+        // R1266 — the validating `try_from` guards the length invariant the
+        // public constructors always uphold and that `cell()` indexes
+        // against unchecked; a plain derive would let a short payload build
+        // an out-of-bounds buffer that panics on the next read.
+        let good = GridBuffer::new(2, 2);
+
+        // cells.len() (3) != cols*rows (4) after dropping one cell.
+        let mut short_cells = serde_json::to_value(&good).unwrap();
+        short_cells["cells"].as_array_mut().unwrap().pop();
+        let err = serde_json::from_value::<GridBuffer>(short_cells).unwrap_err();
+        assert!(err.to_string().contains("cell count"), "{err}");
+
+        // row_generations.len() (1) != rows (2) after dropping one stamp.
+        let mut short_gens = serde_json::to_value(&good).unwrap();
+        short_gens["row_generations"].as_array_mut().unwrap().pop();
+        let err = serde_json::from_value::<GridBuffer>(short_gens).unwrap_err();
+        assert!(err.to_string().contains("row generation"), "{err}");
     }
 }
