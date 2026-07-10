@@ -344,6 +344,22 @@ pub fn apply_key(state: &TextEditState, key: &str, modifiers: crate::input::Modi
             }
             true
         }
+        // R1268 §5.22 — Enter inserts an auto-indented newline for a multi-line
+        // code editor that opted in via `set_auto_indent`. The keymap-SSOT peer
+        // of the Tab arm above (a TextEditState-only key, not a `dispatch_key`
+        // clipboard pre-empt): a field that did NOT opt in returns `false`, so
+        // Enter keeps the field's own policy — a single-line field submits, and
+        // a prose multi-line field drives its own plain-newline handler — every
+        // pre-R1268 field is byte-unchanged. The modifier state is intentionally
+        // ignored: Shift+Enter is the same indent-aware newline (a hard newline;
+        // a soft-break variant is a later slice, not a missed case here).
+        "Enter" => {
+            if !state.auto_indent() {
+                return false;
+            }
+            state.insert_newline();
+            true
+        }
         other => {
             // R56.1.f.2 §5.22 — Ctrl+A / Cmd+A select-all. The W3C
             // `KeyboardEvent.key` value for the lowercase letter
@@ -3599,6 +3615,50 @@ mod r56_1_d_tests {
         state.set_caret(state.text().len());
         assert!(apply_key(&state, "/", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "// ab/");
+    }
+
+    #[test]
+    fn r1268_apply_key_enter_auto_indents_when_opted_in() {
+        let state = TextEditState::with_initial("    foo".to_string());
+        // Not opted in → Enter is unhandled (the field keeps its submit / focus
+        // policy — a single-line field is byte-unchanged) and inserts nothing.
+        assert!(
+            !apply_key(&state, "Enter", crate::input::Modifiers::empty()),
+            "no auto-indent opt-in → Enter falls through"
+        );
+        assert_eq!(
+            state.text(),
+            "    foo",
+            "unhandled Enter never mutates the buffer"
+        );
+        // Opt in → Enter inserts an indent-copying newline (the keymap-SSOT twin
+        // of TextEditState::insert_newline).
+        state.set_auto_indent(true);
+        assert!(
+            apply_key(&state, "Enter", crate::input::Modifiers::empty()),
+            "opted-in Enter is handled"
+        );
+        assert_eq!(
+            state.text(),
+            "    foo\n    ",
+            "the new line copies the 4-space indent"
+        );
+        // Shift+Enter is the same indent-aware newline (the modifier is ignored).
+        let shift = crate::input::Modifiers {
+            shift: true,
+            ctrl: false,
+            alt: false,
+            meta: false,
+        };
+        assert!(
+            apply_key(&state, "Enter", shift),
+            "Shift+Enter is handled too"
+        );
+        assert_eq!(
+            state.text(),
+            "    foo\n    \n    ",
+            "Shift+Enter also inserts an auto-indented newline"
+        );
     }
 
     #[test]

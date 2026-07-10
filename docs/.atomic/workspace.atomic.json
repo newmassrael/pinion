@@ -23102,6 +23102,58 @@
         "(3) The audit that surfaced this (an independent read-only sweep) found the pinion-core Model/View proxy family already clean (memoized order, BTreeSet selection, windowed a11y) and only this one example-level asymptotic hot-path — so R1265 is a single, bounded, output-preserving win, not a campaign."
       ]
     },
+    "R1268": {
+      "decision_summary": "R1268 §5.22 §5.38 auto-indent newline: insert_newline copies caret-line leading indent, opt-in set_auto_indent gated in shared field keymap; hello-syntax-highlight now editable",
+      "changes_bullets": [
+        "TextEditState::insert_newline SSOT: \\n + copied leading indent as one insert = one undo step",
+        "auto_indent opt-in Cell + set/get accessors, default off (existing fields byte-unchanged)",
+        "shared field keymap Enter arm gated on auto_indent (sibling of Tab-indent / Ctrl+/-comment)",
+        "line_indent_end: leading space/tab run clamped to insertion point (never copies \\r or code)",
+        "hello-syntax-highlight opts in: code editor now auto-indents newlines (Enter was a no-op)",
+        "hello-textarea Enter routed via insert_newline (plain \\n, no opt-in): 2nd newline-SSOT consumer"
+      ],
+      "verification_bullets": [
+        "10 new r1268 tests: 9 text_edit insert_newline (copy/clamp/caret-line/sel/undo) + 1 keymap gate",
+        "cargo test --workspace exit 0 (0 fail); clippy -D pedantic exit 0; cargo doc private exit 0",
+        "r1268_auto_indent.py 33 checks PASS (release headless): copy/clamp/tabs/sel/1-undo/Shift+Enter",
+        "regressions PASS: r764/r765 textarea, r938 indent, r939 comment, r987/r951 (keymap+newline)",
+        "3b clean: no other Enter->newline site; insert_newline 2 consumers; line_indent_end own helper"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "multi-key (N-key) grid sort deferred: ~21-file blast radius (single->ordered keys) = own campaign",
+        "vertical caret nav skips no folded-hidden rows; editable code-fold consumer still a gap",
+        "R1266/R1267 have no atomic changelog entry (git+memory record them); backfill a separate call"
+      ],
+      "publishable_decision_summary": "R1268 §5.22 §5.38 auto-indent newline: insert_newline copies caret-line leading indent, opt-in set_auto_indent gated in shared field keymap; hello-syntax-highlight now editable",
+      "publishable_changes_bullets": [
+        "TextEditState::insert_newline SSOT: \\n + copied leading indent as one insert = one undo step",
+        "auto_indent opt-in Cell + set/get accessors, default off (existing fields byte-unchanged)",
+        "shared field keymap Enter arm gated on auto_indent (sibling of Tab-indent / Ctrl+/-comment)",
+        "line_indent_end: leading space/tab run clamped to insertion point (never copies \\r or code)",
+        "hello-syntax-highlight opts in: code editor now auto-indents newlines (Enter was a no-op)",
+        "hello-textarea Enter routed via insert_newline (plain \\n, no opt-in): 2nd newline-SSOT consumer"
+      ],
+      "publishable_verification_bullets": [
+        "10 new r1268 tests: 9 text_edit insert_newline (copy/clamp/caret-line/sel/undo) + 1 keymap gate",
+        "cargo test --workspace exit 0 (0 fail); clippy -D pedantic exit 0; cargo doc private exit 0",
+        "r1268_auto_indent.py 33 checks PASS (release headless): copy/clamp/tabs/sel/1-undo/Shift+Enter",
+        "regressions PASS: r764/r765 textarea, r938 indent, r939 comment, r987/r951 (keymap+newline)",
+        "3b clean: no other Enter->newline site; insert_newline 2 consumers; line_indent_end own helper"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "multi-key (N-key) grid sort deferred: ~21-file blast radius (single->ordered keys) = own campaign",
+        "vertical caret nav skips no folded-hidden rows; editable code-fold consumer still a gap",
+        "R1266/R1267 have no atomic changelog entry (git+memory record them); backfill a separate call"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

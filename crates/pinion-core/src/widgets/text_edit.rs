@@ -395,6 +395,18 @@ pub struct TextEditState {
     /// shares the interior-mutability shape of [`undo`](Self::undo) /
     /// `highlighter`, not the reactive content shape.
     tab_indents: Cell<bool>,
+    /// R1268 §5.22 — opt-in: `Enter` inserts an **auto-indented** newline (a
+    /// `\n` followed by a copy of the current line's leading indentation), the
+    /// code-editor "keep indentation" affordance. `false` (the default) leaves
+    /// `Enter` to the field's own policy — a single-line field submits, a prose
+    /// multi-line field inserts a plain newline through its own handler — so
+    /// every pre-R1268 caller is byte-unchanged. A multi-line code editor calls
+    /// [`set_auto_indent`](Self::set_auto_indent)`(true)` (the sibling of
+    /// [`set_tab_indents`](Self::set_tab_indents) / [`set_line_comment`](Self::set_line_comment):
+    /// Enter is the third code-editor keystroke the shared field keymap gates on
+    /// an opt-in flag). Non-reactive [`Cell`], like `tab_indents`: the flag is
+    /// wiring, not observable content (no view-fn renders "does Enter auto-indent").
+    auto_indent: Cell<bool>,
     /// R939 §5.22 — opt-in: the line-comment marker `Ctrl+/` toggles on the
     /// selected lines (`Some("//")` for a C-family editor), or `None` (the
     /// default) so `Ctrl+/` falls through to the application — the marker is a
@@ -935,6 +947,25 @@ fn line_first_non_ws(text: &str, ls: usize) -> Option<usize> {
     None
 }
 
+/// R1268 §5.22 — the byte offset where the leading indentation of the line
+/// starting at `ls` ends, bounded by `at` — the copy bound for an auto-indent
+/// newline ([`TextEditState::insert_newline`]). Scans only ASCII ` ` / `\t`
+/// (indent characters — never `\r` or content, unlike the comment-toggle's
+/// [`line_first_non_ws`] blank detection) and stops at `at`, so the copied
+/// slice `text[ls..line_indent_end]` is the indentation up to the insertion
+/// point: a caret inside the indent copies only what precedes it, a caret past
+/// the indent copies the whole indent, and neither ever reaches code. The
+/// returned offset is a `char` boundary (the scan steps over single-byte ASCII
+/// only).
+fn line_indent_end(text: &str, ls: usize, at: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut end = ls;
+    while end < at && matches!(bytes.get(end), Some(b' ' | b'\t')) {
+        end += 1;
+    }
+    end
+}
+
 /// R939 §5.22 — re-anchor a caret / selection offset across a set of
 /// non-overlapping `(offset, removed_len, inserted_len)` edits. A position at
 /// or after an edit's removed run moves by `inserted_len - removed_len`; a
@@ -1321,6 +1352,7 @@ impl TextEditState {
             highlighter: RefCell::new(None),
             folds: Signal::new(BTreeSet::new()),
             tab_indents: Cell::new(false),
+            auto_indent: Cell::new(false),
             line_comment: Cell::new(None),
             pending_style: Signal::new(None),
         }
@@ -1367,6 +1399,7 @@ impl TextEditState {
             highlighter: RefCell::new(None),
             folds: Signal::new(BTreeSet::new()),
             tab_indents: Cell::new(false),
+            auto_indent: Cell::new(false),
             line_comment: Cell::new(None),
             pending_style: Signal::new(None),
         }
@@ -1413,6 +1446,26 @@ impl TextEditState {
     #[must_use]
     pub fn tab_indents(&self) -> bool {
         self.tab_indents.get()
+    }
+
+    /// R1268 §5.22 — opt this field into `Enter` inserting an **auto-indented**
+    /// newline ([`auto_indent`](Self::auto_indent) — the [`insert_newline`](Self::insert_newline)
+    /// behaviour). Call once at wiring time for a multi-line code editor; a
+    /// single-line field leaves it off so `Enter` keeps submitting, and a prose
+    /// multi-line field that wants a plain newline leaves it off and drives its
+    /// own handler. The default is `false`, so every pre-R1268 caller is
+    /// byte-unchanged.
+    pub fn set_auto_indent(&self, on: bool) {
+        self.auto_indent.set(on);
+    }
+
+    /// R1268 §5.22 — whether `Enter` inserts an auto-indented newline here (vs.
+    /// the field's own submit / plain-newline policy). The dispatch gate the
+    /// shared field keymap consults before calling [`insert_newline`](Self::insert_newline)
+    /// (the sibling of [`tab_indents`](Self::tab_indents) for the `Tab` key).
+    #[must_use]
+    pub fn auto_indent(&self) -> bool {
+        self.auto_indent.get()
     }
 
     /// R939 §5.22 — opt this field into `Ctrl+/` line-comment toggling, with
@@ -2897,6 +2950,42 @@ impl TextEditState {
         });
     }
 
+    /// R1268 §5.22 — insert a newline, copying the current line's leading
+    /// indentation when [`auto_indent`](Self::auto_indent) is set (the
+    /// code-editor "keep indentation" behaviour). The single newline-insert
+    /// entry point every `Enter` handler routes through: with `auto_indent`
+    /// off it is exactly `insert("\n")` (so a prose textarea is byte-unchanged);
+    /// with it on it inserts `"\n"` + the copied indent as **one** insert (one
+    /// undo step, since a whitespace insert never coalesces with the typing
+    /// run), leaving the caret past the copied indent on the new line.
+    ///
+    /// The copied indent is the run of ASCII space / tab bytes at the insertion
+    /// line's start, up to the insertion point (the selection start when a
+    /// selection is being replaced, else the caret — the byte [`insert`](Self::insert)
+    /// lands `s` at). Clamping to the insertion point means a caret parked
+    /// inside the indent copies only the indentation before it, and a caret
+    /// past the indent copies the whole indent but never any code; only ` ` /
+    /// `\t` are copied (never a trailing `\r` or content), so the new line
+    /// carries a clean indent prefix.
+    pub fn insert_newline(&self) {
+        if !self.auto_indent.get() {
+            self.insert("\n");
+            return;
+        }
+        let text = self.text.get();
+        // The byte `insert` will splice at: the selection start when replacing
+        // a selection, else the (clamped) caret.
+        let at = self
+            .selection_range()
+            .map_or_else(|| self.caret_pos.get().min(text.len()), |(start, _)| start);
+        let starts = line_starts(&text);
+        let ls = starts[line_of(&starts, at)];
+        let indent_end = line_indent_end(&text, ls, at);
+        // `\n` + the leading-indent slice (empty when the line has no indent up
+        // to `at`, degenerating to a plain newline). One `insert` = one edit.
+        self.insert(&format!("\n{}", &text[ls..indent_end]));
+    }
+
     /// Delete the `char` immediately preceding the caret and move
     /// the caret back by the deleted span (Backspace canonical).
     /// No-op when caret is at `0`. Handles multi-byte chars
@@ -3700,8 +3789,8 @@ mod tests {
 
     use super::{
         FormatField, INDENT_UNIT, INDENT_WIDTH, TextEditState, clamp_to_char_boundary,
-        dedent_remove_len, find_matches_in, fold_regions_in, line_first_non_ws, line_of,
-        line_starts, line_starts_in_range, matching_bracket_in, next_char_boundary,
+        dedent_remove_len, find_matches_in, fold_regions_in, line_first_non_ws, line_indent_end,
+        line_of, line_starts, line_starts_in_range, matching_bracket_in, next_char_boundary,
         prev_char_boundary, shift_pos_for_edits, style_runs_diff, use_text_edit_state,
     };
     use crate::reactive::{Effect, Owner};
@@ -6373,6 +6462,172 @@ mod tests {
         );
         st.set_tab_indents(true);
         assert!(st.tab_indents());
+    }
+
+    #[test]
+    fn r1268_auto_indent_flag_defaults_off() {
+        let st = TextEditState::new();
+        assert!(
+            !st.auto_indent(),
+            "off by default — single-line fields keep Enter=submit"
+        );
+        st.set_auto_indent(true);
+        assert!(st.auto_indent());
+    }
+
+    #[test]
+    fn r1268_line_indent_end_scans_spaces_and_tabs_clamped() {
+        // "    foo": four leading spaces, then 'f' at 4.
+        let t = "    foo";
+        assert_eq!(
+            line_indent_end(t, 0, 7),
+            4,
+            "stops at the first non-indent byte"
+        );
+        assert_eq!(
+            line_indent_end(t, 0, 2),
+            2,
+            "clamps to `at` inside the indent"
+        );
+        assert_eq!(line_indent_end(t, 0, 0), 0, "`at == ls` copies nothing");
+        // Tabs are indent bytes; a flush-left line has none.
+        assert_eq!(line_indent_end("\t\tx", 0, 3), 2, "leading tabs are indent");
+        assert_eq!(
+            line_indent_end("x", 0, 1),
+            0,
+            "flush-left line has no indent"
+        );
+        // The second line's own indent (ls past the first `\n`).
+        assert_eq!(
+            line_indent_end("a\n    b", 2, 7),
+            6,
+            "second line's 4-space indent"
+        );
+        // A carriage return ends the scan (never copied — the LF-oriented editor).
+        assert_eq!(
+            line_indent_end("  \r", 0, 3),
+            2,
+            "`\\r` is not an indent byte"
+        );
+    }
+
+    #[test]
+    fn r1268_insert_newline_plain_when_flag_off() {
+        Owner::new().run(|| {
+            // Flag defaults off → a plain newline, byte-identical to insert("\n").
+            let st = TextEditState::with_initial("    foo".to_string());
+            st.insert_newline();
+            assert_eq!(
+                st.text(),
+                "    foo\n",
+                "no indent copied when auto-indent is off"
+            );
+            assert_eq!(st.caret(), 8);
+        });
+    }
+
+    #[test]
+    fn r1268_insert_newline_copies_leading_indent() {
+        Owner::new().run(|| {
+            // Caret at the end of an indented line.
+            let st = TextEditState::with_initial("    foo".to_string());
+            st.set_auto_indent(true);
+            st.insert_newline();
+            assert_eq!(
+                st.text(),
+                "    foo\n    ",
+                "the new line copies the 4-space indent"
+            );
+            assert_eq!(st.caret(), 12, "caret lands past the copied indent");
+        });
+    }
+
+    #[test]
+    fn r1268_insert_newline_clamps_copied_indent_to_the_caret() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("    foo".to_string());
+            st.set_auto_indent(true);
+            st.set_caret(2); // parked inside the 4-space indent
+            st.insert_newline();
+            // Split at 2: "  " + "\n  " + "  foo" — only the indent BEFORE the
+            // caret is copied, never doubling the total indentation.
+            assert_eq!(
+                st.text(),
+                "  \n    foo",
+                "copies only the indent before the caret"
+            );
+            assert_eq!(
+                st.caret(),
+                5,
+                "caret sits just past the 2-space copied indent"
+            );
+        });
+    }
+
+    #[test]
+    fn r1268_insert_newline_no_indent_on_a_flush_left_line() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("foo".to_string());
+            st.set_auto_indent(true);
+            st.insert_newline();
+            assert_eq!(
+                st.text(),
+                "foo\n",
+                "a flush-left line yields a plain newline"
+            );
+            assert_eq!(st.caret(), 4);
+        });
+    }
+
+    #[test]
+    fn r1268_insert_newline_uses_the_caret_line_indent_not_the_first() {
+        Owner::new().run(|| {
+            // Caret at the end of the indented SECOND line.
+            let st = TextEditState::with_initial("fn f() {\n        bar".to_string());
+            st.set_auto_indent(true);
+            st.insert_newline();
+            assert_eq!(
+                st.text(),
+                "fn f() {\n        bar\n        ",
+                "the newline copies the caret line's 8-space indent",
+            );
+        });
+    }
+
+    #[test]
+    fn r1268_insert_newline_over_a_selection_uses_the_start_line_indent() {
+        Owner::new().run(|| {
+            // Select the whole tail from the indented first line; Enter replaces it.
+            let st = TextEditState::with_initial("    ab\ncd".to_string());
+            st.set_auto_indent(true);
+            st.set_selection(4, 9);
+            st.insert_newline();
+            // The selection drains, the insert lands at byte 4 (line-1 start),
+            // so the copied indent is line 1's "    " — not the collapsed caret's.
+            assert_eq!(
+                st.text(),
+                "    \n    ",
+                "indent copied from the selection-start line"
+            );
+            assert_eq!(st.caret(), 9);
+        });
+    }
+
+    #[test]
+    fn r1268_insert_newline_is_one_undo_step() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("    x".to_string());
+            st.set_auto_indent(true);
+            st.attach_undo(Rc::new(crate::undo::UndoStack::new()));
+            st.insert_newline();
+            assert_eq!(st.text(), "    x\n    ", "auto-indented newline");
+            assert!(st.undo(), "one undo reverses the whole newline + indent");
+            assert_eq!(
+                st.text(),
+                "    x",
+                "the \\n and the copied indent vanish together"
+            );
+        });
     }
 
     #[test]

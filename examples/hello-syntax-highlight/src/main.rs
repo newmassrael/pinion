@@ -272,6 +272,14 @@ impl WidgetCore for SyntaxView {
         // `<textarea>`-vs-`<input>` distinction. Opt-in: single-line fields
         // keep Tab = next-field.
         text_state.set_tab_indents(true);
+        // R1268 §5.22 — and Enter inserts an auto-indented newline (copies the
+        // current line's leading indentation), so adding a line inside an
+        // indented block keeps the indent — the code-editor "keep indentation"
+        // affordance that makes this field a usable editor rather than a viewer
+        // (pre-R1268 Enter reached the shared keymap and was a no-op here). The
+        // sibling opt-in of `set_tab_indents` / `set_line_comment`; a plain
+        // textarea leaves it off.
+        text_state.set_auto_indent(true);
         // R939 §5.22 — and Ctrl+/ toggles `//` line comments on the selected
         // lines (and the `toggle-comment` RPC verb). The marker is the C-family
         // token matching this editor's keyword highlighter; a field that does

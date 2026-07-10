@@ -814,7 +814,11 @@ impl WidgetCore for TextAreaView {
         }
         match key {
             "Enter" => {
-                use_text_edit_state(TA_TAG).insert("\n");
+                // R1268 §5.22 — route through the newline SSOT. This prose
+                // textarea does not opt into `set_auto_indent`, so it inserts a
+                // plain `\n` (byte-identical to the pre-R1268 `insert("\n")`);
+                // a code editor opts in and the same entry point copies indent.
+                use_text_edit_state(TA_TAG).insert_newline();
                 return true;
             }
             "ArrowUp" | "ArrowDown" => {
