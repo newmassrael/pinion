@@ -1,0 +1,85 @@
+{
+  "telling": "reader",
+  "fork_tree": {
+    "branches": [
+      {
+        "branch_id": "ending-flee",
+        "description": "물때를 놓치기 전에 갯벌을 떠난다",
+        "fork": { "parent": "main", "at": "ch16-the-cost", "at_placed": true }
+      },
+      {
+        "branch_id": "ending-silence",
+        "description": "밤의 부름에 답하지 않고 침묵으로 버틴다",
+        "fork": { "parent": "main", "at": "ch16-the-cost", "at_placed": true }
+      }
+    ],
+    "unplaced_fork_points": [],
+    "branch_count": 2
+  },
+  "worlds": [
+    {
+      "branch_id": "main",
+      "scenes": [
+        {
+          "idx": 0,
+          "title": "물때표",
+          "intent": "플레이어에게 물때 시계와 갯벌의 규칙을 각인시킨다",
+          "disclosures": [
+            { "mode": "plant", "fact": "만조에는 갯벌 길이 사라진다", "first_at": "ch01" }
+          ]
+        },
+        {
+          "idx": 1,
+          "title": "문설주의 동그라미",
+          "intent": "굿당 문설주에 그려진 역산 표식을 발견하게 한다",
+          "disclosures": [
+            { "mode": "plant", "fact": "동그라미는 일곱 매듭의 첫 단서", "first_at": "ch03" },
+            { "mode": "reveal", "fact": "표식은 이전 굿의 흔적이다", "first_at": "ch03" }
+          ]
+        },
+        {
+          "idx": 2,
+          "title": "밤의 부름",
+          "intent": "이름을 부르는 소리에 답할지 침묵할지 선택하게 한다",
+          "disclosures": [
+            { "mode": "plant", "fact": "대답하면 원귀가 위치를 안다", "first_at": "ch09" }
+          ]
+        },
+        {
+          "idx": 3,
+          "title": "셈의 대가",
+          "intent": "세계선이 갈리는 비용을 제시한다",
+          "disclosures": [
+            { "mode": "reveal", "fact": "셈이 끝나면 하나를 두고 가야 한다", "first_at": "ch16-the-cost" }
+          ]
+        }
+      ]
+    },
+    {
+      "branch_id": "ending-flee",
+      "scenes": [
+        {
+          "idx": 0,
+          "title": "떠나는 발",
+          "intent": "갯벌을 등지는 결말의 정경을 보여준다",
+          "disclosures": [
+            { "mode": "reveal", "fact": "물때는 기다려주지 않았다", "first_at": "end-flee" }
+          ]
+        }
+      ]
+    },
+    {
+      "branch_id": "ending-silence",
+      "scenes": [
+        {
+          "idx": 0,
+          "title": "침묵",
+          "intent": "부름에 답하지 않은 자의 결말을 보여준다",
+          "disclosures": [
+            { "mode": "reveal", "fact": "침묵의 대가는 다른 이름이었다", "first_at": "end-silence" }
+          ]
+        }
+      ]
+    }
+  ]
+}

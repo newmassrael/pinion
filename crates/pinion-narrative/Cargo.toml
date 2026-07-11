@@ -1,0 +1,22 @@
+[package]
+name = "pinion-narrative"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Read-side consumption of Mnemosyne narrative reports (playable-world / fork-tree) projected into a queryable pinion scene — the CQRS read projection for text->2D story pipelines"
+publish = false
+
+[dependencies]
+# Scene primitives, reactive Owner/Signal, the External escape hatch,
+# Intent wire form — the projection target + AI-first drive surface.
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# AT semantic nodes for the scene walk (List / ListItem).
+pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
+# Tolerant deserialize of the report JSON + Json-valued introspection.
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

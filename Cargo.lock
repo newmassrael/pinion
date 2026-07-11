@@ -2572,6 +2572,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-narrative-walk"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-narrative",
+ "pinion-tui",
+]
+
+[[package]]
 name = "hello-nav-rail"
 version = "0.0.1"
 dependencies = [
@@ -4604,6 +4614,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pinion-narrative"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

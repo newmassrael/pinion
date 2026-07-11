@@ -1,0 +1,26 @@
+[package]
+name = "hello-narrative-walk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "the-tide Stage 0 — a TUI scene walk driven by a Mnemosyne playable-world report, projected through pinion-narrative (R1 consumption seam)"
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hello-narrative-walk"
+path = "src/main.rs"
+
+[dependencies]
+# WidgetA11y AT node type for the binding's access_node.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# Scene / External / Owner + the WidgetCore harness trait.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# The read-side narrative substrate this binary consumes.
+pinion-narrative = { path = "../../crates/pinion-narrative", version = "0.0.1" }
+# TUI run entry point + renderer.
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
