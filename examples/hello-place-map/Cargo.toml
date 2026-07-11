@@ -1,0 +1,22 @@
+[package]
+name = "hello-place-map"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "the-tide 2D map — a relation place-graph solved to coordinates and projected through pinion-narrative::place (review F3)"
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hello-place-map"
+path = "src/main.rs"
+
+[dependencies]
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-narrative = { path = "../../crates/pinion-narrative", version = "0.0.1" }
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }

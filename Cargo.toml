@@ -28,6 +28,7 @@ members = [
     "examples/hello-window-chrome",
     "examples/hello-button-tui",
     "examples/hello-narrative-walk",
+    "examples/hello-place-map",
     "examples/hello-dnd",
     "examples/hello-filedrop",
     "examples/hello-file-browser",

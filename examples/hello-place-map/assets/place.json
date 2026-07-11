@@ -1,0 +1,18 @@
+{
+  "places": [
+    { "id": "village",  "label": "갯마을" },
+    { "id": "shrine",   "label": "굿당",   "contained_by": "village" },
+    { "id": "well",     "label": "우물",   "contained_by": "village" },
+    { "id": "mudflat",  "label": "갯벌",   "contained_by": null },
+    { "id": "channel",  "label": "갯골",   "contained_by": "mudflat" },
+    { "id": "sea",      "label": "먼바다", "contained_by": null },
+    { "id": "hill",     "label": "당산",   "contained_by": null }
+  ],
+  "adjacencies": [
+    { "from": "village",  "to": "mudflat", "direction": "south" },
+    { "from": "mudflat",  "to": "sea",     "direction": "south" },
+    { "from": "mudflat",  "to": "channel", "direction": "east" },
+    { "from": "village",  "to": "hill",    "direction": "north" },
+    { "from": "shrine",   "to": "well",    "direction": "east" }
+  ]
+}

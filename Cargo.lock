@@ -2669,6 +2669,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-place-map"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-narrative",
+ "pinion-tui",
+]
+
+[[package]]
 name = "hello-popover"
 version = "0.0.1"
 dependencies = [

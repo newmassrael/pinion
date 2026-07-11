@@ -14,6 +14,7 @@ use std::fmt;
 use std::path::Path;
 
 use crate::model::PlayableWorld;
+use crate::place::model::PlaceGraph;
 
 /// Failure loading or parsing a report.
 #[derive(Debug)]
@@ -88,6 +89,34 @@ pub fn resolve_report(env_var: &str, fallback_json: &str) -> Result<PlayableWorl
     }
 }
 
+/// Parse a [`PlaceGraph`] (spatial report) from a JSON string. Tolerant,
+/// like [`parse_report`].
+///
+/// # Errors
+///
+/// Returns [`ReportError::Parse`] when `json` is not well-formed JSON.
+pub fn parse_place_graph(json: &str) -> Result<PlaceGraph, ReportError> {
+    serde_json::from_str(json).map_err(ReportError::Parse)
+}
+
+/// The spatial acquisition seam, mirroring [`resolve_report`]: an
+/// env-var-pointed live place-graph file, else a bundled fallback.
+///
+/// # Errors
+///
+/// Propagates the read error when `env_var` is set but its target cannot be
+/// read or parsed, or the parse error if the bundled `fallback_json` is
+/// malformed.
+pub fn resolve_place_graph(env_var: &str, fallback_json: &str) -> Result<PlaceGraph, ReportError> {
+    match std::env::var_os(env_var) {
+        Some(path) => {
+            let bytes = std::fs::read_to_string(path).map_err(ReportError::Io)?;
+            parse_place_graph(&bytes)
+        }
+        None => parse_place_graph(fallback_json),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +170,21 @@ mod tests {
         let world = resolve_report("PINION_NARRATIVE_REPORT_TEST_UNSET_XYZ", SAMPLE)
             .expect("fallback parses");
         assert_eq!(world.telling, "reader");
+    }
+
+    #[test]
+    fn parse_place_graph_reads_and_tolerates_drift() {
+        let json = r#"{
+            "future_field": 1,
+            "places": [
+                { "id": "village", "label": "마을" },
+                { "id": "shrine", "label": "굿당", "contained_by": "village" }
+            ],
+            "adjacencies": [ { "from": "village", "to": "mudflat", "direction": "east" } ]
+        }"#;
+        let graph = parse_place_graph(json).expect("place graph parses");
+        assert_eq!(graph.place_count(), 2);
+        assert_eq!(graph.places[1].contained_by.as_deref(), Some("village"));
+        assert_eq!(graph.adjacencies.len(), 1);
     }
 }

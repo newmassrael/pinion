@@ -37,12 +37,19 @@ pub mod a11y;
 pub mod external;
 pub mod load;
 pub mod model;
+pub mod place;
 pub mod state;
 pub mod view;
 
 pub use a11y::narrative_access_nodes;
 pub use external::{MOVED_INTENT, NarrativeExternal};
-pub use load::{ReportError, load_report, parse_report, resolve_report};
+pub use load::{
+    ReportError, load_report, parse_place_graph, parse_report, resolve_place_graph, resolve_report,
+};
 pub use model::{Branch, Disclosure, Fork, ForkTree, PlayableWorld, SceneNode, WorldLine};
+pub use place::{
+    Adjacency, Direction, Place, PlaceGraph, PlaceLayout, PlaceMapExternal, PlacedNode,
+    place_map_access_nodes, place_map_scene, solve_layout,
+};
 pub use state::{NarrativeCursor, NarrativeState, use_narrative_state};
 pub use view::narrative_scene;
