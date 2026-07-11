@@ -119,6 +119,10 @@ pub fn decode_compressed(bytes: &[u8]) -> Result<AudioClip, DecodeError> {
         .ok_or(DecodeError::NoTrack)?;
     let track_id = track.id;
     let sample_rate = track.codec_params.sample_rate.ok_or(DecodeError::NoTrack)?;
+    // The frame count the container declares (FLAC STREAMINFO total-samples,
+    // Vorbis last-granule). Used below to catch a stream cut short mid-decode,
+    // which symphonia otherwise surfaces as an ordinary end-of-stream.
+    let declared_frames = track.codec_params.n_frames;
 
     let mut decoder =
         symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
@@ -156,5 +160,22 @@ pub fn decode_compressed(bytes: &[u8]) -> Result<AudioClip, DecodeError> {
     if channels == 0 {
         return Err(DecodeError::NoTrack);
     }
-    Ok(AudioClip::new(sample_rate, channels, samples))
+    let clip = AudioClip::new(sample_rate, channels, samples);
+
+    // symphonia reports both a clean container end and a stream cut short
+    // mid-decode as the same `UnexpectedEof` from `next_packet`. Cross-check
+    // the frames actually decoded against the count the container declared: a
+    // shortfall means the stream was truncated (the common "asset copied /
+    // downloaded incompletely" case), which the public contract promises to
+    // reject rather than return as a silently-clipped clip. Only a shortfall
+    // is an error — encoder padding can make a valid stream overshoot.
+    if let Some(declared) = declared_frames
+        && (clip.frame_count() as u64) < declared
+    {
+        return Err(DecodeError::Corrupt(format!(
+            "truncated stream: decoded {} of {declared} declared frames",
+            clip.frame_count()
+        )));
+    }
+    Ok(clip)
 }

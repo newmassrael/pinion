@@ -345,35 +345,49 @@ mod tests {
     #[test]
     fn set_param_commands_apply_across_renders() {
         let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16);
-        // A spatial voice; move the listener via a command and the pan flips.
-        ctl.play(
-            tone(4096),
-            "src",
-            PlayOptions::one_shot().with_position([1.0, 0.0, 0.0]),
-        )
-        .expect("queued");
-        ctl.set_master_gain(0.5);
+        // A centred, full-scale, long tone → constant-power centre ~0.707/leg.
+        ctl.play(tone(4096), "src", PlayOptions::one_shot())
+            .expect("queued");
+        assert!(ctl.set_master_gain(0.5), "queued");
 
+        let center = std::f32::consts::FRAC_1_SQRT_2;
         let mut out = [0.0f32; 256];
         renderer.render(&mut out);
-        // +X emitter, default listener → right channel dominates.
-        let (mut l, mut r) = (0.0f32, 0.0f32);
-        for f in out.chunks_exact(2) {
-            l += f[0] * f[0];
-            r += f[1] * f[1];
-        }
-        assert!(r > l, "emitter on the right dominates the right channel");
+        // If the queued SetMasterGain were dropped the peak would be ~0.707,
+        // not ~0.354 — so this assertion actually exercises the command path.
+        assert!(
+            (peak(&out) - center * 0.5).abs() < 1e-3,
+            "queued master gain applied: peak {}",
+            peak(&out)
+        );
+
+        // It is engine state, so it persists into the next render block.
+        let mut out2 = [0.0f32; 256];
+        renderer.render(&mut out2);
+        assert!(
+            (peak(&out2) - center * 0.5).abs() < 1e-3,
+            "master gain persists across renders: peak {}",
+            peak(&out2)
+        );
     }
 
     #[test]
-    fn full_ring_rejects_without_panicking() {
-        // Capacity 2: the third queued command is refused, no id burned.
-        let (mut ctl, _renderer) = realtime_channel(AudioEngine::new(48_000), 2);
+    fn full_ring_rejects_without_panicking_and_burns_no_id() {
+        // Capacity 2. First play succeeds (id 1); stop_all fills the ring.
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 2);
+        assert_eq!(ctl.play(tone(4), "a", PlayOptions::one_shot()), Some(1));
         assert!(ctl.stop_all());
-        assert!(ctl.stop_all());
-        assert!(!ctl.stop_all(), "ring full → command dropped, no panic");
-        // A play into the full ring returns None and does not advance the id.
-        assert!(ctl.play(tone(4), "x", PlayOptions::one_shot()).is_none());
+        // Ring full: the next play is refused, no panic.
+        assert!(ctl.play(tone(4), "b", PlayOptions::one_shot()).is_none());
+        // Drain the ring, then the next play is id 2 — proving the rejected
+        // play did NOT advance the id counter (else it would be 3).
+        let mut out = [0.0f32; 8];
+        renderer.render(&mut out);
+        assert_eq!(
+            ctl.play(tone(4), "c", PlayOptions::one_shot()),
+            Some(2),
+            "rejected play burned no id"
+        );
     }
 
     #[test]

@@ -89,3 +89,22 @@ fn format_is_detected_from_content_not_a_hint() {
     assert!(decode_compressed(TONE_FLAC).is_ok(), "FLAC detected");
     assert!(decode_compressed(TONE_OGG).is_ok(), "OGG detected");
 }
+
+#[test]
+fn truncated_stream_is_rejected_not_silently_clipped() {
+    // A stream cut short mid-decode (valid header, missing trailing audio) is
+    // the common "asset copied/downloaded incompletely" case. It must error,
+    // not return a silently-shortened clip. The full FLAC decodes to a known
+    // frame count; a prefix that still probes must not come back at full
+    // length claiming success.
+    let full = decode_compressed(TONE_FLAC).expect("full flac ok");
+    let cut = &TONE_FLAC[..TONE_FLAC.len() * 3 / 4];
+    match decode_compressed(cut) {
+        Err(_) => {} // rejected — the contract holds.
+        Ok(clip) => panic!(
+            "truncated FLAC returned Ok with {} of {} frames (silent data loss)",
+            clip.frame_count(),
+            full.frame_count()
+        ),
+    }
+}

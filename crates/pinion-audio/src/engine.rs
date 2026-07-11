@@ -182,7 +182,7 @@ impl AudioEngine {
         label: impl Into<String>,
         opts: PlayOptions,
     ) {
-        self.next_id = self.next_id.max(id + 1);
+        self.next_id = self.next_id.max(id.saturating_add(1));
         let mut voice = Voice::new(clip, label, opts.gain, opts.pan, opts.looping);
         if let Some(pos) = opts.position {
             voice = voice.with_position(pos);
@@ -249,13 +249,47 @@ impl AudioEngine {
         self.master_gain = gain;
     }
 
+    /// The live voice with `id`, if any — the one place id lookup happens.
+    fn voice_mut(&mut self, id: VoiceId) -> Option<&mut Voice> {
+        self.voices
+            .iter_mut()
+            .find(|(vid, _)| *vid == id)
+            .map(|(_, voice)| voice)
+    }
+
     /// Set the gain of the voice with `id`. Returns whether it matched.
     pub fn set_voice_gain(&mut self, id: VoiceId, gain: f32) -> bool {
-        if let Some((_, voice)) = self.voices.iter_mut().find(|(vid, _)| *vid == id) {
-            voice.set_gain(gain);
-            true
-        } else {
-            false
+        match self.voice_mut(id) {
+            Some(voice) => {
+                voice.set_gain(gain);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Set the stereo pan of the voice with `id`. Returns whether it matched.
+    /// (Ignored acoustically while the voice has a 3D position, whose pan is
+    /// derived — but still stored as the authored value.)
+    pub fn set_voice_pan(&mut self, id: VoiceId, pan: f32) -> bool {
+        match self.voice_mut(id) {
+            Some(voice) => {
+                voice.set_pan(pan);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Move (or, with `None`, un-spatialise) the voice with `id`. Returns
+    /// whether it matched.
+    pub fn set_voice_position(&mut self, id: VoiceId, position: Option<Vec3>) -> bool {
+        match self.voice_mut(id) {
+            Some(voice) => {
+                voice.set_position(position);
+                true
+            }
+            None => false,
         }
     }
 

@@ -64,7 +64,11 @@ impl Listener {
         }
     }
 
-    /// The listener's right axis, `forward × up`, normalised.
+    /// The listener's right axis, `forward × up`, normalised. If `forward`
+    /// and `up` are parallel (a degenerate orientation the caller should not
+    /// supply), the cross product vanishes and this falls back to world `+X` —
+    /// well defined, but no longer orientation-aware; pass a non-parallel
+    /// `forward`/`up` for a meaningful azimuth.
     #[must_use]
     pub fn right(&self) -> Vec3 {
         normalize_or(cross(self.forward, self.up), [1.0, 0.0, 0.0])
@@ -102,6 +106,12 @@ impl Attenuation {
     /// The gain multiplier for a source `distance` metres away, in `[0, 1]`.
     #[must_use]
     pub fn gain(&self, distance: f32) -> f32 {
+        // A non-finite distance (a NaN/inf emitter position from the in-process
+        // API) is silenced rather than let a NaN through to the mix, where the
+        // `f32::max` peak probe would hide it and a real device would get it.
+        if !distance.is_finite() {
+            return 0.0;
+        }
         // A non-positive reference distance is meaningless; treat it as the
         // smallest positive distance so the formula stays finite.
         let reference = self.reference_distance.max(NEAR_EPSILON);
@@ -243,5 +253,18 @@ mod tests {
         let s = spatialize(&l, [0.0, 0.0, 0.0], &Attenuation::default());
         assert!(approx(s.pan, 0.0), "no direction → centre");
         assert!(approx(s.gain, 1.0), "at listener → full gain");
+    }
+
+    #[test]
+    fn non_finite_distance_is_silenced_not_a_nan() {
+        // A NaN/inf emitter position (only reachable from the in-process API)
+        // must never leak a NaN into the mix — it is silenced.
+        let a = Attenuation::default();
+        assert!(a.gain(f32::NAN) < 1e-9, "NaN distance → silence");
+        assert!(a.gain(f32::INFINITY) < 1e-9, "inf distance → silence");
+        let l = Listener::default();
+        let s = spatialize(&l, [f32::NAN, 0.0, 0.0], &a);
+        assert!(s.gain.is_finite() && s.gain < 1e-9, "NaN position → 0 gain");
+        assert!(s.pan.is_finite(), "pan stays finite");
     }
 }

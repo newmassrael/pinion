@@ -79,6 +79,42 @@ impl AudioEngineExternal {
         ));
         Ok(IntrospectValue::Int(int_of_u64(id)))
     }
+
+    /// Apply a per-voice `intervene` (`voice.<id>.{gain,pan,position}`). An
+    /// unknown voice id or field is `UnknownPath`; the wrong value type is
+    /// `TypeMismatch`. `position` accepts a `[x, y, z]` array (place in 3D) or
+    /// `null` (un-spatialise back to the authored pan).
+    fn intervene_voice(
+        &mut self,
+        id: u64,
+        field: &str,
+        value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        let mut engine = self.engine.borrow_mut();
+        let matched = match (field, value) {
+            ("gain", IntrospectValue::Float(g)) => engine.set_voice_gain(id, f32_of(g)),
+            ("pan", IntrospectValue::Float(p)) => engine.set_voice_pan(id, f32_of(p)),
+            ("position", IntrospectValue::Null) => engine.set_voice_position(id, None),
+            ("position", IntrospectValue::Json(v)) => match parse_vec3(Some(&v)) {
+                Some(pos) => engine.set_voice_position(id, Some(pos)),
+                None => return Err(InterveneError::TypeMismatch),
+            },
+            ("gain" | "pan" | "position", _) => return Err(InterveneError::TypeMismatch),
+            _ => return Err(InterveneError::UnknownPath),
+        };
+        if matched {
+            Ok(())
+        } else {
+            // No live voice with that id.
+            Err(InterveneError::UnknownPath)
+        }
+    }
+}
+
+/// Split a `voice.<id>.<field>` intervene path into `(id, field)`.
+fn parse_voice_path(path: &str) -> Option<(u64, &str)> {
+    let (id_str, field) = path.strip_prefix("voice.")?.split_once('.')?;
+    Some((id_str.parse().ok()?, field))
 }
 
 /// The per-voice shape emitted by the `voices` query. `gain`/`pan` are the
@@ -116,6 +152,10 @@ impl ExternalIntrospect for AudioEngineExternal {
             ("clips", "json"),
             ("listener", "json"),
             ("attenuation", "json"),
+            // Per-voice writes (the read twins are the `voices` array fields).
+            ("voice.<id>.gain", "float"),
+            ("voice.<id>.pan", "float"),
+            ("voice.<id>.position", "json"),
         ])
     }
 
@@ -158,6 +198,11 @@ impl ExternalIntrospect for AudioEngineExternal {
     }
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        // Per-voice live drive: `voice.<id>.{gain,pan,position}` — the write
+        // twins of the per-voice reads in the `voices` query (§2 #7 symmetry).
+        if let Some((id, field)) = parse_voice_path(path) {
+            return self.intervene_voice(id, field, value);
+        }
         match (path, value) {
             ("master_gain", IntrospectValue::Float(g)) => {
                 self.engine.borrow_mut().set_master_gain(f32_of(g));
@@ -437,6 +482,61 @@ mod tests {
             }
             other => panic!("expected listener json, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn per_voice_intervene_drives_gain_and_position() {
+        let mut ext = director();
+        let id = match ext.invoke("play", IntrospectValue::Text("bell".to_string())) {
+            Ok(IntrospectValue::Int(id)) => id,
+            other => panic!("expected id, got {other:?}"),
+        };
+        let path = format!("voice.{id}.gain");
+
+        // Fade the one voice — the write twin of the `voices[].gain` read.
+        ext.intervene(&path, IntrospectValue::Float(0.3))
+            .expect("set voice gain");
+        // Place it in 3D to the world-right at 2× reference distance.
+        ext.intervene(
+            &format!("voice.{id}.position"),
+            IntrospectValue::Json(serde_json::json!([2.0, 0.0, 0.0])),
+        )
+        .expect("set voice position");
+
+        match ext.query("voices") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                let v = &items[0];
+                assert!(
+                    (v["gain"].as_f64().unwrap() - 0.3).abs() < 1e-3,
+                    "authored gain set"
+                );
+                assert!((v["distance"].as_f64().unwrap() - 2.0).abs() < 1e-4);
+                // effective = authored 0.3 × distance atten 0.5 = 0.15.
+                assert!((v["effective_gain"].as_f64().unwrap() - 0.15).abs() < 1e-3);
+                assert!((v["effective_pan"].as_f64().unwrap() - 1.0).abs() < 1e-3);
+            }
+            other => panic!("expected voices, got {other:?}"),
+        }
+
+        // `null` un-spatialises back to the authored pan (no distance).
+        ext.intervene(&format!("voice.{id}.position"), IntrospectValue::Null)
+            .expect("clear position");
+        match ext.query("voices") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                assert!(items[0].get("distance").is_none(), "flat again");
+            }
+            other => panic!("expected voices, got {other:?}"),
+        }
+
+        // Unknown voice id / field → UnknownPath; wrong type → TypeMismatch.
+        assert!(matches!(
+            ext.intervene("voice.999.gain", IntrospectValue::Float(1.0)),
+            Err(InterveneError::UnknownPath)
+        ));
+        assert!(matches!(
+            ext.intervene(&path, IntrospectValue::Text("loud".to_string())),
+            Err(InterveneError::TypeMismatch)
+        ));
     }
 
     #[test]
