@@ -32,10 +32,12 @@
 //! gain + 3D positional audio (listener-relative distance attenuation +
 //! azimuth pan) + a real cpal device backend (`cpal-backend` feature) driven
 //! from a real-time-safe control model (a bounded voice pool + a resource-
-//! return queue, so the audio thread never allocates or frees) + the
-//! introspection surface. Deferred (same voice model): higher-order
-//! resampling, richer spatialisation (HRTF / surround / doppler / per-source
-//! rolloff tuning), and priority-based voice stealing at the pool bound.
+//! return queue, so the audio callback does not allocate or free — a full
+//! return ring is the one sizing-precluded fallback) + the introspection
+//! surface. Deferred (same voice model): higher-order resampling, richer
+//! spatialisation (HRTF / surround / doppler / per-source rolloff tuning), and
+//! priority-based voice stealing at the pool bound (needs per-voice
+//! priority/age metadata `Voice` does not yet carry).
 //!
 //! ## Threading & the real-time control model
 //!
@@ -50,10 +52,11 @@
 //! audio thread** ([`AudioRenderer`]), fed a **lock-free SPSC command queue**
 //! (play/stop/set-param) from the control thread ([`AudioController`]), with a
 //! lock-free [`AudioSnapshot`] published back for polling. The callback is
-//! real-time safe end to end — no lock, no shared mutable engine, no
-//! allocation (a pre-reserved voice pool), and no free (finished or
+//! real-time safe — no lock, no shared mutable engine, no allocation (a
+//! pre-reserved voice pool), and no free on the callback (finished or
 //! pool-refused voices go back over a **resource-return queue** for the
-//! control thread to drop in [`AudioController::reclaim`]).
+//! control thread to drop in [`AudioController::reclaim`]; a full return ring
+//! is the one sizing-precluded fallback that would free on the audio thread).
 //! [`AudioRenderer::render`] has the exact `&mut [f32]` shape of a cpal output
 //! callback, and the real device backend `device` (the `cpal-backend`
 //! feature) drives it from cpal on real hardware. That backend is

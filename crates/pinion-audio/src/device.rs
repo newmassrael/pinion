@@ -7,9 +7,11 @@
 //! [`AudioController`] for the game/UI thread. The callback body is just
 //! `renderer.render(...)` — the same real-time-safe drain-and-render the
 //! headless tests exercise (no lock, no shared mutable engine, no allocation,
-//! and no free: retired voices go back over the resource-return queue) — so
-//! the device path and the tested path are the *same* code, not two
-//! implementations.
+//! and no free on the callback: retired voices go back over the
+//! resource-return queue, freed on the control thread) — so the device path
+//! and the tested path share the mixing/RT core, not two implementations. The
+//! device callback additionally maps the stereo mix to the device's sample
+//! format / channel layout below, which the headless path does not exercise.
 //!
 //! cpal reports the device's native config, so the adapter is
 //! format/rate/channel-general: it renders the engine's interleaved stereo

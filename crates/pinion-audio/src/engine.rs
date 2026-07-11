@@ -140,7 +140,7 @@ impl AudioEngine {
     /// A fresh engine rendering at `sample_rate` (its stereo output rate),
     /// with the listener at the origin and the default distance model. The
     /// voice buffer grows on demand (unbounded); a real-time consumer bounds
-    /// it with [`AudioEngine::with_voice_capacity`] so the audio thread never
+    /// it with [`AudioEngine::set_voice_capacity`] so the audio thread never
     /// reallocates.
     #[must_use]
     pub fn new(sample_rate: u32) -> Self {
@@ -153,17 +153,6 @@ impl AudioEngine {
             attenuation: Attenuation::default(),
             voice_capacity: None,
         }
-    }
-
-    /// A fresh engine bounded to `max_voices` simultaneous voices, with the
-    /// voice buffer pre-reserved so [`AudioEngine::play_with_id`] never
-    /// reallocates on a real-time thread — the pool the [`crate::rt`] renderer
-    /// wants.
-    #[must_use]
-    pub fn with_voice_capacity(sample_rate: u32, max_voices: usize) -> Self {
-        let mut engine = Self::new(sample_rate);
-        engine.set_voice_capacity(max_voices);
-        engine
     }
 
     /// Bound the engine to `max_voices` simultaneous voices and pre-reserve the
@@ -201,17 +190,24 @@ impl AudioEngine {
     }
 
     /// Start playing `clip` (tagged `label`) with `opts`; returns its id.
+    ///
+    /// This is the unbounded single-thread convenience: a bounded engine is
+    /// driven through an [`crate::AudioController`], which reports rejection
+    /// via its snapshot. On a bounded engine at capacity `play` would return an
+    /// id for a voice that was never admitted (and not advance the id counter),
+    /// so that misuse is guarded in debug builds.
     pub fn play(
         &mut self,
         clip: Arc<AudioClip>,
         label: impl Into<String>,
         opts: PlayOptions,
     ) -> VoiceId {
+        debug_assert!(
+            self.voice_capacity.is_none(),
+            "AudioEngine::play is the unbounded path; drive a bounded engine via AudioController"
+        );
         let id = self.next_id;
-        // The single-thread engine is unbounded, so this never rejects. A
-        // bounded engine driven single-threaded would drop the returned voice
-        // here — a free on the *calling* (not audio) thread, which is fine off
-        // the real-time path.
+        // Unbounded, so this never rejects (the returned Option is always None).
         let _ = self.play_with_id(id, clip, label, opts);
         id
     }
@@ -376,9 +372,15 @@ impl AudioEngine {
     /// dropping it here — the real-time seam. [`AudioEngine::render`] passes
     /// `drop`; [`crate::AudioRenderer`] passes a closure that ships each
     /// retired voice to the control thread's resource-return queue, so the
-    /// audio thread never frees a clip. Reaping is order-preserving, so the
-    /// headless `render` and the real-time path stay in sample-for-sample
-    /// lockstep (§2 #3).
+    /// audio thread never frees a clip. The headless `render` and the
+    /// real-time path reap through this one method, so a given engine +
+    /// command sequence renders identically on both; the reap is
+    /// order-preserving so a captured golden buffer stays byte-reproducible
+    /// across refactors (float-sum order is stable). Note this is not a §2 #3
+    /// `dry_run` claim about the *device* path — voice *admission* at the pool
+    /// bound is timing-dependent (which plays win the budget depends on how
+    /// commands batch into callbacks); §2 #3 determinism is a property of the
+    /// single-thread engine, which the real-time device path is not.
     pub fn render_reaping(&mut self, out: &mut [f32], retire: impl FnMut(Voice)) {
         out.fill(0.0);
         // Copied out so the voices can be borrowed mutably in the loop while
@@ -396,24 +398,18 @@ impl AudioEngine {
         self.reap_finished(retire);
     }
 
-    /// Remove finished voices in place, moving each retired [`Voice`] to
-    /// `retire` rather than dropping it here. Order-preserving and
-    /// non-allocating: an in-place `Vec::remove` compaction that keeps the
-    /// buffer's reserved capacity, so it never *frees* the buffer either. The
-    /// work is bounded by the live voice count (real-time-safe: bounded,
-    /// lock-free, alloc-free); the order-preserving `Vec::remove` is O(n²) in
-    /// the worst case but n is the small voice-pool size, and the O(n) in-place
-    /// extract (`Vec::extract_if`, 1.87+) is both beyond this crate's MSRV and
-    /// would need the `unsafe` this crate forbids.
-    fn reap_finished(&mut self, mut retire: impl FnMut(Voice)) {
-        let mut i = 0;
-        while i < self.voices.len() {
-            if self.voices[i].1.is_finished() {
-                let (_, voice) = self.voices.remove(i);
-                retire(voice);
-            } else {
-                i += 1;
-            }
+    /// Remove finished voices, moving each retired [`Voice`] out to `retire`
+    /// rather than dropping it here. Order-preserving, O(n), non-allocating,
+    /// and safe — `Vec::extract_if` yields each removed element by value in
+    /// place, keeping the buffer's reserved capacity, so it neither reallocates
+    /// nor frees the buffer. The work is bounded by the live voice count, so it
+    /// is real-time-safe (bounded, lock-free, alloc-free). `render` passes
+    /// `drop`; the real-time [`crate::AudioRenderer`] passes the
+    /// resource-return-queue push, and also calls this right after a stop so a
+    /// freed pool slot is reusable by a play later in the same command batch.
+    pub(crate) fn reap_finished(&mut self, mut retire: impl FnMut(Voice)) {
+        for (_, voice) in self.voices.extract_if(.., |(_, voice)| voice.is_finished()) {
+            retire(voice);
         }
     }
 }
@@ -515,7 +511,8 @@ mod tests {
 
     #[test]
     fn bounded_pool_rejects_beyond_capacity_and_returns_the_voice() {
-        let mut engine = AudioEngine::with_voice_capacity(48_000, 2);
+        let mut engine = AudioEngine::new(48_000);
+        engine.set_voice_capacity(2);
         assert_eq!(engine.voice_capacity(), Some(2));
         assert!(
             engine
@@ -540,7 +537,8 @@ mod tests {
 
     #[test]
     fn bounded_pool_never_reallocates() {
-        let mut engine = AudioEngine::with_voice_capacity(48_000, 4);
+        let mut engine = AudioEngine::new(48_000);
+        engine.set_voice_capacity(4);
         let reserved = engine.voices.capacity();
         assert!(reserved >= 4);
         // Many rounds of fill-to-bound then reap-all. `play_with_id` never
