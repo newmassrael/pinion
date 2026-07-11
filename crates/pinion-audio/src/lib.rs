@@ -34,9 +34,10 @@
 //!
 //! ## Threading & the real-time control model
 //!
-//! [`AudioEngine::render`] takes a caller-provided buffer and allocates
-//! nothing, so it is already fit to run inside a real-time audio callback.
-//! The single-thread engine is shared with [`AudioEngineExternal`] via
+//! [`AudioEngine::render`] takes a caller-provided buffer and does not
+//! allocate in the render itself, so it is fit to run inside a real-time
+//! audio callback (the callback's remaining real-time hardening is scoped in
+//! [`rt`]). The single-thread engine is shared with [`AudioEngineExternal`] via
 //! `Rc<RefCell<..>>` — fine for a headless test or a UI-thread pull, but not
 //! what a sound card wants.
 //!
@@ -60,7 +61,7 @@ pub mod rt;
 pub mod spatial;
 pub mod wav;
 
-pub use backend::{AudioBackend, InMemoryAudioBackend, pump};
+pub use backend::{AudioBackend, InMemoryAudioBackend, peak, pump};
 pub use clip::AudioClip;
 pub use decode::{DecodeError, decode_compressed};
 pub use engine::{AudioEngine, PlayOptions, ResolvedOutput, VoiceId};

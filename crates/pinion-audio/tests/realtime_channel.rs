@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::thread;
 
-use pinion_audio::{AudioClip, AudioEngine, PlayOptions, realtime_channel};
+use pinion_audio::{AudioClip, AudioEngine, PlayOptions, peak, realtime_channel};
 
 fn tone(frames: usize) -> Arc<AudioClip> {
     AudioClip::new(48_000, 1, vec![1.0; frames]).shared()
@@ -28,13 +28,12 @@ fn renderer_runs_on_a_separate_thread() {
     let handle = thread::spawn(move || {
         let mut out = vec![0.0f32; 256]; // 128 stereo frames
         renderer.render(&mut out);
-        let peak = out.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-        (peak, renderer.engine().voice_count())
+        (peak(&out), renderer.engine().voice_count())
     });
-    let (peak, voice_count) = handle.join().expect("audio thread ok");
+    let (block_peak, voice_count) = handle.join().expect("audio thread ok");
 
     assert!(
-        peak > 0.5,
+        block_peak > 0.5,
         "the queued voice was rendered on the audio thread"
     );
     assert_eq!(

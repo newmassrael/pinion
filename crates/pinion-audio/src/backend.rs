@@ -30,6 +30,13 @@ pub fn pump(engine: &mut AudioEngine, backend: &mut dyn AudioBackend, frames: us
     backend.submit(&block);
 }
 
+/// Peak absolute amplitude of a sample buffer — the shared "is anything
+/// audible" probe used by the capture backend, the RT snapshot, and tests.
+#[must_use]
+pub fn peak(samples: &[f32]) -> f32 {
+    samples.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
+}
+
 /// A headless backend that captures every submitted sample — the audio
 /// analogue of a golden-buffer render target.
 #[derive(Debug, Default)]
@@ -63,7 +70,7 @@ impl InMemoryAudioBackend {
     /// Peak absolute sample — a headless "is anything audible" probe.
     #[must_use]
     pub fn peak(&self) -> f32 {
-        self.captured.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
+        peak(&self.captured)
     }
 
     /// Drop the captured buffer.

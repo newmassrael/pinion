@@ -9,15 +9,11 @@
 //! comparable length, and the same peak level as the source within a lossy
 //! band) rather than sample equality.
 
-use pinion_audio::{decode_compressed, decode_wav};
+use pinion_audio::{decode_compressed, decode_wav, peak};
 
 const TONE_WAV: &[u8] = include_bytes!("fixtures/tone.wav");
 const TONE_FLAC: &[u8] = include_bytes!("fixtures/tone.flac");
 const TONE_OGG: &[u8] = include_bytes!("fixtures/tone.ogg");
-
-fn peak(samples: &[f32]) -> f32 {
-    samples.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
-}
 
 #[test]
 fn flac_decodes_bit_identical_to_wav() {

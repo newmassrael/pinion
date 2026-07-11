@@ -18,10 +18,13 @@
 //!   publishing a lock-free [`AudioSnapshot`] the control thread can poll.
 //!
 //! [`AudioRenderer::render`] has the exact shape of a cpal output callback
-//! (`&mut [f32]`), so the real device backend is the ~10-line drop-in shown
+//! (`&mut [f32]`), so wiring it to a device is the small adapter sketched
 //! below — deliberately *not* shipped here because a headless box has no
 //! `libasound`/device to compile or run it against (the same reason
-//! [`crate::backend`] leaves the device backend as a documented seam):
+//! [`crate::backend`] leaves the device backend as a documented seam). The
+//! sketch assumes the device gives interleaved f32 stereo at the engine rate;
+//! a real adapter also negotiates the device's sample format, rate, and
+//! channel count (resampling / channel-mapping as needed):
 //!
 //! ```ignore
 //! let (controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 256);
@@ -248,17 +251,20 @@ pub struct AudioRenderer {
 impl AudioRenderer {
     /// Drain every queued command, render one interleaved stereo block into
     /// `out`, and publish the snapshot. This is the audio callback: it takes a
-    /// caller-owned buffer and allocates nothing of its own (see the module
-    /// note on the voice-pool / return-queue refinements still owed).
+    /// caller-owned buffer and allocates nothing in the steady state — the
+    /// render buffer is the caller's and the command ring is pre-allocated.
+    /// (The known exceptions — a `Play` may grow the voice `Vec`, and a
+    /// retired voice frees its `Arc`/`String` — are the module note's owed
+    /// refinements, not steady-state allocation.)
     pub fn render(&mut self, out: &mut [f32]) {
         while let Ok(command) = self.consumer.pop() {
             self.engine.apply(command);
         }
         self.engine.render(out);
-        let peak = out.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        let block_peak = crate::backend::peak(out);
         let frames = (out.len() / 2) as u64;
         let voice_count = u32::try_from(self.engine.voice_count()).unwrap_or(u32::MAX);
-        self.snapshot.publish(voice_count, peak, frames);
+        self.snapshot.publish(voice_count, block_peak, frames);
     }
 
     /// The owned engine — for a headless test or single-thread introspection
@@ -295,13 +301,10 @@ pub fn realtime_channel(engine: AudioEngine, capacity: usize) -> (AudioControlle
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::peak;
 
     fn tone(frames: usize) -> Arc<AudioClip> {
         AudioClip::new(48_000, 1, vec![1.0; frames]).shared()
-    }
-
-    fn peak(block: &[f32]) -> f32 {
-        block.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
     }
 
     #[test]

@@ -13,12 +13,12 @@
 //! clip uses a linear L/R balance. Higher-order resampling is a refinement on
 //! this same voice model.
 //!
-//! A voice's `gain`/`pan` are its **authored** values. For a 3D voice (one
-//! given a [`Voice::position`]) the engine resolves an *effective* gain/pan
-//! from listener geometry every render and feeds them to
-//! [`Voice::mix_into_with`], leaving the authored values untouched so the next
-//! frame re-resolves from scratch. [`Voice::mix_into`] is the non-spatial
-//! path that just uses the authored values.
+//! A voice's `gain`/`pan` are its **authored** values. The engine always
+//! renders through [`Voice::mix_into_with`], which takes an *effective*
+//! gain/pan: for a 3D voice (one given a [`Voice::position`]) it resolves them
+//! from listener geometry every render, leaving the authored values untouched
+//! so the next frame re-resolves from scratch; a flat voice is driven with its
+//! own authored gain/pan.
 
 use std::sync::Arc;
 
@@ -144,12 +144,11 @@ impl Voice {
         self.finished = true;
     }
 
-    /// Mix this voice into an interleaved stereo `out` buffer using its own
-    /// authored gain/pan — the non-spatial path.
-    ///
-    /// Adds to `out` (does not clear it), so the engine clears once and sums
-    /// every voice.
-    pub fn mix_into(&mut self, out: &mut [f32], out_rate: u32) {
+    /// Test-only convenience: mix using the voice's own authored gain/pan.
+    /// Production always goes through [`Voice::mix_into_with`] (the engine
+    /// resolves the effective gain/pan first), so this is not public API.
+    #[cfg(test)]
+    fn mix_into(&mut self, out: &mut [f32], out_rate: u32) {
         let (gain, pan) = (self.gain, self.pan);
         self.mix_into_with(out, out_rate, gain, pan);
     }
