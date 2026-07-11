@@ -77,7 +77,10 @@
         "Effect(opaque) covers GPU shaders/blur/glow; pixel output excluded from introspection",
         "External(opaque) covers embedded SVG/PDF/video handles; declared boundary, no simulation",
         "Embedded WebEngine Chromium-class explicitly out of scope; no built-in browser widget",
-        "Custom multimedia codec embedding out of scope; control surface only via External"
+        "Custom multimedia codec embedding out of scope; control surface only via External",
+        "Amendment: the audio half of the codec-embed exclusion is retired; audio is first-class (§5.54)",
+        "Excluded codec-embed now scopes to video codecs + multimedia stack (ffmpeg/gstreamer), not audio",
+        "Driver: the R663.5 game-engine north star; a GUI-era audio-codec-out clause no longer fits"
       ],
       "alternatives_rejected": [
         {
@@ -7923,6 +7926,44 @@
         "7"
       ],
       "coverage_expectation": "out_of_scope_here"
+    },
+    "5.54": {
+      "title": "Audio subsystem — first-class introspectable engine audio, not opaque External",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "decision_status": "active",
+      "intent": "Audio is a first-class introspectable Phase-C engine subsystem (mixer/PCM/spatial + game-format decode), not an opaque External",
+      "rationale_bullets": [
+        "AAA north star R663.5 needs shippable audio; real games ship compressed audio, not WAV-only",
+        "Hiding audio behind External forfeits the inv #7 scene-as-data introspection AI-first needs",
+        "Unreal/Unity/Godot build audio + Vorbis in-engine; an Unreal-class north star implies the same",
+        "the-tide 2D horror needs SFX/ambience before 3D, forcing the axis earlier than R1000+"
+      ],
+      "outputs_bullets": [
+        "In-engine: mixer, PCM playback, 3D spatial audio, buses, game-format decode (OGG/WAV/FLAC)",
+        "Introspectable: the audio graph stays scene-as-data, queryable over RPC per inv #7",
+        "External(opaque) only for video codecs, container demux, DRM, streaming (the multimedia stack)",
+        "Classified Phase C (R1000+); an early PCM slice may land first, no reclassify to Phase B",
+        "Amends §3: the audio half of its codec-embed exclusion is retired here"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Audio via External(opaque)",
+          "reason": "forfeits inv #7 audio-graph introspection; wrong for AI-first"
+        },
+        {
+          "alternative": "WAV/PCM only, no decode",
+          "reason": "gigabyte assets; no shipping game ships uncompressed audio"
+        },
+        {
+          "alternative": "Keep §3 audio-codec-out as-is",
+          "reason": "a GUI-era clause that contradicts the game-engine north star"
+        }
+      ],
+      "impact_scope": [
+        "3",
+        "2"
+      ]
     },
     "5.6": {
       "title": "Reuse path (early cascade-emit vs Rust-native then port)",
@@ -23310,6 +23351,44 @@
         "F2 addressed in R1270 (overclaim retracted); TUI async waitFor stays consumer-gated (not premature)",
         "no waiter timeout / disconnect-GC (bounded-park later); parked_count has no RPC read verb yet",
         "sprag R4 wire client consumes PR-50 in a sprag-native session ([[no-direct-edits-to-other-repos]])"
+      ]
+    },
+    "R1274": {
+      "decision_summary": "R1274: §3 audio-codec exclusion amended — audio is a first-class engine subsystem (§5.54)",
+      "changes_bullets": [
+        "§3 caveats: audio narrowed OUT of the codec-embed exclusion; it now scopes to video + multimedia stack",
+        "§5.54 new: audio subsystem axis — in-engine mixer/PCM/spatial + game-format decode, introspectable",
+        "F4 review ruling (claudedocs/f4-audio-codec-boundary-ruling.md); spec-only, no audio code yet"
+      ],
+      "verification_bullets": [
+        "validate_workspace after mutations: T1 orphan=0, T3 reject=0; sections 73->74",
+        "§5.54 impact_scope [§3,§2] + §3 caveats reference §5.54 = bidirectional cross-ref, no orphan"
+      ],
+      "impact_refs": [
+        "3",
+        "5.54",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Audio impl (PCM mixer + cpal output + game-format decode) is a later Phase-C round; F4 fixed only the boundary"
+      ],
+      "publishable_decision_summary": "R1274: §3 audio-codec exclusion amended — audio is a first-class engine subsystem (§5.54)",
+      "publishable_changes_bullets": [
+        "§3 caveats: audio narrowed OUT of the codec-embed exclusion; it now scopes to video + multimedia stack",
+        "§5.54 new: audio subsystem axis — in-engine mixer/PCM/spatial + game-format decode, introspectable",
+        "F4 review ruling (claudedocs/f4-audio-codec-boundary-ruling.md); spec-only, no audio code yet"
+      ],
+      "publishable_verification_bullets": [
+        "validate_workspace after mutations: T1 orphan=0, T3 reject=0; sections 73->74",
+        "§5.54 impact_scope [§3,§2] + §3 caveats reference §5.54 = bidirectional cross-ref, no orphan"
+      ],
+      "publishable_impact_refs": [
+        "3",
+        "5.54",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Audio impl (PCM mixer + cpal output + game-format decode) is a later Phase-C round; F4 fixed only the boundary"
       ]
     },
     "R232": {
