@@ -23,6 +23,10 @@
 //! - [`AudioEngineExternal`] — the §5.15 introspection surface: an AI reads
 //!   what is playing and drives play/stop over RPC (§2 #2 / #7). This is the
 //!   "not hidden behind opaque External" half of §5.54 made concrete.
+//! - [`AudioControllerExternal`] — the same §2 #7 surface over the real-time
+//!   [`AudioController`], so the **device** path an AAA game runs on is
+//!   introspectable/drivable over RPC too (query the lock-free published
+//!   aggregate; invoke play/stop). Not just the single-thread engine.
 //!
 //! ## Scope of this increment
 //!
@@ -82,7 +86,7 @@ pub use decode::{DecodeError, decode_compressed};
 #[cfg(feature = "cpal-backend")]
 pub use device::{CpalError, CpalOutput};
 pub use engine::{AudioEngine, PlayOptions, ResolvedOutput, VoiceId};
-pub use external::AudioEngineExternal;
+pub use external::{AudioControllerExternal, AudioEngineExternal};
 pub use mixer::Voice;
 pub use rt::{AudioCommand, AudioController, AudioRenderer, AudioSnapshot, realtime_channel};
 pub use spatial::{Attenuation, Listener, Spatialization, Vec3, spatialize};

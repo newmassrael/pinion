@@ -29,13 +29,40 @@ use serde::Serialize;
 
 use crate::clip::AudioClip;
 use crate::engine::{AudioEngine, PlayOptions};
+use crate::rt::AudioController;
 use crate::spatial::{Attenuation, Listener, Vec3};
+
+/// A named clip library an agent `play`s by name — an agent cannot pass PCM
+/// over the wire, so both audio Externals resolve a name to shared decoded
+/// PCM through this one store.
+#[derive(Debug, Default)]
+struct ClipLibrary {
+    clips: BTreeMap<String, Arc<AudioClip>>,
+}
+
+impl ClipLibrary {
+    /// Register `clip` under `name` (replacing any prior entry).
+    fn insert(&mut self, name: impl Into<String>, clip: Arc<AudioClip>) {
+        self.clips.insert(name.into(), clip);
+    }
+
+    /// The shared clip registered under `name`, or `None` — the caller maps
+    /// the miss to its own "no such clip" error.
+    fn get(&self, name: &str) -> Option<Arc<AudioClip>> {
+        self.clips.get(name).cloned()
+    }
+
+    /// The registered clip names (the `clips` query surface).
+    fn names(&self) -> Vec<&str> {
+        self.clips.keys().map(String::as_str).collect()
+    }
+}
 
 /// Introspectable `External` over a shared audio engine + clip library.
 #[derive(Debug)]
 pub struct AudioEngineExternal {
     engine: Rc<RefCell<AudioEngine>>,
-    clips: BTreeMap<String, Arc<AudioClip>>,
+    clips: ClipLibrary,
     pending_intents: Vec<Intent>,
 }
 
@@ -45,7 +72,7 @@ impl AudioEngineExternal {
     pub fn new(engine: Rc<RefCell<AudioEngine>>) -> Self {
         Self {
             engine,
-            clips: BTreeMap::new(),
+            clips: ClipLibrary::default(),
             pending_intents: Vec::new(),
         }
     }
@@ -53,7 +80,7 @@ impl AudioEngineExternal {
     /// Register a named clip agents / keys can `play` by name.
     #[must_use]
     pub fn with_clip(mut self, name: impl Into<String>, clip: Arc<AudioClip>) -> Self {
-        self.clips.insert(name.into(), clip);
+        self.clips.insert(name, clip);
         self
     }
 
@@ -68,7 +95,7 @@ impl AudioEngineExternal {
             self.engine.borrow_mut().stop_all();
             return Ok(IntrospectValue::Null);
         }
-        let clip = self.clips.get(verb).ok_or(InvokeError::Rejected)?.clone();
+        let clip = self.clips.get(verb).ok_or(InvokeError::Rejected)?;
         let id = self
             .engine
             .borrow_mut()
@@ -187,10 +214,7 @@ impl ExternalIntrospect for AudioEngineExternal {
                     .collect();
                 Some(IntrospectValue::json(&infos))
             }
-            "clips" => {
-                let names: Vec<&str> = self.clips.keys().map(String::as_str).collect();
-                Some(IntrospectValue::json(&names))
-            }
+            "clips" => Some(IntrospectValue::json(&self.clips.names())),
             "listener" => Some(IntrospectValue::json(&engine.listener())),
             "attenuation" => Some(IntrospectValue::json(&engine.attenuation())),
             _ => None,
@@ -252,7 +276,7 @@ impl ExternalIntrospect for AudioEngineExternal {
             },
             "play" => {
                 let (name, opts) = parse_play(args)?;
-                let clip = self.clips.get(&name).ok_or(InvokeError::Rejected)?.clone();
+                let clip = self.clips.get(&name).ok_or(InvokeError::Rejected)?;
                 let id = self.engine.borrow_mut().play(clip, name.clone(), opts);
                 self.pending_intents.push(Intent::new_static(
                     "audio.play",
@@ -269,6 +293,127 @@ impl ExternalIntrospect for AudioEngineExternal {
             },
             "stop_all" => {
                 self.engine.borrow_mut().stop_all();
+                Ok(IntrospectValue::Null)
+            }
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
+/// Introspectable `External` over the real-time [`AudioController`] + a clip
+/// library — the RT **device** path on the same §2 #7 RPC surface as
+/// [`AudioEngineExternal`], so the audio that actually ships is scene-as-data,
+/// not an opaque handle (the R1283/R1284 audit's deepest gap).
+///
+/// The RT read/write shape differs from the single-thread engine's, and
+/// honestly so — it is the lock-free split, not a lesser surface:
+///
+/// - **query** reads the aggregate the audio thread publishes each render
+///   ([`crate::AudioSnapshot`]): `voice_count` / `peak` / `frames_rendered` /
+///   `rejected`. This is the "observe the RT audio without touching its
+///   engine" seam. The per-voice detail [`AudioEngineExternal`] can walk is
+///   deliberately absent — a full lock-free per-voice snapshot is a later
+///   refinement, not part of this slice.
+/// - **invoke** drives the audio thread over the command queue: `play` a named
+///   clip, `stop` a voice id, `stop_all`. These are fire-and-forget commands.
+/// - **intervene** has no paths: the control thread cannot read RT engine
+///   state back, so there is no read-backable settable slot to intervene on.
+///   Param drive (master / voice gain, listener, attenuation) will arrive as
+///   `invoke` actions alongside the richer snapshot, not as `intervene`.
+#[derive(Debug)]
+pub struct AudioControllerExternal {
+    controller: AudioController,
+    clips: ClipLibrary,
+    pending_intents: Vec<Intent>,
+}
+
+impl AudioControllerExternal {
+    /// Wrap a real-time controller with an empty clip library.
+    #[must_use]
+    pub fn new(controller: AudioController) -> Self {
+        Self {
+            controller,
+            clips: ClipLibrary::default(),
+            pending_intents: Vec::new(),
+        }
+    }
+
+    /// Register a named clip agents can `play` by name.
+    #[must_use]
+    pub fn with_clip(mut self, name: impl Into<String>, clip: Arc<AudioClip>) -> Self {
+        self.clips.insert(name, clip);
+        self
+    }
+
+    /// The wrapped control-thread handle — e.g. to `reclaim` retired voices on
+    /// an idle frame, or poll the snapshot directly.
+    pub fn controller_mut(&mut self) -> &mut AudioController {
+        &mut self.controller
+    }
+}
+
+// RPC-only introspection skeleton (paints nothing; emits §5.20 intents).
+pinion_core::intent_query_external_impl!(AudioControllerExternal);
+
+impl ExternalIntrospect for AudioControllerExternal {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("voice_count", "int"),
+            ("peak", "float"),
+            ("frames_rendered", "int"),
+            ("rejected", "int"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        let snapshot = self.controller.snapshot();
+        match path {
+            "voice_count" => Some(IntrospectValue::Int(i64::from(snapshot.voice_count()))),
+            "peak" => Some(IntrospectValue::Float(f64::from(snapshot.peak()))),
+            "frames_rendered" => Some(IntrospectValue::Int(int_of_u64(snapshot.frames_rendered()))),
+            "rejected" => Some(IntrospectValue::Int(int_of_u64(snapshot.rejected()))),
+            _ => None,
+        }
+    }
+
+    /// The RT path exposes no read-backable settable state, so every path is
+    /// unknown here; drive it through `invoke` instead.
+    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        Err(InterveneError::UnknownPath)
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "play" => {
+                let (name, opts) = parse_play(args)?;
+                let clip = self.clips.get(&name).ok_or(InvokeError::Rejected)?;
+                // `Rejected` also covers a full command ring (the play could
+                // not be queued) — both are "could not play now".
+                let id = self
+                    .controller
+                    .play(clip, name.clone(), opts)
+                    .ok_or(InvokeError::Rejected)?;
+                self.pending_intents.push(Intent::new_static(
+                    "audio.play",
+                    IntrospectValue::Text(name),
+                ));
+                Ok(IntrospectValue::Int(int_of_u64(id)))
+            }
+            // The bool is whether the command was *queued* (the actual stop
+            // happens on the audio thread next render), not whether a voice
+            // matched — the control thread cannot know that synchronously.
+            "stop" => match args {
+                IntrospectValue::Int(n) => {
+                    Ok(IntrospectValue::Bool(self.controller.stop(u64_of(n))))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "stop_all" => {
+                self.controller.stop_all();
                 Ok(IntrospectValue::Null)
             }
             _ => Err(InvokeError::UnknownPath),
@@ -561,5 +706,127 @@ mod tests {
             }
             other => panic!("expected voices, got {other:?}"),
         }
+    }
+
+    // --- The real-time device path over the same §2 #7 surface. ---
+
+    fn rt_director(max_voices: usize) -> (AudioControllerExternal, crate::rt::AudioRenderer) {
+        let (controller, renderer) =
+            crate::rt::realtime_channel(AudioEngine::new(48_000), 16, max_voices);
+        // A tone longer than one render block so it stays live to be observed.
+        let bell = AudioClip::new(48_000, 1, vec![1.0; 4096]).shared();
+        let ext = AudioControllerExternal::new(controller).with_clip("bell", bell);
+        (ext, renderer)
+    }
+
+    #[test]
+    fn rt_invoke_play_then_query_published_snapshot() {
+        let (mut ext, mut renderer) = rt_director(8);
+        // Nothing rendered yet.
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(0))
+        ));
+
+        let id = ext.invoke("play", IntrospectValue::Text("bell".to_string()));
+        assert!(
+            matches!(id, Ok(IntrospectValue::Int(1))),
+            "control-minted id"
+        );
+        assert!(ext.is_dirty(), "play queues an intent");
+
+        // The command is queued; the audio thread must render to apply it and
+        // publish the snapshot the External reads.
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(1))
+        ));
+        match ext.query("peak") {
+            Some(IntrospectValue::Float(p)) => assert!(p > 0.5, "audible: {p}"),
+            other => panic!("expected peak float, got {other:?}"),
+        }
+        assert!(matches!(
+            ext.query("frames_rendered"),
+            Some(IntrospectValue::Int(128))
+        ));
+    }
+
+    #[test]
+    fn rt_invoke_stop_all_silences_next_render() {
+        let (mut ext, mut renderer) = rt_director(8);
+        ext.invoke("play", IntrospectValue::Text("bell".to_string()))
+            .expect("play");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(1))
+        ));
+
+        ext.invoke("stop_all", IntrospectValue::Null)
+            .expect("stop_all");
+        renderer.render(&mut out);
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(0))
+        ));
+    }
+
+    #[test]
+    fn rt_stop_by_id_reports_queued() {
+        let (mut ext, mut renderer) = rt_director(8);
+        let id = match ext.invoke("play", IntrospectValue::Text("bell".to_string())) {
+            Ok(IntrospectValue::Int(id)) => id,
+            other => panic!("expected id, got {other:?}"),
+        };
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        // The bool is "command queued", not "voice matched" (async stop).
+        assert!(matches!(
+            ext.invoke("stop", IntrospectValue::Int(id)),
+            Ok(IntrospectValue::Bool(true))
+        ));
+    }
+
+    #[test]
+    fn rt_rejected_metric_surfaces_voice_starvation() {
+        // Pool of 2, three plays → one rejected, visible over the RPC query.
+        let (mut ext, mut renderer) = rt_director(2);
+        for _ in 0..3 {
+            ext.invoke("play", IntrospectValue::Text("bell".to_string()))
+                .expect("play queued");
+        }
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(2))
+        ));
+        assert!(
+            matches!(ext.query("rejected"), Some(IntrospectValue::Int(1))),
+            "the voice-budget drop is introspectable"
+        );
+    }
+
+    #[test]
+    fn rt_unknown_clip_and_paths_are_rejected() {
+        let (mut ext, _renderer) = rt_director(8);
+        assert!(matches!(
+            ext.invoke("play", IntrospectValue::Text("nope".to_string())),
+            Err(InvokeError::Rejected)
+        ));
+        assert!(matches!(
+            ext.invoke("bogus", IntrospectValue::Null),
+            Err(InvokeError::UnknownPath)
+        ));
+        // The RT path has no intervene slots; query of an unknown field is None.
+        assert!(matches!(
+            ext.intervene("voice_count", IntrospectValue::Float(1.0)),
+            Err(InterveneError::UnknownPath)
+        ));
+        assert!(ext.query("nonexistent").is_none());
     }
 }
