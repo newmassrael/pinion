@@ -7,6 +7,8 @@
 //! - [`AudioClip`] — decoded PCM, the currency the mixer sums.
 //! - [`wav`] — a pure-Rust WAV/PCM decoder (the in-scope asset boundary;
 //!   uncompressed PCM is a parse, not a codec).
+//! - [`decode`] — compressed game-audio decode (OGG Vorbis / FLAC) bridged to
+//!   the canonical pure-Rust codec (symphonia), still producing plain PCM.
 //! - [`Voice`] / mixing — the deterministic stereo mix (§2 #3).
 //! - [`AudioEngine`] — the live voice graph: play / stop / master gain /
 //!   render, with the whole graph readable as data.
@@ -19,10 +21,10 @@
 //!
 //! ## Scope of this increment
 //!
-//! WAV/PCM decode + a stereo mixer (mono pan-pot / stereo balance) with
-//! per-voice linear-interpolation **resampling** to the engine rate +
-//! one-shot & looping voices + master gain + the introspection surface.
-//! Deferred (same voice model): compressed decode (OGG/FLAC), higher-order
+//! WAV/PCM + compressed (OGG Vorbis / FLAC) decode, a stereo mixer (mono
+//! pan-pot / stereo balance) with per-voice linear-interpolation
+//! **resampling** to the engine rate + one-shot & looping voices + master
+//! gain + the introspection surface. Deferred (same voice model): higher-order
 //! resampling, richer 3D spatialisation, and the real cpal device backend.
 //!
 //! ## Threading & the real-time transition (deferred, backend-forced)
@@ -46,6 +48,7 @@
 
 pub mod backend;
 pub mod clip;
+pub mod decode;
 pub mod engine;
 pub mod external;
 pub mod mixer;
@@ -53,6 +56,7 @@ pub mod wav;
 
 pub use backend::{AudioBackend, InMemoryAudioBackend, pump};
 pub use clip::AudioClip;
+pub use decode::{DecodeError, decode_compressed};
 pub use engine::{AudioEngine, PlayOptions, VoiceId};
 pub use external::AudioEngineExternal;
 pub use mixer::Voice;

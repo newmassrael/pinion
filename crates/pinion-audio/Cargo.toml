@@ -15,6 +15,19 @@ pinion-core = { path = "../pinion-core", version = "0.0.1" }
 # JSON-valued introspection of the voice graph.
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Compressed game-audio decode (OGG Vorbis / FLAC) per §5.54 (R1274): the
+# canonical pure-Rust audio decoder, the same substrate kira/rodio build on
+# ([[use-substrate-not-hand-rolled-equivalent]] — a Vorbis decoder is a real
+# codec, not the trivial parse WAV is). Feature-gated to AUDIO-only formats:
+# `default-features = false` drops symphonia's MP4/MKV video-container demuxers
+# so we stay inside the §3 / §5.54 "audio-first-class, NOT multimedia stack"
+# boundary. `ogg` = the OGG page reader (an *audio* container), `vorbis` = its
+# codec, `flac` = the FLAC reader + codec.
+symphonia = { version = "0.5", default-features = false, features = [
+    "ogg",
+    "vorbis",
+    "flac",
+] }
 
 [lints]
 workspace = true

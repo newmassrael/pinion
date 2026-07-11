@@ -9,13 +9,20 @@
 //! same graph over RPC through [`AudioEngineExternal`] — audio is not hidden
 //! behind an opaque handle.
 //!
+//! One clip — `chime` — is a **real FLAC asset** (`assets/chime.flac`)
+//! decoded at startup through [`pinion_audio::decode_compressed`], so this
+//! also dogfoods the §5.54 compressed-decode path end to end: a game-format
+//! file becomes PCM the introspectable mixer sums, no opaque External. The
+//! `bell` / `waves` clips stay synthesized sines (the graph is the point, not
+//! the waveform).
+//!
 //! No real sound device is used here (a headless box has none): this
 //! demonstrates the graph + drive + introspection. Actual output is the
 //! [`pinion_audio::AudioBackend`] seam, exercised headlessly by the crate's
 //! `InMemoryAudioBackend` capture test.
 //!
-//! Run: `cargo run -p hello-audio` — `b` bell, `w` waves, `s` stop all,
-//! `Esc` quit.
+//! Run: `cargo run -p hello-audio` — `b` bell, `w` waves, `c` chime (FLAC),
+//! `s` stop all, `Esc` quit.
 
 use std::cell::RefCell;
 use std::io::Stdout;
@@ -23,7 +30,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
-use pinion_audio::{AudioClip, AudioEngine, AudioEngineExternal};
+use pinion_audio::{AudioClip, AudioEngine, AudioEngineExternal, decode_compressed};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
@@ -45,8 +52,8 @@ fn audio_engine() -> Rc<RefCell<AudioEngine>> {
         .cache(ENGINE_KEY, || RefCell::new(AudioEngine::new(RATE)))
 }
 
-/// A deterministic sine clip — a stand-in for a WAV asset (decode is tested
-/// in the crate; this example is about the graph, not the waveform).
+/// A deterministic sine clip — a stand-in for a synthesized voice (the
+/// `chime` clip below is a real decoded FLAC asset instead).
 #[allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
@@ -63,11 +70,28 @@ fn sine_clip(freq: f32, secs: f32) -> Arc<AudioClip> {
     AudioClip::new(RATE, 1, samples).shared()
 }
 
+/// A real FLAC asset, compiled in and decoded at startup — the §5.54
+/// compressed-decode path proven in a runnable binary.
+const CHIME_FLAC: &[u8] = include_bytes!("../assets/chime.flac");
+
+/// Decode the bundled FLAC chime to PCM. On the (fixture-guaranteed-absent)
+/// decode failure the demo just omits the clip rather than panicking.
+fn chime_clip() -> Option<Arc<AudioClip>> {
+    match decode_compressed(CHIME_FLAC) {
+        Ok(clip) => Some(clip.shared()),
+        Err(e) => {
+            eprintln!("hello-audio: chime.flac failed to decode: {e}");
+            None
+        }
+    }
+}
+
 /// Navigation/trigger events the keyboard maps to.
 #[derive(Clone, Copy)]
 enum AudioKey {
     PlayBell,
     PlayWaves,
+    PlayChime,
     StopAll,
 }
 
@@ -80,11 +104,13 @@ impl WidgetCore for HelloAudio {
     type Event = AudioKey;
 
     fn create_external() -> Box<dyn External> {
-        Box::new(
-            AudioEngineExternal::new(audio_engine())
-                .with_clip("bell", sine_clip(880.0, 0.4))
-                .with_clip("waves", sine_clip(110.0, 0.8)),
-        )
+        let mut ext = AudioEngineExternal::new(audio_engine())
+            .with_clip("bell", sine_clip(880.0, 0.4))
+            .with_clip("waves", sine_clip(110.0, 0.8));
+        if let Some(chime) = chime_clip() {
+            ext = ext.with_clip("chime", chime);
+        }
+        Box::new(ext)
     }
 
     fn tag() -> &'static str {
@@ -134,7 +160,7 @@ impl WidgetCore for HelloAudio {
 
         y += 12;
         children.push(text_row(
-            "b bell · w waves · s stop all · Esc quit".to_string(),
+            "b bell · w waves · c chime (FLAC) · s stop all · Esc quit".to_string(),
             y,
         ));
 
@@ -150,6 +176,7 @@ impl WidgetCore for HelloAudio {
         match event {
             AudioKey::PlayBell => "bell",
             AudioKey::PlayWaves => "waves",
+            AudioKey::PlayChime => "chime",
             AudioKey::StopAll => "stop_all",
         }
     }
@@ -162,6 +189,7 @@ impl WidgetCore for HelloAudio {
         match key {
             "b" => Some(AudioKey::PlayBell),
             "w" => Some(AudioKey::PlayWaves),
+            "c" => Some(AudioKey::PlayChime),
             "s" => Some(AudioKey::StopAll),
             _ => None,
         }
@@ -236,5 +264,20 @@ mod tests {
         assert!(core.dispatch_key("w", pinion_core::Modifiers::empty()));
         assert_eq!(core.cached_state(), &2);
         assert!(paint_text(&core).contains("waves"));
+
+        // `c` plays the real FLAC-decoded chime — the compressed-decode path
+        // driven end to end through the shell, its voice in the graph.
+        assert!(core.dispatch_key("c", pinion_core::Modifiers::empty()));
+        assert_eq!(core.cached_state(), &3);
+        assert!(paint_text(&core).contains("chime"));
+    }
+
+    #[test]
+    fn bundled_flac_asset_decodes_to_pcm() {
+        // The §5.54 win in one assertion: a real compressed asset becomes PCM
+        // the engine can play, not an opaque handle.
+        let clip = chime_clip().expect("bundled chime.flac decodes");
+        assert_eq!(clip.sample_rate(), 48_000);
+        assert!(clip.frame_count() > 0, "decoded PCM has frames");
     }
 }
