@@ -28,6 +28,12 @@ symphonia = { version = "0.5", default-features = false, features = [
     "vorbis",
     "flac",
 ] }
+# Lock-free single-producer/single-consumer ring for the real-time command
+# queue (control thread -> audio thread). The canonical realtime-safe SPSC
+# ring the Rust audio ecosystem uses; pure Rust, no system deps
+# ([[use-substrate-not-hand-rolled-equivalent]] — a hand-rolled lock-free ring
+# is exactly the error-prone concurrency code to avoid).
+rtrb = "0.3"
 
 [lints]
 workspace = true

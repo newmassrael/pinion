@@ -152,6 +152,13 @@ impl AudioEngine {
         self.sample_rate
     }
 
+    /// The id [`AudioEngine::play`] will mint next — the seam a command queue
+    /// uses to pre-allocate ids on the control thread.
+    #[must_use]
+    pub fn next_voice_id(&self) -> VoiceId {
+        self.next_id
+    }
+
     /// Start playing `clip` (tagged `label`) with `opts`; returns its id.
     pub fn play(
         &mut self,
@@ -160,13 +167,27 @@ impl AudioEngine {
         opts: PlayOptions,
     ) -> VoiceId {
         let id = self.next_id;
-        self.next_id += 1;
+        self.play_with_id(id, clip, label, opts);
+        id
+    }
+
+    /// Start playing `clip` under a caller-chosen `id` — the entry point for a
+    /// command queue that minted the id on the control thread. The engine's
+    /// own counter is advanced past `id` so a later [`AudioEngine::play`]
+    /// cannot collide with it.
+    pub fn play_with_id(
+        &mut self,
+        id: VoiceId,
+        clip: Arc<AudioClip>,
+        label: impl Into<String>,
+        opts: PlayOptions,
+    ) {
+        self.next_id = self.next_id.max(id + 1);
         let mut voice = Voice::new(clip, label, opts.gain, opts.pan, opts.looping);
         if let Some(pos) = opts.position {
             voice = voice.with_position(pos);
         }
         self.voices.push((id, voice));
-        id
     }
 
     /// Stop the voice with `id` (it stops contributing and is dropped on the

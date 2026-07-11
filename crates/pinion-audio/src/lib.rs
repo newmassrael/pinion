@@ -32,24 +32,23 @@
 //! higher-order resampling, richer spatialisation (HRTF / surround / doppler /
 //! per-source rolloff tuning), and the real cpal device backend.
 //!
-//! ## Threading & the real-time transition (deferred, backend-forced)
+//! ## Threading & the real-time control model
 //!
 //! [`AudioEngine::render`] takes a caller-provided buffer and allocates
 //! nothing, so it is already fit to run inside a real-time audio callback.
-//! What is **not** yet real-time is the *ownership*: today the engine is a
-//! single-thread, on-demand pull graph, shared with
-//! [`AudioEngineExternal`] via `Rc<RefCell<..>>`.
+//! The single-thread engine is shared with [`AudioEngineExternal`] via
+//! `Rc<RefCell<..>>` — fine for a headless test or a UI-thread pull, but not
+//! what a sound card wants.
 //!
-//! The Unreal-class target is the standard game-audio control model — the
-//! mixer owned by the **audio device thread**, fed a lock-free command
-//! queue (play/stop/set-param) from the game/UI thread, publishing a state
-//! snapshot back for introspection, with a no-alloc callback. That
-//! transition replaces the `Rc<RefCell>` with an SPSC command channel +
-//! published snapshot. It is deliberately **not** built here: its exact
-//! shape is forced by the real cpal backend (the forcing consumer), and
-//! guessing it before that consumer exists would be speculative
-//! abstraction. The pieces that are non-speculative today — the alloc-free
-//! buffer-in render, the deterministic mix — are already in place.
+//! [`rt`] is the standard game-audio control model: the mixer **owned by the
+//! audio thread** ([`AudioRenderer`]), fed a **lock-free SPSC command queue**
+//! (play/stop/set-param) from the control thread ([`AudioController`]), with a
+//! lock-free [`AudioSnapshot`] published back for polling — no lock and no
+//! shared mutable engine on the callback. [`AudioRenderer::render`] has the
+//! exact `&mut [f32]` shape of a cpal output callback, so the real device
+//! backend is a documented ~10-line drop-in (see [`rt`]); it is not shipped
+//! because a headless box has no `libasound`/device to compile or run it
+//! against (the same reason the device [`backend`] is a documented seam).
 
 pub mod backend;
 pub mod clip;
@@ -57,6 +56,7 @@ pub mod decode;
 pub mod engine;
 pub mod external;
 pub mod mixer;
+pub mod rt;
 pub mod spatial;
 pub mod wav;
 
@@ -66,5 +66,6 @@ pub use decode::{DecodeError, decode_compressed};
 pub use engine::{AudioEngine, PlayOptions, ResolvedOutput, VoiceId};
 pub use external::AudioEngineExternal;
 pub use mixer::Voice;
+pub use rt::{AudioCommand, AudioController, AudioRenderer, AudioSnapshot, realtime_channel};
 pub use spatial::{Attenuation, Listener, Spatialization, Vec3, spatialize};
 pub use wav::{WavError, decode_wav};
