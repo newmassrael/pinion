@@ -21,11 +21,9 @@
 use std::rc::Rc;
 
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, int_of,
 };
 use pinion_core::intent::Intent;
-use serde::Serialize;
 
 use crate::state::{NarrativeCursor, NarrativeState};
 
@@ -74,41 +72,9 @@ impl NarrativeExternal {
     }
 }
 
-impl External for NarrativeExternal {
-    fn backends(&self) -> BackendSupport {
-        // Structured scene → renders on GUI and TUI; queryable over RPC.
-        BackendSupport::new(
-            &[Backend::Gui, Backend::Tui, Backend::Rpc],
-            BackendFallback::Skip,
-        )
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
-        for intent in self.pending_intents.drain(..) {
-            sink(intent);
-        }
-    }
-
-    fn is_dirty(&self) -> bool {
-        !self.pending_intents.is_empty()
-    }
-}
+// This node paints nothing (the binding's `view` is the paint scene) and
+// emits §5.20 intents — the RPC-only read-write introspection skeleton.
+pinion_core::intent_query_external_impl!(NarrativeExternal);
 
 impl ExternalIntrospect for NarrativeExternal {
     fn schema(&self) -> IntrospectSchema {
@@ -159,9 +125,13 @@ impl ExternalIntrospect for NarrativeExternal {
                     .current_scene()
                     .map_or(0, |s| s.disclosures.len()),
             ))),
-            "disclosures" => Some(json_value(
-                self.state.current_scene().map(|s| &s.disclosures),
-            )),
+            "disclosures" => Some(
+                self.state
+                    .current_scene()
+                    .map_or(IntrospectValue::Null, |s| {
+                        IntrospectValue::json(&s.disclosures)
+                    }),
+            ),
             "world_ids" => {
                 let ids: Vec<&str> = self
                     .state
@@ -170,9 +140,9 @@ impl ExternalIntrospect for NarrativeExternal {
                     .iter()
                     .map(|w| w.branch_id.as_str())
                     .collect();
-                Some(json_value(Some(&ids)))
+                Some(IntrospectValue::json(&ids))
             }
-            "fork_tree" => Some(json_value(Some(&self.state.world().fork_tree))),
+            "fork_tree" => Some(IntrospectValue::json(&self.state.world().fork_tree)),
             _ => None,
         }
     }
@@ -226,17 +196,7 @@ impl ExternalIntrospect for NarrativeExternal {
 }
 
 fn cursor_json(cursor: NarrativeCursor) -> IntrospectValue {
-    IntrospectValue::Json(serde_json::to_value(cursor).unwrap_or(serde_json::Value::Null))
-}
-
-fn json_value<T: Serialize>(value: Option<&T>) -> IntrospectValue {
-    value.map_or(IntrospectValue::Json(serde_json::Value::Null), |t| {
-        IntrospectValue::Json(serde_json::to_value(t).unwrap_or(serde_json::Value::Null))
-    })
-}
-
-fn int_of(n: usize) -> i64 {
-    i64::try_from(n).unwrap_or(i64::MAX)
+    IntrospectValue::json(&cursor)
 }
 
 fn u16_of_i64(n: i64) -> u16 {
@@ -251,6 +211,7 @@ fn u16_of_u64(n: u64) -> u16 {
 mod tests {
     use super::*;
     use crate::model::{Disclosure, PlayableWorld, SceneNode, WorldLine};
+    use pinion_core::external::External;
     use pinion_core::reactive::Owner;
 
     fn sample() -> PlayableWorld {

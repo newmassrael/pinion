@@ -7,7 +7,8 @@
 //! 좌표=휘발" the author declares only relations (containment / adjacency /
 //! direction); pinion's [`solve_layout`] deterministically solves the
 //! coordinates, [`place_map_scene`] projects them into a queryable scene,
-//! and [`PlaceMapExternal`] exposes the solved geometry over RPC.
+//! and `impl QuerySource for PlaceLayout` exposes the solved geometry over
+//! RPC (wrapped in pinion-core's `QueryOnlyIntrospect`).
 //!
 //! This is additive to the text stage: text→2D changes the renderer, not
 //! the data. The same relation graph a 3D stage will read is solved to 2D
@@ -16,7 +17,8 @@
 //! - [`model`] — the tolerant place-graph deserialize contract.
 //! - [`layout`] — the deterministic coordinate solver.
 //! - [`view`] — the scene projection (boxes / labels / adjacency lines).
-//! - [`external`] — the AI-first read surface over the solved geometry.
+//! - [`external`] — `impl QuerySource for PlaceLayout`, wrapped in
+//!   pinion-core's `QueryOnlyIntrospect` for the RPC read surface.
 
 pub mod a11y;
 pub mod external;
@@ -25,7 +27,6 @@ pub mod model;
 pub mod view;
 
 pub use a11y::place_map_access_nodes;
-pub use external::PlaceMapExternal;
 pub use layout::{PlaceLayout, PlacedNode, solve_layout};
 pub use model::{Adjacency, Direction, Place, PlaceGraph};
 pub use view::place_map_scene;

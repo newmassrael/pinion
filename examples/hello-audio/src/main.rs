@@ -145,9 +145,11 @@ impl WidgetCore for HelloAudio {
     }
 
     fn event_name(event: AudioKey) -> &'static str {
+        // The send verb is the clip name (play) or the reserved `stop_all` —
+        // no delimiter, so it never clashes with the `:` send-payload grammar.
         match event {
-            AudioKey::PlayBell => "play:bell",
-            AudioKey::PlayWaves => "play:waves",
+            AudioKey::PlayBell => "bell",
+            AudioKey::PlayWaves => "waves",
             AudioKey::StopAll => "stop_all",
         }
     }

@@ -2,9 +2,9 @@
 //!
 //! A 2D spatial map has no natural linear reading order for a screen
 //! reader, so the accessible fallback is a `List` of the places by label —
-//! the same shape the narrative walk uses. Geometry lives in the scene /
-//! the [`PlaceMapExternal`](crate::place::PlaceMapExternal) for agents that
-//! want coordinates.
+//! the same shape the narrative walk uses. Geometry lives in the scene, and
+//! in the [`PlaceLayout`] `QuerySource` for agents
+//! that want coordinates.
 
 use pinion_a11y::{AccessNode, AriaRole};
 

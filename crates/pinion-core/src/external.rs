@@ -243,6 +243,19 @@ impl IntrospectValue {
     pub fn is_null(&self) -> bool {
         matches!(self, Self::Null)
     }
+
+    /// R1276 §5.15 — construct a [`Self::Json`] payload from any
+    /// serializable value: the canonical way an
+    /// [`ExternalIntrospect::query`] returns a structured (object / array)
+    /// result. Lifts the `Json(serde_json::to_value(..).unwrap_or(Null))`
+    /// idiom the narrative / place-map / audio introspection surfaces each
+    /// hand-rolled (Rule-of-Three). A serialization failure — which the
+    /// derived `Serialize` impls this is used with cannot produce —
+    /// degrades to [`Self::Null`] rather than panicking.
+    #[must_use]
+    pub fn json<T: serde::Serialize>(value: &T) -> Self {
+        Self::Json(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+    }
 }
 
 /// R826 §5.12 — the shared `<axis>.<pos>` introspect projection. Resolve a
@@ -1026,6 +1039,55 @@ macro_rules! query_proxy_external_impl {
     };
 }
 pub use query_proxy_external_impl;
+
+/// R1276 §5.15 — the `External` skeleton for a **read-write introspection**
+/// node: RPC-only (paints nothing — the binding's `view` is the paint
+/// scene), framework repaint, UI-thread sync, and it drains a §5.20 intent
+/// channel. The sibling of [`query_proxy_external_impl`] for nodes that also
+/// `invoke` / `intervene` and emit intents (a cursor walk, an audio
+/// controller), rather than being purely query-only.
+///
+/// The type must have a `pending_intents: Vec<Intent>` field (the macro's
+/// `drain_intents` / `is_dirty` read it) and its own [`ExternalIntrospect`]
+/// impl (the part that genuinely differs). This is the SSOT for the
+/// otherwise byte-identical skeleton that `pinion-narrative`'s
+/// `NarrativeExternal` and `pinion-audio`'s `AudioEngineExternal` had each
+/// hand-rolled (the Rule-of-Three lift; the read-only case has
+/// [`QueryOnlyIntrospect`]).
+#[macro_export]
+macro_rules! intent_query_external_impl {
+    ($t:ty) => {
+        impl $crate::external::External for $t {
+            fn backends(&self) -> $crate::external::BackendSupport {
+                $crate::external::BackendSupport::new(
+                    &[$crate::external::Backend::Rpc],
+                    $crate::external::BackendFallback::Skip,
+                )
+            }
+            fn repaint_ownership(&self) -> $crate::external::RepaintOwner {
+                $crate::external::RepaintOwner::Framework
+            }
+            fn thread_ownership(&self) -> $crate::external::ThreadOwnership {
+                $crate::external::ThreadOwnership::UiThreadSync
+            }
+            fn introspect(&self) -> Option<&dyn $crate::external::ExternalIntrospect> {
+                Some(self)
+            }
+            fn introspect_mut(&mut self) -> Option<&mut dyn $crate::external::ExternalIntrospect> {
+                Some(self)
+            }
+            fn drain_intents(&mut self, sink: &mut dyn FnMut($crate::intent::Intent)) {
+                for intent in self.pending_intents.drain(..) {
+                    sink(intent);
+                }
+            }
+            fn is_dirty(&self) -> bool {
+                !self.pending_intents.is_empty()
+            }
+        }
+    };
+}
+pub use intent_query_external_impl;
 
 /// R810.1 §5.38 §5.12 — the generic **query-only** introspection
 /// `External`: a node that paints nothing (RPC backend only), handles no

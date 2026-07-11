@@ -1,16 +1,17 @@
 //! The mixer — the algorithmic heart. Sums active voices into a stereo
-//! output buffer.
+//! output buffer, resampling each clip to the output rate.
 //!
-//! A [`Voice`] is one playing instance of an [`AudioClip`]:
-//! a playhead, a gain, a stereo pan, and a loop flag. Mixing is a pure,
+//! A [`Voice`] is one playing instance of an [`AudioClip`]: a fractional
+//! playhead, a gain, a stereo pan, and a loop flag. Mixing is a pure,
 //! deterministic sum — no RNG, no wall-clock — so a headless render and a
-//! live device agree sample-for-sample (the same determinism the rest of
-//! pinion relies on, §2 #3).
+//! live device agree sample-for-sample (§2 #3).
 //!
-//! Increment 1 assumes clips are at the engine's output rate (no
-//! resampling) and mixes to stereo. A mono clip is panned with a
-//! constant-power pot; a stereo clip uses a linear L/R balance. Resampling
-//! and richer 3D spatialisation are follow-ups on this same voice model.
+//! Each voice **resamples** its clip to the engine's output rate by a
+//! fractional playhead + linear interpolation, so a 44.1 kHz asset plays at
+//! the right pitch on a 48 kHz engine (rather than the earlier silent
+//! octave shift). A mono clip is panned with a constant-power pot; a stereo
+//! clip uses a linear L/R balance. Higher-order resampling and richer 3D
+//! spatialisation are refinements on this same voice model.
 
 use std::sync::Arc;
 
@@ -21,7 +22,9 @@ use crate::clip::AudioClip;
 pub struct Voice {
     clip: Arc<AudioClip>,
     label: String,
-    playhead: usize,
+    /// Fractional frame position in the clip (advanced by the resample
+    /// ratio each output frame).
+    playhead: f64,
     gain: f32,
     pan: f32,
     looping: bool,
@@ -42,7 +45,7 @@ impl Voice {
         Self {
             clip,
             label: label.into(),
-            playhead: 0,
+            playhead: 0.0,
             gain,
             pan: pan.clamp(-1.0, 1.0),
             looping,
@@ -97,9 +100,9 @@ impl Voice {
         if rate == 0 {
             return 0.0;
         }
-        #[allow(clippy::cast_precision_loss)] // playhead / rate are small, exact in f32.
+        #[allow(clippy::cast_possible_truncation)] // position is small, f64->f32 exact here.
         {
-            self.playhead as f32 / rate as f32
+            (self.playhead / f64::from(rate)) as f32
         }
     }
 
@@ -109,38 +112,82 @@ impl Voice {
     }
 
     /// Mix this voice into an interleaved stereo `out` buffer (length must be
-    /// even), advancing the playhead. Adds to `out` (does not clear it), so
-    /// the engine clears once and sums every voice.
-    pub fn mix_into(&mut self, out: &mut [f32]) {
+    /// even) at `out_rate`, resampling the clip and advancing the playhead.
+    /// Adds to `out` (does not clear it), so the engine clears once and sums
+    /// every voice.
+    #[allow(clippy::cast_precision_loss)] // frame_count is small, exact in f64.
+    pub fn mix_into(&mut self, out: &mut [f32], out_rate: u32) {
         if self.finished {
+            return;
+        }
+        let frame_count = self.clip.frame_count();
+        if frame_count == 0 {
+            self.finished = true;
             return;
         }
         let (pan_l, pan_r) = pan_gains(self.pan);
         let channels = self.clip.channels() as usize;
-        let frame_count = self.clip.frame_count();
+        // Clip frames advanced per output frame (the resample ratio).
+        let step = f64::from(self.clip.sample_rate().max(1)) / f64::from(out_rate.max(1));
+        let len = frame_count as f64;
 
         for frame_out in out.chunks_exact_mut(2) {
-            if self.playhead >= frame_count {
-                if self.looping && frame_count > 0 {
-                    self.playhead = 0;
+            if self.playhead >= len {
+                if self.looping {
+                    self.playhead = self.playhead.rem_euclid(len);
                 } else {
                     self.finished = true;
                     return;
                 }
             }
-            let (l, r) = mix_sample(
-                self.clip.frame(self.playhead),
-                channels,
-                self.gain,
-                self.pan,
-                pan_l,
-                pan_r,
-            );
+            let (l, r) = self.sample_at(channels, pan_l, pan_r);
             frame_out[0] += l;
             frame_out[1] += r;
-            self.playhead += 1;
+            self.playhead += step;
         }
     }
+
+    /// Linearly interpolate the clip at the current fractional playhead and
+    /// map it to a stereo `(left, right)` contribution.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn sample_at(&self, channels: usize, pan_l: f32, pan_r: f32) -> (f32, f32) {
+        let frame_count = self.clip.frame_count();
+        // playhead is guaranteed in `[0, frame_count)` by the caller.
+        let i0 = self.playhead.floor() as usize;
+        let frac = (self.playhead - self.playhead.floor()) as f32;
+        let i1 = if i0 + 1 < frame_count {
+            i0 + 1
+        } else if self.looping {
+            0
+        } else {
+            i0
+        };
+        let f0 = self.clip.frame(i0);
+        let f1 = self.clip.frame(i1);
+        if f0.is_empty() {
+            return (0.0, 0.0);
+        }
+        if channels == 1 {
+            let s0 = f0[0];
+            let s1 = f1.first().copied().unwrap_or(s0);
+            let s = lerp(s0, s1, frac) * self.gain;
+            (s * pan_l, s * pan_r)
+        } else {
+            let l = lerp(f0[0], f1.first().copied().unwrap_or(f0[0]), frac);
+            let r = lerp(
+                f0.get(1).copied().unwrap_or(f0[0]),
+                f1.get(1).copied().unwrap_or(f0[0]),
+                frac,
+            );
+            let balance_l = if self.pan <= 0.0 { 1.0 } else { 1.0 - self.pan };
+            let balance_r = if self.pan >= 0.0 { 1.0 } else { 1.0 + self.pan };
+            (l * self.gain * balance_l, r * self.gain * balance_r)
+        }
+    }
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a * (1.0 - t) + b * t
 }
 
 /// Constant-power pan gains for a mono source: at centre both legs are
@@ -150,44 +197,23 @@ fn pan_gains(pan: f32) -> (f32, f32) {
     (angle.cos(), angle.sin())
 }
 
-/// One frame's stereo contribution: mono is pan-potted, stereo is
-/// L/R-balanced.
-fn mix_sample(
-    frame: &[f32],
-    channels: usize,
-    gain: f32,
-    pan: f32,
-    pan_l: f32,
-    pan_r: f32,
-) -> (f32, f32) {
-    if frame.is_empty() {
-        return (0.0, 0.0);
-    }
-    if channels == 1 {
-        let s = frame[0] * gain;
-        (s * pan_l, s * pan_r)
-    } else {
-        let left = frame[0];
-        let right = frame.get(1).copied().unwrap_or(left);
-        let balance_l = if pan <= 0.0 { 1.0 } else { 1.0 - pan };
-        let balance_r = if pan >= 0.0 { 1.0 } else { 1.0 + pan };
-        (left * gain * balance_l, right * gain * balance_r)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn mono_at(rate: u32, samples: &[f32]) -> Arc<AudioClip> {
+        AudioClip::new(rate, 1, samples.to_vec()).shared()
+    }
+
     fn mono(samples: &[f32]) -> Arc<AudioClip> {
-        AudioClip::new(48_000, 1, samples.to_vec()).shared()
+        mono_at(48_000, samples)
     }
 
     #[test]
     fn center_pan_is_equal_power() {
         let mut v = Voice::new(mono(&[1.0]), "s", 1.0, 0.0, false);
         let mut out = [0.0f32; 2];
-        v.mix_into(&mut out);
+        v.mix_into(&mut out, 48_000);
         assert!((out[0] - out[1]).abs() < 1e-6, "L==R at centre");
         assert!((out[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-4);
     }
@@ -196,7 +222,7 @@ mod tests {
     fn hard_left_silences_right() {
         let mut v = Voice::new(mono(&[1.0]), "s", 1.0, -1.0, false);
         let mut out = [0.0f32; 2];
-        v.mix_into(&mut out);
+        v.mix_into(&mut out, 48_000);
         assert!((out[0] - 1.0).abs() < 1e-4, "L full");
         assert!(out[1].abs() < 1e-4, "R silent");
     }
@@ -206,9 +232,8 @@ mod tests {
         let mut a = Voice::new(mono(&[1.0, 1.0]), "a", 0.5, 0.0, false);
         let mut b = Voice::new(mono(&[1.0, 1.0]), "b", 0.25, 0.0, false);
         let mut out = [0.0f32; 4];
-        a.mix_into(&mut out);
-        b.mix_into(&mut out);
-        // Each leg = (0.5 + 0.25) * 0.707 per frame.
+        a.mix_into(&mut out, 48_000);
+        b.mix_into(&mut out, 48_000);
         let expected = 0.75 * std::f32::consts::FRAC_1_SQRT_2;
         assert!((out[0] - expected).abs() < 1e-4);
         assert!((out[2] - expected).abs() < 1e-4);
@@ -218,9 +243,8 @@ mod tests {
     fn one_shot_finishes_and_stops_contributing() {
         let mut v = Voice::new(mono(&[1.0]), "s", 1.0, 0.0, false);
         let mut out = [0.0f32; 4]; // 2 frames, clip has 1
-        v.mix_into(&mut out);
+        v.mix_into(&mut out, 48_000);
         assert!(v.is_finished());
-        // Frame 0 filled, frame 1 untouched (silence after end).
         assert!(out[0] > 0.0);
         assert!(out[2].abs() < 1e-9);
         assert!(out[3].abs() < 1e-9);
@@ -229,12 +253,39 @@ mod tests {
     #[test]
     fn loop_wraps_the_playhead() {
         let mut v = Voice::new(mono(&[1.0]), "s", 1.0, 0.0, true);
-        let mut out = [0.0f32; 6]; // 3 frames, clip has 1 → wraps twice
-        v.mix_into(&mut out);
+        let mut out = [0.0f32; 6]; // 3 frames, clip has 1 → wraps
+        v.mix_into(&mut out, 48_000);
         assert!(!v.is_finished(), "looping never finishes");
         assert!(
             out[0] > 0.0 && out[2] > 0.0 && out[4] > 0.0,
             "every frame filled"
         );
+    }
+
+    #[test]
+    fn resamples_a_half_rate_clip_to_double_duration() {
+        // A 24 kHz clip on a 48 kHz engine advances 0.5 clip-frames per
+        // output frame, so N clip frames fill ~2N output frames.
+        let clip = mono_at(24_000, &[1.0; 10]);
+        let mut v = Voice::new(clip, "s", 1.0, 0.0, false);
+        let mut out = [0.0f32; 64]; // 32 output frames, ample
+        v.mix_into(&mut out, 48_000);
+        let audible = out.chunks_exact(2).filter(|f| f[0].abs() > 1e-6).count();
+        // 10 clip frames at step 0.5 → playhead reaches 10.0 after 20 frames.
+        assert_eq!(audible, 20, "half-rate clip doubles in output frames");
+    }
+
+    #[test]
+    fn interpolates_between_frames() {
+        // A 24 kHz ramp on 48 kHz: the odd output frames land on the .5
+        // interpolation midpoints.
+        let clip = mono_at(24_000, &[0.0, 1.0]);
+        let mut v = Voice::new(clip, "s", 1.0, 0.0, false);
+        let mut out = [0.0f32; 8];
+        v.mix_into(&mut out, 48_000);
+        let center = std::f32::consts::FRAC_1_SQRT_2;
+        // frame0 = clip[0]=0; frame1 = lerp(0,1,0.5)=0.5.
+        assert!(out[0].abs() < 1e-4);
+        assert!((out[2] - 0.5 * center).abs() < 1e-3);
     }
 }

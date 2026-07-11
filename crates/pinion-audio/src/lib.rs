@@ -19,10 +19,30 @@
 //!
 //! ## Scope of this increment
 //!
-//! WAV/PCM decode + a stereo mixer (mono pan-pot / stereo balance) +
+//! WAV/PCM decode + a stereo mixer (mono pan-pot / stereo balance) with
+//! per-voice linear-interpolation **resampling** to the engine rate +
 //! one-shot & looping voices + master gain + the introspection surface.
-//! Deferred (same voice model): compressed decode (OGG/FLAC), resampling,
-//! richer 3D spatialisation, and the real cpal device backend.
+//! Deferred (same voice model): compressed decode (OGG/FLAC), higher-order
+//! resampling, richer 3D spatialisation, and the real cpal device backend.
+//!
+//! ## Threading & the real-time transition (deferred, backend-forced)
+//!
+//! [`AudioEngine::render`] takes a caller-provided buffer and allocates
+//! nothing, so it is already fit to run inside a real-time audio callback.
+//! What is **not** yet real-time is the *ownership*: today the engine is a
+//! single-thread, on-demand pull graph, shared with
+//! [`AudioEngineExternal`] via `Rc<RefCell<..>>`.
+//!
+//! The Unreal-class target is the standard game-audio control model — the
+//! mixer owned by the **audio device thread**, fed a lock-free command
+//! queue (play/stop/set-param) from the game/UI thread, publishing a state
+//! snapshot back for introspection, with a no-alloc callback. That
+//! transition replaces the `Rc<RefCell>` with an SPSC command channel +
+//! published snapshot. It is deliberately **not** built here: its exact
+//! shape is forced by the real cpal backend (the forcing consumer), and
+//! guessing it before that consumer exists would be speculative
+//! abstraction. The pieces that are non-speculative today — the alloc-free
+//! buffer-in render, the deterministic mix — are already in place.
 
 pub mod backend;
 pub mod clip;

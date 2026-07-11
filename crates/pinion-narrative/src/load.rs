@@ -13,6 +13,8 @@
 use std::fmt;
 use std::path::Path;
 
+use serde::de::DeserializeOwned;
+
 use crate::model::PlayableWorld;
 use crate::place::model::PlaceGraph;
 
@@ -53,7 +55,7 @@ impl std::error::Error for ReportError {
 ///
 /// Returns [`ReportError::Parse`] when `json` is not well-formed JSON.
 pub fn parse_report(json: &str) -> Result<PlayableWorld, ReportError> {
-    serde_json::from_str(json).map_err(ReportError::Parse)
+    parse_json(json)
 }
 
 /// Load a [`PlayableWorld`] from a report file on disk.
@@ -64,7 +66,7 @@ pub fn parse_report(json: &str) -> Result<PlayableWorld, ReportError> {
 /// [`ReportError::Parse`] if its contents are not well-formed JSON.
 pub fn load_report(path: impl AsRef<Path>) -> Result<PlayableWorld, ReportError> {
     let bytes = std::fs::read_to_string(path).map_err(ReportError::Io)?;
-    parse_report(&bytes)
+    parse_json(&bytes)
 }
 
 /// The acquisition seam: an env-var-pointed live report, else a bundled
@@ -79,14 +81,11 @@ pub fn load_report(path: impl AsRef<Path>) -> Result<PlayableWorld, ReportError>
 ///
 /// # Errors
 ///
-/// Propagates [`load_report`]'s error when `env_var` is set but its target
-/// cannot be read or parsed, or [`parse_report`]'s error if the bundled
-/// `fallback_json` is itself malformed.
+/// Propagates the read error when `env_var` is set but its target cannot be
+/// read or parsed, or the parse error if the bundled `fallback_json` is
+/// itself malformed.
 pub fn resolve_report(env_var: &str, fallback_json: &str) -> Result<PlayableWorld, ReportError> {
-    match std::env::var_os(env_var) {
-        Some(path) => load_report(path),
-        None => parse_report(fallback_json),
-    }
+    resolve_json(env_var, fallback_json)
 }
 
 /// Parse a [`PlaceGraph`] (spatial report) from a JSON string. Tolerant,
@@ -96,7 +95,7 @@ pub fn resolve_report(env_var: &str, fallback_json: &str) -> Result<PlayableWorl
 ///
 /// Returns [`ReportError::Parse`] when `json` is not well-formed JSON.
 pub fn parse_place_graph(json: &str) -> Result<PlaceGraph, ReportError> {
-    serde_json::from_str(json).map_err(ReportError::Parse)
+    parse_json(json)
 }
 
 /// The spatial acquisition seam, mirroring [`resolve_report`]: an
@@ -108,12 +107,25 @@ pub fn parse_place_graph(json: &str) -> Result<PlaceGraph, ReportError> {
 /// read or parsed, or the parse error if the bundled `fallback_json` is
 /// malformed.
 pub fn resolve_place_graph(env_var: &str, fallback_json: &str) -> Result<PlaceGraph, ReportError> {
+    resolve_json(env_var, fallback_json)
+}
+
+/// Tolerant JSON parse — the single body shared by [`parse_report`] /
+/// [`parse_place_graph`].
+fn parse_json<T: DeserializeOwned>(json: &str) -> Result<T, ReportError> {
+    serde_json::from_str(json).map_err(ReportError::Parse)
+}
+
+/// The env-or-bundled acquisition body shared by [`resolve_report`] /
+/// [`resolve_place_graph`]: load the `env_var`-pointed file if set (errors
+/// surfaced), else parse the bundled `fallback_json`.
+fn resolve_json<T: DeserializeOwned>(env_var: &str, fallback_json: &str) -> Result<T, ReportError> {
     match std::env::var_os(env_var) {
         Some(path) => {
             let bytes = std::fs::read_to_string(path).map_err(ReportError::Io)?;
-            parse_place_graph(&bytes)
+            parse_json(&bytes)
         }
-        None => parse_place_graph(fallback_json),
+        None => parse_json(fallback_json),
     }
 }
 

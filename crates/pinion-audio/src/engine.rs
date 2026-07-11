@@ -165,7 +165,7 @@ impl AudioEngine {
     pub fn render(&mut self, out: &mut [f32]) {
         out.fill(0.0);
         for (_, voice) in &mut self.voices {
-            voice.mix_into(out);
+            voice.mix_into(out, self.sample_rate);
         }
         if (self.master_gain - 1.0).abs() > f32::EPSILON {
             for sample in out.iter_mut() {

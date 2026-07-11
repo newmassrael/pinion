@@ -48,8 +48,8 @@ pub use load::{
 };
 pub use model::{Branch, Disclosure, Fork, ForkTree, PlayableWorld, SceneNode, WorldLine};
 pub use place::{
-    Adjacency, Direction, Place, PlaceGraph, PlaceLayout, PlaceMapExternal, PlacedNode,
-    place_map_access_nodes, place_map_scene, solve_layout,
+    Adjacency, Direction, Place, PlaceGraph, PlaceLayout, PlacedNode, place_map_access_nodes,
+    place_map_scene, solve_layout,
 };
 pub use state::{NarrativeCursor, NarrativeState, use_narrative_state};
 pub use view::narrative_scene;

@@ -1,38 +1,17 @@
 //! The AI-first read surface over a solved [`PlaceLayout`].
 //!
-//! A read-only §5.15 `External` so an agent can read the map's solved
-//! geometry over RPC (§2 #2 / #7): how many places, how they connect, and
-//! where each solved to. The map is a projection of authored relations, so
-//! there is nothing to `intervene` on here — the geometry is derived, not
-//! authored (re-solving means re-reading the graph, upstream).
+//! The map's solved geometry is exposed over RPC (§2 #2 / #7) as a
+//! **query-only** introspection node. Rather than hand-roll an `External`,
+//! [`PlaceLayout`] implements the [`QuerySource`] contract and a binding
+//! wraps it in pinion-core's `QueryOnlyIntrospect` — the shared read-only
+//! introspection substrate (RPC-only, `intervene` refused). The map is
+//! derived geometry, so there is nothing to author here; re-solving means
+//! re-reading the graph upstream.
 
-use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
-};
+use pinion_core::external::{IntrospectSchema, IntrospectValue, QuerySource, int_of};
 use serde::Serialize;
 
 use crate::place::layout::PlaceLayout;
-
-/// Read-only `External` exposing a solved place-map's geometry.
-#[derive(Debug)]
-pub struct PlaceMapExternal {
-    layout: PlaceLayout,
-}
-
-impl PlaceMapExternal {
-    /// Wrap a solved layout for introspection.
-    #[must_use]
-    pub fn new(layout: PlaceLayout) -> Self {
-        Self { layout }
-    }
-
-    /// The solved layout being exposed.
-    #[must_use]
-    pub fn layout(&self) -> &PlaceLayout {
-        &self.layout
-    }
-}
 
 /// The per-node geometry shape emitted by the `nodes` query.
 #[derive(Serialize)]
@@ -48,33 +27,8 @@ struct NodeGeom<'a> {
     contained_by: Option<&'a str>,
 }
 
-impl External for PlaceMapExternal {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(
-            &[Backend::Gui, Backend::Tui, Backend::Rpc],
-            BackendFallback::Skip,
-        )
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-}
-
-impl ExternalIntrospect for PlaceMapExternal {
-    fn schema(&self) -> IntrospectSchema {
+impl QuerySource for PlaceLayout {
+    fn introspect_schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
             ("node_count", "int"),
             ("edge_count", "int"),
@@ -83,13 +37,12 @@ impl ExternalIntrospect for PlaceMapExternal {
         ])
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "node_count" => Some(IntrospectValue::Int(int_of(self.layout.nodes.len()))),
-            "edge_count" => Some(IntrospectValue::Int(int_of(self.layout.edges.len()))),
+            "node_count" => Some(IntrospectValue::Int(int_of(self.nodes.len()))),
+            "edge_count" => Some(IntrospectValue::Int(int_of(self.edges.len()))),
             "nodes" => {
                 let geoms: Vec<NodeGeom> = self
-                    .layout
                     .nodes
                     .iter()
                     .map(|n| NodeGeom {
@@ -101,28 +54,15 @@ impl ExternalIntrospect for PlaceMapExternal {
                         h: n.rect.h,
                         cell_x: n.cell.0,
                         cell_y: n.cell.1,
-                        contained_by: n.contained_by.map(|pi| self.layout.nodes[pi].id.as_str()),
+                        contained_by: n.contained_by.map(|pi| self.nodes[pi].id.as_str()),
                     })
                     .collect();
-                Some(json(&geoms))
+                Some(IntrospectValue::json(&geoms))
             }
-            "edges" => Some(json(&self.layout.edges)),
+            "edges" => Some(IntrospectValue::json(&self.edges)),
             _ => None,
         }
     }
-
-    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        // The map is derived geometry — nothing is authored here.
-        Err(InterveneError::UnknownPath)
-    }
-}
-
-fn json<T: Serialize>(value: &T) -> IntrospectValue {
-    IntrospectValue::Json(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
-}
-
-fn int_of(n: usize) -> i64 {
-    i64::try_from(n).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
@@ -130,8 +70,11 @@ mod tests {
     use super::*;
     use crate::place::layout::solve_layout;
     use crate::place::model::{Adjacency, Direction, Place, PlaceGraph};
+    use pinion_core::external::QueryOnlyIntrospect;
+    use pinion_core::external::{External, InterveneError};
+    use std::rc::Rc;
 
-    fn sample_external() -> PlaceMapExternal {
+    fn sample_layout() -> PlaceLayout {
         let graph = PlaceGraph {
             places: vec![
                 Place {
@@ -156,27 +99,27 @@ mod tests {
                 direction: Some(Direction::East),
             }],
         };
-        PlaceMapExternal::new(solve_layout(&graph))
+        solve_layout(&graph)
     }
 
     #[test]
-    fn reports_counts() {
-        let ext = sample_external();
+    fn query_source_reports_counts() {
+        let layout = sample_layout();
         assert!(matches!(
-            ext.query("node_count"),
+            layout.introspect_query("node_count"),
             Some(IntrospectValue::Int(3))
         ));
         assert!(matches!(
-            ext.query("edge_count"),
+            layout.introspect_query("edge_count"),
             Some(IntrospectValue::Int(1))
         ));
-        assert!(ext.query("unknown").is_none());
+        assert!(layout.introspect_query("unknown").is_none());
     }
 
     #[test]
     fn nodes_query_carries_geometry_and_containment() {
-        let ext = sample_external();
-        match ext.query("nodes") {
+        let layout = sample_layout();
+        match layout.introspect_query("nodes") {
             Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert_eq!(items.len(), 3);
                 let shrine = items
@@ -191,10 +134,22 @@ mod tests {
     }
 
     #[test]
-    fn map_is_read_only() {
-        let mut ext = sample_external();
+    fn wrapped_in_query_only_introspect_it_is_read_only() {
+        let node = QueryOnlyIntrospect::new(Rc::new(sample_layout()));
+        let intro = node.introspect().expect("introspectable");
         assert!(matches!(
-            ext.intervene("node_count", IntrospectValue::Int(9)),
+            intro.query("node_count"),
+            Some(IntrospectValue::Int(3))
+        ));
+        // A declared path refuses writes; an undeclared one is unknown.
+        let mut node = node;
+        let intro = node.introspect_mut().expect("introspectable");
+        assert!(matches!(
+            intro.intervene("node_count", IntrospectValue::Int(9)),
+            Err(InterveneError::ReadOnly)
+        ));
+        assert!(matches!(
+            intro.intervene("nope", IntrospectValue::Int(9)),
             Err(InterveneError::UnknownPath)
         ));
     }

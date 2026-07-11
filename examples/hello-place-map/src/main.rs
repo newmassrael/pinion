@@ -8,10 +8,12 @@
 //! queryable scene of boxes (places), enclosing boxes (containers), and
 //! lines (adjacencies).
 //!
-//! The scene is backend-agnostic (§2 #6); a box-and-line map is richest on
-//! a GUI backend, but the structure — and its full geometry over
-//! [`pinion_narrative::PlaceMapExternal`] — is the same data on either.
-//! This binary renders it on the TUI shell.
+//! The scene is backend-agnostic (§2 #6). A box-and-line map is a graphical
+//! artifact — its adjacency **lines** render on the GUI (Vello) backend; the
+//! TUI shell here draws the place boxes + labels (it has no `Scene::Path`
+//! cell rasteriser). The full geometry is the same data on either, readable
+//! over RPC via the [`PlaceLayout`]
+//! `QuerySource` wrapped in `QueryOnlyIntrospect`.
 //!
 //! Run against the bundled the-tide map, or a live spatial report:
 //!
@@ -24,13 +26,13 @@ use std::io::Stdout;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, WidgetA11y};
-use pinion_core::external::External;
+use pinion_core::external::{External, QueryOnlyIntrospect};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Scene;
 use pinion_core::{Frame, WidgetCore};
 use pinion_narrative::{
-    PlaceGraph, PlaceLayout, PlaceMapExternal, place_map_access_nodes, place_map_scene,
-    resolve_place_graph, solve_layout,
+    PlaceGraph, PlaceLayout, place_map_access_nodes, place_map_scene, resolve_place_graph,
+    solve_layout,
 };
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
@@ -65,7 +67,9 @@ impl WidgetCore for HelloPlaceMap {
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
-        Box::new(PlaceMapExternal::new((*place_layout()).clone()))
+        // The solved layout is a `QuerySource`; wrap the shared `Rc` (no
+        // clone) in pinion-core's read-only introspection substrate.
+        Box::new(QueryOnlyIntrospect::new(place_layout()))
     }
 
     fn tag() -> &'static str {

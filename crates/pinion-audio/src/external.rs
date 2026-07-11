@@ -19,8 +19,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, int_of,
 };
 use pinion_core::intent::Intent;
 use serde::Serialize;
@@ -54,26 +53,27 @@ impl AudioEngineExternal {
         self
     }
 
-    /// Route a keyboard/RPC `send` verb — `play:<clip>` (one-shot) or
-    /// `stop_all` — to the engine.
+    /// Route a keyboard/RPC `send` verb to the engine. The verb is either
+    /// the reserved control word `stop_all`, or a **clip name** (one-shot
+    /// play). No delimiter is used, so the wire never collides with the
+    /// [`split_send_payload`](pinion_core::composite_tag::split_send_payload)
+    /// `:` grammar; the reserved word takes precedence over a same-named
+    /// clip.
     fn apply_send(&mut self, verb: &str) -> Result<IntrospectValue, InvokeError> {
         if verb == "stop_all" {
             self.engine.borrow_mut().stop_all();
             return Ok(IntrospectValue::Null);
         }
-        if let Some(name) = verb.strip_prefix("play:") {
-            let clip = self.clips.get(name).ok_or(InvokeError::Rejected)?.clone();
-            let id = self
-                .engine
-                .borrow_mut()
-                .play(clip, name.to_string(), PlayOptions::one_shot());
-            self.pending_intents.push(Intent::new_static(
-                "audio.play",
-                IntrospectValue::Text(name.to_string()),
-            ));
-            return Ok(IntrospectValue::Int(int_of_u64(id)));
-        }
-        Err(InvokeError::UnknownPath)
+        let clip = self.clips.get(verb).ok_or(InvokeError::Rejected)?.clone();
+        let id = self
+            .engine
+            .borrow_mut()
+            .play(clip, verb.to_string(), PlayOptions::one_shot());
+        self.pending_intents.push(Intent::new_static(
+            "audio.play",
+            IntrospectValue::Text(verb.to_string()),
+        ));
+        Ok(IntrospectValue::Int(int_of_u64(id)))
     }
 }
 
@@ -89,40 +89,9 @@ struct VoiceInfo<'a> {
     finished: bool,
 }
 
-impl External for AudioEngineExternal {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(
-            &[Backend::Gui, Backend::Tui, Backend::Rpc],
-            BackendFallback::Skip,
-        )
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
-        for intent in self.pending_intents.drain(..) {
-            sink(intent);
-        }
-    }
-
-    fn is_dirty(&self) -> bool {
-        !self.pending_intents.is_empty()
-    }
-}
+// Paints nothing (the binding's `view` is the paint scene) and emits §5.20
+// intents — the RPC-only read-write introspection skeleton.
+pinion_core::intent_query_external_impl!(AudioEngineExternal);
 
 impl ExternalIntrospect for AudioEngineExternal {
     fn schema(&self) -> IntrospectSchema {
@@ -154,11 +123,11 @@ impl ExternalIntrospect for AudioEngineExternal {
                         finished: v.is_finished(),
                     })
                     .collect();
-                Some(json(&infos))
+                Some(IntrospectValue::json(&infos))
             }
             "clips" => {
                 let names: Vec<&str> = self.clips.keys().map(String::as_str).collect();
-                Some(json(&names))
+                Some(IntrospectValue::json(&names))
             }
             _ => None,
         }
@@ -182,7 +151,7 @@ impl ExternalIntrospect for AudioEngineExternal {
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // The keyboard `keybinding -> forward -> send` path arrives here
-            // with a verb: `play:<clip>` or `stop_all`.
+            // with a verb: a clip name (play) or the reserved `stop_all`.
             "send" => match args {
                 IntrospectValue::Text(verb) => self.apply_send(&verb),
                 _ => Err(InvokeError::TypeMismatch),
@@ -238,14 +207,6 @@ fn parse_play(args: IntrospectValue) -> Result<(String, PlayOptions), InvokeErro
     }
 }
 
-fn json<T: Serialize>(value: &T) -> IntrospectValue {
-    IntrospectValue::Json(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
-}
-
-fn int_of(n: usize) -> i64 {
-    i64::try_from(n).unwrap_or(i64::MAX)
-}
-
 fn int_of_u64(n: u64) -> i64 {
     i64::try_from(n).unwrap_or(i64::MAX)
 }
@@ -262,6 +223,7 @@ fn f32_of(x: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::external::External;
 
     fn director() -> AudioEngineExternal {
         let engine = Rc::new(RefCell::new(AudioEngine::new(48_000)));
@@ -325,10 +287,11 @@ mod tests {
     }
 
     #[test]
-    fn send_wire_plays_and_stops() {
+    fn send_wire_plays_by_clip_name_and_stops() {
         let mut ext = director();
+        // A bare clip name plays it (no delimiter → no `:` grammar clash).
         assert!(matches!(
-            ext.invoke("send", IntrospectValue::Text("play:bell".to_string())),
+            ext.invoke("send", IntrospectValue::Text("bell".to_string())),
             Ok(IntrospectValue::Int(_))
         ));
         assert!(matches!(
@@ -337,9 +300,8 @@ mod tests {
         ));
         ext.invoke("send", IntrospectValue::Text("stop_all".to_string()))
             .expect("stop_all sends");
-        // stop_all marks finished; a query still counts it until a render reaps.
         assert!(matches!(
-            ext.invoke("send", IntrospectValue::Text("play:nope".to_string())),
+            ext.invoke("send", IntrospectValue::Text("nope".to_string())),
             Err(InvokeError::Rejected)
         ));
     }
