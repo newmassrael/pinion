@@ -1,0 +1,20 @@
+[package]
+name = "pinion-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "First-class introspectable engine audio (§5.54, R1274): PCM mixer + WAV decode + an audio graph queryable as scene-as-data, not an opaque External"
+publish = false
+
+[dependencies]
+# The introspectable External surface (§2 #7 / §5.15) — the audio graph is
+# queryable over RPC, NOT hidden behind an opaque handle.
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# JSON-valued introspection of the voice graph.
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

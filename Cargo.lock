@@ -1721,6 +1721,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-audio"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-audio",
+ "pinion-core",
+ "pinion-tui",
+]
+
+[[package]]
 name = "hello-badge"
 version = "0.0.1"
 dependencies = [
@@ -4576,6 +4586,15 @@ name = "pinion-asset"
 version = "0.0.1"
 dependencies = [
  "image",
+]
+
+[[package]]
+name = "pinion-audio"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,0 +1,22 @@
+[package]
+name = "hello-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "the-tide audio — the introspectable audio graph (§5.54/R1274) driven over the shell: play/stop clips, read what is playing as scene-as-data"
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hello-audio"
+path = "src/main.rs"
+
+[dependencies]
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-audio = { path = "../../crates/pinion-audio", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
