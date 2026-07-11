@@ -144,6 +144,19 @@ fn parse_voice_path(path: &str) -> Option<(u64, &str)> {
     Some((id_str.parse().ok()?, field))
 }
 
+/// The `intervene` error for a path with no writable slot: `ReadOnly` when the
+/// schema declares it (a read-only field), `UnknownPath` when it does not.
+/// Mirrors [`pinion_core::external::QueryOnlyIntrospect`] so a declared metric
+/// is never mislabelled "unknown" — the honest §2 #7 distinction the RPC layer
+/// draws between "cannot write" and "does not exist".
+fn read_only_or_unknown(schema: &IntrospectSchema, path: &str) -> InterveneError {
+    if schema.fields.iter().any(|(name, _)| *name == path) {
+        InterveneError::ReadOnly
+    } else {
+        InterveneError::UnknownPath
+    }
+}
+
 /// The per-voice shape emitted by the `voices` query. `gain`/`pan` are the
 /// *authored* values; `effective_gain`/`effective_pan` are what the mixer
 /// actually renders after spatialisation (equal to the authored values for a
@@ -258,7 +271,9 @@ impl ExternalIntrospect for AudioEngineExternal {
             }
             // A known path with the wrong value type.
             ("master_gain" | "listener" | "attenuation", _) => Err(InterveneError::TypeMismatch),
-            _ => Err(InterveneError::UnknownPath),
+            // A read-only declared field (voice_count/sample_rate/voices/clips)
+            // is `ReadOnly`; anything else is genuinely unknown.
+            _ => Err(read_only_or_unknown(&self.schema(), path)),
         }
     }
 
@@ -301,25 +316,29 @@ impl ExternalIntrospect for AudioEngineExternal {
 }
 
 /// Introspectable `External` over the real-time [`AudioController`] + a clip
-/// library — the RT **device** path on the same §2 #7 RPC surface as
-/// [`AudioEngineExternal`], so the audio that actually ships is scene-as-data,
-/// not an opaque handle (the R1283/R1284 audit's deepest gap).
+/// library — the RT **device** path brought onto the §2 #7 RPC surface, so the
+/// audio that actually ships is scene-as-data and drivable over RPC, not an
+/// opaque handle (the R1283/R1284 audit's deepest gap).
 ///
-/// The RT read/write shape differs from the single-thread engine's, and
-/// honestly so — it is the lock-free split, not a lesser surface:
+/// The RT read/write shape is the lock-free split, and differs from the
+/// single-thread [`AudioEngineExternal`]:
 ///
 /// - **query** reads the aggregate the audio thread publishes each render
 ///   ([`crate::AudioSnapshot`]): `voice_count` / `peak` / `frames_rendered` /
 ///   `rejected`. This is the "observe the RT audio without touching its
-///   engine" seam. The per-voice detail [`AudioEngineExternal`] can walk is
-///   deliberately absent — a full lock-free per-voice snapshot is a later
-///   refinement, not part of this slice.
+///   engine" seam.
 /// - **invoke** drives the audio thread over the command queue: `play` a named
-///   clip, `stop` a voice id, `stop_all`. These are fire-and-forget commands.
-/// - **intervene** has no paths: the control thread cannot read RT engine
-///   state back, so there is no read-backable settable slot to intervene on.
-///   Param drive (master / voice gain, listener, attenuation) will arrive as
-///   `invoke` actions alongside the richer snapshot, not as `intervene`.
+///   clip, `stop` a voice id, `stop_all`, `set_master_gain`, `set_voice_gain`.
+///   These are fire-and-forget commands.
+/// - **intervene** exposes no writable slots: the schema's four fields are
+///   read-only observations, so an intervene of a declared field is `ReadOnly`
+///   and anything else `UnknownPath`. Drive via `invoke` instead.
+///
+/// Deliberately **not** yet on this surface (honest scope, not the same surface
+/// as the single-thread engine): the per-voice detail [`AudioEngineExternal`]
+/// can walk (needs a richer lock-free per-voice snapshot) and 3D
+/// listener/attenuation param drive (needs a full-spec model, since the control
+/// thread has no current value to partial-update against).
 #[derive(Debug)]
 pub struct AudioControllerExternal {
     controller: AudioController,
@@ -345,10 +364,13 @@ impl AudioControllerExternal {
         self
     }
 
-    /// The wrapped control-thread handle — e.g. to `reclaim` retired voices on
-    /// an idle frame, or poll the snapshot directly.
-    pub fn controller_mut(&mut self) -> &mut AudioController {
-        &mut self.controller
+    /// Free the voices the audio thread has returned, on the control thread —
+    /// a delegate to [`AudioController::reclaim`]. `invoke` reclaims
+    /// opportunistically (every command send does), so a driving agent needs
+    /// this only when it *only* queries: call it on an idle frame to keep the
+    /// resource-return queue drained. Returns how many were reclaimed.
+    pub fn reclaim(&mut self) -> usize {
+        self.controller.reclaim()
     }
 }
 
@@ -376,10 +398,11 @@ impl ExternalIntrospect for AudioControllerExternal {
         }
     }
 
-    /// The RT path exposes no read-backable settable state, so every path is
-    /// unknown here; drive it through `invoke` instead.
-    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        Err(InterveneError::UnknownPath)
+    /// The RT path exposes no writable slots: a schema-declared field is a
+    /// read-only observation (`ReadOnly`), anything else is `UnknownPath`.
+    /// Drive the audio thread through `invoke` instead.
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        Err(read_only_or_unknown(&self.schema(), path))
     }
 
     fn invoke(
@@ -403,12 +426,14 @@ impl ExternalIntrospect for AudioControllerExternal {
                 ));
                 Ok(IntrospectValue::Int(int_of_u64(id)))
             }
-            // The bool is whether the command was *queued* (the actual stop
-            // happens on the audio thread next render), not whether a voice
-            // matched — the control thread cannot know that synchronously.
+            // Fire-and-forget: the actual stop happens on the audio thread next
+            // render, and the control thread cannot know synchronously whether
+            // a voice matched — so, like `stop_all`, this returns `Null` rather
+            // than a misleading bool.
             "stop" => match args {
                 IntrospectValue::Int(n) => {
-                    Ok(IntrospectValue::Bool(self.controller.stop(u64_of(n))))
+                    self.controller.stop(u64_of(n));
+                    Ok(IntrospectValue::Null)
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -416,6 +441,29 @@ impl ExternalIntrospect for AudioControllerExternal {
                 self.controller.stop_all();
                 Ok(IntrospectValue::Null)
             }
+            "set_master_gain" => match args {
+                IntrospectValue::Float(g) => {
+                    self.controller.set_master_gain(f32_of(g));
+                    Ok(IntrospectValue::Null)
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // `{ "id": <int>, "gain": <float> }` — set one voice's gain.
+            "set_voice_gain" => match args {
+                IntrospectValue::Json(v) => {
+                    let id = v
+                        .get("id")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    let gain = v
+                        .get("gain")
+                        .and_then(serde_json::Value::as_f64)
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    self.controller.set_voice_gain(id, f32_of(gain));
+                    Ok(IntrospectValue::Null)
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -574,6 +622,22 @@ mod tests {
         assert!(matches!(
             ext.query("master_gain"),
             Some(IntrospectValue::Float(g)) if (g - 0.25).abs() < 1e-6
+        ));
+    }
+
+    #[test]
+    fn intervene_of_a_read_only_field_is_read_only_not_unknown() {
+        let mut ext = director();
+        // `voice_count` is a declared, query-only field → `ReadOnly`, never
+        // `UnknownPath` (which would deny the schema declares it).
+        assert!(matches!(
+            ext.intervene("voice_count", IntrospectValue::Int(3)),
+            Err(InterveneError::ReadOnly)
+        ));
+        // A path the schema does not declare is genuinely unknown.
+        assert!(matches!(
+            ext.intervene("nonexistent", IntrospectValue::Int(3)),
+            Err(InterveneError::UnknownPath)
         ));
     }
 
@@ -776,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn rt_stop_by_id_reports_queued() {
+    fn rt_stop_by_id_is_fire_and_forget() {
         let (mut ext, mut renderer) = rt_director(8);
         let id = match ext.invoke("play", IntrospectValue::Text("bell".to_string())) {
             Ok(IntrospectValue::Int(id)) => id,
@@ -784,11 +848,66 @@ mod tests {
         };
         let mut out = [0.0f32; 256];
         renderer.render(&mut out);
-        // The bool is "command queued", not "voice matched" (async stop).
+        // Fire-and-forget: `Null`, not a misleading bool (async stop).
         assert!(matches!(
             ext.invoke("stop", IntrospectValue::Int(id)),
-            Ok(IntrospectValue::Bool(true))
+            Ok(IntrospectValue::Null)
         ));
+        renderer.render(&mut out);
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(0))
+        ));
+    }
+
+    #[test]
+    fn rt_invoke_param_drive_reaches_the_mix() {
+        let (mut ext, mut renderer) = rt_director(8);
+        // Centred full-scale tone → constant-power centre ~0.707/leg.
+        ext.invoke("play", IntrospectValue::Text("bell".to_string()))
+            .expect("play");
+        // Duck the whole mix to half, and the one voice to 0.5 gain.
+        ext.invoke("set_master_gain", IntrospectValue::Float(0.5))
+            .expect("master gain");
+        let id = 1; // control-thread-minted first id
+        ext.invoke(
+            "set_voice_gain",
+            IntrospectValue::Json(serde_json::json!({ "id": id, "gain": 0.5 })),
+        )
+        .expect("voice gain");
+
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        // centre 0.707 × voice-gain 0.5 × master 0.5 ≈ 0.177.
+        match ext.query("peak") {
+            Some(IntrospectValue::Float(p)) => assert!(
+                (p - f64::from(std::f32::consts::FRAC_1_SQRT_2) * 0.25).abs() < 1e-2,
+                "master + voice gain both applied: peak {p}"
+            ),
+            other => panic!("expected peak float, got {other:?}"),
+        }
+        // A malformed set_voice_gain object is a type error, not a silent no-op.
+        assert!(matches!(
+            ext.invoke(
+                "set_voice_gain",
+                IntrospectValue::Json(serde_json::json!({ "id": 1 }))
+            ),
+            Err(InvokeError::TypeMismatch)
+        ));
+    }
+
+    #[test]
+    fn rt_reclaim_frees_returned_voices_on_the_control_thread() {
+        let (mut ext, mut renderer) = rt_director(8);
+        // A short one-shot that finishes and is returned over the queue.
+        let blip = AudioClip::new(48_000, 1, vec![1.0; 2]).shared();
+        ext = ext.with_clip("blip", blip);
+        ext.invoke("play", IntrospectValue::Text("blip".to_string()))
+            .expect("play");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out); // one-shot finishes, returned to the queue
+        // A query does not reclaim; the explicit delegate does.
+        assert_eq!(ext.reclaim(), 1, "the retired voice is freed here");
     }
 
     #[test]
@@ -822,9 +941,14 @@ mod tests {
             ext.invoke("bogus", IntrospectValue::Null),
             Err(InvokeError::UnknownPath)
         ));
-        // The RT path has no intervene slots; query of an unknown field is None.
+        // A declared field is read-only (not "unknown"); an undeclared path is
+        // unknown; an unknown query is None.
         assert!(matches!(
             ext.intervene("voice_count", IntrospectValue::Float(1.0)),
+            Err(InterveneError::ReadOnly)
+        ));
+        assert!(matches!(
+            ext.intervene("nonexistent", IntrospectValue::Float(1.0)),
             Err(InterveneError::UnknownPath)
         ));
         assert!(ext.query("nonexistent").is_none());

@@ -23,10 +23,11 @@
 //! - [`AudioEngineExternal`] — the §5.15 introspection surface: an AI reads
 //!   what is playing and drives play/stop over RPC (§2 #2 / #7). This is the
 //!   "not hidden behind opaque External" half of §5.54 made concrete.
-//! - [`AudioControllerExternal`] — the same §2 #7 surface over the real-time
+//! - [`AudioControllerExternal`] — the §2 #7 surface over the real-time
 //!   [`AudioController`], so the **device** path an AAA game runs on is
-//!   introspectable/drivable over RPC too (query the lock-free published
-//!   aggregate; invoke play/stop). Not just the single-thread engine.
+//!   introspectable/drivable over RPC too: query the lock-free published
+//!   aggregate; invoke play/stop/master- & voice-gain. Not just the
+//!   single-thread engine (per-voice reads + 3D param drive are follow-ups).
 //!
 //! ## Scope of this increment
 //!
