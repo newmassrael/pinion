@@ -249,23 +249,14 @@ impl ExternalIntrospect for AudioEngineExternal {
             // given; the rest keep their current value.
             ("listener", IntrospectValue::Json(v)) => {
                 let mut engine = self.engine.borrow_mut();
-                let cur = engine.listener();
-                let position = parse_vec3(v.get("position")).unwrap_or(cur.position);
-                let forward = parse_vec3(v.get("forward")).unwrap_or(cur.forward);
-                let up = parse_vec3(v.get("up")).unwrap_or(cur.up);
-                engine.set_listener(Listener::new(position, forward, up));
+                let listener = listener_from_partial(engine.listener(), &v);
+                engine.set_listener(listener);
                 Ok(())
             }
             // Tune the distance-attenuation model (any field optional).
             ("attenuation", IntrospectValue::Json(v)) => {
                 let mut engine = self.engine.borrow_mut();
-                let cur = engine.attenuation();
-                let attenuation = Attenuation {
-                    reference_distance: parse_f32(v.get("reference_distance"))
-                        .unwrap_or(cur.reference_distance),
-                    max_distance: parse_f32(v.get("max_distance")).unwrap_or(cur.max_distance),
-                    rolloff: parse_f32(v.get("rolloff")).unwrap_or(cur.rolloff),
-                };
+                let attenuation = attenuation_from_partial(engine.attenuation(), &v);
                 engine.set_attenuation(attenuation);
                 Ok(())
             }
@@ -321,24 +312,30 @@ impl ExternalIntrospect for AudioEngineExternal {
 /// opaque handle (the R1283/R1284 audit's deepest gap).
 ///
 /// The RT read/write shape is the lock-free split, and differs from the
-/// single-thread [`AudioEngineExternal`]:
+/// single-thread [`AudioEngineExternal`]: reads go through `query`, writes
+/// through `invoke`, and `intervene` exposes no writable slots.
 ///
 /// - **query** reads the aggregate the audio thread publishes each render
 ///   ([`crate::AudioSnapshot`]): `voice_count` / `peak` / `frames_rendered` /
-///   `rejected`. This is the "observe the RT audio without touching its
-///   engine" seam.
+///   `rejected`; plus the 3D `listener` / `attenuation` read off the
+///   control-thread mirror (the audio thread cannot be read lock-free, but the
+///   control thread is their sole writer — see [`AudioController::listener`]).
+///   This is the "observe the RT audio without touching its engine" seam.
 /// - **invoke** drives the audio thread over the command queue: `play` a named
-///   clip, `stop` a voice id, `stop_all`, `set_master_gain`, `set_voice_gain`.
-///   These are fire-and-forget commands.
-/// - **intervene** exposes no writable slots: the schema's four fields are
-///   read-only observations, so an intervene of a declared field is `ReadOnly`
-///   and anything else `UnknownPath`. Drive via `invoke` instead.
+///   clip, `stop` a voice id, `stop_all`, `set_master_gain`, `set_voice_gain`,
+///   and the 3D `set_listener` / `set_attenuation` (each a partial update
+///   patched against the mirror). All return `Null`, or `Rejected` when the
+///   command ring is full (the write did not reach the audio thread) — a full
+///   ring is surfaced, never silently dropped.
+/// - **intervene** exposes no writable slots: a schema-declared field
+///   (`voice_count` … `listener` / `attenuation`) is a read-only observation,
+///   so an intervene of it is `ReadOnly` (drive via `invoke set_listener` etc.)
+///   and anything else `UnknownPath`.
 ///
 /// Deliberately **not** yet on this surface (honest scope, not the same surface
 /// as the single-thread engine): the per-voice detail [`AudioEngineExternal`]
-/// can walk (needs a richer lock-free per-voice snapshot) and 3D
-/// listener/attenuation param drive (needs a full-spec model, since the control
-/// thread has no current value to partial-update against).
+/// can walk (id / label / gain / pan / resolved 3D per voice) needs a richer
+/// lock-free per-voice snapshot the aggregate does not carry — a follow-up.
 #[derive(Debug)]
 pub struct AudioControllerExternal {
     controller: AudioController,
@@ -384,6 +381,12 @@ impl ExternalIntrospect for AudioControllerExternal {
             ("peak", "float"),
             ("frames_rendered", "int"),
             ("rejected", "int"),
+            // The 3D listener / attenuation, read from the control-thread
+            // mirror. Query-readable but driven via `invoke set_listener` /
+            // `set_attenuation` (the RT surface's read-via-query,
+            // write-via-invoke split), so an `intervene` of them is `ReadOnly`.
+            ("listener", "json"),
+            ("attenuation", "json"),
         ])
     }
 
@@ -394,6 +397,12 @@ impl ExternalIntrospect for AudioControllerExternal {
             "peak" => Some(IntrospectValue::Float(f64::from(snapshot.peak()))),
             "frames_rendered" => Some(IntrospectValue::Int(int_of_u64(snapshot.frames_rendered()))),
             "rejected" => Some(IntrospectValue::Int(int_of_u64(snapshot.rejected()))),
+            // Read the 3D listener / attenuation off the control-thread mirror
+            // (the audio thread owns the engine and cannot be read lock-free,
+            // but the control thread is their sole writer — see
+            // [`AudioController::listener`]).
+            "listener" => Some(IntrospectValue::json(&self.controller.listener())),
+            "attenuation" => Some(IntrospectValue::json(&self.controller.attenuation())),
             _ => None,
         }
     }
@@ -426,25 +435,19 @@ impl ExternalIntrospect for AudioControllerExternal {
                 ));
                 Ok(IntrospectValue::Int(int_of_u64(id)))
             }
-            // Fire-and-forget: the actual stop happens on the audio thread next
-            // render, and the control thread cannot know synchronously whether
-            // a voice matched — so, like `stop_all`, this returns `Null` rather
-            // than a misleading bool.
+            // The stop happens on the audio thread next render, and the control
+            // thread cannot know synchronously whether a voice *matched* — so a
+            // queued stop returns `Null` (not a misleading matched-bool). But a
+            // stop that never queued (full ring) left the sound playing, so
+            // that is surfaced as `Rejected`, not silently swallowed.
             "stop" => match args {
-                IntrospectValue::Int(n) => {
-                    self.controller.stop(u64_of(n));
-                    Ok(IntrospectValue::Null)
-                }
+                IntrospectValue::Int(n) => queued_or_rejected(self.controller.stop(u64_of(n))),
                 _ => Err(InvokeError::TypeMismatch),
             },
-            "stop_all" => {
-                self.controller.stop_all();
-                Ok(IntrospectValue::Null)
-            }
+            "stop_all" => queued_or_rejected(self.controller.stop_all()),
             "set_master_gain" => match args {
                 IntrospectValue::Float(g) => {
-                    self.controller.set_master_gain(f32_of(g));
-                    Ok(IntrospectValue::Null)
+                    queued_or_rejected(self.controller.set_master_gain(f32_of(g)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -459,8 +462,28 @@ impl ExternalIntrospect for AudioControllerExternal {
                         .get("gain")
                         .and_then(serde_json::Value::as_f64)
                         .ok_or(InvokeError::TypeMismatch)?;
-                    self.controller.set_voice_gain(id, f32_of(gain));
-                    Ok(IntrospectValue::Null)
+                    queued_or_rejected(self.controller.set_voice_gain(id, f32_of(gain)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Move / re-orient the 3D listener from a partial `{position?,
+            // forward?, up?}` object, patched against the control-thread mirror
+            // (`query listener`). Full-spec or partial — omitted axes keep the
+            // mirror's value.
+            "set_listener" => match args {
+                IntrospectValue::Json(v) => {
+                    let listener = listener_from_partial(self.controller.listener(), &v);
+                    queued_or_rejected(self.controller.set_listener(listener))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Tune the distance-attenuation model from a partial
+            // `{reference_distance?, max_distance?, rolloff?}` object, patched
+            // against the mirror (`query attenuation`).
+            "set_attenuation" => match args {
+                IntrospectValue::Json(v) => {
+                    let attenuation = attenuation_from_partial(self.controller.attenuation(), &v);
+                    queued_or_rejected(self.controller.set_attenuation(attenuation))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -497,6 +520,35 @@ fn parse_play(args: IntrospectValue) -> Result<(String, PlayOptions), InvokeErro
     }
 }
 
+/// Build a full [`Listener`] from a partial `{position?, forward?, up?}` JSON
+/// object, keeping `cur`'s value for any axis the object omits — the shared
+/// partial-update semantics both audio Externals apply. The single-thread
+/// [`AudioEngineExternal`] reads `cur` from its engine; the real-time
+/// [`AudioControllerExternal`] reads it from the control-thread mirror
+/// ([`AudioController::listener`]). A 2nd-consumer lift: the partial-update
+/// *contract* (which fields are optional, what the fallback is) is one SSOT so
+/// the two Externals cannot drift.
+fn listener_from_partial(cur: Listener, v: &serde_json::Value) -> Listener {
+    Listener::new(
+        parse_vec3(v.get("position")).unwrap_or(cur.position),
+        parse_vec3(v.get("forward")).unwrap_or(cur.forward),
+        parse_vec3(v.get("up")).unwrap_or(cur.up),
+    )
+}
+
+/// Build a full [`Attenuation`] from a partial `{reference_distance?,
+/// max_distance?, rolloff?}` JSON object, keeping `cur`'s value for any field
+/// the object omits — the attenuation twin of [`listener_from_partial`], shared
+/// by both audio Externals.
+fn attenuation_from_partial(cur: Attenuation, v: &serde_json::Value) -> Attenuation {
+    Attenuation {
+        reference_distance: parse_f32(v.get("reference_distance"))
+            .unwrap_or(cur.reference_distance),
+        max_distance: parse_f32(v.get("max_distance")).unwrap_or(cur.max_distance),
+        rolloff: parse_f32(v.get("rolloff")).unwrap_or(cur.rolloff),
+    }
+}
+
 /// Parse an optional JSON `[x, y, z]` array into a [`Vec3`].
 fn parse_vec3(v: Option<&serde_json::Value>) -> Option<Vec3> {
     let arr = v?.as_array()?;
@@ -513,6 +565,19 @@ fn parse_vec3(v: Option<&serde_json::Value>) -> Option<Vec3> {
 /// Parse an optional JSON number into an `f32`.
 fn parse_f32(v: Option<&serde_json::Value>) -> Option<f32> {
     Some(f32_of(v?.as_f64()?))
+}
+
+/// Map a controller command's "was it queued?" flag to the RT invoke result:
+/// `Null` on success, `Rejected` when the command ring was full. Every driving
+/// invoke goes through this so a full ring is *surfaced* uniformly (as `play`
+/// already does) rather than silently dropped — a command that never reached
+/// the audio thread did not take effect, and the agent may retry.
+fn queued_or_rejected(queued: bool) -> Result<IntrospectValue, InvokeError> {
+    if queued {
+        Ok(IntrospectValue::Null)
+    } else {
+        Err(InvokeError::Rejected)
+    }
 }
 
 fn int_of_u64(n: u64) -> i64 {
@@ -952,5 +1017,186 @@ mod tests {
             Err(InterveneError::UnknownPath)
         ));
         assert!(ext.query("nonexistent").is_none());
+    }
+
+    #[test]
+    fn rt_listener_query_reads_mirror_and_invoke_drives_the_mix() {
+        let (mut ext, mut renderer) = rt_director(8);
+        // The default listener is readable off the control-thread mirror.
+        match ext.query("listener") {
+            Some(IntrospectValue::Json(v)) => {
+                assert_eq!(v["position"], serde_json::json!([0.0, 0.0, 0.0]));
+                assert_eq!(v["forward"], serde_json::json!([0.0, 0.0, -1.0]));
+            }
+            other => panic!("expected listener json, got {other:?}"),
+        }
+
+        // Play the bell 4 units to the world-right → distance 4, default rolloff
+        // gives gain 1/(1+3) = 0.25.
+        ext.invoke(
+            "play",
+            IntrospectValue::Json(serde_json::json!({
+                "name": "bell", "position": [4.0, 0.0, 0.0]
+            })),
+        )
+        .expect("spatial play");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        let far = match ext.query("peak") {
+            Some(IntrospectValue::Float(p)) => p,
+            other => panic!("expected peak, got {other:?}"),
+        };
+        assert!((far - 0.25).abs() < 1e-2, "distant voice attenuated: {far}");
+
+        // Move the listener onto [3,0,0] — a partial update: only `position` is
+        // given, so forward/up keep the mirror's value. Distance → 1 → full gain.
+        ext.invoke(
+            "set_listener",
+            IntrospectValue::Json(serde_json::json!({ "position": [3.0, 0.0, 0.0] })),
+        )
+        .expect("move listener");
+        // The mirror advanced and kept the unspecified axes.
+        match ext.query("listener") {
+            Some(IntrospectValue::Json(v)) => {
+                assert_eq!(v["position"], serde_json::json!([3.0, 0.0, 0.0]));
+                assert_eq!(
+                    v["forward"],
+                    serde_json::json!([0.0, 0.0, -1.0]),
+                    "forward kept"
+                );
+            }
+            other => panic!("expected listener json, got {other:?}"),
+        }
+        renderer.render(&mut out);
+        let near = match ext.query("peak") {
+            Some(IntrospectValue::Float(p)) => p,
+            other => panic!("expected peak, got {other:?}"),
+        };
+        assert!(
+            near > far + 0.5,
+            "the listener move reached the mix: {far} -> {near}"
+        );
+        assert!(
+            (near - 1.0).abs() < 1e-2,
+            "on top of the source → full gain: {near}"
+        );
+    }
+
+    #[test]
+    fn rt_set_attenuation_changes_the_falloff() {
+        let (mut ext, mut renderer) = rt_director(8);
+        ext.invoke(
+            "play",
+            IntrospectValue::Json(serde_json::json!({
+                "name": "bell", "position": [4.0, 0.0, 0.0]
+            })),
+        )
+        .expect("spatial play");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        // Zero the rolloff → no distance falloff, so the distance-4 voice is
+        // full gain. A partial update: reference/max keep the mirror's value.
+        ext.invoke(
+            "set_attenuation",
+            IntrospectValue::Json(serde_json::json!({ "rolloff": 0.0 })),
+        )
+        .expect("set attenuation");
+        match ext.query("attenuation") {
+            Some(IntrospectValue::Json(v)) => {
+                assert!(v["rolloff"].as_f64().unwrap().abs() < 1e-9);
+                assert!(
+                    (v["reference_distance"].as_f64().unwrap() - 1.0).abs() < 1e-6,
+                    "reference kept"
+                );
+            }
+            other => panic!("expected attenuation json, got {other:?}"),
+        }
+        renderer.render(&mut out);
+        match ext.query("peak") {
+            Some(IntrospectValue::Float(p)) => {
+                assert!(
+                    (p - 1.0).abs() < 1e-2,
+                    "zero rolloff → full gain at distance 4: {p}"
+                );
+            }
+            other => panic!("expected peak, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rt_listener_attenuation_are_query_read_invoke_write_not_intervene() {
+        let (mut ext, _renderer) = rt_director(8);
+        // Declared (query-readable) but driven via invoke → an intervene of them
+        // is `ReadOnly`, pointing the caller at `invoke set_listener`.
+        assert!(matches!(
+            ext.intervene(
+                "listener",
+                IntrospectValue::Json(serde_json::json!({ "position": [1.0, 0.0, 0.0] }))
+            ),
+            Err(InterveneError::ReadOnly)
+        ));
+        assert!(matches!(
+            ext.intervene(
+                "attenuation",
+                IntrospectValue::Json(serde_json::json!({ "rolloff": 0.0 }))
+            ),
+            Err(InterveneError::ReadOnly)
+        ));
+        // A wrong invoke arg type is a type error, not a silent no-op.
+        assert!(matches!(
+            ext.invoke("set_listener", IntrospectValue::Float(1.0)),
+            Err(InvokeError::TypeMismatch)
+        ));
+        assert!(matches!(
+            ext.invoke("set_attenuation", IntrospectValue::Int(1)),
+            Err(InvokeError::TypeMismatch)
+        ));
+    }
+
+    #[test]
+    fn rt_param_drive_surfaces_a_full_ring_as_rejected() {
+        // Command ring capacity 1: a stop_all fills it, then every driving
+        // invoke is refused *loudly* (`Rejected`), never a silent success.
+        let (controller, mut renderer) =
+            crate::rt::realtime_channel(AudioEngine::new(48_000), 1, 8);
+        let mut ext = AudioControllerExternal::new(controller)
+            .with_clip("bell", AudioClip::new(48_000, 1, vec![1.0; 4096]).shared());
+        ext.invoke("stop_all", IntrospectValue::Null)
+            .expect("stop_all fills the 1-deep ring");
+        for drive in [
+            ext.invoke("set_master_gain", IntrospectValue::Float(0.5)),
+            ext.invoke(
+                "set_listener",
+                IntrospectValue::Json(serde_json::json!({ "position": [1.0, 0.0, 0.0] })),
+            ),
+            ext.invoke(
+                "set_attenuation",
+                IntrospectValue::Json(serde_json::json!({ "rolloff": 0.0 })),
+            ),
+            ext.invoke("stop", IntrospectValue::Int(1)),
+        ] {
+            assert!(
+                matches!(drive, Err(InvokeError::Rejected)),
+                "full ring: {drive:?}"
+            );
+        }
+        // The refused set_listener did not advance the mirror (no drift).
+        match ext.query("listener") {
+            Some(IntrospectValue::Json(v)) => {
+                assert_eq!(
+                    v["position"],
+                    serde_json::json!([0.0, 0.0, 0.0]),
+                    "mirror unchanged"
+                );
+            }
+            other => panic!("expected listener json, got {other:?}"),
+        }
+        // Drain the ring; the drive succeeds now.
+        let mut out = [0.0f32; 8];
+        renderer.render(&mut out);
+        assert!(matches!(
+            ext.invoke("set_master_gain", IntrospectValue::Float(0.5)),
+            Ok(IntrospectValue::Null)
+        ));
     }
 }

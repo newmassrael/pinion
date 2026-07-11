@@ -200,6 +200,16 @@ pub struct AudioController {
     retired: Consumer<Voice>,
     next_id: u64,
     snapshot: Arc<AudioSnapshot>,
+    /// The control thread's mirror of the 3D listener / attenuation it last
+    /// successfully queued. The audio thread owns the engine and cannot be read
+    /// lock-free, but the control thread is the *sole writer* of these two, so
+    /// the last value it queued is the authoritative current value — the
+    /// read-back the snapshot does not carry, and the base a partial update
+    /// patches against. Advanced only when the command is actually queued (see
+    /// [`AudioController::set_listener`]), so it never claims a value the audio
+    /// thread will not apply.
+    listener: Listener,
+    attenuation: Attenuation,
 }
 
 impl AudioController {
@@ -244,15 +254,52 @@ impl AudioController {
         self.send(AudioCommand::SetVoiceGain { id, gain }).is_some()
     }
 
-    /// Move / re-orient the listener. Returns whether the command was queued.
+    /// Move / re-orient the listener, mirroring it on the control thread.
+    /// Returns whether the command was queued; the mirror
+    /// ([`AudioController::listener`]) advances only then, so a full ring leaves
+    /// both the audio thread and the mirror on the previous listener rather than
+    /// letting the read-back drift ahead of what will actually render.
     pub fn set_listener(&mut self, listener: Listener) -> bool {
-        self.send(AudioCommand::SetListener(listener)).is_some()
+        if self.send(AudioCommand::SetListener(listener)).is_some() {
+            self.listener = listener;
+            true
+        } else {
+            false
+        }
     }
 
-    /// Change the distance-attenuation model. Returns whether it was queued.
+    /// Change the distance-attenuation model, mirroring it on the control
+    /// thread. Returns whether it was queued; the mirror
+    /// ([`AudioController::attenuation`]) advances only on success, for the same
+    /// no-drift reason as [`AudioController::set_listener`].
     pub fn set_attenuation(&mut self, attenuation: Attenuation) -> bool {
-        self.send(AudioCommand::SetAttenuation(attenuation))
+        if self
+            .send(AudioCommand::SetAttenuation(attenuation))
             .is_some()
+        {
+            self.attenuation = attenuation;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The listener the control thread last successfully queued — its
+    /// authoritative mirror (the control thread is the listener's sole writer,
+    /// so this *is* the current value even though the audio thread owns the
+    /// engine). The base a partial listener update patches against, and the RT
+    /// `listener` introspection read.
+    #[must_use]
+    pub fn listener(&self) -> Listener {
+        self.listener
+    }
+
+    /// The distance-attenuation model the control thread last successfully
+    /// queued — the control-thread mirror, for the same reason as
+    /// [`AudioController::listener`].
+    #[must_use]
+    pub fn attenuation(&self) -> Attenuation {
+        self.attenuation
     }
 
     /// The latest snapshot the audio thread published.
@@ -393,6 +440,12 @@ pub fn realtime_channel(
     let (retired_tx, retired_rx) = RingBuffer::new(command_capacity.max(1) + voice_capacity.max(1));
 
     let next_id = engine.next_voice_id();
+    // Seed the control-thread mirror from the engine's current values, so a
+    // `listener` / `attenuation` read before any drive returns what the audio
+    // thread actually starts with (the origin listener + default model, unless
+    // the caller pre-set them).
+    let listener = engine.listener();
+    let attenuation = engine.attenuation();
     let snapshot = Arc::new(AudioSnapshot::default());
     (
         AudioController {
@@ -400,6 +453,8 @@ pub fn realtime_channel(
             retired: retired_rx,
             next_id,
             snapshot: Arc::clone(&snapshot),
+            listener,
+            attenuation,
         },
         AudioRenderer {
             engine,
@@ -417,6 +472,12 @@ mod tests {
 
     fn tone(frames: usize) -> Arc<AudioClip> {
         AudioClip::new(48_000, 1, vec![1.0; frames]).shared()
+    }
+
+    /// Component-wise near-equality for a 3D vector (the mirror stores exact
+    /// copies, but `clippy::float_cmp` forbids `==` on float arrays).
+    fn approx3(a: [f32; 3], b: [f32; 3]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
     }
 
     #[test]
@@ -641,5 +702,73 @@ mod tests {
             "send() reclaimed the returned voice"
         );
         assert_eq!(ctl.reclaim(), 0, "nothing left to reclaim");
+    }
+
+    #[test]
+    fn mirror_seeds_from_engine_and_advances_on_successful_set() {
+        // The controller mirror starts from the engine's current values, so a
+        // read before any drive reflects reality.
+        let mut engine = AudioEngine::new(48_000);
+        engine.set_listener(Listener::new(
+            [1.0, 2.0, 3.0],
+            [0.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0],
+        ));
+        let (mut ctl, _renderer) = realtime_channel(engine, 16, 8);
+        assert!(
+            approx3(ctl.listener().position, [1.0, 2.0, 3.0]),
+            "seeded from engine"
+        );
+        assert!(
+            (ctl.attenuation().reference_distance - 1.0).abs() < 1e-6,
+            "engine default"
+        );
+
+        // A successful send advances the mirror.
+        assert!(ctl.set_listener(Listener::new(
+            [5.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0],
+        )));
+        assert!(approx3(ctl.listener().position, [5.0, 0.0, 0.0]));
+        assert!(ctl.set_attenuation(Attenuation {
+            reference_distance: 2.0,
+            max_distance: 100.0,
+            rolloff: 0.5,
+        }));
+        assert!((ctl.attenuation().reference_distance - 2.0).abs() < 1e-6);
+        assert!((ctl.attenuation().rolloff - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mirror_does_not_drift_when_the_command_ring_is_full() {
+        // A full ring means the command never reached the audio thread, so the
+        // mirror must stay put — it must never report a value the audio thread
+        // will not apply.
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 1, 8);
+        assert!(ctl.stop_all(), "fills the 1-deep ring");
+        let before = ctl.listener().position;
+        assert!(
+            !ctl.set_listener(Listener::new(
+                [9.0, 9.0, 9.0],
+                [0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0],
+            )),
+            "refused at a full ring"
+        );
+        assert!(
+            approx3(ctl.listener().position, before),
+            "mirror did not drift"
+        );
+
+        // Drain the ring; the same drive now takes and the mirror advances.
+        let mut out = [0.0f32; 8];
+        renderer.render(&mut out);
+        assert!(ctl.set_listener(Listener::new(
+            [9.0, 9.0, 9.0],
+            [0.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0],
+        )));
+        assert!(approx3(ctl.listener().position, [9.0, 9.0, 9.0]));
     }
 }

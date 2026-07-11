@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::thread;
 
-use pinion_audio::{AudioClip, AudioEngine, PlayOptions, peak, realtime_channel};
+use pinion_audio::{AudioClip, AudioEngine, Listener, PlayOptions, peak, realtime_channel};
 
 fn tone(frames: usize) -> Arc<AudioClip> {
     AudioClip::new(48_000, 1, vec![1.0; frames]).shared()
@@ -72,6 +72,63 @@ fn control_thread_drives_a_running_render_loop() {
     // thread made progress (frames rendered > 0).
     assert_eq!(final_voices, 0);
     assert!(controller.snapshot().frames_rendered() >= 128);
+}
+
+#[test]
+fn control_thread_drives_the_listener_across_the_boundary() {
+    // Two identical spatial plays; one channel also gets a control-thread
+    // listener move onto the source before the audio thread renders. The moved
+    // channel renders at full gain, the unmoved at the attenuated 0.25 — proof
+    // the SetListener command crossed the lock-free queue and changed the mix.
+    // Deterministic: everything is queued before spawn, so spawn's
+    // happens-before makes it visible to the renderer (ZERO-FLAKE, no sleeps).
+    fn render_peak(move_listener: bool) -> (f32, Listener) {
+        let (mut controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 8);
+        // A voice 4 units to the world-right → default listener gives gain
+        // 1/(1+3) = 0.25.
+        let opts = PlayOptions {
+            position: Some([4.0, 0.0, 0.0]),
+            ..PlayOptions::one_shot()
+        };
+        controller.play(tone(512), "src", opts).expect("queued");
+        if move_listener {
+            // Move the ears onto the source → distance 1 → full gain.
+            controller.set_listener(Listener::new(
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0],
+            ));
+        }
+        let peak_of = thread::spawn(move || {
+            let mut out = vec![0.0f32; 256];
+            renderer.render(&mut out);
+            peak(&out)
+        })
+        .join()
+        .expect("audio thread ok");
+        (peak_of, controller.listener())
+    }
+
+    let (moved_peak, moved_listener) = render_peak(true);
+    let (still_peak, still_listener) = render_peak(false);
+
+    assert!(
+        (still_peak - 0.25).abs() < 1e-2,
+        "unmoved: attenuated at distance 4: {still_peak}"
+    );
+    assert!(
+        moved_peak > 0.9,
+        "moved: full gain on top of the source: {moved_peak}"
+    );
+    assert!(
+        moved_peak > still_peak + 0.5,
+        "the control-thread listener drive changed the audio-thread mix"
+    );
+    // The control-thread mirror reflects the move (and the origin seed).
+    // Component-wise (`clippy::float_cmp` forbids `==` on float arrays).
+    let approx3 = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+    assert!(approx3(moved_listener.position, [3.0, 0.0, 0.0]));
+    assert!(approx3(still_listener.position, [0.0, 0.0, 0.0]));
 }
 
 #[test]
