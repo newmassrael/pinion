@@ -10,8 +10,11 @@
 //! - [`decode`] — compressed game-audio decode (OGG Vorbis / FLAC) bridged to
 //!   the canonical pure-Rust codec (symphonia), still producing plain PCM.
 //! - [`Voice`] / mixing — the deterministic stereo mix (§2 #3).
+//! - [`spatial`] — 3D positional audio: a [`spatial::Listener`] plus a
+//!   per-voice world position resolve to distance attenuation + azimuth pan
+//!   through the very same pan pot a hand-panned voice uses.
 //! - [`AudioEngine`] — the live voice graph: play / stop / master gain /
-//!   render, with the whole graph readable as data.
+//!   listener / render, with the whole graph readable as data.
 //! - [`AudioBackend`] / [`InMemoryAudioBackend`] — the output-device seam,
 //!   headlessly verifiable; a real cpal device backend drops in behind the
 //!   same trait (deferred: a headless box has no device to verify it).
@@ -24,8 +27,10 @@
 //! WAV/PCM + compressed (OGG Vorbis / FLAC) decode, a stereo mixer (mono
 //! pan-pot / stereo balance) with per-voice linear-interpolation
 //! **resampling** to the engine rate + one-shot & looping voices + master
-//! gain + the introspection surface. Deferred (same voice model): higher-order
-//! resampling, richer 3D spatialisation, and the real cpal device backend.
+//! gain + 3D positional audio (listener-relative distance attenuation +
+//! azimuth pan) + the introspection surface. Deferred (same voice model):
+//! higher-order resampling, richer spatialisation (HRTF / surround / doppler /
+//! per-source rolloff tuning), and the real cpal device backend.
 //!
 //! ## Threading & the real-time transition (deferred, backend-forced)
 //!
@@ -52,12 +57,14 @@ pub mod decode;
 pub mod engine;
 pub mod external;
 pub mod mixer;
+pub mod spatial;
 pub mod wav;
 
 pub use backend::{AudioBackend, InMemoryAudioBackend, pump};
 pub use clip::AudioClip;
 pub use decode::{DecodeError, decode_compressed};
-pub use engine::{AudioEngine, PlayOptions, VoiceId};
+pub use engine::{AudioEngine, PlayOptions, ResolvedOutput, VoiceId};
 pub use external::AudioEngineExternal;
 pub use mixer::Voice;
+pub use spatial::{Attenuation, Listener, Spatialization, Vec3, spatialize};
 pub use wav::{WavError, decode_wav};

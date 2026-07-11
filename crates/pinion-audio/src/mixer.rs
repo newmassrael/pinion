@@ -10,12 +10,20 @@
 //! fractional playhead + linear interpolation, so a 44.1 kHz asset plays at
 //! the right pitch on a 48 kHz engine (rather than the earlier silent
 //! octave shift). A mono clip is panned with a constant-power pot; a stereo
-//! clip uses a linear L/R balance. Higher-order resampling and richer 3D
-//! spatialisation are refinements on this same voice model.
+//! clip uses a linear L/R balance. Higher-order resampling is a refinement on
+//! this same voice model.
+//!
+//! A voice's `gain`/`pan` are its **authored** values. For a 3D voice (one
+//! given a [`Voice::position`]) the engine resolves an *effective* gain/pan
+//! from listener geometry every render and feeds them to
+//! [`Voice::mix_into_with`], leaving the authored values untouched so the next
+//! frame re-resolves from scratch. [`Voice::mix_into`] is the non-spatial
+//! path that just uses the authored values.
 
 use std::sync::Arc;
 
 use crate::clip::AudioClip;
+use crate::spatial::Vec3;
 
 /// One playing instance of a clip.
 #[derive(Clone, Debug)]
@@ -29,11 +37,16 @@ pub struct Voice {
     pan: f32,
     looping: bool,
     finished: bool,
+    /// World position of a 3D voice, or `None` for a flat (statically panned)
+    /// voice. When set, the engine derives the effective gain/pan from the
+    /// listener each render.
+    position: Option<Vec3>,
 }
 
 impl Voice {
     /// Start a voice for `clip`, tagged `label`, with `gain` (linear),
-    /// `pan` (`-1.0` left … `1.0` right), and `looping`.
+    /// `pan` (`-1.0` left … `1.0` right), and `looping`. Flat (non-spatial)
+    /// by default; call [`Voice::with_position`] to place it in 3D.
     #[must_use]
     pub fn new(
         clip: Arc<AudioClip>,
@@ -50,7 +63,27 @@ impl Voice {
             pan: pan.clamp(-1.0, 1.0),
             looping,
             finished: false,
+            position: None,
         }
+    }
+
+    /// Place this voice at a world `position`, making it a 3D voice whose
+    /// gain/pan the engine resolves from the listener.
+    #[must_use]
+    pub fn with_position(mut self, position: Vec3) -> Self {
+        self.position = Some(position);
+        self
+    }
+
+    /// This voice's 3D world position, or `None` if it is flat.
+    #[must_use]
+    pub fn position(&self) -> Option<Vec3> {
+        self.position
+    }
+
+    /// Move (or, with `None`, un-spatialise) the voice.
+    pub fn set_position(&mut self, position: Option<Vec3>) {
+        self.position = position;
     }
 
     /// This voice's label (the sound's name — the introspection handle).
@@ -111,12 +144,23 @@ impl Voice {
         self.finished = true;
     }
 
-    /// Mix this voice into an interleaved stereo `out` buffer (length must be
-    /// even) at `out_rate`, resampling the clip and advancing the playhead.
+    /// Mix this voice into an interleaved stereo `out` buffer using its own
+    /// authored gain/pan — the non-spatial path.
+    ///
     /// Adds to `out` (does not clear it), so the engine clears once and sums
     /// every voice.
-    #[allow(clippy::cast_precision_loss)] // frame_count is small, exact in f64.
     pub fn mix_into(&mut self, out: &mut [f32], out_rate: u32) {
+        let (gain, pan) = (self.gain, self.pan);
+        self.mix_into_with(out, out_rate, gain, pan);
+    }
+
+    /// Mix this voice into an interleaved stereo `out` buffer (length must be
+    /// even) at `out_rate` with an externally-supplied effective `gain`/`pan`,
+    /// resampling the clip and advancing the playhead. This is the seam the
+    /// engine drives for 3D voices: it passes the listener-resolved gain/pan
+    /// without disturbing the voice's authored values.
+    #[allow(clippy::cast_precision_loss)] // frame_count is small, exact in f64.
+    pub fn mix_into_with(&mut self, out: &mut [f32], out_rate: u32, gain: f32, pan: f32) {
         if self.finished {
             return;
         }
@@ -125,7 +169,7 @@ impl Voice {
             self.finished = true;
             return;
         }
-        let (pan_l, pan_r) = pan_gains(self.pan);
+        let (pan_l, pan_r) = pan_gains(pan);
         let channels = self.clip.channels() as usize;
         // Clip frames advanced per output frame (the resample ratio).
         let step = f64::from(self.clip.sample_rate().max(1)) / f64::from(out_rate.max(1));
@@ -140,7 +184,7 @@ impl Voice {
                     return;
                 }
             }
-            let (l, r) = self.sample_at(channels, pan_l, pan_r);
+            let (l, r) = self.sample_at(channels, gain, pan, pan_l, pan_r);
             frame_out[0] += l;
             frame_out[1] += r;
             self.playhead += step;
@@ -148,9 +192,18 @@ impl Voice {
     }
 
     /// Linearly interpolate the clip at the current fractional playhead and
-    /// map it to a stereo `(left, right)` contribution.
+    /// map it to a stereo `(left, right)` contribution using the effective
+    /// `gain`/`pan` (mono uses the constant-power `pan_l`/`pan_r`; stereo uses
+    /// a linear L/R balance from `pan`).
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn sample_at(&self, channels: usize, pan_l: f32, pan_r: f32) -> (f32, f32) {
+    fn sample_at(
+        &self,
+        channels: usize,
+        gain: f32,
+        pan: f32,
+        pan_l: f32,
+        pan_r: f32,
+    ) -> (f32, f32) {
         let frame_count = self.clip.frame_count();
         // playhead is guaranteed in `[0, frame_count)` by the caller.
         let i0 = self.playhead.floor() as usize;
@@ -170,7 +223,7 @@ impl Voice {
         if channels == 1 {
             let s0 = f0[0];
             let s1 = f1.first().copied().unwrap_or(s0);
-            let s = lerp(s0, s1, frac) * self.gain;
+            let s = lerp(s0, s1, frac) * gain;
             (s * pan_l, s * pan_r)
         } else {
             let l = lerp(f0[0], f1.first().copied().unwrap_or(f0[0]), frac);
@@ -179,9 +232,9 @@ impl Voice {
                 f1.get(1).copied().unwrap_or(f0[0]),
                 frac,
             );
-            let balance_l = if self.pan <= 0.0 { 1.0 } else { 1.0 - self.pan };
-            let balance_r = if self.pan >= 0.0 { 1.0 } else { 1.0 + self.pan };
-            (l * self.gain * balance_l, r * self.gain * balance_r)
+            let balance_l = if pan <= 0.0 { 1.0 } else { 1.0 - pan };
+            let balance_r = if pan >= 0.0 { 1.0 } else { 1.0 + pan };
+            (l * gain * balance_l, r * gain * balance_r)
         }
     }
 }

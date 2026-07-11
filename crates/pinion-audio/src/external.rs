@@ -6,9 +6,12 @@
 //! *play/stop* over RPC:
 //!
 //! - **query** — `voice_count` / `master_gain` / `sample_rate` / `voices`
-//!   (per-voice id/label/gain/pan/loop/position) / `clips` (the library).
-//! - **intervene** — set `master_gain`.
-//! - **invoke** — `play` a named clip, `stop` a voice id, `stop_all`.
+//!   (per-voice id/label/gain/pan/loop/position + resolved 3D
+//!   position/distance/effective gain/pan) / `clips` (the library) /
+//!   `listener` / `attenuation` (the 3D listener + distance model).
+//! - **intervene** — set `master_gain` / `listener` / `attenuation`.
+//! - **invoke** — `play` a named clip (optionally at a 3D `position`), `stop`
+//!   a voice id, `stop_all`.
 //!
 //! It holds a shared [`AudioEngine`] plus a named clip library, so `play`
 //! takes a clip *name* (an agent cannot pass PCM over the wire).
@@ -26,6 +29,7 @@ use serde::Serialize;
 
 use crate::clip::AudioClip;
 use crate::engine::{AudioEngine, PlayOptions};
+use crate::spatial::{Attenuation, Listener, Vec3};
 
 /// Introspectable `External` over a shared audio engine + clip library.
 #[derive(Debug)]
@@ -77,7 +81,10 @@ impl AudioEngineExternal {
     }
 }
 
-/// The per-voice shape emitted by the `voices` query.
+/// The per-voice shape emitted by the `voices` query. `gain`/`pan` are the
+/// *authored* values; `effective_gain`/`effective_pan` are what the mixer
+/// actually renders after spatialisation (equal to the authored values for a
+/// flat voice). `position`/`distance` are present only for a 3D voice.
 #[derive(Serialize)]
 struct VoiceInfo<'a> {
     id: u64,
@@ -87,6 +94,12 @@ struct VoiceInfo<'a> {
     looping: bool,
     position_secs: f32,
     finished: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position: Option<Vec3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    distance: Option<f32>,
+    effective_gain: f32,
+    effective_pan: f32,
 }
 
 // Paints nothing (the binding's `view` is the paint scene) and emits §5.20
@@ -101,6 +114,8 @@ impl ExternalIntrospect for AudioEngineExternal {
             ("master_gain", "float"),
             ("voices", "json"),
             ("clips", "json"),
+            ("listener", "json"),
+            ("attenuation", "json"),
         ])
     }
 
@@ -113,14 +128,21 @@ impl ExternalIntrospect for AudioEngineExternal {
             "voices" => {
                 let infos: Vec<VoiceInfo> = engine
                     .voices()
-                    .map(|(id, v)| VoiceInfo {
-                        id,
-                        label: v.label(),
-                        gain: v.gain(),
-                        pan: v.pan(),
-                        looping: v.looping(),
-                        position_secs: v.position_secs(),
-                        finished: v.is_finished(),
+                    .map(|(id, v)| {
+                        let resolved = engine.resolve_voice(v);
+                        VoiceInfo {
+                            id,
+                            label: v.label(),
+                            gain: v.gain(),
+                            pan: v.pan(),
+                            looping: v.looping(),
+                            position_secs: v.position_secs(),
+                            finished: v.is_finished(),
+                            position: v.position(),
+                            distance: resolved.distance,
+                            effective_gain: resolved.gain,
+                            effective_pan: resolved.pan,
+                        }
                     })
                     .collect();
                 Some(IntrospectValue::json(&infos))
@@ -129,6 +151,8 @@ impl ExternalIntrospect for AudioEngineExternal {
                 let names: Vec<&str> = self.clips.keys().map(String::as_str).collect();
                 Some(IntrospectValue::json(&names))
             }
+            "listener" => Some(IntrospectValue::json(&engine.listener())),
+            "attenuation" => Some(IntrospectValue::json(&engine.attenuation())),
             _ => None,
         }
     }
@@ -139,7 +163,32 @@ impl ExternalIntrospect for AudioEngineExternal {
                 self.engine.borrow_mut().set_master_gain(f32_of(g));
                 Ok(())
             }
-            ("master_gain", _) => Err(InterveneError::TypeMismatch),
+            // Move / re-orient the listener. Any of position/forward/up may be
+            // given; the rest keep their current value.
+            ("listener", IntrospectValue::Json(v)) => {
+                let mut engine = self.engine.borrow_mut();
+                let cur = engine.listener();
+                let position = parse_vec3(v.get("position")).unwrap_or(cur.position);
+                let forward = parse_vec3(v.get("forward")).unwrap_or(cur.forward);
+                let up = parse_vec3(v.get("up")).unwrap_or(cur.up);
+                engine.set_listener(Listener::new(position, forward, up));
+                Ok(())
+            }
+            // Tune the distance-attenuation model (any field optional).
+            ("attenuation", IntrospectValue::Json(v)) => {
+                let mut engine = self.engine.borrow_mut();
+                let cur = engine.attenuation();
+                let attenuation = Attenuation {
+                    reference_distance: parse_f32(v.get("reference_distance"))
+                        .unwrap_or(cur.reference_distance),
+                    max_distance: parse_f32(v.get("max_distance")).unwrap_or(cur.max_distance),
+                    rolloff: parse_f32(v.get("rolloff")).unwrap_or(cur.rolloff),
+                };
+                engine.set_attenuation(attenuation);
+                Ok(())
+            }
+            // A known path with the wrong value type.
+            ("master_gain" | "listener" | "attenuation", _) => Err(InterveneError::TypeMismatch),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -201,10 +250,31 @@ fn parse_play(args: IntrospectValue) -> Result<(String, PlayOptions), InvokeErro
             if let Some(l) = v.get("looping").and_then(serde_json::Value::as_bool) {
                 opts.looping = l;
             }
+            if let Some(pos) = parse_vec3(v.get("position")) {
+                opts.position = Some(pos);
+            }
             Ok((name, opts))
         }
         _ => Err(InvokeError::TypeMismatch),
     }
+}
+
+/// Parse an optional JSON `[x, y, z]` array into a [`Vec3`].
+fn parse_vec3(v: Option<&serde_json::Value>) -> Option<Vec3> {
+    let arr = v?.as_array()?;
+    let [x, y, z] = arr.as_slice() else {
+        return None;
+    };
+    Some([
+        f32_of(x.as_f64()?),
+        f32_of(y.as_f64()?),
+        f32_of(z.as_f64()?),
+    ])
+}
+
+/// Parse an optional JSON number into an `f32`.
+fn parse_f32(v: Option<&serde_json::Value>) -> Option<f32> {
+    Some(f32_of(v?.as_f64()?))
 }
 
 fn int_of_u64(n: u64) -> i64 {
@@ -315,5 +385,81 @@ mod tests {
             ext.query("master_gain"),
             Some(IntrospectValue::Float(g)) if (g - 0.25).abs() < 1e-6
         ));
+    }
+
+    #[test]
+    fn play_at_position_exposes_resolved_spatial_reads() {
+        let mut ext = director();
+        // Play the bell to the world-right at twice the reference distance.
+        let args = IntrospectValue::Json(serde_json::json!({
+            "name": "bell", "position": [2.0, 0.0, 0.0]
+        }));
+        ext.invoke("play", args).expect("spatial play");
+
+        match ext.query("voices") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                let v = &items[0];
+                assert_eq!(v["position"], serde_json::json!([2.0, 0.0, 0.0]));
+                assert!((v["distance"].as_f64().unwrap() - 2.0).abs() < 1e-4);
+                // gain 1.0 halved at 2× reference; pan resolves hard right.
+                assert!((v["effective_gain"].as_f64().unwrap() - 0.5).abs() < 1e-3);
+                assert!((v["effective_pan"].as_f64().unwrap() - 1.0).abs() < 1e-3);
+            }
+            other => panic!("expected voices array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn listener_query_and_intervene_roundtrip() {
+        let mut ext = director();
+        // Default listener faces -Z from the origin.
+        match ext.query("listener") {
+            Some(IntrospectValue::Json(v)) => {
+                assert_eq!(v["position"], serde_json::json!([0.0, 0.0, 0.0]));
+                assert_eq!(v["forward"], serde_json::json!([0.0, 0.0, -1.0]));
+            }
+            other => panic!("expected listener json, got {other:?}"),
+        }
+        // Move it; a partial object keeps the unspecified axes.
+        ext.intervene(
+            "listener",
+            IntrospectValue::Json(serde_json::json!({ "position": [5.0, 0.0, 0.0] })),
+        )
+        .expect("move listener");
+        match ext.query("listener") {
+            Some(IntrospectValue::Json(v)) => {
+                assert_eq!(v["position"], serde_json::json!([5.0, 0.0, 0.0]));
+                assert_eq!(
+                    v["forward"],
+                    serde_json::json!([0.0, 0.0, -1.0]),
+                    "forward kept"
+                );
+            }
+            other => panic!("expected listener json, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn attenuation_intervene_changes_resolved_gain() {
+        let mut ext = director();
+        // Zero rolloff → no distance falloff, so a far voice stays full gain.
+        ext.intervene(
+            "attenuation",
+            IntrospectValue::Json(serde_json::json!({ "rolloff": 0.0 })),
+        )
+        .expect("set attenuation");
+        let args = IntrospectValue::Json(serde_json::json!({
+            "name": "bell", "position": [0.0, 0.0, -50.0]
+        }));
+        ext.invoke("play", args).expect("spatial play");
+        match ext.query("voices") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                assert!(
+                    (items[0]["effective_gain"].as_f64().unwrap() - 1.0).abs() < 1e-3,
+                    "zero rolloff → no attenuation even at distance 50"
+                );
+            }
+            other => panic!("expected voices, got {other:?}"),
+        }
     }
 }
