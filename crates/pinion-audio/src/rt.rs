@@ -18,26 +18,13 @@
 //!   publishing a lock-free [`AudioSnapshot`] the control thread can poll.
 //!
 //! [`AudioRenderer::render`] has the exact shape of a cpal output callback
-//! (`&mut [f32]`), so wiring it to a device is the small adapter sketched
-//! below — deliberately *not* shipped here because a headless box has no
-//! `libasound`/device to compile or run it against (the same reason
-//! [`crate::backend`] leaves the device backend as a documented seam). The
-//! sketch assumes the device gives interleaved f32 stereo at the engine rate;
-//! a real adapter also negotiates the device's sample format, rate, and
-//! channel count (resampling / channel-mapping as needed):
-//!
-//! ```ignore
-//! let (controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 256);
-//! let device = cpal::default_host().default_output_device().unwrap();
-//! let stream = device.build_output_stream(
-//!     &config,
-//!     move |out: &mut [f32], _| renderer.render(out), // <- the audio callback
-//!     |err| eprintln!("audio: {err}"),
-//!     None,
-//! ).unwrap();
-//! stream.play().unwrap();
-//! // ... controller.play(clip, "sfx", PlayOptions::one_shot()); on the UI thread
-//! ```
+//! (`&mut [f32]`), and the real device backend that consumes it is
+//! `crate::device` (the `cpal-backend` feature) — it moves an
+//! [`AudioRenderer`] straight into cpal's callback and hands back the
+//! [`AudioController`], negotiating the device's sample format / rate /
+//! channels. It is feature-gated (its Linux backend needs `libasound2-dev`),
+//! not because it is unverifiable: `cargo run -p pinion-audio --example
+//! device_out --features cpal-backend` drives real hardware.
 //!
 //! ## Real-time hardening still owed (honest scope)
 //!

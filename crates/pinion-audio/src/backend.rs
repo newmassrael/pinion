@@ -1,13 +1,16 @@
 //! The output-device seam.
 //!
-//! [`AudioBackend`] is where a rendered stereo block goes: a real sound
-//! device, or the headless [`InMemoryAudioBackend`] that captures it for
-//! verification. The engine does the rendering; the backend is only the
-//! sink. This is the same trait + in-memory-double pattern the platform
-//! tray uses (`TrayBackend` / `InMemoryTrayBackend`): the substrate is
-//! fully testable headlessly, and a real device backend (cpal, pushing into
-//! a ring buffer its callback drains) drops in behind the same trait —
-//! deferred here because a headless box has no audio device to verify it.
+//! [`AudioBackend`] is the *pull* output seam: a rendered stereo block goes to
+//! a real sound device or to the headless [`InMemoryAudioBackend`] that
+//! captures it for verification — the same trait + in-memory-double pattern
+//! the platform tray uses (`TrayBackend` / `InMemoryTrayBackend`), fully
+//! testable headlessly.
+//!
+//! The real *device* backend is not built on this pull trait, though: a sound
+//! card pushes on its own thread, so device output lives in `crate::device`
+//! (the `cpal-backend` feature), which drives the lock-free [`crate::rt`]
+//! renderer from cpal's callback. This pull seam remains the right shape for
+//! offline / headless capture and golden-buffer tests.
 
 use crate::engine::AudioEngine;
 

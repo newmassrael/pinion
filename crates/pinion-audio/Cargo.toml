@@ -34,6 +34,22 @@ symphonia = { version = "0.5", default-features = false, features = [
 # ([[use-substrate-not-hand-rolled-equivalent]] — a hand-rolled lock-free ring
 # is exactly the error-prone concurrency code to avoid).
 rtrb = "0.3"
+# The real audio-device backend (`cpal-backend` feature). cpal is the
+# canonical cross-platform audio-I/O crate (rodio/kira build on it). Optional
+# because its Linux backend links libasound (needs `libasound2-dev`); the core
+# crate must build everywhere, so device output is opt-in.
+cpal = { version = "0.15", optional = true }
+
+[features]
+# Real audio-device output via cpal (Linux: requires `libasound2-dev`).
+cpal-backend = ["dep:cpal"]
+
+# Device-output smoke check. `required-features` means `cargo build`/`clippy`
+# (even `--all-targets`) SKIP it unless `cpal-backend` is on, so a checkout
+# without the ALSA headers still builds the whole workspace.
+[[example]]
+name = "device_out"
+required-features = ["cpal-backend"]
 
 [lints]
 workspace = true

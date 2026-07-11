@@ -28,9 +28,10 @@
 //! pan-pot / stereo balance) with per-voice linear-interpolation
 //! **resampling** to the engine rate + one-shot & looping voices + master
 //! gain + 3D positional audio (listener-relative distance attenuation +
-//! azimuth pan) + the introspection surface. Deferred (same voice model):
-//! higher-order resampling, richer spatialisation (HRTF / surround / doppler /
-//! per-source rolloff tuning), and the real cpal device backend.
+//! azimuth pan) + a real cpal device backend (`cpal-backend` feature) + the
+//! introspection surface. Deferred (same voice model): higher-order
+//! resampling, richer spatialisation (HRTF / surround / doppler / per-source
+//! rolloff tuning), and real-time voice-pool / resource-return hardening.
 //!
 //! ## Threading & the real-time control model
 //!
@@ -46,14 +47,17 @@
 //! (play/stop/set-param) from the control thread ([`AudioController`]), with a
 //! lock-free [`AudioSnapshot`] published back for polling — no lock and no
 //! shared mutable engine on the callback. [`AudioRenderer::render`] has the
-//! exact `&mut [f32]` shape of a cpal output callback, so the real device
-//! backend is a documented ~10-line drop-in (see [`rt`]); it is not shipped
-//! because a headless box has no `libasound`/device to compile or run it
-//! against (the same reason the device [`backend`] is a documented seam).
+//! exact `&mut [f32]` shape of a cpal output callback, and the real device
+//! backend `device` (the `cpal-backend` feature) drives it from cpal on real
+//! hardware. That backend is feature-gated (its Linux path needs
+//! `libasound2-dev`) so a checkout without the ALSA headers still builds the
+//! core crate; it is verified by `--example device_out`.
 
 pub mod backend;
 pub mod clip;
 pub mod decode;
+#[cfg(feature = "cpal-backend")]
+pub mod device;
 pub mod engine;
 pub mod external;
 pub mod mixer;
@@ -64,6 +68,8 @@ pub mod wav;
 pub use backend::{AudioBackend, InMemoryAudioBackend, peak, pump};
 pub use clip::AudioClip;
 pub use decode::{DecodeError, decode_compressed};
+#[cfg(feature = "cpal-backend")]
+pub use device::{CpalError, CpalOutput};
 pub use engine::{AudioEngine, PlayOptions, ResolvedOutput, VoiceId};
 pub use external::AudioEngineExternal;
 pub use mixer::Voice;
