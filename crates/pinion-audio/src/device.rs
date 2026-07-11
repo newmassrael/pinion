@@ -5,9 +5,11 @@
 //! for: [`CpalOutput::start_default`] opens the system's default output, moves
 //! an [`AudioRenderer`] into cpal's audio-thread callback, and hands back an
 //! [`AudioController`] for the game/UI thread. The callback body is just
-//! `renderer.render(...)` — the same alloc-free, lock-free drain-and-render
-//! the headless tests exercise — so the device path and the tested path are
-//! the *same* code, not two implementations.
+//! `renderer.render(...)` — the same real-time-safe drain-and-render the
+//! headless tests exercise (no lock, no shared mutable engine, no allocation,
+//! and no free: retired voices go back over the resource-return queue) — so
+//! the device path and the tested path are the *same* code, not two
+//! implementations.
 //!
 //! cpal reports the device's native config, so the adapter is
 //! format/rate/channel-general: it renders the engine's interleaved stereo
@@ -69,13 +71,18 @@ pub struct CpalOutput {
 impl CpalOutput {
     /// Open the default output device, start it, and return the control-thread
     /// [`AudioController`] paired with the live stream. `command_capacity` is
-    /// the depth of the lock-free command ring.
+    /// the depth of the lock-free command ring; `max_voices` bounds the
+    /// pre-reserved voice pool so the audio thread never reallocates (plays
+    /// past it are rejected — a voice budget).
     ///
     /// # Errors
     ///
     /// [`CpalError`] if there is no output device, its config cannot be read,
     /// its sample format is unsupported, or the stream cannot be built/started.
-    pub fn start_default(command_capacity: usize) -> Result<(AudioController, Self), CpalError> {
+    pub fn start_default(
+        command_capacity: usize,
+        max_voices: usize,
+    ) -> Result<(AudioController, Self), CpalError> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or(CpalError::NoDevice)?;
         let supported = device.default_output_config().map_err(CpalError::Config)?;
@@ -87,7 +94,7 @@ impl CpalOutput {
         // The engine renders at the device's own rate; per-voice resampling
         // pitches any clip to match, so no separate resample stage is needed.
         let engine = AudioEngine::new(sample_rate);
-        let (controller, renderer) = realtime_channel(engine, command_capacity);
+        let (controller, renderer) = realtime_channel(engine, command_capacity, max_voices);
 
         let channels_usize = channels as usize;
         let stream = match sample_format {
@@ -134,8 +141,9 @@ where
     T: SizedSample + FromSample<f32>,
 {
     // Reused across callbacks; grows to the largest block cpal asks for, then
-    // stops allocating (the steady-state alloc-free property — the remaining
-    // Play-realloc / retire-free hardening is scoped in `rt`).
+    // stops allocating. Together with the pre-reserved voice pool and the
+    // resource-return queue in `rt`, the steady-state callback neither
+    // allocates nor frees.
     let mut stereo: Vec<f32> = Vec::new();
     let channels = channels.max(1);
 

@@ -26,17 +26,26 @@
 //! not because it is unverifiable: `cargo run -p pinion-audio --example
 //! device_out --features cpal-backend` drives real hardware.
 //!
-//! ## Real-time hardening still owed (honest scope)
+//! ## Real-time safety
 //!
-//! The primary real-time win — **no lock and no shared mutable engine on the
-//! callback** — is in place, as is the pre-allocated command ring and the
-//! alloc-free render buffer. Two known refinements are *not* done and are
-//! documented rather than hidden: (1) a finished voice's `Arc<AudioClip>` /
-//! `String` is dropped on the audio thread (a `free`), and (2) the engine's
-//! voice `Vec` may reallocate when many voices start. The textbook fix for
-//! both is a pre-allocated voice pool plus a return channel that ships retired
-//! resources back to the control thread for disposal; that is the next
-//! increment, forced by a real device consumer, not guessed at here.
+//! The callback holds **no lock and no shared mutable engine**, the command
+//! ring is pre-allocated, and the render buffer is the caller's — and the two
+//! remaining `alloc`/`free` hazards are now closed:
+//!
+//! - **No reallocation.** The engine is bounded to a `max_voices` **voice
+//!   pool** whose backing `Vec` is pre-reserved
+//!   ([`AudioEngine::set_voice_capacity`]), so starting a voice never grows it.
+//!   At the bound a play is *rejected* (counted in [`AudioSnapshot::rejected`])
+//!   rather than reallocating — a v1 voice budget; priority-based **voice
+//!   stealing** is a later policy layer on the same pool.
+//! - **No free on the audio thread.** A finished voice — or a play refused at
+//!   the bound — is not dropped on the callback; it is shipped back over a
+//!   second lock-free ring, the **resource-return queue**, and the control
+//!   thread frees it in [`AudioController::reclaim`] (called on every command
+//!   send and available for idle frames). Only if that ring is full does a
+//!   retired voice fall back to a drop on the audio thread; it is sized to
+//!   absorb a full render's retirements so a drained control thread never
+//!   forces that.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -45,6 +54,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::clip::AudioClip;
 use crate::engine::{AudioEngine, PlayOptions, VoiceId};
+use crate::mixer::Voice;
 use crate::spatial::{Attenuation, Listener};
 
 /// A mutation of the engine, sent from the control thread to the audio thread.
@@ -86,14 +96,21 @@ impl AudioEngine {
     /// Apply one queued command — the audio thread's per-command step. Each
     /// arm delegates to the engine's own method so there is no divergent
     /// second implementation.
-    pub fn apply(&mut self, command: AudioCommand) {
+    ///
+    /// Returns a [`Voice`] the caller must dispose **off** the audio thread: a
+    /// `Play` refused at the voice-pool bound, whose `Arc`/`String` must not be
+    /// freed on the callback. Route it to the resource-return queue — the
+    /// real-time [`AudioRenderer::render`] does. `None` for every other command
+    /// and for an admitted play.
+    #[must_use = "a rejected voice must be routed to the resource-return queue, not dropped here"]
+    pub fn apply(&mut self, command: AudioCommand) -> Option<Voice> {
         match command {
             AudioCommand::Play {
                 id,
                 clip,
                 label,
                 opts,
-            } => self.play_with_id(id, clip, label, opts),
+            } => return self.play_with_id(id, clip, label, opts),
             AudioCommand::Stop(id) => {
                 self.stop(id);
             }
@@ -105,6 +122,7 @@ impl AudioEngine {
             AudioCommand::SetListener(listener) => self.set_listener(listener),
             AudioCommand::SetAttenuation(attenuation) => self.set_attenuation(attenuation),
         }
+        None
     }
 }
 
@@ -125,13 +143,19 @@ pub struct AudioSnapshot {
     peak_bits: AtomicU32,
     /// Total stereo frames rendered — a liveness / progress counter.
     frames_rendered: AtomicU64,
+    /// Total plays refused at the voice-pool bound since the channel was
+    /// created — the control thread's view of voice-budget starvation.
+    rejected: AtomicU64,
 }
 
 impl AudioSnapshot {
-    fn publish(&self, voice_count: u32, peak: f32, frames: u64) {
+    fn publish(&self, voice_count: u32, peak: f32, frames: u64, rejected: u64) {
         self.voice_count.store(voice_count, Ordering::Relaxed);
         self.peak_bits.store(peak.to_bits(), Ordering::Relaxed);
         self.frames_rendered.fetch_add(frames, Ordering::Relaxed);
+        if rejected > 0 {
+            self.rejected.fetch_add(rejected, Ordering::Relaxed);
+        }
     }
 
     /// Voices active as of the last published render.
@@ -151,14 +175,29 @@ impl AudioSnapshot {
     pub fn frames_rendered(&self) -> u64 {
         self.frames_rendered.load(Ordering::Relaxed)
     }
+
+    /// Total plays refused at the voice-pool bound — nonzero means the game is
+    /// asking for more simultaneous voices than the pool allows.
+    #[must_use]
+    pub fn rejected(&self) -> u64 {
+        self.rejected.load(Ordering::Relaxed)
+    }
 }
 
-/// The control-thread handle: sends commands and polls the snapshot. It never
-/// touches the engine directly, so it cannot block the audio thread.
+/// The control-thread handle: sends commands, polls the snapshot, and reclaims
+/// retired resources. It never touches the engine directly, so it cannot block
+/// the audio thread.
 #[derive(Debug)]
 pub struct AudioController {
     producer: Producer<AudioCommand>,
+    /// Retired voices the audio thread shipped back for disposal here — the
+    /// receiving end of the resource-return queue. Draining it is where a
+    /// finished (or pool-refused) voice's clip is actually freed, on the
+    /// control thread.
+    retired: Consumer<Voice>,
     next_id: u64,
+    /// The voice-pool bound the paired renderer's engine enforces.
+    voice_capacity: usize,
     snapshot: Arc<AudioSnapshot>,
 }
 
@@ -221,7 +260,33 @@ impl AudioController {
         &self.snapshot
     }
 
+    /// The paired renderer's voice-pool bound — the maximum simultaneous
+    /// voices; plays past it are rejected (see [`AudioSnapshot::rejected`]).
+    #[must_use]
+    pub fn voice_capacity(&self) -> usize {
+        self.voice_capacity
+    }
+
+    /// Drop every resource the audio thread has returned since the last call —
+    /// finished voices and pool-refused plays — freeing each one here on the
+    /// control thread, never on the audio thread. Returns how many were
+    /// reclaimed. Every command send reclaims opportunistically; call this
+    /// directly on an idle frame to keep the return queue drained when no
+    /// commands are flowing.
+    pub fn reclaim(&mut self) -> usize {
+        let mut n = 0;
+        while self.retired.pop().is_ok() {
+            // The popped `Voice` drops here, freeing its `Arc<AudioClip>` /
+            // `String` on the control thread — the whole point of the queue.
+            n += 1;
+        }
+        n
+    }
+
     fn send(&mut self, command: AudioCommand) -> Option<()> {
+        // Free anything the audio thread returned, off the audio thread, before
+        // queuing more work — so retired resources never pile up.
+        self.reclaim();
         self.producer.push(command).ok()
     }
 }
@@ -232,26 +297,51 @@ impl AudioController {
 pub struct AudioRenderer {
     engine: AudioEngine,
     consumer: Consumer<AudioCommand>,
+    /// Retired voices shipped back to the control thread for disposal — the
+    /// sending end of the resource-return queue, so the audio thread frees
+    /// nothing.
+    retired: Producer<Voice>,
     snapshot: Arc<AudioSnapshot>,
 }
 
 impl AudioRenderer {
     /// Drain every queued command, render one interleaved stereo block into
-    /// `out`, and publish the snapshot. This is the audio callback: it takes a
-    /// caller-owned buffer and allocates nothing in the steady state — the
-    /// render buffer is the caller's and the command ring is pre-allocated.
-    /// (The known exceptions — a `Play` may grow the voice `Vec`, and a
-    /// retired voice frees its `Arc`/`String` — are the module note's owed
-    /// refinements, not steady-state allocation.)
+    /// `out`, and publish the snapshot. This is the audio callback, and it is
+    /// real-time safe: it takes no lock, touches no shared mutable engine,
+    /// allocates nothing (the render buffer is the caller's, the command ring
+    /// is pre-allocated, and the voice pool is pre-reserved so no play grows
+    /// it), and **frees nothing** — a finished voice, or a play refused at the
+    /// pool bound, is pushed to the resource-return queue for the control
+    /// thread to free. The one residual `free` is the fallback when that queue
+    /// is full (it is sized so a drained control thread never hits it).
     pub fn render(&mut self, out: &mut [f32]) {
-        while let Ok(command) = self.consumer.pop() {
-            self.engine.apply(command);
+        // Destructure for disjoint borrows: the reap closure needs `retired`
+        // while `render_reaping` holds `engine` mutably.
+        let Self {
+            engine,
+            consumer,
+            retired,
+            snapshot,
+        } = self;
+
+        let mut rejected = 0u64;
+        while let Ok(command) = consumer.pop() {
+            if let Some(refused) = engine.apply(command) {
+                // A play refused at the voice-pool bound: return it for
+                // off-thread disposal rather than freeing its clip here.
+                rejected += 1;
+                let _ = retired.push(refused);
+            }
         }
-        self.engine.render(out);
+        engine.render_reaping(out, |voice| {
+            // A finished voice: return it, do not free it on the audio thread.
+            let _ = retired.push(voice);
+        });
+
         let block_peak = crate::backend::peak(out);
         let frames = (out.len() / 2) as u64;
-        let voice_count = u32::try_from(self.engine.voice_count()).unwrap_or(u32::MAX);
-        self.snapshot.publish(voice_count, block_peak, frames);
+        let voice_count = u32::try_from(engine.voice_count()).unwrap_or(u32::MAX);
+        snapshot.publish(voice_count, block_peak, frames, rejected);
     }
 
     /// The owned engine — for a headless test or single-thread introspection
@@ -263,23 +353,43 @@ impl AudioRenderer {
 }
 
 /// Split an engine into a control-thread [`AudioController`] and an
-/// audio-thread [`AudioRenderer`] joined by a lock-free command ring of
-/// `capacity` commands. The renderer is `Send`, so it moves onto the audio
-/// thread (or into a cpal callback); the controller stays on the UI thread.
+/// audio-thread [`AudioRenderer`], joined by two lock-free rings: a
+/// `command_capacity`-deep command ring (control → audio) and a
+/// resource-return ring (audio → control). The engine is bounded to a
+/// `max_voices` pre-reserved voice pool so the audio thread never reallocates.
+/// The renderer is `Send`, so it moves onto the audio thread (or into a cpal
+/// callback); the controller stays on the UI thread.
 #[must_use]
-pub fn realtime_channel(engine: AudioEngine, capacity: usize) -> (AudioController, AudioRenderer) {
-    let (producer, consumer) = RingBuffer::new(capacity.max(1));
+pub fn realtime_channel(
+    mut engine: AudioEngine,
+    command_capacity: usize,
+    max_voices: usize,
+) -> (AudioController, AudioRenderer) {
+    // Bound + pre-reserve the pool: past this, plays are rejected, not grown.
+    engine.set_voice_capacity(max_voices);
+    let voice_capacity = engine.voice_capacity().unwrap_or(max_voices);
+
+    let (producer, consumer) = RingBuffer::new(command_capacity.max(1));
+    // The return ring must absorb one render's worth of retirements without
+    // forcing an on-thread free: up to `voice_capacity` finished voices plus up
+    // to `command_capacity` pool-refused plays. Sized to that sum, a control
+    // thread that reclaims between renders never overflows it.
+    let (retired_tx, retired_rx) = RingBuffer::new(command_capacity.max(1) + voice_capacity.max(1));
+
     let next_id = engine.next_voice_id();
     let snapshot = Arc::new(AudioSnapshot::default());
     (
         AudioController {
             producer,
+            retired: retired_rx,
             next_id,
+            voice_capacity,
             snapshot: Arc::clone(&snapshot),
         },
         AudioRenderer {
             engine,
             consumer,
+            retired: retired_tx,
             snapshot,
         },
     )
@@ -296,7 +406,7 @@ mod tests {
 
     #[test]
     fn queued_play_renders_and_stop_silences() {
-        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16);
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 16);
         // A tone longer than the block so it is still playing after one render.
         let id = ctl
             .play(tone(512), "bell", PlayOptions::one_shot())
@@ -318,7 +428,7 @@ mod tests {
 
     #[test]
     fn snapshot_publishes_lock_free_state() {
-        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16);
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 16);
         ctl.play(tone(512), "bell", PlayOptions::one_shot())
             .expect("queued");
         assert_eq!(ctl.snapshot().frames_rendered(), 0, "nothing rendered yet");
@@ -334,7 +444,7 @@ mod tests {
 
     #[test]
     fn set_param_commands_apply_across_renders() {
-        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16);
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 16);
         // A centred, full-scale, long tone → constant-power centre ~0.707/leg.
         ctl.play(tone(4096), "src", PlayOptions::one_shot())
             .expect("queued");
@@ -363,8 +473,9 @@ mod tests {
 
     #[test]
     fn full_ring_rejects_without_panicking_and_burns_no_id() {
-        // Capacity 2. First play succeeds (id 1); stop_all fills the ring.
-        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 2);
+        // Command ring capacity 2 (voice pool ample). First play succeeds
+        // (id 1); stop_all fills the ring.
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 2, 8);
         assert_eq!(ctl.play(tone(4), "a", PlayOptions::one_shot()), Some(1));
         assert!(ctl.stop_all());
         // Ring full: the next play is refused, no panic.
@@ -384,16 +495,106 @@ mod tests {
     fn apply_is_the_only_behaviour_source() {
         // apply(SetListener) matches calling the engine method directly.
         let mut engine = AudioEngine::new(48_000);
-        engine.apply(AudioCommand::SetListener(Listener::new(
-            [1.0, 2.0, 3.0],
-            [0.0, 0.0, -1.0],
-            [0.0, 1.0, 0.0],
-        )));
+        // Non-Play commands never return a voice to dispose.
+        assert!(
+            engine
+                .apply(AudioCommand::SetListener(Listener::new(
+                    [1.0, 2.0, 3.0],
+                    [0.0, 0.0, -1.0],
+                    [0.0, 1.0, 0.0],
+                )))
+                .is_none()
+        );
         let p = engine.listener().position;
         assert!(
             (p[0] - 1.0).abs() < 1e-6 && (p[1] - 2.0).abs() < 1e-6 && (p[2] - 3.0).abs() < 1e-6
         );
-        engine.apply(AudioCommand::SetMasterGain(0.25));
+        assert!(engine.apply(AudioCommand::SetMasterGain(0.25)).is_none());
         assert!((engine.master_gain() - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn finished_voice_is_returned_not_freed_on_the_audio_thread() {
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 16);
+        // A 2-frame one-shot finishes within one 128-frame render.
+        let clip = tone(2);
+        ctl.play(Arc::clone(&clip), "blip", PlayOptions::one_shot())
+            .expect("queued");
+        assert_eq!(
+            Arc::strong_count(&clip),
+            2,
+            "the test holds one ref, the queued command another"
+        );
+
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        assert_eq!(renderer.engine().voice_count(), 0, "one-shot reaped");
+        // The reap did NOT free the clip: the retired voice (still holding the
+        // clip) sits in the return queue. If render had dropped it, the count
+        // would be 1 here.
+        assert_eq!(
+            Arc::strong_count(&clip),
+            2,
+            "clip returned to the queue, not freed on the audio thread"
+        );
+
+        // The control thread reclaims: now the returned voice drops and frees.
+        assert_eq!(ctl.reclaim(), 1, "one retired voice reclaimed");
+        assert_eq!(
+            Arc::strong_count(&clip),
+            1,
+            "reclaim freed the returned voice on the control thread"
+        );
+    }
+
+    #[test]
+    fn pool_refused_play_is_returned_and_counted() {
+        // Voice pool of 2; three long tones are queued.
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 2);
+        assert_eq!(ctl.voice_capacity(), 2);
+        ctl.play(tone(4096), "a", PlayOptions::one_shot())
+            .expect("queued");
+        ctl.play(tone(4096), "b", PlayOptions::one_shot())
+            .expect("queued");
+        let refused_clip = tone(4096);
+        ctl.play(Arc::clone(&refused_clip), "c", PlayOptions::one_shot())
+            .expect("queued");
+
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        assert_eq!(renderer.engine().voice_count(), 2, "pool capped at 2");
+        assert_eq!(
+            ctl.snapshot().rejected(),
+            1,
+            "one play rejected at the bound"
+        );
+        // The refused play's clip was returned, not freed on the audio thread.
+        assert_eq!(Arc::strong_count(&refused_clip), 2);
+        assert_eq!(ctl.reclaim(), 1, "the refused voice is reclaimed");
+        assert_eq!(
+            Arc::strong_count(&refused_clip),
+            1,
+            "then freed on control thread"
+        );
+    }
+
+    #[test]
+    fn send_reclaims_opportunistically() {
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 16);
+        let clip = tone(2);
+        ctl.play(Arc::clone(&clip), "blip", PlayOptions::one_shot())
+            .expect("queued");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out); // voice finishes and is returned to the queue
+
+        // A later command send drains the return queue as a side effect, so the
+        // returned voice is freed without an explicit reclaim() call.
+        assert!(ctl.set_master_gain(0.9));
+        assert_eq!(
+            Arc::strong_count(&clip),
+            1,
+            "send() reclaimed the returned voice"
+        );
+        assert_eq!(ctl.reclaim(), 0, "nothing left to reclaim");
     }
 }

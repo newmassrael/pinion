@@ -15,9 +15,11 @@
 //!   through the very same pan pot a hand-panned voice uses.
 //! - [`AudioEngine`] — the live voice graph: play / stop / master gain /
 //!   listener / render, with the whole graph readable as data.
-//! - [`AudioBackend`] / [`InMemoryAudioBackend`] — the output-device seam,
-//!   headlessly verifiable; a real cpal device backend drops in behind the
-//!   same trait (deferred: a headless box has no device to verify it).
+//! - [`AudioBackend`] / [`InMemoryAudioBackend`] — the offline / headless
+//!   *pull* output seam for golden-buffer capture. Real device output is a
+//!   separate *push* path: the `device` module (the `cpal-backend` feature)
+//!   drives the lock-free [`rt`] renderer from cpal's callback,
+//!   hardware-verified (R1282).
 //! - [`AudioEngineExternal`] — the §5.15 introspection surface: an AI reads
 //!   what is playing and drives play/stop over RPC (§2 #2 / #7). This is the
 //!   "not hidden behind opaque External" half of §5.54 made concrete.
@@ -28,10 +30,12 @@
 //! pan-pot / stereo balance) with per-voice linear-interpolation
 //! **resampling** to the engine rate + one-shot & looping voices + master
 //! gain + 3D positional audio (listener-relative distance attenuation +
-//! azimuth pan) + a real cpal device backend (`cpal-backend` feature) + the
+//! azimuth pan) + a real cpal device backend (`cpal-backend` feature) driven
+//! from a real-time-safe control model (a bounded voice pool + a resource-
+//! return queue, so the audio thread never allocates or frees) + the
 //! introspection surface. Deferred (same voice model): higher-order
 //! resampling, richer spatialisation (HRTF / surround / doppler / per-source
-//! rolloff tuning), and real-time voice-pool / resource-return hardening.
+//! rolloff tuning), and priority-based voice stealing at the pool bound.
 //!
 //! ## Threading & the real-time control model
 //!
@@ -45,13 +49,17 @@
 //! [`rt`] is the standard game-audio control model: the mixer **owned by the
 //! audio thread** ([`AudioRenderer`]), fed a **lock-free SPSC command queue**
 //! (play/stop/set-param) from the control thread ([`AudioController`]), with a
-//! lock-free [`AudioSnapshot`] published back for polling — no lock and no
-//! shared mutable engine on the callback. [`AudioRenderer::render`] has the
-//! exact `&mut [f32]` shape of a cpal output callback, and the real device
-//! backend `device` (the `cpal-backend` feature) drives it from cpal on real
-//! hardware. That backend is feature-gated (its Linux path needs
-//! `libasound2-dev`) so a checkout without the ALSA headers still builds the
-//! core crate; it is verified by `--example device_out`.
+//! lock-free [`AudioSnapshot`] published back for polling. The callback is
+//! real-time safe end to end — no lock, no shared mutable engine, no
+//! allocation (a pre-reserved voice pool), and no free (finished or
+//! pool-refused voices go back over a **resource-return queue** for the
+//! control thread to drop in [`AudioController::reclaim`]).
+//! [`AudioRenderer::render`] has the exact `&mut [f32]` shape of a cpal output
+//! callback, and the real device backend `device` (the `cpal-backend`
+//! feature) drives it from cpal on real hardware. That backend is
+//! feature-gated (its Linux path needs `libasound2-dev`) so a checkout without
+//! the ALSA headers still builds the core crate; it is verified by
+//! `--example device_out`.
 
 pub mod backend;
 pub mod clip;

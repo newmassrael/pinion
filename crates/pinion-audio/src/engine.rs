@@ -129,11 +129,19 @@ pub struct AudioEngine {
     master_gain: f32,
     listener: Listener,
     attenuation: Attenuation,
+    /// The bounded voice-pool size, or `None` for an unbounded (growing)
+    /// engine. A bounded engine pre-reserves `voices` to this size and rejects
+    /// a play at the bound rather than reallocating — the real-time voice
+    /// budget (see [`AudioEngine::set_voice_capacity`]).
+    voice_capacity: Option<usize>,
 }
 
 impl AudioEngine {
     /// A fresh engine rendering at `sample_rate` (its stereo output rate),
-    /// with the listener at the origin and the default distance model.
+    /// with the listener at the origin and the default distance model. The
+    /// voice buffer grows on demand (unbounded); a real-time consumer bounds
+    /// it with [`AudioEngine::with_voice_capacity`] so the audio thread never
+    /// reallocates.
     #[must_use]
     pub fn new(sample_rate: u32) -> Self {
         Self {
@@ -143,7 +151,40 @@ impl AudioEngine {
             master_gain: 1.0,
             listener: Listener::default(),
             attenuation: Attenuation::default(),
+            voice_capacity: None,
         }
+    }
+
+    /// A fresh engine bounded to `max_voices` simultaneous voices, with the
+    /// voice buffer pre-reserved so [`AudioEngine::play_with_id`] never
+    /// reallocates on a real-time thread — the pool the [`crate::rt`] renderer
+    /// wants.
+    #[must_use]
+    pub fn with_voice_capacity(sample_rate: u32, max_voices: usize) -> Self {
+        let mut engine = Self::new(sample_rate);
+        engine.set_voice_capacity(max_voices);
+        engine
+    }
+
+    /// Bound the engine to `max_voices` simultaneous voices and pre-reserve the
+    /// backing store, so [`AudioEngine::play_with_id`] can fill the pool to the
+    /// bound without ever reallocating (the audio-thread real-time-safety
+    /// property). At the bound a further play is rejected — its voice handed
+    /// back for disposal off the audio thread — rather than growing the buffer.
+    /// The bound is raised to the current live voice count if that is larger,
+    /// so existing voices are never orphaned.
+    pub fn set_voice_capacity(&mut self, max_voices: usize) {
+        let cap = max_voices.max(self.voices.len());
+        // `reserve(additional)` guarantees capacity >= len + additional == cap,
+        // so `len` can grow to `cap` without a reallocation.
+        self.voices.reserve(cap - self.voices.len());
+        self.voice_capacity = Some(cap);
+    }
+
+    /// The bounded voice-pool size, or `None` if the engine grows unbounded.
+    #[must_use]
+    pub fn voice_capacity(&self) -> Option<usize> {
+        self.voice_capacity
     }
 
     /// The engine's output sample rate.
@@ -167,7 +208,11 @@ impl AudioEngine {
         opts: PlayOptions,
     ) -> VoiceId {
         let id = self.next_id;
-        self.play_with_id(id, clip, label, opts);
+        // The single-thread engine is unbounded, so this never rejects. A
+        // bounded engine driven single-threaded would drop the returned voice
+        // here — a free on the *calling* (not audio) thread, which is fine off
+        // the real-time path.
+        let _ = self.play_with_id(id, clip, label, opts);
         id
     }
 
@@ -175,19 +220,34 @@ impl AudioEngine {
     /// command queue that minted the id on the control thread. The engine's
     /// own counter is advanced past `id` so a later [`AudioEngine::play`]
     /// cannot collide with it.
+    ///
+    /// Returns the un-admitted [`Voice`] when the engine is at its bounded
+    /// voice-pool capacity ([`AudioEngine::set_voice_capacity`]): the pool is
+    /// full and growing it would reallocate on the audio thread, so the voice
+    /// is handed back instead for the caller to dispose off-thread. Returns
+    /// `None` when the voice is admitted, and — for an unbounded engine —
+    /// always admits.
+    #[must_use = "a rejected voice must be disposed off the audio thread, not dropped on it"]
     pub fn play_with_id(
         &mut self,
         id: VoiceId,
         clip: Arc<AudioClip>,
         label: impl Into<String>,
         opts: PlayOptions,
-    ) {
-        self.next_id = self.next_id.max(id.saturating_add(1));
+    ) -> Option<Voice> {
         let mut voice = Voice::new(clip, label, opts.gain, opts.pan, opts.looping);
         if let Some(pos) = opts.position {
             voice = voice.with_position(pos);
         }
+        if let Some(cap) = self.voice_capacity {
+            if self.voices.len() >= cap {
+                // At the pre-allocated bound: reject rather than reallocate.
+                return Some(voice);
+            }
+        }
+        self.next_id = self.next_id.max(id.saturating_add(1));
         self.voices.push((id, voice));
+        None
     }
 
     /// Stop the voice with `id` (it stops contributing and is dropped on the
@@ -306,8 +366,20 @@ impl AudioEngine {
 
     /// Render the current mix into an interleaved stereo `out` buffer,
     /// applying per-voice spatialisation and the master gain, and dropping
-    /// voices that finished.
+    /// voices that finished (freeing them here). This is
+    /// [`AudioEngine::render_reaping`] with `retire = drop`.
     pub fn render(&mut self, out: &mut [f32]) {
+        self.render_reaping(out, drop);
+    }
+
+    /// Render one block and hand each finished voice to `retire` instead of
+    /// dropping it here — the real-time seam. [`AudioEngine::render`] passes
+    /// `drop`; [`crate::AudioRenderer`] passes a closure that ships each
+    /// retired voice to the control thread's resource-return queue, so the
+    /// audio thread never frees a clip. Reaping is order-preserving, so the
+    /// headless `render` and the real-time path stay in sample-for-sample
+    /// lockstep (§2 #3).
+    pub fn render_reaping(&mut self, out: &mut [f32], retire: impl FnMut(Voice)) {
         out.fill(0.0);
         // Copied out so the voices can be borrowed mutably in the loop while
         // the listener / attenuation are read (they are small and `Copy`).
@@ -321,7 +393,28 @@ impl AudioEngine {
                 *sample *= self.master_gain;
             }
         }
-        self.voices.retain(|(_, voice)| !voice.is_finished());
+        self.reap_finished(retire);
+    }
+
+    /// Remove finished voices in place, moving each retired [`Voice`] to
+    /// `retire` rather than dropping it here. Order-preserving and
+    /// non-allocating: an in-place `Vec::remove` compaction that keeps the
+    /// buffer's reserved capacity, so it never *frees* the buffer either. The
+    /// work is bounded by the live voice count (real-time-safe: bounded,
+    /// lock-free, alloc-free); the order-preserving `Vec::remove` is O(n²) in
+    /// the worst case but n is the small voice-pool size, and the O(n) in-place
+    /// extract (`Vec::extract_if`, 1.87+) is both beyond this crate's MSRV and
+    /// would need the `unsafe` this crate forbids.
+    fn reap_finished(&mut self, mut retire: impl FnMut(Voice)) {
+        let mut i = 0;
+        while i < self.voices.len() {
+            if self.voices[i].1.is_finished() {
+                let (_, voice) = self.voices.remove(i);
+                retire(voice);
+            } else {
+                i += 1;
+            }
+        }
     }
 }
 
@@ -401,6 +494,78 @@ mod tests {
                 assert!((r.gain - 0.5).abs() < 1e-4, "gain halved at 2× reference");
                 assert!((r.pan - 1.0).abs() < 1e-4, "hard right");
             }
+        }
+    }
+
+    #[test]
+    fn unbounded_engine_admits_every_play() {
+        let mut engine = AudioEngine::new(48_000);
+        assert_eq!(engine.voice_capacity(), None);
+        for _ in 0..100 {
+            let id = engine.next_id;
+            assert!(
+                engine
+                    .play_with_id(id, tone(4), "v", PlayOptions::one_shot())
+                    .is_none(),
+                "unbounded engine never rejects"
+            );
+        }
+        assert_eq!(engine.voice_count(), 100);
+    }
+
+    #[test]
+    fn bounded_pool_rejects_beyond_capacity_and_returns_the_voice() {
+        let mut engine = AudioEngine::with_voice_capacity(48_000, 2);
+        assert_eq!(engine.voice_capacity(), Some(2));
+        assert!(
+            engine
+                .play_with_id(1, tone(64), "a", PlayOptions::one_shot())
+                .is_none()
+        );
+        assert!(
+            engine
+                .play_with_id(2, tone(64), "b", PlayOptions::one_shot())
+                .is_none()
+        );
+        // The pool is full: the third play is refused and its voice handed back.
+        let refused = engine.play_with_id(3, tone(64), "c", PlayOptions::one_shot());
+        assert!(refused.is_some(), "third play rejected at the bound");
+        assert_eq!(
+            refused.unwrap().label(),
+            "c",
+            "the rejected voice is returned"
+        );
+        assert_eq!(engine.voice_count(), 2, "only the pool-sized set is live");
+    }
+
+    #[test]
+    fn bounded_pool_never_reallocates() {
+        let mut engine = AudioEngine::with_voice_capacity(48_000, 4);
+        let reserved = engine.voices.capacity();
+        assert!(reserved >= 4);
+        // Many rounds of fill-to-bound then reap-all. `play_with_id` never
+        // pushes past the bound and `render`'s reap never shrinks, so the
+        // backing buffer keeps its capacity — no reallocation on what would be
+        // the audio thread.
+        for _ in 0..50 {
+            for _ in 0..4 {
+                let id = engine.next_id;
+                assert!(
+                    engine
+                        .play_with_id(id, tone(1), "v", PlayOptions::one_shot())
+                        .is_none()
+                );
+            }
+            assert!(
+                engine
+                    .play_with_id(engine.next_id, tone(1), "over", PlayOptions::one_shot())
+                    .is_some(),
+                "the fifth play is rejected at the bound"
+            );
+            let mut out = [0.0f32; 8]; // 4 output frames > the 1-frame clips
+            engine.render(&mut out);
+            assert_eq!(engine.voice_count(), 0, "all one-shots reaped");
+            assert_eq!(engine.voices.capacity(), reserved, "no reallocation");
         }
     }
 }

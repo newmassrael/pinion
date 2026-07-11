@@ -19,7 +19,9 @@ use pinion_audio::{CpalOutput, PlayOptions, decode_compressed};
 const CHIME_FLAC: &[u8] = include_bytes!("../tests/fixtures/tone.flac");
 
 fn main() {
-    let (mut controller, out) = match CpalOutput::start_default(64) {
+    // 64-command ring, 32-voice pool (the audio thread never reallocates; a
+    // 33rd simultaneous voice would be rejected and counted in the snapshot).
+    let (mut controller, out) = match CpalOutput::start_default(64, 32) {
         Ok(pair) => pair,
         Err(e) => {
             eprintln!("device_out: no audio output available: {e}");
@@ -62,10 +64,18 @@ fn main() {
     // Stop and let the tail drain, proving commands mutate the live stream.
     controller.stop_all();
     std::thread::sleep(Duration::from_millis(50));
+    // The stopped voice was returned over the resource-return queue, not freed
+    // on the audio thread; reclaim it here on the control thread.
+    let reclaimed = controller.reclaim();
     println!(
-        "after stop_all: voices {}, total frames {}",
+        "after stop_all: voices {}, total frames {}, reclaimed {reclaimed} retired voice(s), \
+         rejected {}",
         controller.snapshot().voice_count(),
-        controller.snapshot().frames_rendered()
+        controller.snapshot().frames_rendered(),
+        controller.snapshot().rejected(),
     );
-    println!("OK: cpal callback drains the queue, renders audible output, and honours stop.");
+    println!(
+        "OK: cpal callback drains the queue, renders audible output, honours stop, and frees \
+         retired voices off the audio thread."
+    );
 }

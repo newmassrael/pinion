@@ -16,7 +16,7 @@ fn tone(frames: usize) -> Arc<AudioClip> {
 
 #[test]
 fn renderer_runs_on_a_separate_thread() {
-    let (mut controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16);
+    let (mut controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 16);
 
     // Queue a play from the control (main) thread before the audio thread
     // starts; spawn's happens-before guarantees the renderer sees it.
@@ -53,7 +53,7 @@ fn control_thread_drives_a_running_render_loop() {
     // The audio thread renders a fixed number of blocks; the control thread
     // queues a play, then a stop_all, ahead of the loop. Bounded + no timing
     // assumptions: we only assert monotonic progress and a final quiet block.
-    let (mut controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16);
+    let (mut controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 16);
     controller
         .play(tone(64), "blip", PlayOptions::one_shot())
         .expect("queued");
@@ -72,4 +72,42 @@ fn control_thread_drives_a_running_render_loop() {
     // thread made progress (frames rendered > 0).
     assert_eq!(final_voices, 0);
     assert!(controller.snapshot().frames_rendered() >= 128);
+}
+
+#[test]
+fn retired_voices_cross_the_return_queue_and_are_freed_on_the_control_thread() {
+    // The audio thread must never free a clip. A one-shot that finishes on the
+    // spawned "audio thread" is shipped back over the resource-return queue;
+    // the control (main) thread frees it via reclaim(). Deterministic: the
+    // spawn/join happens-before makes the returned voice visible here.
+    let (mut controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 16);
+    let clip = tone(2); // finishes within one 128-frame render
+    controller
+        .play(Arc::clone(&clip), "blip", PlayOptions::one_shot())
+        .expect("queued");
+    assert_eq!(Arc::strong_count(&clip), 2);
+
+    let renderer = thread::spawn(move || {
+        let mut out = vec![0.0f32; 256];
+        renderer.render(&mut out); // reaps the finished voice into the return queue
+        renderer // moved back so the returned voice stays alive in its ring
+    })
+    .join()
+    .expect("audio thread ok");
+
+    // The audio thread rendered and reaped, but did NOT free the clip.
+    assert_eq!(renderer.engine().voice_count(), 0, "one-shot reaped");
+    assert_eq!(
+        Arc::strong_count(&clip),
+        2,
+        "clip returned over the queue, not freed on the audio thread"
+    );
+
+    // The control thread reclaims and frees it.
+    assert_eq!(controller.reclaim(), 1);
+    assert_eq!(
+        Arc::strong_count(&clip),
+        1,
+        "reclaim freed the returned voice on the control thread"
+    );
 }
