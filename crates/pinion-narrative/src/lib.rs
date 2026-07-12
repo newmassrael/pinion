@@ -40,6 +40,7 @@ pub mod model;
 pub mod place;
 pub mod state;
 pub mod view;
+pub mod vn;
 
 pub use a11y::narrative_access_nodes;
 pub use external::{MOVED_INTENT, NarrativeExternal};
@@ -53,3 +54,7 @@ pub use place::{
 };
 pub use state::{NarrativeCursor, NarrativeState, use_narrative_state};
 pub use view::narrative_scene;
+pub use vn::{
+    VnExternal, VnMode, VnOption, VnResolution, VnRuntime, VnScript, VnState, VnStep, use_vn_state,
+    vn_scene,
+};

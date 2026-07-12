@@ -3403,6 +3403,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-vn-tide"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-narrative",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-window-chrome"
 version = "0.0.1"
 dependencies = [
