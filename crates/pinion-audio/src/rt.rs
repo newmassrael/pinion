@@ -59,7 +59,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::clip::AudioClip;
-use crate::engine::{Admission, AudioEngine, PlayOptions, VoiceId};
+use crate::engine::{Admission, AudioEngine, PlayOptions, VoiceId, VoicePolicy};
 use crate::mixer::Voice;
 use crate::spatial::{Attenuation, Listener, Vec3};
 
@@ -92,10 +92,27 @@ pub enum AudioCommand {
         /// The new linear gain.
         gain: f32,
     },
+    /// Set one voice's authored stereo pan.
+    SetVoicePan {
+        /// The target voice.
+        id: VoiceId,
+        /// The new pan, `-1.0` left … `1.0` right.
+        pan: f32,
+    },
+    /// Move (or, with `None`, un-spatialise) one voice — the RT peer of moving a
+    /// 3D emitter after it starts (a car, projectile, NPC).
+    SetVoicePosition {
+        /// The target voice.
+        id: VoiceId,
+        /// The new world position, or `None` to un-spatialise back to pan.
+        position: Option<Vec3>,
+    },
     /// Move / re-orient the 3D listener.
     SetListener(Listener),
     /// Change the distance-attenuation model.
     SetAttenuation(Attenuation),
+    /// Change the full-pool policy (reject the newcomer / steal the oldest).
+    SetVoicePolicy(VoicePolicy),
 }
 
 impl AudioEngine {
@@ -125,8 +142,15 @@ impl AudioEngine {
             AudioCommand::SetVoiceGain { id, gain } => {
                 self.set_voice_gain(id, gain);
             }
+            AudioCommand::SetVoicePan { id, pan } => {
+                self.set_voice_pan(id, pan);
+            }
+            AudioCommand::SetVoicePosition { id, position } => {
+                self.set_voice_position(id, position);
+            }
             AudioCommand::SetListener(listener) => self.set_listener(listener),
             AudioCommand::SetAttenuation(attenuation) => self.set_attenuation(attenuation),
+            AudioCommand::SetVoicePolicy(policy) => self.set_voice_policy(policy),
         }
         Admission::Admitted
     }
@@ -197,10 +221,10 @@ pub struct AudioSnapshot {
     frames_rendered: AtomicU64,
     /// Total plays refused at the voice-pool bound since the channel was
     /// created — the control thread's view of voice-budget starvation (only the
-    /// [`VoicePolicy::RejectNewest`](crate::VoicePolicy::RejectNewest) policy refuses).
+    /// [`VoicePolicy::RejectNewest`] policy refuses).
     rejected: AtomicU64,
     /// Total voices evicted to admit a newcomer at the bound since the channel
-    /// was created — nonzero only under [`VoicePolicy::StealOldest`](crate::VoicePolicy::StealOldest). The steal
+    /// was created — nonzero only under [`VoicePolicy::StealOldest`]. The steal
     /// peer of `rejected`: a full pool that admits by stealing counts here, not
     /// there.
     stolen: AtomicU64,
@@ -307,7 +331,7 @@ impl AudioSnapshot {
     }
 
     /// Total voices evicted to admit a newcomer at the bound — the
-    /// [`VoicePolicy::StealOldest`](crate::VoicePolicy::StealOldest) peer of [`AudioSnapshot::rejected`]. Nonzero
+    /// [`VoicePolicy::StealOldest`] peer of [`AudioSnapshot::rejected`]. Nonzero
     /// means the pool is saturated but the game chose to steal rather than drop.
     #[must_use]
     pub fn stolen(&self) -> u64 {
@@ -382,6 +406,10 @@ pub struct AudioController {
     /// thread will not apply.
     listener: Listener,
     attenuation: Attenuation,
+    /// The control thread's mirror of the full-pool [`VoicePolicy`], for the
+    /// same sole-writer reason as `listener` — the read-back the snapshot does
+    /// not carry, so `voice_policy` is introspectable over RPC.
+    voice_policy: VoicePolicy,
 }
 
 impl AudioController {
@@ -435,6 +463,18 @@ impl AudioController {
         self.send(AudioCommand::SetVoiceGain { id, gain }).is_some()
     }
 
+    /// Set one voice's authored pan. Returns whether the command was queued.
+    pub fn set_voice_pan(&mut self, id: VoiceId, pan: f32) -> bool {
+        self.send(AudioCommand::SetVoicePan { id, pan }).is_some()
+    }
+
+    /// Move (or, with `None`, un-spatialise) one 3D voice — the RT way to move
+    /// an emitter after it starts. Returns whether the command was queued.
+    pub fn set_voice_position(&mut self, id: VoiceId, position: Option<Vec3>) -> bool {
+        self.send(AudioCommand::SetVoicePosition { id, position })
+            .is_some()
+    }
+
     /// Move / re-orient the listener, mirroring it on the control thread.
     /// Returns whether the command was queued; the mirror
     /// ([`AudioController::listener`]) advances only then, so a full ring leaves
@@ -481,6 +521,27 @@ impl AudioController {
     #[must_use]
     pub fn attenuation(&self) -> Attenuation {
         self.attenuation
+    }
+
+    /// Change the full-pool [`VoicePolicy`], mirroring it on the control thread.
+    /// Returns whether it was queued; the mirror ([`AudioController::voice_policy`])
+    /// advances only on success, for the same no-drift reason as
+    /// [`AudioController::set_listener`].
+    pub fn set_voice_policy(&mut self, policy: VoicePolicy) -> bool {
+        if self.send(AudioCommand::SetVoicePolicy(policy)).is_some() {
+            self.voice_policy = policy;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The full-pool policy the control thread last successfully queued — the
+    /// control-thread mirror, so it is introspectable without touching the
+    /// audio thread's engine.
+    #[must_use]
+    pub fn voice_policy(&self) -> VoicePolicy {
+        self.voice_policy
     }
 
     /// The latest snapshot the audio thread published.
@@ -660,6 +721,7 @@ pub fn realtime_channel(
     // the caller pre-set them).
     let listener = engine.listener();
     let attenuation = engine.attenuation();
+    let voice_policy = engine.voice_policy();
     // Pre-allocate the per-voice snapshot slots to the pool size, so the audio
     // thread only ever writes into them.
     let snapshot = Arc::new(AudioSnapshot::with_capacity(voice_capacity));
@@ -671,6 +733,7 @@ pub fn realtime_channel(
             snapshot: Arc::clone(&snapshot),
             listener,
             attenuation,
+            voice_policy,
             labels: BTreeMap::new(),
         },
         AudioRenderer {

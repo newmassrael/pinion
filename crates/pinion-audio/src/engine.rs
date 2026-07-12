@@ -98,6 +98,27 @@ pub enum VoicePolicy {
     StealOldest,
 }
 
+impl VoicePolicy {
+    /// The stable wire string for RPC introspection (`query`/`invoke`).
+    #[must_use]
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            VoicePolicy::RejectNewest => "reject_newest",
+            VoicePolicy::StealOldest => "steal_oldest",
+        }
+    }
+
+    /// Parse the wire string back, or `None` for an unknown policy.
+    #[must_use]
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "reject_newest" => Some(VoicePolicy::RejectNewest),
+            "steal_oldest" => Some(VoicePolicy::StealOldest),
+            _ => None,
+        }
+    }
+}
+
 /// The outcome of admitting a play at the (possibly bounded) pool — what, if
 /// anything, the caller must dispose off the audio thread.
 #[derive(Debug)]

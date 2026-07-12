@@ -28,7 +28,7 @@ use pinion_core::intent::Intent;
 use serde::Serialize;
 
 use crate::clip::AudioClip;
-use crate::engine::{AudioEngine, PlayOptions};
+use crate::engine::{AudioEngine, PlayOptions, VoicePolicy};
 use crate::rt::AudioController;
 use crate::spatial::{Attenuation, Listener, Vec3};
 
@@ -346,15 +346,17 @@ impl ExternalIntrospect for AudioEngineExternal {
 ///   [`AudioController::listener`]). This is the "observe the RT audio without
 ///   touching its engine" seam.
 /// - **invoke** drives the audio thread over the command queue: `play` a named
-///   clip, `stop` a voice id, `stop_all`, `set_master_gain`, `set_voice_gain`,
-///   and the 3D `set_listener` / `set_attenuation` (each a partial update
-///   patched against the mirror). All return `Null`, or `Rejected` when the
-///   command ring is full (the write did not reach the audio thread) — a full
-///   ring is surfaced, never silently dropped.
+///   clip, `stop` a voice id, `stop_all`, `set_master_gain`, and the per-voice
+///   `set_voice_gain` / `set_voice_pan` / `set_voice_position` (move a 3D
+///   emitter after it starts, or `null` to un-spatialise), the 3D `set_listener`
+///   / `set_attenuation` (each a partial update patched against the mirror), and
+///   `set_voice_policy`. All return `Null`, or `Rejected` when the command ring
+///   is full (the write did not reach the audio thread) — a full ring is
+///   surfaced, never silently dropped.
 /// - **intervene** exposes no writable slots: a schema-declared field
-///   (`voice_count` … `voices` … `listener` / `attenuation`) is a read-only
-///   observation, so an intervene of it is `ReadOnly` (drive via `invoke
-///   set_listener` etc.) and anything else `UnknownPath`.
+///   (`voice_count` … `voices` … `listener` / `attenuation` / `voice_policy`)
+///   is a read-only observation, so an intervene of it is `ReadOnly` (drive via
+///   `invoke set_listener` etc.) and anything else `UnknownPath`.
 ///
 /// The per-voice `voices` read differs from the single-thread engine in two
 /// honest ways the lock-free slots impose: it carries the *effective*
@@ -416,6 +418,9 @@ impl ExternalIntrospect for AudioControllerExternal {
             // write-via-invoke split), so an `intervene` of them is `ReadOnly`.
             ("listener", "json"),
             ("attenuation", "json"),
+            // The full-pool policy, read from the control-thread mirror; driven
+            // via `invoke set_voice_policy`.
+            ("voice_policy", "text"),
         ])
     }
 
@@ -452,6 +457,12 @@ impl ExternalIntrospect for AudioControllerExternal {
             // [`AudioController::listener`]).
             "listener" => Some(IntrospectValue::json(&self.controller.listener())),
             "attenuation" => Some(IntrospectValue::json(&self.controller.attenuation())),
+            // The full-pool policy, off the control-thread mirror — so an agent
+            // watching `rejected`/`stolen` climb can discover which policy caused
+            // it.
+            "voice_policy" => Some(IntrospectValue::Text(
+                self.controller.voice_policy().as_wire().to_string(),
+            )),
             _ => None,
         }
     }
@@ -515,6 +526,37 @@ impl ExternalIntrospect for AudioControllerExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // `{ "id": <int>, "pan": <float> }` — set one voice's authored pan.
+            "set_voice_pan" => match args {
+                IntrospectValue::Json(v) => {
+                    let id = v
+                        .get("id")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    let pan = v
+                        .get("pan")
+                        .and_then(serde_json::Value::as_f64)
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    queued_or_rejected(self.controller.set_voice_pan(id, f32_of(pan)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // `{ "id": <int>, "position": [x,y,z] | null }` — move a 3D emitter
+            // after it starts (`null` un-spatialises back to its pan).
+            "set_voice_position" => match args {
+                IntrospectValue::Json(v) => {
+                    let id = v
+                        .get("id")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    let position = match v.get("position") {
+                        Some(serde_json::Value::Null) => None,
+                        p => Some(parse_vec3(p).ok_or(InvokeError::TypeMismatch)?),
+                    };
+                    queued_or_rejected(self.controller.set_voice_position(id, position))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             // Move / re-orient the 3D listener from a partial `{position?,
             // forward?, up?}` object, patched against the control-thread mirror
             // (`query listener`). Full-spec or partial — omitted axes keep the
@@ -534,6 +576,15 @@ impl ExternalIntrospect for AudioControllerExternal {
                     let attenuation = attenuation_from_partial(self.controller.attenuation(), &v);
                     queued_or_rejected(self.controller.set_attenuation(attenuation))
                 }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // `"reject_newest" | "steal_oldest"` — choose the full-pool policy.
+            "set_voice_policy" => match args {
+                IntrospectValue::Text(s) => match VoicePolicy::from_wire(&s) {
+                    Some(policy) => queued_or_rejected(self.controller.set_voice_policy(policy)),
+                    // Type matches (Text) but the value is not a known policy.
+                    None => Err(InvokeError::Rejected),
+                },
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
@@ -1350,5 +1401,138 @@ mod tests {
             matches!(ext.query("rejected"), Some(IntrospectValue::Int(0))),
             "no rejection under StealOldest"
         );
+    }
+
+    #[test]
+    fn rt_set_voice_position_moves_an_emitter_over_rpc() {
+        let (mut ext, mut renderer) = rt_director(8);
+        let id = match ext.invoke(
+            "play",
+            IntrospectValue::Json(
+                serde_json::json!({ "name": "bell", "position": [4.0, 0.0, 0.0] }),
+            ),
+        ) {
+            Ok(IntrospectValue::Int(id)) => id,
+            other => panic!("expected id, got {other:?}"),
+        };
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        let dist = |ext: &AudioControllerExternal| -> f64 {
+            match ext.query("voices") {
+                Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                    items[0]["distance"].as_f64().expect("3D distance")
+                }
+                other => panic!("expected voices, got {other:?}"),
+            }
+        };
+        assert!(
+            (dist(&ext) - 4.0).abs() < 1e-3,
+            "emitter starts at distance 4"
+        );
+
+        // Move the emitter onto the listener over RPC → distance 1.
+        ext.invoke(
+            "set_voice_position",
+            IntrospectValue::Json(serde_json::json!({ "id": id, "position": [1.0, 0.0, 0.0] })),
+        )
+        .expect("move emitter");
+        renderer.render(&mut out);
+        assert!(
+            (dist(&ext) - 1.0).abs() < 1e-3,
+            "the emitter moved on the audio thread over the RT wire"
+        );
+
+        // `null` un-spatialises back to a flat voice.
+        ext.invoke(
+            "set_voice_position",
+            IntrospectValue::Json(serde_json::json!({ "id": id, "position": null })),
+        )
+        .expect("un-spatialise");
+        renderer.render(&mut out);
+        match ext.query("voices") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                assert!(
+                    items[0].get("distance").is_none(),
+                    "un-spatialised: flat again"
+                );
+            }
+            other => panic!("expected voices, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rt_set_voice_pan_reaches_the_mix_over_rpc() {
+        let (mut ext, mut renderer) = rt_director(8);
+        let id = match ext.invoke("play", IntrospectValue::Text("bell".to_string())) {
+            Ok(IntrospectValue::Int(id)) => id,
+            other => panic!("expected id, got {other:?}"),
+        };
+        ext.invoke(
+            "set_voice_pan",
+            IntrospectValue::Json(serde_json::json!({ "id": id, "pan": 1.0 })),
+        )
+        .expect("set pan");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        match ext.query("voices") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                assert!(
+                    (items[0]["effective_pan"].as_f64().unwrap() - 1.0).abs() < 1e-3,
+                    "the pan reached the mix (flat voice → effective == authored)"
+                );
+            }
+            other => panic!("expected voices, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rt_voice_policy_query_invoke_and_read_only() {
+        // Pool of 2; default RejectNewest. Read it, switch to StealOldest over
+        // RPC, and prove the audio thread's behaviour actually changed.
+        let (mut ext, mut renderer) = rt_director(2);
+        assert!(matches!(
+            ext.query("voice_policy"),
+            Some(IntrospectValue::Text(ref s)) if s == "reject_newest"
+        ));
+        ext.invoke(
+            "set_voice_policy",
+            IntrospectValue::Text("steal_oldest".to_string()),
+        )
+        .expect("set policy");
+        assert!(matches!(
+            ext.query("voice_policy"),
+            Some(IntrospectValue::Text(ref s)) if s == "steal_oldest"
+        ));
+        // The queued policy applies before the queued plays, so the third steals.
+        for _ in 0..3 {
+            ext.invoke("play", IntrospectValue::Text("bell".to_string()))
+                .expect("play");
+        }
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        assert!(
+            matches!(ext.query("stolen"), Some(IntrospectValue::Int(1))),
+            "the RPC policy change reached the audio thread"
+        );
+        assert!(matches!(
+            ext.query("rejected"),
+            Some(IntrospectValue::Int(0))
+        ));
+        // An unknown policy string is Rejected (Text type ok, value invalid).
+        assert!(matches!(
+            ext.invoke(
+                "set_voice_policy",
+                IntrospectValue::Text("nonsense".to_string())
+            ),
+            Err(InvokeError::Rejected)
+        ));
+        // voice_policy is query-read, invoke-write → intervene is ReadOnly.
+        assert!(matches!(
+            ext.intervene(
+                "voice_policy",
+                IntrospectValue::Text("steal_oldest".to_string())
+            ),
+            Err(InterveneError::ReadOnly)
+        ));
     }
 }
