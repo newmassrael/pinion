@@ -44,9 +44,13 @@ cpal = { version = "0.15", optional = true }
 # Real audio-device output via cpal (Linux: requires `libasound2-dev`).
 cpal-backend = ["dep:cpal"]
 
-# Device-output smoke check. `required-features` means `cargo build`/`clippy`
-# (even `--all-targets`) SKIP it unless `cpal-backend` is on, so a checkout
-# without the ALSA headers still builds the whole workspace.
+# Device-output smoke check. `required-features` keeps THIS example out of a
+# plain `cargo build`/`clippy` unless `cpal-backend` is on. Note that does NOT
+# make the workspace ALSA-free any more: `examples/hello-audio-device` is a
+# workspace member that turns `cpal-backend` on (it is the wire proof that a
+# real device callback runs concurrently with RPC), so a Linux
+# `cargo check --workspace` needs `libasound2-dev`. Depending on pinion-audio
+# WITHOUT the feature still needs no ALSA headers.
 [[example]]
 name = "device_out"
 required-features = ["cpal-backend"]

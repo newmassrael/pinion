@@ -22,10 +22,17 @@
 //! Neither the crate tests (orchestrated, single-threaded interleave) nor
 //! `hello-audio-rt` (one thread, stepped) exercise that. This binary does: it
 //! opens a real output device with [`CpalOutput`], hands the renderer to cpal's
-//! callback, and hosts the **shipping** [`AudioControllerExternal`] — verbatim, no
-//! step-verb — on the `pinion_shell` stdin/stdout JSON-RPC surface.
-//! `tools/demos/hello_audio_device.py` then plays, re-gains, and stops a live
-//! voice over the real wire while the callback is running underneath.
+//! callback, and hosts the **shipping** [`AudioControllerExternal`] — every audio
+//! verb delegated untouched, and **no step-verb added** — on the `pinion_shell`
+//! stdin/stdout JSON-RPC surface. `tools/demos/hello_audio_device.py` then plays,
+//! re-gains, saturates and stops live voices over the real wire while the callback
+//! is running underneath.
+//!
+//! (The GUI shell, not the TUI, for a harness reason rather than a deep one:
+//! `pinion_tui` *does* host JSON-RPC — it replies on stderr, since stdout is its
+//! canvas — but `tools/rpc_verify.py` reads replies from stdout only, so every
+//! demo in the repo drives a GUI binding. Under `PINION_HIDDEN_WINDOW=1` the
+//! window is never mapped, so this runs headless.)
 //!
 //! ## Making no sound: the silent card
 //!
@@ -35,8 +42,14 @@
 //!
 //! ```text
 //! sudo modprobe snd-dummy                       # card "Dummy" appears
-//! PINION_AUDIO_DEVICE=Dummy cargo run -p hello-audio-device
+//! PINION_AUDIO_DEVICE=hw:CARD=Dummy,DEV=0 cargo run -p hello-audio-device
 //! ```
+//!
+//! Name it exactly (or by a substring that matches exactly one device). A bare
+//! `Dummy` matches several ALSA PCMs and is *refused* rather than guessed at —
+//! see [`resolve_device`], and note that a bare `hw` would match the real sound
+//! card first, which is how a "first match wins" policy sends a silent-card test
+//! out of the speakers.
 //!
 //! It is a *real* device with a *real* hardware-style clock — the callback fires
 //! on a timer exactly as a sound card's does — it simply discards the samples.
@@ -61,11 +74,34 @@
 //!   `crates/pinion-audio/tests/realtime_channel.rs`. What this adds is
 //!   integration confidence that the shipping configuration — real callback,
 //!   real RPC thread, concurrently — works end to end.
-//! - **Not the game-loop subsystem tick.** Audio here is clocked by the *device*,
-//!   not by a fixed-timestep frame. A general "per-frame subsystem" seam that the
-//!   game loop fans out to (audio joining physics / AI) remains unbuilt and
-//!   remains Phase-C, exactly as `hello-audio-rt` said; this round does not
-//!   change that.
+//! - **Not that the samples reaching the card are correct.** The snapshot's `peak`
+//!   is measured on the stereo mix *before* [`pinion_audio`]'s device path converts
+//!   it to the card's sample format and channel layout — so no introspection read,
+//!   and therefore no assertion in the demo, can see a bug in that conversion. It
+//!   is covered by unit tests instead (`write_frames` in `pinion-audio`'s
+//!   `device.rs`). Capturing what the card actually *received* (an `snd-aloop`
+//!   loopback) is a further step this binary does not take.
+//!
+//! ## Where the per-frame audio seam really stands (do not mislabel this)
+//!
+//! The mixer is clocked by the **device**, and that is correct and permanent — no
+//! engine frame-clocks a mixer; the card pulls when it pulls.
+//!
+//! What a game *also* wants is per-frame **control-side** audio work: the listener
+//! follows the camera, emitters follow entities, distant voices get culled. It
+//! would be wrong to file that under "Phase C": pinion already has a retained
+//! per-frame clock — [`pinion_core::animation::Tickable`] +
+//! `Owner::register_animation_once` + `Owner::tick_animations`, fanned out from the
+//! shell each paint — and it already carries a *non-animation* subsystem
+//! (`pinion_narrative`'s `VnClock`). A control-side audio ticker could ride that
+//! **today**, holding an `AudioController` and pushing over the same lock-free
+//! ring; nothing new is needed. This binary simply does not do it, because it is
+//! an RPC proof of the device path, not a game.
+//!
+//! What is *genuinely* still absent is narrower: the fixed-timestep game loop's own
+//! `Send` subsystem registry (audio alongside physics / AI, off the UI thread).
+//! That is the real Phase-C boundary — not "per-frame audio", which is buildable
+//! now.
 
 use std::sync::Arc;
 
@@ -147,30 +183,53 @@ const fn compose_schema() -> [(&'static str, &'static str); SCHEMA_LEN] {
 /// borrow.
 static SCHEMA_FIELDS: [(&str, &str); SCHEMA_LEN] = compose_schema();
 
-/// Pick the device to open from `requested` against the host's `names`.
-///
-/// Exact match wins; otherwise the **first case-insensitive substring match in
-/// host order**, so `PINION_AUDIO_DEVICE=Dummy` resolves the ALSA card's full
-/// `hw:CARD=Dummy,DEV=0` name without the caller spelling it out. This fuzziness
-/// is deliberately *the binding's* policy, not the substrate's:
-/// [`CpalOutput::start_on`] matches exactly and refuses a miss, so a typo can
-/// never silently fall back to the speakers.
-fn resolve_device(requested: &str, names: &[String]) -> Option<String> {
-    if let Some(exact) = names.iter().find(|name| *name == requested) {
-        return Some(exact.clone());
-    }
-    let needle = requested.to_lowercase();
-    names
-        .iter()
-        .find(|name| name.to_lowercase().contains(&needle))
-        .cloned()
+/// What matching `requested` against the host's device list produced.
+#[derive(Debug, PartialEq, Eq)]
+enum DeviceChoice {
+    /// Exactly one device answers to the request.
+    One(String),
+    /// Several do. Refuse rather than guess — see [`resolve_device`].
+    Ambiguous(Vec<String>),
+    /// None do.
+    NotFound,
 }
 
-/// Open the output device, failing **loudly** if the requested one is absent.
+/// Pick the device to open from `requested` against the host's `names`.
 ///
-/// A silent fallback here would be the worst outcome: the demo would appear to
-/// pass while the callback never ran (or ran on the speakers). So an absent
-/// device aborts with the list of what the host *does* offer.
+/// An exact name wins outright. Otherwise the request is treated as a
+/// case-insensitive substring — `PINION_AUDIO_DEVICE=Dummy` should find a card
+/// without the caller spelling out ALSA's full `hw:CARD=Dummy,DEV=0` — but **only
+/// if it matches exactly one device**. Several matches is
+/// [`DeviceChoice::Ambiguous`], and the caller aborts.
+///
+/// Refusing an ambiguous match is the whole point, and it is not theoretical: on
+/// a typical Linux box `hw`, `DEV=0`, `Card` and even `d` all match the real
+/// sound card *first*, so a "pick the first match" policy quietly opens the
+/// **speakers** — the exact outcome naming a silent card was meant to prevent. A
+/// partial name persisted by a settings panel would reopen on a different, and
+/// audible, output. So: match one device or none.
+fn resolve_device(requested: &str, names: &[String]) -> DeviceChoice {
+    if let Some(exact) = names.iter().find(|name| *name == requested) {
+        return DeviceChoice::One(exact.clone());
+    }
+    let needle = requested.to_lowercase();
+    let mut hits = names
+        .iter()
+        .filter(|name| name.to_lowercase().contains(&needle))
+        .cloned()
+        .collect::<Vec<_>>();
+    match hits.len() {
+        0 => DeviceChoice::NotFound,
+        1 => DeviceChoice::One(hits.remove(0)),
+        _ => DeviceChoice::Ambiguous(hits),
+    }
+}
+
+/// Open the output device, failing **loudly** on anything but a single match.
+///
+/// A silent fallback here would be the worst outcome: the binary would appear to
+/// work while the callback never ran — or worse, while it ran on the speakers. So
+/// an absent or ambiguous request aborts, printing what the host actually offers.
 fn open_output() -> (pinion_audio::AudioController, CpalOutput) {
     let requested = std::env::var(DEVICE_ENV).ok();
 
@@ -181,13 +240,25 @@ fn open_output() -> (pinion_audio::AudioController, CpalOutput) {
                 eprintln!("hello-audio-device: cannot enumerate output devices: {e}");
                 std::process::exit(1);
             });
-            let Some(name) = resolve_device(want, &names) else {
-                eprintln!(
-                    "hello-audio-device: no output device matches {DEVICE_ENV}={want:?}.\n\
-                     available: {names:?}\n\
-                     hint: the silent test card comes from `sudo modprobe snd-dummy`."
-                );
-                std::process::exit(1);
+            let name = match resolve_device(want, &names) {
+                DeviceChoice::One(name) => name,
+                DeviceChoice::Ambiguous(hits) => {
+                    eprintln!(
+                        "hello-audio-device: {DEVICE_ENV}={want:?} is ambiguous — it matches \
+                         {} devices: {hits:?}\nname one exactly; guessing could open an \
+                         AUDIBLE device.",
+                        hits.len()
+                    );
+                    std::process::exit(1);
+                }
+                DeviceChoice::NotFound => {
+                    eprintln!(
+                        "hello-audio-device: no output device matches {DEVICE_ENV}={want:?}.\n\
+                         available: {names:?}\n\
+                         hint: the silent test card comes from `sudo modprobe snd-dummy`."
+                    );
+                    std::process::exit(1);
+                }
             };
             CpalOutput::start_on(&name, RING_CAP, MAX_VOICES)
         }
@@ -202,14 +273,19 @@ fn open_output() -> (pinion_audio::AudioController, CpalOutput) {
 /// The binding's [`External`]: the shipping [`AudioControllerExternal`] plus the
 /// live device stream it is feeding.
 ///
-/// Every wire verb delegates to the inner RT External **verbatim** — the contract
-/// this binary proves is exactly [`AudioControllerExternal`]'s, with no harness
-/// verb bolted on. Unlike `hello-audio-rt` there is no `render` step-verb,
-/// because there is nothing to step: the [`pinion_audio::AudioRenderer`] lives in cpal's
-/// callback thread and is pumped by the device clock. The only additions are the
-/// read-only device facts ([`DEVICE_FIELDS`]).
+/// Every *audio* verb — `play` / `stop` / `set_*` and every RT read — delegates to
+/// the inner External untouched, so the audio contract this binary proves is
+/// exactly [`AudioControllerExternal`]'s, with **no harness verb bolted on**:
+/// unlike `hello-audio-rt` there is no `render` step-verb, because there is
+/// nothing to step (the [`pinion_audio::AudioRenderer`] lives in cpal's callback
+/// thread and is pumped by the device clock).
+///
+/// What this wrapper adds is the *device* half of the surface, which the
+/// device-agnostic controller cannot know: the read-only [`DEVICE_FIELDS`]
+/// (`device` / `sample_rate` / `channels`). So the wire contract's home is the
+/// inner External **plus** those three fields — see [`compose_schema`].
 struct DeviceAudioExternal {
-    /// The §2 #7 RT surface — the sole home of the wire contract.
+    /// The §2 #7 RT surface — the home of every *audio* verb and read.
     inner: AudioControllerExternal,
     /// The live stream. Owning it here is the lifecycle: dropping this External
     /// stops the device. The [`pinion_audio::AudioRenderer`] it was built with now lives on the
@@ -323,10 +399,9 @@ impl WidgetCore for HelloAudioDevice {
             .primary_external()
             .and_then(|node| node.handle.introspect())
             .and_then(|intro| intro.query("voice_count"))
-            .and_then(|v| match v {
-                IntrospectValue::Int(n) => Some(n),
-                _ => None,
-            })
+            // `IntrospectValue::as_i64` is core's own typed extractor — no reason
+            // to hand-roll the match.
+            .and_then(|v| v.as_i64())
             .map_or(0, |n| {
                 u16::try_from(n.clamp(0, i64::from(u16::MAX))).unwrap_or(0)
             })
@@ -399,11 +474,14 @@ mod tests {
     //! against a real device. What is left to lock down here is the pure logic
     //! that a demo failure would not localise: the device-matching policy and the
     //! compile-time schema composition.
-    use super::{DEVICE_FIELDS, RT_EXTERNAL_FIELDS, SCHEMA_FIELDS, resolve_device};
+    use super::{DEVICE_FIELDS, DeviceChoice, RT_EXTERNAL_FIELDS, SCHEMA_FIELDS, resolve_device};
 
+    /// A realistic ALSA list: a real (AUDIBLE) card plus the silent dummy under
+    /// several PCM prefixes — the shape that makes substring matching dangerous.
     fn names() -> Vec<String> {
         [
             "sysdefault:CARD=PCH",
+            "hw:CARD=PCH,DEV=0",
             "hw:CARD=Dummy,DEV=0",
             "plughw:CARD=Dummy,DEV=0",
         ]
@@ -413,27 +491,50 @@ mod tests {
 
     #[test]
     fn exact_name_wins_over_a_substring_match() {
-        // "plughw:CARD=Dummy,DEV=0" is also a substring match for itself, but an
-        // exact hit must never be passed over for an earlier fuzzy one.
-        let got = resolve_device("plughw:CARD=Dummy,DEV=0", &names());
-        assert_eq!(got.as_deref(), Some("plughw:CARD=Dummy,DEV=0"));
+        // "hw:CARD=Dummy,DEV=0" is a substring of "plughw:CARD=Dummy,DEV=0", so a
+        // substring pass would find TWO. An exact hit must short-circuit that.
+        assert_eq!(
+            resolve_device("hw:CARD=Dummy,DEV=0", &names()),
+            DeviceChoice::One("hw:CARD=Dummy,DEV=0".to_owned())
+        );
     }
 
     #[test]
-    fn substring_resolves_the_first_match_in_host_order() {
-        // The demo/CI contract: `PINION_AUDIO_DEVICE=Dummy` finds the card
-        // without spelling out the full ALSA name, deterministically.
-        let got = resolve_device("Dummy", &names());
-        assert_eq!(got.as_deref(), Some("hw:CARD=Dummy,DEV=0"));
-        // …and case-insensitively.
-        assert_eq!(resolve_device("dummy", &names()), got);
+    fn a_unique_substring_resolves_case_insensitively() {
+        // "PCH,DEV" hits exactly one device, so the convenience is safe here.
+        assert_eq!(
+            resolve_device("pch,dev", &names()),
+            DeviceChoice::One("hw:CARD=PCH,DEV=0".to_owned())
+        );
+    }
+
+    /// ★ The finding that matters: a partial name must NEVER be resolved by
+    /// guessing, because on a real box the guess lands on the SPEAKERS.
+    /// "Dummy" matches two PCMs here, and "hw" matches the real card first.
+    #[test]
+    fn an_ambiguous_substring_refuses_rather_than_opening_the_speakers() {
+        assert_eq!(
+            resolve_device("Dummy", &names()),
+            DeviceChoice::Ambiguous(vec![
+                "hw:CARD=Dummy,DEV=0".to_owned(),
+                "plughw:CARD=Dummy,DEV=0".to_owned(),
+            ]),
+            "two dummy PCMs match — refuse, do not pick one"
+        );
+        // The dangerous case, demonstrated on a real host: "hw" matches the
+        // AUDIBLE card before the silent one. Picking the first would send a
+        // silent-card test out of the speakers.
+        assert!(
+            matches!(resolve_device("hw", &names()), DeviceChoice::Ambiguous(_)),
+            "a request that matches the real card AND the dummy must be refused"
+        );
     }
 
     #[test]
     fn an_absent_device_resolves_to_nothing_not_to_the_first_device() {
-        // The failure that matters: a typo'd name must NOT quietly select the
-        // speakers. `None` is what makes the caller abort loudly.
-        assert_eq!(resolve_device("Loopback", &names()), None);
+        // A typo'd name must NOT quietly select the speakers; NotFound is what
+        // makes the caller abort loudly.
+        assert_eq!(resolve_device("Loopback", &names()), DeviceChoice::NotFound);
     }
 
     #[test]
@@ -457,6 +558,28 @@ mod tests {
             assert!(
                 SCHEMA_FIELDS.iter().any(|(name, _)| *name == field),
                 "{field} must be declared in the schema"
+            );
+        }
+    }
+
+    /// ★ The composition's *other* hazard — the one the omission guard above does
+    /// not catch. `query` matches this binding's device names BEFORE delegating to
+    /// the RT surface, so a name declared on both sides would be announced twice
+    /// over the wire and the RT value would be silently shadowed. No error, no
+    /// failing test — a silent misroute.
+    ///
+    /// This is live, not hypothetical: `AudioEngineExternal` already declares
+    /// `sample_rate`, and it is the most obvious field for someone to add to the
+    /// RT surface next. Then this fires instead of shipping the shadow.
+    #[test]
+    fn the_device_fields_do_not_shadow_any_rt_field() {
+        for (device_field, _) in DEVICE_FIELDS {
+            assert!(
+                !RT_EXTERNAL_FIELDS.iter().any(|(rt, _)| rt == device_field),
+                "{device_field:?} is declared by BOTH the RT surface and this \
+                 binding: the wire would list it twice and `query` would shadow \
+                 the RT value. Rename this binding's field, or drop it and \
+                 delegate."
             );
         }
     }

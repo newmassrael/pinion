@@ -64,8 +64,6 @@ pub enum CpalError {
     DeviceNotFound(String),
     /// Enumerating the host's output devices failed.
     Enumerate(cpal::DevicesError),
-    /// Reading a device's name failed.
-    Name(cpal::DeviceNameError),
     /// The device's default sample format is not one this adapter writes.
     UnsupportedFormat(SampleFormat),
     /// Querying the device's default configuration failed.
@@ -82,7 +80,6 @@ impl fmt::Display for CpalError {
             Self::NoDevice => write!(f, "no default audio output device"),
             Self::DeviceNotFound(name) => write!(f, "no output device named {name:?}"),
             Self::Enumerate(e) => write!(f, "audio device enumeration error: {e}"),
-            Self::Name(e) => write!(f, "audio device name error: {e}"),
             Self::UnsupportedFormat(fmt) => write!(f, "unsupported device sample format {fmt:?}"),
             Self::Config(e) => write!(f, "audio device config error: {e}"),
             Self::Build(e) => write!(f, "audio stream build error: {e}"),
@@ -92,6 +89,11 @@ impl fmt::Display for CpalError {
 }
 
 impl std::error::Error for CpalError {}
+
+/// Reported by [`CpalOutput::device_name`] when the host cannot tell us what the
+/// open device is called. Not addressable by [`CpalOutput::start_on`] — such a
+/// device is reachable only as the host default.
+const UNNAMED_DEVICE: &str = "<unnamed>";
 
 /// A live output stream on one device. Playback stops when this is dropped, so
 /// the caller keeps it alive for as long as sound is wanted.
@@ -112,16 +114,21 @@ impl CpalOutput {
     /// come from here (or from a setting previously saved from here) rather than
     /// be guessed.
     ///
+    /// A device whose name cannot be read is **skipped**, not fatal: it is
+    /// unaddressable by name anyway, so listing it would be useless, and failing
+    /// the whole call over it would hide every *good* device from the panel.
+    /// [`CpalOutput::start_on`] skips such a device for the same reason, so the
+    /// two halves of the seam agree.
+    ///
     /// # Errors
     ///
-    /// [`CpalError::Enumerate`] if the host cannot list its devices, or
-    /// [`CpalError::Name`] if one of them has no readable name.
+    /// [`CpalError::Enumerate`] if the host cannot list its devices at all.
     pub fn output_device_names() -> Result<Vec<String>, CpalError> {
-        cpal::default_host()
+        Ok(cpal::default_host()
             .output_devices()
             .map_err(CpalError::Enumerate)?
-            .map(|device| device.name().map_err(CpalError::Name))
-            .collect()
+            .filter_map(|device| device.name().ok())
+            .collect())
     }
 
     /// Open the host's **default** output device and start it. See
@@ -181,7 +188,12 @@ impl CpalOutput {
         command_capacity: usize,
         max_voices: usize,
     ) -> Result<(AudioController, Self), CpalError> {
-        let device_name = device.name().map_err(CpalError::Name)?;
+        // The name is *reporting only* ([`CpalOutput::device_name`]), so an
+        // unreadable one must never fail the open — a host whose default output
+        // has no readable name must still make sound. (It was fatal when this
+        // body was first extracted, which silently turned a cosmetic field into a
+        // precondition for any audio at all.)
+        let device_name = device.name().unwrap_or_else(|_| UNNAMED_DEVICE.to_owned());
         let supported = device.default_output_config().map_err(CpalError::Config)?;
         let sample_rate = supported.sample_rate().0;
         let channels = supported.channels();
@@ -263,24 +275,50 @@ where
                 stereo.resize(needed, 0.0);
             }
             renderer.render(&mut stereo[..needed]);
-
-            for (frame, out) in data.chunks_mut(channels).enumerate() {
-                let l = stereo[frame * 2];
-                let r = stereo[frame * 2 + 1];
-                if channels == 1 {
-                    out[0] = T::from_sample((l + r) * 0.5);
-                } else {
-                    out[0] = T::from_sample(l);
-                    out[1] = T::from_sample(r);
-                    for extra in out.iter_mut().skip(2) {
-                        *extra = T::from_sample(0.0f32);
-                    }
-                }
-            }
+            write_frames(&stereo[..needed], data, channels);
         },
         |err| eprintln!("pinion-audio: cpal stream error: {err}"),
         None,
     )
+}
+
+/// Map the engine's interleaved stereo `f32` mix into the device's sample format
+/// and channel layout: mono is a downmix, stereo is direct, and >2 channels get
+/// the mix in the first two with the rest silenced.
+///
+/// This is the last thing that happens to a sample before the sound card sees it,
+/// and it is the *only* step the headless render path never exercises — so it is
+/// pulled out of the cpal callback as a pure function of `(stereo, data,
+/// channels)` and unit-tested below. Nothing about it needs a device, and the
+/// real-time snapshot's `peak` is measured on the mix *before* this runs, so a
+/// bug here (silence, wrong channel, bad scaling) is invisible to every
+/// introspection read: tests are the only thing that can catch it.
+///
+/// `channels` must be >= 1. A trailing partial frame — which cpal is not expected
+/// to hand us, but which would index out of bounds if it ever did, on the
+/// real-time thread — is silenced rather than assumed away.
+fn write_frames<T>(stereo: &[f32], data: &mut [T], channels: usize)
+where
+    T: SizedSample + FromSample<f32>,
+{
+    let channels = channels.max(1);
+    let mut frames = data.chunks_exact_mut(channels);
+    for (frame, out) in frames.by_ref().enumerate() {
+        let l = stereo[frame * 2];
+        let r = stereo[frame * 2 + 1];
+        if channels == 1 {
+            out[0] = T::from_sample((l + r) * 0.5);
+        } else {
+            out[0] = T::from_sample(l);
+            out[1] = T::from_sample(r);
+            for extra in out.iter_mut().skip(2) {
+                *extra = T::from_sample(0.0f32);
+            }
+        }
+    }
+    for tail in frames.into_remainder() {
+        *tail = T::from_sample(0.0f32);
+    }
 }
 
 #[cfg(test)]
@@ -292,8 +330,10 @@ mod tests {
     /// to whatever output happened to be default — including real speakers when
     /// a *silent* virtual card was the whole point of naming one.
     ///
-    /// Needs no audio device: on a host with none, enumeration yields nothing
-    /// and the lookup misses just the same.
+    /// Opens no device: it needs only that *enumeration* succeeds. On a host with
+    /// no output at all the list is empty and the lookup misses identically — but
+    /// if enumeration itself fails, the error is `Enumerate`, not
+    /// `DeviceNotFound`, and this test says so rather than pretending otherwise.
     #[test]
     fn opening_an_absent_device_by_name_is_device_not_found() {
         const ABSENT: &str = "pinion::no-such-output-device";
@@ -306,14 +346,105 @@ mod tests {
         );
     }
 
-    /// Enumeration works, and every name it reports is usable as a `start_on`
-    /// key — empty names would be unaddressable, so the list would be a lie.
+    /// Enumeration must not error, and no name it reports may be empty (an empty
+    /// name is unaddressable by `start_on`, so listing it would be a lie).
+    ///
+    /// Honest about its own reach: on a host with no output devices this is
+    /// vacuous. What actually proves an enumerated name *opens* is the
+    /// `hello-audio-device` demo, which opens the silent card by an enumerated
+    /// name over the wire — that needs a device, so it lives in CI's sweep job.
     #[test]
-    fn enumerated_device_names_are_addressable() {
+    fn enumerated_device_names_are_non_empty() {
         let names = CpalOutput::output_device_names().expect("enumerate output devices");
         assert!(
             names.iter().all(|name| !name.is_empty()),
             "device names must be non-empty to be openable by name: {names:?}"
         );
+    }
+
+    // ── the format / channel-layout conversion (`write_frames`) ───────────────
+    //
+    // This is the shipping device path's last step and the one the headless
+    // renderer never runs. `AudioSnapshot::peak` is measured on the stereo mix
+    // BEFORE this conversion, so no introspection read — and therefore no RPC
+    // demo — can observe a bug in here. These tests are the only guard, and they
+    // need no sound card.
+
+    /// Sample-wise comparison with a tolerance — the values here are all exactly
+    /// representable, but an exact `==` on floats is not a habit worth forming.
+    #[track_caller]
+    fn assert_samples(got: &[f32], want: &[f32]) {
+        assert_eq!(got.len(), want.len(), "frame count");
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            assert!(
+                (g - w).abs() < 1e-6,
+                "sample {i}: got {g}, want {w} (whole buffer {got:?})"
+            );
+        }
+    }
+
+    /// Stereo out: the mix passes through, sample for sample.
+    #[test]
+    fn stereo_passes_the_mix_through_unchanged() {
+        let stereo = [0.5f32, -0.25, 1.0, -1.0];
+        let mut out = [0.0f32; 4];
+        write_frames(&stereo, &mut out, 2);
+        assert_samples(&out, &[0.5, -0.25, 1.0, -1.0]);
+    }
+
+    /// Mono out: the two channels are averaged, not silently truncated to the
+    /// left (which would lose every hard-right sound on a mono device).
+    #[test]
+    fn mono_downmixes_both_channels() {
+        let stereo = [1.0f32, 0.0, 0.0, 1.0];
+        let mut out = [0.0f32; 2];
+        write_frames(&stereo, &mut out, 1);
+        assert_samples(&out, &[0.5, 0.5]); // each frame is (l + r) / 2
+    }
+
+    /// Surround out: the mix lands in the first two channels and every extra one
+    /// is SILENCED — never left carrying whatever the driver's buffer held.
+    #[test]
+    fn extra_channels_are_silenced_not_left_as_garbage() {
+        let stereo = [0.5f32, -0.5];
+        let mut out = [9.0f32; 6]; // 5.1, pre-filled with garbage
+        write_frames(&stereo, &mut out, 6);
+        assert_samples(&out, &[0.5, -0.5, 0.0, 0.0, 0.0, 0.0]);
+    }
+
+    /// The integer formats scale correctly. `i16` is the format most real cards
+    /// hand us, and a wrong scale here is inaudible to `peak` (which reads the
+    /// f32 mix) — it would ship as distortion nobody's test caught.
+    #[test]
+    fn i16_and_u16_conversions_scale_to_full_range() {
+        let stereo = [1.0f32, -1.0];
+        let mut i16_out = [0i16; 2];
+        write_frames(&stereo, &mut i16_out, 2);
+        assert_eq!(
+            i16_out,
+            [i16::MAX, i16::MIN],
+            "full-scale maps to full-scale"
+        );
+
+        let mut u16_out = [0u16; 2];
+        write_frames(&stereo, &mut u16_out, 2);
+        assert_eq!(u16_out, [u16::MAX, u16::MIN], "u16 is offset-binary");
+
+        // Silence must be the format's zero, not its numeric 0.
+        let mut mid = [0u16; 2];
+        write_frames(&[0.0, 0.0], &mut mid, 2);
+        assert_eq!(mid, [32768, 32768], "u16 silence is mid-scale, not 0");
+    }
+
+    /// A trailing partial frame is silenced, not indexed out of bounds. cpal is
+    /// not expected to hand us one — but this runs on the real-time thread, where
+    /// an assumption that turns out false is a panic in the audio callback.
+    #[test]
+    fn a_partial_trailing_frame_is_silenced_not_a_panic() {
+        let stereo = [1.0f32, 1.0];
+        // 3 samples on a 2-channel device: one whole frame plus a stray sample.
+        let mut out = [9.0f32; 3];
+        write_frames(&stereo, &mut out, 2);
+        assert_samples(&out, &[1.0, 1.0, 0.0]); // the odd tail sample is silenced
     }
 }

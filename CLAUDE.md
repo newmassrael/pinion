@@ -111,6 +111,11 @@ mnemosyne.toml          workspace config (schema, locale, validators, ledgers)
 ## Working contract
 
 - Build: `cargo check --workspace`, `cargo test --workspace`
+- System deps (Linux): `libfontconfig1-dev libxkbcommon-dev libasound2-dev` — ALSA
+  headers are needed because `examples/hello-audio-device` enables
+  `pinion-audio/cpal-backend` (it opens a real output device; R1310). Depending on
+  `pinion-audio` *without* that feature needs no ALSA. The device demo additionally
+  wants a silent card: `sudo modprobe snd-dummy`
 - Lints (workspace-wide): `unsafe_code = "forbid"`, `clippy::pedantic = "warn"`
 - All new Rust code lives in `crates/`; no top-level Rust files
 - `view-fn` is **sync** (purity invariant per §6.3 — required for dry_run guarantee)

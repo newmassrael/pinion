@@ -39,21 +39,34 @@ What this proves, all over the wire:
   (C) control mutates the RUNNING stream — `set_master_gain` silences and
       restores a voice that is already playing (the concurrency proof proper);
   (D) the lock-free per-voice snapshot reads correctly UNDER a live callback;
-  (E) `stop_all` reaches the audio thread and the voice is reaped;
-  (F) failures still surface loudly over the wire, and there is NO `render`
-      step-verb — this binary is pumped by the device, not by RPC.
+  (E) POOL ADMISSION under a live callback — the one behaviour `AudioEngine`'s
+      own docs call "timing-dependent (which plays win the budget depends on how
+      commands batch into callbacks)", and therefore the one a single-threaded
+      test cannot pin down: over-subscribe the pool and `rejected` rises; switch
+      to steal-oldest over the wire and `stolen` rises; the bound always holds;
+  (F) `stop_all` reaches the audio thread and every voice is reaped;
+  (G) the compile-time-composed `$schema` is what the WIRE actually announces;
+  (H) failures still surface loudly, and there is NO `render` step-verb — this
+      binary is pumped by the device, not by RPC.
 
-What it does NOT prove: "no data race, ever" (no test can). The lock-free
-protocol itself is verified deterministically by the orchestrated cross-thread
-tests in `crates/pinion-audio/tests/realtime_channel.rs`; this adds integration
-confidence for the shipping configuration.
+What it does NOT prove:
+  - "no data race, ever" — no test can. The lock-free protocol itself is verified
+    deterministically by the orchestrated cross-thread tests in
+    `crates/pinion-audio/tests/realtime_channel.rs`; this adds integration
+    confidence for the shipping configuration.
+  - that the SAMPLES REACHING THE CARD are correct. `peak` is measured on the
+    stereo mix BEFORE `write_frames` converts it to the device's format and
+    channel layout, so no read here can see a conversion bug. That conversion is
+    covered by unit tests in `crates/pinion-audio/src/device.rs` instead; a
+    loopback capture (`snd-aloop`) that verifies the bytes the card received is a
+    further step this demo does not take.
 
 Run from the workspace root:
     sudo modprobe snd-dummy
     cargo build -p hello-audio-device --release
     python3 tools/demos/hello_audio_device.py
 
->= 30 assertions.
+>= 40 assertions.
 """
 
 from __future__ import annotations
@@ -75,18 +88,26 @@ from rpc_verify import (  # noqa: E402
 
 EXT = "/external"
 
-# The silent virtual card. `hello-audio-device` resolves this substring against
-# the host's device list, so it finds ALSA's full `hw:CARD=Dummy,DEV=0` name.
-# If the card is absent the binary aborts LOUDLY (listing what it did find)
-# rather than falling back to an audible default — so this demo can never
-# silently "pass" by making noise on the speakers, nor by not running at all.
-SILENT_CARD = "Dummy"
+# The silent virtual card, named EXACTLY. `hello-audio-device` refuses an
+# ambiguous request rather than guessing — and it must: on a typical Linux box
+# "Dummy" matches several PCMs, and a bare "hw" matches the REAL sound card
+# first, so a "first match wins" policy would route this test's tone out of the
+# speakers. If the card is absent the binary aborts LOUDLY (listing what it did
+# find) rather than falling back to an audible default, so this demo can never
+# silently "pass" by making noise, nor by not running at all.
+SILENT_CARD = "hw:CARD=Dummy,DEV=0"
+# What the opened device's name must contain — the card, whatever PCM prefix.
+SILENT_CARD_MARK = "Dummy"
 
 # Peak is the max |sample| of the last block the audio thread rendered. The tone
 # is authored at 0.9, so "audible" clears this comfortably and "silent" is well
 # under it — the gap is wide enough that no timing jitter can straddle it.
 AUDIBLE = 0.1
 SILENT = 0.01
+
+# The binding's voice-pool bound (MAX_VOICES in its main.rs). Asking for more
+# live voices than this must be REFUSED, not silently over-allocated.
+MAX_VOICES = 8
 
 
 def body() -> None:
@@ -103,8 +124,8 @@ def body() -> None:
 
         # ── (A) the SILENT card, and a real free-running callback thread. ──────
         device = q("device")
-        assert SILENT_CARD.lower() in device.lower(), (
-            f"must run on the silent {SILENT_CARD!r} card, not {device!r} — "
+        assert SILENT_CARD_MARK.lower() in device.lower(), (
+            f"must run on the silent {SILENT_CARD_MARK!r} card, not {device!r} — "
             "a real output device would make this demo audible"
         )
         assert q("sample_rate") > 0, "the device reports a real sample rate"
@@ -113,18 +134,17 @@ def body() -> None:
         # Nothing has been asked of the audio thread, yet it is already running:
         # the DEVICE clocks it. This is the load-bearing difference from
         # hello-audio-rt, where frames_rendered stays 0 until `invoke render`.
-        first = wait_until(
+        wait_until(
             lambda: q("frames_rendered") > 0,
             desc="the cpal callback fires with no RPC driving it",
         )
-        assert first is True
         f1 = q("frames_rendered")
-        # …and it keeps going, concurrently with our RPC reads.
+        # …and it keeps going, concurrently with our RPC reads. (`wait_until`
+        # raises on timeout, so reaching the next line IS the assertion.)
         wait_until(
             lambda: q("frames_rendered") > f1,
             desc="frames_rendered keeps advancing (free-running clock)",
         )
-        assert q("frames_rendered") > f1, "the callback thread is free-running"
         assert_eq(q("voice_count"), 0, "boots with no voice")
         assert_eq(q("rejected"), 0, "nothing rejected yet")
         assert_eq(q("stolen"), 0, "nothing stolen yet")
@@ -176,24 +196,70 @@ def body() -> None:
         # A looping voice keeps playing, so its cursor advances on the audio
         # thread — another read of live, concurrently-mutated state.
         pos = live["position_secs"]
-        assert pos >= 0.0, f"position_secs is real: {pos!r}"
         wait_until(
             lambda: q("voices")[0]["position_secs"] > pos,
             desc="the live voice's cursor advances on the audio thread",
         )
 
-        # ── (E) stop reaches the audio thread; the voice is reaped. ───────────
+        # ── (E) POOL ADMISSION under a live callback. ─────────────────────────
+        # `AudioEngine::apply`'s own docs say admission at the pool bound is
+        # "timing-dependent (which plays win the budget depends on how commands
+        # batch into callbacks)" — so it is precisely the behaviour that a
+        # single-threaded test CANNOT pin down, and the reason this demo exists.
+        # One voice is live; ask for MAX_VOICES more so the pool must refuse.
+        for i in range(MAX_VOICES):
+            inv("play", {"name": "bell", "looping": True})
+        # Outcome-based, so batching cannot make it flaky: the pool is bounded, so
+        # SOME play must be refused, and the live count can never exceed the bound.
+        wait_until(
+            lambda: q("rejected") >= 1,
+            desc="the audio thread refuses plays past the voice budget",
+        )
+        assert q("voice_count") <= MAX_VOICES, (
+            f"the pool bound is not a suggestion: {q('voice_count')} > {MAX_VOICES}"
+        )
+        assert_eq(q("stolen"), 0, "reject-newest is the default: nothing stolen")
+
+        # Switch the policy over the wire and the SAME saturated pool now steals.
+        inv("set_voice_policy", "steal_oldest")
+        wait_query(g, f"{EXT}/voice_policy", "steal_oldest", desc="policy took")
+        inv("play", {"name": "bell", "looping": True})
+        wait_until(
+            lambda: q("stolen") >= 1,
+            desc="steal-oldest evicts a live voice to admit the newcomer",
+        )
+        assert q("voice_count") <= MAX_VOICES, "stealing keeps the pool bounded"
+
+        # ── (F) stop reaches the audio thread; every voice is reaped. ─────────
         inv("stop_all", None)
         wait_query(g, f"{EXT}/voice_count", 0, desc="stop_all reached the callback")
         wait_until(
             lambda: q("peak") < SILENT,
-            desc="the stopped voice leaves silence behind",
+            desc="the stopped voices leave silence behind",
         )
-        assert_eq(q("voices"), [], "no live voice remains")
+        # Poll, don't snap: `voice_count` is Relaxed while the per-voice slot ids
+        # are Release/Acquire, so a zero count does not formally order against a
+        # still-stale slot. Polling for the settled list costs nothing and closes
+        # the gap that a bare assert would leave open.
+        wait_until(lambda: q("voices") == [], desc="no live voice remains")
         # The device never stopped clocking through any of it.
         assert q("frames_rendered") > f1, "the callback ran throughout"
 
-        # ── (F) loud failures, and NO step-verb (the device is the pump). ─────
+        # ── (G) the composed schema, ON THE WIRE — not just in a unit test. ────
+        # This binding's schema is the RT surface's fields + its 3 device fields,
+        # composed at compile time. Proving that in Rust only would be an
+        # in-process check of exactly the kind §2 #2 exists to replace — so read
+        # it back over the wire, the way an AI agent discovers the contract.
+        paths = [f["path"] for f in g.query(f"{EXT}/$schema")]
+        for field in ("voice_count", "peak", "frames_rendered", "voices", "voice_policy"):
+            assert field in paths, f"the RT surface's {field!r} must be declared: {paths}"
+        for field in ("device", "sample_rate", "channels"):
+            assert field in paths, f"this binding's {field!r} must be declared: {paths}"
+        # Composed, so no name may be announced twice (a duplicate would mean the
+        # device half silently shadows an RT read).
+        assert len(paths) == len(set(paths)), f"$schema announces a field twice: {paths}"
+
+        # ── (H) loud failures, and NO step-verb (the device is the pump). ─────
         # hello-audio-rt has `invoke render N`; this binary must not — asserting
         # its absence is what proves the pump is the device, not the demo.
         assert_rpc_error(lambda: inv("render", 1), data="UnknownInvokePath")
