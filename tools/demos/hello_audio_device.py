@@ -130,6 +130,18 @@ def body() -> None:
         )
         assert q("sample_rate") > 0, "the device reports a real sample rate"
         assert q("channels") >= 1, "the device reports a real channel count"
+        # Which conversion branch is live (f32 / i16 / u16). Otherwise invisible:
+        # the mix is f32 whatever the card wants, so nothing else reveals the path
+        # the samples took — and CI would not record which one it exercised.
+        assert q("sample_format") in ("F32", "I16", "U16"), q("sample_format")
+        # The output is healthy. A dead device just stops calling back, so without
+        # this reading "idle" and "the card is gone" look identical on the wire.
+        assert_eq(q("stream_errors"), 0, "the stream has not faulted")
+        # Where sound COULD go, not just where it is going — the list a settings
+        # panel is built from. The opened device must be one of them.
+        devices = q("devices")
+        assert isinstance(devices, list) and devices, f"an output list: {devices!r}"
+        assert device in devices, f"the open device {device!r} is not in {devices!r}"
 
         # Nothing has been asked of the audio thread, yet it is already running:
         # the DEVICE clocks it. This is the load-bearing difference from
@@ -253,7 +265,8 @@ def body() -> None:
         paths = [f["path"] for f in g.query(f"{EXT}/$schema")]
         for field in ("voice_count", "peak", "frames_rendered", "voices", "voice_policy"):
             assert field in paths, f"the RT surface's {field!r} must be declared: {paths}"
-        for field in ("device", "sample_rate", "channels"):
+        for field in ("device", "devices", "sample_rate", "channels", "sample_format",
+                      "stream_errors"):
             assert field in paths, f"this binding's {field!r} must be declared: {paths}"
         # Composed, so no name may be announced twice (a duplicate would mean the
         # device half silently shadows an RT read).
@@ -271,6 +284,8 @@ def body() -> None:
         assert_rpc_error(lambda: g.intervene(f"{EXT}/device", "speakers"), data="ReadOnly")
         assert_rpc_error(lambda: g.intervene(f"{EXT}/sample_rate", 48000), data="ReadOnly")
         assert_rpc_error(lambda: g.intervene(f"{EXT}/channels", 2), data="ReadOnly")
+        assert_rpc_error(lambda: g.intervene(f"{EXT}/devices", []), data="ReadOnly")
+        assert_rpc_error(lambda: g.intervene(f"{EXT}/stream_errors", 0), data="ReadOnly")
         # …and the inner RT surface stays read-via-query, write-via-invoke.
         assert_rpc_error(lambda: g.intervene(f"{EXT}/voice_count", 3), data="ReadOnly")
         assert_rpc_error(lambda: g.intervene(f"{EXT}/peak", 1.0), data="ReadOnly")

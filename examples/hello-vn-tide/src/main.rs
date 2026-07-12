@@ -57,6 +57,7 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    forward_intents,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
@@ -256,12 +257,7 @@ impl ExternalIntrospect for VnSaveDemoExternal {
             // any intent it queued so the wrapper's own §5.20 drain surfaces it.
             _ => {
                 let result = self.inner.invoke(path, args);
-                let Self {
-                    inner,
-                    pending_intents,
-                    ..
-                } = &mut *self;
-                inner.drain_intents(&mut |intent| pending_intents.push(intent));
+                forward_intents(&mut self.inner, &mut self.pending_intents);
                 result
             }
         }

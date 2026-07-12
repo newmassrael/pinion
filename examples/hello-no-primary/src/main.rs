@@ -30,7 +30,7 @@
 //!   citizen.
 
 use pinion_a11y::WidgetA11y;
-use pinion_core::external::{CountedExternal, External, IntrospectValue};
+use pinion_core::external::{CountedExternal, External};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -75,10 +75,7 @@ fn read_pane_count(scene: &Scene, tag: &str) -> i64 {
         .find_external_with_tag(tag)
         .and_then(|node| node.handle.introspect())
         .and_then(|intro| intro.query("count"))
-        .and_then(|value| match value {
-            IntrospectValue::Int(n) => Some(n),
-            _ => None,
-        })
+        .and_then(|value| value.as_i64())
         .unwrap_or(0)
 }
 

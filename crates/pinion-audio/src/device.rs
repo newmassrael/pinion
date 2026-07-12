@@ -46,6 +46,8 @@
 //! so `cargo build --workspace` on Linux wants `libasound2-dev` installed.
 
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
@@ -103,6 +105,8 @@ pub struct CpalOutput {
     device_name: String,
     sample_rate: u32,
     channels: u16,
+    sample_format: SampleFormat,
+    stream_errors: Arc<AtomicU64>,
 }
 
 impl CpalOutput {
@@ -205,11 +209,25 @@ impl CpalOutput {
         let engine = AudioEngine::new(sample_rate);
         let (controller, renderer) = realtime_channel(engine, command_capacity, max_voices);
 
+        // Bumped by cpal's error callback, read by the control thread. Without it
+        // a device that DIES (unplugged, fatal xrun) is indistinguishable from one
+        // that is merely idle: the stream stops, `frames_rendered` freezes, and
+        // nothing anywhere says why. A game — and the editor — has to be able to
+        // notice and reopen.
+        let stream_errors = Arc::new(AtomicU64::new(0));
+
         let channels_usize = channels as usize;
+        let errors = Arc::clone(&stream_errors);
         let stream = match sample_format {
-            SampleFormat::F32 => build_stream::<f32>(device, &config, renderer, channels_usize),
-            SampleFormat::I16 => build_stream::<i16>(device, &config, renderer, channels_usize),
-            SampleFormat::U16 => build_stream::<u16>(device, &config, renderer, channels_usize),
+            SampleFormat::F32 => {
+                build_stream::<f32>(device, &config, renderer, channels_usize, errors)
+            }
+            SampleFormat::I16 => {
+                build_stream::<i16>(device, &config, renderer, channels_usize, errors)
+            }
+            SampleFormat::U16 => {
+                build_stream::<u16>(device, &config, renderer, channels_usize, errors)
+            }
             other => return Err(CpalError::UnsupportedFormat(other)),
         }
         .map_err(CpalError::Build)?;
@@ -222,6 +240,8 @@ impl CpalOutput {
                 device_name,
                 sample_rate,
                 channels,
+                sample_format,
+                stream_errors,
             },
         ))
     }
@@ -246,6 +266,27 @@ impl CpalOutput {
     pub fn channels(&self) -> u16 {
         self.channels
     }
+
+    /// The device's sample format — which conversion branch of `write_frames`
+    /// is live (`f32` / `i16` / `u16`). Reported because it is otherwise invisible:
+    /// the mix is `f32` whatever the card wants, so nothing else reveals which
+    /// path the samples actually took.
+    #[must_use]
+    pub fn sample_format(&self) -> SampleFormat {
+        self.sample_format
+    }
+
+    /// How many errors cpal has reported on this stream since it opened.
+    ///
+    /// **The device-health read.** A stream that has died (device unplugged, fatal
+    /// xrun) simply stops calling back: the frame counter freezes and every other
+    /// reading stays plausibly idle. This is the one value that distinguishes
+    /// "nothing is playing" from "the output is gone", which a game needs in order
+    /// to fall back to another device rather than fall silent.
+    #[must_use]
+    pub fn stream_errors(&self) -> u64 {
+        self.stream_errors.load(Ordering::Relaxed)
+    }
 }
 
 /// Build a device stream for sample type `T`, mapping the engine's stereo
@@ -255,6 +296,7 @@ fn build_stream<T>(
     config: &cpal::StreamConfig,
     mut renderer: AudioRenderer,
     channels: usize,
+    stream_errors: Arc<AtomicU64>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
     T: SizedSample + FromSample<f32>,
@@ -277,7 +319,13 @@ where
             renderer.render(&mut stereo[..needed]);
             write_frames(&stereo[..needed], data, channels);
         },
-        |err| eprintln!("pinion-audio: cpal stream error: {err}"),
+        move |err| {
+            // Counted, not just printed: a log line on the audio thread is
+            // invisible to the control thread and to RPC. See
+            // [`CpalOutput::stream_errors`].
+            stream_errors.fetch_add(1, Ordering::Relaxed);
+            eprintln!("pinion-audio: cpal stream error: {err}");
+        },
         None,
     )
 }

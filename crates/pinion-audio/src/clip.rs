@@ -41,6 +41,32 @@ impl AudioClip {
         Arc::new(self)
     }
 
+    /// A mono sine tone: `secs` seconds of `freq` Hz at `amplitude`, sampled at
+    /// `sample_rate`.
+    ///
+    /// A synthesized tone is the natural test signal for a mixer — it is exactly
+    /// periodic, so its peak is a constant a test can assert on, and it needs no
+    /// asset on disk. Three example bindings had each hand-rolled this loop, and
+    /// their amplitudes had already drifted apart (0.5 vs 0.9), which is the usual
+    /// way a "trivial" duplicate stops being trivial: the demos were no longer
+    /// comparable. One home, amplitude an argument.
+    #[must_use]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    pub fn sine(sample_rate: u32, freq: f32, secs: f32, amplitude: f32) -> Self {
+        let frames = (secs.max(0.0) * sample_rate as f32) as usize;
+        let samples = (0..frames)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (t * freq * std::f32::consts::TAU).sin() * amplitude
+            })
+            .collect();
+        Self::new(sample_rate, 1, samples)
+    }
+
     /// Frames per second.
     #[must_use]
     pub fn sample_rate(&self) -> u32 {

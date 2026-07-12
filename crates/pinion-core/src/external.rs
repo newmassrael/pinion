@@ -1040,6 +1040,32 @@ macro_rules! query_proxy_external_impl {
 }
 pub use query_proxy_external_impl;
 
+/// Move an inner `External`'s pending §5.20 [`Intent`]s into `sink`.
+///
+/// For the **wrapper** shape: an External that delegates to an inner one has to
+/// forward the intents the inner queued, or they are simply lost. Written inline
+/// that is not one line but three, because `src` and `sink` are usually two fields
+/// of the same wrapper and the borrow checker needs them destructured apart:
+///
+/// ```ignore
+/// let result = self.inner.invoke(path, args);
+/// let Self { inner, pending_intents, .. } = &mut *self;   // <- only to split the borrow
+/// inner.drain_intents(&mut |intent| pending_intents.push(intent));
+/// ```
+///
+/// Taking the two as separate arguments splits the borrow at the call site, so
+/// the dance disappears:
+///
+/// ```ignore
+/// let result = self.inner.invoke(path, args);
+/// forward_intents(&mut self.inner, &mut self.pending_intents);
+/// ```
+///
+/// Lifted at the fourth byte-identical copy (three example bindings).
+pub fn forward_intents(src: &mut impl External, sink: &mut Vec<Intent>) {
+    src.drain_intents(&mut |intent| sink.push(intent));
+}
+
 /// R1276 §5.15 — the `External` skeleton for a **read-write introspection**
 /// node: RPC-only (paints nothing — the binding's `view` is the paint
 /// scene), framework repaint, UI-thread sync, and it drains a §5.20 intent
@@ -1054,9 +1080,26 @@ pub use query_proxy_external_impl;
 /// `NarrativeExternal` and `pinion-audio`'s `AudioEngineExternal` had each
 /// hand-rolled (the Rule-of-Three lift; the read-only case has
 /// [`QueryOnlyIntrospect`]).
+///
+/// # Declaring thread ownership (§5.15 item 3)
+///
+/// The one-argument form declares [`ThreadOwnership::UiThreadSync`], which is
+/// right for the common case — an External the framework calls straight from the
+/// UI thread. An External that **owns a real OS thread** and is spoken to over a
+/// channel (an audio device callback, say) must say so, or it lies about a
+/// mandatory §5.15 item:
+///
+/// ```ignore
+/// pinion_core::intent_query_external_impl!(DeviceAudioExternal, OwnThread);
+/// ```
+///
+/// The name is any [`ThreadOwnership`] variant.
 #[macro_export]
 macro_rules! intent_query_external_impl {
     ($t:ty) => {
+        $crate::intent_query_external_impl!($t, UiThreadSync);
+    };
+    ($t:ty, $thread_ownership:ident) => {
         impl $crate::external::External for $t {
             fn backends(&self) -> $crate::external::BackendSupport {
                 $crate::external::BackendSupport::new(
@@ -1068,7 +1111,7 @@ macro_rules! intent_query_external_impl {
                 $crate::external::RepaintOwner::Framework
             }
             fn thread_ownership(&self) -> $crate::external::ThreadOwnership {
-                $crate::external::ThreadOwnership::UiThreadSync
+                $crate::external::ThreadOwnership::$thread_ownership
             }
             fn introspect(&self) -> Option<&dyn $crate::external::ExternalIntrospect> {
                 Some(self)

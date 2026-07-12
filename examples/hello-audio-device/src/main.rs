@@ -103,12 +103,11 @@
 //! That is the real Phase-C boundary — not "per-frame audio", which is buildable
 //! now.
 
-use std::sync::Arc;
-
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_audio::{AudioClip, AudioControllerExternal, CpalOutput, RT_EXTERNAL_FIELDS};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    forward_intents,
 };
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
@@ -129,32 +128,35 @@ const TAG: &str = "audio_device";
 /// Names the output device to open. Unset → the host default (**audible**).
 const DEVICE_ENV: &str = "PINION_AUDIO_DEVICE";
 
-/// A looping tone, long enough that it stays live while the demo polls.
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn sine_clip(rate: u32, freq: f32, secs: f32) -> Arc<AudioClip> {
-    let frames = (secs * rate as f32) as usize;
-    let samples: Vec<f32> = (0..frames)
-        .map(|i| {
-            let t = i as f32 / rate as f32;
-            (t * freq * std::f32::consts::TAU).sin() * 0.9
-        })
-        .collect();
-    AudioClip::new(rate, 1, samples).shared()
-}
+/// Tone amplitude. Well clear of the demo's "audible" threshold.
+const TONE_AMPLITUDE: f32 = 0.9;
 
-/// The device facts this binding adds on top of the RT surface — *which* output
-/// the audio thread is actually feeding. Worth having on the wire: an agent (or a
-/// player's settings panel) asking "where is my sound going?" should not have to
-/// guess, and this demo asserts it opened the **silent** card rather than the
-/// speakers.
+/// The device half of the surface — what the device-agnostic
+/// [`AudioControllerExternal`] cannot know, put on the wire because an agent (or a
+/// player's settings panel) must be able to answer three questions without
+/// guessing:
+///
+/// - *where is my sound going?* — `device` / `sample_rate` / `channels` /
+///   `sample_format`. (This demo asserts `device` names the **silent** card, so a
+///   misconfiguration cannot quietly play out of the speakers.)
+/// - *where could it go?* — `devices`, the host's output list. Enumeration is
+///   what a settings panel is built on, and leaving it callable only from Rust
+///   while the whole point of this binary is §2 #2 would be an odd place to stop.
+/// - *is it still going?* — `stream_errors`. A dead device just stops calling
+///   back; without this, silence-because-idle and silence-because-the-output-is-
+///   gone read identically.
+///
+/// Switching device at runtime is a different thing and is NOT here: it means
+/// rebuilding the renderer, controller and clip registry and re-homing live
+/// voices. That is real work, not a slot to write to — hence read-only fields and
+/// no `set_device` verb.
 const DEVICE_FIELDS: &[(&str, &str)] = &[
     ("device", "text"),
+    ("devices", "json"),
     ("sample_rate", "int"),
     ("channels", "int"),
+    ("sample_format", "text"),
+    ("stream_errors", "int"),
 ];
 
 /// Length of the composed schema.
@@ -281,9 +283,14 @@ fn open_output() -> (pinion_audio::AudioController, CpalOutput) {
 /// thread and is pumped by the device clock).
 ///
 /// What this wrapper adds is the *device* half of the surface, which the
-/// device-agnostic controller cannot know: the read-only [`DEVICE_FIELDS`]
-/// (`device` / `sample_rate` / `channels`). So the wire contract's home is the
-/// inner External **plus** those three fields — see [`compose_schema`].
+/// device-agnostic controller cannot know: the read-only [`DEVICE_FIELDS`]. So
+/// the wire contract's home is the inner External **plus** those fields — see
+/// [`compose_schema`].
+///
+/// It also declares [`pinion_core::external::ThreadOwnership::OwnThread`], because
+/// that is the truth: a cpal callback thread is running underneath, and the
+/// framework reaches it only over the lock-free ring. Every other External in the
+/// repo is `UiThreadSync`; this is the first that genuinely is not.
 struct DeviceAudioExternal {
     /// The §2 #7 RT surface — the home of every *audio* verb and read.
     inner: AudioControllerExternal,
@@ -319,8 +326,14 @@ impl DeviceAudioExternal {
         );
         let inner = AudioControllerExternal::new(controller)
             // Looping, so it stays live for as long as the demo polls it.
-            .with_clip("tone", sine_clip(rate, 440.0, 1.0))
-            .with_clip("bell", sine_clip(rate, 880.0, 1.0));
+            .with_clip(
+                "tone",
+                AudioClip::sine(rate, 440.0, 1.0, TONE_AMPLITUDE).shared(),
+            )
+            .with_clip(
+                "bell",
+                AudioClip::sine(rate, 880.0, 1.0, TONE_AMPLITUDE).shared(),
+            );
         Self {
             inner,
             out,
@@ -337,8 +350,22 @@ impl ExternalIntrospect for DeviceAudioExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "device" => Some(IntrospectValue::Text(self.out.device_name().to_owned())),
+            // What the host offers — the list a settings panel is built on. Read
+            // live, so a device appearing or vanishing shows up without a restart.
+            "devices" => Some(IntrospectValue::json(
+                &CpalOutput::output_device_names().unwrap_or_default(),
+            )),
             "sample_rate" => Some(IntrospectValue::Int(i64::from(self.out.sample_rate()))),
             "channels" => Some(IntrospectValue::Int(i64::from(self.out.channels()))),
+            "sample_format" => Some(IntrospectValue::Text(format!(
+                "{:?}",
+                self.out.sample_format()
+            ))),
+            // Non-zero means the output has faulted — the only reading that tells
+            // "nothing is playing" apart from "the device is gone".
+            "stream_errors" => Some(IntrospectValue::Int(
+                i64::try_from(self.out.stream_errors()).unwrap_or(i64::MAX),
+            )),
             // Everything else is the RT surface's, read lock-free off the
             // snapshot the audio thread publishes each callback.
             _ => self.inner.query(path),
@@ -364,17 +391,15 @@ impl ExternalIntrospect for DeviceAudioExternal {
         // all queue onto the lock-free ring the *live callback thread* is
         // draining. No step-verb — the device clock is the pump.
         let result = self.inner.invoke(path, args);
-        let Self {
-            inner,
-            pending_intents,
-            ..
-        } = &mut *self;
-        inner.drain_intents(&mut |intent| pending_intents.push(intent));
+        forward_intents(&mut self.inner, &mut self.pending_intents);
         result
     }
 }
 
-pinion_core::intent_query_external_impl!(DeviceAudioExternal);
+// §5.15 item 3: this External owns a real OS thread (cpal's audio callback)
+// and is spoken to over the lock-free ring — so it declares `OwnThread`, not the
+// `UiThreadSync` default every other binding correctly uses.
+pinion_core::intent_query_external_impl!(DeviceAudioExternal, OwnThread);
 
 /// The binding unit type.
 struct HelloAudioDevice;
@@ -541,7 +566,10 @@ mod tests {
     fn schema_is_the_rt_surface_plus_the_device_fields() {
         // Guards the const-composition: the RT fields come first, in order, and
         // the device fields are appended — no drift, nothing dropped.
-        assert_eq!(SCHEMA_FIELDS.len(), RT_EXTERNAL_FIELDS.len() + 3);
+        assert_eq!(
+            SCHEMA_FIELDS.len(),
+            RT_EXTERNAL_FIELDS.len() + DEVICE_FIELDS.len()
+        );
         assert_eq!(
             &SCHEMA_FIELDS[..RT_EXTERNAL_FIELDS.len()],
             RT_EXTERNAL_FIELDS

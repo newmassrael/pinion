@@ -52,24 +52,6 @@ fn audio_engine() -> Rc<RefCell<AudioEngine>> {
         .cache(ENGINE_KEY, || RefCell::new(AudioEngine::new(RATE)))
 }
 
-/// A deterministic sine clip — a stand-in for a synthesized voice (the
-/// `chime` clip below is a real decoded FLAC asset instead).
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn sine_clip(freq: f32, secs: f32) -> Arc<AudioClip> {
-    let frames = (secs * RATE as f32) as usize;
-    let samples: Vec<f32> = (0..frames)
-        .map(|i| {
-            let t = i as f32 / RATE as f32;
-            (t * freq * std::f32::consts::TAU).sin() * 0.5
-        })
-        .collect();
-    AudioClip::new(RATE, 1, samples).shared()
-}
-
 /// A real FLAC asset, compiled in and decoded at startup — the §5.54
 /// compressed-decode path proven in a runnable binary.
 const CHIME_FLAC: &[u8] = include_bytes!("../assets/chime.flac");
@@ -105,8 +87,8 @@ impl WidgetCore for HelloAudio {
 
     fn create_external() -> Box<dyn External> {
         let mut ext = AudioEngineExternal::new(audio_engine())
-            .with_clip("bell", sine_clip(880.0, 0.4))
-            .with_clip("waves", sine_clip(110.0, 0.8));
+            .with_clip("bell", AudioClip::sine(RATE, 880.0, 0.4, 0.5).shared())
+            .with_clip("waves", AudioClip::sine(RATE, 110.0, 0.8, 0.5).shared());
         if let Some(chime) = chime_clip() {
             ext = ext.with_clip("chime", chime);
         }

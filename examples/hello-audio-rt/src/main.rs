@@ -127,6 +127,7 @@ use pinion_audio::{
 };
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    forward_intents,
 };
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
@@ -159,25 +160,6 @@ const TAG: &str = "audio_rt";
 /// The extra (retained single-thread engine) External tag, addressed over the
 /// wire at `/engine/external/...`.
 const ENGINE_TAG: &str = "engine";
-
-/// A deterministic sine clip long enough to stay live across several render
-/// blocks — a stand-in for a game sound effect. `secs` at [`RATE`] gives the
-/// frame count.
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn sine_clip(freq: f32, secs: f32) -> Arc<AudioClip> {
-    let frames = (secs * RATE as f32) as usize;
-    let samples: Vec<f32> = (0..frames)
-        .map(|i| {
-            let t = i as f32 / RATE as f32;
-            (t * freq * std::f32::consts::TAU).sin() * 0.9
-        })
-        .collect();
-    AudioClip::new(RATE, 1, samples).shared()
-}
 
 /// A real FLAC asset, compiled in and decoded at startup — so the RT device
 /// path is proven over the wire with a real game-format asset, not only
@@ -255,8 +237,8 @@ impl RtAudioDemoExternal {
         let mut inner = AudioControllerExternal::new(controller)
             // Long tones stay live across render blocks so `voices` reads see
             // them; `blip` is a 2-frame one-shot that finishes in one block.
-            .with_clip("bell", sine_clip(880.0, 1.0))
-            .with_clip("waves", sine_clip(220.0, 1.0))
+            .with_clip("bell", AudioClip::sine(RATE, 880.0, 1.0, 0.9).shared())
+            .with_clip("waves", AudioClip::sine(RATE, 220.0, 1.0, 0.9).shared())
             .with_clip("blip", AudioClip::new(RATE, 1, vec![0.9; 2]).shared());
         // A real decoded FLAC asset over the RT path — §5.54 decode + the
         // shipping RT mixer proven together over the wire.
@@ -310,12 +292,7 @@ impl ExternalIntrospect for RtAudioDemoExternal {
         // intent it queued (e.g. `audio.play`) so the wrapper's §5.20 drain
         // surfaces it exactly like the single-thread engine does.
         let result = self.inner.invoke(path, args);
-        let Self {
-            inner,
-            pending_intents,
-            ..
-        } = &mut *self;
-        inner.drain_intents(&mut |intent| pending_intents.push(intent));
+        forward_intents(&mut self.inner, &mut self.pending_intents);
         result
     }
 }
@@ -365,8 +342,8 @@ impl EngineDemoExternal {
     fn new() -> Self {
         let engine = Rc::new(RefCell::new(AudioEngine::new(RATE)));
         let inner = AudioEngineExternal::new(engine.clone())
-            .with_clip("bell", sine_clip(880.0, 0.4))
-            .with_clip("waves", sine_clip(220.0, 0.8));
+            .with_clip("bell", AudioClip::sine(RATE, 880.0, 0.4, 0.9).shared())
+            .with_clip("waves", AudioClip::sine(RATE, 220.0, 0.8, 0.9).shared());
         Self {
             inner,
             engine,
@@ -407,12 +384,7 @@ impl ExternalIntrospect for EngineDemoExternal {
             ));
         }
         let result = self.inner.invoke(path, args);
-        let Self {
-            inner,
-            pending_intents,
-            ..
-        } = &mut *self;
-        inner.drain_intents(&mut |intent| pending_intents.push(intent));
+        forward_intents(&mut self.inner, &mut self.pending_intents);
         result
     }
 }
@@ -462,10 +434,7 @@ impl WidgetCore for HelloAudioRt {
             .primary_external()
             .and_then(|node| node.handle.introspect())
             .and_then(|intro| intro.query("voice_count"))
-            .and_then(|v| match v {
-                IntrospectValue::Int(n) => Some(n),
-                _ => None,
-            })
+            .and_then(|v| v.as_i64())
             .map_or(0, |n| {
                 u16::try_from(n.clamp(0, i64::from(u16::MAX))).unwrap_or(0)
             })
