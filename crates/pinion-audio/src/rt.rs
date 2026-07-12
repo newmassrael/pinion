@@ -237,9 +237,15 @@ impl AtomicF32 {
 /// voice pool, so a full per-voice read needs no audio-thread allocation. The
 /// fields are published independently (each its own atomic), so this is a live
 /// monitor, not a transactionally-consistent view — a concurrent poll may pair
-/// a fresh `voice_count` with a one-render-old `peak`, or read a voice's fields
-/// one render newer than the id it was matched on under heavy churn. That is a
-/// bounded meter imprecision, never used for correctness.
+/// a fresh `voice_count` with a one-render-old `peak`. A per-voice read is
+/// consistent *for the id it Acquire-observes* (the id fences the slot), but
+/// under heavy churn a slot's numeric fields may be one render newer than that
+/// id — and because slots are filled in live-voice iteration order (not keyed by
+/// id), that newer render may have reused the slot for a *different* voice, so a
+/// concurrent read can momentarily pair an id with another voice's gain/position.
+/// The id itself is never torn and the id→label join stays exact; only the
+/// numeric meter fields can transiently mismatch. Bounded, never used for
+/// correctness (introspection / metering only).
 #[derive(Debug, Default)]
 pub struct AudioSnapshot {
     voice_count: AtomicU32,
@@ -526,10 +532,11 @@ impl AudioController {
     }
 
     /// The listener the control thread last successfully queued — its
-    /// authoritative mirror (the control thread is the listener's sole writer,
-    /// so this *is* the current value even though the audio thread owns the
-    /// engine). The base a partial listener update patches against, and the RT
-    /// `listener` introspection read.
+    /// authoritative mirror (the control thread is the listener's sole *writer*,
+    /// so this is the authoritative authored value, which the audio thread
+    /// applies on its next render — up to one block of latency, never a
+    /// different value). The base a partial listener update patches against, and
+    /// the RT `listener` introspection read.
     #[must_use]
     pub fn listener(&self) -> Listener {
         self.listener
@@ -636,26 +643,14 @@ impl AudioRenderer {
         let mut stolen = 0u64;
         while let Ok(command) = consumer.pop() {
             let frees_a_slot = matches!(command, AudioCommand::Stop(_) | AudioCommand::StopAll);
-            // The id to pair a refused newcomer with (only a `Play` is refused).
-            let play_id = if let AudioCommand::Play { id, .. } = &command {
-                Some(*id)
-            } else {
-                None
-            };
             match engine.apply(command) {
                 Admission::Admitted => {}
-                Admission::Rejected(refused) => {
+                Admission::Rejected { id, voice } => {
                     // A play refused at the voice-pool bound: return the newcomer
-                    // (with its id) for off-thread disposal, not freed here. Only
-                    // a `Play` is ever refused, so `play_id` is always `Some`; the
-                    // `if let` keeps the audio callback panic-free (an impossible
-                    // `None` drops the voice here — the same audio-thread free as
-                    // the ring-full fallback — never a panic).
+                    // (keyed by its own id, carried by the `Admission`) for
+                    // off-thread disposal, not freed here.
                     rejected += 1;
-                    debug_assert!(play_id.is_some(), "only a Play command is ever refused");
-                    if let Some(id) = play_id {
-                        return_voice(retired, id, refused);
-                    }
+                    return_voice(retired, id, voice);
                 }
                 Admission::Stole { victim_id, victim } => {
                     // The newcomer was admitted by evicting `victim`: dispose the

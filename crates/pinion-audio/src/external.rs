@@ -674,10 +674,12 @@ fn parse_f32(v: Option<&serde_json::Value>) -> Option<f32> {
 }
 
 /// Map a controller command's "was it queued?" flag to the RT invoke result:
-/// `Null` on success, `Rejected` when the command ring was full. Every driving
-/// invoke goes through this so a full ring is *surfaced* uniformly (as `play`
-/// already does) rather than silently dropped — a command that never reached
-/// the audio thread did not take effect, and the agent may retry.
+/// `Null` on success, `Rejected` when the command ring was full. Every
+/// *value-less* driving invoke routes through this so a full ring is *surfaced*
+/// uniformly rather than silently dropped; `play` surfaces the same full-ring
+/// `Rejected` directly (it returns the minted id, not `Null`). Either way a
+/// command that never reached the audio thread did not take effect, and the
+/// agent may retry.
 fn queued_or_rejected(queued: bool) -> Result<IntrospectValue, InvokeError> {
     if queued {
         Ok(IntrospectValue::Null)

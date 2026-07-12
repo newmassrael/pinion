@@ -128,8 +128,14 @@ pub enum Admission {
     Admitted,
     /// The pool was full and the newcomer was refused
     /// ([`VoicePolicy::RejectNewest`]); its un-admitted [`Voice`] is handed back
-    /// for off-thread disposal.
-    Rejected(Voice),
+    /// for off-thread disposal, keyed by its id (so both disposal arms carry
+    /// their own key — the caller never re-derives it from the command).
+    Rejected {
+        /// The refused newcomer's id.
+        id: VoiceId,
+        /// The un-admitted voice, for off-thread disposal.
+        voice: Voice,
+    },
     /// The pool was full and the newcomer was admitted by evicting `victim`
     /// ([`VoicePolicy::StealOldest`]) — the evicted voice is handed back for
     /// off-thread disposal, keyed by its id.
@@ -328,7 +334,7 @@ impl AudioEngine {
                 // At the pre-allocated bound: grow would reallocate on the audio
                 // thread, so apply the full-pool policy instead.
                 match self.voice_policy {
-                    VoicePolicy::RejectNewest => return Admission::Rejected(voice),
+                    VoicePolicy::RejectNewest => return Admission::Rejected { id, voice },
                     VoicePolicy::StealOldest => {
                         // Evict the oldest live voice (lowest id — ids are minted
                         // monotonically) to free a slot for the newcomer.
@@ -343,7 +349,7 @@ impl AudioEngine {
                             .min_by_key(|(_, (vid, _))| *vid)
                             .map(|(i, _)| i)
                         else {
-                            return Admission::Rejected(voice);
+                            return Admission::Rejected { id, voice };
                         };
                         let (victim_id, victim) = self.voices.remove(idx);
                         self.next_id = self.next_id.max(id.saturating_add(1));
@@ -642,7 +648,8 @@ mod tests {
         // The pool is full and the default policy is RejectNewest: the third
         // play is refused and its voice handed back.
         match engine.play_with_id(3, tone(64), "c", PlayOptions::one_shot()) {
-            Admission::Rejected(voice) => {
+            Admission::Rejected { id, voice } => {
+                assert_eq!(id, 3, "the refused newcomer's own id");
                 assert_eq!(voice.label(), "c", "the rejected voice is returned");
             }
             other => panic!("expected Rejected, got {other:?}"),
@@ -672,7 +679,7 @@ mod tests {
             assert!(
                 matches!(
                     engine.play_with_id(engine.next_id, tone(1), "over", PlayOptions::one_shot()),
-                    Admission::Rejected(_)
+                    Admission::Rejected { .. }
                 ),
                 "the fifth play is rejected at the bound"
             );
