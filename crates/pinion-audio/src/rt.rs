@@ -35,12 +35,14 @@
 //! - **No reallocation.** The engine is bounded to a `max_voices` **voice
 //!   pool** whose backing `Vec` is pre-reserved
 //!   ([`AudioEngine::set_voice_capacity`]), so starting a voice never grows it.
-//!   At the bound the newest play is *rejected* (counted in
-//!   [`AudioSnapshot::rejected`]) rather than reallocating. Reject-newest is a
-//!   deliberate v1 budget policy, not the final word: a real game usually wants
-//!   priority-based **voice stealing** (evict the oldest / quietest), which
-//!   needs per-voice priority/age metadata `Voice` does not yet carry — a
-//!   follow-up, not a toggle.
+//!   At the bound the [`AudioEngine::voice_policy`] decides: the default
+//!   `RejectNewest` refuses the newcomer (counted in
+//!   [`AudioSnapshot::rejected`]), and `StealOldest` evicts the oldest live
+//!   voice to admit it (game-audio **voice stealing**, counted in
+//!   [`AudioSnapshot::stolen`]) — either way the pool never grows. Age (lowest
+//!   [`VoiceId`]) is the steal key; priority-weighted stealing (keep the
+//!   loudest / most important) is a documented refinement that would add
+//!   per-voice priority metadata `Voice` does not yet carry.
 //! - **No free on the audio thread.** A finished voice — or a play refused at
 //!   the bound — is not dropped on the callback; it is shipped back over a
 //!   second lock-free ring, the **resource-return queue**, and the control
@@ -57,7 +59,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::clip::AudioClip;
-use crate::engine::{AudioEngine, PlayOptions, VoiceId};
+use crate::engine::{Admission, AudioEngine, PlayOptions, VoiceId};
 use crate::mixer::Voice;
 use crate::spatial::{Attenuation, Listener, Vec3};
 
@@ -101,13 +103,13 @@ impl AudioEngine {
     /// arm delegates to the engine's own method so there is no divergent
     /// second implementation.
     ///
-    /// Returns a [`Voice`] the caller must dispose **off** the audio thread: a
-    /// `Play` refused at the voice-pool bound, whose `Arc`/`String` must not be
-    /// freed on the callback. Route it to the resource-return queue — the
-    /// real-time [`AudioRenderer::render`] does. `None` for every other command
-    /// and for an admitted play.
-    #[must_use = "a rejected voice must be routed to the resource-return queue, not dropped here"]
-    pub fn apply(&mut self, command: AudioCommand) -> Option<Voice> {
+    /// Returns an [`Admission`]: a `Play` at the voice-pool bound hands back a
+    /// [`Voice`] the caller must dispose **off** the audio thread (a rejected
+    /// newcomer, or a stolen victim), whose `Arc`/`String` must not be freed on
+    /// the callback. Route it to the resource-return queue — the real-time
+    /// [`AudioRenderer::render`] does. `Admitted` for every other command and
+    /// for an admitted play.
+    pub fn apply(&mut self, command: AudioCommand) -> Admission {
         match command {
             AudioCommand::Play {
                 id,
@@ -126,7 +128,7 @@ impl AudioEngine {
             AudioCommand::SetListener(listener) => self.set_listener(listener),
             AudioCommand::SetAttenuation(attenuation) => self.set_attenuation(attenuation),
         }
-        None
+        Admission::Admitted
     }
 }
 
@@ -194,8 +196,14 @@ pub struct AudioSnapshot {
     /// Total stereo frames rendered — a liveness / progress counter.
     frames_rendered: AtomicU64,
     /// Total plays refused at the voice-pool bound since the channel was
-    /// created — the control thread's view of voice-budget starvation.
+    /// created — the control thread's view of voice-budget starvation (only the
+    /// [`VoicePolicy::RejectNewest`](crate::VoicePolicy::RejectNewest) policy refuses).
     rejected: AtomicU64,
+    /// Total voices evicted to admit a newcomer at the bound since the channel
+    /// was created — nonzero only under [`VoicePolicy::StealOldest`](crate::VoicePolicy::StealOldest). The steal
+    /// peer of `rejected`: a full pool that admits by stealing counts here, not
+    /// there.
+    stolen: AtomicU64,
     /// Pre-allocated per-voice slots, one per pool voice. Allocated once at
     /// channel creation (control thread); the audio thread only writes into
     /// them, never grows them.
@@ -213,12 +221,15 @@ impl AudioSnapshot {
         }
     }
 
-    fn publish(&self, voice_count: u32, peak: f32, frames: u64, rejected: u64) {
+    fn publish(&self, voice_count: u32, peak: f32, frames: u64, rejected: u64, stolen: u64) {
         self.voice_count.store(voice_count, Ordering::Relaxed);
         self.peak_bits.store(peak.to_bits(), Ordering::Relaxed);
         self.frames_rendered.fetch_add(frames, Ordering::Relaxed);
         if rejected > 0 {
             self.rejected.fetch_add(rejected, Ordering::Relaxed);
+        }
+        if stolen > 0 {
+            self.stolen.fetch_add(stolen, Ordering::Relaxed);
         }
     }
 
@@ -293,6 +304,14 @@ impl AudioSnapshot {
     #[must_use]
     pub fn rejected(&self) -> u64 {
         self.rejected.load(Ordering::Relaxed)
+    }
+
+    /// Total voices evicted to admit a newcomer at the bound — the
+    /// [`VoicePolicy::StealOldest`](crate::VoicePolicy::StealOldest) peer of [`AudioSnapshot::rejected`]. Nonzero
+    /// means the pool is saturated but the game chose to steal rather than drop.
+    #[must_use]
+    pub fn stolen(&self) -> u64 {
+        self.stolen.load(Ordering::Relaxed)
     }
 
     /// The live voices as of the last published render, read lock-free off the
@@ -517,10 +536,11 @@ impl AudioRenderer {
     /// allocates nothing (the render buffer is the caller's, the command ring
     /// is pre-allocated, and the voice pool is pre-reserved so no play grows
     /// it). It also frees nothing on the audio thread **unless the return ring
-    /// is full**: a finished voice, or a play refused at the pool bound, is
-    /// pushed to the resource-return queue for the control thread to free; only
-    /// on an overflow (which the ring is sized to preclude under the
-    /// reclaim-in-send contract) does a voice fall back to a drop here.
+    /// is full**: a finished voice, a play refused at the pool bound, or a voice
+    /// stolen to admit a newcomer is pushed to the resource-return queue for the
+    /// control thread to free; only on an overflow (which the ring is sized to
+    /// preclude under the reclaim-in-send contract) does a voice fall back to a
+    /// drop here.
     pub fn render(&mut self, out: &mut [f32]) {
         // Destructure for disjoint borrows: the reap closure needs `retired`
         // while `render_reaping` holds `engine` mutably.
@@ -532,25 +552,37 @@ impl AudioRenderer {
         } = self;
 
         let mut rejected = 0u64;
+        let mut stolen = 0u64;
         while let Ok(command) = consumer.pop() {
             let frees_a_slot = matches!(command, AudioCommand::Stop(_) | AudioCommand::StopAll);
-            // The id to pair a refused voice with (only a `Play` can be refused).
+            // The id to pair a refused newcomer with (only a `Play` is refused).
             let play_id = if let AudioCommand::Play { id, .. } = &command {
                 Some(*id)
             } else {
                 None
             };
-            if let Some(refused) = engine.apply(command) {
-                // A play refused at the voice-pool bound: return it (with its id)
-                // for off-thread disposal rather than freeing its clip here. Only
-                // a `Play` is ever refused, so `play_id` is always `Some`; the
-                // `if let` keeps the audio callback panic-free (an impossible
-                // `None` would drop the voice here — the same audio-thread free
-                // as the ring-full fallback — never a panic).
-                rejected += 1;
-                debug_assert!(play_id.is_some(), "only a Play command is ever refused");
-                if let Some(id) = play_id {
-                    return_voice(retired, id, refused);
+            match engine.apply(command) {
+                Admission::Admitted => {}
+                Admission::Rejected(refused) => {
+                    // A play refused at the voice-pool bound: return the newcomer
+                    // (with its id) for off-thread disposal, not freed here. Only
+                    // a `Play` is ever refused, so `play_id` is always `Some`; the
+                    // `if let` keeps the audio callback panic-free (an impossible
+                    // `None` drops the voice here — the same audio-thread free as
+                    // the ring-full fallback — never a panic).
+                    rejected += 1;
+                    debug_assert!(play_id.is_some(), "only a Play command is ever refused");
+                    if let Some(id) = play_id {
+                        return_voice(retired, id, refused);
+                    }
+                }
+                Admission::Stole { victim_id, victim } => {
+                    // The newcomer was admitted by evicting `victim`: dispose the
+                    // victim off-thread (keyed by its own id, not the newcomer's).
+                    // Not a rejection — the play succeeded — so it counts as a
+                    // steal, not toward `rejected`.
+                    stolen += 1;
+                    return_voice(retired, victim_id, victim);
                 }
             }
             if frees_a_slot {
@@ -569,7 +601,7 @@ impl AudioRenderer {
         let block_peak = crate::backend::peak(out);
         let frames = (out.len() / 2) as u64;
         let voice_count = u32::try_from(engine.voice_count()).unwrap_or(u32::MAX);
-        snapshot.publish(voice_count, block_peak, frames, rejected);
+        snapshot.publish(voice_count, block_peak, frames, rejected, stolen);
     }
 
     /// The owned engine — for a headless test or single-thread introspection
@@ -764,13 +796,17 @@ mod tests {
                     [0.0, 0.0, -1.0],
                     [0.0, 1.0, 0.0],
                 )))
-                .is_none()
+                .is_admitted()
         );
         let p = engine.listener().position;
         assert!(
             (p[0] - 1.0).abs() < 1e-6 && (p[1] - 2.0).abs() < 1e-6 && (p[2] - 3.0).abs() < 1e-6
         );
-        assert!(engine.apply(AudioCommand::SetMasterGain(0.25)).is_none());
+        assert!(
+            engine
+                .apply(AudioCommand::SetMasterGain(0.25))
+                .is_admitted()
+        );
         assert!((engine.master_gain() - 0.25).abs() < 1e-6);
     }
 
@@ -1053,5 +1089,48 @@ mod tests {
         // next_id was never advanced, so the id a later play would get has no
         // stale label.
         assert_eq!(ctl.label_of(1), None, "refused play recorded no label");
+    }
+
+    #[test]
+    fn rt_steal_oldest_admits_newcomer_prunes_victim_and_counts() {
+        use crate::engine::VoicePolicy;
+        let mut engine = AudioEngine::new(48_000);
+        engine.set_voice_policy(VoicePolicy::StealOldest);
+        let (mut ctl, mut renderer) = realtime_channel(engine, 16, 2);
+        let a = ctl
+            .play(tone(4096), "a", PlayOptions::one_shot())
+            .expect("queued");
+        let b = ctl
+            .play(tone(4096), "b", PlayOptions::one_shot())
+            .expect("queued");
+        let c = ctl
+            .play(tone(4096), "c", PlayOptions::one_shot())
+            .expect("queued");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+
+        // The third play was admitted by stealing the oldest — not rejected.
+        assert_eq!(ctl.snapshot().voice_count(), 2, "pool still full");
+        assert_eq!(ctl.snapshot().stolen(), 1, "one steal");
+        assert_eq!(
+            ctl.snapshot().rejected(),
+            0,
+            "no rejection under StealOldest"
+        );
+        let ids: Vec<VoiceId> = ctl.snapshot().voices().iter().map(|v| v.id).collect();
+        assert!(
+            ids.contains(&b) && ids.contains(&c) && !ids.contains(&a),
+            "newcomer c replaced oldest a: {ids:?}"
+        );
+        // The evicted voice's label is pruned on reclaim (its id crossed the
+        // return queue), while the newcomer's label is kept.
+        assert_eq!(
+            ctl.label_of(a),
+            Some("a"),
+            "victim label lives until reclaim"
+        );
+        assert!(ctl.reclaim() >= 1, "the stolen victim is reclaimed");
+        assert_eq!(ctl.label_of(a), None, "victim label pruned");
+        assert_eq!(ctl.label_of(c), Some("c"), "newcomer label kept");
     }
 }

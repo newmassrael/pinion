@@ -81,6 +81,56 @@ impl PlayOptions {
     }
 }
 
+/// What happens when a play arrives at a full bounded voice pool.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VoicePolicy {
+    /// Refuse the newcomer, keeping every live voice — the real-time voice
+    /// budget's v1 default. The refused play is counted in
+    /// [`crate::AudioSnapshot::rejected`].
+    #[default]
+    RejectNewest,
+    /// Evict the oldest live voice (lowest [`VoiceId`]) to make room, and admit
+    /// the newcomer — game-audio "voice stealing". Age is the eviction key: the
+    /// pool mints ids monotonically, so the lowest id is the oldest voice.
+    /// Priority-weighted stealing (keep the most important / loudest) is a
+    /// documented refinement that would add per-voice priority metadata `Voice`
+    /// does not yet carry — a follow-up, not this policy.
+    StealOldest,
+}
+
+/// The outcome of admitting a play at the (possibly bounded) pool — what, if
+/// anything, the caller must dispose off the audio thread.
+#[derive(Debug)]
+#[must_use = "a returned voice must be disposed off the audio thread, not dropped on it"]
+pub enum Admission {
+    /// The newcomer was admitted and nothing was displaced.
+    Admitted,
+    /// The pool was full and the newcomer was refused
+    /// ([`VoicePolicy::RejectNewest`]); its un-admitted [`Voice`] is handed back
+    /// for off-thread disposal.
+    Rejected(Voice),
+    /// The pool was full and the newcomer was admitted by evicting `victim`
+    /// ([`VoicePolicy::StealOldest`]) — the evicted voice is handed back for
+    /// off-thread disposal, keyed by its id.
+    Stole {
+        /// The evicted voice's id, so the control thread can prune its
+        /// bookkeeping (label map).
+        victim_id: VoiceId,
+        /// The evicted voice, for off-thread disposal.
+        victim: Voice,
+    },
+}
+
+impl Admission {
+    /// Whether the newcomer was admitted with nothing handed back to dispose
+    /// (either an admit into a free slot, or a steal that displaced a victim —
+    /// both put the newcomer in the pool; only `Rejected` did not).
+    #[must_use]
+    pub fn is_admitted(&self) -> bool {
+        matches!(self, Admission::Admitted | Admission::Stole { .. })
+    }
+}
+
 /// A voice's gain/pan after spatialisation — what the mixer is actually
 /// driven with, and what introspection reports.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,6 +184,9 @@ pub struct AudioEngine {
     /// a play at the bound rather than reallocating — the real-time voice
     /// budget (see [`AudioEngine::set_voice_capacity`]).
     voice_capacity: Option<usize>,
+    /// What a full-pool play does (reject the newcomer or steal the oldest).
+    /// Only meaningful for a bounded engine.
+    voice_policy: VoicePolicy,
 }
 
 impl AudioEngine {
@@ -152,7 +205,20 @@ impl AudioEngine {
             listener: Listener::default(),
             attenuation: Attenuation::default(),
             voice_capacity: None,
+            voice_policy: VoicePolicy::default(),
         }
+    }
+
+    /// The full-pool policy (reject the newcomer, or steal the oldest voice).
+    #[must_use]
+    pub fn voice_policy(&self) -> VoicePolicy {
+        self.voice_policy
+    }
+
+    /// Set the full-pool policy. `RejectNewest` (default) refuses a play at the
+    /// bound; `StealOldest` evicts the oldest live voice to admit it.
+    pub fn set_voice_policy(&mut self, policy: VoicePolicy) {
+        self.voice_policy = policy;
     }
 
     /// Bound the engine to `max_voices` simultaneous voices and pre-reserve the
@@ -207,7 +273,7 @@ impl AudioEngine {
             "AudioEngine::play is the unbounded path; drive a bounded engine via AudioController"
         );
         let id = self.next_id;
-        // Unbounded, so this never rejects (the returned Option is always None).
+        // Unbounded, so this always admits (never rejects or steals).
         let _ = self.play_with_id(id, clip, label, opts);
         id
     }
@@ -217,33 +283,58 @@ impl AudioEngine {
     /// own counter is advanced past `id` so a later [`AudioEngine::play`]
     /// cannot collide with it.
     ///
-    /// Returns the un-admitted [`Voice`] when the engine is at its bounded
-    /// voice-pool capacity ([`AudioEngine::set_voice_capacity`]): the pool is
-    /// full and growing it would reallocate on the audio thread, so the voice
-    /// is handed back instead for the caller to dispose off-thread. Returns
-    /// `None` when the voice is admitted, and — for an unbounded engine —
-    /// always admits.
-    #[must_use = "a rejected voice must be disposed off the audio thread, not dropped on it"]
+    /// Returns an [`Admission`] describing what the caller must dispose off the
+    /// audio thread. At the bounded voice-pool capacity
+    /// ([`AudioEngine::set_voice_capacity`]) the pool is full and growing it
+    /// would reallocate on the audio thread, so per the [`VoicePolicy`] either
+    /// the newcomer is refused (`Rejected`) or the oldest live voice is evicted
+    /// to admit it (`Stole`); the handed-back voice must be disposed off-thread.
+    /// An admitted play (and every play on an unbounded engine) returns
+    /// `Admitted`.
     pub fn play_with_id(
         &mut self,
         id: VoiceId,
         clip: Arc<AudioClip>,
         label: impl Into<String>,
         opts: PlayOptions,
-    ) -> Option<Voice> {
+    ) -> Admission {
         let mut voice = Voice::new(clip, label, opts.gain, opts.pan, opts.looping);
         if let Some(pos) = opts.position {
             voice = voice.with_position(pos);
         }
         if let Some(cap) = self.voice_capacity {
             if self.voices.len() >= cap {
-                // At the pre-allocated bound: reject rather than reallocate.
-                return Some(voice);
+                // At the pre-allocated bound: grow would reallocate on the audio
+                // thread, so apply the full-pool policy instead.
+                match self.voice_policy {
+                    VoicePolicy::RejectNewest => return Admission::Rejected(voice),
+                    VoicePolicy::StealOldest => {
+                        // Evict the oldest live voice (lowest id — ids are minted
+                        // monotonically) to free a slot for the newcomer.
+                        // `remove` is O(pool) and keeps the reserved capacity, so
+                        // it neither reallocates nor frees the buffer (still
+                        // real-time-safe); an empty pool (cap 0) has nothing to
+                        // steal, so the newcomer is refused.
+                        let Some(idx) = self
+                            .voices
+                            .iter()
+                            .enumerate()
+                            .min_by_key(|(_, (vid, _))| *vid)
+                            .map(|(i, _)| i)
+                        else {
+                            return Admission::Rejected(voice);
+                        };
+                        let (victim_id, victim) = self.voices.remove(idx);
+                        self.next_id = self.next_id.max(id.saturating_add(1));
+                        self.voices.push((id, voice));
+                        return Admission::Stole { victim_id, victim };
+                    }
+                }
             }
         }
         self.next_id = self.next_id.max(id.saturating_add(1));
         self.voices.push((id, voice));
-        None
+        Admission::Admitted
     }
 
     /// Stop the voice with `id` (it stops contributing and is dropped on the
@@ -505,7 +596,7 @@ mod tests {
             assert!(
                 engine
                     .play_with_id(id, tone(4), "v", PlayOptions::one_shot())
-                    .is_none(),
+                    .is_admitted(),
                 "unbounded engine never rejects"
             );
         }
@@ -520,21 +611,21 @@ mod tests {
         assert!(
             engine
                 .play_with_id(1, tone(64), "a", PlayOptions::one_shot())
-                .is_none()
+                .is_admitted()
         );
         assert!(
             engine
                 .play_with_id(2, tone(64), "b", PlayOptions::one_shot())
-                .is_none()
+                .is_admitted()
         );
-        // The pool is full: the third play is refused and its voice handed back.
-        let refused = engine.play_with_id(3, tone(64), "c", PlayOptions::one_shot());
-        assert!(refused.is_some(), "third play rejected at the bound");
-        assert_eq!(
-            refused.unwrap().label(),
-            "c",
-            "the rejected voice is returned"
-        );
+        // The pool is full and the default policy is RejectNewest: the third
+        // play is refused and its voice handed back.
+        match engine.play_with_id(3, tone(64), "c", PlayOptions::one_shot()) {
+            Admission::Rejected(voice) => {
+                assert_eq!(voice.label(), "c", "the rejected voice is returned");
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
         assert_eq!(engine.voice_count(), 2, "only the pool-sized set is live");
     }
 
@@ -554,19 +645,57 @@ mod tests {
                 assert!(
                     engine
                         .play_with_id(id, tone(1), "v", PlayOptions::one_shot())
-                        .is_none()
+                        .is_admitted()
                 );
             }
             assert!(
-                engine
-                    .play_with_id(engine.next_id, tone(1), "over", PlayOptions::one_shot())
-                    .is_some(),
+                matches!(
+                    engine.play_with_id(engine.next_id, tone(1), "over", PlayOptions::one_shot()),
+                    Admission::Rejected(_)
+                ),
                 "the fifth play is rejected at the bound"
             );
             let mut out = [0.0f32; 8]; // 4 output frames > the 1-frame clips
             engine.render(&mut out);
             assert_eq!(engine.voice_count(), 0, "all one-shots reaped");
             assert_eq!(engine.voices.capacity(), reserved, "no reallocation");
+        }
+    }
+
+    #[test]
+    fn steal_oldest_policy_evicts_the_oldest_and_admits_the_newcomer() {
+        let mut engine = AudioEngine::new(48_000);
+        engine.set_voice_capacity(2);
+        engine.set_voice_policy(VoicePolicy::StealOldest);
+        assert!(
+            engine
+                .play_with_id(1, tone(64), "a", PlayOptions::one_shot())
+                .is_admitted()
+        );
+        assert!(
+            engine
+                .play_with_id(2, tone(64), "b", PlayOptions::one_shot())
+                .is_admitted()
+        );
+        // Pool full: the newcomer STEALS the oldest (id 1) instead of being
+        // rejected, and the evicted voice is handed back keyed by its own id.
+        match engine.play_with_id(3, tone(64), "c", PlayOptions::one_shot()) {
+            Admission::Stole { victim_id, victim } => {
+                assert_eq!(victim_id, 1, "the oldest voice is evicted");
+                assert_eq!(victim.label(), "a", "the evicted voice is returned");
+            }
+            other => panic!("expected Stole, got {other:?}"),
+        }
+        assert_eq!(engine.voice_count(), 2, "still pool-sized");
+        let live: Vec<VoiceId> = engine.voices().map(|(id, _)| id).collect();
+        assert!(
+            live.contains(&2) && live.contains(&3) && !live.contains(&1),
+            "the newcomer replaced the oldest: {live:?}"
+        );
+        // A further newcomer steals the now-oldest live voice (id 2).
+        match engine.play_with_id(4, tone(64), "d", PlayOptions::one_shot()) {
+            Admission::Stole { victim_id, .. } => assert_eq!(victim_id, 2, "next oldest"),
+            other => panic!("expected Stole, got {other:?}"),
         }
     }
 }

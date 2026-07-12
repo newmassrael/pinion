@@ -406,6 +406,7 @@ impl ExternalIntrospect for AudioControllerExternal {
             ("peak", "float"),
             ("frames_rendered", "int"),
             ("rejected", "int"),
+            ("stolen", "int"),
             // Per-voice detail read off the lock-free per-voice slots + the
             // control-thread label map.
             ("voices", "json"),
@@ -425,6 +426,7 @@ impl ExternalIntrospect for AudioControllerExternal {
             "peak" => Some(IntrospectValue::Float(f64::from(snapshot.peak()))),
             "frames_rendered" => Some(IntrospectValue::Int(int_of_u64(snapshot.frames_rendered()))),
             "rejected" => Some(IntrospectValue::Int(int_of_u64(snapshot.rejected()))),
+            "stolen" => Some(IntrospectValue::Int(int_of_u64(snapshot.stolen()))),
             // Join the lock-free per-voice numeric slots with the control-thread
             // label map (an atomic slot cannot hold the `String` label).
             "voices" => {
@@ -1318,5 +1320,35 @@ mod tests {
             ext.intervene("voices", IntrospectValue::Json(serde_json::json!([]))),
             Err(InterveneError::ReadOnly)
         ));
+    }
+
+    #[test]
+    fn rt_stolen_metric_surfaces_voice_stealing() {
+        use crate::engine::VoicePolicy;
+        // A StealOldest engine, pool of 2: a third play is admitted by stealing,
+        // observable as the `stolen` metric over RPC (and `rejected` stays 0).
+        let mut engine = AudioEngine::new(48_000);
+        engine.set_voice_policy(VoicePolicy::StealOldest);
+        let (controller, mut renderer) = crate::rt::realtime_channel(engine, 16, 2);
+        let mut ext = AudioControllerExternal::new(controller)
+            .with_clip("bell", AudioClip::new(48_000, 1, vec![1.0; 4096]).shared());
+        for _ in 0..3 {
+            ext.invoke("play", IntrospectValue::Text("bell".to_string()))
+                .expect("play queued");
+        }
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(2))
+        ));
+        assert!(
+            matches!(ext.query("stolen"), Some(IntrospectValue::Int(1))),
+            "the steal is introspectable"
+        );
+        assert!(
+            matches!(ext.query("rejected"), Some(IntrospectValue::Int(0))),
+            "no rejection under StealOldest"
+        );
     }
 }
