@@ -1,14 +1,26 @@
-//! Manual device-output smoke check for the cpal backend (R1282).
+//! Manual device-output smoke check for the cpal backend (R1282, R1309).
 //!
 //! Run on a machine with an audio device + `libasound2-dev`:
 //! `cargo run -p pinion-audio --example device_out --features cpal-backend`
 //!
-//! It opens the default output, plays a real FLAC-decoded clip through the
-//! lock-free command queue, and confirms the audio-thread callback actually
-//! ran by reading `frames_rendered` back off the snapshot. This is *not* a
-//! committed auto-test: it depends on a real device, so it would be flaky /
-//! unbuildable in CI — exactly the kind of hardware-gated check that belongs
-//! in a runnable example, not the test suite.
+//! It opens an output, plays a real FLAC-decoded clip through the lock-free
+//! command queue, and confirms the audio-thread callback actually ran by
+//! reading `frames_rendered` back off the snapshot. This is *not* a committed
+//! auto-test: it depends on a real device, so it would be flaky / unbuildable
+//! in CI — exactly the kind of hardware-gated check that belongs in a runnable
+//! example, not the test suite.
+//!
+//! With no argument it opens the **host default** — which is audible, so it
+//! plays out of the real speakers. Pass a device name (R1309) to route it
+//! elsewhere; with no name it also prints the devices it could have used:
+//!
+//! ```text
+//! cargo run -p pinion-audio --example device_out --features cpal-backend -- "hw:CARD=Dummy,DEV=0"
+//! ```
+//!
+//! An ALSA `snd-dummy` card (`sudo modprobe snd-dummy`) is a *silent* device
+//! with a real timer-paced callback — the same trick the `hello-audio-device`
+//! wire demo uses to run the real device path without making a sound.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,9 +31,20 @@ use pinion_audio::{CpalOutput, PlayOptions, decode_compressed};
 const CHIME_FLAC: &[u8] = include_bytes!("../tests/fixtures/tone.flac");
 
 fn main() {
+    let requested = std::env::args().nth(1);
+
+    match CpalOutput::output_device_names() {
+        Ok(names) => println!("output devices: {names:?}"),
+        Err(e) => eprintln!("device_out: could not enumerate devices: {e}"),
+    }
+
     // 64-command ring, 32-voice pool (the audio thread never reallocates; a
     // 33rd simultaneous voice would be rejected and counted in the snapshot).
-    let (mut controller, out) = match CpalOutput::start_default(64, 32) {
+    let opened = match &requested {
+        Some(name) => CpalOutput::start_on(name, 64, 32),
+        None => CpalOutput::start_default(64, 32),
+    };
+    let (mut controller, out) = match opened {
         Ok(pair) => pair,
         Err(e) => {
             eprintln!("device_out: no audio output available: {e}");
@@ -29,7 +52,8 @@ fn main() {
         }
     };
     println!(
-        "device open: {} Hz, {} channel(s)",
+        "device open: {:?} — {} Hz, {} channel(s)",
+        out.device_name(),
         out.sample_rate(),
         out.channels()
     );
