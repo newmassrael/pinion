@@ -1,0 +1,35 @@
+[package]
+name = "hello-no-primary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "a no-primary WidgetCore binding (all interactive surfaces are dynamic extras — the self-hosted-editor archetype) driven over JSON-RPC: the R1303/R1306/R1307 PR-51 forcing consumer proving primary_surface()==None composes, routes, and self-describes the bare /external absence over the real wire"
+publish = false
+
+[[bin]]
+name = "hello-no-primary"
+path = "src/main.rs"
+
+[dependencies]
+# Scene primitives + the External / IntrospectValue introspection triad +
+# the WidgetCore binding trait (incl. PrimarySurface / ExtraExternal).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# WidgetA11y supertrait of WidgetView (this binding uses the default,
+# a11y-empty impl — the panes expose no bespoke AT nodes).
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# The GUI AppShell: winit window + Vello + the built-in stdin JSON-RPC
+# reader (reply -> stdout) that makes the binding RpcSubprocess-driveable.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# The concrete VelloRenderer the forge codegen (app.pinion.xml) emits is
+# `::vello::*`-qualified, so the include names the vello crate directly.
+vello = { workspace = true }
+
+[build-dependencies]
+# Build-time codegen for the `HelloNoPrimaryRenderer` Vello wrapper from
+# `app.pinion.xml` — identical pattern to hello-button.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

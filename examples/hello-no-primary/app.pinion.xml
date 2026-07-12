@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1308 §5.16 pinion-forge renderer manifest for hello-no-primary.
+  Emits a `HelloNoPrimaryRenderer` Vello-backed struct (same emit
+  template as hello-button's `HelloButtonRenderer`; only the struct
+  name differs). `aa` omitted → defaults to Area (UI-canonical).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloNoPrimaryRenderer"
+        backend="vello"/>
