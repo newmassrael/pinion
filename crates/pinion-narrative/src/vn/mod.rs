@@ -19,26 +19,36 @@
 //!
 //! - [`model`] — the authored [`VnScript`] contract ([`VnStep`] /
 //!   [`VnOption`]), `serde`-derived and tolerant.
-//! - [`state`] — [`VnState`], the reactive deterministic play-head, and the
-//!   [`use_vn_state`] one-Rc SSOT hook.
+//! - [`state`] — [`VnState`], the reactive deterministic play-head, the
+//!   [`VnSave`] save state, and the [`use_vn_state`] one-Rc SSOT hook.
+//! - [`stage`] — [`VnStage`], the imperative background + sprite director
+//!   ([`VnSprite`] / [`SpritePos`] / [`StageData`]), projected into
+//!   `Scene::Image` nodes.
 //! - [`external`] — [`VnExternal`], the §5.15 AI-first drive surface
-//!   (query / intervene / invoke `tick` / `advance` / `choose`).
-//! - [`view`] — [`vn_scene`], the read-side structured-scene projection.
+//!   (query / intervene / invoke `tick` / `advance` / `choose` / `save` /
+//!   `load` + the stage director verbs).
+//! - [`view`] — [`vn_scene`], the read-side structured-scene projection
+//!   (stage images + dialogue box).
 //!
-//! ## What stays out (this round, by design)
+//! ## What stays out (by design)
 //!
-//! Sprite / background director, transitions (dissolve / fade / shake),
-//! save/load serialization, real-time frame-driven play (wiring the runner
-//! to the shell's frame delta / the game-loop `scene/tick`), and
-//! outcome→world-line branching are all deferred follow-ups. This round is
-//! the VN heart — typewriter + timed-choice — proven over the wire.
+//! Transitions (dissolve / fade / shake), real-time frame-driven play (wiring
+//! the runner to the shell's frame delta / the game-loop `scene/tick`), and
+//! outcome→world-line branch *mapping* (connecting a chosen outcome to a
+//! Mnemosyne world-line) are deferred follow-ups. Typewriter + timed-choice
+//! (R1295), branching (R1296), save/load (R1297), and the sprite/background
+//! director (R1298) are landed.
 
 pub mod external;
 pub mod model;
+pub mod stage;
 pub mod state;
 pub mod view;
 
 pub use external::{ADVANCED_INTENT, CHOSEN_INTENT, TIMEOUT_INTENT, VnExternal};
 pub use model::{VnOption, VnScript, VnStep};
-pub use state::{ChooseError, VnCursor, VnMode, VnResolution, VnRuntime, VnState, use_vn_state};
+pub use stage::{SpritePos, StageData, VnSprite, VnStage};
+pub use state::{
+    ChooseError, VnCursor, VnMode, VnResolution, VnRuntime, VnSave, VnState, use_vn_state,
+};
 pub use view::vn_scene;

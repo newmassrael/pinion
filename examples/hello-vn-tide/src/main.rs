@@ -61,7 +61,7 @@ use pinion_core::reactive::Owner;
 use pinion_core::scene::Scene;
 use pinion_core::storage::Storage;
 use pinion_core::{Frame, WidgetCore};
-use pinion_narrative::vn::state::{VnCursor, VnRuntime};
+use pinion_narrative::vn::state::{VnCursor, VnSave};
 use pinion_narrative::{VnExternal, VnOption, VnScript, VnState, VnStep, use_vn_state, vn_scene};
 use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -152,6 +152,9 @@ impl std::fmt::Debug for VnSaveDemoExternal {
 impl VnSaveDemoExternal {
     fn new() -> Self {
         let state = vn_state();
+        // Author the opening stage: the tide-flat background is up before the
+        // first line (the demo then directs sprites on / off it).
+        state.stage().set_background("tideflat");
         Self {
             inner: VnExternal::new(state.clone()),
             state,
@@ -202,9 +205,9 @@ impl ExternalIntrospect for VnSaveDemoExternal {
                 let key = slot_name(&args)?;
                 match self.storage.load(&key) {
                     Some(bytes) => {
-                        let runtime: VnRuntime =
+                        let save: VnSave =
                             serde_json::from_slice(&bytes).map_err(|_| InvokeError::Rejected)?;
-                        self.state.load(runtime);
+                        self.state.load(save);
                         Ok(IntrospectValue::json(&self.state.save()))
                     }
                     None => Err(InvokeError::Rejected),

@@ -27,6 +27,7 @@ use pinion_core::reactive::{Owner, Signal};
 use serde::{Deserialize, Serialize};
 
 use crate::vn::model::{VnScript, VnStep};
+use crate::vn::stage::{StageData, VnStage};
 
 /// Typewriter reveal rate, characters per second. A line of `n` characters
 /// is fully revealed after `n / CPS` seconds of accumulated `tick` time.
@@ -109,21 +110,36 @@ pub struct VnCursor {
     pub remaining_ms: u32,
 }
 
+/// The complete save state of a play-through: the dialogue play-head *and*
+/// the visual stage, so a load restores exactly what was on screen. Every
+/// field is `#[serde(default)]` so a partial / older save loads tolerantly.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VnSave {
+    /// The dialogue play-head (step / reveal / countdown / resolution).
+    #[serde(default)]
+    pub runtime: VnRuntime,
+    /// The visual stage (background + sprites).
+    #[serde(default)]
+    pub stage: StageData,
+}
+
 /// The reactive VN read/drive-model.
 #[derive(Debug)]
 pub struct VnState {
     script: Rc<VnScript>,
     runtime: Signal<VnRuntime>,
+    stage: VnStage,
 }
 
 impl VnState {
     /// Build a fresh runner over `script`, positioned at the first step
-    /// with nothing revealed and no timer elapsed.
+    /// with nothing revealed, no timer elapsed, and an empty stage.
     #[must_use]
     pub fn new(script: VnScript) -> Self {
         Self {
             script: Rc::new(script),
             runtime: Signal::new(VnRuntime::default()),
+            stage: VnStage::new(),
         }
     }
 
@@ -131,6 +147,12 @@ impl VnState {
     #[must_use]
     pub fn script(&self) -> &VnScript {
         &self.script
+    }
+
+    /// The visual stage director (background + sprites).
+    #[must_use]
+    pub fn stage(&self) -> &VnStage {
+        &self.stage
     }
 
     /// The current runtime snapshot.
@@ -367,27 +389,32 @@ impl VnState {
         true
     }
 
-    /// The complete save state of this play-through — hand it back to
-    /// [`load`](Self::load) later to resume exactly here. Just the current
-    /// [`VnRuntime`] (which is `Copy + serde`), named for the save/load pair.
+    /// The complete save state of this play-through — the dialogue play-head
+    /// *and* the visual stage — to hand back to [`load`](Self::load) later and
+    /// resume exactly here.
     #[must_use]
-    pub fn save(&self) -> VnRuntime {
-        self.runtime.get()
+    pub fn save(&self) -> VnSave {
+        VnSave {
+            runtime: self.runtime.get(),
+            stage: self.stage.data(),
+        }
     }
 
-    /// Restore the play-head from a saved [`VnRuntime`] — the load half of
+    /// Restore the play-head and stage from a [`VnSave`] — the load half of
     /// save/load. The saved `step` is clamped into `[0, len]`, so a save
     /// written against a different / shorter script cannot land out of range;
     /// a dangling `resolved` pointer degrades to no readable outcome (see
     /// [`resolved_option`](Self::resolved_option)) rather than a panic.
     /// `elapsed_ms` / `snapped` are restored as-is — they re-derive the
-    /// typewriter reveal and the countdown deterministically.
-    pub fn load(&self, runtime: VnRuntime) {
+    /// typewriter reveal and the countdown deterministically — and the whole
+    /// stage is restored so a load brings back what was on screen.
+    pub fn load(&self, save: VnSave) {
         let max = u16::try_from(self.script.len()).unwrap_or(u16::MAX);
         self.runtime.set(VnRuntime {
-            step: runtime.step.min(max),
-            ..runtime
+            step: save.runtime.step.min(max),
+            ..save.runtime
         });
+        self.stage.set_data(save.stage);
     }
 
     /// The most-recently resolved choice, if any.
@@ -635,31 +662,33 @@ mod tests {
     }
 
     #[test]
-    fn save_and_load_round_trip_restores_the_play_head() {
+    fn save_and_load_round_trip_restores_play_head_and_stage() {
+        use crate::vn::stage::{SpritePos, VnSprite};
         with_state(|s| {
-            // Drive to a distinctive mid-line state: partway through the
-            // 무녀 line's reveal on step 0's follow-on.
+            // Drive to a distinctive mid-line state AND stage a sprite.
             assert!(!s.tick(100)); // reveal 4 chars of the first line
+            s.stage().set_background("tideflat");
+            s.stage()
+                .show(VnSprite::new("mudang", "calm", SpritePos::Center, 1));
             let saved = s.save();
-            assert_eq!(saved.step, 0);
-            assert_eq!(s.revealed_chars(), 4);
+            assert_eq!(saved.runtime.step, 0);
+            assert_eq!(saved.stage.sprites.len(), 1);
 
-            // Mutate away: snap, step onto the choice, drain the timer.
+            // Mutate both surfaces away.
             assert!(s.advance());
             assert!(s.advance());
             assert_eq!(s.mode(), VnMode::Choice);
-            assert!(!s.tick(1000));
+            assert!(s.stage().hide("mudang"));
+            assert!(s.stage().clear_background());
             assert_ne!(s.save(), saved, "state moved on");
 
-            // Load restores exactly the saved play-head.
-            s.load(saved);
+            // Load restores exactly the saved play-head AND stage.
+            s.load(saved.clone());
             assert_eq!(s.save(), saved);
             assert_eq!(s.mode(), VnMode::Line);
-            assert_eq!(
-                s.revealed_chars(),
-                4,
-                "reveal re-derived from restored elapsed"
-            );
+            assert_eq!(s.revealed_chars(), 4, "reveal re-derived from elapsed");
+            assert_eq!(s.stage().background().as_deref(), Some("tideflat"));
+            assert_eq!(s.stage().sprite_count(), 1, "the sprite came back");
         });
     }
 
@@ -668,29 +697,35 @@ mod tests {
         with_state(|s| {
             // A save written against a longer script (or a corrupt one) with a
             // step past the end must clamp to End, not panic or read garbage.
-            s.load(VnRuntime {
-                step: 999,
-                ..VnRuntime::default()
+            s.load(VnSave {
+                runtime: VnRuntime {
+                    step: 999,
+                    ..VnRuntime::default()
+                },
+                ..VnSave::default()
             });
             assert_eq!(s.mode(), VnMode::End);
-            assert_eq!(s.save().step, u16::try_from(s.step_count()).unwrap());
+            assert_eq!(
+                s.save().runtime.step,
+                u16::try_from(s.step_count()).unwrap()
+            );
         });
     }
 
     #[test]
-    fn saved_runtime_survives_a_json_round_trip() {
+    fn save_survives_a_json_round_trip_and_is_tolerant() {
         with_state(|s| {
             assert!(s.goto(1));
             s.choose(0).expect("choose"); // a resolved state to serialize
             let saved = s.save();
             let json = serde_json::to_string(&saved).expect("serialize");
-            let back: VnRuntime = serde_json::from_str(&json).expect("deserialize");
+            let back: VnSave = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(back, saved, "the save blob round-trips through JSON");
             // A partial blob loads tolerantly (missing fields -> defaults).
-            let partial: VnRuntime = serde_json::from_str(r#"{"step":2}"#).expect("partial");
-            assert_eq!(partial.step, 2);
-            assert_eq!(partial.elapsed_ms, 0);
-            assert!(partial.resolved.is_none());
+            let partial: VnSave =
+                serde_json::from_str(r#"{"runtime":{"step":2}}"#).expect("partial");
+            assert_eq!(partial.runtime.step, 2);
+            assert!(partial.stage.sprites.is_empty());
         });
     }
 }

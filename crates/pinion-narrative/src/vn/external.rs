@@ -5,17 +5,18 @@
 //! introspection triad so an AI agent (or the `hello-vn-tide` python demo)
 //! drives the whole set-piece as data:
 //!
-//! - **query** — `mode` / `step` / `step_count` / `speaker` / `line` /
-//!   `revealed` / `revealed_chars` / `line_len` / `fully_revealed` /
+//! - **query** — the dialogue: `mode` / `step` / `step_count` / `speaker` /
+//!   `line` / `revealed` / `revealed_chars` / `line_len` / `fully_revealed` /
 //!   `prompt` / `options` / `option_count` / `timeout_ms` / `remaining_ms` /
 //!   `expired` / `resolved` / `outcome` / `outcome_label` / `timed_out` /
-//!   `script`.
+//!   `script`; and the stage: `background` / `sprites` / `sprite_count`.
 //! - **intervene** — set `step` to scrub the play-head (clamped) — the
 //!   save/load + AI-scrub seam.
-//! - **invoke** — the deterministic verbs `tick {ms}` (advance logical
-//!   time), `advance` (snap / step a line), `choose {index}` (take a choice
-//!   option), and the save/load pair `save` (return the play-head as an
-//!   opaque JSON blob) / `load {blob}` (restore it).
+//! - **invoke** — the dialogue verbs `tick {ms}` / `advance` /
+//!   `choose {index}`; the save/load pair `save` (return the whole save state
+//!   as an opaque JSON blob) / `load {blob}`; and the stage director verbs
+//!   `set_background {source}` / `clear_background` / `show {id,source,at?,layer?}`
+//!   / `hide {id}` / `move {id,at}` / `set_sprite_source {id,source}`.
 //!
 //! Every state transition emits a §5.20 intent (`vn.advanced` /
 //! `vn.timeout` / `vn.chosen`) so the shell repaints and an RPC observer can
@@ -45,7 +46,8 @@ use pinion_core::external::{
 use pinion_core::intent::Intent;
 
 use crate::vn::model::VnStep;
-use crate::vn::state::{ChooseError, VnRuntime, VnState};
+use crate::vn::stage::{SpritePos, VnSprite};
+use crate::vn::state::{ChooseError, VnSave, VnState};
 
 /// Emitted when [`advance`](VnExternal) moves the play-head.
 pub const ADVANCED_INTENT: &str = "vn.advanced";
@@ -124,6 +126,88 @@ impl VnExternal {
             Err(ChooseError::NotAChoice | ChooseError::OutOfRange) => Err(InvokeError::Rejected),
         }
     }
+
+    /// The current stage (background + sprites) as JSON — returned by every
+    /// director verb so a client sees the immediate result.
+    fn stage_json(&self) -> IntrospectValue {
+        IntrospectValue::json(&self.state.stage().data())
+    }
+
+    /// `show {id, source, at?, layer?}` — place / update a sprite on stage.
+    fn show(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Json(v) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let id = v
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(InvokeError::TypeMismatch)?;
+        let source = v
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(InvokeError::TypeMismatch)?;
+        // `at` / `layer` are optional (default centre / layer 0); a present but
+        // unrecognised `at` string is a hard type error, not a silent default.
+        let at = match v.get("at").and_then(serde_json::Value::as_str) {
+            Some(s) => SpritePos::parse(s).ok_or(InvokeError::TypeMismatch)?,
+            None => SpritePos::default(),
+        };
+        let layer = u8::try_from(
+            v.get("layer")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+        )
+        .unwrap_or(u8::MAX);
+        self.state
+            .stage()
+            .show(VnSprite::new(id, source, at, layer));
+        Ok(self.stage_json())
+    }
+
+    /// `move {id, at}` — reposition a sprite. A missing sprite is Rejected.
+    fn move_sprite(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Json(v) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let id = v
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(InvokeError::TypeMismatch)?;
+        let at = v
+            .get("at")
+            .and_then(serde_json::Value::as_str)
+            .and_then(SpritePos::parse)
+            .ok_or(InvokeError::TypeMismatch)?;
+        if self.state.stage().move_to(id, at) {
+            Ok(self.stage_json())
+        } else {
+            Err(InvokeError::Rejected)
+        }
+    }
+
+    /// `set_sprite_source {id, source}` — swap a sprite's source (an
+    /// expression change). A missing sprite is Rejected.
+    fn set_sprite_source(
+        &mut self,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Json(v) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let id = v
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(InvokeError::TypeMismatch)?;
+        let source = v
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(InvokeError::TypeMismatch)?;
+        if self.state.stage().set_source(id, source) {
+            Ok(self.stage_json())
+        } else {
+            Err(InvokeError::Rejected)
+        }
+    }
 }
 
 // Paints nothing (the binding's `view` is the paint scene) and drains
@@ -153,6 +237,9 @@ impl ExternalIntrospect for VnExternal {
             ("outcome_label", "text"),
             ("timed_out", "bool"),
             ("script", "json"),
+            ("background", "text"),
+            ("sprites", "json"),
+            ("sprite_count", "int"),
         ])
     }
 
@@ -206,6 +293,14 @@ impl ExternalIntrospect for VnExternal {
                 self.state.resolution().is_some_and(|r| r.timed_out),
             )),
             "script" => Some(IntrospectValue::json(self.state.script())),
+            "background" => Some(match self.state.stage().background() {
+                Some(source) => IntrospectValue::Text(source),
+                None => IntrospectValue::Null,
+            }),
+            "sprites" => Some(IntrospectValue::json(&self.state.stage().sprites())),
+            "sprite_count" => Some(IntrospectValue::Int(int_of(
+                self.state.stage().sprite_count(),
+            ))),
             _ => None,
         }
     }
@@ -271,15 +366,37 @@ impl ExternalIntrospect for VnExternal {
             // Restore from a save blob (tolerant deserialize; the runner
             // clamps the step into range). Bad JSON is a type error.
             "load" => match args {
-                IntrospectValue::Json(v) => match serde_json::from_value::<VnRuntime>(v) {
-                    Ok(runtime) => {
-                        self.state.load(runtime);
+                IntrospectValue::Json(v) => match serde_json::from_value::<VnSave>(v) {
+                    Ok(save) => {
+                        self.state.load(save);
                         Ok(self.status())
                     }
                     Err(_) => Err(InvokeError::TypeMismatch),
                 },
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // ── stage director verbs (background + sprites) ──
+            "set_background" => match args {
+                IntrospectValue::Text(source) => {
+                    self.state.stage().set_background(source);
+                    Ok(self.stage_json())
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "clear_background" => {
+                let _ = self.state.stage().clear_background();
+                Ok(self.stage_json())
+            }
+            "show" => self.show(&args),
+            "hide" => match args {
+                IntrospectValue::Text(id) => {
+                    let _ = self.state.stage().hide(&id);
+                    Ok(self.stage_json())
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "move" => self.move_sprite(&args),
+            "set_sprite_source" => self.set_sprite_source(&args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -391,6 +508,91 @@ mod tests {
             assert!(matches!(
                 ext.invoke("load", IntrospectValue::Int(3)),
                 Err(InvokeError::TypeMismatch)
+            ));
+        });
+    }
+
+    #[test]
+    fn stage_director_verbs_place_and_query_sprites() {
+        with_external(|ext| {
+            // Empty stage at boot.
+            assert!(matches!(
+                ext.query("background"),
+                Some(IntrospectValue::Null)
+            ));
+            assert_eq!(int(ext.query("sprite_count")), 0);
+
+            ext.invoke("set_background", IntrospectValue::Text("tideflat".into()))
+                .expect("set_background");
+            assert_eq!(text(ext.query("background")), "tideflat");
+
+            // show {id, source, at, layer}
+            let show = IntrospectValue::Json(serde_json::json!({
+                "id": "mudang", "source": "mudang_calm", "at": "left", "layer": 1
+            }));
+            ext.invoke("show", show).expect("show");
+            assert_eq!(int(ext.query("sprite_count")), 1);
+            let sprites = match ext.query("sprites") {
+                Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a,
+                other => panic!("sprites is a JSON array, got {other:?}"),
+            };
+            assert_eq!(sprites[0]["id"], "mudang");
+            assert_eq!(sprites[0]["at"], "left");
+
+            // move + re-express by id.
+            ext.invoke(
+                "move",
+                IntrospectValue::Json(serde_json::json!({"id": "mudang", "at": "center"})),
+            )
+            .expect("move");
+            ext.invoke(
+                "set_sprite_source",
+                IntrospectValue::Json(
+                    serde_json::json!({"id": "mudang", "source": "mudang_grave"}),
+                ),
+            )
+            .expect("re-express");
+            let sprites = match ext.query("sprites") {
+                Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a,
+                other => panic!("got {other:?}"),
+            };
+            assert_eq!(sprites[0]["at"], "center");
+            assert_eq!(sprites[0]["source"], "mudang_grave");
+
+            // hide, then clear background.
+            ext.invoke("hide", IntrospectValue::Text("mudang".into()))
+                .expect("hide");
+            assert_eq!(int(ext.query("sprite_count")), 0);
+            ext.invoke("clear_background", IntrospectValue::Null)
+                .expect("clear");
+            assert!(matches!(
+                ext.query("background"),
+                Some(IntrospectValue::Null)
+            ));
+
+            // Failure surfaces: missing id, bad position, move of an absent sprite.
+            assert!(matches!(
+                ext.invoke(
+                    "show",
+                    IntrospectValue::Json(serde_json::json!({"source": "x"}))
+                ),
+                Err(InvokeError::TypeMismatch)
+            ));
+            assert!(matches!(
+                ext.invoke(
+                    "show",
+                    IntrospectValue::Json(
+                        serde_json::json!({"id": "a", "source": "x", "at": "nope"})
+                    )
+                ),
+                Err(InvokeError::TypeMismatch)
+            ));
+            assert!(matches!(
+                ext.invoke(
+                    "move",
+                    IntrospectValue::Json(serde_json::json!({"id": "ghost", "at": "left"}))
+                ),
+                Err(InvokeError::Rejected)
             ));
         });
     }

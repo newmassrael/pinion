@@ -1,16 +1,18 @@
 //! The projection: [`VnState`] → a queryable pinion [`Scene`].
 //!
-//! The read-side render of the VN runner. The output is a plain structured
-//! scene of `Text` rows (§2 #1 — no opaque paint), so it renders identically
+//! The read-side render of the VN runner. Structured, no opaque paint (§2 #1):
+//! the dialogue is `Text` rows and the stage is `Scene::Image` nodes whose
+//! `source` is an asset *reference* (never pixels), so it renders identically
 //! on the GUI and TUI backends (§2 #6) and every field — the revealed
-//! dialogue, the options, the countdown — is readable as data via
-//! `scene/query` (§2 #7). The countdown is drawn as a block-character bar
-//! *and* surfaced numerically (`remaining_ms`), so the visual is TUI-native
-//! and the truth stays queryable.
+//! dialogue, the options, the countdown, and *which* image is on stage where —
+//! is readable as data via `scene/query` (§2 #7). The countdown is drawn as a
+//! block-character bar *and* surfaced numerically (`remaining_ms`), so the
+//! visual is TUI-native and the truth stays queryable.
 
-use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+use pinion_core::scene::{ContainerNode, ImageNode, Rect, Scene, TextNode};
 
 use crate::vn::model::VnStep;
+use crate::vn::stage::VnStage;
 use crate::vn::state::{VnMode, VnState};
 
 /// Left margin, in pixels (2 cells at the default 8×16 metric).
@@ -21,12 +23,25 @@ const WIDTH: u32 = 760;
 const LINE: u32 = 16;
 /// Number of cells in the countdown bar.
 const BAR_CELLS: usize = 20;
+/// Stage width, in pixels (the background fills it; sprite x positions read
+/// [`SpritePos::x_fraction`](crate::vn::SpritePos::x_fraction) of it).
+const STAGE_W: u32 = 800;
+/// Stage height, in pixels (the visual band above the dialogue box).
+const STAGE_H: u32 = 240;
+/// Sprite box width / height, in pixels.
+const SPRITE_W: u32 = 160;
+const SPRITE_H: u32 = 200;
 
-/// Project the runner into a retained scene.
+/// Project the runner into a retained scene: the stage (background + sprites)
+/// above the dialogue box.
 #[must_use]
 pub fn vn_scene(state: &VnState) -> Scene {
     let mut children: Vec<Scene> = Vec::new();
-    let mut y: u32 = 16;
+
+    // ── the visual stage (§2 #1 Image nodes, §2 #7 queryable references) ──
+    stage_nodes(state.stage(), &mut children);
+
+    let mut y: u32 = STAGE_H + 16;
 
     let step_no = usize::from(state.runtime().step) + 1;
     let step_count = state.step_count();
@@ -128,6 +143,29 @@ const fn mode_label(mode: VnMode) -> &'static str {
     }
 }
 
+/// Project the stage into `Scene::Image` nodes: the background (full stage
+/// rect) then each sprite (already sorted back-to-front by layer), positioned
+/// by [`SpritePos`](crate::vn::SpritePos). Each image's `source` is an asset
+/// reference the backend resolves — the scene carries *which* image and
+/// *where*, never pixels (§2 #1 / #7). Sprites are tagged with their id so an
+/// AI can path-route to a specific character.
+fn stage_nodes(stage: &VnStage, out: &mut Vec<Scene>) {
+    let data = stage.data();
+    if let Some(background) = data.background {
+        out.push(Scene::Image(
+            ImageNode::new(background, Rect::new(0, 0, STAGE_W, STAGE_H)).with_tag("vn.background"),
+        ));
+    }
+    for sprite in data.sprites {
+        let x = sprite.at.center_x(STAGE_W).saturating_sub(SPRITE_W / 2);
+        let y = STAGE_H.saturating_sub(SPRITE_H); // feet rest on the stage floor
+        out.push(Scene::Image(
+            ImageNode::new(sprite.source, Rect::new(x, y, SPRITE_W, SPRITE_H))
+                .with_tag(format!("vn.sprite.{}", sprite.id)),
+        ));
+    }
+}
+
 fn text_row(content: impl Into<String>, y: u32) -> Scene {
     Scene::Text(TextNode::new(content, Rect::new(MARGIN, y, WIDTH, LINE)))
 }
@@ -207,6 +245,52 @@ mod tests {
             assert!(out.contains("남은 시간"), "countdown row");
             assert!(out.contains("4.0s"), "full countdown at entry: {out}");
             assert!(out.contains('█'), "bar filled at entry");
+        });
+    }
+
+    fn collect_images(scene: &Scene, out: &mut Vec<(String, i64)>) {
+        match scene {
+            // (source, tag-marker via x) — record source + x for position checks.
+            Scene::Image(n) => out.push((n.source.clone(), i64::from(n.rect.x))),
+            Scene::Container(c) => {
+                for child in &c.children {
+                    collect_images(child, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn stage_projects_background_and_positioned_sprites_as_images() {
+        use crate::vn::stage::{SpritePos, VnSprite};
+        let owner = Owner::new();
+        owner.run(|| {
+            let state = VnState::new(script());
+            state.stage().set_background("tideflat");
+            state
+                .stage()
+                .show(VnSprite::new("mudang", "mudang_calm", SpritePos::Left, 1));
+            state
+                .stage()
+                .show(VnSprite::new("child", "child", SpritePos::Right, 0));
+            let mut imgs = Vec::new();
+            collect_images(&vn_scene(&state), &mut imgs);
+            // Background + 2 sprites, all as Image nodes carrying source refs.
+            let sources: Vec<&str> = imgs.iter().map(|(s, _)| s.as_str()).collect();
+            assert!(
+                sources.contains(&"tideflat"),
+                "background image: {sources:?}"
+            );
+            assert!(sources.contains(&"mudang_calm"), "sprite source");
+            // The left sprite paints further left than the right one.
+            let x = |src: &str| {
+                imgs.iter()
+                    .find(|(s, _)| s == src)
+                    .map(|(_, x)| *x)
+                    .unwrap()
+            };
+            assert!(x("mudang_calm") < x("child"), "left is left of right");
         });
     }
 
