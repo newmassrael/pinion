@@ -257,7 +257,38 @@ def body() -> None:
         # The device never stopped clocking through any of it.
         assert q("frames_rendered") > f1, "the callback ran throughout"
 
-        # ── (G) the composed schema, ON THE WIRE — not just in a unit test. ────
+        # ── (G) THE PER-FRAME CONTROL-SIDE AUDIO TICK. ───────────────────────
+        # `set_camera` moves the WORLD only — it never touches the audio engine.
+        # The listener follows solely because `AudioFollowClock`, a retained
+        # Tickable registered with the shell's animation driver, carries the pose
+        # across on the next paint. So `listener.position` catching up to `camera`
+        # is a proof that the per-frame tick ran and pushed over the lock-free
+        # ring — which is what makes "per-frame audio needs Phase C" false.
+        assert_eq(q("camera"), [0.0, 0.0, 0.0], "camera starts at the origin")
+        listener = q("listener")
+        assert_eq(listener["position"], [0.0, 0.0, 0.0], "listener starts there too")
+
+        inv("set_camera", [3.0, 0.0, -4.0])
+        assert_eq(q("camera"), [3.0, 0.0, -4.0], "the world moved immediately")
+        # The audio engine has NOT been told yet — only a frame can do that.
+        wait_until(
+            lambda: q("listener")["position"] == [3.0, 0.0, -4.0],
+            desc="the per-frame clock carries the camera pose to the listener",
+        )
+        # Orientation is preserved: the clock moves where the ears ARE, not
+        # where they look.
+        assert_eq(q("listener")["forward"], listener["forward"], "facing kept")
+        assert_eq(q("listener")["up"], listener["up"], "up kept")
+
+        # It settles (is_at_rest) and re-arms on the next move — so the frame loop
+        # is not pinned awake, and a second move still lands.
+        inv("set_camera", [-1.0, 2.0, 0.0])
+        wait_until(
+            lambda: q("listener")["position"] == [-1.0, 2.0, 0.0],
+            desc="a second camera move lands after the clock went back to rest",
+        )
+
+        # ── (H) the composed schema, ON THE WIRE — not just in a unit test. ────
         # This binding's schema is the RT surface's fields + its 3 device fields,
         # composed at compile time. Proving that in Rust only would be an
         # in-process check of exactly the kind §2 #2 exists to replace — so read
@@ -266,13 +297,13 @@ def body() -> None:
         for field in ("voice_count", "peak", "frames_rendered", "voices", "voice_policy"):
             assert field in paths, f"the RT surface's {field!r} must be declared: {paths}"
         for field in ("device", "devices", "sample_rate", "channels", "sample_format",
-                      "stream_errors"):
+                      "stream_errors", "camera"):
             assert field in paths, f"this binding's {field!r} must be declared: {paths}"
         # Composed, so no name may be announced twice (a duplicate would mean the
         # device half silently shadows an RT read).
         assert len(paths) == len(set(paths)), f"$schema announces a field twice: {paths}"
 
-        # ── (H) loud failures, and NO step-verb (the device is the pump). ─────
+        # ── (I) loud failures, and NO step-verb (the device is the pump). ─────
         # hello-audio-rt has `invoke render N`; this binary must not — asserting
         # its absence is what proves the pump is the device, not the demo.
         assert_rpc_error(lambda: inv("render", 1), data="UnknownInvokePath")

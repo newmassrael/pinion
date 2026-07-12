@@ -357,7 +357,7 @@ impl ExternalIntrospect for AudioEngineExternal {
 /// "finished-but-listed" transient the retained single-thread engine keeps).
 #[derive(Debug)]
 pub struct AudioControllerExternal {
-    controller: AudioController,
+    controller: SharedController,
     clips: ClipLibrary,
     pending_intents: Vec<Intent>,
 }
@@ -366,11 +366,66 @@ impl AudioControllerExternal {
     /// Wrap a real-time controller with an empty clip library.
     #[must_use]
     pub fn new(controller: AudioController) -> Self {
+        Self::from_shared(shared_controller(controller))
+    }
+
+    /// Wrap a controller that is **already shared** with another control-thread
+    /// driver — the per-frame ticker case (see [`SharedController`]).
+    #[must_use]
+    pub fn from_shared(controller: SharedController) -> Self {
         Self {
             controller,
             clips: ClipLibrary::default(),
             pending_intents: Vec::new(),
         }
+    }
+
+    /// The per-voice parameter verbs — `set_voice_{gain,pan,position}` — which all
+    /// take `{ "id": <int>, "<field>": … }`. One home, so the id parse and the
+    /// full-ring `Rejected` mapping cannot drift between them.
+    fn invoke_voice_param(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Json(v) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let id = v
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(InvokeError::TypeMismatch)?;
+        let mut controller = self.controller.borrow_mut();
+        let queued = match path {
+            "set_voice_gain" => {
+                let gain = parse_f32(v.get("gain")).ok_or(InvokeError::TypeMismatch)?;
+                controller.set_voice_gain(id, gain)
+            }
+            "set_voice_pan" => {
+                let pan = parse_f32(v.get("pan")).ok_or(InvokeError::TypeMismatch)?;
+                controller.set_voice_pan(id, pan)
+            }
+            // `null` un-spatialises the voice back to its authored pan.
+            _ => {
+                let position = match v.get("position") {
+                    Some(serde_json::Value::Null) => None,
+                    p => Some(parse_vec3(p).ok_or(InvokeError::TypeMismatch)?),
+                };
+                controller.set_voice_position(id, position)
+            }
+        };
+        queued_or_rejected(queued)
+    }
+
+    /// A second handle to the controller this External drives.
+    ///
+    /// The point is the game shape: RPC (or the player's UI) is not the only
+    /// thing that talks to the audio thread — every frame, the *world* does too
+    /// (the listener follows the camera, emitters follow entities). Both are
+    /// control-thread drivers of the same queue, so they share one controller.
+    #[must_use]
+    pub fn controller_handle(&self) -> SharedController {
+        Rc::clone(&self.controller)
     }
 
     /// Register a named clip agents can `play` by name.
@@ -386,12 +441,29 @@ impl AudioControllerExternal {
     /// this only when it *only* queries: call it on an idle frame to keep the
     /// resource-return queue drained. Returns how many were reclaimed.
     pub fn reclaim(&mut self) -> usize {
-        self.controller.reclaim()
+        self.controller.borrow_mut().reclaim()
     }
 }
 
 // RPC-only introspection skeleton (paints nothing; emits §5.20 intents).
 pinion_core::intent_query_external_impl!(AudioControllerExternal);
+
+/// An [`AudioController`] shared between the control-thread drivers that need it.
+///
+/// [`AudioController`] cannot be cloned — its command ring is SPSC, so there is
+/// exactly *one* producer by construction — yet a game has more than one thing
+/// that wants to talk to the audio thread from the control side: the RPC / UI
+/// surface, and the per-frame world sync (listener follows the camera, emitters
+/// follow entities). `Rc<RefCell<_>>` is the honest way to share it: both live on
+/// the main thread, and the genuinely *concurrent* party — the audio thread — is
+/// on the far side of the lock-free ring, untouched by this borrow.
+pub type SharedController = Rc<RefCell<AudioController>>;
+
+/// Put a freshly-built controller behind a [`SharedController`] handle.
+#[must_use]
+pub fn shared_controller(controller: AudioController) -> SharedController {
+    Rc::new(RefCell::new(controller))
+}
 
 /// The fields [`AudioControllerExternal`] declares — the RT surface's schema, as
 /// data.
@@ -427,7 +499,10 @@ impl ExternalIntrospect for AudioControllerExternal {
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let snapshot = self.controller.snapshot();
+        // Held for the whole read: `snapshot` and the label map both borrow from
+        // it, and `RtVoiceInfo` borrows its label straight out of that map.
+        let controller = self.controller.borrow();
+        let snapshot = controller.snapshot();
         match path {
             "voice_count" => Some(IntrospectValue::Int(i64::from(snapshot.voice_count()))),
             "max_voices" => Some(IntrospectValue::Int(int_of(snapshot.max_voices()))),
@@ -443,7 +518,7 @@ impl ExternalIntrospect for AudioControllerExternal {
                     .iter()
                     .map(|v| RtVoiceInfo {
                         id: v.id,
-                        label: self.controller.label_of(v.id).unwrap_or(""),
+                        label: controller.label_of(v.id).unwrap_or(""),
                         gain: v.authored_gain,
                         pan: v.authored_pan,
                         effective_gain: v.effective_gain,
@@ -460,13 +535,13 @@ impl ExternalIntrospect for AudioControllerExternal {
             // (the audio thread owns the engine and cannot be read lock-free,
             // but the control thread is their sole writer — see
             // [`AudioController::listener`]).
-            "listener" => Some(IntrospectValue::json(&self.controller.listener())),
-            "attenuation" => Some(IntrospectValue::json(&self.controller.attenuation())),
+            "listener" => Some(IntrospectValue::json(&controller.listener())),
+            "attenuation" => Some(IntrospectValue::json(&controller.attenuation())),
             // The full-pool policy, off the control-thread mirror — so an agent
             // watching `rejected`/`stolen` climb can discover which policy caused
             // it.
             "voice_policy" => Some(IntrospectValue::Text(
-                self.controller.voice_policy().as_wire().to_string(),
+                controller.voice_policy().as_wire().to_string(),
             )),
             _ => None,
         }
@@ -492,6 +567,7 @@ impl ExternalIntrospect for AudioControllerExternal {
                 // not be queued) — both are "could not play now".
                 let id = self
                     .controller
+                    .borrow_mut()
                     .play(clip, name.clone(), opts)
                     .ok_or(InvokeError::Rejected)?;
                 self.pending_intents.push(Intent::new_static(
@@ -506,70 +582,30 @@ impl ExternalIntrospect for AudioControllerExternal {
             // stop that never queued (full ring) left the sound playing, so
             // that is surfaced as `Rejected`, not silently swallowed.
             "stop" => match args {
-                IntrospectValue::Int(n) => queued_or_rejected(self.controller.stop(u64_of(n))),
+                IntrospectValue::Int(n) => {
+                    queued_or_rejected(self.controller.borrow_mut().stop(u64_of(n)))
+                }
                 _ => Err(InvokeError::TypeMismatch),
             },
-            "stop_all" => queued_or_rejected(self.controller.stop_all()),
+            "stop_all" => queued_or_rejected(self.controller.borrow_mut().stop_all()),
             "set_master_gain" => match args {
                 IntrospectValue::Float(g) => {
-                    queued_or_rejected(self.controller.set_master_gain(f32_of(g)))
+                    queued_or_rejected(self.controller.borrow_mut().set_master_gain(f32_of(g)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
-            // `{ "id": <int>, "gain": <float> }` — set one voice's gain.
-            "set_voice_gain" => match args {
-                IntrospectValue::Json(v) => {
-                    let id = v
-                        .get("id")
-                        .and_then(serde_json::Value::as_u64)
-                        .ok_or(InvokeError::TypeMismatch)?;
-                    let gain = v
-                        .get("gain")
-                        .and_then(serde_json::Value::as_f64)
-                        .ok_or(InvokeError::TypeMismatch)?;
-                    queued_or_rejected(self.controller.set_voice_gain(id, f32_of(gain)))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            // `{ "id": <int>, "pan": <float> }` — set one voice's authored pan.
-            "set_voice_pan" => match args {
-                IntrospectValue::Json(v) => {
-                    let id = v
-                        .get("id")
-                        .and_then(serde_json::Value::as_u64)
-                        .ok_or(InvokeError::TypeMismatch)?;
-                    let pan = v
-                        .get("pan")
-                        .and_then(serde_json::Value::as_f64)
-                        .ok_or(InvokeError::TypeMismatch)?;
-                    queued_or_rejected(self.controller.set_voice_pan(id, f32_of(pan)))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            // `{ "id": <int>, "position": [x,y,z] | null }` — move a 3D emitter
-            // after it starts (`null` un-spatialises back to its pan).
-            "set_voice_position" => match args {
-                IntrospectValue::Json(v) => {
-                    let id = v
-                        .get("id")
-                        .and_then(serde_json::Value::as_u64)
-                        .ok_or(InvokeError::TypeMismatch)?;
-                    let position = match v.get("position") {
-                        Some(serde_json::Value::Null) => None,
-                        p => Some(parse_vec3(p).ok_or(InvokeError::TypeMismatch)?),
-                    };
-                    queued_or_rejected(self.controller.set_voice_position(id, position))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
+            // The per-voice params all take `{ "id": <int>, "<field>": … }`.
+            "set_voice_gain" | "set_voice_pan" | "set_voice_position" => {
+                self.invoke_voice_param(path, args)
+            }
             // Move / re-orient the 3D listener from a partial `{position?,
             // forward?, up?}` object, patched against the control-thread mirror
             // (`query listener`). Full-spec or partial — omitted axes keep the
             // mirror's value.
             "set_listener" => match args {
                 IntrospectValue::Json(v) => {
-                    let listener = listener_from_partial(self.controller.listener(), &v);
-                    queued_or_rejected(self.controller.set_listener(listener))
+                    let listener = listener_from_partial(self.controller.borrow().listener(), &v);
+                    queued_or_rejected(self.controller.borrow_mut().set_listener(listener))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -578,15 +614,18 @@ impl ExternalIntrospect for AudioControllerExternal {
             // against the mirror (`query attenuation`).
             "set_attenuation" => match args {
                 IntrospectValue::Json(v) => {
-                    let attenuation = attenuation_from_partial(self.controller.attenuation(), &v);
-                    queued_or_rejected(self.controller.set_attenuation(attenuation))
+                    let attenuation =
+                        attenuation_from_partial(self.controller.borrow().attenuation(), &v);
+                    queued_or_rejected(self.controller.borrow_mut().set_attenuation(attenuation))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             // `"reject_newest" | "steal_oldest"` — choose the full-pool policy.
             "set_voice_policy" => match args {
                 IntrospectValue::Text(s) => match VoicePolicy::from_wire(&s) {
-                    Some(policy) => queued_or_rejected(self.controller.set_voice_policy(policy)),
+                    Some(policy) => {
+                        queued_or_rejected(self.controller.borrow_mut().set_voice_policy(policy))
+                    }
                     // Type matches (Text) but the value is not a known policy.
                     None => Err(InvokeError::Rejected),
                 },
@@ -655,7 +694,14 @@ fn attenuation_from_partial(cur: Attenuation, v: &serde_json::Value) -> Attenuat
 }
 
 /// Parse an optional JSON `[x, y, z]` array into a [`Vec3`].
-fn parse_vec3(v: Option<&serde_json::Value>) -> Option<Vec3> {
+///
+/// Public because it is the **wire form** of a world position: every consumer
+/// that accepts a position over RPC — this crate's `set_voice_position` /
+/// `set_listener`, and any binding that carries its own world pose across —
+/// must agree on it, and a second hand-rolled parser is how a wire contract
+/// starts drifting.
+#[must_use]
+pub fn parse_vec3(v: Option<&serde_json::Value>) -> Option<Vec3> {
     let arr = v?.as_array()?;
     let [x, y, z] = arr.as_slice() else {
         return None;

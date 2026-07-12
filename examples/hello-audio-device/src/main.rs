@@ -82,34 +82,58 @@
 //!   `device.rs`). Capturing what the card actually *received* (an `snd-aloop`
 //!   loopback) is a further step this binary does not take.
 //!
-//! ## Where the per-frame audio seam really stands (do not mislabel this)
+//! ## The per-frame, control-side audio tick — built, not deferred
 //!
 //! The mixer is clocked by the **device**, and that is correct and permanent — no
 //! engine frame-clocks a mixer; the card pulls when it pulls.
 //!
-//! What a game *also* wants is per-frame **control-side** audio work: the listener
-//! follows the camera, emitters follow entities, distant voices get culled. It
-//! would be wrong to file that under "Phase C": pinion already has a retained
-//! per-frame clock — [`pinion_core::animation::Tickable`] +
-//! `Owner::register_animation_once` + `Owner::tick_animations`, fanned out from the
-//! shell each paint — and it already carries a *non-animation* subsystem
-//! (`pinion_narrative`'s `VnClock`). A control-side audio ticker could ride that
-//! **today**, holding an `AudioController` and pushing over the same lock-free
-//! ring; nothing new is needed. This binary simply does not do it, because it is
-//! an RPC proof of the device path, not a game.
+//! But a game *also* does control-side audio work every frame: the listener
+//! follows the camera, emitters follow entities, distant voices get culled. An
+//! earlier round filed that under "Phase C". That was **wrong**, and rather than
+//! just correct the sentence this binary now does it: [`AudioFollowClock`] is a
+//! retained [`Tickable`], registered with the owner's animation driver and ticked
+//! once per paint by the shell — the same substrate `CaretBlink` and
+//! `pinion_narrative`'s `VnClock` ride. `invoke set_camera` moves *the world* and
+//! never touches the audio engine; the listener follows because a **frame**
+//! carried the pose over the lock-free ring.
 //!
-//! What is *genuinely* still absent is narrower: the fixed-timestep game loop's own
-//! `Send` subsystem registry (audio alongside physics / AI, off the UI thread).
-//! That is the real Phase-C boundary — not "per-frame audio", which is buildable
-//! now.
+//! Three things had to be true, and only the first was as cheap as claimed:
+//!
+//! 1. **The clock substrate** — genuinely already there, unchanged.
+//! 2. **A shareable controller.** `AudioControllerExternal` owned its
+//!    `AudioController` outright, and the controller cannot be cloned (its command
+//!    ring is SPSC). Two control-thread drivers — RPC and the frame — need one
+//!    queue, so `pinion-audio` grew
+//!    [`SharedController`]. That is the part the
+//!    "nothing new is needed" claim got wrong.
+//! 3. **A reactive world pose.** The camera is a
+//!    [`Signal`] that `view` *reads*. This is
+//!    load-bearing and was the whole bug: a `Signal` notifies its observers, a
+//!    view subscribes by reading it, and only a dirty owner arms a repaint. With
+//!    the camera in a plain `Cell` (or a `Signal` no view read), moving it painted
+//!    nothing, so the clock never ticked and the listener never followed —
+//!    measured, not theorised. An idle retained app has no free-running frame
+//!    loop; a world change must *schedule* the frame that carries it.
+//!
+//! What remains genuinely Phase-C is narrower than "per-frame audio": the
+//! fixed-timestep game loop's own `Send` subsystem registry (audio alongside
+//! physics / AI, off the UI thread). Per-frame audio itself is here.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
-use pinion_audio::{AudioClip, AudioControllerExternal, CpalOutput, RT_EXTERNAL_FIELDS};
+use pinion_audio::{
+    AudioClip, AudioControllerExternal, CpalOutput, RT_EXTERNAL_FIELDS, SharedController, Vec3,
+    parse_vec3, shared_controller,
+};
+use pinion_core::animation::Tickable;
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
     forward_intents,
 };
 use pinion_core::intent::Intent;
+use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::{Frame, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -127,6 +151,11 @@ const MAX_VOICES: usize = 8;
 const TAG: &str = "audio_device";
 /// Names the output device to open. Unset → the host default (**audible**).
 const DEVICE_ENV: &str = "PINION_AUDIO_DEVICE";
+/// `Owner::cache` key for the shared rig (device + world), resolved from both
+/// `create_external` and `view`.
+const RIG_KEY: &str = "audio_device.rig";
+/// `Owner::register_animation_once` key for the per-frame follow clock.
+const CLOCK_KEY: &str = "audio_device.follow_clock";
 
 /// Tone amplitude. Well clear of the demo's "audible" threshold.
 const TONE_AMPLITUDE: f32 = 0.9;
@@ -157,6 +186,10 @@ const DEVICE_FIELDS: &[(&str, &str)] = &[
     ("channels", "int"),
     ("sample_format", "text"),
     ("stream_errors", "int"),
+    // The WORLD pose the game owns (see `set_camera` / [`AudioFollowClock`]).
+    // Read-only like the rest: it is moved with `invoke set_camera`, because a
+    // camera move is an event in the world, not a slot in the audio surface.
+    ("camera", "json"),
 ];
 
 /// Length of the composed schema.
@@ -272,6 +305,176 @@ fn open_output() -> (pinion_audio::AudioController, CpalOutput) {
     })
 }
 
+/// The open device plus the little bit of **world** that drives it: everything
+/// both the RPC surface and the per-frame clock need, built once per `Owner`
+/// scope and resolved by key from `create_external` and `view` alike (the
+/// `use_vn_state` pattern).
+///
+/// `camera` is the world pose the *game* owns. Nothing here writes it to the
+/// audio engine — that is the clock's job, once a frame. See
+/// [`AudioFollowClock`].
+struct AudioRig {
+    /// Shared with [`AudioFollowClock`]: two control-thread drivers, one queue.
+    controller: SharedController,
+    /// Owns the live stream — dropping the rig stops the device.
+    out: CpalOutput,
+    /// The game-side state the clock carries to the audio thread.
+    world: Rc<World>,
+}
+
+/// The control-side world the frame carries across — deliberately **separate from
+/// the device**, because [`AudioFollowClock`] has no business knowing about a
+/// sound card. That separation is also what makes the clock unit-testable with no
+/// device at all (see the tests): a `realtime_channel` needs no hardware.
+#[derive(Debug)]
+struct World {
+    /// Where the listener *is* in the world, as the game last moved it.
+    ///
+    /// A reactive [`Signal`], not a plain `Cell`, and that is load-bearing: a
+    /// `Signal::set` marks the reactive `Owner` dirty, which is the bridge the
+    /// shell's dispatch tail reads to arm a repaint. Written to a `Cell` the
+    /// camera would move and *nothing would ever paint* — so the frame that
+    /// carries the pose to the audio thread would never run, and an idle app
+    /// would sit there with its sound in the wrong place. (Measured: with a
+    /// `Cell`, `frame_ticks` stayed at 1 and the listener never followed.)
+    camera: Signal<Vec3>,
+    /// How many times the per-frame clock has run. The honest measure of whether
+    /// the frame loop is actually carrying the world across — and a real §2 #7
+    /// read for a game ("is my audio sync running?").
+    frame_ticks: Cell<u64>,
+    /// Set when `camera` has moved and the audio thread has not been told yet.
+    /// This is what makes the clock a *propagator* and not a busy loop: it is the
+    /// clock's `is_at_rest`, so the shell's frame loop is armed only while there
+    /// is something to push, then released.
+    camera_dirty: Cell<bool>,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self {
+            camera: Signal::new(Vec3::default()),
+            frame_ticks: Cell::new(0),
+            camera_dirty: Cell::new(false),
+        }
+    }
+}
+
+impl World {
+    /// Move the world camera. Deliberately does **not** touch the audio engine —
+    /// the whole point is that the *frame* carries it there.
+    fn set_camera(&self, position: Vec3) {
+        // The Signal write is what wakes the shell: `view` reads this signal, so
+        // setting it marks the owner dirty and a repaint is armed. With a plain
+        // `Cell` nothing would ever paint and the pose would never land.
+        self.camera.set(position);
+        self.camera_dirty.set(true);
+    }
+}
+
+impl std::fmt::Debug for AudioRig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioRig")
+            .field("device", &self.out.device_name())
+            .field("camera", &self.world.camera.get())
+            .finish_non_exhaustive()
+    }
+}
+
+impl AudioRig {
+    /// Open the device and start its callback thread.
+    fn open() -> Self {
+        let (controller, out) = open_output();
+        eprintln!(
+            "hello-audio-device: {:?} @ {} Hz, {} channel(s) — callback thread live",
+            out.device_name(),
+            out.sample_rate(),
+            out.channels()
+        );
+        Self {
+            controller: shared_controller(controller),
+            out,
+            world: Rc::new(World::default()),
+        }
+    }
+}
+
+/// The shared rig for this `Owner` scope.
+///
+/// # Panics
+///
+/// Panics if called outside an active `Owner` scope (`create_external` and
+/// `view` both run inside one).
+fn audio_rig() -> Rc<AudioRig> {
+    Owner::current()
+        .expect("audio_rig requires an active Owner scope")
+        .cache(RIG_KEY, AudioRig::open)
+}
+
+/// **The per-frame, control-side audio tick** — the thing a game actually does
+/// every frame: push the world's listener pose to the audio engine.
+///
+/// This exists to make a claim concrete rather than assert it. The mixer is
+/// clocked by the *device* and always will be. But the control-side work — the
+/// listener following the camera, emitters following entities — is per-*frame*,
+/// and it needs no Phase-C machinery: it is a retained
+/// [`Tickable`], registered with the owner's animation driver
+/// (`Owner::register_animation_once`) and ticked once per paint by the shell,
+/// exactly as `CaretBlink` and `pinion_narrative`'s `VnClock` are.
+///
+/// Unlike those two it is a **propagator, not an integrator**: it does not
+/// advance anything by `dt`, it pushes the current world pose over the same
+/// lock-free ring the RPC surface uses. So it is idempotent, `dt`-independent,
+/// and — the reason the VN clock had to stay out of its harness — it cannot
+/// drift a headless demo. It settles, and a demo polls for the settled outcome.
+#[derive(Debug)]
+struct AudioFollowClock {
+    /// The same queue the RPC surface drives — one controller, two drivers.
+    controller: SharedController,
+    /// What the game changed; what the frame must carry across.
+    world: Rc<World>,
+}
+
+impl Tickable for AudioFollowClock {
+    fn tick(&self, _dt: f32) {
+        // `dt` is unused ON PURPOSE: a pose is a pose, not a rate. Pushing it
+        // twice is harmless; pushing it late just means the sound follows the
+        // camera one frame behind, which is exactly the game contract.
+        self.world.frame_ticks.set(self.world.frame_ticks.get() + 1);
+        if !self.world.camera_dirty.get() {
+            return;
+        }
+        let mut controller = self.controller.borrow_mut();
+        // Keep the listener's orientation; move only where it is standing.
+        let mut listener = controller.listener();
+        listener.position = self.world.camera.get();
+        if controller.set_listener(listener) {
+            // Queued. If the ring were full the write did NOT reach the audio
+            // thread, so stay dirty and try again next frame rather than
+            // silently dropping the camera move.
+            self.world.camera_dirty.set(false);
+        }
+    }
+
+    fn is_at_rest(&self, _epsilon: f32) -> bool {
+        // Nothing pending → release the shell's continuous frame loop. A camera
+        // move re-arms it, the next paint pushes, and it settles again.
+        !self.world.camera_dirty.get()
+    }
+}
+
+/// Register the follow-clock with the animation driver (once per `Owner`).
+///
+/// # Panics
+///
+/// Panics if called outside an active `Owner` scope.
+fn use_audio_follow_clock(rig: &Rc<AudioRig>) -> Rc<AudioFollowClock> {
+    let controller = rig.controller.clone();
+    let world = rig.world.clone();
+    Owner::current()
+        .expect("use_audio_follow_clock requires an active Owner scope")
+        .register_animation_once(CLOCK_KEY, || AudioFollowClock { controller, world })
+}
+
 /// The binding's [`External`]: the shipping [`AudioControllerExternal`] plus the
 /// live device stream it is feeding.
 ///
@@ -291,40 +494,27 @@ fn open_output() -> (pinion_audio::AudioController, CpalOutput) {
 /// that is the truth: a cpal callback thread is running underneath, and the
 /// framework reaches it only over the lock-free ring. Every other External in the
 /// repo is `UiThreadSync`; this is the first that genuinely is not.
+#[derive(Debug)]
 struct DeviceAudioExternal {
-    /// The §2 #7 RT surface — the home of every *audio* verb and read.
+    /// The §2 #7 RT surface — the home of every *audio* verb and read. It drives
+    /// the SAME controller the per-frame [`AudioFollowClock`] does.
     inner: AudioControllerExternal,
-    /// The live stream. Owning it here is the lifecycle: dropping this External
-    /// stops the device. The [`pinion_audio::AudioRenderer`] it was built with now lives on the
-    /// audio thread, so it is not reachable from this side at all — which is the
-    /// whole point of the lock-free split.
-    out: CpalOutput,
+    /// The open device + the world pose, shared with the clock. The
+    /// [`pinion_audio::AudioRenderer`] is not reachable from this side at all —
+    /// it lives on the audio thread, which is the whole point of the split.
+    rig: Rc<AudioRig>,
     /// §5.20 intents forwarded from the inner controller (e.g. `audio.play`).
     pending_intents: Vec<Intent>,
 }
 
-impl std::fmt::Debug for DeviceAudioExternal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DeviceAudioExternal")
-            .field("inner", &self.inner)
-            .field("device", &self.out.device_name())
-            .finish_non_exhaustive()
-    }
-}
-
 impl DeviceAudioExternal {
-    /// Open the device, start its callback thread, and register the demo clips.
+    /// Take the shared rig and register the demo clips.
     fn open() -> Self {
-        let (controller, out) = open_output();
+        let rig = audio_rig();
         // The engine renders at the device's rate, so author the clips there too
         // (per-voice resampling would handle a mismatch; matching is just tidier).
-        let rate = out.sample_rate();
-        eprintln!(
-            "hello-audio-device: {:?} @ {rate} Hz, {} channel(s) — callback thread live",
-            out.device_name(),
-            out.channels()
-        );
-        let inner = AudioControllerExternal::new(controller)
+        let rate = rig.out.sample_rate();
+        let inner = AudioControllerExternal::from_shared(rig.controller.clone())
             // Looping, so it stays live for as long as the demo polls it.
             .with_clip(
                 "tone",
@@ -336,7 +526,7 @@ impl DeviceAudioExternal {
             );
         Self {
             inner,
-            out,
+            rig,
             pending_intents: Vec::new(),
         }
     }
@@ -349,22 +539,29 @@ impl ExternalIntrospect for DeviceAudioExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "device" => Some(IntrospectValue::Text(self.out.device_name().to_owned())),
+            "device" => Some(IntrospectValue::Text(self.rig.out.device_name().to_owned())),
             // What the host offers — the list a settings panel is built on. Read
             // live, so a device appearing or vanishing shows up without a restart.
             "devices" => Some(IntrospectValue::json(
                 &CpalOutput::output_device_names().unwrap_or_default(),
             )),
-            "sample_rate" => Some(IntrospectValue::Int(i64::from(self.out.sample_rate()))),
-            "channels" => Some(IntrospectValue::Int(i64::from(self.out.channels()))),
+            "sample_rate" => Some(IntrospectValue::Int(i64::from(self.rig.out.sample_rate()))),
+            "channels" => Some(IntrospectValue::Int(i64::from(self.rig.out.channels()))),
             "sample_format" => Some(IntrospectValue::Text(format!(
                 "{:?}",
-                self.out.sample_format()
+                self.rig.out.sample_format()
             ))),
             // Non-zero means the output has faulted — the only reading that tells
             // "nothing is playing" apart from "the device is gone".
             "stream_errors" => Some(IntrospectValue::Int(
-                i64::try_from(self.out.stream_errors()).unwrap_or(i64::MAX),
+                i64::try_from(self.rig.out.stream_errors()).unwrap_or(i64::MAX),
+            )),
+            // Where the game's camera is. Compare it with `listener` to watch the
+            // per-frame clock catch up: `set_camera` moves THIS, and only the
+            // frame tick moves the listener to match.
+            "camera" => Some(IntrospectValue::json(&self.rig.world.camera.get())),
+            "frame_ticks" => Some(IntrospectValue::Int(
+                i64::try_from(self.rig.world.frame_ticks.get()).unwrap_or(i64::MAX),
             )),
             // Everything else is the RT surface's, read lock-free off the
             // snapshot the audio thread publishes each callback.
@@ -386,6 +583,29 @@ impl ExternalIntrospect for DeviceAudioExternal {
         path: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
+        // The one verb this binding owns: move the world camera. Note what it
+        // does NOT do — it never touches the audio engine. The listener follows
+        // only because the per-frame [`AudioFollowClock`] carries the pose across
+        // on the next paint, which is what makes `listener` catching up to
+        // `camera` a proof that the frame tick ran.
+        if path == "set_camera" {
+            let IntrospectValue::Json(v) = args else {
+                return Err(InvokeError::TypeMismatch);
+            };
+            let pos = parse_vec3(Some(&v)).ok_or(InvokeError::TypeMismatch)?;
+            self.rig.world.set_camera(pos);
+            // A §5.20 intent, and NOT merely decoration: "the camera moved" is a
+            // real symbolic event, and emitting it is also what marks this
+            // External dirty — which is what schedules the frame that then
+            // carries the pose to the audio thread. Without it the retained shell
+            // has no reason to paint (the widget's `State` did not change), so an
+            // idle app would sit there with the sound in the wrong place.
+            self.pending_intents.push(Intent::new_static(
+                "audio.camera",
+                IntrospectValue::json(&pos),
+            ));
+            return Ok(IntrospectValue::Null);
+        }
         // Verbatim: `play` / `stop` / `stop_all` / `set_master_gain` /
         // `set_voice_*` / `set_listener` / `set_attenuation` / `set_voice_policy`
         // all queue onto the lock-free ring the *live callback thread* is
@@ -433,11 +653,31 @@ impl WidgetCore for HelloAudioDevice {
     }
 
     fn view(state: u16, _frame: &Frame) -> Scene {
+        // ★ The per-frame control-side audio tick, registered here because `view`
+        // is the Owner scope the shell re-enters every paint. Unlike the VN
+        // clock — which had to stay OUT of its headless harness, because a
+        // wall-clock integrator drifts the play-head run to run — this one is
+        // safe to leave on: it *propagates* the camera pose rather than
+        // integrating `dt`, so it settles to the same state no matter how many
+        // frames the shell happened to paint.
+        let rig = audio_rig();
+        let _clock = use_audio_follow_clock(&rig);
+
+        // ★ Reading the camera Signal HERE is what closes the loop, and it is not
+        // decoration. `Signal::set` notifies its *observers*, and a view acquires
+        // that subscription by calling `get()` inside the Owner scope. Without
+        // this read, moving the camera marks nothing dirty, the shell never
+        // paints, the animation driver never ticks, and the listener never
+        // follows — measured, before this line existed. The view depending on the
+        // world pose is exactly what makes a world change schedule a frame.
+        let camera = rig.world.camera.get();
+
         let mut children: Vec<Scene> = Vec::new();
         let mut y = 16u32;
 
         for line in [
             format!("hello-audio-device — real cpal callback + RPC ({state} live voice(s))"),
+            format!("camera {camera:?} — the per-frame clock carries this to the listener"),
             "The audio thread is clocked by the DEVICE, not by an RPC step-verb.".to_string(),
             "Run it on a silent card: sudo modprobe snd-dummy + PINION_AUDIO_DEVICE=Dummy"
                 .to_string(),
@@ -499,7 +739,13 @@ mod tests {
     //! against a real device. What is left to lock down here is the pure logic
     //! that a demo failure would not localise: the device-matching policy and the
     //! compile-time schema composition.
-    use super::{DEVICE_FIELDS, DeviceChoice, RT_EXTERNAL_FIELDS, SCHEMA_FIELDS, resolve_device};
+    use super::{
+        AudioFollowClock, DEVICE_FIELDS, DeviceChoice, RT_EXTERNAL_FIELDS, SCHEMA_FIELDS, Vec3,
+        World, resolve_device,
+    };
+    use pinion_audio::{AudioEngine, realtime_channel, shared_controller};
+    use pinion_core::animation::Tickable;
+    use std::rc::Rc;
 
     /// A realistic ALSA list: a real (AUDIBLE) card plus the silent dummy under
     /// several PCM prefixes — the shape that makes substring matching dangerous.
@@ -560,6 +806,76 @@ mod tests {
         // A typo'd name must NOT quietly select the speakers; NotFound is what
         // makes the caller abort loudly.
         assert_eq!(resolve_device("Loopback", &names()), DeviceChoice::NotFound);
+    }
+
+    /// Positions are exactly representable here, but an exact `==` on floats is
+    /// not a habit worth forming.
+    #[track_caller]
+    fn assert_pos(got: Vec3, want: Vec3) {
+        for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+            assert!((g - w).abs() < 1e-6, "axis {i}: got {got:?}, want {want:?}");
+        }
+    }
+
+    /// ★ The per-frame tick, with **no sound card**: a `realtime_channel` needs no
+    /// hardware, and splitting [`World`] from the device is what lets the clock be
+    /// tested at all. Locks the contract the demo proves over the wire.
+    #[test]
+    fn the_frame_tick_carries_the_camera_to_the_audio_thread() {
+        let (controller, _renderer) = realtime_channel(AudioEngine::new(48_000), 8, 4);
+        let world = Rc::new(World::default());
+        let clock = AudioFollowClock {
+            controller: shared_controller(controller),
+            world: world.clone(),
+        };
+
+        // A clean world is at rest — the shell's frame loop is released.
+        assert!(clock.is_at_rest(0.01));
+        assert_pos(
+            clock.controller.borrow().listener().position,
+            [0.0, 0.0, 0.0],
+        );
+
+        // Moving the camera does NOT touch the audio engine…
+        world.set_camera([3.0, 0.0, -4.0]);
+        assert!(!clock.is_at_rest(0.01), "a camera move re-arms the loop");
+        assert_pos(
+            clock.controller.borrow().listener().position,
+            [0.0, 0.0, 0.0],
+        );
+
+        // …a frame does.
+        clock.tick(0.016);
+        assert_pos(
+            clock.controller.borrow().listener().position,
+            [3.0, 0.0, -4.0],
+        );
+        assert!(clock.is_at_rest(0.01), "pushed, so it settles again");
+        assert_eq!(world.frame_ticks.get(), 1);
+    }
+
+    /// `dt`-independent: it is a propagator, not an integrator. This is exactly
+    /// why it may stay registered in a headless harness where a wall-clock
+    /// integrator (`VnClock`) could not — it cannot drift.
+    #[test]
+    fn the_clock_is_dt_independent_and_keeps_the_listener_facing() {
+        let (controller, _renderer) = realtime_channel(AudioEngine::new(48_000), 8, 4);
+        let world = Rc::new(World::default());
+        let clock = AudioFollowClock {
+            controller: shared_controller(controller),
+            world: world.clone(),
+        };
+        let facing = clock.controller.borrow().listener().forward;
+
+        world.set_camera([1.0, 2.0, 3.0]);
+        clock.tick(0.001); // a tiny frame …
+        let after_small = clock.controller.borrow().listener().position;
+        world.set_camera([1.0, 2.0, 3.0]);
+        clock.tick(10.0); // … and a huge one land the SAME pose.
+        assert_pos(clock.controller.borrow().listener().position, after_small);
+        assert_pos(after_small, [1.0, 2.0, 3.0]);
+        // It moves where the ears ARE, never where they look.
+        assert_pos(clock.controller.borrow().listener().forward, facing);
     }
 
     #[test]
