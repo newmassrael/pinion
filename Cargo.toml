@@ -31,6 +31,7 @@ members = [
     "examples/hello-narrative-walk",
     "examples/hello-place-map",
     "examples/hello-audio",
+    "examples/hello-audio-rt",
     "examples/hello-dnd",
     "examples/hello-filedrop",
     "examples/hello-file-browser",

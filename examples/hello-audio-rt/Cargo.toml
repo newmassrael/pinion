@@ -1,0 +1,41 @@
+[package]
+name = "hello-audio-rt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "the real-time device audio path (AudioController + AudioRenderer) driven over JSON-RPC — the §2 #2 wire proof for the shipping audio path, on the pinion_shell GUI shell with a deterministic render step-verb"
+publish = false
+
+[[bin]]
+name = "hello-audio-rt"
+path = "src/main.rs"
+
+[dependencies]
+# Scene primitives + the External / IntrospectValue introspection triad +
+# WidgetCore binding trait.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# WidgetA11y supertrait of WidgetView (the graph lowers to a labelled node).
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# The GUI AppShell: winit window + Vello + the built-in stdin JSON-RPC reader
+# (reply -> stdout). This is what makes the binding RpcSubprocess-driveable,
+# and — unlike pinion_tui — it paints to a GPU window, so stdout stays a clean
+# RPC channel (the TUI-on-stdout vs RPC-on-stdout conflict the single-thread
+# hello-audio has).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# The first-class audio subsystem (§5.54): the real-time control model
+# (AudioController / AudioRenderer / realtime_channel) + the §2 #7
+# AudioControllerExternal surface this binary brings onto the real wire.
+pinion-audio = { path = "../../crates/pinion-audio", version = "0.0.1" }
+# The concrete VelloRenderer the forge codegen (app.pinion.xml) emits is
+# `::vello::*`-qualified, so the include names the vello crate directly.
+vello = { workspace = true }
+
+[build-dependencies]
+# Build-time codegen for the `HelloAudioRtRenderer` Vello wrapper from
+# `app.pinion.xml` — identical pattern to hello-node-editor / hello-toggle.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
