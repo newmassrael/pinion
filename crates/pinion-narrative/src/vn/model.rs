@@ -26,20 +26,37 @@ pub struct VnOption {
     #[serde(default)]
     pub label: String,
     /// The outcome tag recorded when this option is taken — the seam a
-    /// later round reads to branch the telling (map an outcome to a
-    /// world-line). For the MVP it is an opaque, queryable string.
+    /// later round reads to map an outcome to a Mnemosyne world-line. An
+    /// opaque, queryable string.
     #[serde(default)]
     pub outcome: String,
+    /// Where the play-head goes when this option is taken: `Some(step)`
+    /// branches to that step (clamped into range), `None` falls through to
+    /// the next step. This is what makes a choice *matter* — different
+    /// options lead to different steps. The pinion-side precursor of the
+    /// [`ForkTree`](crate::model::ForkTree) branch topology the narrative
+    /// scene-walk already models.
+    #[serde(default)]
+    pub goto: Option<u16>,
 }
 
 impl VnOption {
-    /// Build an option from a player-facing `label` and its `outcome` tag.
+    /// Build an option from a player-facing `label` and its `outcome` tag,
+    /// falling through to the next step when taken (no branch).
     #[must_use]
     pub fn new(label: impl Into<String>, outcome: impl Into<String>) -> Self {
         Self {
             label: label.into(),
             outcome: outcome.into(),
+            goto: None,
         }
+    }
+
+    /// Branch to step `to` when this option is taken (builder form).
+    #[must_use]
+    pub const fn goto(mut self, to: u16) -> Self {
+        self.goto = Some(to);
+        self
     }
 }
 
@@ -61,6 +78,13 @@ pub enum VnStep {
         /// it.
         #[serde(default)]
         text: String,
+        /// Where the play-head goes when this line is advanced past:
+        /// `Some(step)` jumps there (clamped), `None` falls through to the
+        /// next step. Lets a branch's terminal line jump to the End (or a
+        /// shared convergence step) instead of flowing into the next
+        /// branch's steps — the peer of [`VnOption::goto`].
+        #[serde(default)]
+        goto: Option<u16>,
     },
     /// A choice the player must resolve before the countdown expires —
     /// the-tide's "급박함" (urgency) core.
@@ -84,12 +108,13 @@ pub enum VnStep {
 }
 
 impl VnStep {
-    /// Build a spoken [`Self::Line`].
+    /// Build a spoken [`Self::Line`] that falls through to the next step.
     #[must_use]
     pub fn line(speaker: impl Into<String>, text: impl Into<String>) -> Self {
         Self::Line {
             speaker: speaker.into(),
             text: text.into(),
+            goto: None,
         }
     }
 
@@ -99,7 +124,20 @@ impl VnStep {
         Self::Line {
             speaker: String::new(),
             text: text.into(),
+            goto: None,
         }
+    }
+
+    /// Set a jump target on a [`Self::Line`] — advancing past it goes to
+    /// `to` (clamped) instead of the next step. A no-op on a
+    /// [`Self::TimedChoice`] (choice branching lives on each
+    /// [`VnOption::goto`]).
+    #[must_use]
+    pub fn with_goto(mut self, to: u16) -> Self {
+        if let Self::Line { goto, .. } = &mut self {
+            *goto = Some(to);
+        }
+        self
     }
 
     /// Build a [`Self::TimedChoice`].
@@ -133,10 +171,11 @@ impl VnStep {
 
 /// An ordered VN script — the presentation-layer data a runner plays.
 ///
-/// Deliberately just a `Vec<VnStep>`: an authored script is linear, and
-/// branching (an outcome jumping to a different step / world-line) is a
-/// later round's addition that reads the [`VnOption::outcome`] tags, not a
-/// shape this MVP bakes in.
+/// A `Vec<VnStep>` addressed by index: steps play in order by default, and
+/// branching is expressed by per-step jump targets ([`VnOption::goto`] on a
+/// choice, [`VnStep::with_goto`] on a line) rather than a nested tree — the
+/// flat, index-addressed shape the wire form and an external projection both
+/// consume most easily.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VnScript {
     /// The steps to play, in author order.
@@ -213,6 +252,30 @@ mod tests {
         // The `kind` tag is the stable wire discriminator.
         assert!(json.contains("\"kind\":\"line\""));
         assert!(json.contains("\"kind\":\"timed_choice\""));
+    }
+
+    #[test]
+    fn goto_builders_set_branch_targets_and_round_trip() {
+        let opt = VnOption::new("돌아본다", "turn").goto(3);
+        assert_eq!(opt.goto, Some(3));
+        let line = VnStep::line("무녀", "끝").with_goto(9);
+        assert!(matches!(line, VnStep::Line { goto: Some(9), .. }));
+        // with_goto is a no-op on a choice (branching lives on the options).
+        let choice = VnStep::timed_choice("?", vec![opt.clone()], 1000, 0).with_goto(5);
+        assert!(choice.is_choice());
+
+        let script = VnScript::new(vec![choice, line]);
+        let back: VnScript =
+            serde_json::from_str(&serde_json::to_string(&script).unwrap()).unwrap();
+        assert_eq!(script, back, "goto targets survive the wire round-trip");
+    }
+
+    #[test]
+    fn options_without_goto_default_to_fall_through() {
+        let opt = VnOption::new("버틴다", "endure");
+        assert_eq!(opt.goto, None, "no branch by default");
+        let line = VnStep::narration("계속");
+        assert!(matches!(line, VnStep::Line { goto: None, .. }));
     }
 
     #[test]

@@ -253,12 +253,14 @@ impl VnState {
             && rt.elapsed_ms >= *timeout_ms
         {
             let option = clamp_option(*default_option, options.len());
+            let goto = options.get(usize::from(option)).and_then(|o| o.goto);
+            let target = self.step_after(rt.step, goto);
             rt.resolved = Some(VnResolution {
                 step: rt.step,
                 option,
                 timed_out: true,
             });
-            rt.step = rt.step.saturating_add(1);
+            rt.step = target;
             rt.elapsed_ms = 0;
             rt.snapped = false;
             self.runtime.set(rt);
@@ -269,6 +271,17 @@ impl VnState {
         false
     }
 
+    /// The step the play-head moves to after leaving `current`: the explicit
+    /// `goto` branch target if set, else the next step — both clamped into
+    /// `[0, len]` (`len` = End).
+    fn step_after(&self, current: u16, goto: Option<u16>) -> u16 {
+        let max = u16::try_from(self.script.len()).unwrap_or(u16::MAX);
+        match goto {
+            Some(target) => target.min(max),
+            None => current.saturating_add(1).min(max),
+        }
+    }
+
     /// Player action on a line: snap a partly-revealed line to full, or (if
     /// already full) step to the next step. A no-op on a choice (the player
     /// must [`choose`](Self::choose) or let it time out) and at
@@ -277,9 +290,9 @@ impl VnState {
     pub fn advance(&self) -> bool {
         let mut rt = self.runtime.get();
         match self.script.step(usize::from(rt.step)) {
-            Some(VnStep::Line { .. }) => {
+            Some(VnStep::Line { goto, .. }) => {
                 if self.fully_revealed() {
-                    rt.step = rt.step.saturating_add(1);
+                    rt.step = self.step_after(rt.step, *goto);
                     rt.elapsed_ms = 0;
                     rt.snapped = false;
                     self.runtime.set(rt);
@@ -311,12 +324,13 @@ impl VnState {
                 if index >= options.len() {
                     return Err(ChooseError::OutOfRange);
                 }
+                let target = self.step_after(rt.step, options[index].goto);
                 rt.resolved = Some(VnResolution {
                     step: rt.step,
                     option: u16::try_from(index).unwrap_or(u16::MAX),
                     timed_out: false,
                 });
-                rt.step = rt.step.saturating_add(1);
+                rt.step = target;
                 rt.elapsed_ms = 0;
                 rt.snapped = false;
                 self.runtime.set(rt);
@@ -515,6 +529,78 @@ mod tests {
             assert_eq!(s.mode(), VnMode::End);
             assert!(!s.tick(100));
             assert!(!s.advance());
+        });
+    }
+
+    /// A diamond: choice at step 0 branches to step 1 (option A) or step 3
+    /// (option B); the option-A line jumps to the End so it does not flow
+    /// into the option-B branch.
+    fn branching_script() -> VnScript {
+        VnScript::new(vec![
+            VnStep::timed_choice(
+                "goes where?",
+                vec![
+                    VnOption::new("A", "a").goto(1),
+                    VnOption::new("B", "b").goto(3),
+                ],
+                2000,
+                0, // timeout -> option A (goto 1)
+            ),
+            VnStep::narration("branch A step 1").with_goto(4), // jump past B
+            VnStep::narration("branch A step 2 (skipped by the jump)"),
+            VnStep::narration("branch B step 3"),
+            VnStep::narration("shared ending step 4"),
+        ])
+    }
+
+    #[test]
+    fn choose_option_branches_to_its_goto_target() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let s = VnState::new(branching_script());
+            assert_eq!(s.mode(), VnMode::Choice);
+            s.choose(1).expect("option B"); // goto 3
+            assert_eq!(s.runtime().step, 3, "branched to B's target, not step 1");
+            assert_eq!(s.resolved_option().map(|o| o.outcome.as_str()), Some("b"));
+        });
+    }
+
+    #[test]
+    fn timeout_branches_via_the_default_options_goto() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let s = VnState::new(branching_script());
+            assert!(s.tick(2500), "timed out"); // default option 0 -> goto 1
+            assert_eq!(s.runtime().step, 1, "timeout took option A's branch");
+            assert!(s.resolution().is_some_and(|r| r.timed_out));
+        });
+    }
+
+    #[test]
+    fn line_goto_jumps_past_the_other_branch() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let s = VnState::new(branching_script());
+            s.choose(0).expect("option A"); // goto 1
+            assert_eq!(s.runtime().step, 1);
+            // Advancing past step 1 jumps to step 4 (its with_goto), skipping
+            // steps 2 and 3 (branch B), not flowing linearly into them.
+            assert!(s.advance()); // snap
+            assert!(s.advance()); // jump to 4
+            assert_eq!(s.runtime().step, 4, "line goto skipped the B branch");
+        });
+    }
+
+    #[test]
+    fn goto_target_past_end_clamps_to_end() {
+        let owner = Owner::new();
+        owner.run(|| {
+            // Empty text -> line_len 0 -> fully revealed at once, so one
+            // advance takes the jump.
+            let s = VnState::new(VnScript::new(vec![VnStep::narration("").with_goto(99)]));
+            assert!(s.fully_revealed());
+            assert!(s.advance()); // jump via goto(99)
+            assert_eq!(s.mode(), VnMode::End, "an over-range goto clamps to End");
         });
     }
 }

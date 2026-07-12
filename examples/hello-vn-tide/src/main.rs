@@ -79,34 +79,36 @@ fn vn_state() -> Rc<VnState> {
     use_vn_state(VN_KEY, tide_script)
 }
 
-/// The-tide "부름 급박 세트피스" — a small authored VN script. Two timed
-/// choices: the first the demo lets time out (→ its default), the second the
-/// demo answers in time — so one linear play-through exercises the typewriter,
-/// `advance`, a countdown timeout, and an explicit `choose`.
+/// The-tide "부름 급박 세트피스" — a small **branching** VN script. One
+/// decisive timed choice forks the telling into two endings, so a choice
+/// actually changes what happens (R1296): 돌아본다 → the peril branch
+/// (steps 3–4), 버틴다 → the endure branch (steps 5–6). The peril ending's
+/// line jumps past the endure branch to the End (`with_goto`), so the two
+/// branches do not bleed into each other. Timeout takes the default
+/// (돌아본다 → peril) — hesitation is punished, the "급박함" of the tide.
+///
+/// Steps: 0 narration · 1 무녀 line · 2 timed choice · 3–4 peril branch ·
+/// 5–6 endure branch (len = 7, so `with_goto(7)` is the End).
 fn tide_script() -> VnScript {
+    const END: u16 = 7;
     VnScript::new(vec![
         VnStep::narration("밀물이 갯벌을 삼킨다. 등 뒤에서 목소리가 너를 부른다."),
         VnStep::line("무녀", "돌아오지 마라. 물때가 널 데려간다."),
         VnStep::timed_choice(
-            "다시, 네 이름이 불린다 — 어쩔 텐가?",
+            "네 이름이 다시 불린다 — 어쩔 텐가?",
             vec![
-                VnOption::new("돌아본다", "turn"),
-                VnOption::new("버틴다", "endure"),
+                VnOption::new("돌아본다", "turn").goto(3),
+                VnOption::new("버틴다", "endure").goto(5),
             ],
             4000,
-            1, // default on timeout = 버틴다 / endure
+            0, // default on timeout = 돌아본다 / turn (the peril branch)
         ),
-        VnStep::narration("너는 이를 악문다. 검은 물이 무릎까지 찬다."),
-        VnStep::timed_choice(
-            "마지막 부름. 차가운 손이 어깨에 닿는다.",
-            vec![
-                VnOption::new("뿌리친다", "shake_off"),
-                VnOption::new("잡는다", "take_hand"),
-            ],
-            3000,
-            0, // default on timeout = 뿌리친다 / shake_off
-        ),
-        VnStep::narration("손을 잡자, 물이 잔잔해진다. 물때가 멈춘다."),
+        // Peril branch (3–4): the terminal line jumps to the End.
+        VnStep::narration("돌아보자, 아무도 없다. 검은 물이 목까지 차오른다."),
+        VnStep::line("무녀", "물때가 너를 데려간다. — 나쁜 끝.").with_goto(END),
+        // Endure branch (5–6): flows off the last step into the End.
+        VnStep::narration("이를 악물고 버틴다. 검은 물이 무릎에서 멈춘다."),
+        VnStep::line("무녀", "물때가 잦아든다. 너는 살아 남는다. — 버틴 끝."),
     ])
 }
 
