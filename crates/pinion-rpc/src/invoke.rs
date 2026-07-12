@@ -186,7 +186,7 @@ mod tests {
         // side (the M1 concern): with no primary, a bare `/external`
         // invoke resolves, per declaration order, to the FIRST extra
         // (pane_a, start 101) — `increment` by 6 returns 107. This is the
-        // unstable shorthand `WidgetCore::has_primary_surface` documents;
+        // unstable shorthand `WidgetCore::primary_surface` documents;
         // clients address extras by tag (proven stable in
         // `r1303_no_primary_invoke_by_tag_mutates_the_correct_extra`).
         use pinion_core::scene::{ContainerNode, ExternalNode as ExtNode};

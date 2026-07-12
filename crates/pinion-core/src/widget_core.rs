@@ -121,6 +121,38 @@ impl core::fmt::Debug for ExtraExternal {
     }
 }
 
+/// (R1306 PR-51 §5.41) The primary interactive surface a binding
+/// contributes — the value [`WidgetCore::primary_surface`] returns when a
+/// binding has one. Pairs the factory that builds the binding's root
+/// [`External`] with the tag that routes input to it.
+///
+/// A binding with no single canonical primary (every routable surface is a
+/// dynamic [`ExtraExternal`]) returns `None` from `primary_surface`
+/// instead. Because the substrate reads the primary *only* through
+/// `primary_surface`, "there is no primary" is an `Option::None` the type
+/// system forces every substrate site to handle — never a bare
+/// `Self::tag()` call a site can forget to gate.
+#[derive(Clone, Copy)]
+pub struct PrimarySurface {
+    /// Stable routing tag — matches the paint-side hit-test target the
+    /// view fn attaches (R55.G.17). The input router forwards pointer /
+    /// key events to the `Scene::External` carrying this tag.
+    pub tag: &'static str,
+    /// Factory building a fresh primary [`External`] at boot (and on each
+    /// dynamic reconcile). A `fn` pointer — not an eagerly built value — so
+    /// a site that needs only [`Self::tag`] (e.g. the TUI focus target)
+    /// reads it without constructing an `External`.
+    pub factory: fn() -> Box<dyn External>,
+}
+
+impl core::fmt::Debug for PrimarySurface {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PrimarySurface")
+            .field("tag", &self.tag)
+            .finish_non_exhaustive()
+    }
+}
+
 /// R51.121 §5.41 — backend-free widget binding contract.
 ///
 /// Every application-side widget binding (`HelloButton`,
@@ -150,76 +182,84 @@ pub trait WidgetCore: 'static {
     /// contract.
     type Event: Copy;
 
-    /// (R1303 PR-51 §5.41 §5.45 §5.49) Whether this binding contributes a
-    /// **primary interactive surface** — the single canonical
-    /// [`External`] created by [`Self::create_external`] and named by
-    /// [`Self::tag`], composed at state-scene index 0.
+    /// (R1306 PR-51 §5.41 §5.45 §5.49) The binding's **primary interactive
+    /// surface**, if it has one — the factory that builds its root
+    /// [`External`] plus the tag that routes to it, composed at state-scene
+    /// index 0.
     ///
-    /// Default `true` — the overwhelming majority of bindings have a
-    /// natural primary: a button, a text field, an editor viewport, a
-    /// list. For those the substrate calls [`Self::create_external`] /
-    /// [`Self::tag`] at boot and composes the primary at index 0 — a bare
-    /// [`Scene::External`] when there are no extras, or
+    /// This is the substrate's **sole accessor** for the primary: the boot
+    /// compose ([`CoreShell::new`](../../pinion_runtime/struct.CoreShell.html#method.new)),
+    /// the reconcile, `send_to_primary`, and the TUI key-focus dispatch all
+    /// read `primary_surface()` and **never** call [`Self::create_external`]
+    /// / [`Self::tag`] directly. Centralising "is there a primary + what
+    /// builds it + what tag routes to it" in one [`Option`] accessor means a
+    /// substrate site cannot silently skip the no-primary case — it is
+    /// forced by the type. (The R1303→R1304 TUI panic was exactly a site
+    /// that re-derived the tag as an unconditional `Self::tag()` instead of
+    /// going through here; routing every site through this accessor makes
+    /// that class of bug structural, not a matter of remembering to gate.)
+    ///
+    /// Default `Some(...)`, delegating to [`Self::create_external`] /
+    /// [`Self::tag`] — the overwhelming majority of bindings have a natural
+    /// primary (a button, a text field, an editor viewport, a list) and
+    /// need no override. The substrate composes the primary at index 0: a
+    /// bare [`Scene::External`] when there are no extras, or
     /// `Scene::Container([primary, ...extras])` when
     /// [`Self::create_extra_externals`] is non-empty — exactly as every
-    /// pre-R1303 binding does. No existing binding changes.
+    /// pre-R1303 binding does. **No existing binding changes** (the default
+    /// wraps the required `create_external`/`tag` they already provide).
     ///
-    /// Override to `false` **only** for a binding whose interactive
-    /// surfaces are *all* dynamic extras with no single canonical
-    /// primary: every routable surface is a per-item / per-pane
-    /// [`ExtraExternal`] from [`Self::create_extra_externals`]. The
-    /// motivating consumer is sprag's multi-pane GUI (topology B) — its
-    /// scrollbars / splitters / dock panels are all per-pane dynamic
-    /// extras (`external_set_is_dynamic() == true`), so it has no natural
-    /// primary. Before this opt-out such a binding had to satisfy the
-    /// mandatory-primary contract with an **inert sentinel** External
-    /// tagged with a name nothing ever paints: technically correct (never
-    /// painted, never routed) but a deliberate violation of the R55.G.17
-    /// painted-primary-tag convention and a phantom node in the state
-    /// scene. Returning `false` lets the binding declare the absence
-    /// explicitly instead of forging a sentinel.
+    /// Override to `None` **only** for a binding whose interactive surfaces
+    /// are *all* dynamic extras with no single canonical primary: every
+    /// routable surface is a per-item / per-pane [`ExtraExternal`] from
+    /// [`Self::create_extra_externals`]. The motivating consumer is sprag's
+    /// multi-pane GUI (topology B) — its scrollbars / splitters / dock
+    /// panels are all per-pane dynamic extras
+    /// (`external_set_is_dynamic() == true`), so it has no natural primary.
+    /// Before this opt-out such a binding had to satisfy the mandatory-
+    /// primary contract with an **inert sentinel** External tagged with a
+    /// name nothing ever paints: technically correct (never painted, never
+    /// routed) but a deliberate violation of the R55.G.17 painted-primary-
+    /// tag convention and a phantom node in the state scene. Returning
+    /// `None` lets the binding declare the absence explicitly.
     ///
-    /// When `false`:
-    /// - The **substrate never calls** [`Self::create_external`] /
-    ///   [`Self::tag`] for this binding — the GUI/TUI boot compose, the
-    ///   reconcile, `send_to_primary`, and the TUI single-widget
-    ///   key-focus dispatch (`pinion_tui`'s `dispatch_key`, which hands
-    ///   the focused tag to `apply_key`) all skip them. So a no-primary
-    ///   binding need not supply a meaningful body for either; an
-    ///   `unreachable!` marker documents that they are structurally
-    ///   inapplicable. (A binding must correspondingly NOT call a helper
-    ///   that references its own [`Self::tag`] — e.g.
-    ///   [`Self::forward_key_to_external`] — from its `apply_key`.) They
+    /// When `None`:
+    /// - [`Self::create_external`] / [`Self::tag`] are **never reached**
+    ///   (the default that would call them is overridden away). A
+    ///   no-primary binding leaves both as `unreachable!` markers. They
     ///   stay required on the trait so the has-primary majority keeps the
     ///   compile-time guarantee that a primary factory + tag is provided;
-    ///   making them `Option`-with-`None`-default would migrate ~150
-    ///   existing impls + their internal `Self::tag()` uses and trade that
-    ///   guarantee away for the rare case (the deliberate mechanism
-    ///   choice — this bool mirrors the existing
-    ///   [`Self::external_set_is_dynamic`] opt-out).
+    ///   `Option`-typing *those two methods* instead would pollute the ~150
+    ///   existing impls and their internal `Self::tag()` uses — one
+    ///   delegating `Option` descriptor here achieves the opt-out with zero
+    ///   migration. The binding must correspondingly NOT call a helper that
+    ///   references its own [`Self::tag`] — e.g.
+    ///   [`Self::forward_key_to_external`] — from its `apply_key`, and its
+    ///   [`Self::keybinding`] must stay empty (a keybinding event would
+    ///   reach the no-op `send_to_primary` and be dropped; a no-primary
+    ///   binding drives its extras by tag).
     /// - The substrate composes the state scene from the extras alone:
     ///   `Scene::Container([...extras])`, or an empty container when the
-    ///   extra set is momentarily empty (a dynamic binding before its
-    ///   first pane exists). There is no index-0 primary.
+    ///   extra set is momentarily empty (a dynamic binding before its first
+    ///   pane exists). There is no index-0 primary.
     /// - The R55.G.17 painted-primary-tag convention on [`Self::tag`] /
-    ///   [`Self::view`] does not apply (there is no primary tag to
-    ///   paint). Keyboard focus for this binding is not [`Self::tag`]-
-    ///   derived on either backend: the GUI focus manager derives focus
-    ///   stops from the paint scene ([`Scene::collect_focusable_tags`]),
-    ///   and the TUI `dispatch_key` passes `None` (no primary tag) rather
-    ///   than calling [`Self::tag`].
+    ///   [`Self::view`] does not apply. Keyboard focus is not
+    ///   [`Self::tag`]-derived on either backend: the GUI focus manager
+    ///   derives focus stops from the paint scene
+    ///   ([`Scene::collect_focusable_tags`]) and the TUI `dispatch_key`
+    ///   passes `None`.
     /// - [`CoreShell::send_to_primary`](../../pinion_runtime/struct.CoreShell.html#method.send_to_primary)
-    ///   is a no-op (there is no primary statechart to advance); the
-    ///   binding drives its extras through their own tags. Over the §5.12
-    ///   RPC wire the binding likewise addresses each extra by its
-    ///   explicit tag path; the bare `/external` shorthand (which
-    ///   resolves via [`Scene::primary_external`]'s "first in declaration
-    ///   order" convention) has no distinguished primary to name and
-    ///   resolves to the first extra, so it is not a stable address for a
-    ///   dynamic no-primary binding — address extras by tag.
+    ///   is a no-op. Over the §5.12 RPC wire the binding addresses each
+    ///   extra by its explicit tag path; the bare `/external` shorthand has
+    ///   no distinguished primary to name and resolves to the first extra
+    ///   (see [`Scene::primary_external`]), so it is not a stable address
+    ///   for a dynamic no-primary binding — address extras by tag.
     #[must_use]
-    fn has_primary_surface() -> bool {
-        true
+    fn primary_surface() -> Option<PrimarySurface> {
+        Some(PrimarySurface {
+            tag: Self::tag(),
+            factory: Self::create_external,
+        })
     }
 
     /// Build a fresh state scene root. Called once at shell boot (and on
@@ -228,11 +268,10 @@ pub trait WidgetCore: 'static {
     /// .with_tag(Self::tag()))` so the input router's hit-test on the
     /// paint-side tag routes to this node.
     ///
-    /// (R1303 PR-51 §5.41) Called **only** when
-    /// [`Self::has_primary_surface`] is `true` (the default). A binding
-    /// that overrides `has_primary_surface` to `false` has no primary and
-    /// this factory is never invoked — its body may be an `unreachable!`
-    /// marker.
+    /// (R1306 PR-51 §5.41) Reached **only** through the default
+    /// [`Self::primary_surface`]. A binding that overrides `primary_surface`
+    /// to `None` has no primary and this factory is never invoked — its body
+    /// may be an `unreachable!` marker.
     fn create_external() -> Box<dyn External>;
 
     /// (R55.D.5 §5.45) Sibling [`External`]s registered alongside the
@@ -306,11 +345,11 @@ pub trait WidgetCore: 'static {
     /// forwards pointer / key events to any `Scene::External` in the
     /// state scene whose tag equals this hit-test target.
     ///
-    /// (R1303 PR-51 §5.41) Called **only** when
-    /// [`Self::has_primary_surface`] is `true` (the default). A binding
-    /// with no primary surface (`has_primary_surface() == false`) never
-    /// has this called and the R55.G.17 convention below does not apply to
-    /// it — its body may be an `unreachable!` marker.
+    /// (R1306 PR-51 §5.41) Reached **only** through the default
+    /// [`Self::primary_surface`]. A binding with no primary surface
+    /// (`primary_surface()` overridden to `None`) never has this called and
+    /// the R55.G.17 convention below does not apply to it — its body may be
+    /// an `unreachable!` marker.
     ///
     /// R55.G.17 §5.49 — composite paint-root tag convention. For AI-
     /// side `scene/click` / `scene/key` / `scene/wheel`
@@ -339,8 +378,8 @@ pub trait WidgetCore: 'static {
     /// pixel rects.
     ///
     /// R55.G.17 §5.49 — composite paint-root tag convention. When the
-    /// binding has a primary surface ([`Self::has_primary_surface`] is
-    /// `true`, the default), the returned scene must contain a node
+    /// binding has a primary surface ([`Self::primary_surface`] is
+    /// `Some`, the default), the returned scene must contain a node
     /// tagged [`Self::tag`]
     /// somewhere (typically the outermost interactive container or a
     /// transparent wrapper around it). Without this, AI-side

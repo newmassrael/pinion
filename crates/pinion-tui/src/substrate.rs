@@ -364,11 +364,11 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// itself as the activation target. The TUI `FocusManager`
     /// axis (carry) lifts this constant.
     ///
-    /// (R1303 PR-51 §5.41) A binding that opts out of a primary surface
-    /// ([`pinion_core::WidgetCore::has_primary_surface`] `== false`) has
-    /// no primary tag — `V::tag()` is an `unreachable!` marker for it — so
-    /// the focus argument is `None` (via `then`, which does not call
-    /// `V::tag()`).
+    /// (R1306 PR-51 §5.41) A binding that opts out of a primary surface
+    /// ([`pinion_core::WidgetCore::primary_surface`] `== None`) has no
+    /// primary tag — `V::tag()` is an `unreachable!` marker for it — so the
+    /// focus argument is read through `primary_surface()` (which yields
+    /// `None`, never calling `V::tag()`), not a bare `V::tag()`.
     /// The binding's `apply_key` handles keys without a primary-tag focus
     /// gate; this keeps a no-primary binding TUI-renderable per §2 #6
     /// (GUI/TUI dual) instead of panicking on the first key.
@@ -377,7 +377,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             let tail = self.core.forward(event);
             return self.handle_tail(&tail);
         }
-        let focused = V::has_primary_surface().then(V::tag);
+        let focused = V::primary_surface().map(|p| p.tag);
         if let Some(tail) = self.core.apply_key(focused, key_str, modifiers) {
             return self.handle_tail(&tail);
         }
@@ -2276,8 +2276,8 @@ mod tests {
             type State = ButtonState;
             type Event = ButtonEvent;
 
-            fn has_primary_surface() -> bool {
-                false
+            fn primary_surface() -> Option<pinion_core::widget_core::PrimarySurface> {
+                None
             }
 
             fn create_external() -> Box<dyn pinion_core::external::External> {

@@ -362,7 +362,7 @@ mod tests {
     // stable §2 #2 AI address a no-primary binding relies on; (b) the
     // bare `/external` shorthand resolves, per `Scene::primary_external`'s
     // "first in declaration order" convention, to the FIRST extra (not an
-    // error) — documented on `WidgetCore::has_primary_surface` as an
+    // error) — documented on `WidgetCore::primary_surface` as an
     // unstable address for a dynamic no-primary binding, so clients
     // address extras by tag.
     // ─────────────────────────────────────────────────────────────────
@@ -403,7 +403,7 @@ mod tests {
         // The bare `/external` shorthand has no primary to name; per the
         // declaration-order convention it resolves to the FIRST extra
         // (pane_a, count 101), NOT an error. Documented on
-        // `WidgetCore::has_primary_surface` as unstable for a dynamic
+        // `WidgetCore::primary_surface` as unstable for a dynamic
         // no-primary binding — clients address extras by tag.
         let scene = extras_only_wrap();
         assert_eq!(

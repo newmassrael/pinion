@@ -563,17 +563,16 @@ impl<V: WidgetCore> CoreShell<V> {
         // (every pre-R56.1.b.1 example) are unaffected: their
         // factories ignore the Owner context.
         //
-        // (R1303 PR-51 §5.41 §5.45) The primary is composed only when the
-        // binding declares one (`has_primary_surface()`, default `true`).
-        // A no-primary binding (all surfaces are dynamic extras — sprag's
-        // topology B) leaves `create_external` / `tag` uncalled and the
-        // state scene is built from the extras alone. `None` here flows
-        // into `compose_root`, which drops the index-0 primary slot.
-        let primary = V::has_primary_surface().then(|| {
-            Scene::External(
-                ExternalNode::new(root_owner.run(V::create_external)).with_tag(V::tag()),
-            )
-        });
+        // (R1306 PR-51 §5.41 §5.45) The primary is composed only when the
+        // binding declares one via [`WidgetCore::primary_surface`] (default
+        // `Some`, delegating to `create_external`/`tag`). A no-primary
+        // binding (all surfaces are dynamic extras — sprag's topology B)
+        // returns `None` and the state scene is built from the extras alone.
+        // Reading it through the one `primary_surface` accessor keeps every
+        // substrate site off a bare `V::tag()`/`V::create_external()` call.
+        // `None` flows into `compose_root`, which drops the index-0 primary.
+        let primary = V::primary_surface()
+            .map(|p| Scene::External(ExternalNode::new(root_owner.run(p.factory)).with_tag(p.tag)));
         let extra_children: Vec<Scene> = root_owner
             .run(V::create_extra_externals)
             .into_iter()
@@ -839,7 +838,7 @@ impl<V: WidgetCore> CoreShell<V> {
     /// the root shape cannot drift between the two call sites.
     ///
     /// (R1303 PR-51) `primary` is `None` for a binding that opted out of
-    /// a primary surface ([`WidgetCore::has_primary_surface`] `== false`):
+    /// a primary surface ([`WidgetCore::primary_surface`] `== None`):
     /// the state scene is then `Scene::Container([...extra_children])`
     /// with **no** index-0 primary — or, when the extra set is momentarily
     /// empty (a dynamic no-primary binding before its first surface
@@ -956,12 +955,13 @@ impl<V: WidgetCore> CoreShell<V> {
             return;
         }
         let new_extras = self.root_owner.run(V::create_extra_externals);
-        // (R1303 PR-51 §5.45) The extras begin after the index-0 primary
+        // (R1306 PR-51 §5.45) The extras begin after the index-0 primary
         // only when the binding has one; a no-primary binding
-        // (`has_primary_surface() == false`) composes a container of extras
-        // with no distinguished head, so the offset is 0. Bound once so the
-        // steady-state offset and the rebuild branch below read one value.
-        let has_primary = V::has_primary_surface();
+        // (`primary_surface()` overridden to `None`) composes a container of
+        // extras with no distinguished head, so the offset is 0. Bound once
+        // so the steady-state offset and the rebuild branch below read one
+        // value.
+        let has_primary = V::primary_surface().is_some();
         let primary_offset = usize::from(has_primary);
         // Steady-state guard — identical tag list means no surface was
         // added or removed, so every existing instance stays put.
@@ -1872,12 +1872,12 @@ impl<V: WidgetCore> CoreShell<V> {
     /// ignored (statechart-side rejection is a valid SCXML outcome
     /// per the conservative-bump policy).
     pub fn send_to_primary(&mut self, name: &str) {
-        // (R1303 PR-51 §5.41) A no-primary binding
-        // (`has_primary_surface() == false`) has no primary statechart to
-        // advance — return before touching the scene. Without this gate
+        // (R1306 PR-51 §5.41) A no-primary binding (`primary_surface()`
+        // overridden to `None`) has no primary statechart to advance —
+        // return before touching the scene. Without this gate
         // `primary_external_mut()` (DFS-first) would resolve the binding's
         // *first extra* and misroute the send to it.
-        if !V::has_primary_surface() {
+        if V::primary_surface().is_none() {
             return;
         }
         // R886.1 — for a has-primary binding, a missing primary is a
@@ -5713,11 +5713,12 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // R1303 PR-51 §5.41 §5.45 §5.49 — has_primary_surface() opt-out.
+    // R1303 PR-51 §5.41 §5.45 §5.49 — primary_surface() opt-out
+    // (R1306: the opt-out is `primary_surface() -> None`, was a bool).
     //
     // A binding whose interactive surfaces are ALL dynamic extras with no
-    // single canonical primary (sprag's topology B). It declares
-    // `has_primary_surface() == false`; its `create_external` / `tag` are
+    // single canonical primary (sprag's topology B). It returns
+    // `primary_surface() == None`; its `create_external` / `tag` are
     // `unreachable!` markers and the seam must never call them. The state
     // scene is composed from the extras alone — no index-0 primary.
     //
@@ -5735,8 +5736,8 @@ mod tests {
         type State = ButtonState;
         type Event = ButtonEvent;
 
-        fn has_primary_surface() -> bool {
-            false
+        fn primary_surface() -> Option<pinion_core::widget_core::PrimarySurface> {
+            None
         }
 
         fn create_external() -> Box<dyn pinion_core::external::External> {
@@ -5802,12 +5803,16 @@ mod tests {
     }
 
     #[test]
-    fn r1303_default_has_primary_surface_is_true() {
-        // The opt-out defaults to true — every existing binding keeps a
-        // primary with zero source change.
-        assert!(<TestButton as WidgetCore>::has_primary_surface());
-        assert!(<ReconcileFixture as WidgetCore>::has_primary_surface());
-        assert!(!<NoPrimaryFixture as WidgetCore>::has_primary_surface());
+    fn r1303_default_primary_surface_is_some() {
+        // The opt-out defaults to `Some` — every existing binding keeps a
+        // primary with zero source change; the default wraps create_external
+        // + tag, so a has-primary binding's descriptor names its own tag.
+        assert_eq!(
+            <TestButton as WidgetCore>::primary_surface().map(|p| p.tag),
+            Some(<TestButton as WidgetCore>::tag()),
+        );
+        assert!(<ReconcileFixture as WidgetCore>::primary_surface().is_some());
+        assert!(<NoPrimaryFixture as WidgetCore>::primary_surface().is_none());
     }
 
     #[test]
@@ -5946,8 +5951,8 @@ mod tests {
         type State = ButtonState;
         type Event = ButtonEvent;
 
-        fn has_primary_surface() -> bool {
-            false
+        fn primary_surface() -> Option<pinion_core::widget_core::PrimarySurface> {
+            None
         }
 
         fn create_external() -> Box<dyn pinion_core::external::External> {
