@@ -363,12 +363,22 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// so the widget's focus-gated `apply_key` impl recognises
     /// itself as the activation target. The TUI `FocusManager`
     /// axis (carry) lifts this constant.
+    ///
+    /// (R1303 PR-51 §5.41) A binding that opts out of a primary surface
+    /// ([`pinion_core::WidgetCore::has_primary_surface`] `== false`) has
+    /// no primary tag — `V::tag()` is an `unreachable!` marker for it — so
+    /// the focus argument is `None` (via `then`, which does not call
+    /// `V::tag()`).
+    /// The binding's `apply_key` handles keys without a primary-tag focus
+    /// gate; this keeps a no-primary binding TUI-renderable per §2 #6
+    /// (GUI/TUI dual) instead of panicking on the first key.
     pub fn dispatch_key(&mut self, key_str: &str, modifiers: pinion_core::Modifiers) -> bool {
         if let Some(event) = V::keybinding(key_str) {
             let tail = self.core.forward(event);
             return self.handle_tail(&tail);
         }
-        if let Some(tail) = self.core.apply_key(Some(V::tag()), key_str, modifiers) {
+        let focused = V::has_primary_surface().then(V::tag);
+        if let Some(tail) = self.core.apply_key(focused, key_str, modifiers) {
             return self.handle_tail(&tail);
         }
         // R51.187 §5.45 R55.C.3 — widget reported the key
@@ -2237,5 +2247,100 @@ mod tests {
         let mut core: ShellCoreTui<ContextMenuFixture> = ShellCoreTui::new();
         assert!(!core.secondary_click(), "no cursor cache → no dispatch");
         assert!(!core.cached_state().open, "popup stays closed");
+    }
+
+    mod r1303_no_primary {
+        //! R1303 PR-51 §5.41 §2 #6 — a no-primary binding must be
+        //! TUI-renderable. Regression guard for the audit finding that
+        //! `dispatch_key` handed `Some(V::tag())` unconditionally, which
+        //! panics for a binding whose `tag()` is the sanctioned
+        //! `unreachable!` marker.
+        use std::cell::Cell;
+
+        use pinion_core::external::StubExternal;
+        use pinion_core::widget_core::ExtraExternal;
+        use pinion_core::widgets::button::{ButtonEvent, ButtonState};
+        use pinion_core::{Frame, Scene, WidgetCore};
+
+        use super::super::{ShellCoreTui, WidgetViewTui};
+
+        thread_local! {
+            // None = apply_key not reached; Some(b) = reached with
+            // `focused.is_none() == b`.
+            static FOCUSED_WAS_NONE: Cell<Option<bool>> = const { Cell::new(None) };
+        }
+
+        struct NoPrimaryTuiView;
+
+        impl WidgetCore for NoPrimaryTuiView {
+            type State = ButtonState;
+            type Event = ButtonEvent;
+
+            fn has_primary_surface() -> bool {
+                false
+            }
+
+            fn create_external() -> Box<dyn pinion_core::external::External> {
+                unreachable!("R1303 PR-51 — NoPrimaryTuiView has no primary surface")
+            }
+
+            fn tag() -> &'static str {
+                unreachable!("R1303 PR-51 — NoPrimaryTuiView has no primary surface")
+            }
+
+            fn create_extra_externals() -> Vec<ExtraExternal> {
+                vec![ExtraExternal::new("pane", Box::new(StubExternal::new()))]
+            }
+
+            fn read_state(_scene: &Scene) -> Self::State {
+                ButtonState::Idle
+            }
+
+            fn view(_state: Self::State, _frame: &Frame) -> Scene {
+                Scene::Container(pinion_core::scene::ContainerNode::new(Vec::new()))
+            }
+
+            fn event_name(_event: Self::Event) -> &'static str {
+                ""
+            }
+
+            fn title() -> &'static str {
+                "no-primary-tui"
+            }
+
+            fn apply_key(
+                _scene: &mut Scene,
+                focused: Option<&str>,
+                _key: &str,
+                _modifiers: pinion_core::Modifiers,
+            ) -> bool {
+                FOCUSED_WAS_NONE.with(|c| c.set(Some(focused.is_none())));
+                false
+            }
+        }
+
+        impl pinion_a11y::WidgetA11y for NoPrimaryTuiView {}
+
+        impl WidgetViewTui for NoPrimaryTuiView {
+            type Renderer = crate::TuiRenderer<ratatui::backend::TestBackend>;
+        }
+
+        #[test]
+        fn dispatch_key_does_not_panic_and_passes_none_focus() {
+            // Pre-R1303-fix, `dispatch_key` evaluated `Some(V::tag())`
+            // eagerly → `unreachable!` panic for this binding. Post-fix it
+            // passes `None` (no primary tag), so a no-primary binding is
+            // TUI-renderable (§2 #6) and its `apply_key` runs.
+            FOCUSED_WAS_NONE.with(|c| c.set(None));
+            let mut core: ShellCoreTui<NoPrimaryTuiView> = ShellCoreTui::new();
+            // A non-keybinding named key routes through `apply_key`; must
+            // not panic.
+            let _ = core.dispatch_key("ArrowLeft", pinion_core::Modifiers::empty());
+            assert_eq!(
+                FOCUSED_WAS_NONE.with(Cell::get),
+                Some(true),
+                "apply_key must run with focused == None for a no-primary binding",
+            );
+        }
     }
 }

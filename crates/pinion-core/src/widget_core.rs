@@ -180,28 +180,43 @@ pub trait WidgetCore: 'static {
     /// explicitly instead of forging a sentinel.
     ///
     /// When `false`:
-    /// - [`Self::create_external`] / [`Self::tag`] are **never called** —
-    ///   a no-primary binding need not supply a meaningful body for
-    ///   either (an `unreachable!` marker documents that they are
-    ///   structurally inapplicable). They stay required on the trait so
-    ///   the has-primary majority keeps the compile-time guarantee that a
-    ///   primary factory + tag is provided; making them
-    ///   `Option`-with-`None`-default would migrate ~150 existing impls +
-    ///   their internal `Self::tag()` uses and trade that guarantee away
-    ///   for the rare case (the deliberate mechanism choice — this bool
-    ///   mirrors the existing [`Self::external_set_is_dynamic`] opt-out).
+    /// - The **substrate never calls** [`Self::create_external`] /
+    ///   [`Self::tag`] for this binding — the GUI/TUI boot compose, the
+    ///   reconcile, `send_to_primary`, and the TUI single-widget
+    ///   key-focus dispatch (`pinion_tui`'s `dispatch_key`, which hands
+    ///   the focused tag to `apply_key`) all skip them. So a no-primary
+    ///   binding need not supply a meaningful body for either; an
+    ///   `unreachable!` marker documents that they are structurally
+    ///   inapplicable. (A binding must correspondingly NOT call a helper
+    ///   that references its own [`Self::tag`] — e.g.
+    ///   [`Self::forward_key_to_external`] — from its `apply_key`.) They
+    ///   stay required on the trait so the has-primary majority keeps the
+    ///   compile-time guarantee that a primary factory + tag is provided;
+    ///   making them `Option`-with-`None`-default would migrate ~150
+    ///   existing impls + their internal `Self::tag()` uses and trade that
+    ///   guarantee away for the rare case (the deliberate mechanism
+    ///   choice — this bool mirrors the existing
+    ///   [`Self::external_set_is_dynamic`] opt-out).
     /// - The substrate composes the state scene from the extras alone:
     ///   `Scene::Container([...extras])`, or an empty container when the
     ///   extra set is momentarily empty (a dynamic binding before its
     ///   first pane exists). There is no index-0 primary.
     /// - The R55.G.17 painted-primary-tag convention on [`Self::tag`] /
     ///   [`Self::view`] does not apply (there is no primary tag to
-    ///   paint). Keyboard focus is unaffected — it is derived from the
-    ///   paint scene by [`Scene::collect_focusable_tags`], never from
-    ///   [`Self::tag`].
+    ///   paint). Keyboard focus for this binding is not [`Self::tag`]-
+    ///   derived on either backend: the GUI focus manager derives focus
+    ///   stops from the paint scene ([`Scene::collect_focusable_tags`]),
+    ///   and the TUI `dispatch_key` passes `None` (no primary tag) rather
+    ///   than calling [`Self::tag`].
     /// - [`CoreShell::send_to_primary`](../../pinion_runtime/struct.CoreShell.html#method.send_to_primary)
     ///   is a no-op (there is no primary statechart to advance); the
-    ///   binding drives its extras through their own tags.
+    ///   binding drives its extras through their own tags. Over the §5.12
+    ///   RPC wire the binding likewise addresses each extra by its
+    ///   explicit tag path; the bare `/external` shorthand (which
+    ///   resolves via [`Scene::primary_external`]'s "first in declaration
+    ///   order" convention) has no distinguished primary to name and
+    ///   resolves to the first extra, so it is not a stable address for a
+    ///   dynamic no-primary binding — address extras by tag.
     #[must_use]
     fn has_primary_surface() -> bool {
         true

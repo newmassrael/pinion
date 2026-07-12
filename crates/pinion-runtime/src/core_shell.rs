@@ -959,8 +959,10 @@ impl<V: WidgetCore> CoreShell<V> {
         // (R1303 PR-51 §5.45) The extras begin after the index-0 primary
         // only when the binding has one; a no-primary binding
         // (`has_primary_surface() == false`) composes a container of extras
-        // with no distinguished head, so the offset is 0.
-        let primary_offset = usize::from(V::has_primary_surface());
+        // with no distinguished head, so the offset is 0. Bound once so the
+        // steady-state offset and the rebuild branch below read one value.
+        let has_primary = V::has_primary_surface();
+        let primary_offset = usize::from(has_primary);
         // Steady-state guard — identical tag list means no surface was
         // added or removed, so every existing instance stays put.
         let new_tags: Vec<&str> = new_extras.iter().map(|e| e.tag.as_ref()).collect();
@@ -1008,7 +1010,7 @@ impl<V: WidgetCore> CoreShell<V> {
         // `Scene::Container` whose children are all extras — there is no
         // index-0 primary to remove, and `primary` stays `None` so
         // `compose_root` re-emits a primary-less container below.
-        let (primary, current_extras): (Option<Scene>, Vec<Scene>) = if V::has_primary_surface() {
+        let (primary, current_extras): (Option<Scene>, Vec<Scene>) = if has_primary {
             match current {
                 Scene::External(node) => (Some(Scene::External(node)), Vec::new()),
                 Scene::Container(container) => {
