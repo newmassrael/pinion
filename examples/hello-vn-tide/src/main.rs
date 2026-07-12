@@ -64,7 +64,9 @@ use pinion_core::scene::Scene;
 use pinion_core::storage::Storage;
 use pinion_core::{Frame, WidgetCore};
 use pinion_narrative::vn::state::{VnCursor, VnSave};
-use pinion_narrative::{VnExternal, VnOption, VnScript, VnState, VnStep, use_vn_state, vn_scene};
+use pinion_narrative::{
+    VnExternal, VnOption, VnScript, VnState, VnStep, use_vn_clock, use_vn_state, vn_scene,
+};
 use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 
@@ -78,6 +80,19 @@ vello_renderer_impl!(HelloVnTideRenderer, HelloVnTideRendererError);
 
 /// `Owner::cache` key for the shared runner — the one-Rc SSOT.
 const VN_KEY: &str = "the_tide.vn";
+/// Animation-registry key for the real-time clock (the `CaretBlink` pattern).
+const VN_CLOCK_KEY: &str = "the_tide.vn.clock";
+
+/// `true` in an interactive window (real-time clock on), `false` under the
+/// headless `PINION_HIDDEN_WINDOW` harness (the deterministic `tick` verb
+/// drives time instead — a registered wall-clock clock drifts the offscreen
+/// play-head run-to-run, even under `scene/set_fps 0`, because RPC-induced
+/// repaints still tick the animation clock by wall-clock; verified).
+fn real_time_enabled() -> bool {
+    std::env::var("PINION_HIDDEN_WINDOW")
+        .map(|v| v.is_empty() || v == "0")
+        .unwrap_or(true)
+}
 /// The External / paint-focus tag.
 const TAG: &str = "vn_tide";
 
@@ -267,7 +282,19 @@ impl WidgetCore for HelloVnTide {
     }
 
     fn view(_state: VnCursor, _frame: &Frame) -> Scene {
-        vn_scene(&vn_state())
+        let state = vn_state();
+        // Real-time clock — but ONLY in an interactive window. In a live GUI the
+        // registered `Tickable` advances the typewriter / countdown on the wall
+        // clock (felt urgency). The headless RPC harness deliberately does NOT
+        // register it: the shared animation loop paints the offscreen window on
+        // the wall clock too, which would drift the play-head and defeat the
+        // zero-flake demo — so the demo drives time by the deterministic `tick`
+        // verb instead. (Verified: with the clock on, a hidden window's boot
+        // `revealed_chars` drifts run-to-run.)
+        if real_time_enabled() {
+            let _clock = use_vn_clock(VN_CLOCK_KEY, state.clone());
+        }
+        vn_scene(&state)
     }
 
     fn event_name((): ()) -> &'static str {

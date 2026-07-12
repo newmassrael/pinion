@@ -55,6 +55,6 @@ pub use place::{
 pub use state::{NarrativeCursor, NarrativeState, use_narrative_state};
 pub use view::narrative_scene;
 pub use vn::{
-    SpritePos, StageData, VnExternal, VnMode, VnOption, VnResolution, VnRuntime, VnSave, VnScript,
-    VnSprite, VnStage, VnState, VnStep, use_vn_state, vn_scene,
+    SpritePos, StageData, VnClock, VnExternal, VnMode, VnOption, VnResolution, VnRuntime, VnSave,
+    VnScript, VnSprite, VnStage, VnState, VnStep, use_vn_clock, use_vn_state, vn_scene,
 };

@@ -258,6 +258,21 @@ impl VnState {
         timeout > 0 && self.runtime.get().elapsed_ms >= timeout
     }
 
+    /// `true` when time is still advancing observable state — the typewriter
+    /// is mid-reveal, or a choice's countdown is live. `false` on a
+    /// fully-revealed line (waiting for the player), on an untimed / expired
+    /// choice, and at [`VnMode::End`]. This is the "not at rest" predicate a
+    /// real-time driver (the [`crate::vn::clock`] `Tickable`) reads to decide
+    /// whether to keep requesting frames.
+    #[must_use]
+    pub fn is_animating(&self) -> bool {
+        match self.mode() {
+            VnMode::Line => !self.fully_revealed(),
+            VnMode::Choice => self.timeout_ms() > 0 && self.remaining_ms() > 0,
+            VnMode::End => false,
+        }
+    }
+
     /// Advance the play-head by `dt_ms` of logical time. Grows the
     /// typewriter reveal on a line; decrements the countdown on a choice and
     /// auto-resolves it (to the clamped `default_option`) if the timer runs

@@ -49,18 +49,15 @@
 //! ## What stays out (honestly scoped)
 //!
 //! Landed: typewriter + timed-choice (R1295), branching (R1296), save/load
-//! (R1297), and the sprite/background director *data model* (R1298).
+//! (R1297), the sprite/background director *data model* (R1298), and
+//! **real-time play** (R1300) — [`clock::VnClock`] is a retained `Tickable`
+//! (the `CaretBlink` pattern) an interactive window advances on the wall clock;
+//! it was never Phase-C. The headless demo keeps driving time by the
+//! deterministic `tick` verb (a wall-clock clock would drift the offscreen
+//! play-head), so both coexist over the one [`VnState::tick`].
 //!
 //! Deferred follow-ups, with their real reasons (no false boundaries):
 //!
-//! - **Live real-time play** (the typewriter revealing / the countdown
-//!   draining on the wall clock). This is a small retained
-//!   `Tickable` — the `CaretBlink` pattern,
-//!   *existing* Phase-A/B substrate (`Owner::register_animation_once` +
-//!   `any_animation_active` drive retained widgets per-frame). It is **not**
-//!   Phase-C and does **not** need an immediate-mode node; it is left to a
-//!   follow-up round only because a zero-flake wire demo must be driven by the
-//!   deterministic `tick` verb, not the wall clock.
 //! - **Positioned sprite *pixels*.** The director's data (which sprite, where,
 //!   layered) is queryable and projects to `Scene::Image` reference nodes, but
 //!   those nodes carry no `LayoutStyle`, so the paint layout currently zeroes
@@ -73,12 +70,14 @@
 //! - **Transitions** (dissolve / fade / shake) and **outcome→world-line branch
 //!   mapping** (connecting a chosen outcome to a Mnemosyne world-line).
 
+pub mod clock;
 pub mod external;
 pub mod model;
 pub mod stage;
 pub mod state;
 pub mod view;
 
+pub use clock::{VnClock, use_vn_clock};
 pub use external::{ADVANCED_INTENT, CHOSEN_INTENT, TIMEOUT_INTENT, VnExternal};
 pub use model::{VnOption, VnScript, VnStep};
 pub use stage::{SpritePos, StageData, VnSprite, VnStage};

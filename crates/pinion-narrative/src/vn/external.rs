@@ -29,28 +29,28 @@
 //! driven by the shell's state-change detection, not by these intents — a
 //! `tick` reveal repaints while emitting no intent.)
 //!
-//! ## The `tick` step-verb — honestly scoped
+//! ## The `tick` step-verb vs. the real-time clock — honestly scoped
 //!
 //! `tick {ms}` advances the runner by exactly `ms` of *logical* time, read
-//! from the argument, never a wall clock — so every assertion in the wire
-//! demo observes settled state with no background thread and no sleeps
-//! ([[zero-flake-policy]]). This is the same choice `hello-audio-rt`'s
-//! `render` step-verb made — but the boundary is scoped honestly, without
-//! overstating it:
+//! from the argument, never a wall clock — so every assertion in the headless
+//! wire demo observes settled state with no background thread and no sleeps
+//! ([[zero-flake-policy]]).
 //!
-//! - The bespoke `tick` verb is genuinely forced *for the wire demo*: the
-//!   game-loop `scene/tick {dt}` fan-out reaches only `Scene::ImmediateModeNode`
-//!   paint drivers, and this runner is deliberately a retained structured-scene
-//!   `Scene::External` (§2 #1 — the dialogue is queryable text, not opaque
-//!   paint), so `scene/tick` cannot reach it and a zero-flake demo must not
-//!   depend on the wall clock.
-//! - **Live real-time play is NOT Phase-C and does NOT need an immediate-mode
-//!   node.** `VnState::tick(dt)` is a pure fixed-timestep function; a retained
-//!   `Tickable` (the `CaretBlink` pattern,
-//!   existing Phase-A/B substrate) drives it per-frame on the wall clock. That
-//!   is a follow-up round, not an architectural boundary — only driving the
-//!   runner from the *game-loop* `scene/tick` (making it an immediate-mode
-//!   node) would be Phase-C, and that is not the only way to get live play.
+//! **Real-time play is landed, not deferred.** [`crate::vn::clock::VnClock`] is
+//! a retained [`Tickable`](pinion_core::animation::Tickable) (the `CaretBlink`
+//! pattern) that an interactive window's paint cycle advances on the wall clock
+//! — the-tide's felt urgency, and *not* Phase-C.
+//!
+//! The bespoke `tick` verb is genuinely forced for the deterministic harness —
+//! but for the honest reason, not the earlier false "`scene/tick` can't reach a
+//! retained `Scene::External`" claim. `scene/tick {dt}` *does* reach this
+//! runner's clock (it enqueues a `DeferredInput::Tick` that ticks the same
+//! `tick_animations` path). It simply cannot drive it *deterministically* over
+//! the wire: the offscreen `PINION_HIDDEN_WINDOW` window still repaints on the
+//! wall clock — even under `scene/set_fps 0` an RPC-induced repaint ticks the
+//! animation clock by wall-clock — so a registered clock drifts the play-head
+//! run-to-run (verified). The harness therefore registers no clock and drives
+//! time by this verb; the interactive window gets real time from the clock.
 
 use std::rc::Rc;
 
