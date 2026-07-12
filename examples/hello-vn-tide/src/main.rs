@@ -65,7 +65,8 @@ use pinion_core::storage::Storage;
 use pinion_core::{Frame, WidgetCore};
 use pinion_narrative::vn::state::{VnCursor, VnSave};
 use pinion_narrative::{
-    VnExternal, VnOption, VnScript, VnState, VnStep, use_vn_clock, use_vn_state, vn_scene,
+    SpritePos, VnExternal, VnOption, VnScript, VnSprite, VnState, VnStep, use_vn_clock,
+    use_vn_state, vn_scene,
 };
 use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -166,12 +167,25 @@ impl std::fmt::Debug for VnSaveDemoExternal {
     }
 }
 
+/// Absolute paths (resolved at compile time from the crate dir, present at run
+/// time in a checkout) to the bundled placeholder art, so the shell's
+/// `ImageCache` — which reads `ImageNode.source` as a filesystem path — draws
+/// real pixels. (A logical-name → file asset registry is the Phase-C asset
+/// pipeline; these paths are the honest stand-in that proves the render path.)
+const BG_ASSET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tideflat.png");
+const MUDANG_ASSET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mudang.png");
+
 impl VnSaveDemoExternal {
     fn new() -> Self {
         let state = vn_state();
-        // Author the opening stage: the tide-flat background is up before the
-        // first line (the demo then directs sprites on / off it).
-        state.stage().set_background("tideflat");
+        // Author the opening stage with REAL assets: the tide-flat background
+        // fills the stage and the 무녀 stands centre — both resolvable image
+        // files, so a screenshot shows actual positioned pixels, not just
+        // queryable data. (The demo then directs further sprites over the wire.)
+        state.stage().set_background(BG_ASSET);
+        state
+            .stage()
+            .show(VnSprite::new("mudang", MUDANG_ASSET, SpritePos::Center, 1));
         Self {
             inner: VnExternal::new(state.clone()),
             state,

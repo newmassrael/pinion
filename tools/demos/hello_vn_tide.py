@@ -33,11 +33,12 @@ What this proves, all over the wire:
       mutate -> `load` restores it), AND a `save_slot` written to disk by one
       process is reloaded by a SEPARATE fresh process (`load_slot`) that lands on
       the exact mid-countdown checkpoint — a save that survives a full restart;
-  (G) the sprite/background director (R1298): `set_background` / `show` / `move` /
-      `set_sprite_source` / `hide` place the stage as queryable data, the paint
-      scene carries it as tagged `Scene::Image` REFERENCES (source names, not
-      pixels — §2 #1 / #7), and the whole stage is part of the save state (the
-      restored checkpoint brings back its night background and 무녀 sprite).
+  (G) the sprite/background director (R1298 data + R1301 render): `set_background`
+      / `show` / `move` / `set_sprite_source` / `hide` place the stage as queryable
+      data projected to positioned `Scene::Image` nodes; the whole stage is part of
+      the save state; and a screenshot readback proves it RENDERS real positioned
+      pixels (background fills the stage, the 무녀 sprite paints over it at centre)
+      — the fix for the pre-R1301 hollow render (invisible, unpositioned nodes).
 
 The §5.20 intent emission on each transition (`vn.advanced` / `vn.timeout` /
 `vn.chosen`) is proven by the crate unit tests in `vn::external`, not here:
@@ -55,7 +56,10 @@ Run from the workspace root:
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -63,13 +67,44 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_pixel_eq,
     assert_rpc_error,
     find_by_tag,
     isolated_storage_dir,
+    png_pixel,
+    read_png_rgba8,
     run_demo,
 )
 
 EXT = "/external"
+WORKSPACE = Path(__file__).resolve().parent.parent.parent
+
+
+def _prove_pixels() -> None:
+    """Prove the stage RENDERS positioned pixels — the R1301 fix for the
+    pre-R1301 hollow render (invisible `h:0`, unpositioned `x:0` Image nodes).
+    Screenshots the initial frame (`PINION_SCREENSHOT`, no RPC) and asserts the
+    tide-flat background fills the stage and the 무녀 sprite paints its own
+    colour at centre, layered OVER the background."""
+    binary = WORKSPACE / "target" / "release" / "hello-vn-tide"
+    out = Path(tempfile.mkdtemp(prefix="vn-px-")) / "vn.png"
+    env = os.environ.copy()
+    env["PINION_SCREENSHOT"] = str(out)
+    cmd = (
+        [str(binary)]
+        if binary.exists()
+        else ["cargo", "run", "-p", "hello-vn-tide", "--release", "--quiet"]
+    )
+    subprocess.run(cmd, cwd=WORKSPACE, env=env, capture_output=True, text=True, timeout=180.0)
+    assert out.exists(), "the binary rendered a screenshot"
+    img = read_png_rgba8(out)
+    blue = (30, 60, 110, 255)   # tideflat.png background
+    ochre = (200, 140, 60, 255)  # mudang.png sprite
+    # Background fills the stage away from the centre sprite.
+    assert_pixel_eq(png_pixel(img, 40, 120), blue, "the background renders", tolerance=4)
+    # The 무녀 sprite paints its colour at centre, OVER the background — proving
+    # a positioned, sized, layered render (not the collapsed hollow node).
+    assert_pixel_eq(png_pixel(img, 400, 120), ochre, "the sprite renders positioned", tolerance=4)
 
 
 def _prove_and_checkpoint(g: RpcSubprocess) -> dict[str, Any]:
@@ -95,34 +130,45 @@ def _prove_and_checkpoint(g: RpcSubprocess) -> dict[str, Any]:
     assert_eq(q("step_count"), 7, "the branching set-piece has 7 steps")
     assert_eq(q("speaker"), "", "step 0 is narration (no speaker)")
     assert_eq(q("revealed_chars"), 0, "nothing revealed at t=0")
-    assert_eq(q("background"), "tideflat", "the binding authored the opening background")
-    assert_eq(q("sprite_count"), 0, "no sprites yet")
+    assert (q("background") or "").endswith("tideflat.png"), "the opening background is a real asset"
+    assert_eq(q("sprite_count"), 1, "the opening 무녀 sprite is on stage")
+
     line_len = q("line_len")
     assert isinstance(line_len, int) and line_len > 8, f"a real line: {line_len}"
 
     # ── (G) the stage director: place / move / re-express / hide a sprite, all
-    # as queryable data, and prove the scene carries it as Image REFERENCES
-    # (source names + positions), never pixels (§2 #1 / #7).
-    inv("show", {"id": "mudang", "source": "mudang_calm", "at": "center", "layer": 1})
-    assert_eq(q("sprite_count"), 1, "the 무녀 sprite is on stage")
-    sprites = q("sprites")
-    assert_eq(sprites[0]["id"], "mudang", "the sprite is queryable as data")
-    assert_eq(sprites[0]["at"], "center")
-    # §2 #7: the PAINT scene (V::view = vn_scene) carries the stage as tagged
-    # Image nodes whose `source` is an asset REFERENCE, not a bitmap. (Pixel
-    # compositing — resolving those references + overlay layout — is a
-    # reference-level follow-up; the director's data is the proof here.)
+    # as queryable data, and prove the PAINT scene carries it as an Image node
+    # with a REAL rect (positioned + sized, not the collapsed w:800 h:0 the
+    # pre-R1301 hollow render produced) — §2 #1 / #7. (Actual bitmap pixels are
+    # proven separately by `_prove_pixels` via screenshot readback.)
     snap = g.snapshot(source="paint")
     bg = find_by_tag(snap, "vn.background")
-    assert bg is not None and bg.get("source") == "tideflat", f"background image node: {bg!r}"
-    sp = find_by_tag(snap, "vn.sprite.mudang")
-    assert sp is not None and sp.get("source") == "mudang_calm", f"sprite image node: {sp!r}"
-    # move + expression swap by id.
-    inv("move", {"id": "mudang", "at": "left"})
-    inv("set_sprite_source", {"id": "mudang", "source": "mudang_grave"})
-    sprites = q("sprites")
-    assert_eq(sprites[0]["at"], "left", "the sprite moved over the wire")
-    assert_eq(sprites[0]["source"], "mudang_grave", "the expression swapped")
+    assert bg is not None and bg["rect"]["w"] == 800 and bg["rect"]["h"] == 240, (
+        f"background image node fills the stage: {bg!r}"
+    )
+    mudang = find_by_tag(snap, "vn.sprite.mudang")
+    assert mudang is not None, "the opening sprite is an Image node"
+    assert mudang["rect"]["h"] == 200 and mudang["rect"]["w"] == 160, (
+        f"the sprite has a real size (not h:0): {mudang['rect']!r}"
+    )
+    mid_x = mudang["rect"]["x"]
+
+    # Direct a SECOND sprite over the wire (the opening 무녀 stays put).
+    inv("show", {"id": "guest", "source": "guest_calm", "at": "right", "layer": 2})
+    assert_eq(q("sprite_count"), 2, "the directed sprite joined the stage")
+    snap = g.snapshot(source="paint")
+    guest = find_by_tag(snap, "vn.sprite.guest")
+    assert guest is not None and guest["rect"]["x"] > mid_x, (
+        f"the 'right' sprite paints further right than centre: {guest['rect']!r} vs {mid_x}"
+    )
+    # move + expression swap by id, then hide — all queryable.
+    inv("move", {"id": "guest", "at": "left"})
+    inv("set_sprite_source", {"id": "guest", "source": "guest_grave"})
+    guest_data = next(s for s in q("sprites") if s["id"] == "guest")
+    assert_eq(guest_data["at"], "left", "the sprite moved over the wire")
+    assert_eq(guest_data["source"], "guest_grave", "the expression swapped")
+    inv("hide", "guest")
+    assert_eq(q("sprite_count"), 1, "hide removed the directed sprite; 무녀 remains")
 
     # ── (A) the typewriter reveals a growing prefix (40 cps -> 200 ms = 8).
     tick(200)
@@ -233,8 +279,8 @@ def _prove_reload(g: RpcSubprocess, checkpoint: dict[str, Any]) -> None:
     # apart from the binding's opening background.
     assert_eq(q("step"), 0, "a fresh process boots at the start")
     assert_eq(q("mode"), "line", "fresh boot is on the first line")
-    assert_eq(q("background"), "tideflat", "fresh boot has the DEFAULT background")
-    assert_eq(q("sprite_count"), 0, "fresh boot has no sprites")
+    assert (q("background") or "").endswith("tideflat.png"), "fresh boot has the DEFAULT background"
+    assert_eq(q("sprite_count"), 1, "fresh boot has only the opening 무녀 sprite")
     # Loading a slot that was never written is Rejected (well-typed, nothing there).
     assert_rpc_error(lambda: g.invoke(f"{EXT}/load_slot", "nope"), data="InvokeRejected")
     # The checkpoint the previous process saved reloads from disk — dialogue AND stage.
@@ -251,6 +297,8 @@ def _prove_reload(g: RpcSubprocess, checkpoint: dict[str, Any]) -> None:
 
 
 def body() -> None:
+    # First: prove the stage renders real positioned pixels (screenshot readback).
+    _prove_pixels()
     # Hermetic on-disk save slots: a fresh tempdir via PINION_STORAGE_DIR,
     # inherited by both subprocesses and cleaned up on exit.
     with isolated_storage_dir("vn_tide_save"):

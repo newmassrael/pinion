@@ -10,6 +10,7 @@
 //! visual is TUI-native and the truth stays queryable.
 
 use pinion_core::scene::{ContainerNode, ImageNode, Rect, Scene, TextNode};
+use pinion_core::style::{LayoutStyle, Size};
 
 use crate::vn::model::VnStep;
 use crate::vn::stage::VnStage;
@@ -152,18 +153,43 @@ const fn mode_label(mode: VnMode) -> &'static str {
 fn stage_nodes(stage: &VnStage, out: &mut Vec<Scene>) {
     let data = stage.data();
     if let Some(background) = data.background {
-        out.push(Scene::Image(
-            ImageNode::new(background, Rect::new(0, 0, STAGE_W, STAGE_H)).with_tag("vn.background"),
+        out.push(image_at(
+            background,
+            "vn.background".to_string(),
+            0,
+            0,
+            STAGE_W,
+            STAGE_H,
         ));
     }
     for sprite in data.sprites {
         let x = sprite.at.center_x(STAGE_W).saturating_sub(SPRITE_W / 2);
         let y = STAGE_H.saturating_sub(SPRITE_H); // feet rest on the stage floor
-        out.push(Scene::Image(
-            ImageNode::new(sprite.source, Rect::new(x, y, SPRITE_W, SPRITE_H))
-                .with_tag(format!("vn.sprite.{}", sprite.id)),
+        out.push(image_at(
+            sprite.source,
+            format!("vn.sprite.{}", sprite.id),
+            x,
+            y,
+            SPRITE_W,
+            SPRITE_H,
         ));
     }
+}
+
+/// An `Image` node **absolutely positioned + fixed-size** so the paint layout
+/// honours `(x, y, w, h)` instead of collapsing the node to the flow default.
+/// The `Rect` mirrors the layout (pre-layout intent); the `LayoutStyle`
+/// absolute-position override is what actually reaches the painted pixels
+/// (`ImageNode`'s bare `Rect` is otherwise overwritten by the taffy pass).
+fn image_at(source: String, tag: String, x: u32, y: u32, w: u32, h: u32) -> Scene {
+    let layout = LayoutStyle::new()
+        .with_size(Size::px(w, h))
+        .with_absolute_position(x, y);
+    Scene::Image(
+        ImageNode::new(source, Rect::new(x, y, w, h))
+            .with_layout(layout)
+            .with_tag(tag),
+    )
 }
 
 fn text_row(content: impl Into<String>, y: u32) -> Scene {
