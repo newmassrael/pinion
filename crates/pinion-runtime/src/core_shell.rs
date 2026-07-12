@@ -562,9 +562,18 @@ impl<V: WidgetCore> CoreShell<V> {
         // with the view fn. Bindings without reactive-state needs
         // (every pre-R56.1.b.1 example) are unaffected: their
         // factories ignore the Owner context.
-        let primary = Scene::External(
-            ExternalNode::new(root_owner.run(V::create_external)).with_tag(V::tag()),
-        );
+        //
+        // (R1303 PR-51 §5.41 §5.45) The primary is composed only when the
+        // binding declares one (`has_primary_surface()`, default `true`).
+        // A no-primary binding (all surfaces are dynamic extras — sprag's
+        // topology B) leaves `create_external` / `tag` uncalled and the
+        // state scene is built from the extras alone. `None` here flows
+        // into `compose_root`, which drops the index-0 primary slot.
+        let primary = V::has_primary_surface().then(|| {
+            Scene::External(
+                ExternalNode::new(root_owner.run(V::create_external)).with_tag(V::tag()),
+            )
+        });
         let extra_children: Vec<Scene> = root_owner
             .run(V::create_extra_externals)
             .into_iter()
@@ -818,23 +827,40 @@ impl<V: WidgetCore> CoreShell<V> {
         &self.cached_state
     }
 
-    /// (R688.A §5.16) Single source for the state-scene root shape.
+    /// (R688.A §5.16 / R1303 PR-51 §5.45) Single source for the
+    /// state-scene root shape.
     ///
-    /// A single-External binding (`extra_children` empty) stays a bare
-    /// [`Scene::External`]; a binding with extras becomes
-    /// `Scene::Container([primary, ...extra_children])`. Both the boot
-    /// path ([`Self::new`]) and the runtime reconcile
+    /// A single-External binding (`primary` `Some`, `extra_children`
+    /// empty) stays a bare [`Scene::External`]; a binding with extras
+    /// becomes `Scene::Container([primary, ...extra_children])`. Both the
+    /// boot path ([`Self::new`]) and the runtime reconcile
     /// ([`Self::reconcile_externals`]) assemble through here, so the
     /// composition rule lives in exactly one place — a later change to
     /// the root shape cannot drift between the two call sites.
-    fn compose_root(primary: Scene, extra_children: Vec<Scene>) -> Scene {
-        if extra_children.is_empty() {
-            primary
-        } else {
-            let mut children = Vec::with_capacity(1 + extra_children.len());
-            children.push(primary);
-            children.extend(extra_children);
-            Scene::Container(ContainerNode::new(children))
+    ///
+    /// (R1303 PR-51) `primary` is `None` for a binding that opted out of
+    /// a primary surface ([`WidgetCore::has_primary_surface`] `== false`):
+    /// the state scene is then `Scene::Container([...extra_children])`
+    /// with **no** index-0 primary — or, when the extra set is momentarily
+    /// empty (a dynamic no-primary binding before its first surface
+    /// exists), an empty `Scene::Container`. Downstream shape-agnostic
+    /// helpers ([`Scene::primary_external`], the input router's DFS walk,
+    /// [`Scene::collect_focusable_tags`]) already tolerate a container of
+    /// externals with no distinguished head.
+    fn compose_root(primary: Option<Scene>, extra_children: Vec<Scene>) -> Scene {
+        match primary {
+            Some(primary) if extra_children.is_empty() => primary,
+            Some(primary) => {
+                let mut children = Vec::with_capacity(1 + extra_children.len());
+                children.push(primary);
+                children.extend(extra_children);
+                Scene::Container(ContainerNode::new(children))
+            }
+            // (R1303 PR-51) No primary — the extras (possibly empty) are
+            // the whole state scene. An empty container is the honest boot
+            // shape for a dynamic no-primary binding whose surfaces appear
+            // only after the first reconcile.
+            None => Scene::Container(ContainerNode::new(extra_children)),
         }
     }
 
@@ -930,6 +956,11 @@ impl<V: WidgetCore> CoreShell<V> {
             return;
         }
         let new_extras = self.root_owner.run(V::create_extra_externals);
+        // (R1303 PR-51 §5.45) The extras begin after the index-0 primary
+        // only when the binding has one; a no-primary binding
+        // (`has_primary_surface() == false`) composes a container of extras
+        // with no distinguished head, so the offset is 0.
+        let primary_offset = usize::from(V::has_primary_surface());
         // Steady-state guard — identical tag list means no surface was
         // added or removed, so every existing instance stays put.
         let new_tags: Vec<&str> = new_extras.iter().map(|e| e.tag.as_ref()).collect();
@@ -937,7 +968,7 @@ impl<V: WidgetCore> CoreShell<V> {
             Scene::Container(c) => c
                 .children
                 .iter()
-                .skip(1)
+                .skip(primary_offset)
                 .filter_map(|child| match child {
                     Scene::External(node) => node.tag.as_deref(),
                     _ => None,
@@ -957,7 +988,7 @@ impl<V: WidgetCore> CoreShell<V> {
             // with `new_extras` by tag.
             if let Scene::Container(c) = &mut self.scene {
                 let mut fresh = new_extras.iter();
-                for child in c.children.iter_mut().skip(1) {
+                for child in c.children.iter_mut().skip(primary_offset) {
                     if let Scene::External(node) = child
                         && let Some(extra) = fresh.next()
                     {
@@ -972,25 +1003,42 @@ impl<V: WidgetCore> CoreShell<V> {
             &mut self.scene,
             Scene::Container(ContainerNode::new(Vec::new())),
         );
-        let (primary, current_extras): (Scene, Vec<Scene>) = match current {
-            Scene::External(node) => (Scene::External(node), Vec::new()),
-            Scene::Container(container) => {
-                let mut children = container.children;
-                // Index 0 is the primary External (see `Self::compose_root`
-                // composition); the rest are the extras.
-                let primary = children.remove(0);
-                (primary, children)
+        // (R1303 PR-51 §5.45) Split the primary off the head only when the
+        // binding has one. A no-primary binding's root is a
+        // `Scene::Container` whose children are all extras — there is no
+        // index-0 primary to remove, and `primary` stays `None` so
+        // `compose_root` re-emits a primary-less container below.
+        let (primary, current_extras): (Option<Scene>, Vec<Scene>) = if V::has_primary_surface() {
+            match current {
+                Scene::External(node) => (Some(Scene::External(node)), Vec::new()),
+                Scene::Container(container) => {
+                    let mut children = container.children;
+                    // Index 0 is the primary External (see `Self::compose_root`
+                    // composition); the rest are the extras.
+                    let primary = children.remove(0);
+                    (Some(primary), children)
+                }
+                // The state-scene root is only ever assembled as
+                // `Scene::External` or `Scene::Container` by `Self::compose_root`
+                // (boot + this method); `scene_mut` hands out a borrow for
+                // path-level intervene/query but never reshapes the root. A
+                // silent restore would hide a contract violation by leaving the
+                // new surface inert, so this is an `unreachable!` contract panic
+                // (the R685 Smell-6 convention: contract panic over fallback).
+                other => unreachable!(
+                    "CoreShell state-scene root must be External or Container; got {other:?}"
+                ),
             }
-            // The state-scene root is only ever assembled as
-            // `Scene::External` or `Scene::Container` by `Self::compose_root`
-            // (boot + this method); `scene_mut` hands out a borrow for
-            // path-level intervene/query but never reshapes the root. A
-            // silent restore would hide a contract violation by leaving the
-            // new surface inert, so this is an `unreachable!` contract panic
-            // (the R685 Smell-6 convention: contract panic over fallback).
-            other => unreachable!(
-                "CoreShell state-scene root must be External or Container; got {other:?}"
-            ),
+        } else {
+            match current {
+                Scene::Container(container) => (None, container.children),
+                // A no-primary binding never composes a bare `Scene::External`
+                // (that shape is reserved for `Some(primary)` + no extras);
+                // `compose_root` always hands it a `Scene::Container`.
+                other => unreachable!(
+                    "CoreShell no-primary state-scene root must be a Container; got {other:?}"
+                ),
+            }
         };
         // Preserve in-flight state: a surviving tag keeps its live node; a
         // genuinely new tag adopts the freshly built handle. `existing`
@@ -1822,12 +1870,20 @@ impl<V: WidgetCore> CoreShell<V> {
     /// ignored (statechart-side rejection is a valid SCXML outcome
     /// per the conservative-bump policy).
     pub fn send_to_primary(&mut self, name: &str) {
-        // R886.1 — a missing primary is a `compose_root` contract breach,
-        // not a skippable state (the R685 Smell-6 convention: contract
-        // panic over fallback — a silent skip would re-arm the exact
-        // "silently dropped send" failure mode R884 closed). The
-        // `introspect_mut() == None` leg below IS a legitimate skip (an
-        // External that opts out of introspection).
+        // (R1303 PR-51 §5.41) A no-primary binding
+        // (`has_primary_surface() == false`) has no primary statechart to
+        // advance — return before touching the scene. Without this gate
+        // `primary_external_mut()` (DFS-first) would resolve the binding's
+        // *first extra* and misroute the send to it.
+        if !V::has_primary_surface() {
+            return;
+        }
+        // R886.1 — for a has-primary binding, a missing primary is a
+        // `compose_root` contract breach, not a skippable state (the R685
+        // Smell-6 convention: contract panic over fallback — a silent skip
+        // would re-arm the exact "silently dropped send" failure mode R884
+        // closed). The `introspect_mut() == None` leg below IS a legitimate
+        // skip (an External that opts out of introspection).
         let Some(node) = self.scene.primary_external_mut() else {
             unreachable!("CoreShell state scene must contain the primary External (compose_root)")
         };
@@ -5652,5 +5708,309 @@ mod tests {
             Some(30),
             "new tag c built fresh",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1303 PR-51 §5.41 §5.45 §5.49 — has_primary_surface() opt-out.
+    //
+    // A binding whose interactive surfaces are ALL dynamic extras with no
+    // single canonical primary (sprag's topology B). It declares
+    // `has_primary_surface() == false`; its `create_external` / `tag` are
+    // `unreachable!` markers and the seam must never call them. The state
+    // scene is composed from the extras alone — no index-0 primary.
+    //
+    // `NoPrimaryFixture` shares the RECON_TAGS / RECON_CTR thread-locals so
+    // the reconcile add/remove paths run with index 0 being an *extra*, not
+    // a primary. `NoPrimarySpyFixture` hosts a send-recording External so a
+    // test can prove `send_to_primary` does not misroute to the first extra.
+    // ─────────────────────────────────────────────────────────────────
+
+    use pinion_core::external::InvokeError;
+
+    struct NoPrimaryFixture;
+
+    impl WidgetCore for NoPrimaryFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn has_primary_surface() -> bool {
+            false
+        }
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            unreachable!("R1303 PR-51 — NoPrimaryFixture has no primary surface")
+        }
+
+        fn tag() -> &'static str {
+            unreachable!("R1303 PR-51 — NoPrimaryFixture has no primary surface")
+        }
+
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            RECON_TAGS.with(|tags| {
+                tags.borrow()
+                    .iter()
+                    .map(|&tag| {
+                        let seq = RECON_CTR.with(|c| {
+                            let v = c.get();
+                            c.set(v + 1);
+                            v
+                        });
+                        ExtraExternal::new(tag, Box::new(CountedExternal::new(seq)))
+                    })
+                    .collect()
+            })
+        }
+
+        fn external_set_is_dynamic() -> bool {
+            true
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(state: Self::State, frame: &Frame) -> Scene {
+            <TestButton as WidgetCore>::view(state, frame)
+        }
+
+        fn event_name(event: Self::Event) -> &'static str {
+            <TestButton as WidgetCore>::event_name(event)
+        }
+
+        fn title() -> &'static str {
+            "NoPrimary"
+        }
+    }
+
+    /// Every External tag in scene order — NO index-0 skip, because a
+    /// no-primary binding has no distinguished primary head.
+    fn all_external_tags(scene: &Scene) -> Vec<String> {
+        match scene {
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .filter_map(|child| match child {
+                    Scene::External(node) => node.tag.as_deref().map(str::to_owned),
+                    _ => None,
+                })
+                .collect(),
+            Scene::External(node) => node.tag.as_deref().map(str::to_owned).into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn r1303_default_has_primary_surface_is_true() {
+        // The opt-out defaults to true — every existing binding keeps a
+        // primary with zero source change.
+        assert!(<TestButton as WidgetCore>::has_primary_surface());
+        assert!(<ReconcileFixture as WidgetCore>::has_primary_surface());
+        assert!(!<NoPrimaryFixture as WidgetCore>::has_primary_surface());
+    }
+
+    #[test]
+    fn r1303_no_primary_boot_composes_extras_only() {
+        // Reaching the assertions at all proves create_external / tag were
+        // never called (they `unreachable!`). The scene is a Container of
+        // the extras with NO index-0 primary: index 0 is the first extra.
+        recon_reset(&["a", "b"]);
+        let core: CoreShell<NoPrimaryFixture> = CoreShell::new();
+        assert!(matches!(core.scene(), Scene::Container(_)));
+        assert_eq!(
+            all_external_tags(core.scene()),
+            vec!["a", "b"],
+            "no-primary scene is the extras alone, no synthesised primary head",
+        );
+        // Index 0 IS the first extra (CountedExternal seq 0), not a primary.
+        assert_eq!(recon_count(core.scene(), "a"), Some(0));
+    }
+
+    #[test]
+    fn r1303_no_primary_empty_extras_is_empty_container() {
+        // A dynamic no-primary binding whose extras are momentarily empty
+        // (before its first pane exists) boots to an empty Container — not a
+        // panic, not a bare primary.
+        recon_reset(&[]);
+        let core: CoreShell<NoPrimaryFixture> = CoreShell::new();
+        match core.scene() {
+            Scene::Container(c) => assert!(
+                c.children.is_empty(),
+                "no primary + no extras composes an empty container",
+            ),
+            other => panic!("expected empty Container, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r1303_no_primary_reconcile_adds_extra_at_head() {
+        // Reconcile treats index 0 as an extra: the boot extra `a` is
+        // preserved (count 0, not consumed as a primary) while `b` is added.
+        recon_reset(&["a"]);
+        let mut core: CoreShell<NoPrimaryFixture> = CoreShell::new();
+        assert_eq!(all_external_tags(core.scene()), vec!["a"]);
+        assert_eq!(recon_count(core.scene(), "a"), Some(0));
+        recon_set_tags(&["a", "b"]);
+        core.reconcile_externals();
+        assert_eq!(all_external_tags(core.scene()), vec!["a", "b"]);
+        assert_eq!(
+            recon_count(core.scene(), "a"),
+            Some(0),
+            "head extra preserved across reconcile (not split off as a primary)",
+        );
+        assert!(recon_count(core.scene(), "b").is_some(), "b registered");
+    }
+
+    #[test]
+    fn r1303_no_primary_reconcile_removes_to_empty_container() {
+        // Counterpart to r688_a: with no primary to collapse back to,
+        // removing every extra leaves an empty Container (not a bare
+        // External).
+        recon_reset(&["a", "b"]);
+        let mut core: CoreShell<NoPrimaryFixture> = CoreShell::new();
+        recon_set_tags(&[]);
+        core.reconcile_externals();
+        match core.scene() {
+            Scene::Container(c) => assert!(
+                c.children.is_empty(),
+                "all extras removed leaves an empty container (no primary to collapse to)",
+            ),
+            other => panic!("expected empty Container, got {other:?}"),
+        }
+    }
+
+    /// A send-recording External: `invoke("send", Text(x))` stores `x`, and
+    /// `query("last_send")` returns the last stored name (empty until any).
+    /// Lets a test prove `send_to_primary` never reached this extra.
+    #[derive(Debug, Default)]
+    struct SendSpyExternal {
+        last_send: String,
+    }
+
+    impl External for SendSpyExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+            Some(self)
+        }
+        fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+            Some(self)
+        }
+    }
+
+    impl ExternalIntrospect for SendSpyExternal {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(&[("last_send", "string")])
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            match path {
+                "last_send" => Some(IntrospectValue::Text(self.last_send.clone())),
+                _ => None,
+            }
+        }
+        fn intervene(
+            &mut self,
+            _path: &str,
+            _value: IntrospectValue,
+        ) -> Result<(), InterveneError> {
+            Err(InterveneError::UnknownPath)
+        }
+        fn invoke(
+            &mut self,
+            path: &str,
+            args: IntrospectValue,
+        ) -> Result<IntrospectValue, InvokeError> {
+            match path {
+                "send" => {
+                    if let IntrospectValue::Text(name) = args {
+                        self.last_send = name;
+                    }
+                    Ok(IntrospectValue::Null)
+                }
+                _ => Err(InvokeError::UnknownPath),
+            }
+        }
+    }
+
+    struct NoPrimarySpyFixture;
+
+    impl WidgetCore for NoPrimarySpyFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn has_primary_surface() -> bool {
+            false
+        }
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            unreachable!("R1303 PR-51 — NoPrimarySpyFixture has no primary surface")
+        }
+
+        fn tag() -> &'static str {
+            unreachable!("R1303 PR-51 — NoPrimarySpyFixture has no primary surface")
+        }
+
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            vec![ExtraExternal::new(
+                "spy",
+                Box::new(SendSpyExternal::default()),
+            )]
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(state: Self::State, frame: &Frame) -> Scene {
+            <TestButton as WidgetCore>::view(state, frame)
+        }
+
+        fn event_name(event: Self::Event) -> &'static str {
+            <TestButton as WidgetCore>::event_name(event)
+        }
+
+        fn title() -> &'static str {
+            "NoPrimarySpy"
+        }
+    }
+
+    #[test]
+    fn r1303_no_primary_send_to_primary_is_noop_not_misroute() {
+        // `send_to_primary` on a no-primary binding must return before
+        // touching the scene. Without the gate, `primary_external_mut()`
+        // (DFS-first) would resolve the sole extra `spy` and misroute the
+        // send to it — the spy would then record "Disable".
+        let mut core: CoreShell<NoPrimarySpyFixture> = CoreShell::new();
+        assert_eq!(all_external_tags(core.scene()), vec!["spy"]);
+        core.send_to_primary("Disable");
+        let recorded = core
+            .scene()
+            .find_external_with_tag("spy")
+            .and_then(|n| n.handle.introspect())
+            .and_then(|i| i.query("last_send"));
+        assert_eq!(
+            recorded,
+            Some(IntrospectValue::Text(String::new())),
+            "send_to_primary is a no-op for a no-primary binding — the spy received nothing",
+        );
+        // Sanity: the spy DOES record a direct send, so the empty result
+        // above is a real no-op, not a spy that never records.
+        if let Some(node) = core.scene_mut().find_external_with_tag_mut("spy")
+            && let Some(intro) = node.handle.introspect_mut()
+        {
+            let _ = intro.invoke("send", IntrospectValue::Text("direct".to_string()));
+        }
+        let after = core
+            .scene()
+            .find_external_with_tag("spy")
+            .and_then(|n| n.handle.introspect())
+            .and_then(|i| i.query("last_send"));
+        assert_eq!(after, Some(IntrospectValue::Text("direct".to_string())));
     }
 }
