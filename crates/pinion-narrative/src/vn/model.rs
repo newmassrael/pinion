@@ -19,6 +19,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::vn::stage::StageOp;
+
 /// One authored option in a [`VnStep::TimedChoice`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VnOption {
@@ -85,6 +87,11 @@ pub enum VnStep {
         /// branch's steps — the peer of [`VnOption::goto`].
         #[serde(default)]
         goto: Option<u16>,
+        /// Stage directives applied when the play-head enters this step, so
+        /// the script drives its own staging (Ren'Py's interleaved
+        /// `scene` / `show`). Empty = leave the persistent stage unchanged.
+        #[serde(default)]
+        stage: Vec<StageOp>,
     },
     /// A choice the player must resolve before the countdown expires —
     /// the-tide's "급박함" (urgency) core.
@@ -104,6 +111,9 @@ pub enum VnStep {
         /// degrades to the first option rather than panicking).
         #[serde(default)]
         default_option: usize,
+        /// Stage directives applied on entry (see [`Self::Line::stage`]).
+        #[serde(default)]
+        stage: Vec<StageOp>,
     },
 }
 
@@ -115,6 +125,7 @@ impl VnStep {
             speaker: speaker.into(),
             text: text.into(),
             goto: None,
+            stage: Vec::new(),
         }
     }
 
@@ -125,6 +136,7 @@ impl VnStep {
             speaker: String::new(),
             text: text.into(),
             goto: None,
+            stage: Vec::new(),
         }
     }
 
@@ -140,6 +152,24 @@ impl VnStep {
         self
     }
 
+    /// Attach stage directives applied when the play-head enters this step
+    /// (builder form) — the script driving its own staging.
+    #[must_use]
+    pub fn with_stage(mut self, ops: Vec<StageOp>) -> Self {
+        match &mut self {
+            Self::Line { stage, .. } | Self::TimedChoice { stage, .. } => *stage = ops,
+        }
+        self
+    }
+
+    /// The stage directives to apply when entering this step (empty if none).
+    #[must_use]
+    pub fn stage_ops(&self) -> &[StageOp] {
+        match self {
+            Self::Line { stage, .. } | Self::TimedChoice { stage, .. } => stage,
+        }
+    }
+
     /// Build a [`Self::TimedChoice`].
     #[must_use]
     pub fn timed_choice(
@@ -153,6 +183,7 @@ impl VnStep {
             options,
             timeout_ms,
             default_option,
+            stage: Vec::new(),
         }
     }
 
@@ -176,18 +207,50 @@ impl VnStep {
 /// choice, [`VnStep::with_goto`] on a line) rather than a nested tree — the
 /// flat, index-addressed shape the wire form and an external projection both
 /// consume most easily.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VnScript {
     /// The steps to play, in author order.
     #[serde(default)]
     pub steps: Vec<VnStep>,
+    /// Typewriter reveal rate in characters per second — the authored text
+    /// speed (Ren'Py's `config.text_cps`). Defaults to
+    /// [`DEFAULT_TEXT_SPEED_CPS`]; a value of 0 is treated as 1 by the runner
+    /// so a line always reveals.
+    #[serde(default = "default_text_speed")]
+    pub text_speed_cps: u32,
+}
+
+impl Default for VnScript {
+    fn default() -> Self {
+        Self {
+            steps: Vec::new(),
+            text_speed_cps: DEFAULT_TEXT_SPEED_CPS,
+        }
+    }
+}
+
+/// The default typewriter speed, characters per second.
+pub const DEFAULT_TEXT_SPEED_CPS: u32 = 40;
+
+fn default_text_speed() -> u32 {
+    DEFAULT_TEXT_SPEED_CPS
 }
 
 impl VnScript {
-    /// Build a script from its steps.
+    /// Build a script from its steps at the default text speed.
     #[must_use]
     pub fn new(steps: Vec<VnStep>) -> Self {
-        Self { steps }
+        Self {
+            steps,
+            text_speed_cps: DEFAULT_TEXT_SPEED_CPS,
+        }
+    }
+
+    /// Set the typewriter reveal rate (characters per second) — builder form.
+    #[must_use]
+    pub fn with_text_speed(mut self, cps: u32) -> Self {
+        self.text_speed_cps = cps;
+        self
     }
 
     /// Number of steps.

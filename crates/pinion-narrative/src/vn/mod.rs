@@ -64,11 +64,17 @@
 //!   their rects — a positioned sprite does not yet reach the screen. Fixing
 //!   this needs a stage layout (fixed size + absolute position) and real asset
 //!   files; the R1298 director is **data-level**, not yet a pixel render.
-//! - **Script-driven staging.** [`VnStep`] has no stage-directive channel, so a
-//!   script (or a future projection) yields a blank stage — staging is only
-//!   the out-of-band [`VnExternal`] director verbs today.
+//! - **Stable step identity for branching.** `goto` targets are flat `u16`
+//!   indices into [`VnScript::steps`]; inserting / reordering renumbers them.
+//!   A self-hosted node-graph editor wants stable ids — deferred to the
+//!   `report → VnScript` projection seam (design it with stable identity),
+//!   per the R1298-review recommendation, rather than churned now.
 //! - **Transitions** (dissolve / fade / shake) and **outcome→world-line branch
 //!   mapping** (connecting a chosen outcome to a Mnemosyne world-line).
+//!
+//! Script-driven staging (R1302) is landed: a [`VnStep`] carries [`StageOp`]
+//! directives applied on entry, so a script stages its own set-piece; and the
+//! typewriter speed is authored (`VnScript::text_speed_cps`).
 
 pub mod clock;
 pub mod external;
@@ -79,8 +85,8 @@ pub mod view;
 
 pub use clock::{VnClock, use_vn_clock};
 pub use external::{ADVANCED_INTENT, CHOSEN_INTENT, TIMEOUT_INTENT, VnExternal};
-pub use model::{VnOption, VnScript, VnStep};
-pub use stage::{SpritePos, StageData, VnSprite, VnStage};
+pub use model::{DEFAULT_TEXT_SPEED_CPS, VnOption, VnScript, VnStep};
+pub use stage::{SpritePos, StageData, StageOp, VnSprite, VnStage};
 pub use state::{
     ChooseError, VnCursor, VnMode, VnResolution, VnRuntime, VnSave, VnState, use_vn_state,
 };

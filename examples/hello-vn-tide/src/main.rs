@@ -65,7 +65,7 @@ use pinion_core::storage::Storage;
 use pinion_core::{Frame, WidgetCore};
 use pinion_narrative::vn::state::{VnCursor, VnSave};
 use pinion_narrative::{
-    SpritePos, VnExternal, VnOption, VnScript, VnSprite, VnState, VnStep, use_vn_clock,
+    SpritePos, StageOp, VnExternal, VnOption, VnScript, VnSprite, VnState, VnStep, use_vn_clock,
     use_vn_state, vn_scene,
 };
 use pinion_platform_storage::{AppStorage, use_app_storage};
@@ -115,7 +115,19 @@ fn vn_state() -> Rc<VnState> {
 fn tide_script() -> VnScript {
     const END: u16 = 7;
     VnScript::new(vec![
-        VnStep::narration("밀물이 갯벌을 삼킨다. 등 뒤에서 목소리가 너를 부른다."),
+        // The opening step STAGES ITSELF (R1302): the tide-flat is up and 무녀
+        // stands centre, authored in the script rather than poked in by the
+        // binding — script-driven staging.
+        VnStep::narration("밀물이 갯벌을 삼킨다. 등 뒤에서 목소리가 너를 부른다.").with_stage(
+            vec![
+                StageOp::Background {
+                    source: BG_ASSET.to_string(),
+                },
+                StageOp::Show {
+                    sprite: VnSprite::new("mudang", MUDANG_ASSET, SpritePos::Center, 1),
+                },
+            ],
+        ),
         VnStep::line("무녀", "돌아오지 마라. 물때가 널 데려간다."),
         VnStep::timed_choice(
             "네 이름이 다시 불린다 — 어쩔 텐가?",
@@ -177,15 +189,11 @@ const MUDANG_ASSET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mudang.p
 
 impl VnSaveDemoExternal {
     fn new() -> Self {
+        // The opening stage (tide-flat background + 무녀 centre) is authored in
+        // `tide_script`'s step-0 stage directives and applied by `VnState::new`
+        // — script-driven staging (R1302), not poked in here. Both are real
+        // asset files, so a screenshot shows actual positioned pixels.
         let state = vn_state();
-        // Author the opening stage with REAL assets: the tide-flat background
-        // fills the stage and the 무녀 stands centre — both resolvable image
-        // files, so a screenshot shows actual positioned pixels, not just
-        // queryable data. (The demo then directs further sprites over the wire.)
-        state.stage().set_background(BG_ASSET);
-        state
-            .stage()
-            .show(VnSprite::new("mudang", MUDANG_ASSET, SpritePos::Center, 1));
         Self {
             inner: VnExternal::new(state.clone()),
             state,

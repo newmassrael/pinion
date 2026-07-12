@@ -125,6 +125,39 @@ impl StageData {
     }
 }
 
+/// A single authored stage directive — the script-side counterpart of the
+/// [`VnExternal`](crate::vn::VnExternal) director verbs. A [`VnStep`] carries a
+/// list of these, applied when the play-head enters the step, so a *script*
+/// (not only out-of-band RPC) can stage its own set-piece: "on this line, the
+/// tide-flat is up and 무녀 stands centre".
+///
+/// [`VnStep`]: crate::vn::VnStep
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum StageOp {
+    /// Set the background to a source reference.
+    Background {
+        /// The background asset reference.
+        #[serde(default)]
+        source: String,
+    },
+    /// Clear the background.
+    ClearBackground,
+    /// Show (or update, by id) a sprite — subsumes move / re-express, since
+    /// [`VnStage::show`] is idempotent by id.
+    Show {
+        /// The sprite to place.
+        #[serde(default)]
+        sprite: VnSprite,
+    },
+    /// Hide the sprite handle.
+    Hide {
+        /// The sprite id to remove.
+        #[serde(default)]
+        id: String,
+    },
+}
+
 /// The reactive stage director. One `Signal<StageData>`; the view reads it,
 /// the [`VnExternal`](crate::vn::VnExternal) director verbs mutate it — the
 /// same reactive-holder pattern the dialogue runner uses.
@@ -236,6 +269,21 @@ impl VnStage {
     pub fn set_source(&self, id: &str, source: impl Into<String>) -> bool {
         let source = source.into();
         self.mutate_sprite(id, |s| s.source = source)
+    }
+
+    /// Apply one authored [`StageOp`] — the script-driven counterpart of the
+    /// director verbs.
+    pub fn apply(&self, op: &StageOp) {
+        match op {
+            StageOp::Background { source } => self.set_background(source.clone()),
+            StageOp::ClearBackground => {
+                let _ = self.clear_background();
+            }
+            StageOp::Show { sprite } => self.show(sprite.clone()),
+            StageOp::Hide { id } => {
+                let _ = self.hide(id);
+            }
+        }
     }
 
     /// Apply `f` to the sprite `id` if present, re-sorting after. Returns

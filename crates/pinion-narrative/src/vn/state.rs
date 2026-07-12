@@ -29,10 +29,6 @@ use serde::{Deserialize, Serialize};
 use crate::vn::model::{VnScript, VnStep};
 use crate::vn::stage::{StageData, VnStage};
 
-/// Typewriter reveal rate, characters per second. A line of `n` characters
-/// is fully revealed after `n / CPS` seconds of accumulated `tick` time.
-const CPS: u64 = 40;
-
 /// What the runner is currently presenting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VnMode {
@@ -133,13 +129,29 @@ pub struct VnState {
 
 impl VnState {
     /// Build a fresh runner over `script`, positioned at the first step
-    /// with nothing revealed, no timer elapsed, and an empty stage.
+    /// with nothing revealed, no timer elapsed, and the opening step's stage
+    /// directives applied.
     #[must_use]
     pub fn new(script: VnScript) -> Self {
-        Self {
+        let state = Self {
             script: Rc::new(script),
             runtime: Signal::new(VnRuntime::default()),
             stage: VnStage::new(),
+        };
+        state.enter(0);
+        state
+    }
+
+    /// Apply the stage directives ([`StageOp`](crate::vn::stage::StageOp))
+    /// authored on the step at `step`, if any — the script driving its own
+    /// staging. Called on natural
+    /// entry (construction, `advance`, `choose`, timeout), NOT on a raw
+    /// `goto` scrub or a `load` (which restores the whole saved stage).
+    fn enter(&self, step: u16) {
+        if let Some(vn_step) = self.script.step(usize::from(step)) {
+            for op in vn_step.stage_ops() {
+                self.stage.apply(op);
+            }
         }
     }
 
@@ -205,7 +217,9 @@ impl VnState {
         if rt.snapped {
             return full;
         }
-        let by_time = usize::try_from(u64::from(rt.elapsed_ms) * CPS / 1000).unwrap_or(full);
+        // 0 cps would stall a line forever; the runner floors it at 1.
+        let cps = u64::from(self.script.text_speed_cps.max(1));
+        let by_time = usize::try_from(u64::from(rt.elapsed_ms) * cps / 1000).unwrap_or(full);
         by_time.min(full)
     }
 
@@ -308,6 +322,7 @@ impl VnState {
             rt.elapsed_ms = 0;
             rt.snapped = false;
             self.runtime.set(rt);
+            self.enter(target);
             return true;
         }
 
@@ -336,10 +351,12 @@ impl VnState {
         match self.script.step(usize::from(rt.step)) {
             Some(VnStep::Line { goto, .. }) => {
                 if self.fully_revealed() {
-                    rt.step = self.step_after(rt.step, *goto);
+                    let target = self.step_after(rt.step, *goto);
+                    rt.step = target;
                     rt.elapsed_ms = 0;
                     rt.snapped = false;
                     self.runtime.set(rt);
+                    self.enter(target);
                     true
                 } else {
                     rt.snapped = true;
@@ -378,6 +395,7 @@ impl VnState {
                 rt.elapsed_ms = 0;
                 rt.snapped = false;
                 self.runtime.set(rt);
+                self.enter(target);
                 Ok(())
             }
             _ => Err(ChooseError::NotAChoice),
@@ -741,6 +759,54 @@ mod tests {
                 serde_json::from_str(r#"{"runtime":{"step":2}}"#).expect("partial");
             assert_eq!(partial.runtime.step, 2);
             assert!(partial.stage.sprites.is_empty());
+        });
+    }
+
+    #[test]
+    fn script_drives_the_stage_on_entry() {
+        use crate::vn::stage::{SpritePos, StageOp, VnSprite};
+        let owner = Owner::new();
+        owner.run(|| {
+            let s = VnState::new(VnScript::new(vec![
+                VnStep::narration("open").with_stage(vec![
+                    StageOp::Background {
+                        source: "bg".into(),
+                    },
+                    StageOp::Show {
+                        sprite: VnSprite::new("m", "calm", SpritePos::Center, 1),
+                    },
+                ]),
+                VnStep::narration("next").with_stage(vec![StageOp::Hide { id: "m".into() }]),
+            ]));
+            // The opening step's directives applied at construction.
+            assert_eq!(s.stage().background().as_deref(), Some("bg"));
+            assert_eq!(s.stage().sprite_count(), 1);
+            // Advancing into step 1 applies its directives (hide the sprite);
+            // the background persists (no directive touched it).
+            assert!(s.advance()); // snap "open"
+            assert!(s.advance()); // step to 1 -> enter -> hide m
+            assert_eq!(s.stage().sprite_count(), 0, "step 1 hid the sprite");
+            assert_eq!(s.stage().background().as_deref(), Some("bg"), "bg persists");
+            // A raw goto scrub does NOT re-apply entry directives.
+            assert!(s.goto(0));
+            assert_eq!(
+                s.stage().sprite_count(),
+                0,
+                "goto is a raw scrub, no re-stage"
+            );
+        });
+    }
+
+    #[test]
+    fn text_speed_cps_is_configurable() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let s = VnState::new(
+                VnScript::new(vec![VnStep::narration("abcdefgh")]).with_text_speed(80),
+            );
+            // 80 cps -> 50 ms reveals 4 chars (vs 2 at the default 40 cps).
+            assert!(!s.tick(50));
+            assert_eq!(s.revealed_chars(), 4);
         });
     }
 }
