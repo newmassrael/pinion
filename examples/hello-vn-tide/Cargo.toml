@@ -26,6 +26,12 @@ pinion-narrative = { path = "../../crates/pinion-narrative", version = "0.0.1" }
 # and — unlike pinion_tui — it paints to a GPU window, so stdout stays a clean
 # RPC channel.
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# Filesystem key/value store (PINION_STORAGE_DIR-aware) backing the demo's
+# save/load SLOTS — the example wires the crate's pure state save/load to real
+# files that survive a process restart (Ren'Py-style save slots).
+pinion-platform-storage = { path = "../../crates/pinion-platform-storage", version = "0.0.1" }
+# JSON (de)serialize of the save blob between the runner and the slot file.
+serde_json = { workspace = true }
 # The concrete VelloRenderer the forge codegen (app.pinion.xml) emits is
 # `::vello::*`-qualified, so the include names the vello crate directly.
 vello = { workspace = true }

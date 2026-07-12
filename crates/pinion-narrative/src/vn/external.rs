@@ -14,7 +14,8 @@
 //!   save/load + AI-scrub seam.
 //! - **invoke** — the deterministic verbs `tick {ms}` (advance logical
 //!   time), `advance` (snap / step a line), `choose {index}` (take a choice
-//!   option).
+//!   option), and the save/load pair `save` (return the play-head as an
+//!   opaque JSON blob) / `load {blob}` (restore it).
 //!
 //! Every state transition emits a §5.20 intent (`vn.advanced` /
 //! `vn.timeout` / `vn.chosen`) so the shell repaints and an RPC observer can
@@ -44,7 +45,7 @@ use pinion_core::external::{
 use pinion_core::intent::Intent;
 
 use crate::vn::model::VnStep;
-use crate::vn::state::{ChooseError, VnState};
+use crate::vn::state::{ChooseError, VnRuntime, VnState};
 
 /// Emitted when [`advance`](VnExternal) moves the play-head.
 pub const ADVANCED_INTENT: &str = "vn.advanced";
@@ -264,6 +265,21 @@ impl ExternalIntrospect for VnExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // Return the complete save state as an opaque JSON blob a client
+            // persists and hands back to `load` to resume exactly here.
+            "save" => Ok(IntrospectValue::json(&self.state.save())),
+            // Restore from a save blob (tolerant deserialize; the runner
+            // clamps the step into range). Bad JSON is a type error.
+            "load" => match args {
+                IntrospectValue::Json(v) => match serde_json::from_value::<VnRuntime>(v) {
+                    Ok(runtime) => {
+                        self.state.load(runtime);
+                        Ok(self.status())
+                    }
+                    Err(_) => Err(InvokeError::TypeMismatch),
+                },
+                _ => Err(InvokeError::TypeMismatch),
+            },
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -344,6 +360,38 @@ mod tests {
             assert_eq!(int(ext.query("revealed_chars")), 4);
             assert_eq!(text(ext.query("revealed")), "돌아오지");
             assert!(!ext.is_dirty(), "a mere reveal queues no intent");
+        });
+    }
+
+    #[test]
+    fn save_returns_a_blob_that_load_restores() {
+        with_external(|ext| {
+            ext.invoke("tick", IntrospectValue::Int(100)).unwrap(); // reveal 4
+            let blob = match ext.invoke("save", IntrospectValue::Null) {
+                Ok(IntrospectValue::Json(v)) => v,
+                other => panic!("save returns a JSON blob, got {other:?}"),
+            };
+            // Move on, then load the blob back.
+            ext.invoke("advance", IntrospectValue::Null).unwrap();
+            ext.invoke("advance", IntrospectValue::Null).unwrap();
+            assert_eq!(
+                text(ext.query("mode")),
+                "choice",
+                "moved off the saved state"
+            );
+            ext.invoke("load", IntrospectValue::Json(blob))
+                .expect("load");
+            assert_eq!(
+                text(ext.query("mode")),
+                "line",
+                "restored to the saved line"
+            );
+            assert_eq!(int(ext.query("revealed_chars")), 4, "reveal re-derived");
+            // A non-JSON load arg is a type error, not a silent no-op.
+            assert!(matches!(
+                ext.invoke("load", IntrospectValue::Int(3)),
+                Err(InvokeError::TypeMismatch)
+            ));
         });
     }
 

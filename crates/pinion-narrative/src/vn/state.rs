@@ -71,20 +71,27 @@ pub struct VnResolution {
     pub timed_out: bool,
 }
 
-/// The `Copy` mutable runtime of a VN play-through.
+/// The `Copy` mutable runtime of a VN play-through — the complete save
+/// state. Every field is `#[serde(default)]` so a partial / older save
+/// deserializes tolerantly (a missing field falls back to its default)
+/// rather than failing the whole load.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VnRuntime {
     /// The current step index. Equal to `script.len()` at [`VnMode::End`].
+    #[serde(default)]
     pub step: u16,
     /// Milliseconds accumulated on the current step (reset to 0 on every
     /// transition). Drives typewriter reveal on a line and the countdown on
     /// a choice.
+    #[serde(default)]
     pub elapsed_ms: u32,
     /// `true` once the player has snapped the current line to full reveal
     /// (an `advance` on a partly-revealed line).
+    #[serde(default)]
     pub snapped: bool,
     /// The most-recently resolved choice, if any (`None` before the first
     /// choice resolves).
+    #[serde(default)]
     pub resolved: Option<VnResolution>,
 }
 
@@ -360,6 +367,29 @@ impl VnState {
         true
     }
 
+    /// The complete save state of this play-through — hand it back to
+    /// [`load`](Self::load) later to resume exactly here. Just the current
+    /// [`VnRuntime`] (which is `Copy + serde`), named for the save/load pair.
+    #[must_use]
+    pub fn save(&self) -> VnRuntime {
+        self.runtime.get()
+    }
+
+    /// Restore the play-head from a saved [`VnRuntime`] — the load half of
+    /// save/load. The saved `step` is clamped into `[0, len]`, so a save
+    /// written against a different / shorter script cannot land out of range;
+    /// a dangling `resolved` pointer degrades to no readable outcome (see
+    /// [`resolved_option`](Self::resolved_option)) rather than a panic.
+    /// `elapsed_ms` / `snapped` are restored as-is — they re-derive the
+    /// typewriter reveal and the countdown deterministically.
+    pub fn load(&self, runtime: VnRuntime) {
+        let max = u16::try_from(self.script.len()).unwrap_or(u16::MAX);
+        self.runtime.set(VnRuntime {
+            step: runtime.step.min(max),
+            ..runtime
+        });
+    }
+
     /// The most-recently resolved choice, if any.
     #[must_use]
     pub fn resolution(&self) -> Option<VnResolution> {
@@ -601,6 +631,66 @@ mod tests {
             assert!(s.fully_revealed());
             assert!(s.advance()); // jump via goto(99)
             assert_eq!(s.mode(), VnMode::End, "an over-range goto clamps to End");
+        });
+    }
+
+    #[test]
+    fn save_and_load_round_trip_restores_the_play_head() {
+        with_state(|s| {
+            // Drive to a distinctive mid-line state: partway through the
+            // 무녀 line's reveal on step 0's follow-on.
+            assert!(!s.tick(100)); // reveal 4 chars of the first line
+            let saved = s.save();
+            assert_eq!(saved.step, 0);
+            assert_eq!(s.revealed_chars(), 4);
+
+            // Mutate away: snap, step onto the choice, drain the timer.
+            assert!(s.advance());
+            assert!(s.advance());
+            assert_eq!(s.mode(), VnMode::Choice);
+            assert!(!s.tick(1000));
+            assert_ne!(s.save(), saved, "state moved on");
+
+            // Load restores exactly the saved play-head.
+            s.load(saved);
+            assert_eq!(s.save(), saved);
+            assert_eq!(s.mode(), VnMode::Line);
+            assert_eq!(
+                s.revealed_chars(),
+                4,
+                "reveal re-derived from restored elapsed"
+            );
+        });
+    }
+
+    #[test]
+    fn load_clamps_an_out_of_range_saved_step() {
+        with_state(|s| {
+            // A save written against a longer script (or a corrupt one) with a
+            // step past the end must clamp to End, not panic or read garbage.
+            s.load(VnRuntime {
+                step: 999,
+                ..VnRuntime::default()
+            });
+            assert_eq!(s.mode(), VnMode::End);
+            assert_eq!(s.save().step, u16::try_from(s.step_count()).unwrap());
+        });
+    }
+
+    #[test]
+    fn saved_runtime_survives_a_json_round_trip() {
+        with_state(|s| {
+            assert!(s.goto(1));
+            s.choose(0).expect("choose"); // a resolved state to serialize
+            let saved = s.save();
+            let json = serde_json::to_string(&saved).expect("serialize");
+            let back: VnRuntime = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, saved, "the save blob round-trips through JSON");
+            // A partial blob loads tolerantly (missing fields -> defaults).
+            let partial: VnRuntime = serde_json::from_str(r#"{"step":2}"#).expect("partial");
+            assert_eq!(partial.step, 2);
+            assert_eq!(partial.elapsed_ms, 0);
+            assert!(partial.resolved.is_none());
         });
     }
 }

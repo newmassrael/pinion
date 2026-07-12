@@ -53,12 +53,17 @@
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
-use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
+use pinion_core::external::{
+    External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+};
+use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Scene;
+use pinion_core::storage::Storage;
 use pinion_core::{Frame, WidgetCore};
-use pinion_narrative::vn::state::VnCursor;
+use pinion_narrative::vn::state::{VnCursor, VnRuntime};
 use pinion_narrative::{VnExternal, VnOption, VnScript, VnState, VnStep, use_vn_state, vn_scene};
+use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 
 // pinion-forge codegen output: `pub struct HelloVnTideRenderer` + async `new`
@@ -112,6 +117,119 @@ fn tide_script() -> VnScript {
     ])
 }
 
+/// App name for the on-disk save-slot store (honours `PINION_STORAGE_DIR`).
+const APP: &str = "pinion-vn-tide";
+/// `Owner::cache` key for the shared save-slot store.
+const STORAGE_KEY: &str = "the_tide.vn.storage";
+
+/// Demo-glue [`External`] adding **file-backed save slots** on top of the
+/// crate's pure state save/load — the persistence half of save/load, the peer
+/// of `hello-audio-rt`'s `EngineDemoExternal`.
+///
+/// Every crate verb (`tick` / `advance` / `choose` / `save` / `load` / query /
+/// intervene) delegates verbatim to the inner [`VnExternal`], so the wire
+/// contract this binary proves is exactly the crate's. The wrapper adds two
+/// verbs the crate deliberately leaves out (it stays storage-free): `save_slot`
+/// / `load_slot`, which persist the crate's [`VnState::save`] blob to a
+/// `pinion-platform-storage` file so a save survives a process restart. The
+/// wrapper holds a second clone of the same `Rc<VnState>` the inner External
+/// drives, so a slot save reads the live play-head and a slot load mutates it.
+struct VnSaveDemoExternal {
+    inner: VnExternal,
+    state: Rc<VnState>,
+    storage: Rc<AppStorage>,
+    pending_intents: Vec<Intent>,
+}
+
+impl std::fmt::Debug for VnSaveDemoExternal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VnSaveDemoExternal")
+            .field("inner", &self.inner)
+            .finish_non_exhaustive()
+    }
+}
+
+impl VnSaveDemoExternal {
+    fn new() -> Self {
+        let state = vn_state();
+        Self {
+            inner: VnExternal::new(state.clone()),
+            state,
+            storage: use_app_storage(STORAGE_KEY, APP),
+            pending_intents: Vec::new(),
+        }
+    }
+}
+
+/// The slot name a `save_slot` / `load_slot` arg carries (a plain `Text`).
+fn slot_name(args: &IntrospectValue) -> Result<String, InvokeError> {
+    match args {
+        IntrospectValue::Text(s) => Ok(format!("slot.{s}")),
+        _ => Err(InvokeError::TypeMismatch),
+    }
+}
+
+impl ExternalIntrospect for VnSaveDemoExternal {
+    fn schema(&self) -> IntrospectSchema {
+        self.inner.schema()
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        self.inner.query(path)
+    }
+
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        self.inner.intervene(path, value)
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // Persist the live play-head to a named on-disk slot.
+            "save_slot" => {
+                let key = slot_name(&args)?;
+                let blob =
+                    serde_json::to_vec(&self.state.save()).map_err(|_| InvokeError::Rejected)?;
+                self.storage.save(&key, &blob);
+                Ok(IntrospectValue::json(&self.state.save()))
+            }
+            // Restore the play-head from a named on-disk slot. A missing slot
+            // is Rejected (well-typed arg, nothing to load).
+            "load_slot" => {
+                let key = slot_name(&args)?;
+                match self.storage.load(&key) {
+                    Some(bytes) => {
+                        let runtime: VnRuntime =
+                            serde_json::from_slice(&bytes).map_err(|_| InvokeError::Rejected)?;
+                        self.state.load(runtime);
+                        Ok(IntrospectValue::json(&self.state.save()))
+                    }
+                    None => Err(InvokeError::Rejected),
+                }
+            }
+            // Every other verb is the inner crate surface's, verbatim; forward
+            // any intent it queued so the wrapper's own §5.20 drain surfaces it.
+            _ => {
+                let result = self.inner.invoke(path, args);
+                let Self {
+                    inner,
+                    pending_intents,
+                    ..
+                } = &mut *self;
+                inner.drain_intents(&mut |intent| pending_intents.push(intent));
+                result
+            }
+        }
+    }
+}
+
+// Paints nothing (the binding's `view` is the paint scene), draining
+// `self.pending_intents` — the same skeleton the crate External uses.
+pinion_core::intent_query_external_impl!(VnSaveDemoExternal);
+
 /// The binding unit type.
 struct HelloVnTide;
 
@@ -125,7 +243,7 @@ impl WidgetCore for HelloVnTide {
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
-        Box::new(VnExternal::new(vn_state()))
+        Box::new(VnSaveDemoExternal::new())
     }
 
     fn tag() -> &'static str {

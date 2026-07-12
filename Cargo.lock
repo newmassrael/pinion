@@ -3410,7 +3410,9 @@ dependencies = [
  "pinion-core",
  "pinion-forge",
  "pinion-narrative",
+ "pinion-platform-storage",
  "pinion-shell",
+ "serde_json",
  "vello",
 ]
 
