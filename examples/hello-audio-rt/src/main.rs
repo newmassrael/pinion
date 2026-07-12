@@ -53,13 +53,13 @@
 //! `PINION_HIDDEN_WINDOW=1` (the harness default) the window is created unmapped,
 //! so the full real pipeline runs headless.
 //!
-//! ## The `render` step-verb — deterministic, no background thread
+//! ## The `render` step-verb — an explicit, honestly-scoped harness pump
 //!
 //! On real hardware the audio callback thread pulls [`AudioRenderer::render`]
 //! continuously; a queued `play` takes effect on the next callback, and the
 //! control thread reads the snapshot the callback publishes. Reproducing a
 //! *background* audio thread in a demo would mean sleeps and polling — the exact
-//! [[zero-flake-policy]] hazard. Instead [`RtAudioDemoExternal`] co-locates the
+//! [[zero-flake-policy]] hazard. So [`RtAudioDemoExternal`] co-locates the
 //! audio-thread [`AudioRenderer`] with the control-thread
 //! [`AudioControllerExternal`] on the one dispatch thread and exposes a
 //! deterministic **`render` step-verb**: `invoke render N` pumps exactly `N`
@@ -67,6 +67,25 @@
 //! crate tests already do (interleave `renderer.render(&mut out)` with
 //! `ext.query` / `ext.invoke`) — a queued command is applied and its snapshot
 //! published by the very next `render`, with zero wall-clock dependence.
+//!
+//! **What `render` is NOT, stated plainly** (this verb is the round's one bit of
+//! throwaway scaffolding, so its scope must be exact): the north-star pump for
+//! audio is the fixed-timestep **game-loop tick** — a real engine advances
+//! audio, physics and AI from one clock. pinion's frame-step for that already
+//! ships and is RPC-driven and deterministic today: `scene/set_fps {fps:0}`
+//! pauses a window's loop and `scene/tick {dt}` advances it one fixed step
+//! (R724 / R829 / R831). The reason this harness does NOT drive audio through
+//! `scene/tick` is *not* that the frame-step is unbuilt (it is built) — it is
+//! that the tick fan-out reaches only [`Scene::ImmediateModeNode`] paint drivers
+//! (see `Scene::tick_immediate_mode`), and audio is not a paint node (no
+//! viewport / layout / pointer). Hanging audio off an `ImmediateModeNode` to
+//! borrow the verb would be glue-reuse of a paint abstraction, not contract
+//! reuse; the *correct* structure is a general "per-frame subsystem" seam the
+//! game-loop tick fans out to (audio joining physics / AI), and building that
+//! well is Phase-C architecture that needs forcing consumers beyond audio — so
+//! it is deliberately deferred, not faked here. `render` therefore proves only
+//! the audio **control surface** over the wire; pumping audio from the game-loop
+//! tick is the acknowledged Phase-C follow-up, not something this round did.
 //!
 //! The retained engine gets the *same* `render` step-verb ([`EngineDemoExternal`]).
 //! It plays synchronously (a `play` shows in `voice_count` with no render), but it
@@ -76,11 +95,26 @@
 //! real capture / device loop would. Both surfaces therefore demonstrate the full
 //! play → stop → reap lifecycle over the wire.
 //!
-//! This is a **headless RPC harness**, not a real-time interactive audio toy:
-//! it makes no sound (a headless box has no device; the real cpal push path is
-//! the `cpal-backend` feature, hardware-verified in R1282). It proves the RT
-//! control surface end-to-end over the wire, which is the one thing the audio
-//! arc never had.
+//! This is a **headless RPC harness**, not a real-time interactive audio toy: it
+//! opens no audio device and makes no sound — deliberately (it declares no `cpal`
+//! dependency and pumps the mixer through the `render` verb instead of a device
+//! callback), NOT because the machine lacks a device. The real cpal *push* path
+//! is the `pinion-audio` `cpal-backend` feature, whose device output was
+//! hardware-verified in R1282; note that is a *different* proof from this one —
+//! neither R1282 nor this harness exercises a real cpal callback thread and the
+//! stdin-RPC control thread concurrently, so that lock-free-snapshot-under-a-live-
+//! callback path is not proven here. That is a genuine open item — but it is
+//! *buildable* (poll the settled snapshot with `wait_until`, exactly like every
+//! other async RPC path; the coarser cost is approximate not flaky assertions),
+//! and its deterministic core is already covered (the lock-free protocol is
+//! verified by the orchestrated cross-thread tests in
+//! `crates/pinion-audio/tests/realtime_channel.rs`). The real reason it is
+//! deferred is that a real callback needs an audio device, which CI lacks (so it
+//! would be local-hardware-gated like R1282's `device_out`, or need a virtual
+//! audio device wired into CI), and the marginal value over the verified protocol
+//! is real-concurrency integration confidence. What this round proves is the RT
+//! control surface end-to-end over the wire, which is the one thing the audio arc
+//! never had.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -89,7 +123,7 @@ use std::sync::Arc;
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_audio::{
     AudioClip, AudioControllerExternal, AudioEngine, AudioEngineExternal, AudioRenderer,
-    realtime_channel,
+    decode_compressed, realtime_channel,
 };
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
@@ -145,14 +179,39 @@ fn sine_clip(freq: f32, secs: f32) -> Arc<AudioClip> {
     AudioClip::new(RATE, 1, samples).shared()
 }
 
+/// A real FLAC asset, compiled in and decoded at startup — so the RT device
+/// path is proven over the wire with a real game-format asset, not only
+/// synthesized PCM (dogfooding the §5.54 compressed-decode path *and* the RT
+/// path together, end to end).
+const CHIME_FLAC: &[u8] = include_bytes!("../assets/chime.flac");
+
+/// Decode the bundled FLAC chime to PCM. On the (fixture-guaranteed-absent)
+/// decode failure the demo just omits the clip rather than panicking.
+fn chime_clip() -> Option<Arc<AudioClip>> {
+    match decode_compressed(CHIME_FLAC) {
+        Ok(clip) => Some(clip.shared()),
+        Err(e) => {
+            eprintln!("hello-audio-rt: chime.flac failed to decode: {e}");
+            None
+        }
+    }
+}
+
+/// Upper bound on a single `render` invoke's block count. The pump is
+/// synchronous on the dispatch thread, so an unbounded count would freeze both
+/// paint and RPC; `render` is a fine-grained step verb (demos pump 1 block at a
+/// time), so this ceiling only guards a fat-fingered / hostile `render 1e11`.
+const MAX_RENDER_BLOCKS: u64 = 4096;
+
 /// Parse the `render` step-verb's block count: `Null` → 1 block (the
-/// cpal-callback-per-frame default), an `Int` → that many (a negative clamps to
-/// 0), anything else → a type error. Shared by both demo wrappers so the one
+/// cpal-callback-per-frame default), an `Int` → that many, clamped to
+/// `[0, MAX_RENDER_BLOCKS]` (a negative → 0, an over-large → the ceiling),
+/// anything else → a type error. Shared by both demo wrappers so the one
 /// `render` verb contract has a single home.
 fn parse_render_blocks(args: &IntrospectValue) -> Result<u64, InvokeError> {
     match args {
         IntrospectValue::Null => Ok(1),
-        IntrospectValue::Int(n) => Ok(u64::try_from(*n).unwrap_or(0)),
+        IntrospectValue::Int(n) => Ok(u64::try_from(*n).unwrap_or(0).min(MAX_RENDER_BLOCKS)),
         _ => Err(InvokeError::TypeMismatch),
     }
 }
@@ -193,12 +252,17 @@ impl RtAudioDemoExternal {
     /// thread is *this* thread, stepped by the `render` verb.
     fn new() -> Self {
         let (controller, renderer) = realtime_channel(AudioEngine::new(RATE), RING_CAP, MAX_VOICES);
-        let inner = AudioControllerExternal::new(controller)
+        let mut inner = AudioControllerExternal::new(controller)
             // Long tones stay live across render blocks so `voices` reads see
             // them; `blip` is a 2-frame one-shot that finishes in one block.
             .with_clip("bell", sine_clip(880.0, 1.0))
             .with_clip("waves", sine_clip(220.0, 1.0))
             .with_clip("blip", AudioClip::new(RATE, 1, vec![0.9; 2]).shared());
+        // A real decoded FLAC asset over the RT path — §5.54 decode + the
+        // shipping RT mixer proven together over the wire.
+        if let Some(chime) = chime_clip() {
+            inner = inner.with_clip("chime", chime);
+        }
         Self {
             inner,
             renderer,
@@ -427,7 +491,8 @@ impl WidgetCore for HelloAudioRt {
         ));
         y += 30;
         children.push(text_row(
-            "query: voice_count / peak / frames_rendered / rejected / stolen / voices".to_string(),
+            "query: voice_count / max_voices / peak / frames_rendered / rejected / stolen / voices"
+                .to_string(),
             y,
         ));
         y += 22;
@@ -509,7 +574,7 @@ mod tests {
     //! proves the same contract over the real JSON-RPC wire; these lock the
     //! wrapper's own logic (the `render` step-verb + verbatim delegation) so a
     //! regression is caught in `cargo test` without spawning the shell.
-    use super::RtAudioDemoExternal;
+    use super::{EngineDemoExternal, RtAudioDemoExternal};
     use pinion_core::external::{
         External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
     };
@@ -578,6 +643,44 @@ mod tests {
         assert!(matches!(
             ext.intervene("voice_count", IntrospectValue::Int(3)),
             Err(InterveneError::ReadOnly)
+        ));
+    }
+
+    #[test]
+    fn engine_render_verb_reaps_a_stopped_voice() {
+        // The engine wrapper's distinctive path: a second `Rc<RefCell<AudioEngine>>`
+        // clone stepped by `render` while the inner External holds the other clone.
+        // A retained `play` is synchronous (no render needed); the wrapper's own
+        // `render` verb reaps the stopped voice — the exact behaviour the wire demo
+        // exercises, locked here without a subprocess.
+        let mut ext = EngineDemoExternal::new();
+        let id = match ext.invoke("play", IntrospectValue::Text("bell".to_string())) {
+            Ok(IntrospectValue::Int(id)) => id,
+            other => panic!("expected a minted id, got {other:?}"),
+        };
+        // Retained play applies synchronously — no render.
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(1))
+        ));
+        // Stop marks it finished but does not reap; the count holds until render.
+        assert!(matches!(
+            ext.invoke("stop", IntrospectValue::Int(id)),
+            Ok(IntrospectValue::Bool(true))
+        ));
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(1))
+        ));
+        // The wrapper's `render` steps AudioEngine::render, which reaps it (no
+        // double-borrow of the shared engine RefCell).
+        assert!(matches!(
+            ext.invoke("render", IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1))
+        ));
+        assert!(matches!(
+            ext.query("voice_count"),
+            Some(IntrospectValue::Int(0))
         ));
     }
 }

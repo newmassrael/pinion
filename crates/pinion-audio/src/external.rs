@@ -409,6 +409,7 @@ impl ExternalIntrospect for AudioControllerExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
             ("voice_count", "int"),
+            ("max_voices", "int"),
             ("peak", "float"),
             ("frames_rendered", "int"),
             ("rejected", "int"),
@@ -432,6 +433,7 @@ impl ExternalIntrospect for AudioControllerExternal {
         let snapshot = self.controller.snapshot();
         match path {
             "voice_count" => Some(IntrospectValue::Int(i64::from(snapshot.voice_count()))),
+            "max_voices" => Some(IntrospectValue::Int(int_of(snapshot.max_voices()))),
             "peak" => Some(IntrospectValue::Float(f64::from(snapshot.peak()))),
             "frames_rendered" => Some(IntrospectValue::Int(int_of_u64(snapshot.frames_rendered()))),
             "rejected" => Some(IntrospectValue::Int(int_of_u64(snapshot.rejected()))),
@@ -963,6 +965,11 @@ mod tests {
         assert!(matches!(
             ext.query("voice_count"),
             Some(IntrospectValue::Int(0))
+        ));
+        // The pool bound is introspectable before any render (fixed at creation).
+        assert!(matches!(
+            ext.query("max_voices"),
+            Some(IntrospectValue::Int(8))
         ));
 
         let id = ext.invoke("play", IntrospectValue::Text("bell".to_string()));

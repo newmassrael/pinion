@@ -898,6 +898,30 @@ def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
         )
 
 
+def assert_rpc_error(fn, *, code: int = -32602, data: Any = None) -> None:
+    """Assert `fn()` raises a JSON-RPC error with the given `code` (and, when
+    supplied, `error.data`) — and did NOT succeed.
+
+    The typed peer of `assert_eq` for the wire's failure channel. The dispatch
+    layer maps every `InvokeError` / `InterveneError` variant to a `-32602
+    Invalid params` carrying the variant name in `error.data` (e.g.
+    `"InvokeRejected"`, `"ReadOnly"`), so `data=` proves the failure travelled
+    the real wire with the right typed reason — not a silent success and not a
+    generic transport error. Callers pass a zero-arg lambda:
+    `assert_rpc_error(lambda: g.invoke(P, A), data="InvokeRejected")`.
+    """
+    try:
+        fn()
+    except RpcError as exc:
+        assert_eq(exc.code, code, f"{data or 'error'}: JSON-RPC code")
+        if data is not None:
+            assert_eq(exc.data, data, "error.data variant")
+        return
+    raise AssertionError(
+        f"expected RpcError (code={code}, data={data!r}), but the call succeeded"
+    )
+
+
 def wait_until(
     predicate,
     *,

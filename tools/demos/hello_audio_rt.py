@@ -45,19 +45,17 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
-    RpcError,
     RpcSubprocess,
     assert_eq,
+    assert_rpc_error,
     run_demo,
 )
 
 EXT = "/external"
-# The binding's MAX_VOICES — small on purpose so the pool can starve.
-MAX_VOICES = 4
 # Interleaved-stereo samples per render block -> frames = SAMPLES / 2.
 FRAMES_PER_BLOCK = 256
 
@@ -67,23 +65,6 @@ def _find_voice(voices: list[dict], label: str) -> dict:
         if v.get("label") == label:
             return v
     raise AssertionError(f"no live voice labelled {label!r} in {voices!r}")
-
-
-def _expect_invoke_error(fn: Callable[[], Any], data: str) -> None:
-    """Assert `fn()` raises a JSON-RPC error whose `error.data` is `data`.
-
-    The dispatch layer maps every `InvokeError` / `InterveneError` variant to a
-    `-32602 Invalid params` carrying the variant name in `error.data`, so this
-    proves the failure travelled the *wire* with the right typed reason — not a
-    silent success and not a generic transport error.
-    """
-    try:
-        fn()
-    except RpcError as exc:
-        assert_eq(exc.code, -32602, f"{data}: JSON-RPC code")
-        assert_eq(exc.data, data, "error.data variant")
-        return
-    raise AssertionError(f"expected RpcError with data={data!r}, but the call succeeded")
 
 
 def body() -> None:
@@ -105,6 +86,11 @@ def body() -> None:
         assert_eq(q("stolen"), 0, "no steal yet")
         assert_eq(q("voice_policy"), "reject_newest", "default full-pool policy")
         assert_eq(q("voices"), [], "no live voices")
+        # The pool bound is introspectable over the wire (§2 #7) — so the
+        # starvation phase measures against the wire value, not a copy of the
+        # binding's constant that could silently drift.
+        max_voices = q("max_voices")
+        assert isinstance(max_voices, int) and max_voices >= 1, f"pool bound: {max_voices!r}"
 
         # ── (A) a play is queued, not applied, until a render pumps the audio thread.
         vid = inv("play", "bell")
@@ -124,6 +110,18 @@ def body() -> None:
         assert abs(bell["gain"] - 1.0) < 1e-3, f"authored gain 1.0: {bell['gain']}"
         assert abs(bell["effective_gain"] - 1.0) < 1e-3, "flat voice: effective == authored"
         assert "position" not in bell, "a flat voice omits its 3D position"
+
+        # ── (B') a real decoded FLAC asset over the RT wire — §5.54 compressed
+        # decode + the shipping RT mixer proven together, not only synth PCM.
+        cid = inv("play", "chime")
+        assert isinstance(cid, int), f"the decoded chime plays over the RT wire: {cid!r}"
+        render(1)
+        chime = _find_voice(q("voices"), "chime")
+        assert_eq(chime["id"], cid, "the decoded-FLAC voice is live and labelled")
+        # Retire it so the pool-count phases below start from just the bell.
+        inv("stop", cid)
+        render(1)
+        assert_eq(q("voice_count"), 1, "chime reaped; only the bell remains")
 
         # ── (C) a spatial play, then MOVE the emitter over the wire.
         wid = inv("play", {"name": "waves", "position": [4.0, 0.0, 0.0]})
@@ -204,10 +202,10 @@ def body() -> None:
         assert_eq(q("voice_policy"), "reject_newest", "still the default policy")
         rej0 = q("rejected")
         stol0 = q("stolen")
-        for _ in range(MAX_VOICES + 1):
+        for _ in range(max_voices + 1):
             inv("play", "bell")
         render(1)
-        assert_eq(q("voice_count"), MAX_VOICES, "the pool is bounded")
+        assert_eq(q("voice_count"), max_voices, "the pool is bounded")
         assert_eq(q("rejected"), rej0 + 1, "the dropped play is introspectable over RPC")
         assert_eq(q("stolen"), stol0, "reject-newest steals nothing")
 
@@ -218,28 +216,28 @@ def body() -> None:
         assert_eq(q("voice_policy"), "steal_oldest", "policy switched over RPC")
         rej1 = q("rejected")
         stol1 = q("stolen")
-        for _ in range(MAX_VOICES + 1):
+        for _ in range(max_voices + 1):
             inv("play", "bell")
         render(1)
-        assert_eq(q("voice_count"), MAX_VOICES, "the pool is still bounded")
+        assert_eq(q("voice_count"), max_voices, "the pool is still bounded")
         assert_eq(q("stolen"), stol1 + 1, "the overflow stole the oldest (RPC policy reached the thread)")
         assert_eq(q("rejected"), rej1, "steal-oldest rejects nothing")
 
         # ── (F) every failure surfaces loudly over the wire, never a silent success.
-        _expect_invoke_error(lambda: inv("play", "nope"), "InvokeRejected")
-        _expect_invoke_error(lambda: inv("bogus", None), "UnknownInvokePath")
-        _expect_invoke_error(lambda: inv("set_master_gain", "loud"), "InvokeTypeMismatch")
-        _expect_invoke_error(lambda: inv("set_voice_policy", "nonsense"), "InvokeRejected")
-        _expect_invoke_error(lambda: render("two"), "InvokeTypeMismatch")
+        assert_rpc_error(lambda: inv("play", "nope"), data="InvokeRejected")
+        assert_rpc_error(lambda: inv("bogus", None), data="UnknownInvokePath")
+        assert_rpc_error(lambda: inv("set_master_gain", "loud"), data="InvokeTypeMismatch")
+        assert_rpc_error(lambda: inv("set_voice_policy", "nonsense"), data="InvokeRejected")
+        assert_rpc_error(lambda: render("two"), data="InvokeTypeMismatch")
         # The RT surface is read-via-query, write-via-invoke: an intervene of a
         # declared read-only field is ReadOnly; an undeclared path is unknown.
-        _expect_invoke_error(lambda: g.intervene(f"{EXT}/voice_count", 3), "ReadOnly")
-        _expect_invoke_error(lambda: g.intervene(f"{EXT}/voices", []), "ReadOnly")
-        _expect_invoke_error(
+        assert_rpc_error(lambda: g.intervene(f"{EXT}/voice_count", 3), data="ReadOnly")
+        assert_rpc_error(lambda: g.intervene(f"{EXT}/voices", []), data="ReadOnly")
+        assert_rpc_error(
             lambda: g.intervene(f"{EXT}/listener", {"position": [1.0, 0.0, 0.0]}),
-            "ReadOnly",
+            data="ReadOnly",
         )
-        _expect_invoke_error(lambda: g.intervene(f"{EXT}/nonexistent", 3), "UnknownIntervenePath")
+        assert_rpc_error(lambda: g.intervene(f"{EXT}/nonexistent", 3), data="UnknownIntervenePath")
 
 
 if __name__ == "__main__":

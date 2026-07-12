@@ -368,6 +368,17 @@ impl AudioSnapshot {
         self.stolen.load(Ordering::Relaxed)
     }
 
+    /// The bounded voice-pool capacity — the maximum number of simultaneous
+    /// voices, fixed at channel creation. The per-voice slot array is sized to
+    /// it, so `voice_count() <= max_voices()` always; a `play` past it is
+    /// `rejected` (or `stolen`) per the [`VoicePolicy`]. Exposed so an AI client
+    /// reading `voice_count`/`rejected`/`stolen` can know the bound they are
+    /// measured against, rather than assuming it.
+    #[must_use]
+    pub fn max_voices(&self) -> usize {
+        self.voices.len()
+    }
+
     /// The live voices as of the last published render, read lock-free off the
     /// per-voice slots. Each slot's numeric fields are matched to the id via an
     /// `Acquire` load (see [`AudioSnapshot`] for the bounded live-monitor

@@ -33,13 +33,13 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
-    RpcError,
     RpcSubprocess,
     assert_eq,
+    assert_rpc_error,
     run_demo,
 )
 
@@ -52,17 +52,6 @@ def _find_voice(voices: list[dict], label: str) -> dict:
         if v.get("label") == label:
             return v
     raise AssertionError(f"no voice labelled {label!r} in {voices!r}")
-
-
-def _expect_error(fn: Callable[[], Any], data: str) -> None:
-    """Assert `fn()` raises a JSON-RPC `-32602` whose `error.data` is `data`."""
-    try:
-        fn()
-    except RpcError as exc:
-        assert_eq(exc.code, -32602, f"{data}: JSON-RPC code")
-        assert_eq(exc.data, data, "error.data variant")
-        return
-    raise AssertionError(f"expected RpcError with data={data!r}, but the call succeeded")
 
 
 def body() -> None:
@@ -164,11 +153,11 @@ def body() -> None:
         assert_eq(q("voice_count"), 0, "send stop_all + render silenced")
 
         # ── every failure surfaces loudly over the wire.
-        _expect_error(lambda: inv("play", "nope"), "InvokeRejected")
-        _expect_error(lambda: iv("master_gain", "loud"), "InterveneTypeMismatch")
-        _expect_error(lambda: iv("voice_count", 3), "ReadOnly")
-        _expect_error(lambda: iv("nonexistent", 3), "UnknownIntervenePath")
-        _expect_error(lambda: iv("voice.999.gain", 1.0), "UnknownIntervenePath")
+        assert_rpc_error(lambda: inv("play", "nope"), data="InvokeRejected")
+        assert_rpc_error(lambda: iv("master_gain", "loud"), data="InterveneTypeMismatch")
+        assert_rpc_error(lambda: iv("voice_count", 3), data="ReadOnly")
+        assert_rpc_error(lambda: iv("nonexistent", 3), data="UnknownIntervenePath")
+        assert_rpc_error(lambda: iv("voice.999.gain", 1.0), data="UnknownIntervenePath")
 
 
 if __name__ == "__main__":
