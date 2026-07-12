@@ -26,13 +26,15 @@
 //! exact [[zero-flake-policy]] hazard, so the runner is stepped by a
 //! deterministic **`tick {ms}` step-verb** that advances *logical* time read
 //! from the argument (the wire form of a fixed-timestep frame). This is the
-//! same choice `hello-audio-rt`'s `render` verb made: the north-star driver
-//! is the game-loop `scene/tick {dt}`, but that fan-out reaches only
-//! `Scene::ImmediateModeNode` paint drivers, and this runner is deliberately a
-//! retained structured-scene `Scene::External`. Frame-driven real-time play
-//! (wiring the runner to the shell's frame delta) and the presentation layer
-//! it needs (sprites / transitions) are the acknowledged follow-ups; this
-//! round proves the VN control + presentation surface over the wire.
+//! same choice `hello-audio-rt`'s `render` verb made: the game-loop
+//! `scene/tick {dt}` fan-out reaches only `Scene::ImmediateModeNode` paint
+//! drivers, and this runner is deliberately a retained structured-scene
+//! `Scene::External`, so `scene/tick` cannot reach it and a zero-flake demo
+//! must not depend on the wall clock. Live real-time play (typewriter /
+//! countdown on the wall clock) is a small retained `Tickable` (the
+//! `CaretBlink` pattern, existing substrate — NOT Phase-C, NOT an
+//! immediate-mode node); it is a follow-up round, kept out of this wire-proof
+//! harness so the demo stays deterministic.
 //!
 //! ## Why the GUI shell, not the TUI
 //!

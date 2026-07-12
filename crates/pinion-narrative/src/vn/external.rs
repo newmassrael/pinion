@@ -19,8 +19,15 @@
 //!   / `hide {id}` / `move {id,at}` / `set_sprite_source {id,source}`.
 //!
 //! Every state transition emits a §5.20 intent (`vn.advanced` /
-//! `vn.timeout` / `vn.chosen`) so the shell repaints and an RPC observer can
-//! watch the play-through.
+//! `vn.timeout` / `vn.chosen`). These are the retained-reducer signal: the
+//! shell's dispatch tail drains them into `V::update` on the same call that
+//! emits them, so they are **not** independently observable via a later
+//! `scene/intents` poll (that is a framework-wide §5.20 v1 limitation, not a
+//! VN one). An RPC client watches the play-through by polling the queryable
+//! state (`mode` / `step` / `outcome` / …), which is the §2 #7 surface; the
+//! intents' emission is covered by the crate unit tests. (Repaint itself is
+//! driven by the shell's state-change detection, not by these intents — a
+//! `tick` reveal repaints while emitting no intent.)
 //!
 //! ## The `tick` step-verb — honestly scoped
 //!
@@ -28,15 +35,22 @@
 //! from the argument, never a wall clock — so every assertion in the wire
 //! demo observes settled state with no background thread and no sleeps
 //! ([[zero-flake-policy]]). This is the same choice `hello-audio-rt`'s
-//! `render` step-verb made: the north-star driver is the fixed-timestep
-//! game-loop `scene/tick {dt}`, but that fan-out reaches only
-//! `Scene::ImmediateModeNode` paint drivers, and this runner is deliberately
-//! a retained structured-scene `Scene::External` (§2 #1 — the dialogue is
-//! queryable text, not opaque paint). Driving the runner from the real
-//! game-loop tick (making it an immediate-mode node) is the acknowledged
-//! Phase-C follow-up the presentation layer — sprites / transitions — will
-//! force; this round proves the VN control + presentation surface over the
-//! wire, which is the thing it never had.
+//! `render` step-verb made — but the boundary is scoped honestly, without
+//! overstating it:
+//!
+//! - The bespoke `tick` verb is genuinely forced *for the wire demo*: the
+//!   game-loop `scene/tick {dt}` fan-out reaches only `Scene::ImmediateModeNode`
+//!   paint drivers, and this runner is deliberately a retained structured-scene
+//!   `Scene::External` (§2 #1 — the dialogue is queryable text, not opaque
+//!   paint), so `scene/tick` cannot reach it and a zero-flake demo must not
+//!   depend on the wall clock.
+//! - **Live real-time play is NOT Phase-C and does NOT need an immediate-mode
+//!   node.** `VnState::tick(dt)` is a pure fixed-timestep function; a retained
+//!   `Tickable` (the `CaretBlink` pattern,
+//!   existing Phase-A/B substrate) drives it per-frame on the wall clock. That
+//!   is a follow-up round, not an architectural boundary — only driving the
+//!   runner from the *game-loop* `scene/tick` (making it an immediate-mode
+//!   node) would be Phase-C, and that is not the only way to get live play.
 
 use std::rc::Rc;
 

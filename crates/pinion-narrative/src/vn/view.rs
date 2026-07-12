@@ -24,7 +24,7 @@ const LINE: u32 = 16;
 /// Number of cells in the countdown bar.
 const BAR_CELLS: usize = 20;
 /// Stage width, in pixels (the background fills it; sprite x positions read
-/// [`SpritePos::x_fraction`](crate::vn::SpritePos::x_fraction) of it).
+/// [`SpritePos::center_x`](crate::vn::SpritePos::center_x) of it).
 const STAGE_W: u32 = 800;
 /// Stage height, in pixels (the visual band above the dialogue box).
 const STAGE_H: u32 = 240;

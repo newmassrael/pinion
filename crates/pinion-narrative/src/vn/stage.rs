@@ -58,20 +58,9 @@ impl SpritePos {
         }
     }
 
-    /// The sprite centre's x as a fraction of stage width (`0.0..=1.0`) — the
-    /// normalized layout position.
-    #[must_use]
-    pub const fn x_fraction(self) -> f32 {
-        match self {
-            Self::Left => 0.2,
-            Self::Center => 0.5,
-            Self::Right => 0.8,
-        }
-    }
-
-    /// The sprite centre's x in pixels for a stage `width` (integer math — the
-    /// same 0.2 / 0.5 / 0.8 fractions as [`x_fraction`](Self::x_fraction), the
-    /// form the [`crate::vn::view`] projection reads without a float cast).
+    /// The sprite centre's x in pixels for a stage `width` — the deterministic
+    /// layout position the [`crate::vn::view`] projection reads (0.2 / 0.5 /
+    /// 0.8 of the width, in integer math so there is no float cast).
     #[must_use]
     pub const fn center_x(self, width: u32) -> u32 {
         match self {
@@ -336,9 +325,9 @@ mod tests {
     }
 
     #[test]
-    fn position_x_fractions_are_ordered() {
-        assert!(SpritePos::Left.x_fraction() < SpritePos::Center.x_fraction());
-        assert!(SpritePos::Center.x_fraction() < SpritePos::Right.x_fraction());
+    fn position_center_x_is_ordered_and_parses() {
+        assert!(SpritePos::Left.center_x(800) < SpritePos::Center.center_x(800));
+        assert!(SpritePos::Center.center_x(800) < SpritePos::Right.center_x(800));
         assert_eq!(SpritePos::parse("left"), Some(SpritePos::Left));
         assert_eq!(SpritePos::parse("nope"), None);
     }
