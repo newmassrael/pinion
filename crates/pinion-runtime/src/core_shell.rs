@@ -855,11 +855,14 @@ impl<V: WidgetCore> CoreShell<V> {
                 children.extend(extra_children);
                 Scene::Container(ContainerNode::new(children))
             }
-            // (R1303 PR-51) No primary — the extras (possibly empty) are
-            // the whole state scene. An empty container is the honest boot
-            // shape for a dynamic no-primary binding whose surfaces appear
-            // only after the first reconcile.
-            None => Scene::Container(ContainerNode::new(extra_children)),
+            // (R1303 PR-51 / R1307) No primary — the extras (possibly empty)
+            // are the whole state scene. An empty container is the honest
+            // boot shape for a dynamic no-primary binding whose surfaces
+            // appear only after the first reconcile. `without_primary_head`
+            // marks it so `Scene::primary_external` returns `None`: the bare
+            // `/external` RPC shorthand then rejects cleanly (§2 #7
+            // self-describing) instead of silently resolving the first extra.
+            None => Scene::Container(ContainerNode::new(extra_children).without_primary_head()),
         }
     }
 

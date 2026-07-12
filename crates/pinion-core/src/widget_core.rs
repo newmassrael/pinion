@@ -251,9 +251,11 @@ pub trait WidgetCore: 'static {
     /// - [`CoreShell::send_to_primary`](../../pinion_runtime/struct.CoreShell.html#method.send_to_primary)
     ///   is a no-op. Over the §5.12 RPC wire the binding addresses each
     ///   extra by its explicit tag path; the bare `/external` shorthand has
-    ///   no distinguished primary to name and resolves to the first extra
-    ///   (see [`Scene::primary_external`]), so it is not a stable address
-    ///   for a dynamic no-primary binding — address extras by tag.
+    ///   no distinguished primary to name, so (R1307) the composed container
+    ///   is marked no-primary-head and [`Scene::primary_external`] returns
+    ///   `None` — a bare `/external` query / invoke / intervene rejects with
+    ///   `NoExternalAtPath`, self-describing the absence (§2 #7) rather than
+    ///   silently resolving an arbitrary extra as the primary.
     #[must_use]
     fn primary_surface() -> Option<PrimarySurface> {
         Some(PrimarySurface {

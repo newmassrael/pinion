@@ -160,7 +160,7 @@ mod tests {
             Scene::External(ExtNode::new(Box::new(CountedExternal::new(101))).with_tag("pane_a"));
         let b =
             Scene::External(ExtNode::new(Box::new(CountedExternal::new(202))).with_tag("pane_b"));
-        let mut c = ContainerNode::new(vec![a, b]);
+        let mut c = ContainerNode::new(vec![a, b]).without_primary_head();
         c.rect = Rect::new(0, 0, 100, 100);
         let mut scene = Scene::Container(c);
         let result = invoke(
@@ -181,25 +181,34 @@ mod tests {
     }
 
     #[test]
-    fn r1303_no_primary_bare_invoke_hits_first_extra() {
-        // Pin the documented bare-`/external` convention on the MUTATING
-        // side (the M1 concern): with no primary, a bare `/external`
-        // invoke resolves, per declaration order, to the FIRST extra
-        // (pane_a, start 101) — `increment` by 6 returns 107. This is the
-        // unstable shorthand `WidgetCore::primary_surface` documents;
-        // clients address extras by tag (proven stable in
-        // `r1303_no_primary_invoke_by_tag_mutates_the_correct_extra`).
+    fn r1303_no_primary_bare_invoke_rejects() {
+        // (R1307) The M1 fix on the MUTATING side: a bare `/external` invoke
+        // on a no-primary-head container REJECTS with `NoExternalAtPath`
+        // rather than silently mutating the first extra. `primary_external_mut`
+        // returns `None` for the marked container, so the audit's silent-
+        // misroute footgun on the AI mutate wire is closed. Clients address
+        // extras by tag (proven in the by-tag test above).
         use pinion_core::scene::{ContainerNode, ExternalNode as ExtNode};
         let a =
             Scene::External(ExtNode::new(Box::new(CountedExternal::new(101))).with_tag("pane_a"));
         let b =
             Scene::External(ExtNode::new(Box::new(CountedExternal::new(202))).with_tag("pane_b"));
-        let mut c = ContainerNode::new(vec![a, b]);
+        let mut c = ContainerNode::new(vec![a, b]).without_primary_head();
         c.rect = Rect::new(0, 0, 100, 100);
         let mut scene = Scene::Container(c);
-        let result = invoke(&mut scene, "/external/increment", IntrospectValue::Int(6))
-            .expect("bare invoke resolves to the first extra");
-        assert_eq!(result, IntrospectValue::Int(107));
+        let err = invoke(&mut scene, "/external/increment", IntrospectValue::Int(6)).unwrap_err();
+        assert_eq!(err, InvokeError::NoExternalAtPath);
+        // The first extra was NOT mutated (still 101).
+        assert_eq!(
+            scene
+                .find_external_with_tag("pane_a")
+                .unwrap()
+                .handle
+                .introspect()
+                .unwrap()
+                .query("count"),
+            Some(IntrospectValue::Int(101)),
+        );
     }
 
     #[test]

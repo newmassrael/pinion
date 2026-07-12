@@ -437,6 +437,11 @@ impl Scene {
     pub fn primary_external(&self) -> Option<&ExternalNode> {
         match self {
             Scene::External(n) => Some(n),
+            // (R1307 PR-51 §5.45) A container marked as having no
+            // distinguished primary head (the no-primary state-scene root)
+            // resolves to `None` — the DFS-first child is an extra, not a
+            // primary, so bare `/external` rejects instead of misrouting.
+            Scene::Container(c) if c.no_primary_head => None,
             Scene::Container(c) => c.children.iter().find_map(Self::primary_external),
             Scene::Scroll(s) => s.content.primary_external(),
             Scene::Box(_)
@@ -749,6 +754,9 @@ impl Scene {
     pub fn primary_external_mut(&mut self) -> Option<&mut ExternalNode> {
         match self {
             Scene::External(n) => Some(n),
+            // (R1307 PR-51 §5.45) No distinguished primary head → `None`
+            // (mirror of [`Self::primary_external`]).
+            Scene::Container(c) if c.no_primary_head => None,
             Scene::Container(c) => c.children.iter_mut().find_map(Self::primary_external_mut),
             Scene::Scroll(s) => s.content.primary_external_mut(),
             Scene::Box(_)
@@ -2098,6 +2106,18 @@ pub struct ContainerNode {
     /// accessible name is a per-node attribute in WAI-ARIA (1.2 §5.2),
     /// not a layout/transform adjustment.
     pub aria_label: Option<Cow<'static, str>>,
+    /// (R1307 PR-51 §5.45 §2 #7) When `true`, this container has **no
+    /// distinguished primary child**: it is the state-scene root the
+    /// runtime composes for a binding whose interactive surfaces are all
+    /// dynamic extras ([`WidgetCore::primary_surface`](crate::WidgetCore::primary_surface)
+    /// `== None`). [`Scene::primary_external`] returns `None` for such a
+    /// container instead of its first External, so the bare `/external` RPC
+    /// shorthand — which names "the primary" — self-describes the absence
+    /// with a clean `NoExternalAtPath` rather than silently resolving an
+    /// arbitrary extra as if it were the primary. Default `false`: an
+    /// ordinary container is headed by its first External (the substrate's
+    /// "primary is first in declaration order" convention), unchanged.
+    pub no_primary_head: bool,
     /// R682 §5.16 — within-paint-pass memoised structural hash for
     /// the §5.16 paint-fragment cache (axis 4 of the 4-axis
     /// paint-pipeline rewrite series).
@@ -2136,8 +2156,21 @@ impl ContainerNode {
             layout: LayoutStyle::new(),
             tag: None,
             aria_label: None,
+            no_primary_head: false,
             paint_hash: Cell::new(None),
         }
+    }
+
+    /// (R1307 PR-51 §5.45) Mark this container as having **no distinguished
+    /// primary child** — the state-scene root shape the runtime composes for
+    /// a no-primary binding. See [`Self::no_primary_head`]. Builder form; the
+    /// substrate's `compose_root` calls it on the primary-less arm so
+    /// [`Scene::primary_external`] returns `None` and the bare `/external`
+    /// RPC shorthand rejects cleanly instead of resolving an arbitrary extra.
+    #[must_use]
+    pub const fn without_primary_head(mut self) -> Self {
+        self.no_primary_head = true;
+        self
     }
 
     /// Attach a §5.20 intent tag to this node (builder form).
