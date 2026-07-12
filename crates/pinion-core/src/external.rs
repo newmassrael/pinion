@@ -1040,6 +1040,26 @@ macro_rules! query_proxy_external_impl {
 }
 pub use query_proxy_external_impl;
 
+/// The `intervene` error for a path with **no writable slot**: `ReadOnly` when
+/// `schema` declares it (a real field, just not writable), `UnknownPath` when it
+/// does not.
+///
+/// The §2 #7 distinction between "you cannot write this" and "this does not
+/// exist" is worth keeping honest — an agent that gets `UnknownPath` for a field
+/// it can plainly `query` learns something false about the surface. Every
+/// read-only External needs exactly this rule, so it lives here rather than being
+/// re-typed: `QueryOnlyIntrospect` below and `pinion-audio`'s RT External (whose
+/// own copy admitted, in its docstring, to mirroring this one) both route through
+/// it.
+#[must_use]
+pub fn read_only_or_unknown(schema: &IntrospectSchema, path: &str) -> InterveneError {
+    if schema.fields.iter().any(|(name, _)| *name == path) {
+        InterveneError::ReadOnly
+    } else {
+        InterveneError::UnknownPath
+    }
+}
+
 /// Move an inner `External`'s pending §5.20 [`Intent`]s into `sink`.
 ///
 /// For the **wrapper** shape: an External that delegates to an inner one has to
@@ -1200,17 +1220,7 @@ impl<S: QuerySource + core::fmt::Debug + 'static> ExternalIntrospect for QueryOn
     /// `UnknownPath`. The schema is the single source of "which paths
     /// exist", so a slot can never drift between `query` and `intervene`.
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        if self
-            .source
-            .introspect_schema()
-            .fields
-            .iter()
-            .any(|(name, _)| *name == path)
-        {
-            Err(InterveneError::ReadOnly)
-        } else {
-            Err(InterveneError::UnknownPath)
-        }
+        Err(read_only_or_unknown(&self.source.introspect_schema(), path))
     }
 }
 

@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, int_of,
+    read_only_or_unknown,
 };
 use pinion_core::intent::Intent;
 use serde::Serialize;
@@ -142,19 +143,6 @@ impl AudioEngineExternal {
 fn parse_voice_path(path: &str) -> Option<(u64, &str)> {
     let (id_str, field) = path.strip_prefix("voice.")?.split_once('.')?;
     Some((id_str.parse().ok()?, field))
-}
-
-/// The `intervene` error for a path with no writable slot: `ReadOnly` when the
-/// schema declares it (a read-only field), `UnknownPath` when it does not.
-/// Mirrors [`pinion_core::external::QueryOnlyIntrospect`] so a declared metric
-/// is never mislabelled "unknown" — the honest §2 #7 distinction the RPC layer
-/// draws between "cannot write" and "does not exist".
-fn read_only_or_unknown(schema: &IntrospectSchema, path: &str) -> InterveneError {
-    if schema.fields.iter().any(|(name, _)| *name == path) {
-        InterveneError::ReadOnly
-    } else {
-        InterveneError::UnknownPath
-    }
 }
 
 /// The per-voice shape emitted by the `voices` query. `gain`/`pan` are the
