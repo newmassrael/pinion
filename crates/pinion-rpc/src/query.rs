@@ -352,6 +352,67 @@ mod tests {
         );
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // R1303 PR-51 §5.45 §5.7 §2 #2 — no-primary binding over the RPC
+    // wire. `CoreShell` composes a no-primary binding's state scene as
+    // `Container([extra, extra, ...])` with no index-0 primary. The RPC
+    // path layer is V-agnostic (scene-as-data, §2 #7), so it sees an
+    // ordinary container of externals. These pin the two contracts for
+    // that shape: (a) every extra is reachable by its explicit tag — the
+    // stable §2 #2 AI address a no-primary binding relies on; (b) the
+    // bare `/external` shorthand resolves, per `Scene::primary_external`'s
+    // "first in declaration order" convention, to the FIRST extra (not an
+    // error) — documented on `WidgetCore::has_primary_surface` as an
+    // unstable address for a dynamic no-primary binding, so clients
+    // address extras by tag.
+    // ─────────────────────────────────────────────────────────────────
+
+    fn extras_only_wrap() -> Scene {
+        // No primary: `Container([External(pane_a), External(pane_b)])`,
+        // the shape `compose_root(None, [a, b])` produces. Distinct counts
+        // tell the two extras apart.
+        use pinion_core::scene::{ContainerNode, ExternalNode as ExtNode, Rect};
+        let a =
+            Scene::External(ExtNode::new(Box::new(CountedExternal::new(101))).with_tag("pane_a"));
+        let b =
+            Scene::External(ExtNode::new(Box::new(CountedExternal::new(202))).with_tag("pane_b"));
+        let mut c = ContainerNode::new(vec![a, b]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn r1303_no_primary_extras_reachable_by_tag() {
+        // §2 #2 — a no-primary binding's every surface is addressable by
+        // its explicit tag over the wire (the stable AI address), with no
+        // primary present.
+        let scene = extras_only_wrap();
+        assert_eq!(
+            query(&scene, "/pane_a/external/count").unwrap(),
+            IntrospectValue::Int(101),
+        );
+        assert_eq!(
+            query(&scene, "/pane_b/external/count").unwrap(),
+            IntrospectValue::Int(202),
+            "the second extra is reachable by tag with no primary present",
+        );
+    }
+
+    #[test]
+    fn r1303_no_primary_bare_external_resolves_first_extra() {
+        // The bare `/external` shorthand has no primary to name; per the
+        // declaration-order convention it resolves to the FIRST extra
+        // (pane_a, count 101), NOT an error. Documented on
+        // `WidgetCore::has_primary_surface` as unstable for a dynamic
+        // no-primary binding — clients address extras by tag.
+        let scene = extras_only_wrap();
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(101),
+            "bare /external resolves to the first extra in declaration order",
+        );
+    }
+
     #[test]
     fn query_nested_non_external_target_is_no_external_at_path() {
         // Walk lands on a Box (not External) → reject.

@@ -147,6 +147,40 @@ mod tests {
     }
 
     #[test]
+    fn r1303_no_primary_invoke_by_tag_mutates_the_correct_extra() {
+        // R1303 PR-51 §2 #2 — a no-primary binding's state scene is
+        // `Container([extra, extra])`. The audit's concern was that a
+        // MUTATING method (invoke/intervene) on the bare path could
+        // misroute to the wrong (first) extra. The stable contract: invoke
+        // addressed by the extra's explicit tag mutates THAT extra. Here
+        // `increment` on pane_b (start 202) by 5 must return 207, and
+        // pane_a (start 101) must be untouched.
+        use pinion_core::scene::{ContainerNode, ExternalNode as ExtNode};
+        let a =
+            Scene::External(ExtNode::new(Box::new(CountedExternal::new(101))).with_tag("pane_a"));
+        let b =
+            Scene::External(ExtNode::new(Box::new(CountedExternal::new(202))).with_tag("pane_b"));
+        let mut c = ContainerNode::new(vec![a, b]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        let mut scene = Scene::Container(c);
+        let result = invoke(
+            &mut scene,
+            "/pane_b/external/increment",
+            IntrospectValue::Int(5),
+        )
+        .expect("invoke by tag reaches the tagged extra");
+        assert_eq!(result, IntrospectValue::Int(207));
+        // pane_a untouched — the mutation did not leak to the first extra.
+        let a_node = scene
+            .find_external_with_tag("pane_a")
+            .expect("pane_a still present");
+        assert_eq!(
+            a_node.handle.introspect().unwrap().query("count"),
+            Some(IntrospectValue::Int(101)),
+        );
+    }
+
+    #[test]
     fn stub_at_root_reports_introspection_opted_out() {
         let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
         let err = invoke(&mut scene, "/external/anything", IntrospectValue::Null).unwrap_err();
