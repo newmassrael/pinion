@@ -1,0 +1,41 @@
+[package]
+name = "hello-audio-device"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "a real cpal audio callback thread driven concurrently with the JSON-RPC control thread — the wire proof that the shipping device path's lock-free snapshot holds under a live callback, run on a silent snd-dummy card so it makes no sound"
+publish = false
+
+[[bin]]
+name = "hello-audio-device"
+path = "src/main.rs"
+
+[dependencies]
+# Scene primitives + the External / IntrospectValue introspection triad +
+# WidgetCore binding trait.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# WidgetA11y supertrait of WidgetView.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# The GUI AppShell: winit window + Vello + the built-in stdin JSON-RPC reader
+# (reply -> stdout), which is what makes the binding RpcSubprocess-driveable.
+# Same reason as hello-audio-rt: pinion_tui would paint to stdout and corrupt
+# the RPC reply framing.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# `cpal-backend` is the point of this binary: it opens a REAL output device, so
+# a REAL audio callback thread pumps `AudioRenderer::render` while RPC drives
+# the controller. This is the one workspace member that turns the feature on —
+# hence the workspace needs ALSA headers (`libasound2-dev`) on Linux.
+pinion-audio = { path = "../../crates/pinion-audio", version = "0.0.1", features = [
+    "cpal-backend",
+] }
+# The forge codegen emits `::vello::*`-qualified paths, so the include names it.
+vello = { workspace = true }
+
+[build-dependencies]
+# Build-time codegen for the `HelloAudioDeviceRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

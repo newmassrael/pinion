@@ -87,7 +87,7 @@ pub use decode::{DecodeError, decode_compressed};
 #[cfg(feature = "cpal-backend")]
 pub use device::{CpalError, CpalOutput};
 pub use engine::{Admission, AudioEngine, PlayOptions, ResolvedOutput, VoiceId, VoicePolicy};
-pub use external::{AudioControllerExternal, AudioEngineExternal};
+pub use external::{AudioControllerExternal, AudioEngineExternal, RT_EXTERNAL_FIELDS};
 pub use mixer::Voice;
 pub use rt::{AudioCommand, AudioController, AudioRenderer, AudioSnapshot, realtime_channel};
 pub use spatial::{Attenuation, Listener, Spatialization, Vec3, spatialize};

@@ -49,10 +49,17 @@ jobs:
         # cheap (rustfmt needs only the source, no compilation). Mirrors the
         # local .githooks/pre-commit + pre-push `cargo fmt --all --check`.
         run: cargo fmt --all --check
-      - name: System build deps (fontconfig for parley/fontique)
+      - name: System build deps (fontconfig for parley/fontique, ALSA for cpal)
+        # R1310 — libasound2-dev: `examples/hello-audio-device` turns on
+        # `pinion-audio/cpal-backend` (it opens a REAL output device so a real
+        # audio callback thread runs), and cpal links ALSA on Linux. It is the
+        # one workspace member that does, so a `--workspace` build now needs the
+        # ALSA headers. The pinion-audio *crate* keeps the backend optional, so a
+        # checkout that does not build the examples still compiles without them.
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libfontconfig1-dev libxkbcommon-dev
+          sudo apt-get install -y pkg-config libfontconfig1-dev libxkbcommon-dev \
+            libasound2-dev
       - uses: Swatinem/rust-cache@v2
       - name: clippy (-D pedantic via workspace.lints)
         run: cargo clippy --workspace --all-targets --features pinion-runtime/vello
@@ -111,7 +118,30 @@ jobs:
             pkg-config libfontconfig1-dev libxkbcommon-dev \
             libxkbcommon-x11-0 libwayland-dev \
             xvfb mesa-vulkan-drivers vulkan-tools libvulkan1 \
-            ffmpeg x11-utils gcc libxtst-dev libx11-dev python3
+            ffmpeg x11-utils gcc libxtst-dev libx11-dev python3 \
+            libasound2-dev
+      - name: Silent audio card (snd-dummy) for the device-audio demo
+        # R1310 — `hello_audio_device.py` drives a REAL cpal callback thread
+        # concurrently with the RPC control thread. That needs a real output
+        # device, and a runner has none. `snd-dummy` is one: a timer-paced ALSA
+        # card that fires real callbacks on a real clock and discards the samples
+        # — the audio analogue of forcing lavapipe for the GPU, and what lets the
+        # shipping device path be CI-covered instead of local-hardware-gated.
+        #
+        # Fails LOUDLY if the card cannot be loaded. A demo that quietly skipped
+        # itself would rot invisibly ([[ignored-integration-tests-fall-through-ci]]),
+        # and `hello-audio-device` itself aborts rather than falling back to an
+        # audible default, so a missing card can never masquerade as a pass.
+        run: |
+          sudo modprobe snd-dummy \
+            || (sudo apt-get install -y "linux-modules-extra-$(uname -r)" \
+                && sudo modprobe snd-dummy)
+          grep -q Dummy /proc/asound/cards || {
+            echo "::error::snd-dummy loaded no card; the audio device demo cannot run"
+            cat /proc/asound/cards
+            exit 1
+          }
+          cat /proc/asound/cards
       - name: Build workspace (release — sweep runs release binaries)
         run: cargo build --release --workspace
       - name: Run full demo sweep under Xvfb

@@ -405,28 +405,37 @@ impl AudioControllerExternal {
 // RPC-only introspection skeleton (paints nothing; emits §5.20 intents).
 pinion_core::intent_query_external_impl!(AudioControllerExternal);
 
+/// The fields [`AudioControllerExternal`] declares — the RT surface's schema, as
+/// data.
+///
+/// Public so a binding that *wraps* the RT External (a device host adding
+/// `device` / `sample_rate` / `channels`, say) can compose its own schema from
+/// this list instead of hand-copying it, which would be a second source of truth
+/// that silently drifts the moment a field is added here.
+pub const RT_EXTERNAL_FIELDS: &[(&str, &str)] = &[
+    ("voice_count", "int"),
+    ("max_voices", "int"),
+    ("peak", "float"),
+    ("frames_rendered", "int"),
+    ("rejected", "int"),
+    ("stolen", "int"),
+    // Per-voice detail read off the lock-free per-voice slots + the
+    // control-thread label map.
+    ("voices", "json"),
+    // The 3D listener / attenuation, read from the control-thread
+    // mirror. Query-readable but driven via `invoke set_listener` /
+    // `set_attenuation` (the RT surface's read-via-query,
+    // write-via-invoke split), so an `intervene` of them is `ReadOnly`.
+    ("listener", "json"),
+    ("attenuation", "json"),
+    // The full-pool policy, read from the control-thread mirror; driven
+    // via `invoke set_voice_policy`.
+    ("voice_policy", "text"),
+];
+
 impl ExternalIntrospect for AudioControllerExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("voice_count", "int"),
-            ("max_voices", "int"),
-            ("peak", "float"),
-            ("frames_rendered", "int"),
-            ("rejected", "int"),
-            ("stolen", "int"),
-            // Per-voice detail read off the lock-free per-voice slots + the
-            // control-thread label map.
-            ("voices", "json"),
-            // The 3D listener / attenuation, read from the control-thread
-            // mirror. Query-readable but driven via `invoke set_listener` /
-            // `set_attenuation` (the RT surface's read-via-query,
-            // write-via-invoke split), so an `intervene` of them is `ReadOnly`.
-            ("listener", "json"),
-            ("attenuation", "json"),
-            // The full-pool policy, read from the control-thread mirror; driven
-            // via `invoke set_voice_policy`.
-            ("voice_policy", "text"),
-        ])
+        IntrospectSchema::new(RT_EXTERNAL_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

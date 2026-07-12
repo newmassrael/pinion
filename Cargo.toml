@@ -32,6 +32,7 @@ members = [
     "examples/hello-place-map",
     "examples/hello-audio",
     "examples/hello-audio-rt",
+    "examples/hello-audio-device",
     "examples/hello-vn-tide",
     "examples/hello-no-primary",
     "examples/hello-dnd",

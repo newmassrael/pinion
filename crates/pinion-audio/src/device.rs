@@ -39,8 +39,11 @@
 //! the *caller's* policy to apply over the enumerated list, not this seam's.
 //!
 //! Optional and Linux-gated by `libasound2-dev` (see the crate manifest): the
-//! core audio crate builds everywhere; this backend is opt-in so a checkout
-//! without the ALSA headers still compiles.
+//! core audio crate builds everywhere; this backend is opt-in, so depending on
+//! `pinion-audio` without `cpal-backend` needs no ALSA headers. Note the
+//! *workspace* does build it: `examples/hello-audio-device` turns the feature on
+//! (it is the wire proof that a real device callback runs concurrently with RPC),
+//! so `cargo build --workspace` on Linux wants `libasound2-dev` installed.
 
 use std::fmt;
 
