@@ -178,6 +178,26 @@ struct VoiceInfo<'a> {
     effective_pan: f32,
 }
 
+/// The per-voice shape emitted by the real-time `voices` query. Assembled from
+/// the lock-free [`crate::AudioSnapshot`] slots (the numbers) + the
+/// control-thread label map (the `String`). `effective_gain`/`effective_pan`
+/// are the post-spatialisation values the mixer rendered with; only live voices
+/// appear (a finished voice is reaped before the next publish), so there is no
+/// authored gain/pan or `finished` flag — the honest lock-free-slot limits.
+#[derive(Serialize)]
+struct RtVoiceInfo<'a> {
+    id: u64,
+    label: &'a str,
+    effective_gain: f32,
+    effective_pan: f32,
+    position_secs: f32,
+    looping: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position: Option<Vec3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    distance: Option<f32>,
+}
+
 // Paints nothing (the binding's `view` is the paint scene) and emits §5.20
 // intents — the RPC-only read-write introspection skeleton.
 pinion_core::intent_query_external_impl!(AudioEngineExternal);
@@ -315,12 +335,16 @@ impl ExternalIntrospect for AudioEngineExternal {
 /// single-thread [`AudioEngineExternal`]: reads go through `query`, writes
 /// through `invoke`, and `intervene` exposes no writable slots.
 ///
-/// - **query** reads the aggregate the audio thread publishes each render
-///   ([`crate::AudioSnapshot`]): `voice_count` / `peak` / `frames_rendered` /
-///   `rejected`; plus the 3D `listener` / `attenuation` read off the
-///   control-thread mirror (the audio thread cannot be read lock-free, but the
-///   control thread is their sole writer — see [`AudioController::listener`]).
-///   This is the "observe the RT audio without touching its engine" seam.
+/// - **query** reads what the audio thread publishes each render
+///   ([`crate::AudioSnapshot`]): the aggregate `voice_count` / `peak` /
+///   `frames_rendered` / `rejected`, and the per-voice `voices` array (id /
+///   label / effective gain+pan / `position_secs` / loop / resolved 3D per live
+///   voice) read lock-free off the pre-allocated per-voice slots and joined to
+///   the control-thread label map; plus the 3D `listener` / `attenuation` read
+///   off the control-thread mirror (the audio thread cannot be read lock-free,
+///   but the control thread is their sole writer — see
+///   [`AudioController::listener`]). This is the "observe the RT audio without
+///   touching its engine" seam.
 /// - **invoke** drives the audio thread over the command queue: `play` a named
 ///   clip, `stop` a voice id, `stop_all`, `set_master_gain`, `set_voice_gain`,
 ///   and the 3D `set_listener` / `set_attenuation` (each a partial update
@@ -328,14 +352,15 @@ impl ExternalIntrospect for AudioEngineExternal {
 ///   command ring is full (the write did not reach the audio thread) — a full
 ///   ring is surfaced, never silently dropped.
 /// - **intervene** exposes no writable slots: a schema-declared field
-///   (`voice_count` … `listener` / `attenuation`) is a read-only observation,
-///   so an intervene of it is `ReadOnly` (drive via `invoke set_listener` etc.)
-///   and anything else `UnknownPath`.
+///   (`voice_count` … `voices` … `listener` / `attenuation`) is a read-only
+///   observation, so an intervene of it is `ReadOnly` (drive via `invoke
+///   set_listener` etc.) and anything else `UnknownPath`.
 ///
-/// Deliberately **not** yet on this surface (honest scope, not the same surface
-/// as the single-thread engine): the per-voice detail [`AudioEngineExternal`]
-/// can walk (id / label / gain / pan / resolved 3D per voice) needs a richer
-/// lock-free per-voice snapshot the aggregate does not carry — a follow-up.
+/// The per-voice `voices` read differs from the single-thread engine in two
+/// honest ways the lock-free slots impose: it carries the *effective*
+/// (post-spatialisation) gain/pan the mixer rendered with, not the separate
+/// authored values, and it lists only live voices (a finished one is reaped
+/// before the next publish, so there is no `finished` flag to read).
 #[derive(Debug)]
 pub struct AudioControllerExternal {
     controller: AudioController,
@@ -381,6 +406,9 @@ impl ExternalIntrospect for AudioControllerExternal {
             ("peak", "float"),
             ("frames_rendered", "int"),
             ("rejected", "int"),
+            // Per-voice detail read off the lock-free per-voice slots + the
+            // control-thread label map.
+            ("voices", "json"),
             // The 3D listener / attenuation, read from the control-thread
             // mirror. Query-readable but driven via `invoke set_listener` /
             // `set_attenuation` (the RT surface's read-via-query,
@@ -397,6 +425,25 @@ impl ExternalIntrospect for AudioControllerExternal {
             "peak" => Some(IntrospectValue::Float(f64::from(snapshot.peak()))),
             "frames_rendered" => Some(IntrospectValue::Int(int_of_u64(snapshot.frames_rendered()))),
             "rejected" => Some(IntrospectValue::Int(int_of_u64(snapshot.rejected()))),
+            // Join the lock-free per-voice numeric slots with the control-thread
+            // label map (an atomic slot cannot hold the `String` label).
+            "voices" => {
+                let infos: Vec<RtVoiceInfo> = snapshot
+                    .voices()
+                    .iter()
+                    .map(|v| RtVoiceInfo {
+                        id: v.id,
+                        label: self.controller.label_of(v.id).unwrap_or(""),
+                        effective_gain: v.gain,
+                        effective_pan: v.pan,
+                        position_secs: v.position_secs,
+                        looping: v.looping,
+                        position: v.position,
+                        distance: v.distance,
+                    })
+                    .collect();
+                Some(IntrospectValue::json(&infos))
+            }
             // Read the 3D listener / attenuation off the control-thread mirror
             // (the audio thread owns the engine and cannot be read lock-free,
             // but the control thread is their sole writer — see
@@ -1197,6 +1244,79 @@ mod tests {
         assert!(matches!(
             ext.invoke("set_master_gain", IntrospectValue::Float(0.5)),
             Ok(IntrospectValue::Null)
+        ));
+    }
+
+    #[test]
+    fn rt_voices_query_reads_per_voice_detail_with_labels() {
+        let (mut ext, mut renderer) = rt_director(8);
+        ext = ext.with_clip("waves", AudioClip::new(48_000, 1, vec![0.5; 4096]).shared());
+        ext.invoke("play", IntrospectValue::Text("bell".to_string()))
+            .expect("flat play");
+        // A spatial voice 4 units to the right → effective gain 1.0 × 0.25.
+        ext.invoke(
+            "play",
+            IntrospectValue::Json(serde_json::json!({
+                "name": "waves", "position": [4.0, 0.0, 0.0]
+            })),
+        )
+        .expect("spatial play");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+
+        match ext.query("voices") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                assert_eq!(items.len(), 2, "both live voices listed");
+                let bell = items
+                    .iter()
+                    .find(|v| v["label"] == "bell")
+                    .expect("bell labelled from the control-thread map");
+                assert!((bell["effective_gain"].as_f64().unwrap() - 1.0).abs() < 1e-3);
+                assert!(bell.get("position").is_none(), "flat voice omits position");
+                let waves = items
+                    .iter()
+                    .find(|v| v["label"] == "waves")
+                    .expect("waves labelled");
+                assert_eq!(waves["position"], serde_json::json!([4.0, 0.0, 0.0]));
+                assert!((waves["distance"].as_f64().unwrap() - 4.0).abs() < 1e-3);
+                assert!(
+                    (waves["effective_gain"].as_f64().unwrap() - 0.25).abs() < 1e-3,
+                    "effective gain = 1.0 voice gain x 0.25 distance atten"
+                );
+                assert!((waves["effective_pan"].as_f64().unwrap() - 1.0).abs() < 1e-3);
+            }
+            other => panic!("expected voices array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rt_voices_empties_and_label_prunes_after_a_one_shot_finishes() {
+        let (mut ext, mut renderer) = rt_director(8);
+        ext = ext.with_clip("blip", AudioClip::new(48_000, 1, vec![1.0; 2]).shared());
+        ext.invoke("play", IntrospectValue::Text("blip".to_string()))
+            .expect("play");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out); // the 2-frame one-shot finishes this block
+        // The finished voice is gone from the per-voice read (reaped before the
+        // publish).
+        match ext.query("voices") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                assert!(items.is_empty(), "finished voice not listed");
+            }
+            other => panic!("expected empty voices array, got {other:?}"),
+        }
+        // Reclaim frees the returned voice and prunes its label on the control
+        // thread.
+        assert_eq!(ext.reclaim(), 1, "the retired voice is reclaimed");
+    }
+
+    #[test]
+    fn rt_voices_is_read_only_via_intervene() {
+        let (mut ext, _renderer) = rt_director(8);
+        // Declared (query-readable) but not an intervene slot.
+        assert!(matches!(
+            ext.intervene("voices", IntrospectValue::Json(serde_json::json!([]))),
+            Err(InterveneError::ReadOnly)
         ));
     }
 }

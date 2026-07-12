@@ -50,6 +50,7 @@
 //!   absorb a full render's retirements so a drained control thread never
 //!   forces that.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -58,7 +59,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use crate::clip::AudioClip;
 use crate::engine::{AudioEngine, PlayOptions, VoiceId};
 use crate::mixer::Voice;
-use crate::spatial::{Attenuation, Listener};
+use crate::spatial::{Attenuation, Listener, Vec3};
 
 /// A mutation of the engine, sent from the control thread to the audio thread.
 /// Every variant maps to an existing [`AudioEngine`] method — the queue is a
@@ -129,15 +130,61 @@ impl AudioEngine {
     }
 }
 
+/// One voice as read back off the lock-free [`AudioSnapshot`] — the real-time
+/// peer of the single-thread `voices` introspection, minus the `String` label
+/// (which cannot live in an atomic slot; the [`AudioController`] carries it and
+/// [`crate::AudioControllerExternal`] joins it back in). `gain`/`pan` are the
+/// *effective* (post-spatialisation) values the mixer rendered with;
+/// `position`/`distance` are present only for a 3D voice.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RtVoice {
+    /// The control-thread-minted voice id (the join key for its label).
+    pub id: VoiceId,
+    /// Effective linear gain the mixer used this block (post-attenuation).
+    pub gain: f32,
+    /// Effective stereo pan the mixer used this block.
+    pub pan: f32,
+    /// Playback position in seconds.
+    pub position_secs: f32,
+    /// Whether the voice loops at the clip end.
+    pub looping: bool,
+    /// World position of a 3D voice, or `None` for a flat one.
+    pub position: Option<Vec3>,
+    /// Distance from the listener, `Some` only for a 3D voice.
+    pub distance: Option<f32>,
+}
+
+/// One pre-allocated per-voice slot the audio thread publishes into each render.
+/// `id == 0` marks an empty slot. The id carries a `Release`/`Acquire` fence:
+/// the writer stores the numeric fields (relaxed) and then the id (release), so
+/// a reader that `Acquire`-loads a non-zero id sees that render's fields for it.
+#[derive(Debug, Default)]
+struct VoiceSlot {
+    id: AtomicU64,
+    gain_bits: AtomicU32,
+    pan_bits: AtomicU32,
+    secs_bits: AtomicU32,
+    /// bit 0 = looping, bit 1 = has a 3D position.
+    flags: AtomicU32,
+    pos_x_bits: AtomicU32,
+    pos_y_bits: AtomicU32,
+    pos_z_bits: AtomicU32,
+    dist_bits: AtomicU32,
+}
+
+const FLAG_LOOPING: u32 = 0b01;
+const FLAG_POSITIONED: u32 = 0b10;
+
 /// A lock-free snapshot the audio thread publishes each render and the control
 /// thread polls — the "read what is playing without touching the audio
-/// thread's engine" seam. Lightweight (counts + peak) by design: the rich
-/// per-voice introspection stays on the single-thread [`crate::AudioEngineExternal`]
-/// path; a full lock-free voice list is a later refinement. The fields are
-/// published independently (each its own relaxed atomic), so this is a live
+/// thread's engine" seam. It carries the aggregate (counts + peak) **and** a
+/// pre-allocated per-voice slot array ([`AudioSnapshot::voices`]) sized to the
+/// voice pool, so a full per-voice read needs no audio-thread allocation. The
+/// fields are published independently (each its own atomic), so this is a live
 /// monitor, not a transactionally-consistent view — a concurrent poll may pair
-/// a fresh `voice_count` with a one-render-old `peak`, which is fine for a
-/// meter and never used for correctness.
+/// a fresh `voice_count` with a one-render-old `peak`, or read a voice's fields
+/// one render newer than the id it was matched on under heavy churn. That is a
+/// bounded meter imprecision, never used for correctness.
 #[derive(Debug, Default)]
 pub struct AudioSnapshot {
     voice_count: AtomicU32,
@@ -149,15 +196,77 @@ pub struct AudioSnapshot {
     /// Total plays refused at the voice-pool bound since the channel was
     /// created — the control thread's view of voice-budget starvation.
     rejected: AtomicU64,
+    /// Pre-allocated per-voice slots, one per pool voice. Allocated once at
+    /// channel creation (control thread); the audio thread only writes into
+    /// them, never grows them.
+    voices: Box<[VoiceSlot]>,
 }
 
 impl AudioSnapshot {
+    /// A snapshot with `max_voices` pre-allocated per-voice slots — the audio
+    /// thread never allocates, it only writes into these.
+    fn with_capacity(max_voices: usize) -> Self {
+        let voices = (0..max_voices).map(|_| VoiceSlot::default()).collect();
+        Self {
+            voices,
+            ..Self::default()
+        }
+    }
+
     fn publish(&self, voice_count: u32, peak: f32, frames: u64, rejected: u64) {
         self.voice_count.store(voice_count, Ordering::Relaxed);
         self.peak_bits.store(peak.to_bits(), Ordering::Relaxed);
         self.frames_rendered.fetch_add(frames, Ordering::Relaxed);
         if rejected > 0 {
             self.rejected.fetch_add(rejected, Ordering::Relaxed);
+        }
+    }
+
+    /// Publish the live voices into the per-voice slots — the audio thread's
+    /// per-render per-voice write. Bounded by the pool size, allocation-free,
+    /// lock-free: it re-resolves each live voice's effective gain/pan/distance
+    /// against the current listener (the same values the mix used) and stores
+    /// them, then clears any slot the shrinking voice set left behind. The
+    /// numeric fields are stored before the id (with a `Release` on the id) so a
+    /// reader sees a consistent slot for any non-zero id it observes.
+    fn publish_voices(&self, engine: &AudioEngine) {
+        let mut next = 0;
+        for (id, voice) in engine.voices() {
+            let Some(slot) = self.voices.get(next) else {
+                // The live set never exceeds the pool the slots were sized to,
+                // but guard rather than panic on the audio thread.
+                break;
+            };
+            let resolved = engine.resolve_voice(voice);
+            slot.gain_bits
+                .store(resolved.gain.to_bits(), Ordering::Relaxed);
+            slot.pan_bits
+                .store(resolved.pan.to_bits(), Ordering::Relaxed);
+            slot.secs_bits
+                .store(voice.position_secs().to_bits(), Ordering::Relaxed);
+            let mut flags = 0;
+            if voice.looping() {
+                flags |= FLAG_LOOPING;
+            }
+            if let Some(pos) = voice.position() {
+                flags |= FLAG_POSITIONED;
+                slot.pos_x_bits.store(pos[0].to_bits(), Ordering::Relaxed);
+                slot.pos_y_bits.store(pos[1].to_bits(), Ordering::Relaxed);
+                slot.pos_z_bits.store(pos[2].to_bits(), Ordering::Relaxed);
+                slot.dist_bits.store(
+                    resolved.distance.unwrap_or(0.0).to_bits(),
+                    Ordering::Relaxed,
+                );
+            }
+            slot.flags.store(flags, Ordering::Relaxed);
+            // Release-publish the id last: any reader that Acquire-sees this id
+            // sees the field stores above.
+            slot.id.store(id, Ordering::Release);
+            next += 1;
+        }
+        // Clear the slots the (possibly shrunk) live set no longer fills.
+        for slot in &self.voices[next..] {
+            slot.id.store(0, Ordering::Release);
         }
     }
 
@@ -185,6 +294,43 @@ impl AudioSnapshot {
     pub fn rejected(&self) -> u64 {
         self.rejected.load(Ordering::Relaxed)
     }
+
+    /// The live voices as of the last published render, read lock-free off the
+    /// per-voice slots. Each slot's numeric fields are matched to the id via an
+    /// `Acquire` load (see [`AudioSnapshot`] for the bounded live-monitor
+    /// semantics). The `String` label is not here — it is control-thread state
+    /// [`crate::AudioControllerExternal`] joins back in by id.
+    #[must_use]
+    pub fn voices(&self) -> Vec<RtVoice> {
+        let mut out = Vec::new();
+        for slot in &self.voices {
+            let id = slot.id.load(Ordering::Acquire);
+            if id == 0 {
+                continue;
+            }
+            let flags = slot.flags.load(Ordering::Relaxed);
+            let positioned = flags & FLAG_POSITIONED != 0;
+            let position = positioned.then(|| {
+                [
+                    f32::from_bits(slot.pos_x_bits.load(Ordering::Relaxed)),
+                    f32::from_bits(slot.pos_y_bits.load(Ordering::Relaxed)),
+                    f32::from_bits(slot.pos_z_bits.load(Ordering::Relaxed)),
+                ]
+            });
+            let distance =
+                positioned.then(|| f32::from_bits(slot.dist_bits.load(Ordering::Relaxed)));
+            out.push(RtVoice {
+                id,
+                gain: f32::from_bits(slot.gain_bits.load(Ordering::Relaxed)),
+                pan: f32::from_bits(slot.pan_bits.load(Ordering::Relaxed)),
+                position_secs: f32::from_bits(slot.secs_bits.load(Ordering::Relaxed)),
+                looping: flags & FLAG_LOOPING != 0,
+                position,
+                distance,
+            });
+        }
+        out
+    }
 }
 
 /// The control-thread handle: sends commands, polls the snapshot, and reclaims
@@ -193,13 +339,20 @@ impl AudioSnapshot {
 #[derive(Debug)]
 pub struct AudioController {
     producer: Producer<AudioCommand>,
-    /// Retired voices the audio thread shipped back for disposal here — the
-    /// receiving end of the resource-return queue. Draining it is where a
-    /// finished (or pool-refused) voice's clip is actually freed, on the
-    /// control thread.
-    retired: Consumer<Voice>,
+    /// Retired voices — each with its id — the audio thread shipped back for
+    /// disposal here, the receiving end of the resource-return queue. Draining
+    /// it is where a finished (or pool-refused) voice's clip is actually freed,
+    /// on the control thread; the id lets [`AudioController::reclaim`] prune the
+    /// voice's label at the same time.
+    retired: Consumer<(VoiceId, Voice)>,
     next_id: u64,
     snapshot: Arc<AudioSnapshot>,
+    /// The label each live voice was played under, keyed by id. Inserted when a
+    /// play is queued and removed when the voice is reclaimed, so it mirrors the
+    /// set of ids the audio thread can still be rendering — the control-thread
+    /// half of the per-voice read (the lock-free [`AudioSnapshot`] carries the
+    /// numbers, this carries the `String` an atomic slot cannot).
+    labels: BTreeMap<VoiceId, String>,
     /// The control thread's mirror of the 3D listener / attenuation it last
     /// successfully queued. The audio thread owns the engine and cannot be read
     /// lock-free, but the control thread is the *sole writer* of these two, so
@@ -222,16 +375,25 @@ impl AudioController {
         opts: PlayOptions,
     ) -> Option<VoiceId> {
         let id = self.next_id;
+        let label = label.into();
         self.send(AudioCommand::Play {
             id,
             clip,
-            label: label.into(),
+            label: label.clone(),
             opts,
         })?;
-        // Only advance once the command is safely queued, so a full ring does
-        // not burn ids.
+        // Only advance / record once the command is safely queued, so a full
+        // ring neither burns an id nor leaks a never-played label.
+        self.labels.insert(id, label);
         self.next_id += 1;
         Some(id)
+    }
+
+    /// The label the live voice with `id` was played under, or `None` if there
+    /// is no such live voice — the control-thread half of the per-voice read.
+    #[must_use]
+    pub fn label_of(&self, id: VoiceId) -> Option<&str> {
+        self.labels.get(&id).map(String::as_str)
     }
 
     /// Stop one voice. Returns whether the command was queued.
@@ -316,9 +478,12 @@ impl AudioController {
     /// commands are flowing.
     pub fn reclaim(&mut self) -> usize {
         let mut n = 0;
-        while self.retired.pop().is_ok() {
+        while let Ok((id, _voice)) = self.retired.pop() {
             // The popped `Voice` drops here, freeing its `Arc<AudioClip>` /
-            // `String` on the control thread — the whole point of the queue.
+            // `String` on the control thread — the whole point of the queue —
+            // and its id is pruned from the label map, since that voice can no
+            // longer be rendering.
+            self.labels.remove(&id);
             n += 1;
         }
         n
@@ -338,10 +503,10 @@ impl AudioController {
 pub struct AudioRenderer {
     engine: AudioEngine,
     consumer: Consumer<AudioCommand>,
-    /// Retired voices shipped back to the control thread for disposal — the
-    /// sending end of the resource-return queue, so the audio thread frees
-    /// nothing.
-    retired: Producer<Voice>,
+    /// Retired voices — each with its id — shipped back to the control thread
+    /// for disposal, the sending end of the resource-return queue, so the audio
+    /// thread frees nothing.
+    retired: Producer<(VoiceId, Voice)>,
     snapshot: Arc<AudioSnapshot>,
 }
 
@@ -369,22 +534,38 @@ impl AudioRenderer {
         let mut rejected = 0u64;
         while let Ok(command) = consumer.pop() {
             let frees_a_slot = matches!(command, AudioCommand::Stop(_) | AudioCommand::StopAll);
+            // The id to pair a refused voice with (only a `Play` can be refused).
+            let play_id = if let AudioCommand::Play { id, .. } = &command {
+                Some(*id)
+            } else {
+                None
+            };
             if let Some(refused) = engine.apply(command) {
-                // A play refused at the voice-pool bound: return it for
-                // off-thread disposal rather than freeing its clip here.
+                // A play refused at the voice-pool bound: return it (with its id)
+                // for off-thread disposal rather than freeing its clip here. Only
+                // a `Play` is ever refused, so `play_id` is always `Some`; the
+                // `if let` keeps the audio callback panic-free (an impossible
+                // `None` would drop the voice here — the same audio-thread free
+                // as the ring-full fallback — never a panic).
                 rejected += 1;
-                return_voice(retired, refused);
+                debug_assert!(play_id.is_some(), "only a Play command is ever refused");
+                if let Some(id) = play_id {
+                    return_voice(retired, id, refused);
+                }
             }
             if frees_a_slot {
                 // Reap the just-stopped voice(s) now, so a play later in this
                 // same command batch can reuse the freed slot instead of being
                 // rejected at the still-full bound.
-                engine.reap_finished(|voice| return_voice(retired, voice));
+                engine.reap_finished(|id, voice| return_voice(retired, id, voice));
             }
         }
-        // A finished voice: return it, do not free it on the audio thread.
-        engine.render_reaping(out, |voice| return_voice(retired, voice));
+        // A finished voice: return it (with its id), do not free it here.
+        engine.render_reaping(out, |id, voice| return_voice(retired, id, voice));
 
+        // Publish the per-voice slots from the post-reap live set, then the
+        // aggregate.
+        snapshot.publish_voices(engine);
         let block_peak = crate::backend::peak(out);
         let frames = (out.len() / 2) as u64;
         let voice_count = u32::try_from(engine.voice_count()).unwrap_or(u32::MAX);
@@ -399,12 +580,13 @@ impl AudioRenderer {
     }
 }
 
-/// Ship one retired voice back to the control thread for disposal. The return
-/// ring is sized so this always succeeds under the reclaim-in-send contract; a
-/// debug build asserts that, and a release build falls back to dropping the
-/// voice here — a free on the audio thread — rather than blocking the callback.
-fn return_voice(retired: &mut Producer<Voice>, voice: Voice) {
-    if retired.push(voice).is_err() {
+/// Ship one retired voice (with its id) back to the control thread for
+/// disposal. The return ring is sized so this always succeeds under the
+/// reclaim-in-send contract; a debug build asserts that, and a release build
+/// falls back to dropping the voice here — a free on the audio thread — rather
+/// than blocking the callback.
+fn return_voice(retired: &mut Producer<(VoiceId, Voice)>, id: VoiceId, voice: Voice) {
+    if retired.push((id, voice)).is_err() {
         // Sized (in `realtime_channel`) to hold one render's worth of
         // retirements, so under the reclaim-in-send contract this is
         // unreachable. The failed push already dropped the voice here — a free
@@ -446,7 +628,9 @@ pub fn realtime_channel(
     // the caller pre-set them).
     let listener = engine.listener();
     let attenuation = engine.attenuation();
-    let snapshot = Arc::new(AudioSnapshot::default());
+    // Pre-allocate the per-voice snapshot slots to the pool size, so the audio
+    // thread only ever writes into them.
+    let snapshot = Arc::new(AudioSnapshot::with_capacity(voice_capacity));
     (
         AudioController {
             producer,
@@ -455,6 +639,7 @@ pub fn realtime_channel(
             snapshot: Arc::clone(&snapshot),
             listener,
             attenuation,
+            labels: BTreeMap::new(),
         },
         AudioRenderer {
             engine,
@@ -770,5 +955,103 @@ mod tests {
             [0.0, 1.0, 0.0],
         )));
         assert!(approx3(ctl.listener().position, [9.0, 9.0, 9.0]));
+    }
+
+    #[test]
+    fn per_voice_snapshot_publishes_effective_state() {
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 8);
+        let flat = ctl
+            .play(tone(4096), "flat", PlayOptions::one_shot())
+            .expect("queued");
+        // A voice 4 units to the world-right: distance 4 → effective gain 0.25
+        // (inverse-distance), hard-right pan.
+        let spatial = ctl
+            .play(
+                tone(4096),
+                "spatial",
+                PlayOptions {
+                    position: Some([4.0, 0.0, 0.0]),
+                    ..PlayOptions::one_shot()
+                },
+            )
+            .expect("queued");
+
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+
+        let voices = ctl.snapshot().voices();
+        assert_eq!(voices.len(), 2, "both voices published to the slots");
+        let f = voices.iter().find(|v| v.id == flat).expect("flat present");
+        assert!((f.gain - 1.0).abs() < 1e-4, "flat effective gain 1.0");
+        assert!(
+            f.position.is_none() && f.distance.is_none(),
+            "flat is not 3D"
+        );
+        let s = voices
+            .iter()
+            .find(|v| v.id == spatial)
+            .expect("spatial present");
+        assert!(approx3(
+            s.position.expect("spatial carries position"),
+            [4.0, 0.0, 0.0]
+        ));
+        assert!((s.distance.expect("3D distance") - 4.0).abs() < 1e-3);
+        assert!((s.gain - 0.25).abs() < 1e-3, "effective gain at distance 4");
+        assert!((s.pan - 1.0).abs() < 1e-3, "hard right");
+    }
+
+    #[test]
+    fn per_voice_slots_clear_when_the_voice_set_shrinks() {
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 8);
+        let a = ctl
+            .play(tone(4096), "a", PlayOptions::one_shot())
+            .expect("queued");
+        ctl.play(tone(4096), "b", PlayOptions::one_shot())
+            .expect("queued");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out);
+        assert_eq!(ctl.snapshot().voices().len(), 2);
+
+        // Stop one; the next render leaves a single live voice and the freed
+        // slot reads empty (not a stale ghost of the stopped voice).
+        ctl.stop(a);
+        renderer.render(&mut out);
+        let voices = ctl.snapshot().voices();
+        assert_eq!(voices.len(), 1, "stopped voice cleared from the slots");
+        assert!(
+            voices.iter().all(|v| v.id != a),
+            "no ghost of the stopped voice"
+        );
+    }
+
+    #[test]
+    fn controller_labels_track_live_voices_and_prune_on_reclaim() {
+        let (mut ctl, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 8);
+        // A 2-frame one-shot finishes within one render.
+        let id = ctl
+            .play(tone(2), "blip", PlayOptions::one_shot())
+            .expect("queued");
+        assert_eq!(ctl.label_of(id), Some("blip"), "label recorded on play");
+        let mut out = [0.0f32; 256];
+        renderer.render(&mut out); // one-shot finishes, returned over the queue
+        // The label survives until the voice is reclaimed.
+        assert_eq!(ctl.label_of(id), Some("blip"), "label lives until reclaim");
+        assert_eq!(ctl.reclaim(), 1);
+        assert_eq!(ctl.label_of(id), None, "label pruned on reclaim");
+    }
+
+    #[test]
+    fn full_ring_play_records_no_label() {
+        // Command ring capacity 1: fill it, then a refused play must not leak a
+        // never-played label (it burned no id either).
+        let (mut ctl, _renderer) = realtime_channel(AudioEngine::new(48_000), 1, 8);
+        assert!(ctl.stop_all(), "fills the 1-deep ring");
+        assert!(
+            ctl.play(tone(4), "ghost", PlayOptions::one_shot())
+                .is_none()
+        );
+        // next_id was never advanced, so the id a later play would get has no
+        // stale label.
+        assert_eq!(ctl.label_of(1), None, "refused play recorded no label");
     }
 }

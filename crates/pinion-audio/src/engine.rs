@@ -365,23 +365,25 @@ impl AudioEngine {
     /// voices that finished (freeing them here). This is
     /// [`AudioEngine::render_reaping`] with `retire = drop`.
     pub fn render(&mut self, out: &mut [f32]) {
-        self.render_reaping(out, drop);
+        self.render_reaping(out, |_id, voice| drop(voice));
     }
 
-    /// Render one block and hand each finished voice to `retire` instead of
-    /// dropping it here — the real-time seam. [`AudioEngine::render`] passes
-    /// `drop`; [`crate::AudioRenderer`] passes a closure that ships each
-    /// retired voice to the control thread's resource-return queue, so the
-    /// audio thread never frees a clip. The headless `render` and the
-    /// real-time path reap through this one method, so a given engine +
-    /// command sequence renders identically on both; the reap is
-    /// order-preserving so a captured golden buffer stays byte-reproducible
-    /// across refactors (float-sum order is stable). Note this is not a §2 #3
-    /// `dry_run` claim about the *device* path — voice *admission* at the pool
-    /// bound is timing-dependent (which plays win the budget depends on how
-    /// commands batch into callbacks); §2 #3 determinism is a property of the
-    /// single-thread engine, which the real-time device path is not.
-    pub fn render_reaping(&mut self, out: &mut [f32], retire: impl FnMut(Voice)) {
+    /// Render one block and hand each finished voice — with its [`VoiceId`] — to
+    /// `retire` instead of dropping it here, the real-time seam.
+    /// [`AudioEngine::render`] passes a drop; [`crate::AudioRenderer`] passes a
+    /// closure that ships each retired `(id, voice)` to the control thread's
+    /// resource-return queue, so the audio thread never frees a clip and the
+    /// control thread can prune the retired id from its per-voice bookkeeping.
+    /// The headless `render` and the real-time path reap through this one
+    /// method, so a given engine + command sequence renders identically on both;
+    /// the reap is order-preserving so a captured golden buffer stays
+    /// byte-reproducible across refactors (float-sum order is stable). Note this
+    /// is not a §2 #3 `dry_run` claim about the *device* path — voice
+    /// *admission* at the pool bound is timing-dependent (which plays win the
+    /// budget depends on how commands batch into callbacks); §2 #3 determinism
+    /// is a property of the single-thread engine, which the real-time device
+    /// path is not.
+    pub fn render_reaping(&mut self, out: &mut [f32], retire: impl FnMut(VoiceId, Voice)) {
         out.fill(0.0);
         // Copied out so the voices can be borrowed mutably in the loop while
         // the listener / attenuation are read (they are small and `Copy`).
@@ -398,18 +400,19 @@ impl AudioEngine {
         self.reap_finished(retire);
     }
 
-    /// Remove finished voices, moving each retired [`Voice`] out to `retire`
-    /// rather than dropping it here. Order-preserving, O(n), non-allocating,
-    /// and safe — `Vec::extract_if` yields each removed element by value in
-    /// place, keeping the buffer's reserved capacity, so it neither reallocates
-    /// nor frees the buffer. The work is bounded by the live voice count, so it
-    /// is real-time-safe (bounded, lock-free, alloc-free). `render` passes
-    /// `drop`; the real-time [`crate::AudioRenderer`] passes the
-    /// resource-return-queue push, and also calls this right after a stop so a
-    /// freed pool slot is reusable by a play later in the same command batch.
-    pub(crate) fn reap_finished(&mut self, mut retire: impl FnMut(Voice)) {
-        for (_, voice) in self.voices.extract_if(.., |(_, voice)| voice.is_finished()) {
-            retire(voice);
+    /// Remove finished voices, moving each retired `(VoiceId, Voice)` out to
+    /// `retire` rather than dropping it here. Order-preserving, O(n),
+    /// non-allocating, and safe — `Vec::extract_if` yields each removed element
+    /// by value in place, keeping the buffer's reserved capacity, so it neither
+    /// reallocates nor frees the buffer. The work is bounded by the live voice
+    /// count, so it is real-time-safe (bounded, lock-free, alloc-free). `render`
+    /// drops each; the real-time [`crate::AudioRenderer`] passes the
+    /// resource-return-queue push (keyed by id), and also calls this right after
+    /// a stop so a freed pool slot is reusable by a play later in the same
+    /// command batch.
+    pub(crate) fn reap_finished(&mut self, mut retire: impl FnMut(VoiceId, Voice)) {
+        for (id, voice) in self.voices.extract_if(.., |(_, voice)| voice.is_finished()) {
+            retire(id, voice);
         }
     }
 }

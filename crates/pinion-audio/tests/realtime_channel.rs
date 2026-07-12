@@ -132,6 +132,41 @@ fn control_thread_drives_the_listener_across_the_boundary() {
 }
 
 #[test]
+fn per_voice_snapshot_crosses_the_thread_boundary() {
+    // The audio thread publishes the per-voice slots; the control thread reads
+    // them back and joins the label — all across the real thread boundary.
+    // Deterministic: the play is queued before spawn (spawn's happens-before),
+    // and the join establishes the happens-before for reading the published
+    // slots (ZERO-FLAKE, no sleeps).
+    let (mut controller, mut renderer) = realtime_channel(AudioEngine::new(48_000), 16, 8);
+    let opts = PlayOptions {
+        position: Some([4.0, 0.0, 0.0]),
+        ..PlayOptions::one_shot()
+    };
+    controller.play(tone(512), "src", opts).expect("queued");
+
+    let renderer = thread::spawn(move || {
+        let mut out = vec![0.0f32; 256];
+        renderer.render(&mut out);
+        renderer // moved back so the engine + slots stay alive
+    })
+    .join()
+    .expect("audio thread ok");
+    assert_eq!(renderer.engine().voice_count(), 1);
+
+    // The slots the audio thread published are visible here; the label joins
+    // from the control-thread map.
+    let voices = controller.snapshot().voices();
+    assert_eq!(voices.len(), 1);
+    assert_eq!(controller.label_of(voices[0].id), Some("src"));
+    assert!((voices[0].distance.expect("3D voice") - 4.0).abs() < 1e-3);
+    assert!(
+        (voices[0].gain - 0.25).abs() < 1e-3,
+        "effective gain at distance 4"
+    );
+}
+
+#[test]
 fn retired_voices_cross_the_return_queue_and_are_freed_on_the_control_thread() {
     // The audio thread must never free a clip. A one-shot that finishes on the
     // spawned "audio thread" is shipped back over the resource-return queue;
