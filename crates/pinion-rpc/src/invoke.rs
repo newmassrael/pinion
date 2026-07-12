@@ -181,6 +181,28 @@ mod tests {
     }
 
     #[test]
+    fn r1303_no_primary_bare_invoke_hits_first_extra() {
+        // Pin the documented bare-`/external` convention on the MUTATING
+        // side (the M1 concern): with no primary, a bare `/external`
+        // invoke resolves, per declaration order, to the FIRST extra
+        // (pane_a, start 101) — `increment` by 6 returns 107. This is the
+        // unstable shorthand `WidgetCore::has_primary_surface` documents;
+        // clients address extras by tag (proven stable in
+        // `r1303_no_primary_invoke_by_tag_mutates_the_correct_extra`).
+        use pinion_core::scene::{ContainerNode, ExternalNode as ExtNode};
+        let a =
+            Scene::External(ExtNode::new(Box::new(CountedExternal::new(101))).with_tag("pane_a"));
+        let b =
+            Scene::External(ExtNode::new(Box::new(CountedExternal::new(202))).with_tag("pane_b"));
+        let mut c = ContainerNode::new(vec![a, b]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        let mut scene = Scene::Container(c);
+        let result = invoke(&mut scene, "/external/increment", IntrospectValue::Int(6))
+            .expect("bare invoke resolves to the first extra");
+        assert_eq!(result, IntrospectValue::Int(107));
+    }
+
+    #[test]
     fn stub_at_root_reports_introspection_opted_out() {
         let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
         let err = invoke(&mut scene, "/external/anything", IntrospectValue::Null).unwrap_err();
