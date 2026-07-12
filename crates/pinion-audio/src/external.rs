@@ -180,14 +180,17 @@ struct VoiceInfo<'a> {
 
 /// The per-voice shape emitted by the real-time `voices` query. Assembled from
 /// the lock-free [`crate::AudioSnapshot`] slots (the numbers) + the
-/// control-thread label map (the `String`). `effective_gain`/`effective_pan`
-/// are the post-spatialisation values the mixer rendered with; only live voices
-/// appear (a finished voice is reaped before the next publish), so there is no
-/// authored gain/pan or `finished` flag — the honest lock-free-slot limits.
+/// control-thread label map (the `String`). Carries authored `gain`/`pan` and
+/// `effective_gain`/`effective_pan`, matching the single-thread [`VoiceInfo`]
+/// shape. The only honest difference: no `finished` flag — a finished voice is
+/// reaped before the next publish, so only live voices appear (the RT model has
+/// no "finished-but-listed" transient).
 #[derive(Serialize)]
 struct RtVoiceInfo<'a> {
     id: u64,
     label: &'a str,
+    gain: f32,
+    pan: f32,
     effective_gain: f32,
     effective_pan: f32,
     position_secs: f32,
@@ -337,10 +340,11 @@ impl ExternalIntrospect for AudioEngineExternal {
 ///
 /// - **query** reads what the audio thread publishes each render
 ///   ([`crate::AudioSnapshot`]): the aggregate `voice_count` / `peak` /
-///   `frames_rendered` / `rejected`, and the per-voice `voices` array (id /
-///   label / effective gain+pan / `position_secs` / loop / resolved 3D per live
-///   voice) read lock-free off the pre-allocated per-voice slots and joined to
-///   the control-thread label map; plus the 3D `listener` / `attenuation` read
+///   `frames_rendered` / `rejected` / `stolen`, and the per-voice `voices` array
+///   (id / label / authored + effective gain+pan / `position_secs` / loop /
+///   resolved 3D per live voice) read lock-free off the pre-allocated per-voice
+///   slots and joined to the control-thread label map; plus the 3D `listener` /
+///   `attenuation` and `voice_policy` read
 ///   off the control-thread mirror (the audio thread cannot be read lock-free,
 ///   but the control thread is their sole writer — see
 ///   [`AudioController::listener`]). This is the "observe the RT audio without
@@ -358,11 +362,11 @@ impl ExternalIntrospect for AudioEngineExternal {
 ///   is a read-only observation, so an intervene of it is `ReadOnly` (drive via
 ///   `invoke set_listener` etc.) and anything else `UnknownPath`.
 ///
-/// The per-voice `voices` read differs from the single-thread engine in two
-/// honest ways the lock-free slots impose: it carries the *effective*
-/// (post-spatialisation) gain/pan the mixer rendered with, not the separate
-/// authored values, and it lists only live voices (a finished one is reaped
-/// before the next publish, so there is no `finished` flag to read).
+/// The per-voice `voices` read matches the single-thread engine's shape
+/// (authored + effective gain/pan, position/distance) with one honest
+/// difference: it lists only *live* voices — a finished one is reaped before the
+/// next publish, so there is no `finished` flag (the RT model has no
+/// "finished-but-listed" transient the retained single-thread engine keeps).
 #[derive(Debug)]
 pub struct AudioControllerExternal {
     controller: AudioController,
@@ -441,8 +445,10 @@ impl ExternalIntrospect for AudioControllerExternal {
                     .map(|v| RtVoiceInfo {
                         id: v.id,
                         label: self.controller.label_of(v.id).unwrap_or(""),
-                        effective_gain: v.gain,
-                        effective_pan: v.pan,
+                        gain: v.authored_gain,
+                        pan: v.authored_pan,
+                        effective_gain: v.effective_gain,
+                        effective_pan: v.effective_pan,
                         position_secs: v.position_secs,
                         looping: v.looping,
                         position: v.position,
@@ -1332,6 +1338,12 @@ mod tests {
                     .expect("waves labelled");
                 assert_eq!(waves["position"], serde_json::json!([4.0, 0.0, 0.0]));
                 assert!((waves["distance"].as_f64().unwrap() - 4.0).abs() < 1e-3);
+                // Authored gain stays 1.0; effective = 1.0 x 0.25 distance atten
+                // — both readable, so a debugger can tell "low gain" from "far".
+                assert!(
+                    (waves["gain"].as_f64().unwrap() - 1.0).abs() < 1e-3,
+                    "authored gain published"
+                );
                 assert!(
                     (waves["effective_gain"].as_f64().unwrap() - 0.25).abs() < 1e-3,
                     "effective gain = 1.0 voice gain x 0.25 distance atten"

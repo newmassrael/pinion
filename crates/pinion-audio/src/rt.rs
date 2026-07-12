@@ -157,19 +157,24 @@ impl AudioEngine {
 }
 
 /// One voice as read back off the lock-free [`AudioSnapshot`] — the real-time
-/// peer of the single-thread `voices` introspection, minus the `String` label
-/// (which cannot live in an atomic slot; the [`AudioController`] carries it and
-/// [`crate::AudioControllerExternal`] joins it back in). `gain`/`pan` are the
-/// *effective* (post-spatialisation) values the mixer rendered with;
-/// `position`/`distance` are present only for a 3D voice.
+/// peer of the single-thread `voices` introspection. It carries both the
+/// *authored* gain/pan and the *effective* (post-spatialisation) gain/pan the
+/// mixer rendered with, matching the single-thread shape. The only field it
+/// omits is the `String` label — that genuinely cannot live in an atomic slot,
+/// so the [`AudioController`] carries it and [`crate::AudioControllerExternal`]
+/// joins it back in by id. `position`/`distance` are present only for a 3D voice.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RtVoice {
     /// The control-thread-minted voice id (the join key for its label).
     pub id: VoiceId,
+    /// Authored linear gain (what the caller set), before spatialisation.
+    pub authored_gain: f32,
+    /// Authored stereo pan, before spatialisation.
+    pub authored_pan: f32,
     /// Effective linear gain the mixer used this block (post-attenuation).
-    pub gain: f32,
+    pub effective_gain: f32,
     /// Effective stereo pan the mixer used this block.
-    pub pan: f32,
+    pub effective_pan: f32,
     /// Playback position in seconds.
     pub position_secs: f32,
     /// Whether the voice loops at the clip end.
@@ -187,19 +192,43 @@ pub struct RtVoice {
 #[derive(Debug, Default)]
 struct VoiceSlot {
     id: AtomicU64,
-    gain_bits: AtomicU32,
-    pan_bits: AtomicU32,
-    secs_bits: AtomicU32,
+    /// Authored gain/pan (what the caller set) — the RT peer of the
+    /// single-thread `voices` authored fields, so a debugger can tell "quiet
+    /// because low gain" from "quiet because far".
+    authored_gain: AtomicF32,
+    authored_pan: AtomicF32,
+    /// Effective (post-spatialisation) gain/pan the mixer rendered with.
+    effective_gain: AtomicF32,
+    effective_pan: AtomicF32,
+    secs: AtomicF32,
     /// bit 0 = looping, bit 1 = has a 3D position.
     flags: AtomicU32,
-    pos_x_bits: AtomicU32,
-    pos_y_bits: AtomicU32,
-    pos_z_bits: AtomicU32,
-    dist_bits: AtomicU32,
+    pos_x: AtomicF32,
+    pos_y: AtomicF32,
+    pos_z: AtomicF32,
+    dist: AtomicF32,
 }
 
 const FLAG_LOOPING: u32 = 0b01;
 const FLAG_POSITIONED: u32 = 0b10;
+
+/// A lock-free `f32` cell (bit-packed into an `AtomicU32`, `Relaxed`) — the one
+/// idiom the snapshot's meter/per-voice value cells all share, so the
+/// `x.to_bits()` / `f32::from_bits(x)` pack is written once. The per-voice `id`
+/// keeps its bespoke `Release`/`Acquire` fence (it publishes a whole slot); only
+/// the value cells use this.
+#[derive(Debug, Default)]
+struct AtomicF32(AtomicU32);
+
+impl AtomicF32 {
+    fn store(&self, value: f32) {
+        self.0.store(value.to_bits(), Ordering::Relaxed);
+    }
+
+    fn load(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
 
 /// A lock-free snapshot the audio thread publishes each render and the control
 /// thread polls — the "read what is playing without touching the audio
@@ -214,9 +243,8 @@ const FLAG_POSITIONED: u32 = 0b10;
 #[derive(Debug, Default)]
 pub struct AudioSnapshot {
     voice_count: AtomicU32,
-    /// Last block's peak amplitude, stored as `f32::to_bits` for a lock-free
-    /// exact publish.
-    peak_bits: AtomicU32,
+    /// Last block's peak amplitude.
+    peak: AtomicF32,
     /// Total stereo frames rendered — a liveness / progress counter.
     frames_rendered: AtomicU64,
     /// Total plays refused at the voice-pool bound since the channel was
@@ -247,7 +275,7 @@ impl AudioSnapshot {
 
     fn publish(&self, voice_count: u32, peak: f32, frames: u64, rejected: u64, stolen: u64) {
         self.voice_count.store(voice_count, Ordering::Relaxed);
-        self.peak_bits.store(peak.to_bits(), Ordering::Relaxed);
+        self.peak.store(peak);
         self.frames_rendered.fetch_add(frames, Ordering::Relaxed);
         if rejected > 0 {
             self.rejected.fetch_add(rejected, Ordering::Relaxed);
@@ -273,25 +301,21 @@ impl AudioSnapshot {
                 break;
             };
             let resolved = engine.resolve_voice(voice);
-            slot.gain_bits
-                .store(resolved.gain.to_bits(), Ordering::Relaxed);
-            slot.pan_bits
-                .store(resolved.pan.to_bits(), Ordering::Relaxed);
-            slot.secs_bits
-                .store(voice.position_secs().to_bits(), Ordering::Relaxed);
+            slot.authored_gain.store(voice.gain());
+            slot.authored_pan.store(voice.pan());
+            slot.effective_gain.store(resolved.gain);
+            slot.effective_pan.store(resolved.pan);
+            slot.secs.store(voice.position_secs());
             let mut flags = 0;
             if voice.looping() {
                 flags |= FLAG_LOOPING;
             }
             if let Some(pos) = voice.position() {
                 flags |= FLAG_POSITIONED;
-                slot.pos_x_bits.store(pos[0].to_bits(), Ordering::Relaxed);
-                slot.pos_y_bits.store(pos[1].to_bits(), Ordering::Relaxed);
-                slot.pos_z_bits.store(pos[2].to_bits(), Ordering::Relaxed);
-                slot.dist_bits.store(
-                    resolved.distance.unwrap_or(0.0).to_bits(),
-                    Ordering::Relaxed,
-                );
+                slot.pos_x.store(pos[0]);
+                slot.pos_y.store(pos[1]);
+                slot.pos_z.store(pos[2]);
+                slot.dist.store(resolved.distance.unwrap_or(0.0));
             }
             slot.flags.store(flags, Ordering::Relaxed);
             // Release-publish the id last: any reader that Acquire-sees this id
@@ -314,7 +338,7 @@ impl AudioSnapshot {
     /// Peak amplitude of the last rendered block.
     #[must_use]
     pub fn peak(&self) -> f32 {
-        f32::from_bits(self.peak_bits.load(Ordering::Relaxed))
+        self.peak.load()
     }
 
     /// Total stereo frames rendered since the channel was created.
@@ -353,20 +377,16 @@ impl AudioSnapshot {
             }
             let flags = slot.flags.load(Ordering::Relaxed);
             let positioned = flags & FLAG_POSITIONED != 0;
-            let position = positioned.then(|| {
-                [
-                    f32::from_bits(slot.pos_x_bits.load(Ordering::Relaxed)),
-                    f32::from_bits(slot.pos_y_bits.load(Ordering::Relaxed)),
-                    f32::from_bits(slot.pos_z_bits.load(Ordering::Relaxed)),
-                ]
-            });
-            let distance =
-                positioned.then(|| f32::from_bits(slot.dist_bits.load(Ordering::Relaxed)));
+            let position =
+                positioned.then(|| [slot.pos_x.load(), slot.pos_y.load(), slot.pos_z.load()]);
+            let distance = positioned.then(|| slot.dist.load());
             out.push(RtVoice {
                 id,
-                gain: f32::from_bits(slot.gain_bits.load(Ordering::Relaxed)),
-                pan: f32::from_bits(slot.pan_bits.load(Ordering::Relaxed)),
-                position_secs: f32::from_bits(slot.secs_bits.load(Ordering::Relaxed)),
+                authored_gain: slot.authored_gain.load(),
+                authored_pan: slot.authored_pan.load(),
+                effective_gain: slot.effective_gain.load(),
+                effective_pan: slot.effective_pan.load(),
+                position_secs: slot.secs.load(),
                 looping: flags & FLAG_LOOPING != 0,
                 position,
                 distance,
@@ -1081,7 +1101,14 @@ mod tests {
         let voices = ctl.snapshot().voices();
         assert_eq!(voices.len(), 2, "both voices published to the slots");
         let f = voices.iter().find(|v| v.id == flat).expect("flat present");
-        assert!((f.gain - 1.0).abs() < 1e-4, "flat effective gain 1.0");
+        assert!(
+            (f.authored_gain - 1.0).abs() < 1e-4,
+            "flat authored gain 1.0"
+        );
+        assert!(
+            (f.effective_gain - 1.0).abs() < 1e-4,
+            "flat effective gain 1.0"
+        );
         assert!(
             f.position.is_none() && f.distance.is_none(),
             "flat is not 3D"
@@ -1095,8 +1122,16 @@ mod tests {
             [4.0, 0.0, 0.0]
         ));
         assert!((s.distance.expect("3D distance") - 4.0).abs() < 1e-3);
-        assert!((s.gain - 0.25).abs() < 1e-3, "effective gain at distance 4");
-        assert!((s.pan - 1.0).abs() < 1e-3, "hard right");
+        // Authored gain stays 1.0; effective is halved to 0.25 at distance 4.
+        assert!(
+            (s.authored_gain - 1.0).abs() < 1e-3,
+            "authored gain unchanged"
+        );
+        assert!(
+            (s.effective_gain - 0.25).abs() < 1e-3,
+            "effective gain at distance 4"
+        );
+        assert!((s.effective_pan - 1.0).abs() < 1e-3, "hard right");
     }
 
     #[test]

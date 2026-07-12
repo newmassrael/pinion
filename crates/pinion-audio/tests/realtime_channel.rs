@@ -161,7 +161,7 @@ fn per_voice_snapshot_crosses_the_thread_boundary() {
     assert_eq!(controller.label_of(voices[0].id), Some("src"));
     assert!((voices[0].distance.expect("3D voice") - 4.0).abs() < 1e-3);
     assert!(
-        (voices[0].gain - 0.25).abs() < 1e-3,
+        (voices[0].effective_gain - 0.25).abs() < 1e-3,
         "effective gain at distance 4"
     );
 }
