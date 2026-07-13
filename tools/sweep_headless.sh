@@ -105,6 +105,27 @@ runner='
   exit 0
 '
 
+# R1330 — freshness gate. The demo harness (`rpc_verify.RpcSubprocess`) rebuilds
+# each example on launch by default, so a stale binary can never outrun a source
+# edit (a clean incremental build is a ~0.2s fingerprint check). For the FULL sweep
+# that would be one such check per demo (~350); collapse it to a single workspace
+# build here and export PINION_ASSUME_BUILT so demos skip their own — this also
+# aborts the whole sweep with cargo's own error if the tree does not compile, rather
+# than every demo failing to build in turn. For a FILTERED sweep (a handful of
+# demos) the per-demo build is cheaper than a workspace fingerprint pass over a dirty
+# tree, so skip the upfront build and let the harness rebuild only what it runs.
+# PINION_SWEEP_NO_BUILD=1 forces the upfront build off (you vouch the tree is built).
+if [ "$#" -eq 0 ] && [ "${PINION_SWEEP_NO_BUILD:-0}" != "1" ]; then
+  echo "[sweep] cargo build --release --workspace (freshness gate) ..." >&2
+  if ! CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo build --release --workspace >&2; then
+    echo "[sweep] FATAL: workspace build failed — fix it before the sweep runs" >&2
+    exit 2
+  fi
+  export PINION_ASSUME_BUILT=1
+elif [ "${PINION_SWEEP_NO_BUILD:-0}" = "1" ]; then
+  export PINION_ASSUME_BUILT=1
+fi
+
 case "$PINION_SWEEP_MODE" in
   realgpu)
     # Real GPU via Vulkan on the host display (VELLO-002 workaround).

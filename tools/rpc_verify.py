@@ -44,8 +44,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from build_gate import BuildError, ensure_built
+
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+
+# R1330 — when set, the caller has ALREADY built every example it will drive
+# (the sweep does one workspace build up front), so a per-launch rebuild is
+# redundant. Left unset for interactive / one-off runs, where `RpcSubprocess`
+# rebuilds on entry so a source edit can never be silently outrun by a stale
+# binary. See `tools/build_gate.py`.
+_ASSUME_BUILT_ENV = "PINION_ASSUME_BUILT"
 
 
 @contextmanager
@@ -108,9 +117,20 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         boot_timeout: float = 30.0,
         visible_window: bool = False,
         env: Optional[dict[str, str]] = None,
+        ensure_build: bool = True,
     ) -> None:
         self.example = example
         self.release = release
+        # R1330 — rebuild the example before launching so a source edit can never
+        # be outrun by a stale on-disk binary (the rig trap that cost the
+        # R1327-R1329 session hours). `cargo build` is incremental, so the
+        # no-change case is a sub-second fingerprint check. The sweep sets
+        # `PINION_ASSUME_BUILT` after its own batch build and turns this off; a
+        # caller streaming many launches of a known-fresh binary can pass
+        # `ensure_build=False`.
+        self.ensure_build = ensure_build and (
+            os.environ.get(_ASSUME_BUILT_ENV) is None
+        )
         self.boot_grace = boot_grace
         self.request_timeout = request_timeout
         # R881.1 CI fix — deadline for the FIRST request only (the R719
@@ -275,6 +295,21 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         self._proc = None
 
     def _resolve_binary(self) -> Optional[Path]:
+        # R1330 — build-then-run: unless the caller vouches the binary is already
+        # fresh (`ensure_build=False` / `PINION_ASSUME_BUILT`), rebuild the example
+        # first so a stale on-disk binary can never silently run against edited
+        # source. `cargo build` is incremental (sub-second when unchanged); a build
+        # failure raises `BuildError` here — the demo dies loud instead of
+        # exercising the previous artifact.
+        if self.ensure_build:
+            try:
+                return ensure_built(self.example, release=self.release)
+            except BuildError as exc:
+                raise RpcError(
+                    -32099,
+                    f"cargo build -p {self.example} failed before launch",
+                    exc.output[-4000:],
+                ) from exc
         flavor = "release" if self.release else "debug"
         path = WORKSPACE_ROOT / "target" / flavor / self.example
         return path if path.exists() else None
