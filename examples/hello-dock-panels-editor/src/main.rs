@@ -42,7 +42,7 @@
 //! * `floating_window_id(prefix, panel_id)` + `DEFAULT_FLOATING_WINDOW_PREFIX` —
 //!   `"torn-{panel_id}"` convention.
 
-use pinion_a11y::{AccessNode, WidgetA11y};
+use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::command::Command;
 use pinion_core::external::OUTER_DOCK_ZONE_TAG;
 use pinion_core::external::{DropPoint, IntrospectValue};
@@ -118,6 +118,18 @@ const CONSOLE_PANEL_TAG: &str = "console";
 /// Viewport Button paint-side tag — the primary [`ButtonExternal`] of
 /// the editor binding. Routes pointer events to the primary external.
 const VIEWPORT_BTN_TAG: &str = "viewport_btn";
+
+/// (R1329 §5.39 §5.16 PR-53) The editor's PANE FOCUS STOPS: each panel's content
+/// body tag, paired with the panel that owns it. ONE table, two consumers — the
+/// focus→pane map ([`panel_of_focus`]) and the AT tree
+/// ([`DockPanelsEditorView::access_node`], which must NAME every keyboard stop) — so
+/// a new pane cannot join the Tab order while staying anonymous to a screen reader.
+const PANE_FOCUS_STOPS: &[(&str, &str)] = &[
+    ("outliner_content_body", OUTLINER_PANEL_TAG),
+    ("viewport_content_body", VIEWPORT_PANEL_TAG),
+    ("properties_content_body", PROPERTIES_PANEL_TAG),
+    ("console_content_body", CONSOLE_PANEL_TAG),
+];
 
 /// (R1327 §5.39 §5.16 PR-53) Each panel's content-body paint tag — and, marked
 /// `.with_focusable(true)`, the panel's own FOCUS STOP: Tab roves the panes, a
@@ -1694,11 +1706,26 @@ impl WidgetA11y for DockPanelsEditorView {
         // is LABELLED BY ITS TAB (WAI-ARIA), and every tab name is enriched from the
         // painted strip — so the AT tree takes the panel's DISPLAY title (R1318) from
         // the pixels themselves, and cannot drift from them.
-        use_editor_topology()
+        let mut nodes = use_editor_topology()
             .get()
             .as_ref()
             .map(|topology| dock_tablist_access_nodes(topology, focused))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // (R1329 §5.39 §5.27 PR-53) Every PANE is a keyboard focus stop (that is what
+        // makes an "active pane" exist to name the window after) — so every pane must
+        // also be a NAMED node in the AT tree. A focusable node absent from the tree
+        // collapses AT focus onto the window root: a screen-reader user would Tab into
+        // a pane and hear nothing about it. WAI-ARIA `group` is the role for a
+        // focusable region; the name is the panel's DISPLAY title, from the same
+        // `editor_chrome` SSOT the header paints, so spoken and drawn cannot drift.
+        let titles = use_panel_titles().get().0;
+        let chrome = editor_chrome(&titles);
+        nodes.extend(PANE_FOCUS_STOPS.iter().map(|(body, panel)| {
+            AccessNode::new(*body, AriaRole::Group)
+                .with_name(chrome.title_for(panel).into_owned())
+                .with_focused(focused == Some(*body))
+        }));
+        nodes
     }
 }
 

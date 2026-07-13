@@ -136,6 +136,15 @@ def _set_titles(tf: RpcSubprocess, titles: dict[str, str]) -> None:
     tf.intervene(TITLES, titles)
 
 
+def _access_nodes(tf: RpcSubprocess) -> list[dict]:
+    """The `scene/access` AT tree — the structured NAME channel (not the paint tree)."""
+    resp = tf.request("scene/access", {})
+    assert resp is not None and resp.result is not None, "scene/access must answer"
+    nodes = resp.result.get("nodes")
+    assert isinstance(nodes, list), f"scene/access.nodes must be a list; got {resp.result!r}"
+    return nodes
+
+
 def _pane_of(tag: Optional[str]) -> Optional[str]:
     """The pane a focus stop belongs to — the demo's INDEPENDENT oracle.
 
@@ -289,6 +298,38 @@ def body() -> None:
             IDLE_TITLE,
             "I.4 ★…and the main window stops naming a pane it no longer shows "
             "(one pane names exactly one window)",
+        )
+
+        # ── (J) the pane focus stops are NAMED in the AT tree ────────────
+        # A pane is a keyboard focus stop now (that is what makes an "active pane"
+        # exist to name the window after), so it MUST also be a named node in the
+        # accessibility tree — otherwise Tab lands on a region a screen reader cannot
+        # announce. `group` is the WAI-ARIA role for a focusable region; the name is
+        # the pane's DISPLAY title, from the same SSOT the header paints.
+        #
+        # This section is also the regression guard for a release-codegen defect that
+        # made the WHOLE AT tree collapse to zero nodes when the binding contributed
+        # these nodes (see the `[profile.release.package.hello-dock-panels-editor]`
+        # note in the workspace Cargo.toml). If that ever comes back, this fails loudly
+        # instead of silently un-naming every pane.
+        _set_focus(tf, BODY[VIEWPORT])
+        nodes = _access_nodes(tf)
+        groups = {n.get("tag"): n for n in nodes if n.get("role") == "group"}
+        assert_eq(
+            sorted(groups),
+            sorted(BODY.values()),
+            "J.1 ★every pane is a NAMED node in the AT tree (not an anonymous focus stop)",
+        )
+        assert_eq(
+            groups[BODY[OUTLINER]].get("name"),
+            VIM,
+            "J.2 ★…named by its DISPLAY title, the same string the header paints",
+        )
+        assert groups[BODY[VIEWPORT]].get("state", {}).get("focused") is True, (
+            f"J.3 ★the focused pane is marked focused for AT: {groups[BODY[VIEWPORT]]!r}"
+        )
+        assert groups[BODY[CONSOLE]].get("state", {}).get("focused") is not True, (
+            "J.4 …and an unfocused pane is not"
         )
 
         print(

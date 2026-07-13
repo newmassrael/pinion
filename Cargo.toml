@@ -365,3 +365,22 @@ warnings = "deny"
 # current workspace; promoting `warn → deny` makes the policy
 # enforced by the compiler instead of by convention.
 pedantic = { level = "deny", priority = -1 }
+
+# R1329 — codegen-unit-partitioning workaround for a release miscompilation.
+#
+# `hello-dock-panels-editor`'s `WidgetA11y::access_node` returns a non-empty
+# `Vec<AccessNode>` that its caller (`access_node_for_window`, whose guard
+# evaluates TRUE — verified by returning the comparison over the wire) receives
+# as EMPTY under the default release profile. The whole AT tree then collapses to
+# zero nodes (`scene/access` count 0), which is how it was found. It reproduces on
+# rustc 1.88.0 and 1.94.1, in safe code (`unsafe_code = "forbid"` workspace-wide),
+# and is sensitive to code that cannot affect the result: changing the NEVER-TAKEN
+# `else` arm from `Vec::new()` to a one-element `vec![]` makes the taken arm return
+# its nodes correctly. `-C codegen-units=1` compiles it correctly.
+#
+# Scoped to this package (not the whole release profile) so the workspace keeps its
+# parallel-codegen build times. See the pinion memory note
+# `a11y-extra-accessnodes-collapse-tree` and the `r1327_focused_pane_window_title`
+# demo, whose AT-tree assertions fail loudly if this ever regresses.
+[profile.release.package.hello-dock-panels-editor]
+codegen-units = 1
