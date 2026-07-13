@@ -293,6 +293,42 @@ pub(crate) struct OwnerInner {
     /// / [`use_caret_blink`](crate::widgets::caret_blink::use_caret_blink))
     /// is now load-bearing rather than aspirational.
     pub(crate) cache: RefCell<HashMap<CacheKey, Rc<dyn Any>>>,
+
+    /// R1335 §5.39 (PR-53) — the binding-wide "which paint tag has focus"
+    /// mirror. `pinion_runtime::FocusManager` (the focus SSOT) publishes into
+    /// it on every commit; any binding reads it via
+    /// [`focus_state::focused`](crate::focus_state::focused) to derive display
+    /// state from focus (a window title naming the active pane, a status-bar
+    /// label, an active-tab highlight).
+    ///
+    /// An **eager direct field**, not an [`Owner::cache`] slot like
+    /// [`viewport_size_signal`](Owner::viewport_size_signal) — a *principled*
+    /// difference, because focus and the viewport are different KINDS of state:
+    ///
+    /// * The viewport size is a **per-owner value** (a secondary window genuinely
+    ///   has its own size), so each owner lazily seeds its own cache slot.
+    /// * Focus is a **binding-wide singular fact** (one focused tag per binding,
+    ///   across every window). A binding is an owner *tree*, so the whole tree must
+    ///   share ONE mirror: [`Owner::new`] mints it, and [`Owner::new_child`] threads
+    ///   the same handle down (a child does not get its own). A field that is
+    ///   *inherited at construction* is the natural carrier for that; a per-owner
+    ///   cache slot would give each child its own empty mirror and break the
+    ///   binding-wide read from a secondary window's scope.
+    ///
+    /// The direct field also has no shell-injection story (the `FocusManager`
+    /// publishes into whatever mirror the owner already carries, so there is
+    /// nothing to `provide_*`) and, as a plain field, a `focused()` read never
+    /// touches the cache `RefCell` — so it is safe even from inside an
+    /// [`Owner::cache`] factory. (The reference consumer no longer relies on that
+    /// last property: `hello-dock-panels-editor`'s title-sync `Effect` captures
+    /// this handle OUTSIDE its cache factory, the way any owner-scoped signal is
+    /// read inside an `Effect`. It is a robustness margin, not the reason.)
+    ///
+    /// Deliberately **not** registered for snapshot/restore (absent from
+    /// `owned_signals`): it is derived display state mirroring the
+    /// `FocusManager`'s own `focused` SSOT, not authoritative binding state — the
+    /// same reason the pre-R1335 thread-local mirror was untracked.
+    pub(crate) focused_tag: super::signal::Signal<Option<String>>,
 }
 
 /// (R56.1.b.1 / R685.C atomic 5 §5.22) Internal cache key for
@@ -349,6 +385,16 @@ impl Owner {
     /// an existing parent for cascade-drop.
     #[must_use]
     pub fn new() -> Self {
+        // A detached root owns a fresh focus mirror — the head of a new binding's
+        // owner tree. [`Self::new_child`] threads THIS handle down so the whole
+        // tree shares one mirror (R1335 §5.39: focus is binding-wide).
+        Self::with_focus_mirror(super::signal::Signal::new(None))
+    }
+
+    /// R1335 §5.39 — construct an owner carrying `focused_tag` as its focus
+    /// mirror. [`Self::new`] passes a fresh signal (a new binding); [`Self::new_child`]
+    /// passes the parent's handle so descendants share the binding-wide mirror.
+    fn with_focus_mirror(focused_tag: super::signal::Signal<Option<String>>) -> Self {
         Self {
             inner: Rc::new(OwnerInner {
                 id: next_node_id(),
@@ -359,6 +405,7 @@ impl Owner {
                 owned_animations: RefCell::new(Vec::new()),
                 owned_commands: RefCell::new(Vec::new()),
                 cache: RefCell::new(HashMap::new()),
+                focused_tag,
             }),
         }
     }
@@ -426,9 +473,22 @@ impl Owner {
 
     /// Construct a scope owned by `parent`. The parent retains a strong ref;
     /// dropping the parent drops this child (and its descendants) too.
+    ///
+    /// R1335 §5.39 — the child **inherits the parent's focus mirror handle**
+    /// (`focused_tag`), so the whole owner tree shares one mirror. Focus is a
+    /// binding-wide fact (one focused tag per binding, across every window), and a
+    /// binding is exactly an owner tree — so a `focus_state::focused()` read
+    /// resolves the same value in a secondary window's child scope
+    /// (`CoreShell::window_owner`) as in the root, and `FocusManager`'s single
+    /// publish to the root owner is seen tree-wide. This makes the binding-wide
+    /// property STRUCTURAL rather than "true only while every view runs under
+    /// root" — a plain `focused()` read stays correct even if a future round
+    /// (R680 atomic 1) runs a secondary window's view under its child scope. It
+    /// also means only root owners allocate a focus `Signal`; children clone the
+    /// handle.
     #[must_use]
     pub fn new_child(parent: &Owner) -> Self {
-        let child = Self::new();
+        let child = Self::with_focus_mirror(parent.inner.focused_tag.clone());
         parent.inner.children.borrow_mut().push(child.clone());
         child
     }
@@ -1197,6 +1257,29 @@ impl Owner {
         );
     }
 
+    /// R1335 §5.39 (PR-53) — the owner-scoped focus mirror
+    /// [`Signal`](super::signal::Signal): the paint-path "which tag has focus"
+    /// carrier read via [`focus_state::focused`](crate::focus_state::focused).
+    ///
+    /// Returns a clone of this owner's `focused_tag` handle. The mirror is
+    /// binding-wide: [`Self::new_child`] threads the root's handle down the whole
+    /// owner tree, so a child (secondary-window) scope hands back the SAME cell
+    /// the root does — a write through any clone is seen by every reader.
+    /// `pinion_runtime::FocusManager` writes it from its single `commit_focus`
+    /// funnel (self-wrapped in [`Self::run`] so a subscriber woken by that write,
+    /// should it read an owner-scoped hook, re-resolves [`Owner::current`] — the
+    /// R1006 "blocker B" discipline `provide_viewport_size_signal` documents);
+    /// consumers read it with a tracked `get`, so a focus change re-runs a
+    /// subscribed view fn / `Effect`.
+    ///
+    /// A tree-inherited *direct field* rather than a per-owner [`Self::cache`]
+    /// slot on purpose — see the `focused_tag` field for the full rationale
+    /// (focus is a binding-wide singular fact, not a per-owner value).
+    #[must_use]
+    pub fn focused_tag_signal(&self) -> super::signal::Signal<Option<String>> {
+        self.inner.focused_tag.clone()
+    }
+
     /// R1012 §5.23 §5.22 — the owner-scoped per-pane viewport registry: the
     /// tag-keyed map of pane → measured-size
     /// [`Signal`](super::signal::Signal) backing
@@ -1340,6 +1423,17 @@ impl Clone for Owner {
         Self {
             inner: Rc::clone(&self.inner),
         }
+    }
+}
+
+impl std::fmt::Debug for Owner {
+    /// R1335 §5.22 — a reactive handle prints by its stable [`Self::id`]; the
+    /// scope's interior (signals, cache, children) is intentionally opaque. Lets
+    /// structs that hold an `Owner` (e.g. `pinion_runtime::FocusManager`, which
+    /// carries the root owner to publish the focus mirror) keep a derived
+    /// `Debug`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Owner").field("id", &self.id()).finish()
     }
 }
 

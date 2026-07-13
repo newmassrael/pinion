@@ -624,6 +624,13 @@ impl<V: WidgetView> ShellCore<V> {
         shell.revision.set_observer(move |new| {
             waiters.wake(new);
         });
+        // R1335 §5.39 (PR-53) — hand the focus manager this binding's root owner
+        // so its `commit_focus` funnel publishes the focused tag into the owner
+        // mirror a binding reads (`pinion_core::focus_state::focused`). Attach
+        // before the first `refresh_focusable_from_view` below, which can drop
+        // (and therefore publish) focus.
+        let root_owner = shell.core.root_owner().clone();
+        shell.focus.attach_owner(root_owner);
         shell.refresh_focusable_from_view();
         shell
     }

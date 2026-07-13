@@ -70,6 +70,7 @@
 //! the topmost scope owns traversal, and each scope restores its own
 //! saved focus on pop.
 
+use pinion_core::Owner;
 use std::mem;
 
 /// One entry on the modal focus-trap stack. Captures the focus to
@@ -88,7 +89,7 @@ struct ModalScope {
 
 /// Focused tag identity for key dispatch + ARIA visual indication.
 ///
-/// The struct stores three pieces of state:
+/// The struct stores four pieces of state:
 ///
 /// - `focused`: currently focused widget tag, `None` between Tab
 ///   traversal boundaries or when no focusable widget exists.
@@ -97,12 +98,26 @@ struct ModalScope {
 ///   scene-derived [`Scene::collect_focusable_tags`](../../pinion_core/enum.Scene.html#method.collect_focusable_tags)
 ///   walk (R1020); Tab advances forward, Shift+Tab backward, both wrap.
 /// - `saved`: snapshot for window blur / refocus restore.
+/// - `owner`: R1335 §5.39 — the binding's root [`Owner`], attached by the shell
+///   at boot ([`attach_owner`](FocusManager::attach_owner)). The single
+///   `commit_focus` funnel publishes the focused tag into this owner's
+///   [`focused_tag_signal`](pinion_core::Owner::focused_tag_signal) so a binding
+///   can READ focus on the paint path (`pinion_core::focus_state::focused`).
+///   `None` on a manager the shell never attached (unit tests, a headless
+///   manager) — such a manager simply does not publish.
+///
+/// `Clone` (needed by the shell's snapshot paths) deep-copies the focus state but
+/// **shares** the `owner` handle: two clones would publish into one mirror
+/// (last-writer-wins). There is no live clone site today (the shell holds one
+/// manager and mutates it by `&mut`); the aliasing is called out here so a future
+/// clone site is a deliberate choice, not a silent double-writer.
 #[derive(Debug, Clone)]
 pub struct FocusManager {
     focused: Option<String>,
     tab_order: Vec<String>,
     saved: Option<String>,
     modal_stack: Vec<ModalScope>,
+    owner: Option<Owner>,
 }
 
 impl Default for FocusManager {
@@ -112,22 +127,57 @@ impl Default for FocusManager {
 }
 
 impl FocusManager {
-    /// Empty manager — no focus, no focusable enumeration.
+    /// Empty manager — no focus, no focusable enumeration, no owner attached.
     ///
-    /// Publishes the empty focus to [`pinion_core::focus_state`] so a fresh
-    /// manager starts its thread's mirror clean (hand-written rather than
-    /// derived for exactly that reason — a derived `Default` would leave the
-    /// mirror holding a dead manager's tag).
+    /// Publishes nothing: R1335 §5.39 moved the focus mirror onto a per-binding
+    /// [`Owner`] scope, and a bare manager has none yet. The shell calls
+    /// [`attach_owner`](Self::attach_owner) at boot, which clears that owner's
+    /// mirror to this manager's (empty) focus — so a fresh manager still starts
+    /// its binding's mirror clean, without a manager needing a thread-global to
+    /// scribble on at construction.
     #[must_use]
     pub fn new() -> Self {
-        let manager = Self {
+        Self {
             focused: None,
             tab_order: Vec::new(),
             saved: None,
             modal_stack: Vec::new(),
-        };
-        pinion_core::focus_state::publish(None);
-        manager
+            owner: None,
+        }
+    }
+
+    /// R1335 §5.39 (PR-53) — attach the binding's root [`Owner`] so the manager
+    /// can publish the focused tag to a reader
+    /// (`pinion_core::focus_state::focused`). Called once by the shell at boot,
+    /// after the owner exists and before the first focus mutation. Immediately
+    /// re-publishes the current focus, so attaching to an owner whose mirror
+    /// holds a stale tag (a reused owner in a test) resets it to this manager's
+    /// truth.
+    pub fn attach_owner(&mut self, owner: Owner) {
+        self.owner = Some(owner);
+        self.publish_mirror();
+    }
+
+    /// R1335 §5.39 — write the currently focused tag into the attached owner's
+    /// [`focused_tag_signal`](pinion_core::Owner::focused_tag_signal).
+    ///
+    /// The write is wrapped in [`Owner::run`] as the R1006 "blocker B" discipline
+    /// (`pinion_core::reactive::use_viewport_size` documents it, and the viewport
+    /// signal's publish follows the same shape): a
+    /// [`Signal::set`](pinion_core::reactive::Signal::set) synchronously re-runs
+    /// subscribed [`Effect`](pinion_core::reactive::Effect)s, and a woken Effect
+    /// that reads an owner-scoped hook resolves
+    /// [`Owner::current`](pinion_core::Owner::current) — which must find this scope
+    /// on the stack. The reference consumer reads a *captured* handle
+    /// (`focused_sig.get()`), which needs no scope, so the wrap is not load-bearing
+    /// for it — it is the correct discipline for any subscriber that DOES read a
+    /// hook when woken, and it lets every focus-dispatch call site stay
+    /// scope-unaware regardless. No-op when no owner is attached.
+    fn publish_mirror(&self) {
+        if let Some(owner) = &self.owner {
+            let value = self.focused.clone();
+            owner.run(|| owner.focused_tag_signal().set(value));
+        }
     }
 
     /// Currently focused tag, if any.
@@ -166,7 +216,7 @@ impl FocusManager {
         // value is then self-healing (a stray write to the mirror is repaired by
         // the next focus op, even one that moves no focus), and `Signal::set`
         // equality-skips so an unchanged re-publish wakes nobody.
-        pinion_core::focus_state::publish(self.focused.as_deref());
+        self.publish_mirror();
         changed
     }
 
@@ -411,7 +461,7 @@ impl FocusManager {
 
 #[cfg(test)]
 mod tests {
-    use super::FocusManager;
+    use super::{FocusManager, Owner};
 
     fn tags(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|s| (*s).to_owned()).collect()
@@ -687,62 +737,83 @@ mod tests {
     }
 
     // ----- R1327 §5.39: the published focus mirror (PR-53) -----
+    // R1335: the mirror moved from a thread-local to the binding's `Owner`
+    // scope. A manager publishes only once the shell attaches that owner
+    // (`attach_owner`), and a binding reads the mirror from inside it — so each
+    // test wires a fresh owner and reads `mirror(&owner)` in that scope.
 
-    /// The tag a binding reads from `pinion_core::focus_state` — the mirror
-    /// this manager publishes on every commit.
-    fn mirror() -> Option<String> {
-        pinion_core::focus_state::focused()
+    /// A manager wired to a fresh binding owner — the shell's boot
+    /// `attach_owner`. Returns the owner too, so a test can read the mirror in
+    /// that scope with [`mirror`].
+    fn attached() -> (FocusManager, Owner) {
+        let owner = Owner::new();
+        let mut m = FocusManager::new();
+        m.attach_owner(owner.clone());
+        (m, owner)
+    }
+
+    /// The tag a binding reads from `pinion_core::focus_state` — read inside the
+    /// owner's scope, exactly as a view fn / Effect would.
+    fn mirror(owner: &Owner) -> Option<String> {
+        owner.run(pinion_core::focus_state::focused)
     }
 
     /// The invariant the whole seam rests on: what a binding reads is what the
     /// manager holds. Asserted after every mutation below, so a future mutator
     /// added outside the `commit_focus` funnel fails here.
-    fn assert_mirrors(m: &FocusManager) {
+    fn assert_mirrors(m: &FocusManager, owner: &Owner) {
         assert_eq!(
-            mirror().as_deref(),
+            mirror(owner).as_deref(),
             m.focused(),
             "the published mirror must equal the FocusManager's own focused tag",
         );
     }
 
     #[test]
-    fn r1327_new_manager_publishes_empty_focus() {
-        // A dead manager's tag must not survive into a fresh one's mirror.
-        pinion_core::focus_state::publish(Some("stale"));
-        let m = FocusManager::new();
-        assert_eq!(mirror(), None);
-        assert_mirrors(&m);
+    fn r1335_attach_clears_a_stale_mirror() {
+        // A reused owner's mirror holds a dead manager's tag; attaching a fresh
+        // manager must reset it (attach_owner re-publishes the empty focus).
+        let owner = Owner::new();
+        owner.run(|| owner.focused_tag_signal().set(Some("stale".to_owned())));
+        let mut m = FocusManager::new();
+        m.attach_owner(owner.clone());
+        assert_eq!(mirror(&owner), None);
+        assert_mirrors(&m, &owner);
     }
 
     #[test]
     fn r1327_focus_set_publishes() {
-        let mut m = FocusManager::new();
+        let (mut m, owner) = attached();
         m.update_focusable_tags(tags(&["a", "b"]));
         assert!(m.focus_set("b"));
-        assert_eq!(mirror().as_deref(), Some("b"));
-        assert_mirrors(&m);
+        assert_eq!(mirror(&owner).as_deref(), Some("b"));
+        assert_mirrors(&m, &owner);
     }
 
     #[test]
     fn r1327_tab_traversal_publishes() {
-        let mut m = FocusManager::new();
+        let (mut m, owner) = attached();
         m.update_focusable_tags(tags(&["a", "b"]));
         m.focus_next();
-        assert_eq!(mirror().as_deref(), Some("a"), "Tab publishes");
-        assert_mirrors(&m);
+        assert_eq!(mirror(&owner).as_deref(), Some("a"), "Tab publishes");
+        assert_mirrors(&m, &owner);
         m.focus_prev();
-        assert_eq!(mirror().as_deref(), Some("b"), "Shift+Tab publishes (wrap)");
-        assert_mirrors(&m);
+        assert_eq!(
+            mirror(&owner).as_deref(),
+            Some("b"),
+            "Shift+Tab publishes (wrap)"
+        );
+        assert_mirrors(&m, &owner);
     }
 
     #[test]
     fn r1327_focus_clear_publishes() {
-        let mut m = FocusManager::new();
+        let (mut m, owner) = attached();
         m.update_focusable_tags(tags(&["a"]));
         m.focus_set("a");
         assert!(m.focus_clear());
-        assert_eq!(mirror(), None);
-        assert_mirrors(&m);
+        assert_eq!(mirror(&owner), None);
+        assert_mirrors(&m, &owner);
     }
 
     #[test]
@@ -751,15 +822,15 @@ mod tests {
         // went away). The binding must not keep naming a dead tag — AND the caller
         // must learn about it, because this runs inside the paint pass: the shell
         // pairs the `true` with a redraw so the correcting frame is scheduled.
-        let mut m = FocusManager::new();
+        let (mut m, owner) = attached();
         m.update_focusable_tags(tags(&["a", "b"]));
         m.focus_set("a");
         assert!(
             m.update_focusable_tags(tags(&["b"])),
             "the refresh reports the drop to the shell",
         );
-        assert_eq!(mirror(), None);
-        assert_mirrors(&m);
+        assert_eq!(mirror(&owner), None);
+        assert_mirrors(&m, &owner);
         assert!(
             !m.update_focusable_tags(tags(&["b"])),
             "a refresh that drops nothing reports nothing (no spurious frame)",
@@ -770,66 +841,70 @@ mod tests {
     fn r1327_a_stray_write_self_heals_on_the_next_commit_attempt() {
         // The published tag is re-asserted on every commit ATTEMPT, so a stray
         // write is repaired by the next focus op — even one that moves no focus.
-        let mut m = FocusManager::new();
+        let (mut m, owner) = attached();
         m.update_focusable_tags(tags(&["a"]));
         m.focus_set("a");
-        pinion_core::focus_state::publish(Some("bogus"));
+        owner.run(|| owner.focused_tag_signal().set(Some("bogus".to_owned())));
         assert!(
             !m.focus_set("a"),
             "re-focusing the focused tag moves nothing"
         );
         assert_eq!(
-            mirror().as_deref(),
+            mirror(&owner).as_deref(),
             Some("a"),
             "…but it re-asserts the truth",
         );
-        assert_mirrors(&m);
+        assert_mirrors(&m, &owner);
     }
 
     #[test]
     fn r1327_modal_push_and_pop_publish() {
-        let mut m = FocusManager::new();
+        let (mut m, owner) = attached();
         m.update_focusable_tags(tags(&["open_btn"]));
         m.focus_set("open_btn");
         m.push_modal_scope(tags(&["ok", "cancel"]));
-        assert_eq!(mirror().as_deref(), Some("ok"), "the trap's auto-focus");
-        assert_mirrors(&m);
+        assert_eq!(
+            mirror(&owner).as_deref(),
+            Some("ok"),
+            "the trap's auto-focus"
+        );
+        assert_mirrors(&m, &owner);
         m.pop_modal_scope();
         assert_eq!(
-            mirror().as_deref(),
+            mirror(&owner).as_deref(),
             Some("open_btn"),
             "the invoker's restored focus",
         );
-        assert_mirrors(&m);
+        assert_mirrors(&m, &owner);
     }
 
     #[test]
     fn r1327_window_blur_restore_publishes() {
         // The path that bypasses the shell's own `notify_focus_change` observer
         // — publishing from the state's owner is what covers it.
-        let mut m = FocusManager::new();
+        let (mut m, owner) = attached();
         m.update_focusable_tags(tags(&["a", "b"]));
         m.focus_set("b");
         m.save();
         m.focus_clear();
-        assert_eq!(mirror(), None);
+        assert_eq!(mirror(&owner), None);
         assert!(m.restore());
-        assert_eq!(mirror().as_deref(), Some("b"));
-        assert_mirrors(&m);
+        assert_eq!(mirror(&owner).as_deref(), Some("b"));
+        assert_mirrors(&m, &owner);
     }
 
     #[test]
     fn r1327_rejected_focus_set_leaves_the_mirror_untouched() {
-        let mut m = FocusManager::new();
+        let (mut m, owner) = attached();
         m.update_focusable_tags(tags(&["a"]));
         m.focus_set("a");
         assert!(!m.focus_set("not_focusable"), "unknown tag is rejected");
         assert_eq!(
-            mirror().as_deref(),
+            mirror(&owner).as_deref(),
             Some("a"),
             "a rejected focus move publishes nothing",
         );
-        assert_mirrors(&m);
+        assert_mirrors(&m, &owner);
     }
 
     #[test]

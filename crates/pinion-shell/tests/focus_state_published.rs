@@ -50,9 +50,10 @@ const DECO: &str = "decoration";
 const W: u32 = 640;
 const H: u32 = 384;
 
-/// Serialises the file's tests: the mirror is a thread-local, and the shared
-/// `TestRenderer` fixture makes interleaving undesirable regardless (the R1020
-/// focus-test precedent).
+/// Serialises the file's tests: R1335 made the mirror per-owner (so distinct
+/// `ShellCore`s no longer share it), but the file-static `APPLY_KEY_FOCUS` /
+/// `PANE1_PAINTED` probes and the shared `TestRenderer` fixture still make
+/// interleaving undesirable (the R1020 focus-test precedent).
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// What `WidgetCore::apply_key` was handed, paired with what
@@ -155,9 +156,11 @@ impl WidgetView for FocusPublishView {
     }
 }
 
-/// The tag a binding reads on the paint path.
-fn mirror() -> Option<String> {
-    pinion_core::focus_state::focused()
+/// The tag a binding reads on the paint path. R1335: the mirror is owner-scoped,
+/// so it is read inside the shell's root-owner scope — exactly where a view fn or
+/// title Effect reads it.
+fn mirror(core: &ShellCore<FocusPublishView>) -> Option<String> {
+    core.root_owner().run(pinion_core::focus_state::focused)
 }
 
 /// Boot a shell with the panes painted (so the scene-derived focus enumeration
@@ -190,21 +193,21 @@ fn a_click_publishes_the_focused_tag() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
-    assert_eq!(mirror(), None, "boot: nothing focused");
+    assert_eq!(mirror(&core), None, "boot: nothing focused");
 
     // NO key is pressed here — this is precisely the path an `apply_key`-cache
     // workaround cannot observe.
     click_at(&mut core, 50.0, 50.0);
     assert_eq!(core.focus().focused(), Some(PANE0));
     assert_eq!(
-        mirror().as_deref(),
+        mirror(&core).as_deref(),
         Some(PANE0),
         "a click that moves focus publishes it to the binding",
     );
 
     click_at(&mut core, 150.0, 50.0);
     assert_eq!(
-        mirror().as_deref(),
+        mirror(&core).as_deref(),
         Some(PANE1),
         "…and a click onto another pane republishes",
     );
@@ -217,13 +220,13 @@ fn a_background_click_publishes_the_cleared_focus() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
     click_at(&mut core, 50.0, 50.0);
-    assert_eq!(mirror().as_deref(), Some(PANE0));
+    assert_eq!(mirror(&core).as_deref(), Some(PANE0));
 
     // Past all three cells → no target → focus clears.
     click_at(&mut core, 400.0, 50.0);
     assert_eq!(core.focus().focused(), None);
     assert_eq!(
-        mirror(),
+        mirror(&core),
         None,
         "the cleared focus is published too (a binding must stop naming a dead tag)",
     );
@@ -236,14 +239,14 @@ fn a_click_that_moves_no_focus_publishes_nothing() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut core = booted();
     click_at(&mut core, 50.0, 50.0);
-    assert_eq!(mirror().as_deref(), Some(PANE0));
+    assert_eq!(mirror(&core).as_deref(), Some(PANE0));
 
     // A tagged but non-focusable decoration: focus stays where it is, so the
     // mirror must not churn (the control that makes the tests above
     // attributable to the focus change itself).
     click_at(&mut core, 250.0, 50.0);
     assert_eq!(core.focus().focused(), Some(PANE0));
-    assert_eq!(mirror().as_deref(), Some(PANE0));
+    assert_eq!(mirror(&core).as_deref(), Some(PANE0));
 }
 
 #[test]
@@ -254,13 +257,13 @@ fn tab_traversal_publishes_the_focused_tag() {
     let mut core = booted();
 
     assert!(core.handle_focus_traverse(false), "Tab advances focus");
-    assert_eq!(mirror().as_deref(), Some(PANE0), "Tab publishes");
+    assert_eq!(mirror(&core).as_deref(), Some(PANE0), "Tab publishes");
 
     assert!(core.handle_focus_traverse(false));
-    assert_eq!(mirror().as_deref(), Some(PANE1));
+    assert_eq!(mirror(&core).as_deref(), Some(PANE1));
 
     assert!(core.handle_focus_traverse(true), "Shift+Tab steps back");
-    assert_eq!(mirror().as_deref(), Some(PANE0));
+    assert_eq!(mirror(&core).as_deref(), Some(PANE0));
 }
 
 #[test]
@@ -276,13 +279,13 @@ fn rpc_focus_set_publishes_the_focused_tag() {
         r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"pane1"},"id":1}"#,
     );
     assert_eq!(core.focus().focused(), Some(PANE1));
-    assert_eq!(mirror().as_deref(), Some(PANE1), "focus/set publishes");
+    assert_eq!(mirror(&core).as_deref(), Some(PANE1), "focus/set publishes");
 
     rpc(
         &mut core,
         r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":null},"id":2}"#,
     );
-    assert_eq!(mirror(), None, "focus/set null publishes the clear");
+    assert_eq!(mirror(&core), None, "focus/set null publishes the clear");
 }
 
 #[test]
@@ -302,7 +305,7 @@ fn a_drained_focus_request_publishes_the_focused_tag() {
 
     assert_eq!(core.focus().focused(), Some(PANE1));
     assert_eq!(
-        mirror().as_deref(),
+        mirror(&core).as_deref(),
         Some(PANE1),
         "a drained focus_request publishes — the write direction's own move is readable",
     );
@@ -349,7 +352,7 @@ fn focus_dropped_by_the_paint_pass_schedules_the_correcting_frame() {
         &mut core,
         r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"pane1"},"id":1}"#,
     );
-    assert_eq!(mirror().as_deref(), Some(PANE1));
+    assert_eq!(mirror(&core).as_deref(), Some(PANE1));
 
     // The focused pane's view branch goes away. The NEXT paint drops focus — but it
     // does so AFTER `V::view` has already run and painted "pane1 is active", so that
@@ -364,7 +367,7 @@ fn focus_dropped_by_the_paint_pass_schedules_the_correcting_frame() {
         None,
         "the focused tag left the scene, so focus dropped",
     );
-    assert_eq!(mirror(), None, "…and the binding is told");
+    assert_eq!(mirror(&core), None, "…and the binding is told");
     assert!(
         core.take_redraw_request(),
         "★ a focus drop INSIDE the paint pass must schedule the correcting frame: the \

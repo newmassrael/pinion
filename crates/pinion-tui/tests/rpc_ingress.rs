@@ -207,12 +207,18 @@ fn r670_dispatch_rpc_focus_set_targets_button_tag() {
         "focus/set must update the substrate's FocusManager",
     );
     // R1327 §5.39 §2 #6 (PR-53) — the focus a binding READS is published by the
-    // `FocusManager` itself, so the TUI backend inherits the seam from the same
-    // state owner the Vello shell uses: one scene, two render dispatch paths,
-    // ONE focus channel. (A shell-side publish would have needed separate wiring
-    // here — and would have drifted the day one backend forgot it.)
+    // `FocusManager` itself (the shared state owner), not re-derived per backend,
+    // so the value and the equality-skip/self-heal behaviour are identical on both
+    // render dispatch paths: one scene, ONE focus channel. R1335 owner-scoped it;
+    // each backend does perform ONE setup step — `attach_owner(root_owner)` at boot
+    // (asserted by construction: this test would read `None` if the TUI shell had
+    // skipped it) — but the per-commit publish itself stays in the manager, so a
+    // backend cannot drift the channel one mutation at a time.
+    // Read the mirror inside the binding's root-owner scope, where a view fn / Effect reads it.
     assert_eq!(
-        pinion_core::focus_state::focused().as_deref(),
+        core.root_owner()
+            .run(pinion_core::focus_state::focused)
+            .as_deref(),
         Some("test_btn"),
         "the TUI backend publishes the focused tag to the binding too",
     );

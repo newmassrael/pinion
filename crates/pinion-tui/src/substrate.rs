@@ -189,6 +189,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             log_sink: None,
             last_paint_instant: Cell::new(None),
         };
+        // R1335 §5.39 (PR-53) — attach this binding's root owner so RPC-driven
+        // focus mutations publish the focused tag to the owner mirror an AI
+        // client / binding reads (`pinion_core::focus_state::focused`). Mirrors
+        // `pinion_shell::ShellCore::new`.
+        let root_owner = shell.core.root_owner().clone();
+        shell.focus.attach_owner(root_owner);
         shell.refresh_focusable_from_view();
         shell
     }

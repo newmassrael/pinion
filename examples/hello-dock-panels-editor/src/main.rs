@@ -532,13 +532,19 @@ struct WindowTitleSyncMarker {
 ///   FOCUS (R1327 — the tmux / gnome-terminal convention), falling back to the app
 ///   name when focus rests outside the dock workspace.
 ///
-/// The focused pane is read with [`pinion_core::focus_state::focused`], which
-/// subscribes this Effect: click a pane, Tab to it, or `focus/set` it over RPC and
-/// the title follows. That read is what PR-53 added — before it, focus reached a
-/// binding only as an `apply_key` argument (so a title could only track focus while
-/// keys were being pressed, and silently lied after any click) or from the a11y
-/// hook (which does not run when no assistive client is attached). Neither can hold
-/// this invariant; caching either would be a display bug waiting to happen.
+/// The focused pane is read from the owner's focus mirror
+/// ([`Owner::focused_tag_signal`], the read side of PR-53 / R1335), a captured
+/// handle read inside the Effect so it subscribes: click a pane, Tab to it, or
+/// `focus/set` it over RPC and the title follows. (The convenience hook
+/// [`pinion_core::focus_state::focused`] reads the same mirror for a VIEW fn;
+/// inside a multi-subscription Effect the handle is captured instead — a wake by
+/// the titles or windows signal must still resolve focus, and only the handle
+/// read does so with no owner on the stack.) That read is what PR-53 added —
+/// before it, focus reached a binding only as an `apply_key` argument (so a title
+/// could only track focus while keys were being pressed, and silently lied after
+/// any click) or from the a11y hook (which does not run when no assistive client
+/// is attached). Neither can hold this invariant; caching either would be a
+/// display bug waiting to happen.
 ///
 /// An EFFECT, not a reducer arm: "a window is titled after the panel it shows" is a
 /// DERIVED invariant that must hold for EVERY writer of its inputs. The RPC
@@ -564,13 +570,24 @@ fn install_window_title_sync() -> Rc<WindowTitleSyncMarker> {
     let owner = Owner::current().expect("install_window_title_sync() requires an Owner scope");
     let titles = use_panel_titles();
     let windows = use_editor_windows();
+    // R1335 §5.39 — read focus through the owner's mirror SIGNAL, captured here
+    // and `.get()`-read inside the Effect, exactly like `titles` / `windows`
+    // above. `pinion_core::focus_state::focused()` is the convenience hook for a
+    // VIEW fn (which always runs in the owner scope); inside a multi-subscription
+    // Effect it is the wrong tool — a wake by the titles or windows signal
+    // re-runs this body with no owner on the handle stack, so the hook's
+    // `Owner::current()` would resolve nothing and report "unfocused" spuriously.
+    // A captured handle reads the value directly (the same pattern
+    // `use_viewport_size`'s reflow Effect is documented to use), so any of the
+    // three subscriptions can wake it and focus still reads true.
+    let focused_sig = owner.focused_tag_signal();
     let owner_for_effect = owner.clone();
     owner.cache(WINDOW_TITLE_SYNC_KEY, move || {
         let titles_e = Rc::clone(&titles);
         let windows_e = Rc::clone(&windows);
         let effect = Effect::new(&owner_for_effect, move || {
             let titles = titles_e.get().0; // subscription 1: the display-title map
-            let focused = pinion_core::focus_state::focused(); // subscription 2: the active pane
+            let focused = focused_sig.get(); // subscription 2: the active pane
             let specs = windows_e.get(); // subscription 3: which panes are torn off
             let chrome = editor_chrome(&titles);
             // The pane the MAIN window names: the focused one, unless it has been torn

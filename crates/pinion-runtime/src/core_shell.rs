@@ -346,6 +346,15 @@ pub struct CoreShell<V: WidgetCore> {
     /// registrations still land on `root_owner`. Atomic (1) flips
     /// the wrap to make per-window registration the default.
     ///
+    /// R1335 §5.39 note: the focus mirror (`focus_state::focused`) is
+    /// SAFE across that flip and needs no change here — the mirror is
+    /// inherited down the owner tree by [`Owner::new_child`], so a
+    /// `focused()` read under a secondary window's child scope resolves
+    /// the same binding-wide value the root does. (Contrast per-owner
+    /// cache slots such as `viewport_size`, which the flip WOULD start
+    /// reading from the child owner — those are the ones atomic (1) must
+    /// re-examine.)
+    ///
     /// ## Field choice rationale
     ///
     /// `HashMap<String, Owner>` mirrors the existing
