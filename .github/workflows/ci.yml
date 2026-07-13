@@ -119,35 +119,55 @@ jobs:
             libxkbcommon-x11-0 libwayland-dev \
             xvfb mesa-vulkan-drivers vulkan-tools libvulkan1 \
             ffmpeg x11-utils gcc libxtst-dev libx11-dev python3 \
-            libasound2-dev
-      - name: Silent audio card (snd-dummy) for the device-audio demo
-        # R1310 — `hello_audio_device.py` drives a REAL cpal callback thread
-        # concurrently with the RPC control thread. That needs a real output
-        # device, and a runner has none. `snd-dummy` is one: a timer-paced ALSA
-        # card that fires real callbacks on a real clock and discards the samples
-        # — the audio analogue of forcing lavapipe for the GPU, and what lets the
-        # shipping device path be CI-covered instead of local-hardware-gated.
+            libasound2-dev libasound2-plugins alsa-utils \
+            pulseaudio pulseaudio-utils
+      - name: Silent audio device (userspace null sink) for the device-audio demo
+        # R1325 — `hello_audio_device.py` drives a REAL cpal callback thread
+        # concurrently with the RPC control thread, so it needs a real output device
+        # with a real clock. A runner has none.
         #
-        # Fails LOUDLY if the card cannot be loaded. A demo that quietly skipped
-        # itself would rot invisibly ([[ignored-integration-tests-fall-through-ci]]),
-        # and `hello-audio-device` itself aborts rather than falling back to an
-        # audible default, so a missing card can never masquerade as a pass.
+        # R1310 tried `snd-dummy` (a timer-paced ALSA card) and it CANNOT work here:
+        # the runner kernel (`6.17.0-1018-azure`) ships no such module, and installing
+        # `linux-modules-extra-$(uname -r)` does not add one —
+        #   modprobe: FATAL: Module snd-dummy not found in /lib/modules/6.17.0-1018-azure
+        # so this step failed on EVERY push and took the whole sweep job down with it.
+        # That is how 8 rotting demos (r683 / r1094 / r1099 / r1107 / r1124 / r1146 /
+        # r1149 / r705) stayed red for weeks behind a gate nobody could see.
         #
-        # PROVISIONAL: this step has never executed on a GitHub runner (it was
-        # authored on a dev box). If `modprobe` is unavailable on the runner image,
-        # this goes red for every PR — which is the correct failure mode, but do NOT
-        # record "the device path is CI-covered" as settled until a green run is
-        # actually observed.
+        # The userspace equivalent has the same properties and no kernel dependency:
+        # a PulseAudio daemon whose ONLY sink is a null sink (timer-driven, discards
+        # samples), with two ALSA PCMs routed to it. VERIFIED locally against this
+        # exact config: cpal opens the PCM and its callback is paced at ~44.1 kHz
+        # (44132 frames/s measured), silent by construction, and the demo passes
+        # end-to-end. The demo reads the PCM names from the env below, defaulting to
+        # the `snd-dummy` recipe for local dev.
+        #
+        # Fails LOUDLY if the PCMs do not materialise: `hello-audio-device` aborts
+        # rather than opening an audible default, so a missing device can never
+        # masquerade as a pass ([[ignored-integration-tests-fall-through-ci]]).
         run: |
-          sudo modprobe snd-dummy \
-            || (sudo apt-get install -y "linux-modules-extra-$(uname -r)" \
-                && sudo modprobe snd-dummy)
-          grep -q Dummy /proc/asound/cards || {
-            echo "::error::snd-dummy loaded no card; the audio device demo cannot run"
-            cat /proc/asound/cards
+          sudo tee /etc/asound.conf > /dev/null <<'ASOUND'
+          pcm.!default { type pulse }
+          ctl.!default { type pulse }
+          pcm.pinion_silent  { type pulse  hint { show on  description "pinion silent A" } }
+          pcm.pinion_silent2 { type pulse  hint { show on  description "pinion silent B" } }
+          ASOUND
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink \
+            sink_name=pinion_null sink_properties=device.description=pinion_null
+          pactl set-default-sink pinion_null
+          aplay -L | grep -q '^pinion_silent$' || {
+            echo "::error::the silent PCMs did not materialise; the audio device demo cannot run"
+            pactl list short sinks || true
+            aplay -L || true
             exit 1
           }
-          cat /proc/asound/cards
+          {
+            echo "PINION_SILENT_PCM=pinion_silent"
+            echo "PINION_SILENT_PCM_MARK=pinion_silent"
+            echo "PINION_SILENT_PCM_2=pinion_silent2"
+          } >> "$GITHUB_ENV"
+          pactl list short sinks
       - name: Build workspace (release — sweep runs release binaries)
         run: cargo build --release --workspace
       - name: Run full demo sweep under Xvfb

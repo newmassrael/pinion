@@ -16,12 +16,20 @@ This demo is that proof. `hello-audio-device` opens a REAL output device via cpa
 `AudioControllerExternal` verbatim — there is no `render` verb here, and the demo
 asserts its absence: the device clock is the pump.
 
-Silent by construction: it opens ALSA's `snd-dummy` card — a timer-paced device
-with real callbacks and no audible output (the audio analogue of lavapipe). The
-demo asserts over the wire that it really is on that card, so a misconfiguration
+Silent by construction: it opens a TIMER-PACED, INAUDIBLE device — real callbacks
+on a real clock, samples discarded (the audio analogue of lavapipe). The demo
+asserts over the wire that it really is on that device, so a misconfiguration
 cannot quietly route a test tone to the developer's speakers.
 
+Two provisionings, one contract (R1325 — the PCM names come from the env, see
+`SILENT_CARD` below):
+
+    # local: the kernel's dummy card
     sudo modprobe snd-dummy          # once; creates the silent "Dummy" card
+
+    # CI: a userspace null sink (a GitHub runner's kernel has NO snd-dummy module,
+    # and installing linux-modules-extra does not add one — see .github/workflows)
+    pulseaudio --start && pactl load-module module-null-sink ...
 
 ZERO-FLAKE without a step-verb: a free-running callback cannot be stepped, so
 nothing here counts frames exactly. Every assertion polls with `wait_until` /
@@ -95,12 +103,23 @@ EXT = "/external"
 # speakers. If the card is absent the binary aborts LOUDLY (listing what it did
 # find) rather than falling back to an audible default, so this demo can never
 # silently "pass" by making noise, nor by not running at all.
-SILENT_CARD = "hw:CARD=Dummy,DEV=0"
+# (R1325) The silent PCMs are OVERRIDABLE, because a GitHub runner cannot provide
+# `snd-dummy`: its kernel (`*-azure`) ships no such module, and installing
+# `linux-modules-extra-$(uname -r)` does not add one — so the CI step that tried to
+# `modprobe` it failed on every push, taking the ENTIRE demo sweep down with it (the
+# gate that should have caught 8 other rotting demos). CI therefore provisions a
+# userspace equivalent instead — a PulseAudio daemon whose only sink is a null sink,
+# with two ALSA PCMs routed to it — and exports these three names. Same properties as
+# the dummy card (a REAL device clock, measured at ~44.1 kHz; silent by construction;
+# no audible fallback possible), with no kernel dependency at all.
+#
+# The defaults keep the local `snd-dummy` recipe working unchanged.
+SILENT_CARD = os.environ.get("PINION_SILENT_PCM", "hw:CARD=Dummy,DEV=0")
 # What the opened device's name must contain — the card, whatever PCM prefix.
-SILENT_CARD_MARK = "Dummy"
-# A SECOND PCM on the same silent card, so `set_device` can be proven over the
+SILENT_CARD_MARK = os.environ.get("PINION_SILENT_PCM_MARK", "Dummy")
+# A SECOND PCM on the same silent device, so `set_device` can be proven over the
 # wire without any risk of the test ever becoming audible.
-SECOND_SILENT_PCM = "plughw:CARD=Dummy,DEV=0"
+SECOND_SILENT_PCM = os.environ.get("PINION_SILENT_PCM_2", "plughw:CARD=Dummy,DEV=0")
 
 # Peak is the max |sample| of the last block the audio thread rendered. The tone
 # is authored at 0.9, so "audible" clears this comfortably and "silent" is well
