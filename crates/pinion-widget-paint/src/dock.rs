@@ -5374,6 +5374,156 @@ pub struct DockSplitState {
     pub dragging: bool,
 }
 
+/// (R1318 §5.16 §5.51) The binding's OPTIONAL per-panel presentation providers,
+/// keyed by `panel_id` — the ONE seam through which a binding customizes what the
+/// [`view_dock_surface_chrome`] walker paints for a panel, without ever touching
+/// what the panel IS.
+///
+/// ## Why a struct and not more walker parameters
+///
+/// Every optional axis added as its own walker parameter forks a new
+/// `view_dock_surface_*` entry point that must re-declare all the previous ones
+/// (R1173's `_styled` was the first fork). A second axis (this round's title) would
+/// take the walker to 7 arguments — one short of `clippy::too_many_arguments`, so
+/// the axis after it would break the pedantic gate and force this refactor anyway.
+/// Bundling the optional providers means a NEW axis (a per-panel icon, a close
+/// button, a tooltip) lands as a `with_*` builder on this struct — no new entry
+/// point, no new parameter, no generic explosion. `Default` IS the pre-R1318
+/// behaviour (identity style, title = `panel_id`), so [`view_dock_surface`] is
+/// byte-identical to its pre-R1318 self.
+///
+/// ## Identity vs. display name (the R1318 separation)
+///
+/// `panel_id` is the panel's IDENTITY: the [`DockNode::Leaf`] key, the paint tag,
+/// the [`DockPanelExternal`] registration key, the drop-target address, the RPC
+/// path, the [`DockTopology::panel_ids`] order. The walker OWNS it and no provider
+/// here can change it.
+///
+/// [`title`](Self::with_title) is the panel's DISPLAY NAME — the string painted in
+/// the panel header and in its tab-well label, and nothing else. Pre-R1318 the
+/// walker passed `panel_id` as the title, welding the two together; a consumer
+/// whose CHILD names itself (a terminal's `OSC 0`/`OSC 2` window title, an editor's
+/// open document, a browser tab) could not follow that name without either
+/// mutating its own addresses every time the child renamed itself, or giving up the
+/// walker. Two panels may safely carry the SAME display title — a label is not an
+/// address.
+///
+/// The provider is `Fn(&str) -> Cow<'_, str>` so the common "some panels have a
+/// dynamic name, the rest fall back to their id" policy stays alloc-free on the
+/// fallback arm: `|id| child_title(id).map_or(Cow::Borrowed(id), Cow::Owned)`.
+///
+/// ## Scope of each provider
+///
+/// * [`title`](Self::with_title) — asked for EVERY panel the walker NAMES: a
+///   `Leaf`'s header, and each tab label of a `Tabs` well (a well's strip IS its
+///   panels' header row, so a tab label is the panel's header title relocated).
+/// * [`style`](Self::with_style) — applied to every LIVE panel (a `Leaf`, and a
+///   well's active panel), NEVER to a torn-slot placeholder (a transient hole whose
+///   chrome the walker owns). The walker re-forces the invariants it owns AFTER the
+///   customizer runs — the tag (identity) and a well's active panel being
+///   headerless — so a binding cannot break the topology by styling it.
+///
+/// A binding that also paints a panel OUTSIDE the walker (a torn-off panel in its
+/// own floating window, via [`view_dock_panel_with_actions`]) calls
+/// [`title_for`](Self::title_for) / [`style_for`](Self::style_for) directly, so the
+/// docked and floating chrome of the same panel come from ONE source of truth.
+#[derive(Default)]
+pub struct DockPanelChrome<'f> {
+    /// Per-panel style customizer — `None` = the walker's `m3_default` chrome.
+    style: Option<Box<PanelStyleFn<'f>>>,
+    /// Per-panel display-title provider — `None` = the identity (title = `panel_id`).
+    title: Option<Box<PanelTitleFn<'f>>>,
+}
+
+/// (R1318 §5.16) The [`DockPanelChrome`] style customizer: the walker's
+/// correctly-tagged `m3_default` chrome in, the binding's flag-tweaked chrome out.
+type PanelStyleFn<'f> = dyn Fn(&str, DockPanelStyle) -> DockPanelStyle + 'f;
+
+/// (R1318 §5.16 §5.51) The [`DockPanelChrome`] display-title provider: `panel_id` in,
+/// the string the walker PAINTS out. Higher-ranked over the id's lifetime so the
+/// common "named panels are owned, the rest fall back to their id" policy keeps the
+/// fallback arm alloc-free (`Cow::Borrowed(panel_id)`).
+type PanelTitleFn<'f> = dyn for<'a> Fn(&'a str) -> Cow<'a, str> + 'f;
+
+impl std::fmt::Debug for DockPanelChrome<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The closures are opaque; report WHICH providers a binding installed
+        // (the only observable a caller can act on).
+        f.debug_struct("DockPanelChrome")
+            .field("style", &self.style.is_some())
+            .field("title", &self.title.is_some())
+            .finish()
+    }
+}
+
+impl<'f> DockPanelChrome<'f> {
+    /// (R1318 §5.16) Install the per-panel STYLE customizer — invoked for each LIVE
+    /// panel with the walker's correctly-tagged [`DockPanelStyle::m3_default`],
+    /// returning the (flag-tweaked) style the panel paints with. This is the seam
+    /// for the per-panel chrome a pro dock needs — a LOCKED toolbar that is also
+    /// HEADERLESS ([`with_show_header(false)`](DockPanelStyle::with_show_header)) and
+    /// NON-RECEIVING ([`with_drop_target(false)`](DockPanelStyle::with_drop_target)),
+    /// a pinned inspector with a taller header, etc. — freely combined with the
+    /// per-panel MOVE / FLOAT policy ([`DockPanelExternal::with_movable`] /
+    /// [`with_floatable`](DockPanelExternal::with_floatable)) and the global
+    /// [`Theme`]. (R1173's `view_dock_surface_styled` parameter, moved here.)
+    ///
+    /// The customizer tweaks FLAGS, not identity: the walker re-stamps the
+    /// `panel_id` tag afterwards, so a style that changes the tag is ignored rather
+    /// than allowed to desynchronise the paint tree from the topology.
+    #[must_use]
+    pub fn with_style(
+        mut self,
+        style: impl Fn(&str, DockPanelStyle) -> DockPanelStyle + 'f,
+    ) -> Self {
+        self.style = Some(Box::new(style));
+        self
+    }
+
+    /// (R1318 §5.16 §5.51) Install the per-panel DISPLAY-TITLE provider — invoked
+    /// for every panel the walker names (a `Leaf`'s header title, each tab label of
+    /// a `Tabs` well). Default (no provider) = the identity `panel_id`, the
+    /// pre-R1318 behaviour.
+    ///
+    /// The returned string is PAINT ONLY: it never becomes a tag, an address, or a
+    /// topology key (see the type-level rustdoc). Returning the same title for two
+    /// panels is legal.
+    #[must_use]
+    pub fn with_title(mut self, title: impl for<'a> Fn(&'a str) -> Cow<'a, str> + 'f) -> Self {
+        self.title = Some(Box::new(title));
+        self
+    }
+
+    /// (R1318 §5.16 §5.51) The display title for `panel_id` — the provider's string,
+    /// or `panel_id` itself when no provider is installed.
+    ///
+    /// `pub` because a binding paints its torn-off panels OUTSIDE the walker (a
+    /// floating window's [`view_dock_panel_with_actions`]) and must name them from
+    /// the SAME source of truth the docked chrome uses — otherwise a panel would
+    /// rename itself by being dragged out of the dock.
+    #[must_use]
+    pub fn title_for<'a>(&self, panel_id: &'a str) -> Cow<'a, str> {
+        self.title
+            .as_ref()
+            .map_or(Cow::Borrowed(panel_id), |f| f(panel_id))
+    }
+
+    /// (R1318 §5.16) The style for `panel_id` given the walker's `base`
+    /// (`m3_default`-tagged) chrome — the customizer's result, or `base` when no
+    /// customizer is installed. `pub` for the same out-of-walker floating-panel
+    /// path [`title_for`](Self::title_for) documents.
+    #[must_use]
+    pub fn style_for(&self, panel_id: &str, base: DockPanelStyle) -> DockPanelStyle {
+        // `match`, not `map_or`: the latter EAGERLY moves `base` into the default arm
+        // (it would have to be cloned for the customizer arm — a needless alloc of the
+        // tag `Cow` on every panel of every frame).
+        match self.style.as_ref() {
+            Some(customize) => customize(panel_id, base),
+            None => base,
+        }
+    }
+}
+
 /// (R685.B §5.16 §5.49) Recursive walker — lower a [`DockTopology`]
 /// into a nested splitter + dock-panel [`Scene`]. The topology IS
 /// the source of truth for tree shape, panel identity, split
@@ -5441,45 +5591,42 @@ where
     S: Fn(&str, f32) -> DockSplitState,
     Z: Fn(&str) -> Option<DockDropZone>,
 {
-    // (R1173 §5.16) The default surface uses the identity panel-style customizer
-    // (every panel keeps its `m3_default` chrome) — byte-identical to pre-R1173.
-    view_dock_surface_styled(
+    // (R1318 §5.16) The default surface installs NO chrome providers — every panel
+    // keeps its `m3_default` chrome and is titled by its own `panel_id`.
+    // Byte-identical to pre-R1318 (and to pre-R1173, whose identity customizer this
+    // `Default` replaces).
+    view_dock_surface_chrome(
         topology,
         panel_content,
         split_state,
         drop_zone,
-        |_, style| style,
+        &DockPanelChrome::default(),
         theme,
     )
 }
 
-/// (R1173 §5.16) [`view_dock_surface`] plus a per-panel STYLE customizer —
-/// `panel_style: Fn(&str, DockPanelStyle) -> DockPanelStyle` is invoked for each
-/// LIVE leaf with the walker's correctly-tagged [`DockPanelStyle::m3_default`], and
-/// returns the (flag-tweaked) style the panel paints with. This is the seam for
-/// composing per-panel chrome a pro dock needs — a LOCKED toolbar that is also
-/// HEADERLESS (`with_show_header(false)`) and NON-RECEIVING
-/// (`with_drop_target(false)`), a fixed status bar, a panel with a taller header,
-/// etc. — freely combined with the per-panel MOVE / FLOAT policy
-/// ([`DockPanelExternal::with_movable`] / [`with_floatable`](DockPanelExternal::with_floatable))
-/// and the global [`Theme`]. The walker OWNS the tag (the `panel_id` SSOT), so the
-/// customizer tweaks FLAGS, not identity (changing the tag is a binding bug, like a
-/// `panel_content` that returns the wrong content). A torn-slot placeholder is NOT
-/// customized (it is a transient hole, not the panel's chrome).
+/// (R1318 §5.16 §5.51) [`view_dock_surface`] plus the binding's per-panel
+/// [`DockPanelChrome`] — the per-panel STYLE customizer (R1173) and the per-panel
+/// DISPLAY-TITLE provider (R1318), bundled so a future per-panel axis extends the
+/// struct instead of forking a third walker (see the [`DockPanelChrome`] rustdoc for
+/// why, and for the identity-vs-display-name contract this walker enforces).
+///
+/// Supersedes R1173's `view_dock_surface_styled`, which took the style customizer as
+/// its own parameter: `view_dock_surface_chrome(…, &DockPanelChrome::default().with_style(f), theme)`
+/// is that function, and the walker's argument count stops growing per axis.
 #[must_use]
-pub fn view_dock_surface_styled<P, S, Z, F>(
+pub fn view_dock_surface_chrome<P, S, Z>(
     topology: &DockTopology,
     panel_content: P,
     split_state: S,
     drop_zone: Z,
-    panel_style: F,
+    chrome: &DockPanelChrome<'_>,
     theme: &Theme,
 ) -> Scene
 where
     P: Fn(&str) -> Scene,
     S: Fn(&str, f32) -> DockSplitState,
     Z: Fn(&str) -> Option<DockDropZone>,
-    F: Fn(&str, DockPanelStyle) -> DockPanelStyle,
 {
     // (R1205 §5.51 §5.39) Wrap the whole workspace subtree in a
     // [`DOCK_SURFACE_TAG`] container so its laid-out rect IS the DOCK AREA — the
@@ -5509,7 +5656,7 @@ where
         &panel_content,
         &split_state,
         &drop_zone,
-        &panel_style,
+        chrome,
         theme,
     );
     Scene::Container(
@@ -5537,19 +5684,18 @@ where
 /// `orientation`, and forwards the topology's declared `ratio` as
 /// the initial-value seed for the binding's reactive Signal
 /// constructor.
-fn view_dock_surface_node<P, S, Z, F>(
+fn view_dock_surface_node<P, S, Z>(
     node: &DockNode,
     panel_content: &P,
     split_state: &S,
     drop_zone: &Z,
-    panel_style: &F,
+    chrome: &DockPanelChrome<'_>,
     theme: &Theme,
 ) -> Scene
 where
     P: Fn(&str) -> Scene,
     S: Fn(&str, f32) -> DockSplitState,
     Z: Fn(&str) -> Option<DockDropZone>,
-    F: Fn(&str, DockPanelStyle) -> DockPanelStyle,
 {
     match node {
         DockNode::Leaf { panel_id } => {
@@ -5570,23 +5716,28 @@ where
                 .is_some_and(|t| t.ends_with(PLACEHOLDER_TAG_SUFFIX));
             // Walker builds the panel style from the topology's panel_id — no
             // caller drift possible (SSOT). (R1173 §5.16) A LIVE (non-placeholder)
-            // panel then passes through the binding's `panel_style` customizer so a
-            // binding can compose per-panel chrome — a headerless / non-receiving
-            // locked toolbar (`with_show_header(false).with_drop_target(false)`),
-            // etc. The walker still owns the tag (m3_default keyed on panel_id), so
-            // the customizer tweaks FLAGS, not the SSOT identity. A torn-slot
-            // placeholder keeps the forced `show_header=false` + its redock
-            // `drop_target` (it is not customized — it is a transient hole, not the
-            // panel's chrome).
+            // panel then passes through the binding's `DockPanelChrome` style
+            // customizer so a binding can compose per-panel chrome — a headerless /
+            // non-receiving locked toolbar
+            // (`with_show_header(false).with_drop_target(false)`), etc. The walker
+            // still owns the tag (`walker_owned_tag` re-stamps it), so the customizer
+            // tweaks FLAGS, not the SSOT identity. A torn-slot placeholder keeps the
+            // forced `show_header=false` + its redock `drop_target` (it is not
+            // customized — it is a transient hole, not the panel's chrome).
             let base =
                 DockPanelStyle::m3_default(panel_id.clone()).with_show_header(!is_placeholder);
             let style = if is_placeholder {
                 base
             } else {
-                panel_style(panel_id.as_ref(), base)
+                walker_owned_tag(chrome.style_for(panel_id.as_ref(), base), panel_id.clone())
             };
+            // (R1318 §5.16 §5.51) The painted header title is the chrome's DISPLAY
+            // NAME for the panel, not its identity — `panel_id` still tags the
+            // container, registers the External, and addresses the drop target
+            // (above). Default (no provider) = `panel_id`, byte-identical to
+            // pre-R1318.
             view_dock_panel(
-                panel_id.as_ref(),
+                &chrome.title_for(panel_id.as_ref()),
                 content,
                 theme,
                 &style,
@@ -5602,7 +5753,17 @@ where
         // this well, so an edge drop splits the whole well + a centre drop
         // tabifies into it). `active < panels.len()` by topology invariant.
         DockNode::Tabs { id, panels, active } => {
-            let labels: Vec<&str> = panels.iter().map(Cow::as_ref).collect();
+            // (R1318 §5.16 §5.51) A well's strip IS its panels' header row, so a tab
+            // LABEL is the panel's header title relocated — it comes from the same
+            // `DockPanelChrome` display-title provider a `Leaf` header does. The tab
+            // is still ADDRESSED by `panel_id` (`composite_tab_tag(id, i)` + the
+            // `panels` slice below); only the painted string is the display name, so
+            // two panels sharing a display title stay independently addressable.
+            let titles: Vec<Cow<'_, str>> = panels
+                .iter()
+                .map(|p| chrome.title_for(p.as_ref()))
+                .collect();
+            let labels: Vec<&str> = titles.iter().map(Cow::as_ref).collect();
             let strip = view_tabs(
                 id.clone(),
                 &labels,
@@ -5610,9 +5771,24 @@ where
                 theme,
                 &TabsStyle::m3_default(),
             );
-            let active_panel_id = panels[*active].as_ref();
-            let style =
-                DockPanelStyle::m3_default(active_panel_id.to_string()).with_show_header(false);
+            let active_panel = &panels[*active];
+            let active_panel_id = active_panel.as_ref();
+            // (R1318 §5.16) The well's ACTIVE panel is a LIVE panel, so the binding's
+            // style customizer applies to it exactly as it does to a `Leaf` (pre-R1318
+            // a panel silently LOST its customized chrome — a taller header, a
+            // non-receiving lock — the moment it was tabified, because the walker built
+            // this style without consulting the customizer at all). The walker then
+            // re-forces the two invariants it owns: the `panel_id` tag, and
+            // `show_header(false)` — the strip above IS this panel's header, so a
+            // customizer cannot reintroduce a redundant second title bar inside a well.
+            let style = walker_owned_tag(
+                chrome.style_for(
+                    active_panel_id,
+                    DockPanelStyle::m3_default(active_panel.clone()),
+                ),
+                active_panel.clone(),
+            )
+            .with_show_header(false);
             // (R1161 §5.51) The active tab's panel must FILL the well cell below
             // the fixed strip — give its OWN container `flex_grow(1.0)` so it claims
             // the Column's leftover height (the well's `align_items: Stretch` fills
@@ -5624,7 +5800,11 @@ where
             // augments the panel's existing `Column`/`Stretch`/`drop_target` layout
             // rather than replacing it.
             let active_view = match view_dock_panel(
-                active_panel_id,
+                // The title is not painted here (`show_header(false)` — the strip
+                // above carries this panel's label), but it is still the panel's
+                // DISPLAY name, not its id: the walker never feeds identity into a
+                // paint string it would show if the header were ever shown.
+                &titles[*active],
                 panel_content(active_panel_id),
                 theme,
                 &style,
@@ -5652,20 +5832,14 @@ where
             // Walker builds the splitter style from the topology's
             // id + orientation — SSOT.
             let style = SplitterStyle::m3_default(*orientation, id.clone());
-            let first_scene = view_dock_surface_node(
-                first,
-                panel_content,
-                split_state,
-                drop_zone,
-                panel_style,
-                theme,
-            );
+            let first_scene =
+                view_dock_surface_node(first, panel_content, split_state, drop_zone, chrome, theme);
             let second_scene = view_dock_surface_node(
                 second,
                 panel_content,
                 split_state,
                 drop_zone,
-                panel_style,
+                chrome,
                 theme,
             );
             view_splitter(
@@ -5678,6 +5852,35 @@ where
             )
         }
     }
+}
+
+/// (R1318 §5.16 §5.51) Re-stamp the ONE thing the walker owns after a binding's
+/// [`DockPanelChrome`] style customizer ran: the panel TAG.
+///
+/// [`DockPanelStyle::tag`] is a public field, so a customizer *can* return a style
+/// with a different tag — and pre-R1318 that tag went straight into the paint tree,
+/// silently desynchronising the panel's [`Scene::Container`] tag from its
+/// [`DockNode::Leaf`] identity (the [`DockPanelExternal`] registration, the drop
+/// target address, the RPC path all key on the topology's `panel_id`, so the panel
+/// would paint under one name and be addressed under another). The R1173 rustdoc
+/// declared "the customizer tweaks FLAGS, not identity" but nothing enforced it.
+///
+/// This makes the contract real: identity is restored in release builds (a chrome
+/// bug degrades to "the style tweak applied, the tag did not" rather than a broken
+/// dock), and `debug_assert` makes it LOUD in dev + every test run.
+/// `panel_id` is taken BY VALUE (the caller's `Cow::clone` — free for the
+/// `Borrowed` ids every static topology declares) because the tag it restores is an
+/// owned field: borrowing here would only force the same clone one line later.
+fn walker_owned_tag(mut style: DockPanelStyle, panel_id: Cow<'static, str>) -> DockPanelStyle {
+    debug_assert_eq!(
+        style.tag.as_ref(),
+        panel_id.as_ref(),
+        "DockPanelChrome style customizer must not change DockPanelStyle::tag — \
+         the panel id is the walker's identity SSOT (paint tag = External key = \
+         drop target = RPC path). Set the DISPLAY name via DockPanelChrome::with_title.",
+    );
+    style.tag = panel_id;
+    style
 }
 
 /// R1095 §5.51 §5.27 §5.40 — the accessible name of every dock tab well's
@@ -7267,12 +7470,12 @@ mod tests {
     //! 10. **Composite tag format**: `{tag}#header` / `{tag}#content`.
 
     use super::{
-        CONTENT_TAG_SUFFIX, DOCK_DROP_PREVIEW_TAG, DockDropZone, DockNode, DockPanelExternal,
-        DockPanelStyle, DockReorganizer, DockSplitState, DockTopology, FloatPolicy,
-        HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT,
-        TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT, composite_tag, dock_drop_preview_overlay,
-        dock_drop_zone_highlight, dock_tablist_access_nodes, view_dock_panel, view_dock_surface,
-        view_dock_surface_styled,
+        CONTENT_TAG_SUFFIX, DOCK_DROP_PREVIEW_TAG, DockDropZone, DockNode, DockPanelChrome,
+        DockPanelExternal, DockPanelStyle, DockReorganizer, DockSplitState, DockTopology,
+        FloatPolicy, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
+        TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT, composite_tag,
+        dock_drop_preview_overlay, dock_drop_zone_highlight, dock_tablist_access_nodes,
+        view_dock_panel, view_dock_surface, view_dock_surface_chrome,
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::AccessNode;
@@ -7284,6 +7487,7 @@ mod tests {
     use pinion_core::reactive::{Owner, Signal};
     use pinion_core::scene::{ContainerNode, Rect, Scene};
     use pinion_core::theme::Theme;
+    use std::borrow::Cow;
     use std::rc::Rc;
 
     const PANEL_TAG: &str = "test_panel";
@@ -7752,63 +7956,257 @@ mod tests {
         }
     }
 
-    #[test]
-    fn r1173_styled_surface_applies_the_per_panel_style_customizer() {
-        // R1173 §5.16 — `view_dock_surface_styled` runs the binding's customizer on
-        // each LIVE leaf, composing per-panel chrome: a customizer that strips panel
-        // "a"'s header (`show_header=false`) makes it HEADERLESS (no `a#header` tag),
-        // while "b" (identity) keeps its header. The default `view_dock_surface` uses
-        // the identity customizer (every panel keeps its `m3_default` header —
-        // byte-identical to pre-R1173).
-        fn has(scene: &Scene, tag: &str) -> bool {
-            scene.tag() == Some(tag)
-                || match scene {
-                    Scene::Container(c) => c.children.iter().any(|ch| has(ch, tag)),
-                    Scene::Scroll(s) => has(&s.content, tag),
-                    _ => false,
-                }
-        }
-        fn content(_: &str) -> Scene {
-            empty_content()
-        }
-        fn split(_: &str, r: f32) -> DockSplitState {
-            DockSplitState {
-                ratio_signal: Rc::new(Signal::new(r)),
-                dragging: false,
+    // ─── R1318 chrome seam (display title ⊥ identity) ─────────────────────
+
+    /// Every `TextNode` string painted under `scene`, in paint order — the panel
+    /// header titles + tab labels the walker emits.
+    fn painted_texts(scene: &Scene) -> Vec<String> {
+        fn walk(scene: &Scene, out: &mut Vec<String>) {
+            match scene {
+                Scene::Text(t) => out.push(t.content.clone()),
+                Scene::Container(c) => c.children.iter().for_each(|ch| walk(ch, out)),
+                Scene::Scroll(s) => walk(&s.content, out),
+                _ => {}
             }
         }
+        let mut out = Vec::new();
+        walk(scene, &mut out);
+        out
+    }
+
+    fn has_tag(scene: &Scene, tag: &str) -> bool {
+        scene.tag() == Some(tag)
+            || match scene {
+                Scene::Container(c) => c.children.iter().any(|ch| has_tag(ch, tag)),
+                Scene::Scroll(s) => has_tag(&s.content, tag),
+                _ => false,
+            }
+    }
+
+    /// The `Container` painted under `tag` — the panel root, so a test can read the
+    /// chrome the walker actually emitted for it (`layout.drop_target`, …).
+    fn find_container<'a>(scene: &'a Scene, tag: &str) -> Option<&'a ContainerNode> {
+        match scene {
+            Scene::Container(c) if c.tag.as_deref() == Some(tag) => Some(c),
+            Scene::Container(c) => c.children.iter().find_map(|ch| find_container(ch, tag)),
+            Scene::Scroll(s) => find_container(&s.content, tag),
+            _ => None,
+        }
+    }
+
+    fn empty_panel(_: &str) -> Scene {
+        empty_content()
+    }
+
+    fn split_at(_: &str, r: f32) -> DockSplitState {
+        DockSplitState {
+            ratio_signal: Rc::new(Signal::new(r)),
+            dragging: false,
+        }
+    }
+
+    #[test]
+    fn r1173_chrome_surface_applies_the_per_panel_style_customizer() {
+        // R1173 §5.16 (R1318: moved onto `DockPanelChrome::with_style`) — the walker
+        // runs the binding's customizer on each LIVE leaf, composing per-panel chrome:
+        // a customizer that strips panel "a"'s header (`show_header=false`) makes it
+        // HEADERLESS (no `a#header` tag), while "b" (identity) keeps its header. The
+        // default `view_dock_surface` installs NO customizer (every panel keeps its
+        // `m3_default` header — byte-identical to pre-R1173/pre-R1318).
         let topo = ab_topology();
-        let styled = view_dock_surface_styled(
+        let chrome = DockPanelChrome::default().with_style(|id, style| {
+            if id == "a" {
+                style.with_show_header(false)
+            } else {
+                style
+            }
+        });
+        let styled = view_dock_surface_chrome(
             &topo,
-            content,
-            split,
+            empty_panel,
+            split_at,
             |_| None,
-            |id, style| {
-                if id == "a" {
-                    style.with_show_header(false)
-                } else {
-                    style
-                }
-            },
+            &chrome,
             &theme_light(),
         );
         assert!(
-            !has(&styled, "a#header"),
+            !has_tag(&styled, "a#header"),
             "the customizer made panel a HEADERLESS"
         );
         assert!(
-            has(&styled, "b#header"),
+            has_tag(&styled, "b#header"),
             "panel b (identity) keeps its header"
         );
-        // The default surface keeps EVERY header (the identity customizer).
-        let default = view_dock_surface(&topo, content, split, |_| None, &theme_light());
+        // The default surface keeps EVERY header (no customizer installed).
+        let default = view_dock_surface(&topo, empty_panel, split_at, |_| None, &theme_light());
         assert!(
-            has(&default, "a#header"),
+            has_tag(&default, "a#header"),
             "default view_dock_surface keeps a's header"
         );
         assert!(
-            has(&default, "b#header"),
+            has_tag(&default, "b#header"),
             "default view_dock_surface keeps b's header"
+        );
+    }
+
+    #[test]
+    fn r1318_default_chrome_titles_every_panel_by_its_own_id() {
+        // The pre-R1318 behaviour IS the `DockPanelChrome::default()`: no provider →
+        // the header title is the `panel_id`. `view_dock_surface` must be
+        // byte-identical to its pre-R1318 self (the back-compat criterion — every
+        // existing binding keeps its output without touching a line).
+        let topo = ab_topology();
+        let default = view_dock_surface(&topo, empty_panel, split_at, |_| None, &theme_light());
+        assert_eq!(
+            painted_texts(&default),
+            vec!["a".to_string(), "b".to_string()],
+            "no title provider → each header paints the panel's own id",
+        );
+        let explicit_default = view_dock_surface_chrome(
+            &topo,
+            empty_panel,
+            split_at,
+            |_| None,
+            &DockPanelChrome::default(),
+            &theme_light(),
+        );
+        assert_eq!(
+            painted_texts(&explicit_default),
+            painted_texts(&default),
+            "view_dock_surface IS the default-chrome surface",
+        );
+    }
+
+    #[test]
+    fn r1318_title_provider_renames_the_header_without_touching_identity() {
+        // ★The PR-52 separation: the display title is a PAINT string; `panel_id` stays
+        // the identity (paint tag, External key, drop-target address, RPC path). A
+        // terminal pane titled `vim README` is still addressed as `a`.
+        let topo = ab_topology();
+        let chrome = DockPanelChrome::default().with_title(|id| match id {
+            "a" => Cow::Owned("vim README".to_string()),
+            _ => Cow::Borrowed(id),
+        });
+        let scene = view_dock_surface_chrome(
+            &topo,
+            empty_panel,
+            split_at,
+            |_| None,
+            &chrome,
+            &theme_light(),
+        );
+        assert_eq!(
+            painted_texts(&scene),
+            vec!["vim README".to_string(), "b".to_string()],
+            "★panel a's header paints the DISPLAY title; b falls back to its id",
+        );
+        // ★Identity is untouched — the panel is still tagged / addressed by `a`.
+        assert!(has_tag(&scene, "a"), "★the panel root is still tagged `a`");
+        assert!(
+            has_tag(&scene, "a#header") && has_tag(&scene, "a#content"),
+            "★the composite hit regions still key on the panel id, not the title",
+        );
+        assert!(
+            !has_tag(&scene, "vim README"),
+            "★the display title NEVER becomes a tag",
+        );
+    }
+
+    #[test]
+    fn r1318_tab_labels_follow_the_display_title() {
+        // A tab well's strip IS its panels' header row, so a tab LABEL is the panel's
+        // header title relocated — it comes from the same provider. Pre-R1318 the
+        // labels were hardwired to the panel ids.
+        let topo = DockTopology::new(DockNode::tabs("well", vec!["a".into(), "b".into()], 0));
+        let chrome = DockPanelChrome::default().with_title(|id| match id {
+            "a" => Cow::Owned("~/src".to_string()),
+            "b" => Cow::Owned("htop".to_string()),
+            _ => Cow::Borrowed(id),
+        });
+        let scene = view_dock_surface_chrome(
+            &topo,
+            empty_panel,
+            split_at,
+            |_| None,
+            &chrome,
+            &theme_light(),
+        );
+        let texts = painted_texts(&scene);
+        assert!(
+            texts.contains(&"~/src".to_string()) && texts.contains(&"htop".to_string()),
+            "★both tab labels paint their display titles, got {texts:?}",
+        );
+        assert!(
+            !texts.contains(&"a".to_string()) && !texts.contains(&"b".to_string()),
+            "★no raw panel id leaks into the strip, got {texts:?}",
+        );
+        // ★Identity: the tabs are still ADDRESSED by the well id + index (the router's
+        // composite tab tag), and the active panel by its own id.
+        assert!(
+            has_tag(&scene, &composite_tab_tag("well", 0)) && has_tag(&scene, "a"),
+            "★tab hit regions + the active panel keep their id-derived tags",
+        );
+    }
+
+    #[test]
+    fn r1318_two_panels_may_share_one_display_title() {
+        // ★A label is not an address: a terminal multiplexer whose two panes both run
+        // `vim` shows `vim` twice. Identity (and therefore every drop target / External
+        // / RPC path) stays distinct — the case that would be a `DuplicatePanelId`
+        // topology error if a binding had been forced to push the title into the id.
+        let topo = ab_topology();
+        let chrome = DockPanelChrome::default().with_title(|_| Cow::Borrowed("vim"));
+        let scene = view_dock_surface_chrome(
+            &topo,
+            empty_panel,
+            split_at,
+            |_| None,
+            &chrome,
+            &theme_light(),
+        );
+        assert_eq!(
+            painted_texts(&scene),
+            vec!["vim".to_string(), "vim".to_string()],
+            "★both headers paint the same display title",
+        );
+        assert!(
+            has_tag(&scene, "a") && has_tag(&scene, "b"),
+            "★…while both panels stay independently addressable",
+        );
+        assert_eq!(
+            topo.panel_ids(),
+            vec!["a", "b"],
+            "★the topology (identity SSOT) is untouched by any display naming",
+        );
+    }
+
+    #[test]
+    fn r1318_style_customizer_reaches_a_tabified_panel() {
+        // R1318 closes an R1173 gap the chrome bundling exposed: the walker built a tab
+        // well's active-panel style WITHOUT consulting the customizer, so a panel
+        // silently LOST its customized chrome (a taller header, a non-receiving lock)
+        // the moment it was tabified. The walker still re-forces the invariants it owns
+        // — the tag, and `show_header(false)` (the strip IS the header, so a customizer
+        // cannot reintroduce a second title bar inside a well).
+        let topo = DockTopology::new(DockNode::tabs("well", vec!["a".into(), "b".into()], 0));
+        let chrome = DockPanelChrome::default()
+            .with_style(|_, style| style.with_drop_target(false).with_show_header(true));
+        let scene = view_dock_surface_chrome(
+            &topo,
+            empty_panel,
+            split_at,
+            |_| None,
+            &chrome,
+            &theme_light(),
+        );
+        let panel = find_container(&scene, "a").expect("the active panel paints under its id");
+        assert!(
+            !panel.layout.drop_target,
+            "★the customizer's flags now reach the well's active panel",
+        );
+        assert!(
+            !has_tag(&scene, "a#header"),
+            "★…but the walker still owns the well invariant: no per-panel header inside a strip",
         );
     }
 

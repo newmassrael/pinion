@@ -56,7 +56,7 @@ use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::undo::{UndoStack, UndoStackExternal, use_undo_stack};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
+use pinion_core::{Frame, JsonValue, Owner, Scene, Signal, SignalExternal, WidgetCore};
 use pinion_shell::{
     SizeStrategy, WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_MAXIMIZE_TAG, WINDOW_CHROME_MINIMIZE_TAG,
     WidgetView, WindowPolicy, WindowSpec, desktop_position_from, vello_renderer_impl,
@@ -64,17 +64,18 @@ use pinion_shell::{
 };
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
-    DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelExternal, DockPanelStyle,
-    DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology, DropResolution,
-    FloatPolicy, FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
+    DEFAULT_FLOATING_WINDOW_PREFIX, DockDropPreview, DockNode, DockPanelChrome, DockPanelExternal,
+    DockPanelStyle, DockReorganizeExternal, DockReorganizer, DockSplitState, DockTopology,
+    DropResolution, FloatPolicy, FloatingPlaceholderStyle, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
     TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT,
     WindowControlTags, dock_drop_preview_overlay, dock_outer_preview_overlay,
     dock_outer_zone_highlight, dock_redock_preview_tint, dock_tablist_access_nodes,
     floating_window_id as dock_floating_window_id, resolve_drop, view_dock_panel_with_actions,
-    view_dock_surface_styled, view_floating_placeholder, view_window_controls,
+    view_dock_surface_chrome, view_floating_placeholder, view_window_controls,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -149,6 +150,9 @@ const DOCK_REORGANIZE_TAG: &str = "dock_reorganize";
 /// workspace history (Ctrl+Z over panel moves). AI clients drive it via
 /// `scene/invoke /dock_undo_stack/external/undo` (and `redo`).
 const DOCK_UNDO_TAG: &str = "dock_undo_stack";
+/// (R1318 §5.16 §5.51 PR-52) Wire tag of the per-panel DISPLAY-TITLE map — an AI
+/// client retitles a panel with `scene/intervene {path: "/panel_titles/external/value"}`.
+const PANEL_TITLES_TAG: &str = "panel_titles";
 /// `use_undo_stack` key for the shared reorganize history.
 const DOCK_UNDO_KEY: &str = "editor_dock_undo";
 
@@ -369,6 +373,64 @@ fn use_editor_windows() -> Rc<Signal<Vec<WindowSpec>>> {
                     height: MAIN_H,
                 },
             )])
+        })
+}
+
+// ─── per-panel display titles (R1318 §5.16 §5.51 PR-52) ──────────────────
+//
+// A panel's DISPLAY NAME is not its IDENTITY. `panel_id` addresses the panel
+// (topology leaf, paint tag, `DockPanelExternal` key, drop target, RPC path);
+// the display title is a paint string the panel's CONTENT gets to choose, and
+// change, at runtime. The forcing consumer is a terminal multiplexer (sprag
+// PR-52): a child process renames its pane on every prompt via `OSC 0`/`OSC 2`,
+// so the header must read `vim README` while the pane stays addressable as
+// `terminal-1`. Welding the two (pre-R1318: the walker painted `panel_id` as the
+// title) would make a pane change its own address every time its child renamed
+// itself — drag, dock, focus and RPC would all break, and two panes with the same
+// title would collide.
+//
+// The editor stands in for that consumer: the title map is APP state, and pinion
+// supplies only the `DockPanelChrome` paint seam.
+
+/// (R1318 §5.16 §5.51) The editor's `panel_id` → display-title map. EMPTY by
+/// default — every panel is titled by its own `panel_id`, exactly as pre-R1318.
+///
+/// Exposed on the wire as a [`SignalExternal`] (`/panel_titles/external/value`), so
+/// an AI client retitles a panel with ONE `scene/intervene` — the wire stand-in for
+/// the terminal's `OSC 0` escape. Read by [`editor_chrome`] (which subscribes the
+/// view, so a retitle repaints).
+fn use_panel_titles() -> Rc<Signal<JsonValue<BTreeMap<String, String>>>> {
+    Owner::current()
+        .expect("hello-dock-panels-editor: panel titles run inside owner scope")
+        .cache("panel_titles", || Signal::new(JsonValue(BTreeMap::new())))
+}
+
+/// (R1318 §5.16 §5.51) The editor's [`DockPanelChrome`] — the SINGLE construction
+/// site for both per-panel presentation axes:
+///
+/// * TITLE — the display name from [`use_panel_titles`], falling back to the
+///   `panel_id` for any panel the app has not named (the alloc-free `Cow::Borrowed`
+///   arm).
+/// * STYLE — (R1206) the PROPERTIES panel is a "pinned inspector" with a taller
+///   header.
+///
+/// Used by BOTH the docked walker ([`view_main_dock`]) and a torn-off panel's own
+/// floating window ([`view_floating_panel`], via [`DockPanelChrome::title_for`]), so
+/// a panel keeps its name when it is dragged out of the dock — one source of truth
+/// for what a panel is CALLED, as `panel_id` is for what it IS.
+fn editor_chrome(titles: &BTreeMap<String, String>) -> DockPanelChrome<'_> {
+    DockPanelChrome::default()
+        .with_title(|panel_id| {
+            titles
+                .get(panel_id)
+                .map_or(Cow::Borrowed(panel_id), |title| Cow::Owned(title.clone()))
+        })
+        .with_style(|panel_id, style| {
+            if panel_id == PROPERTIES_PANEL_TAG {
+                style.with_header_height_px(PINNED_INSPECTOR_HEADER_PX)
+            } else {
+                style
+            }
         })
 }
 
@@ -953,12 +1015,16 @@ fn view_main_dock(state: ButtonState) -> Scene {
     // (R1105 §5.51) The live floating-window set; a panel listed here paints
     // a placeholder in its dock leaf instead of its content.
     let windows = use_editor_windows().get();
+    // (R1318 §5.16 §5.51) The live display-title map (subscribes the view — an AI's
+    // `scene/intervene` retitle repaints the headers + tab labels below).
+    let titles = use_panel_titles().get().0;
+    let chrome = editor_chrome(&titles);
     // (R1084 §5.51) The dock surface is total over the empty (`None`) state.
     // The editor seeds `Some` and never empties, but the view honours the
     // universal Option (the R685.B SSOT walker auto-builds DockPanelStyle /
     // SplitterStyle from the topology + threads its declared initial_ratio).
     let workspace = match topology {
-        Some(topology) => view_dock_surface_styled(
+        Some(topology) => view_dock_surface_chrome(
             &topology,
             |panel_id| {
                 if is_panel_floating(&windows, panel_id) {
@@ -982,19 +1048,13 @@ fn view_main_dock(state: ButtonState) -> Scene {
                     .filter(|p| p.target == panel_id)
                     .map(|p| p.zone)
             },
-            // (R1206 §5.16) Per-panel PAINT policy via the walker customizer: the
-            // PROPERTIES panel is a "pinned inspector" with a TALLER header — the
-            // 2nd consumer of the `view_dock_surface_styled` per-panel style seam
-            // (the R1173 toolbar customization moved here when the toolbar became a
-            // fixed frame). It stays a normal dockable panel (header + drop target),
-            // so no drag / dock-into gesture is affected — only its header is taller.
-            |panel_id, style| {
-                if panel_id == PROPERTIES_PANEL_TAG {
-                    style.with_header_height_px(PINNED_INSPECTOR_HEADER_PX)
-                } else {
-                    style
-                }
-            },
+            // (R1318 §5.16 §5.51) Per-panel PAINT policy — the display TITLE (the
+            // R1318 seam) + the STYLE (R1206: the PROPERTIES panel is a "pinned
+            // inspector" with a taller header). Both come from `editor_chrome`, the
+            // one construction site the floating-window paint shares. Neither can
+            // touch identity: the walker re-stamps the `panel_id` tag, so drag /
+            // dock / focus / RPC addressing is unaffected by anything here.
+            &chrome,
             &theme,
         ),
         None => Scene::Container(ContainerNode::new(vec![])),
@@ -1055,11 +1115,18 @@ fn view_main_dock(state: ButtonState) -> Scene {
 /// `panel_id` services both the docked placeholder header AND the floating
 /// header (1 External per panel, shared across windows; each per-window
 /// `InputRouter` resolves the composite tag against its own paint scene), so
-/// a second tear-off on the floating header dock-backs it (toggle). The
-/// panel id is the header title — the same SSOT the dock walker uses.
+/// a second tear-off on the floating header dock-backs it (toggle).
+///
+/// (R1318 §5.16 §5.51) The header title is the panel's DISPLAY name from the shared
+/// [`editor_chrome`] — the same source of truth the docked walker paints from, so a
+/// panel does not get RENAMED (back to its raw id) by being torn out of the dock.
+/// Its identity (`panel_id`) still tags the panel + keys its External, here as in
+/// the dock.
 fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let content = panel_content_for(panel_id, state, &theme);
+    let titles = use_panel_titles().get().0;
+    let title = editor_chrome(&titles).title_for(panel_id).into_owned();
     // (R1116/R1118 §5.51 PR-38) The floater is the SOLE content of its own
     // window, so `drop_target=false`: the floater exposes no drop target, so
     // another panel cannot be docked INTO it (cross-window-drop rejection — the
@@ -1077,7 +1144,7 @@ fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
     // 설계" caught). The shell still routes a press on these tags to
     // `set_minimized` / `set_maximized` / `window_close_requested`.
     view_dock_panel_with_actions(
-        panel_id,
+        &title,
         content,
         &theme,
         &style,
@@ -1259,6 +1326,16 @@ impl WidgetCore for DockPanelsEditorView {
         externals.push(ExtraExternal::new(
             DOCK_UNDO_TAG,
             Box::new(UndoStackExternal::new(use_dock_undo())),
+        ));
+        // (R1318 §5.16 §5.51 PR-52) The per-panel DISPLAY-TITLE map on the wire —
+        // the lifted `SignalExternal` substrate (query + intervene over the SAME
+        // `Signal` the view reads), not a bespoke External: the app owns the title
+        // SOURCE, pinion owns only the `DockPanelChrome` paint seam. An AI retitles
+        // a panel with one `scene/intervene {path: "/panel_titles/external/value"}`,
+        // standing in for the terminal child's `OSC 0` rename (sprag PR-52).
+        externals.push(ExtraExternal::new(
+            PANEL_TITLES_TAG,
+            Box::new(SignalExternal::new((*use_panel_titles()).clone())),
         ));
         // (R1135 §5.51.1) The toolbar float-policy toggle button — a second
         // ButtonExternal whose click flips collapse|placeholder (the human GUI
@@ -2009,8 +2086,9 @@ mod tests {
             // the toolbar left the topology so it registers neither a split nor a
             // panel external) + 1 DockReorganizeExternal (R686) + 1 UndoStackExternal
             // (R749 §5.52) + 1 float-policy toggle button (R1135) + 1 undock-tab
-            // button (R1145). Was 13 (4 splits + 5 panels) pre-R1206.
-            assert_eq!(externals.len(), 11);
+            // button (R1145) + 1 panel-display-title SignalExternal (R1318). Was 13
+            // (4 splits + 5 panels) pre-R1206, 11 pre-R1318.
+            assert_eq!(externals.len(), 12);
             let tags: Vec<&str> = externals.iter().map(|e| e.tag.as_ref()).collect();
             for split in [SPLIT_INNER_V_TAG, SPLIT_MIDDLE_H_TAG, SPLIT_INNER_H_TAG] {
                 assert!(tags.contains(&split), "splitter {split} registered");
@@ -2039,6 +2117,11 @@ mod tests {
             assert!(
                 tags.contains(&UNDOCK_BTN_TAG),
                 "R1145 undock-tab button registered"
+            );
+            assert!(
+                tags.contains(&PANEL_TITLES_TAG),
+                "R1318 per-panel display-title map registered (the wire seam an AI \
+                 retitles a panel through)"
             );
         });
     }
