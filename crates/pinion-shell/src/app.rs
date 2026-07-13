@@ -2317,27 +2317,33 @@ impl<V: WidgetView> AppShell<V> {
         }
         // R1319 §5.16 §5.41 PR-52 — title pass: a spec present in BOTH old and new
         // whose declared title changed drives the live OS window's title (alt-tab,
-        // taskbar, window list). Structurally the twin of the move pass above —
-        // total pure diff (`window_title_changes`, unit-tested), best-effort apply,
-        // same silent skip for a window with no live arc (a `Suspended(Some)` mobile
-        // state re-applies its title on the next create, where `with_title` runs).
+        // taskbar, window list). Structurally the twin of the move pass above — total
+        // pure diff (`window_title_changes`, unit-tested) + best-effort apply.
         //
-        // Pre-R1319 `title` was create-time-only, so a binding could not rename a
-        // live window at all — the terminal-multiplexer convention (the OS title
-        // follows the focused pane, which its child renames every prompt) was
-        // unreachable, and `WindowSpec::title`'s rustdoc claimed a `set_title`
-        // forwarding that only ever happened once. Unlike `decorations` below, this
-        // one gets an APPLY rather than a warn: winit HAS `Window::set_title`, so
-        // there is no platform reason to refuse it.
+        // Pre-R1319 `title` was create-time-only, so a binding could not rename a live
+        // window at all — the terminal-multiplexer convention (the OS title follows the
+        // focused pane, which its child renames every prompt) was unreachable, and
+        // `WindowSpec::title`'s rustdoc claimed a `set_title` forwarding that only ever
+        // happened once.
+        //
+        // The apply reaches every window with a live arc, INCLUDING a `Suspended(Some)`
+        // one (`slot_window` returns its cached arc — R1320 correction: the R1087 move
+        // pass's comment claims such a window is skipped and re-applied at create; it is
+        // not skipped, and `resume_spec`'s cached-arc branch does NOT re-apply, which is
+        // why that branch now re-applies the title explicitly, mirroring R1088's
+        // position re-apply). Only a `Suspended(None)` slot — no arc at all — is skipped;
+        // it is rebuilt by `resume_spec`, whose `with_title` reads the CURRENT spec, so
+        // the title cannot be lost.
         for (spec_id, title) in window_title_changes(&old_specs, &new_specs) {
             if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied()
                 && let Some(slot) = self.windows.get(&window_id)
                 && let Some(window) = Self::slot_window(slot)
             {
                 window.set_title(title);
-                // The OS title is not readable back (winit's X11 `title()` is a
-                // stub), so this trace IS the observable that the apply ran — the
-                // `hello-dock-panels-editor` demo asserts it.
+                // winit exposes no OS title read-back (its X11 `Window::title()` is a
+                // stub returning ""), so this trace is what an out-of-process observer
+                // (the `hello-dock-panels-editor` demo) can assert the apply on. It is
+                // NOT a claim that the OS accepted it — that is winit's contract.
                 tracing::debug!(
                     target: "pinion::shell",
                     window = %spec_id,
@@ -2346,23 +2352,26 @@ impl<V: WidgetView> AppShell<V> {
                 );
             }
         }
-        // R1118 §5.16 PR-38 — `decorations` is create-time-only (like
-        // `strategy`): a same-id runtime flip is NOT applied (no
-        // `Window::set_decorations` call exists). Make that trap LOUD rather than
-        // a silent no-op, so a future consumer that toggles a live window's
-        // chrome gets a signal instead of nothing (fail clearly). Only POSITION
-        // closes the OS-feedback loop; chrome + size are read once at create.
-        for spec in &new_specs {
-            if let Some(old) = old_specs.iter().find(|o| o.id == spec.id) {
-                if old.decorations != spec.decorations {
-                    tracing::warn!(
-                        target: "pinion::shell",
-                        window = %spec.id,
-                        from = old.decorations,
-                        to = spec.decorations,
-                        "decorations change ignored — create-time-only; recreate the window to change chrome",
-                    );
-                }
+        // R1320 §5.16 §5.41 — decorations pass. R1118 made a same-id `decorations` flip
+        // a WARN ("create-time-only; recreate the window to change chrome") justified by
+        // "no `Window::set_decorations` call exists". That justification was FALSE:
+        // winit 0.30 has `Window::set_decorations` (`window.rs:1160`), implemented on
+        // X11 / Wayland / macOS / Windows (a no-op only on iOS / Android / Web). A warn
+        // that tells a consumer to destroy and recreate a window, on the strength of an
+        // invented platform limit, is worse than no warn — so it becomes an apply, the
+        // same shape as the title + position passes.
+        for (spec_id, decorations) in window_decoration_changes(&old_specs, &new_specs) {
+            if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied()
+                && let Some(slot) = self.windows.get(&window_id)
+                && let Some(window) = Self::slot_window(slot)
+            {
+                window.set_decorations(decorations);
+                tracing::debug!(
+                    target: "pinion::shell",
+                    window = %spec_id,
+                    decorations,
+                    "window decorations updated",
+                );
             }
         }
         // Update the cache so the next `reconcile_windows` call
@@ -2416,6 +2425,15 @@ impl<V: WidgetView> AppShell<V> {
             if let Some((x, y)) = spec.position {
                 w.set_outer_position(LogicalPosition::new(f64::from(x), f64::from(y)));
             }
+            // R1320 §5.16 §5.41 PR-52 — re-apply the declared TITLE + DECORATIONS on a
+            // `Suspended(Some)` resume, mirroring the position re-apply above (R1088).
+            // `with_title` / `with_decorations` only run on the CREATE branch below, so a
+            // cached window reused across a suspend/resume cycle would otherwise keep its
+            // pre-suspend chrome while the binding's spec says otherwise — the same
+            // drift R1088 closed for position. (The live-window passes in
+            // `reconcile_windows` cover a window that never suspended.)
+            w.set_title(&spec.title);
+            w.set_decorations(spec.decorations);
             w
         } else {
             let mut attrs = Window::default_attributes()
@@ -2703,12 +2721,24 @@ impl<V: WidgetView> AppShell<V> {
         let Some(new_specs) = user_move_writeback(signal.get(), spec_id.as_ref(), logical) else {
             return;
         };
-        // Sync the reconcile cache to the snapshot we are about to emit, so
-        // the signal write does NOT re-command the OS window to where the
-        // user just dragged it (the move pass would otherwise emit a
-        // redundant `set_outer_position`). The effect still fires + lands
-        // on the `new == old` fast path.
-        (*self.last_known_specs.borrow_mut()).clone_from(&new_specs);
+        // Sync the reconcile cache so the signal write does NOT re-command the OS
+        // window to where the user just dragged it (the move pass would otherwise emit
+        // a redundant `set_outer_position`).
+        //
+        // R1320 §5.16 §5.41 — patch ONLY THIS WINDOW'S POSITION, not the whole cached
+        // vector. Pre-R1320 this overwrote the cache with the signal's CURRENT value,
+        // which silently ACKNOWLEDGED every other pending change in it: a title (R1319)
+        // or decorations write that `reconcile_windows` had not yet drained was
+        // swallowed — the next reconcile saw `new == old`, took the fast path, and the
+        // OS window kept the stale title FOREVER (until the next rename). The forcing
+        // consumer makes that reachable: a terminal renames its panes on every prompt
+        // while their floating windows are being dragged. The echo suppression only
+        // ever needed the position, so only the position is acknowledged.
+        cache_moved_position(
+            &mut self.last_known_specs.borrow_mut(),
+            spec_id.as_ref(),
+            logical,
+        );
         signal.set(new_specs);
     }
 }
@@ -3790,6 +3820,48 @@ fn window_title_changes<'a>(old: &[WindowSpec], new: &'a [WindowSpec]) -> Vec<(S
     changes
 }
 
+/// R1320 §5.16 §5.41 — acknowledge a USER window move in the reconcile cache by
+/// patching ONLY that window's `position`.
+///
+/// The write-back path ([`AppShell::note_window_moved`]) must tell the next
+/// `reconcile_windows` "this window is already where the signal says", so the move pass
+/// does not re-command the position the user just dragged to. Pre-R1320 it did that by
+/// overwriting the WHOLE cached spec list with the signal's current value — which also
+/// acknowledged every OTHER pending change in that list (a title, a decorations flip),
+/// so the reconcile that had not yet drained them took its `new == old` fast path and
+/// dropped them permanently. Patching one field of one window keeps every other diff
+/// alive.
+///
+/// A spec id not in the cache is a no-op (the window is being created or dropped in the
+/// same pass; its title/position come from the fresh spec either way).
+fn cache_moved_position(cache: &mut [WindowSpec], spec_id: &str, position: (i32, i32)) {
+    if let Some(spec) = cache.iter_mut().find(|s| s.id.as_ref() == spec_id) {
+        spec.position = Some(position);
+    }
+}
+
+/// R1320 §5.16 §5.41 — the same-id DECORATIONS changes between two [`WindowSpec`]
+/// lists, the twin of [`window_title_changes`].
+///
+/// R1118 declared this axis create-time-only and warned on a runtime flip, on the
+/// stated grounds that "no `Window::set_decorations` call exists". winit 0.30 HAS
+/// [`winit::window::Window::set_decorations`], implemented for X11 / Wayland / macOS /
+/// Windows (documented no-op on iOS / Android / Web). The limit was invented, so the
+/// warn is replaced by an apply and a binding can now hide or restore a live window's
+/// OS chrome by writing its spec — the declared spec stays the SSOT for chrome exactly
+/// as it now is for title.
+fn window_decoration_changes(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String, bool)> {
+    let mut changes = Vec::new();
+    for spec in new {
+        if let Some(old_spec) = old.iter().find(|o| o.id == spec.id) {
+            if old_spec.decorations != spec.decorations {
+                changes.push((spec.id.as_ref().to_owned(), spec.decorations));
+            }
+        }
+    }
+    changes
+}
+
 /// R1088 §5.16 §5.41 §2 #7 PR-31 — is this `WindowEvent::Moved` the echo of
 /// a position the shell just commanded via `set_outer_position`? `true`
 /// when `commanded` is set and equals the incoming `logical` position
@@ -4019,6 +4091,55 @@ mod r1319_window_title_change_diff_tests {
             window_title_changes(&old, &new),
             vec![("a".to_owned(), "ONE"), ("c".to_owned(), "THREE")]
         );
+    }
+
+    #[test]
+    fn a_user_move_writeback_does_not_swallow_a_pending_retitle() {
+        // ★R1320 — the clobber. `note_window_moved` acknowledges a user drag in the
+        // reconcile cache; pre-R1320 it overwrote the WHOLE cache with the signal's
+        // current value, so a title written but not yet reconciled was marked "already
+        // applied" and never reached the OS window.
+        //
+        // Sequence: the binding retitles a floating pane (signal write, reconcile not
+        // drained yet) → the user drags that window (WM move → write-back). The cache
+        // must acknowledge ONLY the position, leaving the title still diffing.
+        use super::{cache_moved_position, window_position_moves};
+        let cached_before = vec![titled("torn-x", "console").with_position(10, 10)];
+        // The signal now carries BOTH the new title and (after the drag) the new
+        // position; `last_known_specs` is still the pre-retitle snapshot.
+        let mut cache = cached_before.clone();
+        cache_moved_position(&mut cache, "torn-x", (40, 50));
+        let signal_now = vec![titled("torn-x", "vim README").with_position(40, 50)];
+        assert_eq!(
+            window_position_moves(&cache, &signal_now),
+            Vec::new(),
+            "the user's own drag is acknowledged — no redundant set_outer_position",
+        );
+        assert_eq!(
+            window_title_changes(&cache, &signal_now),
+            vec![("torn-x".to_owned(), "vim README")],
+            "★…but the pending retitle SURVIVES the acknowledgement and still applies",
+        );
+    }
+
+    #[test]
+    fn decoration_changes_mirror_title_changes() {
+        // R1320 — `decorations` is an APPLY axis now (winit HAS `set_decorations`; the
+        // R1118 warn cited a limit that does not exist). Same diff shape as the title.
+        use super::window_decoration_changes;
+        let old = vec![titled("main", "editor")];
+        let new = vec![titled("main", "editor").with_decorations(false)];
+        assert_eq!(
+            window_decoration_changes(&old, &new),
+            vec![("main".to_owned(), false)],
+        );
+        assert_eq!(window_decoration_changes(&old, &old), Vec::new());
+        // An ADD is not a change — `resume_spec`'s `with_decorations` applies at create.
+        let added = vec![
+            titled("main", "editor"),
+            titled("torn-x", "pane").with_decorations(false),
+        ];
+        assert_eq!(window_decoration_changes(&old, &added), Vec::new());
     }
 
     #[test]

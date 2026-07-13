@@ -636,7 +636,7 @@ pub struct WindowSpec {
     ///
     /// R1319 §5.16 §5.41 PR-52 — a LIVE, reconcilable axis (like
     /// [`position`](Self::position), unlike [`strategy`](Self::strategy) /
-    /// [`decorations`](Self::decorations), which are create-time intent): applied at
+    /// [`strategy`](Self::strategy), which is create-time intent): applied at
     /// create by `Window::with_title`, and on a same-id change by [`crate::AppShell`]'s
     /// `reconcile_windows` title pass (`Window::set_title`), so a binding renames a
     /// live window simply by writing this field into its
@@ -711,13 +711,19 @@ pub struct WindowSpec {
     /// over it — the custom-chrome floating panel the self-hosted-editor
     /// northern star needs (Blender/Unreal tear-offs show no OS title bar).
     ///
-    /// **Create-time intent, like [`strategy`](Self::strategy) — NOT
-    /// reconciled at runtime.** Honoured once by [`crate::AppShell`] at
-    /// window create ([`winit::window::WindowAttributes::with_decorations`]);
-    /// the shell does not call `Window::set_decorations` on a same-id spec
-    /// change (no consumer toggles chrome on a live window — a dock-back
-    /// destroys the floating window rather than re-decorating it). Only
-    /// [`position`](Self::position) closes the OS-feedback loop.
+    /// **R1320 §5.16 §5.41 — a LIVE, reconcilable axis** (like
+    /// [`position`](Self::position) and [`title`](Self::title), unlike
+    /// [`strategy`](Self::strategy)): honoured at create
+    /// ([`winit::window::WindowAttributes::with_decorations`]) and on a same-id change
+    /// by [`crate::AppShell`]'s `reconcile_windows` decorations pass
+    /// (`Window::set_decorations`), so a binding hides or restores a live window's OS
+    /// chrome by writing its spec.
+    ///
+    /// R1115-R1118 declared this create-time-only and WARNED on a runtime flip
+    /// ("recreate the window to change chrome"), on the stated grounds that no
+    /// `Window::set_decorations` call exists. That was false — winit 0.30 has it, on
+    /// every desktop platform (a documented no-op on iOS / Android / Web). The invented
+    /// limit is gone; the declared spec is the SSOT for chrome.
     ///
     /// `#[serde(default = "windowspec_decorations_default")]` so a wire form
     /// omitting the field (every pre-R1115 serialized spec) deserializes to
