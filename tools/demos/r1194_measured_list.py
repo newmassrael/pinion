@@ -36,6 +36,7 @@ The witness is scene-as-data + introspection (§2 #7), no pixels:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -101,12 +102,25 @@ def body() -> None:
         # top") — a race in the DEMO, not in the shell. Polling for the settled
         # observable is the [[zero-flake-policy]] form; the assertions below are
         # unchanged and still pin virtualization.
-        snap = wait_snap(
-            tf,
-            lambda s: bool(present_rows(s)),
-            viewport=WIN,
-            desc="the measured list paints its first row window",
-        )
+        # (R1327 diagnostic) The CI sweep sees ZERO rows here while every local run
+        # (real GPU, Xvfb+lavapipe, even pinned to one core) paints them immediately,
+        # and the 8s poll never converges — so this is structural on the runner, not
+        # slow. Dump what the app actually reports before asserting, so the sweep log
+        # says WHY instead of just "no rows".
+        for attempt in range(12):
+            snap = tf.snapshot(source="paint", viewport=WIN)
+            rects_d = abs_rects_of(snap)
+            print(
+                f"[diag {attempt}] rows={len(present_rows(snap))} "
+                f"list={rects_d.get(LIST_TAG)} scroll={rects_d.get(SCROLL_TAG)} "
+                f"measured={tf.query('/external/measured_count')} "
+                f"items={tf.query('/external/item_count')}",
+                flush=True,
+            )
+            if present_rows(snap):
+                break
+            time.sleep(0.5)
+        assert present_rows(snap), "the measured list never painted a row window"
 
         # ── (A) boot window: a small window of 120 rows ──────────────
         rects = abs_rects_of(snap)
