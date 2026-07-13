@@ -406,26 +406,19 @@ impl AudioControllerExternal {
                 controller.set_voice_pan(id, pan)
             }
             // `null` un-spatialises the voice back to its authored pan.
-            _ => {
+            "set_voice_position" => {
                 let position = match v.get("position") {
                     Some(serde_json::Value::Null) => None,
                     p => Some(parse_vec3(p).ok_or(InvokeError::TypeMismatch)?),
                 };
                 controller.set_voice_position(id, position)
             }
+            // Reached only from the three-arm dispatch in `invoke`; a `_ =>`
+            // catch-all here would make a 4th verb routed in by mistake a SILENT
+            // position write.
+            other => unreachable!("invoke_voice_param called with {other:?}"),
         };
         queued_or_rejected(queued)
-    }
-
-    /// A second handle to the controller this External drives.
-    ///
-    /// The point is the game shape: RPC (or the player's UI) is not the only
-    /// thing that talks to the audio thread — every frame, the *world* does too
-    /// (the listener follows the camera, emitters follow entities). Both are
-    /// control-thread drivers of the same queue, so they share one controller.
-    #[must_use]
-    pub fn controller_handle(&self) -> SharedController {
-        Rc::clone(&self.controller)
     }
 
     /// Register a named clip agents can `play` by name.
@@ -446,7 +439,15 @@ impl AudioControllerExternal {
 }
 
 // RPC-only introspection skeleton (paints nothing; emits §5.20 intents).
-pinion_core::intent_query_external_impl!(AudioControllerExternal);
+//
+// §5.15 item 3 — `OwnThread`, not the `UiThreadSync` default: this External exists
+// to drive an [`AudioRenderer`] that lives on a device's audio thread, reached only
+// over the lock-free ring (that is what `rt` IS). Declaring `UiThreadSync` here
+// would publish a falsehood to any consumer that mounts it directly with a real
+// device — which is the documented way to use it. A harness that deliberately
+// co-locates the renderer on the dispatch thread (`hello-audio-rt`'s step-verb
+// wrapper) declares `UiThreadSync` for itself, which is then true of *that* type.
+pinion_core::intent_query_external_impl!(AudioControllerExternal, OwnThread);
 
 /// An [`AudioController`] shared between the control-thread drivers that need it.
 ///

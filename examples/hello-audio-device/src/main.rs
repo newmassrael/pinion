@@ -130,7 +130,7 @@ use pinion_audio::{
 use pinion_core::animation::Tickable;
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    forward_intents,
+    forward_intents, read_only_or_unknown,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Owner, Signal};
@@ -190,6 +190,11 @@ const DEVICE_FIELDS: &[(&str, &str)] = &[
     // Read-only like the rest: it is moved with `invoke set_camera`, because a
     // camera move is an event in the world, not a slot in the audio surface.
     ("camera", "json"),
+    // How many times the per-frame audio sync has run — "is my audio sync
+    // running?". Declared, because a field that `query` answers but `$schema`
+    // hides and `intervene` calls UnknownPath tells an agent three different
+    // things about one path.
+    ("frame_ticks", "int"),
 ];
 
 /// Length of the composed schema.
@@ -244,6 +249,12 @@ enum DeviceChoice {
 /// partial name persisted by a settings panel would reopen on a different, and
 /// audible, output. So: match one device or none.
 fn resolve_device(requested: &str, names: &[String]) -> DeviceChoice {
+    // An empty request matches EVERYTHING (`contains("")` is always true), so on a
+    // single-output host it would resolve to `One` — the audible card — instead of
+    // refusing. Treat it as no request at all.
+    if requested.is_empty() {
+        return DeviceChoice::NotFound;
+    }
     if let Some(exact) = names.iter().find(|name| *name == requested) {
         return DeviceChoice::One(exact.clone());
     }
@@ -337,7 +348,23 @@ struct World {
     /// carries the pose to the audio thread would never run, and an idle app
     /// would sit there with its sound in the wrong place. (Measured: with a
     /// `Cell`, `frame_ticks` stayed at 1 and the listener never followed.)
-    camera: Signal<Vec3>,
+    /// `(write sequence, position)`.
+    ///
+    /// ★ The sequence number is **load-bearing, not bookkeeping**. [`Signal::set`]
+    /// **equality-skips**: writing the value it already holds notifies nobody, so
+    /// with a bare `Signal<Vec3>` a `set_camera` to the *current* pose armed no
+    /// repaint — while `camera_dirty` latched `true` regardless. The frame that
+    /// services it never ran, the audio thread was never told, and the flag stayed
+    /// pending forever. (Reproduced over the wire: re-asserting an unchanged pose
+    /// after an `invoke set_listener` left camera and listener permanently
+    /// disagreeing, with the RPC call returning success.) Re-asserting the same
+    /// pose is exactly what a save/load restore or a respawn-in-place does.
+    ///
+    /// Bumping the sequence on every write makes the new value never equal to the
+    /// old, so a write *always* notifies, *always* arms a frame, and the dirty
+    /// flag is always serviced. One signal, one writer ([`World::set_camera`]) —
+    /// the pose and its schedule token cannot drift apart.
+    camera: Signal<(u64, Vec3)>,
     /// How many times the per-frame clock has run. The honest measure of whether
     /// the frame loop is actually carrying the world across — and a real §2 #7
     /// read for a game ("is my audio sync running?").
@@ -352,7 +379,7 @@ struct World {
 impl Default for World {
     fn default() -> Self {
         Self {
-            camera: Signal::new(Vec3::default()),
+            camera: Signal::new((0, Vec3::default())),
             frame_ticks: Cell::new(0),
             camera_dirty: Cell::new(false),
         }
@@ -365,9 +392,17 @@ impl World {
     fn set_camera(&self, position: Vec3) {
         // The Signal write is what wakes the shell: `view` reads this signal, so
         // setting it marks the owner dirty and a repaint is armed. With a plain
-        // `Cell` nothing would ever paint and the pose would never land.
-        self.camera.set(position);
+        // `Cell` nothing would ever paint and the pose would never land. The
+        // sequence bump is what stops `Signal`'s equality-skip from swallowing a
+        // re-assert of the current pose (see the field doc).
+        let seq = self.camera.get().0;
+        self.camera.set((seq.wrapping_add(1), position));
         self.camera_dirty.set(true);
+    }
+
+    /// The camera's world position (without the write sequence).
+    fn camera_position(&self) -> Vec3 {
+        self.camera.get().1
     }
 }
 
@@ -375,7 +410,7 @@ impl std::fmt::Debug for AudioRig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioRig")
             .field("device", &self.out.device_name())
-            .field("camera", &self.world.camera.get())
+            .field("camera", &self.world.camera_position())
             .finish_non_exhaustive()
     }
 }
@@ -446,7 +481,7 @@ impl Tickable for AudioFollowClock {
         let mut controller = self.controller.borrow_mut();
         // Keep the listener's orientation; move only where it is standing.
         let mut listener = controller.listener();
-        listener.position = self.world.camera.get();
+        listener.position = self.world.camera_position();
         if controller.set_listener(listener) {
             // Queued. If the ring were full the write did NOT reach the audio
             // thread, so stay dirty and try again next frame rather than
@@ -468,6 +503,9 @@ impl Tickable for AudioFollowClock {
 ///
 /// Panics if called outside an active `Owner` scope.
 fn use_audio_follow_clock(rig: &Rc<AudioRig>) -> Rc<AudioFollowClock> {
+    // The RIG owns the queue and lends it to both drivers (the External via
+    // `from_shared`, this clock via the same handle) — one queue, two
+    // control-thread writers.
     let controller = rig.controller.clone();
     let world = rig.world.clone();
     Owner::current()
@@ -542,15 +580,21 @@ impl ExternalIntrospect for DeviceAudioExternal {
             "device" => Some(IntrospectValue::Text(self.rig.out.device_name().to_owned())),
             // What the host offers — the list a settings panel is built on. Read
             // live, so a device appearing or vanishing shows up without a restart.
-            "devices" => Some(IntrospectValue::json(
-                &CpalOutput::output_device_names().unwrap_or_default(),
-            )),
+            // An enumeration FAILURE is `Null`, not `[]`: on the one surface whose
+            // job is telling "nothing there" apart from "the thing is broken",
+            // collapsing an error into an empty list is the same lie it exists to
+            // prevent.
+            "devices" => Some(match CpalOutput::output_device_names() {
+                Ok(names) => IntrospectValue::json(&names),
+                Err(_) => IntrospectValue::Null,
+            }),
             "sample_rate" => Some(IntrospectValue::Int(i64::from(self.rig.out.sample_rate()))),
             "channels" => Some(IntrospectValue::Int(i64::from(self.rig.out.channels()))),
-            "sample_format" => Some(IntrospectValue::Text(format!(
-                "{:?}",
-                self.rig.out.sample_format()
-            ))),
+            // A stable wire token, not `Debug` of a foreign `#[non_exhaustive]`
+            // enum — cpal's rendering is not ours to promise.
+            "sample_format" => Some(IntrospectValue::Text(
+                self.rig.out.sample_format_wire().to_owned(),
+            )),
             // Non-zero means the output has faulted — the only reading that tells
             // "nothing is playing" apart from "the device is gone".
             "stream_errors" => Some(IntrospectValue::Int(
@@ -559,7 +603,7 @@ impl ExternalIntrospect for DeviceAudioExternal {
             // Where the game's camera is. Compare it with `listener` to watch the
             // per-frame clock catch up: `set_camera` moves THIS, and only the
             // frame tick moves the listener to match.
-            "camera" => Some(IntrospectValue::json(&self.rig.world.camera.get())),
+            "camera" => Some(IntrospectValue::json(&self.rig.world.camera_position())),
             "frame_ticks" => Some(IntrospectValue::Int(
                 i64::try_from(self.rig.world.frame_ticks.get()).unwrap_or(i64::MAX),
             )),
@@ -569,13 +613,14 @@ impl ExternalIntrospect for DeviceAudioExternal {
         }
     }
 
-    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
-        if DEVICE_FIELDS.iter().any(|(name, _)| *name == path) {
-            // Declared, but a device fact is an observation, not a slot: you
-            // change the output by opening a different one, not by writing here.
-            return Err(InterveneError::ReadOnly);
-        }
-        self.inner.intervene(path, value)
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        // Every field on this surface is an observation, not a slot — the RT half
+        // is driven by `invoke`, and a device fact is changed by opening a
+        // different device. So the answer is the composed SCHEMA's: declared =>
+        // ReadOnly, else UnknownPath. Keying off `DEVICE_FIELDS` instead would be
+        // a second source of truth for "which of my fields exist" — which is
+        // exactly how `frame_ticks` came to be queryable yet undeclared.
+        Err(read_only_or_unknown(&self.schema(), path))
     }
 
     fn invoke(
@@ -583,6 +628,14 @@ impl ExternalIntrospect for DeviceAudioExternal {
         path: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
+        // On THIS binding the WORLD owns the listener: the per-frame clock is its
+        // sole writer. A raw `set_listener` would silently win — and could not be
+        // taken back, because the clock only re-asserts when the camera *changes*
+        // — so the two writers are arbitrated here rather than left to race.
+        // (Refused, not ignored: the write is loud, and it names its replacement.)
+        if path == "set_listener" {
+            return Err(InvokeError::Rejected);
+        }
         // The one verb this binding owns: move the world camera. Note what it
         // does NOT do — it never touches the audio engine. The listener follows
         // only because the per-frame [`AudioFollowClock`] carries the pose across
@@ -594,12 +647,13 @@ impl ExternalIntrospect for DeviceAudioExternal {
             };
             let pos = parse_vec3(Some(&v)).ok_or(InvokeError::TypeMismatch)?;
             self.rig.world.set_camera(pos);
-            // A §5.20 intent, and NOT merely decoration: "the camera moved" is a
-            // real symbolic event, and emitting it is also what marks this
-            // External dirty — which is what schedules the frame that then
-            // carries the pose to the audio thread. Without it the retained shell
-            // has no reason to paint (the widget's `State` did not change), so an
-            // idle app would sit there with the sound in the wrong place.
+            // A §5.20 symbolic event — "the camera moved" — visible on
+            // `scene/intents`. It does NOT schedule the frame: nothing in the
+            // shell consults `External::is_dirty` (it only skips the
+            // `drain_intents` call), and this binding's `State` does not change on
+            // a camera move. The `camera` Signal the view reads is the only thing
+            // that arms a repaint. Do not delete that read believing this intent
+            // covers it — it does not.
             self.pending_intents.push(Intent::new_static(
                 "audio.camera",
                 IntrospectValue::json(&pos),
@@ -670,7 +724,8 @@ impl WidgetCore for HelloAudioDevice {
         // paints, the animation driver never ticks, and the listener never
         // follows — measured, before this line existed. The view depending on the
         // world pose is exactly what makes a world change schedule a frame.
-        let camera = rig.world.camera.get();
+        // Subscribing to the signal (see `World::camera`) is what arms the frame.
+        let camera = rig.world.camera_position();
 
         let mut children: Vec<Scene> = Vec::new();
         let mut y = 16u32;
@@ -817,6 +872,27 @@ mod tests {
         }
     }
 
+    /// ★ Regression: a `set_camera` to the pose it ALREADY holds must still be
+    /// serviced. `Signal::set` equality-skips, so before the write-sequence stamp
+    /// this armed no repaint while latching `camera_dirty` — the push was stranded
+    /// forever and the audio thread never heard about it.
+    #[test]
+    fn re_asserting_the_same_camera_pose_is_not_silently_dropped() {
+        let world = World::default();
+        world.set_camera([3.0, 0.0, -4.0]);
+        let first = world.camera.get();
+        // The very same position again …
+        world.set_camera([3.0, 0.0, -4.0]);
+        let second = world.camera.get();
+        assert_ne!(
+            first, second,
+            "an unchanged pose must still produce a NEW signal value, or the \
+             equality-skip swallows the write and no frame is ever scheduled"
+        );
+        assert_pos(world.camera_position(), [3.0, 0.0, -4.0]);
+        assert!(world.camera_dirty.get(), "and it is still pending a push");
+    }
+
     /// ★ The per-frame tick, with **no sound card**: a `realtime_channel` needs no
     /// hardware, and splitting [`World`] from the device is what lets the clock be
     /// tested at all. Locks the contract the demo proves over the wire.
@@ -915,6 +991,39 @@ mod tests {
     /// This is live, not hypothetical: `AudioEngineExternal` already declares
     /// `sample_rate`, and it is the most obvious field for someone to add to the
     /// RT surface next. Then this fires instead of shipping the shadow.
+    /// ★ The direction the shadow test below does NOT cover, and the one that
+    /// actually broke: **every path `query` answers must be declared**. A field
+    /// that `query` returns but `$schema` omits tells an agent it does not exist,
+    /// while `intervene` calls it `UnknownPath` — three answers for one path.
+    ///
+    /// Enforced from the declared side (the answerable direction): every field in
+    /// the composed schema must be a path this binding, or the RT surface beneath
+    /// it, actually answers. The demo asserts the same set over the real wire.
+    #[test]
+    fn every_declared_field_is_a_real_path() {
+        // The RT half is covered by the inner External's own tests; here assert
+        // the binding's own fields are all declared AND all answered.
+        for field in [
+            "device",
+            "devices",
+            "sample_rate",
+            "channels",
+            "sample_format",
+            "stream_errors",
+            "camera",
+            "frame_ticks",
+        ] {
+            assert!(
+                DEVICE_FIELDS.iter().any(|(name, _)| *name == field),
+                "{field} is answered by `query` but not declared in DEVICE_FIELDS"
+            );
+            assert!(
+                SCHEMA_FIELDS.iter().any(|(name, _)| *name == field),
+                "{field} must reach the composed schema"
+            );
+        }
+    }
+
     #[test]
     fn the_device_fields_do_not_shadow_any_rt_field() {
         for (device_field, _) in DEVICE_FIELDS {

@@ -276,6 +276,24 @@ impl CpalOutput {
         self.sample_format
     }
 
+    /// The device's sample format as a **stable wire token** (`"f32"` / `"i16"` /
+    /// `"u16"`).
+    ///
+    /// Not `Debug` of [`cpal::SampleFormat`]: that enum is foreign and
+    /// `#[non_exhaustive]`, so its rendering is not ours to promise on a wire an AI
+    /// agent reads. The peer of `VoicePolicy::as_wire`.
+    #[must_use]
+    pub fn sample_format_wire(&self) -> &'static str {
+        match self.sample_format {
+            SampleFormat::F32 => "f32",
+            SampleFormat::I16 => "i16",
+            SampleFormat::U16 => "u16",
+            // The stream refuses to open any other format
+            // ([`CpalError::UnsupportedFormat`]), so a live stream cannot be here.
+            _ => "unsupported",
+        }
+    }
+
     /// How many errors cpal has reported on this stream since it opened.
     ///
     /// **The device-health read.** A stream that has died (device unplugged, fatal

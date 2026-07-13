@@ -133,7 +133,7 @@ def body() -> None:
         # Which conversion branch is live (f32 / i16 / u16). Otherwise invisible:
         # the mix is f32 whatever the card wants, so nothing else reveals the path
         # the samples took — and CI would not record which one it exercised.
-        assert q("sample_format") in ("F32", "I16", "U16"), q("sample_format")
+        assert q("sample_format") in ("f32", "i16", "u16"), q("sample_format")
         # The output is healthy. A dead device just stops calling back, so without
         # this reading "idle" and "the card is gone" look identical on the wire.
         assert_eq(q("stream_errors"), 0, "the stream has not faulted")
@@ -280,6 +280,52 @@ def body() -> None:
         assert_eq(q("listener")["forward"], listener["forward"], "facing kept")
         assert_eq(q("listener")["up"], listener["up"], "up kept")
 
+        # …and the pose reached the AUDIO THREAD, not merely the control-thread
+        # mirror. `query listener` reads the mirror, which advances on ENQUEUE — so
+        # on its own it proves only "the command was queued". `voices[].distance`
+        # is published BY the callback from its own engine, so polling it proves
+        # the audio thread actually consumed the pose and re-spatialised the mix.
+        emitter = inv("play", {"name": "bell", "looping": True, "position": [3.0, 0.0, 6.0]})
+        assert isinstance(emitter, int)
+        wait_until(lambda: len(q("voices")) >= 1, desc="the emitter is live")
+
+        def emitter_distance():
+            for v in q("voices"):
+                if v["id"] == emitter:
+                    return v.get("distance")
+            return None
+
+        # Listener at [3,0,-4], emitter at [3,0,6] -> 10 units apart.
+        wait_until(
+            lambda: emitter_distance() is not None and abs(emitter_distance() - 10.0) < 0.01,
+            desc="the audio thread spatialises the emitter against the carried pose",
+        )
+        # Walk the camera onto the emitter; the AUDIO THREAD must see distance -> 0.
+        inv("set_camera", [3.0, 0.0, 6.0])
+        wait_until(
+            lambda: emitter_distance() is not None and emitter_distance() < 0.01,
+            desc="a frame carried the new pose all the way into the MIX",
+        )
+        inv("stop", emitter)
+        wait_query(g, f"{EXT}/voice_count", 0, desc="emitter stopped")
+
+        # ★ Re-asserting the SAME pose must still be serviced. `Signal::set`
+        # equality-skips, so before the write-sequence stamp this armed no repaint
+        # while latching the dirty flag: the push was stranded and the audio thread
+        # never heard it. Drive the listener away first so a successful re-assert is
+        # observable — and note `set_listener` itself is REFUSED here, because on
+        # this binding the world owns the listener (two unarbitrated writers was the
+        # other half of that bug).
+        assert_rpc_error(
+            lambda: inv("set_listener", {"position": [9.0, 9.0, 9.0]}),
+            data="InvokeRejected",
+        )
+        inv("set_camera", [3.0, 0.0, 6.0])  # the pose it already holds
+        wait_until(
+            lambda: q("listener")["position"] == [3.0, 0.0, 6.0],
+            desc="a re-asserted, unchanged pose is still carried (not equality-skipped)",
+        )
+
         # It settles (is_at_rest) and re-arms on the next move — so the frame loop
         # is not pinned awake, and a second move still lands.
         inv("set_camera", [-1.0, 2.0, 0.0])
@@ -287,9 +333,11 @@ def body() -> None:
             lambda: q("listener")["position"] == [-1.0, 2.0, 0.0],
             desc="a second camera move lands after the clock went back to rest",
         )
+        # The per-frame sync is observable — declared, and non-zero because it ran.
+        assert q("frame_ticks") >= 1, "the audio sync has run"
 
         # ── (H) the composed schema, ON THE WIRE — not just in a unit test. ────
-        # This binding's schema is the RT surface's fields + its 3 device fields,
+        # This binding's schema is the RT surface's fields + its device fields,
         # composed at compile time. Proving that in Rust only would be an
         # in-process check of exactly the kind §2 #2 exists to replace — so read
         # it back over the wire, the way an AI agent discovers the contract.
@@ -297,7 +345,7 @@ def body() -> None:
         for field in ("voice_count", "peak", "frames_rendered", "voices", "voice_policy"):
             assert field in paths, f"the RT surface's {field!r} must be declared: {paths}"
         for field in ("device", "devices", "sample_rate", "channels", "sample_format",
-                      "stream_errors", "camera"):
+                      "stream_errors", "camera", "frame_ticks"):
             assert field in paths, f"this binding's {field!r} must be declared: {paths}"
         # Composed, so no name may be announced twice (a duplicate would mean the
         # device half silently shadows an RT read).
@@ -317,6 +365,10 @@ def body() -> None:
         assert_rpc_error(lambda: g.intervene(f"{EXT}/channels", 2), data="ReadOnly")
         assert_rpc_error(lambda: g.intervene(f"{EXT}/devices", []), data="ReadOnly")
         assert_rpc_error(lambda: g.intervene(f"{EXT}/stream_errors", 0), data="ReadOnly")
+        # Declared => ReadOnly. This one used to answer `query` while `intervene`
+        # called it UnknownPath — three answers for one path.
+        assert_rpc_error(lambda: g.intervene(f"{EXT}/frame_ticks", 0), data="ReadOnly")
+        assert_rpc_error(lambda: g.intervene(f"{EXT}/camera", []), data="ReadOnly")
         # …and the inner RT surface stays read-via-query, write-via-invoke.
         assert_rpc_error(lambda: g.intervene(f"{EXT}/voice_count", 3), data="ReadOnly")
         assert_rpc_error(lambda: g.intervene(f"{EXT}/peak", 1.0), data="ReadOnly")
