@@ -16,7 +16,7 @@
 //! than the reverse — inventing the engine's `Vec3` inside the audio crate
 //! before that crate exists would be the premature-abstraction mistake.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A point or direction in the engine's right-handed 3D space (metres).
 pub type Vec3 = [f32; 3];
@@ -31,7 +31,7 @@ const NEAR_EPSILON: f32 = 1e-4;
 /// their cross product is the listener's "right", the axis azimuth pan is
 /// measured along. The default faces `-Z` with `+Y` up (the common
 /// right-handed convention), so an emitter at `+X` is heard on the right.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Listener {
     /// World position of the listener.
     pub position: Vec3,

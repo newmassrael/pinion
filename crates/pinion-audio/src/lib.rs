@@ -80,6 +80,7 @@ pub mod mixer;
 pub mod rt;
 pub mod spatial;
 pub mod wav;
+pub mod world;
 
 pub use backend::{AudioBackend, InMemoryAudioBackend, peak, pump};
 pub use clip::AudioClip;
@@ -88,10 +89,11 @@ pub use decode::{DecodeError, decode_compressed};
 pub use device::{CpalError, CpalOutput};
 pub use engine::{Admission, AudioEngine, PlayOptions, ResolvedOutput, VoiceId, VoicePolicy};
 pub use external::{
-    AudioControllerExternal, AudioEngineExternal, RT_EXTERNAL_FIELDS, SharedController, parse_vec3,
-    shared_controller,
+    AudioControllerExternal, AudioEngineExternal, RT_EXTERNAL_FIELDS, SharedController,
+    parse_emitter, parse_vec3, shared_controller,
 };
 pub use mixer::Voice;
 pub use rt::{AudioCommand, AudioController, AudioRenderer, AudioSnapshot, realtime_channel};
 pub use spatial::{Attenuation, Listener, Spatialization, Vec3, spatialize};
 pub use wav::{WavError, decode_wav};
+pub use world::{AudioWorld, AudioWorldClock, use_audio_world_clock};

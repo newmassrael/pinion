@@ -309,6 +309,28 @@ def body() -> None:
             lambda: emitter_distance() is not None and emitter_distance() < 0.01,
             desc="a frame carried the new pose all the way into the MIX",
         )
+
+        # ★ And the EMITTER moves too — the operation a game performs hundreds of
+        # times a frame (one listener, many sounds). `set_emitter` writes the WORLD
+        # only; the frame carries it, exactly like the camera. A direct
+        # `set_voice_position` is REFUSED here, because on this binding the world
+        # owns all spatial state — two unarbitrated writers is the bug that shipped
+        # once already.
+        assert_rpc_error(
+            lambda: inv("set_voice_position", {"id": emitter, "position": [0.0, 0.0, 0.0]}),
+            data="InvokeRejected",
+        )
+        inv("set_emitter", {"id": emitter, "position": [3.0, 0.0, 14.0]})
+        wait_until(
+            lambda: emitter_distance() is not None and abs(emitter_distance() - 8.0) < 0.01,
+            desc="a frame carried the EMITTER pose into the mix",
+        )
+        # `null` un-spatialises it back to its authored pan.
+        inv("set_emitter", {"id": emitter, "position": None})
+        wait_until(
+            lambda: emitter_distance() is None,
+            desc="a frame carried the un-spatialise across",
+        )
         inv("stop", emitter)
         wait_query(g, f"{EXT}/voice_count", 0, desc="emitter stopped")
 

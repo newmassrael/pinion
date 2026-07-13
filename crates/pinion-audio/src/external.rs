@@ -405,12 +405,10 @@ impl AudioControllerExternal {
                 let pan = parse_f32(v.get("pan")).ok_or(InvokeError::TypeMismatch)?;
                 controller.set_voice_pan(id, pan)
             }
-            // `null` un-spatialises the voice back to its authored pan.
+            // `null` un-spatialises the voice back to its authored pan. Same wire
+            // form a world-routed emitter uses — one parser, one contract.
             "set_voice_position" => {
-                let position = match v.get("position") {
-                    Some(serde_json::Value::Null) => None,
-                    p => Some(parse_vec3(p).ok_or(InvokeError::TypeMismatch)?),
-                };
+                let (_, position) = parse_emitter(&v).ok_or(InvokeError::TypeMismatch)?;
                 controller.set_voice_position(id, position)
             }
             // Reached only from the three-arm dispatch in `invoke`; a `_ =>`
@@ -692,6 +690,23 @@ fn attenuation_from_partial(cur: Attenuation, v: &serde_json::Value) -> Attenuat
         max_distance: parse_f32(v.get("max_distance")).unwrap_or(cur.max_distance),
         rolloff: parse_f32(v.get("rolloff")).unwrap_or(cur.rolloff),
     }
+}
+
+/// Parse `{ "id": <int>, "position": [x,y,z] | null }` — the **wire form of an
+/// emitter placement** (`null` un-spatialises the voice back to its authored pan).
+///
+/// Public for the same reason as [`parse_vec3`]: every consumer that accepts an
+/// emitter over RPC — this crate's `set_voice_position`, and a binding that routes
+/// emitters through [`crate::AudioWorld`] instead — must agree on the shape, and a
+/// second hand-rolled parser is how a wire contract starts drifting.
+#[must_use]
+pub fn parse_emitter(v: &serde_json::Value) -> Option<(crate::engine::VoiceId, Option<Vec3>)> {
+    let id = v.get("id").and_then(serde_json::Value::as_u64)?;
+    let position = match v.get("position") {
+        Some(serde_json::Value::Null) => None,
+        p => Some(parse_vec3(p)?),
+    };
+    Some((id, position))
 }
 
 /// Parse an optional JSON `[x, y, z]` array into a [`Vec3`].
