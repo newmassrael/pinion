@@ -28,6 +28,7 @@ pub mod event;
 pub mod external;
 pub mod file_dialog;
 pub mod focus_request;
+pub mod focus_state;
 pub mod frame;
 pub mod input;
 pub mod intent;

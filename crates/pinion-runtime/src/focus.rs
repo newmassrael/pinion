@@ -97,7 +97,7 @@ struct ModalScope {
 ///   scene-derived [`Scene::collect_focusable_tags`](../../pinion_core/enum.Scene.html#method.collect_focusable_tags)
 ///   walk (R1020); Tab advances forward, Shift+Tab backward, both wrap.
 /// - `saved`: snapshot for window blur / refocus restore.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct FocusManager {
     focused: Option<String>,
     tab_order: Vec<String>,
@@ -105,17 +105,66 @@ pub struct FocusManager {
     modal_stack: Vec<ModalScope>,
 }
 
+impl Default for FocusManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FocusManager {
     /// Empty manager — no focus, no focusable enumeration.
+    ///
+    /// Publishes the empty focus to [`pinion_core::focus_state`] so a fresh
+    /// manager starts its thread's mirror clean (hand-written rather than
+    /// derived for exactly that reason — a derived `Default` would leave the
+    /// mirror holding a dead manager's tag).
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        let manager = Self {
+            focused: None,
+            tab_order: Vec::new(),
+            saved: None,
+            modal_stack: Vec::new(),
+        };
+        pinion_core::focus_state::publish(None);
+        manager
     }
 
     /// Currently focused tag, if any.
     #[must_use]
     pub fn focused(&self) -> Option<&str> {
         self.focused.as_deref()
+    }
+
+    /// R1327 §5.39 — the SINGLE write path for [`Self::focused`]. Commits
+    /// `next` and publishes it to [`pinion_core::focus_state`], the mirror a
+    /// binding reads to derive display state from focus (a window title naming
+    /// the focused pane, a status bar, an active-tab highlight). Returns
+    /// whether the focused tag changed — the boolean every mutator below hands
+    /// back to the shell to gate its repaint.
+    ///
+    /// Every mutator funnels through here — Tab traversal, click-to-focus,
+    /// `focus/set` over RPC, a drained
+    /// [`focus_request`](pinion_core::focus_request), a modal trap opening or
+    /// closing, the stale-tag drop in [`Self::update_focusable_tags`],
+    /// window-blur [`Self::restore`] — so the mirror cannot drift from this
+    /// SSOT. Publishing from the *owner* of the state rather than from the
+    /// shell's call sites is deliberate: the shell mutates focus from click,
+    /// key, RPC, request-drain and window-event paths, and one of them
+    /// (`window_focused` → [`Self::restore`]) bypasses even the shell's own
+    /// `notify_focus_change` observer, so any "publish at each call site"
+    /// scheme would already have a stale hole.
+    ///
+    /// The publish equality-skips downstream, and this funnel equality-skips
+    /// here, so a no-op focus commit (re-clicking the focused widget) wakes no
+    /// subscriber.
+    fn commit_focus(&mut self, next: Option<String>) -> bool {
+        if self.focused == next {
+            return false;
+        }
+        self.focused = next;
+        pinion_core::focus_state::publish(self.focused.as_deref());
+        true
     }
 
     /// Focusable enumeration in Tab order. Lent out for the shell /
@@ -140,10 +189,12 @@ impl FocusManager {
     /// enumeration.
     pub fn update_focusable_tags(&mut self, tags: Vec<String>) {
         if self.modal_stack.is_empty() {
-            if let Some(f) = self.focused.as_deref() {
-                if !tags.iter().any(|t| t == f) {
-                    self.focused = None;
-                }
+            let focus_left_the_scene = self
+                .focused
+                .as_deref()
+                .is_some_and(|f| !tags.iter().any(|t| t == f));
+            if focus_left_the_scene {
+                self.commit_focus(None);
             }
         }
         self.tab_order = tags;
@@ -202,14 +253,9 @@ impl FocusManager {
             saved_focus,
             members,
         });
-        match first {
-            Some(tag) => {
-                let changed = self.focused.as_deref() != Some(tag.as_str());
-                self.focused = Some(tag);
-                changed
-            }
-            None => self.focused.take().is_some(),
-        }
+        // `first == None` (a modal with no focusable controls) clears focus —
+        // the funnel's `None` commit is exactly that.
+        self.commit_focus(first)
     }
 
     /// Close the topmost modal focus trap and restore the focus owner
@@ -221,11 +267,10 @@ impl FocusManager {
         let Some(scope) = self.modal_stack.pop() else {
             return false;
         };
-        let before = self.focused.take();
-        self.focused = scope
+        let restored = scope
             .saved_focus
             .filter(|t| self.active_order().iter().any(|x| x == t));
-        before != self.focused
+        self.commit_focus(restored)
     }
 
     /// Move focus to the next focusable widget. Returns `true` if
@@ -248,11 +293,7 @@ impl FocusManager {
         if !self.active_order().iter().any(|t| t == tag) {
             return false;
         }
-        if self.focused.as_deref() == Some(tag) {
-            return false;
-        }
-        self.focused = Some(tag.to_owned());
-        true
+        self.commit_focus(Some(tag.to_owned()))
     }
 
     /// R742.3 §5.39 — resolve a (possibly composite `group#i`) tag to the
@@ -292,7 +333,7 @@ impl FocusManager {
     /// Clear focus. Returns `true` if focus changed (`focused` was
     /// `Some`).
     pub fn focus_clear(&mut self) -> bool {
-        self.focused.take().is_some()
+        self.commit_focus(None)
     }
 
     /// Snapshot the current focused tag for window-blur restore.
@@ -351,11 +392,7 @@ impl FocusManager {
             },
         };
         let new_tag = order[next_idx].clone();
-        if self.focused.as_deref() == Some(new_tag.as_str()) {
-            return false;
-        }
-        self.focused = Some(new_tag);
-        true
+        self.commit_focus(Some(new_tag))
     }
 }
 
@@ -634,6 +671,123 @@ mod tests {
         m.pop_modal_scope();
         assert!(!m.is_modal());
         assert_eq!(m.focused(), Some("root"));
+    }
+
+    // ----- R1327 §5.39: the published focus mirror (PR-53) -----
+
+    /// The tag a binding reads from `pinion_core::focus_state` — the mirror
+    /// this manager publishes on every commit.
+    fn mirror() -> Option<String> {
+        pinion_core::focus_state::focused()
+    }
+
+    /// The invariant the whole seam rests on: what a binding reads is what the
+    /// manager holds. Asserted after every mutation below, so a future mutator
+    /// added outside the `commit_focus` funnel fails here.
+    fn assert_mirrors(m: &FocusManager) {
+        assert_eq!(
+            mirror().as_deref(),
+            m.focused(),
+            "the published mirror must equal the FocusManager's own focused tag",
+        );
+    }
+
+    #[test]
+    fn r1327_new_manager_publishes_empty_focus() {
+        // A dead manager's tag must not survive into a fresh one's mirror.
+        pinion_core::focus_state::publish(Some("stale"));
+        let m = FocusManager::new();
+        assert_eq!(mirror(), None);
+        assert_mirrors(&m);
+    }
+
+    #[test]
+    fn r1327_focus_set_publishes() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["a", "b"]));
+        assert!(m.focus_set("b"));
+        assert_eq!(mirror().as_deref(), Some("b"));
+        assert_mirrors(&m);
+    }
+
+    #[test]
+    fn r1327_tab_traversal_publishes() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["a", "b"]));
+        m.focus_next();
+        assert_eq!(mirror().as_deref(), Some("a"), "Tab publishes");
+        assert_mirrors(&m);
+        m.focus_prev();
+        assert_eq!(mirror().as_deref(), Some("b"), "Shift+Tab publishes (wrap)");
+        assert_mirrors(&m);
+    }
+
+    #[test]
+    fn r1327_focus_clear_publishes() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["a"]));
+        m.focus_set("a");
+        assert!(m.focus_clear());
+        assert_eq!(mirror(), None);
+        assert_mirrors(&m);
+    }
+
+    #[test]
+    fn r1327_dropping_a_focused_tag_that_left_the_scene_publishes() {
+        // The paint-derived enumeration shrank (the focused widget's view
+        // branch went away) — the binding must not keep naming a dead tag.
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["a", "b"]));
+        m.focus_set("a");
+        m.update_focusable_tags(tags(&["b"]));
+        assert_eq!(mirror(), None);
+        assert_mirrors(&m);
+    }
+
+    #[test]
+    fn r1327_modal_push_and_pop_publish() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn"]));
+        m.focus_set("open_btn");
+        m.push_modal_scope(tags(&["ok", "cancel"]));
+        assert_eq!(mirror().as_deref(), Some("ok"), "the trap's auto-focus");
+        assert_mirrors(&m);
+        m.pop_modal_scope();
+        assert_eq!(
+            mirror().as_deref(),
+            Some("open_btn"),
+            "the invoker's restored focus",
+        );
+        assert_mirrors(&m);
+    }
+
+    #[test]
+    fn r1327_window_blur_restore_publishes() {
+        // The path that bypasses the shell's own `notify_focus_change` observer
+        // — publishing from the state's owner is what covers it.
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["a", "b"]));
+        m.focus_set("b");
+        m.save();
+        m.focus_clear();
+        assert_eq!(mirror(), None);
+        assert!(m.restore());
+        assert_eq!(mirror().as_deref(), Some("b"));
+        assert_mirrors(&m);
+    }
+
+    #[test]
+    fn r1327_rejected_focus_set_leaves_the_mirror_untouched() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["a"]));
+        m.focus_set("a");
+        assert!(!m.focus_set("not_focusable"), "unknown tag is rejected");
+        assert_eq!(
+            mirror().as_deref(),
+            Some("a"),
+            "a rejected focus move publishes nothing",
+        );
+        assert_mirrors(&m);
     }
 
     #[test]

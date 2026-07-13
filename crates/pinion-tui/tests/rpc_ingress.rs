@@ -206,6 +206,16 @@ fn r670_dispatch_rpc_focus_set_targets_button_tag() {
         Some("test_btn"),
         "focus/set must update the substrate's FocusManager",
     );
+    // R1327 §5.39 §2 #6 (PR-53) — the focus a binding READS is published by the
+    // `FocusManager` itself, so the TUI backend inherits the seam from the same
+    // state owner the Vello shell uses: one scene, two render dispatch paths,
+    // ONE focus channel. (A shell-side publish would have needed separate wiring
+    // here — and would have drifted the day one backend forgot it.)
+    assert_eq!(
+        pinion_core::focus_state::focused().as_deref(),
+        Some("test_btn"),
+        "the TUI backend publishes the focused tag to the binding too",
+    );
 }
 
 /// R670 §5.41 §5.34 — `scene/click` mutating dispatch bumps the

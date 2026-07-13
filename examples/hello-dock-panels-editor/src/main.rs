@@ -119,6 +119,16 @@ const CONSOLE_PANEL_TAG: &str = "console";
 /// the editor binding. Routes pointer events to the primary external.
 const VIEWPORT_BTN_TAG: &str = "viewport_btn";
 
+/// (R1327 §5.39 §5.16 PR-53) Each panel's content-body paint tag — and, marked
+/// `.with_focusable(true)`, the panel's own FOCUS STOP: Tab roves the panes, a
+/// click lands on one, `focus/set` addresses one. A DCC / IDE / terminal
+/// multiplexer has an "active pane" for exactly this reason, and the editor
+/// needs one to have something to name its window after.
+const OUTLINER_BODY_TAG: &str = "outliner_content_body";
+const VIEWPORT_BODY_TAG: &str = "viewport_content_body";
+const PROPERTIES_BODY_TAG: &str = "properties_content_body";
+const CONSOLE_BODY_TAG: &str = "console_content_body";
+
 /// (R1135 §5.51.1) Toolbar float-policy toggle button tag — the HUMAN GUI
 /// path for the R1134 collapse|placeholder selection (R1134 added the
 /// AI/RPC `set_float_policy` invoke; this lets a person flip it by
@@ -368,7 +378,7 @@ fn use_editor_windows() -> Rc<Signal<Vec<WindowSpec>>> {
         .cache("editor_windows", || {
             Signal::new(vec![WindowSpec::new(
                 Cow::Borrowed(MAIN_WINDOW_ID),
-                "hello-dock-panels-editor — R685 5-pane editor",
+                MAIN_WINDOW_IDLE_TITLE,
                 SizeStrategy::Fixed {
                     width: MAIN_W,
                     height: MAIN_H,
@@ -449,61 +459,136 @@ fn floating_window_title(display: &str) -> String {
     format!("hello-dock-panels-editor — {display} (floating)")
 }
 
-/// `Owner::cache` key of the floating-title sync [`Effect`].
-const FLOATING_TITLE_SYNC_KEY: &str = "floating_title_sync";
+/// (R1327 §5.39 §5.16 PR-53) The main window's title while NO pane owns focus —
+/// the app's own name. Also its boot title (nothing is focused at boot).
+const MAIN_WINDOW_IDLE_TITLE: &str = "hello-dock-panels-editor — R685 5-pane editor";
 
-/// (R665) Lifetime marker holding the floating-title sync [`Effect`] — an Effect must
+/// (R1327 §5.39 §5.16 PR-53) The main window's OS title given the display name of
+/// the pane that currently owns focus: **the window is named after its ACTIVE
+/// PANE** — the tmux / gnome-terminal / VS Code convention, and the rule sprag's
+/// terminal multiplexer needs (its child processes rename their panes through
+/// `OSC 0`, and the window follows whichever pane you are typing into).
+///
+/// This is APP policy, not framework policy: pinion supplies the focused tag
+/// ([`pinion_core::focus_state::focused`]) and the live-title seam
+/// ([`WindowSpec::title`], R1319); which pane, and how to word it, is the
+/// binding's business.
+fn main_window_title(focused_pane_display: Option<&str>) -> String {
+    match focused_pane_display {
+        Some(display) => format!("hello-dock-panels-editor — {display}"),
+        None => MAIN_WINDOW_IDLE_TITLE.to_owned(),
+    }
+}
+
+/// (R1327 §5.39 §5.16 PR-53) Which PANEL owns the focused paint tag — the
+/// binding-side map from a FOCUS STOP to the pane containing it (sprag's peer is
+/// `pane_index_of`: focus tag → tile index).
+///
+/// A panel's body is its own focus stop, and a control INSIDE a panel names that
+/// panel too (focusing the viewport's button means the viewport is the active
+/// pane — what every DCC does). Focus stops that belong to no pane (the toolbar's
+/// buttons, which live in the fixed app frame, not the dock workspace) map to
+/// `None`: the window then shows the app's own name rather than lying about an
+/// active pane.
+fn panel_of_focus(tag: &str) -> Option<&'static str> {
+    match tag {
+        OUTLINER_BODY_TAG => Some(OUTLINER_PANEL_TAG),
+        VIEWPORT_BODY_TAG | VIEWPORT_BTN_TAG => Some(VIEWPORT_PANEL_TAG),
+        PROPERTIES_BODY_TAG => Some(PROPERTIES_PANEL_TAG),
+        CONSOLE_BODY_TAG => Some(CONSOLE_PANEL_TAG),
+        _ => None,
+    }
+}
+
+/// `Owner::cache` key of the window-title sync [`Effect`].
+const WINDOW_TITLE_SYNC_KEY: &str = "window_title_sync";
+
+/// (R665) Lifetime marker holding the window-title sync [`Effect`] — an Effect must
 /// be RETAINED to keep firing.
-struct FloatingTitleSyncMarker {
+struct WindowTitleSyncMarker {
     _effect: Effect,
 }
 
-/// (R1319 §5.16 §5.41 PR-52) Keep every FLOATING window's OS title in sync with the
-/// display title of the panel it hosts — the editor's forcing consumer for the shell's
-/// new live-title reconcile pass (pre-R1319 `WindowSpec::title` was create-time-only,
-/// so a torn-off panel's window kept its boot title forever).
+/// (R1319 §5.16 §5.41 PR-52 / R1327 §5.39 PR-53) Keep every window's OS title in
+/// sync with the panel it is showing:
 ///
-/// An EFFECT, not a reducer arm: "a floating window is titled after the panel it
-/// hosts" is a DERIVED invariant that must hold for EVERY writer of the title map.
-/// The RPC `scene/intervene` is only this demo's writer; the real consumer's titles
-/// arrive from a child process's `OSC 0` escape (sprag PR-52), never through an
-/// intent. A reducer arm would hold the invariant for exactly one of those paths.
+/// * a FLOATING window hosts exactly one panel → it is titled after that panel's
+///   display name (R1319 — the forcing consumer for the shell's live-title
+///   reconcile pass; pre-R1319 `WindowSpec::title` was create-time-only, so a
+///   torn-off panel's window kept its boot title forever);
+/// * the MAIN window tiles many panes → it is titled after the pane that owns
+///   FOCUS (R1327 — the tmux / gnome-terminal convention), falling back to the app
+///   name when focus rests outside the dock workspace.
 ///
-/// Subscribes the title map ONLY. The windows list is read + written through
-/// [`Signal::set_with`], which does NOT subscribe — so the Effect cannot re-trigger
-/// itself — and [`Signal::set`] equality-skips, so a title change touching no floating
-/// window costs no reconcile at all.
-fn install_floating_title_sync() -> Rc<FloatingTitleSyncMarker> {
-    let owner = Owner::current().expect("install_floating_title_sync() requires an Owner scope");
+/// The focused pane is read with [`pinion_core::focus_state::focused`], which
+/// subscribes this Effect: click a pane, Tab to it, or `focus/set` it over RPC and
+/// the title follows. That read is what PR-53 added — before it, focus reached a
+/// binding only as an `apply_key` argument (so a title could only track focus while
+/// keys were being pressed, and silently lied after any click) or from the a11y
+/// hook (which does not run when no assistive client is attached). Neither can hold
+/// this invariant; caching either would be a display bug waiting to happen.
+///
+/// An EFFECT, not a reducer arm: "a window is titled after the panel it shows" is a
+/// DERIVED invariant that must hold for EVERY writer of its inputs. The RPC
+/// `scene/intervene` is only this demo's title writer; the real consumer's titles
+/// arrive from a child process's `OSC 0` escape (sprag), never through an intent —
+/// and focus has no intent at all, it is shell state. A reducer arm would hold the
+/// invariant for exactly one of those paths.
+///
+/// Subscribes all THREE live inputs the titles derive from — the display-title map,
+/// the focused tag, and the window set itself (a pane that has been torn off titles
+/// its OWN window, so the main window must stop naming it: tearing off the active
+/// pane changes the answer without changing focus or any title). Missing that third
+/// subscription is a silent staleness bug, not a missing repaint: the Effect simply
+/// never re-derives.
+///
+/// The Effect reads AND writes the window list, which is safe and terminating
+/// because the projection is idempotent: it rewrites only the `title` field from
+/// inputs that do not depend on the title, so re-running it on its own output
+/// produces the same list, and [`Signal::set`]'s equality-skip stops the chain
+/// there. (The reactive substrate also drops a self-directed `mark_dirty` raised
+/// during an Effect's own run, so the write cannot even schedule the second pass.)
+fn install_window_title_sync() -> Rc<WindowTitleSyncMarker> {
+    let owner = Owner::current().expect("install_window_title_sync() requires an Owner scope");
     let titles = use_panel_titles();
     let windows = use_editor_windows();
     let owner_for_effect = owner.clone();
-    owner.cache(FLOATING_TITLE_SYNC_KEY, move || {
+    owner.cache(WINDOW_TITLE_SYNC_KEY, move || {
         let titles_e = Rc::clone(&titles);
         let windows_e = Rc::clone(&windows);
         let effect = Effect::new(&owner_for_effect, move || {
-            let titles = titles_e.get().0; // the Effect's ONLY subscription
+            let titles = titles_e.get().0; // subscription 1: the display-title map
+            let focused = pinion_core::focus_state::focused(); // subscription 2: the active pane
+            let specs = windows_e.get(); // subscription 3: which panes are torn off
             let chrome = editor_chrome(&titles);
-            windows_e.set_with(|specs| {
-                specs
-                    .iter()
-                    .map(
-                        |spec| match spec.id.strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX) {
-                            // A floating window hosts exactly one panel (its id encodes
-                            // which): retitle it after that panel's display name.
-                            Some(panel) => spec
-                                .clone()
-                                .with_title(floating_window_title(&chrome.title_for(panel))),
-                            // The main window is not a panel host — the binding owns its
-                            // title (a terminal multiplexer would point it at the FOCUSED
-                            // pane here; that rule is app policy, not framework policy).
-                            None => spec.clone(),
-                        },
-                    )
-                    .collect()
-            });
+            // The pane the MAIN window names: the focused one, unless it has been torn
+            // off (it names its own floating window then) or it is no pane at all (a
+            // toolbar control — the app frame, not the dock workspace).
+            let active_pane = focused
+                .as_deref()
+                .and_then(panel_of_focus)
+                .filter(|panel| !is_panel_floating(&specs, panel))
+                .map(|panel| chrome.title_for(panel).into_owned());
+            let retitled: Vec<WindowSpec> = specs
+                .iter()
+                .map(
+                    |spec| match spec.id.strip_prefix(DEFAULT_FLOATING_WINDOW_PREFIX) {
+                        // A floating window hosts exactly one panel (its id encodes
+                        // which): it is titled after that panel's display name.
+                        Some(panel) => spec
+                            .clone()
+                            .with_title(floating_window_title(&chrome.title_for(panel))),
+                        // The main window tiles many panes: it is titled after the
+                        // ACTIVE one.
+                        None => spec
+                            .clone()
+                            .with_title(main_window_title(active_pane.as_deref())),
+                    },
+                )
+                .collect();
+            windows_e.set(retitled);
         });
-        FloatingTitleSyncMarker { _effect: effect }
+        WindowTitleSyncMarker { _effect: effect }
     })
 }
 
@@ -534,7 +619,7 @@ fn floating_window_position(panel_id: &str) -> (i32, i32) {
 /// `decorations:false`; the main window keeps the default `decorations:true`.
 fn floating_window_spec(panel_id: &str, pos: (i32, i32)) -> WindowSpec {
     // (R1319 §5.16 PR-52) A panel that was already renamed opens its floating window
-    // under its DISPLAY name — the same title `install_floating_title_sync` keeps it
+    // under its DISPLAY name — the same title `install_window_title_sync` keeps it
     // at afterwards (one rule, whether the rename precedes or follows the tear-off).
     let titles = use_panel_titles().get().0;
     let display = editor_chrome(&titles).title_for(panel_id);
@@ -881,9 +966,10 @@ fn view_outliner_content(theme: &Theme) -> Scene {
         .collect();
     Scene::Container(
         ContainerNode::new(row_scenes)
-            .with_tag("outliner_content_body")
+            .with_tag(OUTLINER_BODY_TAG)
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Stretch)
                     .with_padding(Rect::new(8, 8, 8, 8)),
@@ -910,9 +996,10 @@ fn view_viewport_content(state: ButtonState, theme: &Theme) -> Scene {
     let button_paint = view_viewport_button(state, theme);
     Scene::Container(
         ContainerNode::new(vec![header, counter, button_paint])
-            .with_tag("viewport_content_body")
+            .with_tag(VIEWPORT_BODY_TAG)
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Center)
@@ -986,9 +1073,10 @@ fn view_properties_content(theme: &Theme) -> Scene {
         .collect();
     Scene::Container(
         ContainerNode::new(row_scenes)
-            .with_tag("properties_content_body")
+            .with_tag(PROPERTIES_BODY_TAG)
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Stretch)
                     .with_padding(Rect::new(8, 8, 8, 8)),
@@ -1020,9 +1108,10 @@ fn view_console_content(theme: &Theme) -> Scene {
         .collect();
     Scene::Container(
         ContainerNode::new(row_scenes)
-            .with_tag("console_content_body")
+            .with_tag(CONSOLE_BODY_TAG)
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Stretch)
                     .with_padding(Rect::new(8, 8, 8, 8)),
@@ -1408,10 +1497,11 @@ impl WidgetCore for DockPanelsEditorView {
             DOCK_UNDO_TAG,
             Box::new(UndoStackExternal::new(use_dock_undo())),
         ));
-        // (R1319 §5.16 §5.41 PR-52) Install the floating-title sync Effect FIRST, so
-        // the derived invariant (a floating window is titled after the panel it hosts)
-        // is live before the first paint and never runs inside the pure view-fn.
-        let _floating_titles = install_floating_title_sync();
+        // (R1319 PR-52 / R1327 PR-53 §5.16 §5.39 §5.41) Install the window-title sync
+        // Effect FIRST, so the derived invariant (every window is titled after the panel
+        // it shows — a floater after its host panel, the main window after its FOCUSED
+        // pane) is live before the first paint and never runs inside the pure view-fn.
+        let _window_titles = install_window_title_sync();
         // (R1318 §5.16 §5.51 PR-52) The per-panel DISPLAY-TITLE map on the wire —
         // the lifted `SignalExternal` substrate (query + intervene over the SAME
         // `Signal` the view reads), not a bespoke External: the app owns the title
