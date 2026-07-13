@@ -51,6 +51,11 @@
 //! card first, which is how a "first match wins" policy sends a silent-card test
 //! out of the speakers.
 //!
+//! The environment variable only picks the *boot* device. Switching afterwards is
+//! on the wire — `invoke set_device "<name>"` — because `devices` telling an agent
+//! where sound *could* go while offering no way to go there would make the human's
+//! shell more capable than the AI's §2 #2 primary path.
+//!
 //! It is a *real* device with a *real* hardware-style clock — the callback fires
 //! on a timer exactly as a sound card's does — it simply discards the samples.
 //! That is the audio analogue of rendering through lavapipe instead of a GPU, and
@@ -76,11 +81,14 @@
 //!   real RPC thread, concurrently — works end to end.
 //! - **Not that the samples reaching the card are correct.** The snapshot's `peak`
 //!   is measured on the stereo mix *before* [`pinion_audio`]'s device path converts
-//!   it to the card's sample format and channel layout — so no introspection read,
-//!   and therefore no assertion in the demo, can see a bug in that conversion. It
-//!   is covered by unit tests instead (`write_frames` in `pinion-audio`'s
-//!   `device.rs`). Capturing what the card actually *received* (an `snd-aloop`
-//!   loopback) is a further step this binary does not take.
+//!   it to the card's sample format and channel layout — so no *introspection read*
+//!   can see a bug in that conversion, and the unit tests on `write_frames` (in
+//!   `pinion-audio`'s `device.rs`) are what cover it today. That is a **deferral,
+//!   not an impossibility**: an `snd-aloop` loopback (output → capture on the same
+//!   host — the same trick as the silent card, one step further) would verify the
+//!   bytes the card actually *received*, including the two things a pure unit test
+//!   structurally cannot — the channel count really passed in, and the buffer
+//!   slicing in the live callback. Not done yet.
 //!
 //! ## The per-frame, control-side audio tick — built, not deferred
 //!
@@ -119,13 +127,13 @@
 //! fixed-timestep game loop's own `Send` subsystem registry (audio alongside
 //! physics / AI, off the UI thread). Per-frame audio itself is here.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_audio::{
-    AudioClip, AudioControllerExternal, CpalOutput, RT_EXTERNAL_FIELDS, SharedController, Vec3,
-    parse_vec3, shared_controller,
+    AudioClip, AudioControllerExternal, CpalError, CpalOutput, RT_EXTERNAL_FIELDS,
+    SharedController, Vec3, parse_vec3, shared_controller,
 };
 use pinion_core::animation::Tickable;
 use pinion_core::external::{
@@ -175,10 +183,10 @@ const TONE_AMPLITUDE: f32 = 0.9;
 ///   back; without this, silence-because-idle and silence-because-the-output-is-
 ///   gone read identically.
 ///
-/// Switching device at runtime is a different thing and is NOT here: it means
-/// rebuilding the renderer, controller and clip registry and re-homing live
-/// voices. That is real work, not a slot to write to — hence read-only fields and
-/// no `set_device` verb.
+/// The fields stay **read-only**, but switching device is not therefore absent:
+/// it is `invoke set_device "<name>"`. A device change is an *action* with real
+/// consequences (the old stream stops, live voices are lost), not a slot to poke —
+/// so it is a verb, and the reads report the outcome.
 const DEVICE_FIELDS: &[(&str, &str)] = &[
     ("device", "text"),
     ("devices", "json"),
@@ -327,8 +335,9 @@ fn open_output() -> (pinion_audio::AudioController, CpalOutput) {
 struct AudioRig {
     /// Shared with [`AudioFollowClock`]: two control-thread drivers, one queue.
     controller: SharedController,
-    /// Owns the live stream — dropping the rig stops the device.
-    out: CpalOutput,
+    /// Owns the live stream — dropping the rig stops the device. In a `RefCell`
+    /// because the output is **switchable at runtime** (see `set_device`).
+    out: RefCell<CpalOutput>,
     /// The game-side state the clock carries to the audio thread.
     world: Rc<World>,
 }
@@ -409,7 +418,7 @@ impl World {
 impl std::fmt::Debug for AudioRig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioRig")
-            .field("device", &self.out.device_name())
+            .field("device", &self.out.borrow().device_name())
             .field("camera", &self.world.camera_position())
             .finish_non_exhaustive()
     }
@@ -427,9 +436,44 @@ impl AudioRig {
         );
         Self {
             controller: shared_controller(controller),
-            out,
+            out: RefCell::new(out),
             world: Rc::new(World::default()),
         }
+    }
+
+    /// **Switch the output device at runtime.** Open `name`, hand the new
+    /// renderer to its callback, and swap both halves behind the shared handles —
+    /// the RPC surface and the frame clock keep the same `Rc`s and never notice.
+    ///
+    /// An earlier round refused to build this and justified it by claiming a
+    /// switch "means rebuilding the renderer, controller **and clip registry** and
+    /// re-homing live voices". Two thirds of that was invented:
+    ///
+    /// - **Clips need nothing.** They are `Arc<AudioClip>` held by the External,
+    ///   and every voice *resamples* its clip to the engine's rate — so a device
+    ///   at a different rate reuses them untouched. The library is not even
+    ///   reachable from here.
+    /// - **The controller swap is one assignment**, because it lives behind a
+    ///   [`SharedController`] — which the very round that wrote the excuse shipped.
+    ///
+    /// What is genuinely true is the third: **live voices do not survive.** The old
+    /// engine dies with the old stream. That is what every DAW and game engine does
+    /// on a device switch, and it is honest to say so rather than to pretend the
+    /// whole feature is expensive.
+    ///
+    /// On failure the CURRENT device keeps playing and the error is returned — a
+    /// bad name must never leave the app silent.
+    fn set_device(&self, name: &str) -> Result<(), CpalError> {
+        let (controller, out) = CpalOutput::start_on(name, RING_CAP, MAX_VOICES)?;
+        // Swap behind the Rc: every holder of the shared controller (the External,
+        // the clock) now drives the new device's queue.
+        *self.controller.borrow_mut() = controller;
+        // Dropping the old `CpalOutput` here stops the old stream.
+        *self.out.borrow_mut() = out;
+        // The new engine has never heard of the world, so re-arm the push: the
+        // next frame carries the listener pose onto the new device.
+        self.world.set_camera(self.world.camera_position());
+        Ok(())
     }
 }
 
@@ -551,7 +595,7 @@ impl DeviceAudioExternal {
         let rig = audio_rig();
         // The engine renders at the device's rate, so author the clips there too
         // (per-voice resampling would handle a mismatch; matching is just tidier).
-        let rate = rig.out.sample_rate();
+        let rate = rig.out.borrow().sample_rate();
         let inner = AudioControllerExternal::from_shared(rig.controller.clone())
             // Looping, so it stays live for as long as the demo polls it.
             .with_clip(
@@ -577,7 +621,9 @@ impl ExternalIntrospect for DeviceAudioExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "device" => Some(IntrospectValue::Text(self.rig.out.device_name().to_owned())),
+            "device" => Some(IntrospectValue::Text(
+                self.rig.out.borrow().device_name().to_owned(),
+            )),
             // What the host offers — the list a settings panel is built on. Read
             // live, so a device appearing or vanishing shows up without a restart.
             // An enumeration FAILURE is `Null`, not `[]`: on the one surface whose
@@ -588,17 +634,21 @@ impl ExternalIntrospect for DeviceAudioExternal {
                 Ok(names) => IntrospectValue::json(&names),
                 Err(_) => IntrospectValue::Null,
             }),
-            "sample_rate" => Some(IntrospectValue::Int(i64::from(self.rig.out.sample_rate()))),
-            "channels" => Some(IntrospectValue::Int(i64::from(self.rig.out.channels()))),
+            "sample_rate" => Some(IntrospectValue::Int(i64::from(
+                self.rig.out.borrow().sample_rate(),
+            ))),
+            "channels" => Some(IntrospectValue::Int(i64::from(
+                self.rig.out.borrow().channels(),
+            ))),
             // A stable wire token, not `Debug` of a foreign `#[non_exhaustive]`
             // enum — cpal's rendering is not ours to promise.
             "sample_format" => Some(IntrospectValue::Text(
-                self.rig.out.sample_format_wire().to_owned(),
+                self.rig.out.borrow().sample_format_wire().to_owned(),
             )),
             // Non-zero means the output has faulted — the only reading that tells
             // "nothing is playing" apart from "the device is gone".
             "stream_errors" => Some(IntrospectValue::Int(
-                i64::try_from(self.rig.out.stream_errors()).unwrap_or(i64::MAX),
+                i64::try_from(self.rig.out.borrow().stream_errors()).unwrap_or(i64::MAX),
             )),
             // Where the game's camera is. Compare it with `listener` to watch the
             // per-frame clock catch up: `set_camera` moves THIS, and only the
@@ -628,6 +678,28 @@ impl ExternalIntrospect for DeviceAudioExternal {
         path: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
+        // ★ Switch the output device — the half of the seam that was missing.
+        // `devices` told an agent where sound COULD go while giving it no way to
+        // go there: selection was possible only through an environment variable,
+        // i.e. a human with a shell could do what the AI's §2 #2 *primary* path
+        // could not. This closes that.
+        if path == "set_device" {
+            let IntrospectValue::Text(name) = args else {
+                return Err(InvokeError::TypeMismatch);
+            };
+            return match self.rig.set_device(&name) {
+                Ok(()) => {
+                    self.pending_intents.push(Intent::new_static(
+                        "audio.device",
+                        IntrospectValue::Text(name),
+                    ));
+                    Ok(IntrospectValue::Null)
+                }
+                // The CURRENT device is still playing — a bad name must never
+                // leave the app silent, so this is a loud refusal, not a fault.
+                Err(_) => Err(InvokeError::Rejected),
+            };
+        }
         // On THIS binding the WORLD owns the listener: the per-frame clock is its
         // sole writer. A raw `set_listener` would silently win — and could not be
         // taken back, because the clock only re-asserts when the camera *changes*

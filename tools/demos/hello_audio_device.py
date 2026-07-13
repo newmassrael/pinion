@@ -98,6 +98,9 @@ EXT = "/external"
 SILENT_CARD = "hw:CARD=Dummy,DEV=0"
 # What the opened device's name must contain — the card, whatever PCM prefix.
 SILENT_CARD_MARK = "Dummy"
+# A SECOND PCM on the same silent card, so `set_device` can be proven over the
+# wire without any risk of the test ever becoming audible.
+SECOND_SILENT_PCM = "plughw:CARD=Dummy,DEV=0"
 
 # Peak is the max |sample| of the last block the audio thread rendered. The tone
 # is authored at 0.9, so "audible" clears this comfortably and "silent" is well
@@ -336,7 +339,43 @@ def body() -> None:
         # The per-frame sync is observable — declared, and non-zero because it ran.
         assert q("frame_ticks") >= 1, "the audio sync has run"
 
-        # ── (H) the composed schema, ON THE WIRE — not just in a unit test. ────
+        # ── (H) SWITCH THE DEVICE over RPC. ──────────────────────────────────
+        # `devices` used to tell an agent where sound COULD go while giving it no
+        # way to go there — selection was possible only via an environment
+        # variable, so a human with a shell could do what the AI's §2 #2 *primary*
+        # path could not. Both PCMs below are the SILENT dummy card, so this can
+        # never become audible.
+        assert SECOND_SILENT_PCM in q("devices"), q("devices")
+        assert_eq(q("device"), SILENT_CARD, "still on the first PCM")
+        inv("set_device", SECOND_SILENT_PCM)
+        wait_query(g, f"{EXT}/device", SECOND_SILENT_PCM, desc="the output switched")
+        # A REAL device, freshly opened: its callback thread is running.
+        wait_until(
+            lambda: q("frames_rendered") > 0,
+            desc="the new device's callback thread is live",
+        )
+        assert q("sample_rate") > 0 and q("channels") >= 1
+        assert_eq(q("stream_errors"), 0, "the new stream is healthy")
+        # The world was re-pushed onto the new engine — the listener is NOT lost.
+        wait_until(
+            lambda: q("listener")["position"] == [-1.0, 2.0, 0.0],
+            desc="the camera pose is carried onto the new device",
+        )
+        # And the clip library survived the switch (it is Arc'd and resampled —
+        # the thing the old docstring claimed had to be "rebuilt").
+        inv("play", {"name": "tone", "looping": True})
+        wait_query(g, f"{EXT}/voice_count", 1, desc="clips still play after a switch")
+        wait_until(lambda: q("peak") > AUDIBLE, desc="the new device renders them")
+        inv("stop_all", None)
+        wait_query(g, f"{EXT}/voice_count", 0, desc="stopped")
+
+        # A bad name is REFUSED and the current device keeps playing — a typo must
+        # never leave the app silent.
+        assert_rpc_error(lambda: inv("set_device", "no::such::device"), data="InvokeRejected")
+        assert_eq(q("device"), SECOND_SILENT_PCM, "still on the working device")
+        assert_eq(q("stream_errors"), 0, "and it is still healthy")
+
+        # ── (I) the composed schema, ON THE WIRE — not just in a unit test. ────
         # This binding's schema is the RT surface's fields + its device fields,
         # composed at compile time. Proving that in Rust only would be an
         # in-process check of exactly the kind §2 #2 exists to replace — so read
@@ -351,7 +390,7 @@ def body() -> None:
         # device half silently shadows an RT read).
         assert len(paths) == len(set(paths)), f"$schema announces a field twice: {paths}"
 
-        # ── (I) loud failures, and NO step-verb (the device is the pump). ─────
+        # ── (J) loud failures, and NO step-verb (the device is the pump). ─────
         # hello-audio-rt has `invoke render N`; this binary must not — asserting
         # its absence is what proves the pump is the device, not the demo.
         assert_rpc_error(lambda: inv("render", 1), data="UnknownInvokePath")

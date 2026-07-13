@@ -132,6 +132,12 @@ jobs:
         # itself would rot invisibly ([[ignored-integration-tests-fall-through-ci]]),
         # and `hello-audio-device` itself aborts rather than falling back to an
         # audible default, so a missing card can never masquerade as a pass.
+        #
+        # PROVISIONAL: this step has never executed on a GitHub runner (it was
+        # authored on a dev box). If `modprobe` is unavailable on the runner image,
+        # this goes red for every PR — which is the correct failure mode, but do NOT
+        # record "the device path is CI-covered" as settled until a green run is
+        # actually observed.
         run: |
           sudo modprobe snd-dummy \
             || (sudo apt-get install -y "linux-modules-extra-$(uname -r)" \
