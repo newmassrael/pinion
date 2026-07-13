@@ -1256,21 +1256,35 @@ def assert_focus_ring_concentric(snap: Any, offset: int = 2) -> Optional[str]:
     ring = rects.get(FOCUS_RING_TAG)
     if ring is None:
         return None
+    # (R1324) The VIEWPORT the ring was clamped into — the snapshot root's own rect.
+    # `build_focus_ring_box` clamps the ring's FAR edges into it (R1022), so a node
+    # flush to the window's right / bottom edge gets a SHORTER ring, not one drawn
+    # outside the framebuffer. Modelling only the near clamp (below) made this helper
+    # demand a ring 2px past the window bottom for such a node — `hello-nav-rail`'s
+    # full-height rail — so `r705_focus_ring_placement` failed against CORRECT shell
+    # output. The helper, not the framework, was stale.
+    root = snap.get("rect") if isinstance(snap, dict) else None
+    view_w = int(root.get("w", 0)) if isinstance(root, dict) else 0
+    view_h = int(root.get("h", 0)) if isinstance(root, dict) else 0
 
     def inflate_sat(r: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-        # Mirrors `build_focus_ring_box` (R806): clamp the near origin and
-        # shrink the span by the same clamped amount so the far edge stays at
-        # `target + offset` — the ring is concentric, with the framebuffer
-        # edge clipping any lost near gap. The LEFT origin floors at 0; the
-        # TOP origin floors at TOP_EDGE_INSET (1px) to dodge the vello y=0
-        # top-tile flood (a stroke touching the framebuffer top row
-        # rasterises ~16px thick). Identical to the plain `+2*offset` inflate
-        # for any node clear of the top/left edge.
+        # Mirrors `build_focus_ring_box`: (1) clamp the near origin and shrink the span
+        # by the same clamped amount so the far edge stays at `target + offset` — the
+        # ring is concentric, with the framebuffer edge clipping any lost near gap; the
+        # LEFT origin floors at 0 and the TOP origin floors at TOP_EDGE_INSET (1px) to
+        # dodge the vello y=0 top-tile flood (a stroke touching the framebuffer top row
+        # rasterises ~16px thick). (2) R1022: clamp the FAR edges into the viewport, so
+        # the stroke of an edge-flush node lands fully visible. Identical to the plain
+        # `+2*offset` inflate for any node clear of every window edge.
         top_edge_inset = 1
         x = max(0, r[0] - offset)
         y = max(top_edge_inset, r[1] - offset)
         ideal_right = r[0] + r[2] + offset
         ideal_bottom = r[1] + r[3] + offset
+        if view_w:
+            ideal_right = min(ideal_right, view_w)
+        if view_h:
+            ideal_bottom = min(ideal_bottom, view_h)
         return (x, y, ideal_right - x, ideal_bottom - y)
 
     for tag, r in rects.items():
