@@ -631,8 +631,26 @@ pub struct WindowSpec {
     /// `Cow::Owned(format!("torn-panel-{n}"))`) coexist without a
     /// separate field shape.
     pub id: Cow<'static, str>,
-    /// OS window title — `winit::window::Window::set_title` forwards
-    /// this string to the platform window decoration.
+    /// OS window title — the string the platform shows in the window decoration,
+    /// the taskbar / window list, and alt-tab.
+    ///
+    /// R1319 §5.16 §5.41 PR-52 — a LIVE, reconcilable axis (like
+    /// [`position`](Self::position), unlike [`strategy`](Self::strategy) /
+    /// [`decorations`](Self::decorations), which are create-time intent): applied at
+    /// create by `Window::with_title`, and on a same-id change by [`crate::AppShell`]'s
+    /// `reconcile_windows` title pass (`Window::set_title`), so a binding renames a
+    /// live window simply by writing this field into its
+    /// [`pinion_core::Signal<Vec<WindowSpec>>`]. The forcing
+    /// consumer is the terminal-multiplexer convention — the OS title follows the
+    /// focused pane, whose child renames it on every prompt.
+    ///
+    /// (Pre-R1319 this doc already promised the `set_title` forwarding, but the
+    /// shell only ever read `title` at create: renaming a live window silently did
+    /// nothing. The promise is now kept.)
+    ///
+    /// The DECLARED title is the single source of truth — there is no write-back
+    /// twin to R1088's position convergence, because nothing outside the binding can
+    /// rename a window.
     pub title: String,
     /// Window-creation policy. See [`SizeStrategy`] for the canonical
     /// contract; multi-window bindings can mix strategies per spec
@@ -788,6 +806,22 @@ impl WindowSpec {
     #[must_use]
     pub fn with_decorations(mut self, decorations: bool) -> Self {
         self.decorations = decorations;
+        self
+    }
+
+    /// R1319 §5.16 §5.41 PR-52 — re-declare this window's OS
+    /// [`title`](Self::title). Completes the builder family over the DECLARED
+    /// axes ([`with_position`](Self::with_position) /
+    /// [`with_decorations`](Self::with_decorations)), and is the operation the
+    /// title axis needs now that it is LIVE: a binding whose window title tracks
+    /// app state (a terminal's focused pane, an editor's open document) derives a
+    /// retitled spec from the old one and writes it back to its
+    /// [`pinion_core::Signal<Vec<WindowSpec>>`] — `reconcile_windows`'s title pass
+    /// then drives the real window. Hand-mutating the pub field would work too;
+    /// this keeps the derive-and-write-back a one-liner inside a `set_with`.
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
         self
     }
 }

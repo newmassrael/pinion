@@ -34,8 +34,20 @@ This drives it over the real wire and observes §2 #7 scene-as-data:
       `DuplicatePanelId` collision the id-as-title workaround would have caused).
   (F) A torn-off panel keeps its display name in its own floating window (one
       naming SSOT across docked + floating chrome).
+  (G) R1319 — the OS WINDOW TITLE of that floating window follows a LIVE retitle
+      (pre-R1319 `WindowSpec::title` was read once, at create).
 
 The live FEEL is HW-gated; this pins what is observable as scene-as-data.
+
+WHAT (G) DOES AND DOES NOT ASSERT. The declared title (`scene/windows`) is sampled
+UPSTREAM of the reconcile pass under test, so on its own it would prove only that the
+binding's Effect ran — not that the shell drove the OS window. The apply itself is
+therefore asserted through the shell's own production `tracing` line ("window title
+updated", `PINION_LOG=pinion::shell=debug`), which fires inside the pass, after
+`Window::set_title`. The X-server layer below that is winit's contract, not asserted
+here: winit's X11 `Window::title()` is a stub returning an empty string, so there is
+no title read-back to converge on (which is also why, unlike position (R1088), the
+title axis has no declared→actual write-back).
 """
 
 from __future__ import annotations
@@ -50,6 +62,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_stderr,
     wait_until,
 )
 
@@ -139,15 +152,38 @@ def _set_titles(tf: RpcSubprocess, titles: dict[str, str]) -> None:
     tf.intervene(TITLES, titles)
 
 
+def _windows(tf: RpcSubprocess) -> list[dict]:
+    resp = tf.request("scene/windows", {})
+    assert resp is not None and resp.result is not None, "scene/windows must answer"
+    return resp.result["windows"]
+
+
 def _floating_ids(tf: RpcSubprocess) -> set:
-    return {w["id"] for w in tf.request("scene/windows", {}).result["windows"]}
+    return {w["id"] for w in _windows(tf)}
+
+
+def _declared_title(tf: RpcSubprocess, window_id: str) -> Optional[str]:
+    """The window's DECLARED OS title (`scene/windows`) — the binding's spec.
+
+    Note this is sampled upstream of the shell's `set_title` pass; section (G)
+    asserts the pass itself through the shell's tracing line.
+    """
+    for w in _windows(tf):
+        if w["id"] == window_id:
+            return w.get("title")
+    return None
 
 
 # ─── demo body ───────────────────────────────────────────────────────
 
 
 def body() -> None:
-    with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+    # (R1319) Raise the shell's log level so its `tracing` title-apply line reaches
+    # stderr (default filter is `warn`) — section (G)'s observable for a pass whose
+    # OS effect winit gives no read-back for.
+    with RpcSubprocess(
+        EXAMPLE, boot_grace=1.5, env={"PINION_LOG": "pinion::shell=debug"}
+    ) as tf:
         # ── (A) boot: no titles declared → identity IS the display name ──
         assert_eq(_panel_ids(_topology(tf)), ALL_PANELS, "A.1 four panels at boot")
         assert_eq(tf.query(TITLES), {}, "A.2 no display titles declared")
@@ -275,6 +311,35 @@ def body() -> None:
             )
             is not None
         ), "F.3 ★…and is still addressed by its panel id in its own window"
+
+        # ── (G) R1319: the OS window title follows a LIVE retitle ────────
+        # The floating window opened while `console` was already titled `vim README`
+        # (the tear-off in (F) read the same display-title SSOT).
+        assert_eq(
+            _declared_title(tf, floating),
+            f"{EXAMPLE} — {VIM} (floating)",
+            "G.1 the torn-off window OPENS under the panel's display name",
+        )
+        # ★Now RENAME the panel while its window is already open — the case that was
+        # structurally impossible pre-R1319 (`title` was read once, at create).
+        _set_titles(tf, {OUTLINER: VIM, CONSOLE: HTOP})
+        wait_until(
+            lambda: _declared_title(tf, floating) == f"{EXAMPLE} — {HTOP} (floating)",
+            desc="G.2 the binding's Effect re-declares the window title",
+        )
+        # ★…and the SHELL drove the real window: this trace fires inside
+        # `reconcile_windows`'s title pass, AFTER `Window::set_title`. Without the
+        # R1319 pass the declared title above would change and the OS window would
+        # silently keep its boot title — exactly the pre-R1319 gap.
+        wait_stderr(
+            tf,
+            "window title updated",
+            desc="G.3 ★the shell APPLIED the new title to the live OS window",
+        )
+        applied = [ln for ln in tf.stderr_tail(120) if "window title updated" in ln]
+        assert any(floating in ln and HTOP in ln for ln in applied), (
+            f"G.4 ★the apply names the right window + title, got {applied}"
+        )
 
         print("[demo] r1318_dock_display_title: all sections PASS (display title ⊥ identity)")
 

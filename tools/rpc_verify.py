@@ -107,6 +107,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         request_timeout: float = 5.0,
         boot_timeout: float = 30.0,
         visible_window: bool = False,
+        env: Optional[dict[str, str]] = None,
     ) -> None:
         self.example = example
         self.release = release
@@ -129,6 +130,14 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # Demos that screen-capture the real window (ffmpeg x11grab) pass
         # `visible_window=True` so the window is mapped for the grab.
         self.visible_window = visible_window
+        # R1319 §5.16 — extra environment for the driven binary, merged over the
+        # inherited env. The canonical use is raising the shell's log level
+        # (`{"PINION_LOG": "pinion::shell=debug"}`): `init_tracing` filters on
+        # `PINION_LOG` (default `warn`) and writes to STDERR, which this harness
+        # already buffers into `stderr_tail` — so a demo can assert on a production
+        # `tracing` line ([[verify-via-tracing-not-eprintln]]) instead of an example
+        # growing an `eprintln!` purely to be observable.
+        self.extra_env = dict(env or {})
 
         self._proc: Optional[subprocess.Popen] = None
         self._inbox: "queue.Queue[str]" = queue.Queue()
@@ -148,6 +157,9 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             env.pop("PINION_HIDDEN_WINDOW", None)
         elif "PINION_HIDDEN_WINDOW" not in env:
             env["PINION_HIDDEN_WINDOW"] = "1"
+        # R1319 — demo-supplied env wins (e.g. `PINION_LOG`), so a demo can observe a
+        # level-gated `tracing` line the default `warn` filter would drop.
+        env.update(self.extra_env)
         self._proc = subprocess.Popen(
             cmd,
             cwd=WORKSPACE_ROOT,

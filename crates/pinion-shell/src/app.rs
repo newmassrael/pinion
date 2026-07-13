@@ -2315,6 +2315,37 @@ impl<V: WidgetView> AppShell<V> {
                 }
             }
         }
+        // R1319 §5.16 §5.41 PR-52 — title pass: a spec present in BOTH old and new
+        // whose declared title changed drives the live OS window's title (alt-tab,
+        // taskbar, window list). Structurally the twin of the move pass above —
+        // total pure diff (`window_title_changes`, unit-tested), best-effort apply,
+        // same silent skip for a window with no live arc (a `Suspended(Some)` mobile
+        // state re-applies its title on the next create, where `with_title` runs).
+        //
+        // Pre-R1319 `title` was create-time-only, so a binding could not rename a
+        // live window at all — the terminal-multiplexer convention (the OS title
+        // follows the focused pane, which its child renames every prompt) was
+        // unreachable, and `WindowSpec::title`'s rustdoc claimed a `set_title`
+        // forwarding that only ever happened once. Unlike `decorations` below, this
+        // one gets an APPLY rather than a warn: winit HAS `Window::set_title`, so
+        // there is no platform reason to refuse it.
+        for (spec_id, title) in window_title_changes(&old_specs, &new_specs) {
+            if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied()
+                && let Some(slot) = self.windows.get(&window_id)
+                && let Some(window) = Self::slot_window(slot)
+            {
+                window.set_title(title);
+                // The OS title is not readable back (winit's X11 `title()` is a
+                // stub), so this trace IS the observable that the apply ran — the
+                // `hello-dock-panels-editor` demo asserts it.
+                tracing::debug!(
+                    target: "pinion::shell",
+                    window = %spec_id,
+                    title = %title,
+                    "window title updated",
+                );
+            }
+        }
         // R1118 §5.16 PR-38 — `decorations` is create-time-only (like
         // `strategy`): a same-id runtime flip is NOT applied (no
         // `Window::set_decorations` call exists). Make that trap LOUD rather than
@@ -3718,6 +3749,47 @@ fn window_position_moves(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String,
     moves
 }
 
+/// R1319 §5.16 §5.41 PR-52 — the same-id TITLE changes between two
+/// [`WindowSpec`] lists: every window whose declared [`WindowSpec::title`] differs
+/// from what it declared before, paired with the new title.
+///
+/// Pre-R1319 `title` was read exactly ONCE, at `Window::default_attributes()`
+/// create time — a live window's OS title could never follow the binding's declared
+/// spec, and (worse) [`WindowSpec::title`]'s own rustdoc CLAIMED that winit
+/// `set_title`-forwards it, which was true only for the window's first frame of
+/// existence. The forcing consumer is a terminal multiplexer (sprag PR-52): the
+/// tmux / gnome-terminal convention is that the OS window title (alt-tab, taskbar)
+/// follows the FOCUSED pane's title, which the child renames on every prompt. That
+/// needs `title` to be a live, reconcilable axis — like `position` (R1087), not like
+/// `strategy` / `decorations` (create-time intent).
+///
+/// A window appears here iff its `id` is in **both** lists (neither an add — whose
+/// title `resume_spec` applies via `with_title` — nor a drop) AND its title changed.
+///
+/// Splitting this out of `reconcile_windows` keeps the logic pure and unit-testable
+/// with no winit event loop, exactly as [`window_position_moves`] does; the apply
+/// (`Window::set_title`) stays in the imperative reconcile.
+///
+/// **No write-back twin.** Position closes its declared→actual loop (R1088:
+/// `WindowEvent::Moved` from a user drag feeds the signal). Title has no such loop
+/// and needs none: nothing but the binding can rename a window, so the declared
+/// spec IS the truth. (winit offers no title read-back to converge on anyway — its
+/// X11 `Window::title()` is a stub returning an empty string.)
+///
+/// O(N²) `find` for the same reason [`window_position_moves`] accepts it: N is the
+/// window count, a handful.
+fn window_title_changes<'a>(old: &[WindowSpec], new: &'a [WindowSpec]) -> Vec<(String, &'a str)> {
+    let mut changes = Vec::new();
+    for spec in new {
+        if let Some(old_spec) = old.iter().find(|o| o.id == spec.id) {
+            if old_spec.title != spec.title {
+                changes.push((spec.id.as_ref().to_owned(), spec.title.as_str()));
+            }
+        }
+    }
+    changes
+}
+
 /// R1088 §5.16 §5.41 §2 #7 PR-31 — is this `WindowEvent::Moved` the echo of
 /// a position the shell just commanded via `set_outer_position`? `true`
 /// when `commanded` is set and equals the incoming `logical` position
@@ -3856,6 +3928,109 @@ mod r1087_window_position_move_diff_tests {
         assert_eq!(
             window_position_moves(&old, &new),
             vec![("a".to_owned(), (1, 1)), ("b".to_owned(), (2, 2))]
+        );
+    }
+}
+
+#[cfg(test)]
+mod r1319_window_title_change_diff_tests {
+    //! R1319 §5.16 §5.41 PR-52 — the pure `window_title_changes` diff that drives
+    //! `reconcile_windows`'s title pass, the twin of R1087's move pass. Pre-R1319
+    //! `title` was create-time-only: a binding could not rename a live window, so the
+    //! tmux convention (the OS title follows the focused pane, renamed by its child on
+    //! every prompt) was unreachable. The live `set_title` apply is HW-gated; this pins
+    //! the logic that decides WHICH window gets renamed to WHAT.
+    use super::{WindowSpec, window_title_changes};
+    use crate::SizeStrategy;
+
+    fn titled(id: &'static str, title: &str) -> WindowSpec {
+        WindowSpec::new(
+            id,
+            title,
+            SizeStrategy::Fixed {
+                width: 100,
+                height: 100,
+            },
+        )
+    }
+
+    #[test]
+    fn unchanged_specs_yield_no_title_changes() {
+        let a = vec![titled("main", "editor"), titled("torn-x", "console")];
+        assert_eq!(window_title_changes(&a, &a), Vec::new());
+    }
+
+    #[test]
+    fn same_id_title_change_is_reported() {
+        // ★The PR-52 gesture: the pane's child renamed itself, so the window
+        // hosting it must follow — same window id, new title.
+        let old = vec![titled("main", "editor"), titled("torn-x", "console")];
+        let new = vec![titled("main", "editor"), titled("torn-x", "vim README")];
+        assert_eq!(
+            window_title_changes(&old, &new),
+            vec![("torn-x".to_owned(), "vim README")]
+        );
+    }
+
+    #[test]
+    fn an_added_window_is_not_a_title_change() {
+        // An id only in `new` is an ADD — `resume_spec` applies its title via
+        // `Window::with_title` at create; re-applying it here would be redundant
+        // (and, for a window whose creation failed, a lookup miss).
+        let old = vec![titled("main", "editor")];
+        let new = vec![titled("main", "editor"), titled("torn-x", "console")];
+        assert_eq!(window_title_changes(&old, &new), Vec::new());
+    }
+
+    #[test]
+    fn a_dropped_window_is_not_a_title_change() {
+        let old = vec![titled("main", "editor"), titled("torn-x", "console")];
+        let new = vec![titled("main", "editor")];
+        assert_eq!(window_title_changes(&old, &new), Vec::new());
+    }
+
+    #[test]
+    fn a_retitled_window_that_also_moved_is_reported_by_both_passes() {
+        // The two passes are ORTHOGONAL — a floating pane that is dragged AND
+        // renamed in the same reconcile must get both applies (a shared "the spec
+        // changed" pass would have to pick one).
+        use super::window_position_moves;
+        let old = vec![titled("torn-x", "console").with_position(10, 10)];
+        let new = vec![titled("torn-x", "vim README").with_position(40, 50)];
+        assert_eq!(
+            window_title_changes(&old, &new),
+            vec![("torn-x".to_owned(), "vim README")]
+        );
+        assert_eq!(
+            window_position_moves(&old, &new),
+            vec![("torn-x".to_owned(), (40, 50))]
+        );
+    }
+
+    #[test]
+    fn multiple_simultaneous_retitles_all_reported_in_new_order() {
+        let old = vec![titled("a", "one"), titled("b", "two"), titled("c", "three")];
+        let new = vec![
+            titled("a", "ONE"),
+            titled("b", "two"), // unchanged
+            titled("c", "THREE"),
+        ];
+        assert_eq!(
+            window_title_changes(&old, &new),
+            vec![("a".to_owned(), "ONE"), ("c".to_owned(), "THREE")]
+        );
+    }
+
+    #[test]
+    fn an_emptied_title_is_still_a_change() {
+        // Unlike `position` (whose `None` means "leave it to the WM" and is NOT a
+        // move — `set_outer_position` cannot un-place a window), a title has no
+        // "unset": an empty string is a legal title and the OS must be told.
+        let old = vec![titled("main", "editor")];
+        let new = vec![titled("main", "")];
+        assert_eq!(
+            window_title_changes(&old, &new),
+            vec![("main".to_owned(), "")]
         );
     }
 }
