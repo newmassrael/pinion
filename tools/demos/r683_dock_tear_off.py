@@ -607,11 +607,18 @@ def body() -> None:
         )
 
         # Round 2: tear off viewport → dock back.
+        # (R1323) The release must land OFF the dragged panel. A panel released back
+        # over its OWN slot snaps back — the ratified desktop-dock rule (R1110/R1162:
+        # VS Code / Blender detach only once the drag leaves every dock zone), not a
+        # tear-off. The viewport IS the centre panel here (x 284..880), so the old
+        # "drag to the window centre" target landed inside the viewport itself; drop it
+        # over the INSPECTOR (0..280) instead, which for this coordinator-less binding
+        # is not a dock target either → float.
         _drag_window(
             tf,
             "main",
             _VIEWPORT_HEADER_TAG,
-            (_MAIN_W * 0.5, _MAIN_H * 0.5),
+            (140.0, 160.0),
             steps=8,
         )
         _wait_main(
@@ -627,16 +634,19 @@ def body() -> None:
         )
 
         # ── (I) Multi-tear-off cascade — 4-window state ───────────
-        # Tear off all 3 panels in sequence.
-        for header_tag, panel_id in (
-            (_INSPECTOR_HEADER_TAG, _INSPECTOR_PANEL_TAG),
-            (_PROPERTY_HEADER_TAG, _PROPERTY_PANEL_TAG),
-            (_VIEWPORT_HEADER_TAG, _VIEWPORT_PANEL_TAG),
+        # Tear off all 3 panels in sequence. (R1323) Each release lands OFF the panel
+        # being dragged (a self-release snaps back — R1110/R1162), so the two left-column
+        # panels drop over the viewport's area and the viewport drops over the inspector's
+        # (a torn slot's placeholder is not a dock target for this coordinator-less
+        # binding either — it floats all the same).
+        _VIEWPORT_AREA = (_MAIN_W * 0.5, _MAIN_H * 0.5)  # x 284..880 → inside viewport
+        _INSPECTOR_AREA = (140.0, 160.0)  # x 0..280, y 0..328 → inside inspector
+        for header_tag, panel_id, release_at in (
+            (_INSPECTOR_HEADER_TAG, _INSPECTOR_PANEL_TAG, _VIEWPORT_AREA),
+            (_PROPERTY_HEADER_TAG, _PROPERTY_PANEL_TAG, _VIEWPORT_AREA),
+            (_VIEWPORT_HEADER_TAG, _VIEWPORT_PANEL_TAG, _INSPECTOR_AREA),
         ):
-            _drag_window(
-                tf, "main", header_tag,
-                (_MAIN_W * 0.5, _MAIN_H * 0.5), steps=8,
-            )
+            _drag_window(tf, "main", header_tag, release_at, steps=8)
             _wait_main(
                 tf,
                 lambda s, p=panel_id: _scene_contains_tag(s, f"{p}_placeholder"),

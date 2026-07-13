@@ -6918,12 +6918,27 @@ impl External for DockPanelExternal {
                 reorg.tabbing(),
                 |zone| reorg.outer_dock_is_redundant(&self.panel_id, zone),
             ),
-            None if over.is_none() => DropResolution::Float,
-            // A coordinator-less (tear-off-only) panel has no topology to classify
-            // against; `over` is Some but inert, so it snaps back with no actionable
-            // zone (a panel never undocks-from-self — that is a tab-only gesture).
-            None => DropResolution::SnapBack {
-                zone: DockDropZone::None,
+            // (R1323 §5.51) A TEAR-OFF-ONLY panel (no coordinator) has no topology, so
+            // NOTHING it can be released onto is a dock target. Route it through the
+            // SAME `resolve_drop` SSOT with `is_panel = |_| false`: a self-drop (the
+            // release landed back on the panel — a click or a tiny in-place drag) snaps
+            // back, and EVERYTHING else floats. An `OuterDock` (possible only in a
+            // window that paints a dock area but wired no coordinator) has nothing to
+            // dock INTO either, so it floats as well.
+            //
+            // R1081 broke this: it replaced the old distance-threshold tear-off with
+            // drop-target resolution but gave the coordinator-less arm a blanket
+            // `over.is_some() → SnapBack`. Since every sibling panel is a drop target,
+            // a header dragged anywhere over the workspace landed on one and snapped
+            // back — a panel whose External is literally named tear-off-only could no
+            // longer be torn off by DRAG at all (only by `invoke("tear_off")`). The
+            // shipped `hello-dock-panels` example carried that dead gesture, and its
+            // `r683_dock_tear_off` demo has been red ever since.
+            None => match resolve_drop(over.as_ref(), &self.panel_id, |_| false, true) {
+                DropResolution::Dock { .. } | DropResolution::OuterDock { .. } => {
+                    DropResolution::Float
+                }
+                other => other,
             },
         };
         // R1172 §5.16 — a non-floatable panel NEVER tears off: an escaped drag (a
@@ -8576,6 +8591,52 @@ mod tests {
     }
 
     #[test]
+    fn r1323_a_coordinator_less_panel_tears_off_by_drag() {
+        // ★R1323 §5.51 — a TEAR-OFF-ONLY panel (no coordinator: `hello-dock-panels`,
+        // and any binding that wants floating panels without a reorganizable topology)
+        // has NO dock targets, so a header drag released anywhere OFF itself must FLOAT.
+        //
+        // R1081 replaced the old distance-threshold tear-off with drop-target
+        // resolution but gave this arm a blanket `over.is_some() → SnapBack`. Every
+        // sibling panel is a drop target, so a header dragged across the workspace
+        // landed on one and snapped back: the gesture the External is NAMED for became
+        // unreachable by drag (only `invoke("tear_off")` worked), and the shipped
+        // example's `r683_dock_tear_off` demo went red for ~240 commits.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        // Released over ANOTHER panel — which this binding cannot dock into.
+        ext.drag_release(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
+        assert!(
+            ext.tear_off_fired(),
+            "★a release over a panel it cannot dock into tears off",
+        );
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert_eq!(received.len(), 1, "exactly one tear_off");
+        assert_eq!(received[0].tag.as_ref(), TEAR_OFF_EVENT);
+        assert_eq!(received[0].payload.as_str(), Some("a"));
+    }
+
+    #[test]
+    fn r1323_a_coordinator_less_panel_still_snaps_back_on_a_self_release() {
+        // The other half of the contract: a release back on the panel ITSELF (a click,
+        // or a drag that never left its own slot) snaps back — the ratified desktop-dock
+        // rule (R1110/R1162: VS Code / Blender detach only once the drag leaves every
+        // dock zone). Non-tautological against the test above: same External, same
+        // gesture, only the release TARGET differs.
+        let mut ext = DockPanelExternal::new("a");
+        let _ = ext.begin_drag();
+        ext.drag_release(&dummy_payload(), Some(drop_point("a", 0.5, 0.5)));
+        assert!(
+            !ext.tear_off_fired(),
+            "★a self-release is a snap-back, never a tear-off",
+        );
+        let mut received: Vec<Intent> = Vec::new();
+        ext.drain_intents(&mut |i| received.push(i));
+        assert!(received.is_empty(), "no intent for an inert snap-back");
+    }
+
+    #[test]
     fn r1081_drag_release_back_on_self_snaps_back_no_tear_off() {
         // A click on the header (press-release in place, over its own
         // panel) must NOT tear off — only an escape-drop floats.
@@ -8588,18 +8649,12 @@ mod tests {
         assert!(received.is_empty(), "no tear_off on a self-drop");
     }
 
-    #[test]
-    fn r1081_tear_off_only_mode_no_coordinator_drop_on_panel_is_noop() {
-        // Without a reorganizer (the flat hello-dock-panels consumer) a
-        // drop onto another panel snaps back; only an escape-drop floats.
-        let mut ext = DockPanelExternal::new("a");
-        let _ = ext.begin_drag();
-        ext.drag_release(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
-        assert!(!ext.tear_off_fired());
-        let mut received: Vec<Intent> = Vec::new();
-        ext.drain_intents(&mut |i| received.push(i));
-        assert!(received.is_empty(), "no coordinator + panel drop = no-op");
-    }
+    // (R1323) `r1081_tear_off_only_mode_no_coordinator_drop_on_panel_is_noop` lived
+    // here and asserted the OPPOSITE: "no coordinator + panel drop = no-op". That
+    // expectation is what made a tear-off-only panel undraggable-to-float, and it is why
+    // the unit suite stayed green while the shipped example's `r683_dock_tear_off` demo
+    // went red for ~240 commits — the test PINNED the bug. Superseded by the
+    // `r1323_*` pair above (same setup, corrected expectation).
 
     #[test]
     fn r1081_drag_cancel_discards_without_committing() {
