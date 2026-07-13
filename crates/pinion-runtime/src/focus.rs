@@ -149,22 +149,25 @@ impl FocusManager {
     /// closing, the stale-tag drop in [`Self::update_focusable_tags`],
     /// window-blur [`Self::restore`] — so the mirror cannot drift from this
     /// SSOT. Publishing from the *owner* of the state rather than from the
-    /// shell's call sites is deliberate: the shell mutates focus from click,
-    /// key, RPC, request-drain and window-event paths, and one of them
-    /// (`window_focused` → [`Self::restore`]) bypasses even the shell's own
-    /// `notify_focus_change` observer, so any "publish at each call site"
-    /// scheme would already have a stale hole.
+    /// shell's call sites is deliberate: the shell mutates focus from click, key,
+    /// RPC, request-drain and window-event paths, and its own observer wiring had
+    /// in fact already missed one of them (`window_focused` → [`Self::restore`]
+    /// fired no `notify_focus_change` until R1327 fixed it). A "publish at each
+    /// call site" scheme starts with that same hole.
     ///
-    /// The publish equality-skips downstream, and this funnel equality-skips
-    /// here, so a no-op focus commit (re-clicking the focused widget) wakes no
-    /// subscriber.
+    /// The publish equality-skips downstream, so a no-op focus commit (re-clicking
+    /// the focused widget) wakes no subscriber.
     fn commit_focus(&mut self, next: Option<String>) -> bool {
-        if self.focused == next {
-            return false;
+        let changed = self.focused != next;
+        if changed {
+            self.focused = next;
         }
-        self.focused = next;
+        // Re-assert on every commit ATTEMPT, not only on change: the published
+        // value is then self-healing (a stray write to the mirror is repaired by
+        // the next focus op, even one that moves no focus), and `Signal::set`
+        // equality-skips so an unchanged re-publish wakes nobody.
         pinion_core::focus_state::publish(self.focused.as_deref());
-        true
+        changed
     }
 
     /// Focusable enumeration in Tab order. Lent out for the shell /
@@ -187,17 +190,27 @@ impl FocusManager {
     /// modal's focus every render. The base `tab_order` is still
     /// refreshed underneath so popping the scope restores a current
     /// enumeration.
-    pub fn update_focusable_tags(&mut self, tags: Vec<String>) {
+    /// R1327 §5.39 — returns whether the refresh DROPPED focus (the focused widget
+    /// left the paint scene). The shell must pair a `true` with a redraw request:
+    /// this runs *inside* the paint pass, after the view fn has already read the old
+    /// focus, so the frame being produced still names the tag that just died. Every
+    /// other focus mutation is paired with a redraw at its own call site; this one
+    /// had no return value to pair with, and the reactive dirty flag its publish
+    /// raises is cleared by the end of the same paint (`clear_dirty`), so nothing
+    /// else would schedule the correcting frame.
+    pub fn update_focusable_tags(&mut self, tags: Vec<String>) -> bool {
+        let mut dropped = false;
         if self.modal_stack.is_empty() {
             let focus_left_the_scene = self
                 .focused
                 .as_deref()
                 .is_some_and(|f| !tags.iter().any(|t| t == f));
             if focus_left_the_scene {
-                self.commit_focus(None);
+                dropped = self.commit_focus(None);
             }
         }
         self.tab_order = tags;
+        dropped
     }
 
     /// The focusable enumeration traversal currently operates over: the
@@ -733,14 +746,43 @@ mod tests {
     }
 
     #[test]
-    fn r1327_dropping_a_focused_tag_that_left_the_scene_publishes() {
-        // The paint-derived enumeration shrank (the focused widget's view
-        // branch went away) — the binding must not keep naming a dead tag.
+    fn r1327_dropping_a_focused_tag_that_left_the_scene_publishes_and_reports() {
+        // The paint-derived enumeration shrank (the focused widget's view branch
+        // went away). The binding must not keep naming a dead tag — AND the caller
+        // must learn about it, because this runs inside the paint pass: the shell
+        // pairs the `true` with a redraw so the correcting frame is scheduled.
         let mut m = FocusManager::new();
         m.update_focusable_tags(tags(&["a", "b"]));
         m.focus_set("a");
-        m.update_focusable_tags(tags(&["b"]));
+        assert!(
+            m.update_focusable_tags(tags(&["b"])),
+            "the refresh reports the drop to the shell",
+        );
         assert_eq!(mirror(), None);
+        assert_mirrors(&m);
+        assert!(
+            !m.update_focusable_tags(tags(&["b"])),
+            "a refresh that drops nothing reports nothing (no spurious frame)",
+        );
+    }
+
+    #[test]
+    fn r1327_a_stray_write_self_heals_on_the_next_commit_attempt() {
+        // The published tag is re-asserted on every commit ATTEMPT, so a stray
+        // write is repaired by the next focus op — even one that moves no focus.
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["a"]));
+        m.focus_set("a");
+        pinion_core::focus_state::publish(Some("bogus"));
+        assert!(
+            !m.focus_set("a"),
+            "re-focusing the focused tag moves nothing"
+        );
+        assert_eq!(
+            mirror().as_deref(),
+            Some("a"),
+            "…but it re-asserts the truth",
+        );
         assert_mirrors(&m);
     }
 

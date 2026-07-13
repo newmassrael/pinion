@@ -1406,7 +1406,13 @@ impl<V: WidgetView> ShellCore<V> {
         // pointed at one of them is dropped by the §5.39 stale guard. Off the
         // paint path (a rare dock tear-down), so the O(windows) fold is free.
         let union = self.union_focusable_tags();
-        self.focus.update_focusable_tags(union);
+        if self.focus.update_focusable_tags(union) {
+            // R1327 §5.39 — a closed window taking the focused tag with it is a focus
+            // change like any other: pair it with a redraw so the focus ring and any
+            // focus-derived binding state (a title naming the active pane) re-derive.
+            self.revision.bump();
+            self.request_redraw();
+        }
         // R1073.1 PR-27.4 §5.39 §5.16 §5.35 — reconcile the OS-focus identity
         // on the one lifecycle event the shell itself controls (destruction),
         // rather than trusting a platform `Focused(false)` that a destroyed
@@ -2986,8 +2992,18 @@ impl<V: WidgetView> ShellCore<V> {
     /// previously-focused widget when the window regains focus (the
     /// [`FocusManager`] owns the snapshot). Sets `redraw_requested` when
     /// `restore` reports a change so the focus ring repaints.
+    ///
+    /// R1327 §5.39 — the restore routes through `notify_focus_change` like
+    /// every other focus mutation. It did not before: a restore that actually moved
+    /// focus (the saved tag re-focused after something cleared or changed focus
+    /// while the window was blurred) left every
+    /// [`External::on_focus_change`](pinion_core::External::on_focus_change)
+    /// observer stale — the `TextField` IME bridge never re-armed, the `CaretBlink`
+    /// gate never re-enabled.
     pub fn window_focused(&mut self) {
+        let focus_before = self.focus.focused().map(str::to_owned);
         if self.focus.restore() {
+            self.notify_focus_change(focus_before.as_deref());
             self.request_redraw();
         }
     }
@@ -5268,10 +5284,23 @@ impl<V: WidgetView> ShellCore<V> {
     /// unpainted). A single-window binding has one entry and no declared signal,
     /// so the union equals that window's tags verbatim: byte-identical to the
     /// pre-R25.1 primary-only enumeration.
+    ///
+    /// R1327 §5.39 — a drop is paired with a redraw request. This runs INSIDE the
+    /// paint pass, after `V::view` has read the old focus, so the frame being
+    /// produced still names the tag that just died (a binding painting "active
+    /// pane: `{focused()}`" — the R1327 seam's advertised use). The reactive dirty
+    /// flag the publish raises is cleared before this paint returns
+    /// (`clear_dirty`), so without this request nothing would schedule the
+    /// correcting frame and the stale name would sit on screen until some unrelated
+    /// event repainted. Every other focus mutation already pairs a redraw at its own
+    /// call site (click / Tab / RPC / request-drain / modal).
     fn refresh_window_focusables(&mut self, window_key: &str, tags: Vec<String>) {
         self.window_state_mut(window_key).focusable_tags = Some(tags);
         let union = self.union_focusable_tags();
-        self.focus.update_focusable_tags(union);
+        if self.focus.update_focusable_tags(union) {
+            self.revision.bump();
+            self.request_redraw();
+        }
     }
 
     /// R25.1 §5.39 / R26 §5.39 §5.16 — fold the focusable enumerations of every

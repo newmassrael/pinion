@@ -10,22 +10,29 @@
 //!
 //! ## Why the read direction has to exist
 //!
-//! Before R1327, focus reached a binding through exactly two doors:
-//! `WidgetCore::apply_key(_, focused, …)` (only on a key press) and
-//! `WidgetView::access_node_for_window(_, focused)` (only while an AT tree is
-//! being built). Neither can carry *display state derived from focus* — a
-//! window title naming the focused pane (the tmux / gnome-terminal
-//! convention), a status bar describing the focused control, a tab strip
-//! highlighting the active pane:
+//! Before R1327, focus reached a binding in two shapes, neither of which is the
+//! binding-wide focused **tag** on the paint path:
 //!
-//! * caching the `apply_key` argument goes stale the moment focus moves
-//!   without a key — a click, Tab, a [`focus_request`](crate::focus_request),
-//!   a modal opening;
-//! * writing display state from the a11y hook is a layer violation *and*
-//!   silently stops updating when no assistive client is attached.
+//! * as a **tag**, but only inside two hooks that run on someone else's schedule
+//!   — `WidgetCore::apply_key(_, focused, …)` (only while a key is being pressed)
+//!   and `WidgetView::access_node_for_window(_, focused)` (the a11y tree
+//!   builder). Caching the `apply_key` argument goes stale the moment focus moves
+//!   without a key — a click, Tab, a [`focus_request`](crate::focus_request), a
+//!   modal opening — and deriving display state inside the a11y builder is a
+//!   layer violation: that hook exists to describe the widget tree to assistive
+//!   technology, and its cadence is the AT tree's, not the paint's.
+//! * as a **per-External boolean**, via
+//!   [`External::on_focus_change`](crate::External::on_focus_change) (R694) — the
+//!   shell tells each External when *it* gains or loses focus, and a binding can
+//!   thread that back into its state (`hello-toolbar` does). That is the right
+//!   channel for "am *I* focused" widget posture, but it answers a different
+//!   question from "*which* pane is active": it never carries the focused tag, it
+//!   only reaches focus stops that are Externals (a plain `Scene::Container` pane
+//!   cannot use it), and it needs per-widget wiring at every stop.
 //!
-//! So the derived state was not merely awkward to compute — it was not
-//! computable correctly. This module closes that.
+//! So a binding-wide "who has focus" read — what a window title naming the active
+//! pane, a status bar, or a tab-strip highlight needs — did not exist. This module
+//! is it.
 //!
 //! ## Model — one writer, no drift
 //!
@@ -34,16 +41,16 @@
 //! `focus/set` over RPC, a drained [`focus_request`](crate::focus_request), a
 //! modal trap opening or closing, the stale-tag drop when a focused widget
 //! leaves the paint scene, window-blur restore) commits through a single
-//! private funnel that calls [`publish`]. There is no per-call-site
-//! "remember to publish" discipline to forget, so the value read here is the
-//! same string the same frame's `apply_key` would receive — by construction,
-//! not by convention.
+//! private funnel that calls [`publish`] — on every commit *attempt*, so the
+//! published value is self-healing. There is no per-call-site "remember to
+//! publish" discipline to forget.
 //!
 //! That is also why the publish does not sit in the shell: `AppShell`'s focus
 //! mutations are spread across click, key, RPC, request-drain and window-event
-//! paths, and at least one of them (`window_focused` → `FocusManager::restore`)
-//! bypasses even the shell's own `notify_focus_change` observer. Publishing
-//! from the state's owner is the only placement that cannot be bypassed.
+//! paths, and its own observer wiring had in fact already missed one of them
+//! (`window_focused` → `FocusManager::restore` fired no `notify_focus_change`
+//! until R1327 fixed it). Publishing from the state's owner is the only placement
+//! a new call site cannot bypass.
 //!
 //! ## Reactive by construction
 //!
@@ -71,29 +78,31 @@ thread_local! {
     /// only by [`publish`] (i.e. only by the focus manager), read by every
     /// binding that derives display state from focus.
     ///
-    /// A bare `Signal` (not a `RefCell<…>`) so a subscriber woken by
-    /// [`publish`] can read [`focused`] re-entrantly inside its own notify —
-    /// an Effect deriving a window title from focus does exactly that, and a
-    /// `RefCell` borrow held across [`Signal::set`]'s synchronous subscriber
-    /// dispatch would panic it. Same shape as
-    /// [`theme`](crate::theme)'s OS color-scheme signal.
+    /// Same shape as [`theme`](crate::theme)'s OS color-scheme signal: a bare
+    /// `Signal`, so a subscriber woken by [`publish`] (Effects re-run
+    /// synchronously) can read [`focused`] again from inside its own notify — an
+    /// Effect deriving a window title from focus does exactly that.
     static FOCUSED: Signal<Option<String>> = Signal::new(None);
 }
 
 /// R1327 §5.39 — the currently focused paint tag, or `None` when nothing is
 /// focused.
 ///
-/// **Auto-subscribes** the calling reactive scope: read it in a view fn (or an
-/// [`Effect`](crate::reactive::Effect)) and the next focus change re-runs that
-/// scope and repaints — the reactive path for a tab strip highlighting the
-/// active pane, a status bar describing the focused control, a window title
-/// naming the focused pane. Read from a non-reactive site (a reducer body, a
-/// `WidgetCore::reconcile_frame` doing a one-shot sync) it is a plain read with
-/// no subscription.
+/// **Auto-subscribes** the calling reactive scope — and in practice every binding
+/// entry point is one: `view`, `reconcile_frame`, `update` (the reducer) and
+/// `apply_key` all run inside the binding's root `Owner` scope, so a focus change
+/// re-runs the reader and schedules a repaint. That is the reactive path for a tab
+/// strip highlighting the active pane, a status bar describing the focused
+/// control, a window title naming the focused pane. (There is no untracked read:
+/// the subscription is harmless — a focus change already requests a redraw — but
+/// it is not optional.)
 ///
-/// The value is the focus manager's own state, so it agrees with the `focused`
-/// argument `WidgetCore::apply_key` receives, and with `focus/get` over RPC —
-/// there is one focus, published from one writer.
+/// The value is the focus manager's own state, so it agrees with `focus/get` over
+/// RPC and — **on the GUI shell** — with the `focused` argument
+/// `WidgetCore::apply_key` receives. The TUI backend does not route keys through
+/// the focus manager at all: it hands `apply_key` its primary surface's tag
+/// unconditionally, a §2 #6 asymmetry that predates this seam and is tracked on
+/// the TUI substrate. `focused()` reports the focus manager's tag on both.
 ///
 /// To *move* focus, a binding calls [`focus_request::request`](crate::focus_request::request);
 /// this is strictly the read direction.
@@ -106,10 +115,11 @@ pub fn focused() -> Option<String> {
 /// code must not call this.**
 ///
 /// The sole caller is `pinion_runtime::FocusManager`, which publishes from its
-/// single write funnel on every focus commit. Calling it from a binding does
-/// not move focus — it only desynchronises this mirror from the focus manager
-/// until the manager's next commit overwrites it. A binding that wants focus to
-/// move calls [`focus_request::request`](crate::focus_request::request).
+/// single write funnel on every focus commit *attempt* — so a stray write from
+/// application code does not move focus, and is overwritten by the next focus
+/// operation even if that operation moves nothing (re-focusing the focused tag
+/// re-asserts the truth). A binding that wants focus to move calls
+/// [`focus_request::request`](crate::focus_request::request).
 ///
 /// `pub` rather than `pub(crate)` only because the focus manager lives in a
 /// sibling crate that the closed-core dependency direction (§6.3) keeps

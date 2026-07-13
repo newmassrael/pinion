@@ -340,7 +340,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         //
         // A binding with no focus stops paints no focusable node, so the
         // enumeration is correctly empty.
-        self.focus
+        // R1327 §5.39 — the drop flag is dropped here, unlike the Vello shell, which
+        // pairs it with a redraw request. The TUI has no redraw-request channel at
+        // all (no dirty bridge, no `redraw_requested`): it commits a fresh paint after
+        // every dispatch, so a focus drop that happens INSIDE a paint is corrected by
+        // the next event's commit rather than by a frame this pass schedules. A §2 #6
+        // asymmetry of the TUI's event-driven paint model, not of this seam.
+        let _dropped_focus = self
+            .focus
             .update_focusable_tags(paint_scene.collect_focusable_tags());
         self.core.update_paint_scene(paint_scene);
     }
@@ -861,7 +868,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let cached_state = *self.core.cached_state();
         let frame = Frame::with_dt(0.0);
         let scene = self.core.root_owner().run(|| V::view(cached_state, &frame));
-        self.focus
+        let _dropped_focus = self
+            .focus
             .update_focusable_tags(scene.collect_focusable_tags());
     }
 

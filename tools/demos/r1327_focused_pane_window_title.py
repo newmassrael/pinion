@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """R1327 §5.39 §5.16 §2 #7 PR-53 — the window is named after its FOCUSED pane.
 
-SCOPE — read this before the assertions. Focus reached a binding through exactly
-two doors: `WidgetCore::apply_key(_, focused, …)` — only while a key is being
-pressed — and `WidgetView::access_node_for_window(_, focused)` — only while an
-a11y tree is being built. Neither can carry display state DERIVED from focus,
-which is what "the window title names the active pane" (tmux / gnome-terminal /
-VS Code, and the sprag terminal multiplexer that forced this PR) needs:
+SCOPE — read this before the assertions. The focused TAG reached a binding through
+exactly two doors, neither of which is the paint path:
+`WidgetCore::apply_key(_, focused, …)` — only while a key is being pressed — and
+`WidgetView::access_node_for_window(_, focused)` — the a11y tree builder. Neither
+can hold display state DERIVED from focus, which is what "the window title names
+the active pane" (tmux / gnome-terminal / VS Code, and the sprag terminal
+multiplexer that forced this PR) needs:
 
   * caching `apply_key`'s argument goes stale the moment focus moves WITHOUT a
     key — a click, a Tab, a `focus_request`, a modal opening — so the title would
     silently name the wrong pane until the user next typed;
-  * writing display state from the a11y hook is a layer violation AND stops
-    updating entirely when no assistive client is attached.
+  * deriving it inside the a11y builder is a layer violation: that hook exists to
+    describe the tree to assistive technology, and its cadence is the AT tree's,
+    not the paint's.
 
-So the state was not awkward to derive — it was NOT DERIVABLE. R1327 publishes
-the focused tag from the `FocusManager` itself (the state's owner, so no call
-site can forget to) into a `pinion_core::focus_state` signal any binding can read
-on the paint path, reactively.
+(`External::on_focus_change` is a third channel, but it carries a per-External
+BOOLEAN — "am I focused" — never the binding-wide tag, and it only reaches focus
+stops that are Externals. A pane that is a plain `Scene::Container`, like the ones
+below, cannot use it, and no boolean answers "WHICH pane is active".)
+
+R1327 publishes the focused tag from the `FocusManager` itself (the state's owner,
+so no call site can forget to) into a `pinion_core::focus_state` signal any binding
+reads on the paint path, reactively.
 
 The editor stands in for the terminal: each dock pane is a focus stop, and its
 title-sync Effect subscribes BOTH the display-title map (R1318) and the focused
