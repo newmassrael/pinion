@@ -7259,11 +7259,18 @@ mod r1138_redock_hint_injection_tests {
         assert_eq!(band.w, 1000);
     }
 
-    /// (R1205) A window with NO dock surface (a naked floater / decorated window)
-    /// falls back to its own rect for the OUTER preview — the band spans the whole
-    /// window (there is no chrome strip to clear).
+    /// (R1322 §5.51) A window with NO dock surface hosts no dock, so it offers NO outer
+    /// redock zone and therefore NO outer preview.
+    ///
+    /// This test previously asserted the OPPOSITE — that the band "falls back to the
+    /// window rect" — and that fallback is exactly the bug: a torn-off panel's own
+    /// floating window (no dock area, and its panel opts OUT of being a drop target per
+    /// R1118) still advertised a full outer perimeter, so a second tear-off dragged near
+    /// an existing floater redocked INTO it instead of floating, and a floater dragged
+    /// back over main resolved its OWN band instead of main's cross-window redock. The
+    /// dock area (`DOCK_SURFACE_TAG`, the R1205 SSOT) is what makes a window dockable.
     #[test]
-    fn r1205_outer_redock_preview_without_surface_spans_the_window() {
+    fn r1322_no_dock_surface_no_outer_redock_preview() {
         fn rect_of_tag(scene: &Scene, tag: &str) -> Option<Rect> {
             if scene.tag() == Some(tag) {
                 return Some(scene.rect());
@@ -7283,12 +7290,14 @@ mod r1138_redock_hint_injection_tests {
         sc.mouse_pressed_for_window(FLOAT_WINDOW, PointerId::MOUSE);
         sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -795.0, 300.0);
         let previewed = sc.apply_cross_window_drop_preview(main_scene(), Some("main"));
-        let band = rect_of_tag(&previewed, PREVIEW_TAG).expect("the OUTER band is injected");
-        assert_eq!(
-            band.y, 0,
-            "no dock surface → band spans from the window top"
+        assert!(
+            !has_tag(&previewed, super::CROSS_WINDOW_DROP_PREVIEW_TAG),
+            "★no dock surface → no outer redock zone, so no preview band is injected",
         );
-        assert_eq!(band.h, 800, "and the full window height");
+        assert!(
+            rect_of_tag(&previewed, PREVIEW_TAG).is_none(),
+            "★…and nothing is painted over a window that cannot receive the dock",
+        );
     }
 
     /// (R1205) The CRUX integration path: compose the REAL dock walker output with

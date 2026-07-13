@@ -1994,14 +1994,30 @@ impl InputRouter {
     fn resolve_own_outer_dock(&self, x: f64, y: f64) -> Option<DropPoint> {
         let paint = self.last_paint_scene.as_ref()?;
         // (R1205) Measure the band against the DOCK AREA — the laid-out rect of the
-        // dock walker's `DOCK_SURFACE_TAG` wrapper (the whole workspace subtree),
-        // falling back to the window rect when there is no dock surface. So the top
-        // full-span band sits at the dock's top edge (below a client-side chrome
-        // strip / toolbar / menu), not up in the chrome. The same-window peer of
-        // R1202's cross-window preview, now reading the SAME `dock_surface_rect`
-        // SSOT — both agree on where the dock area is, and it tracks a toolbar the
-        // retired chrome-height scalar was blind to.
-        let root = paint.dock_surface_rect();
+        // dock walker's `DOCK_SURFACE_TAG` wrapper (the whole workspace subtree). So
+        // the top full-span band sits at the dock's top edge (below a client-side
+        // chrome strip / toolbar / menu), not up in the chrome. The same-window peer
+        // of R1202's cross-window preview, reading the SAME dock-area SSOT — both
+        // agree on where the dock area is, and it tracks a toolbar the retired
+        // chrome-height scalar was blind to.
+        //
+        // (R1322 §5.51) NO DOCK AREA → NO OUTER DOCK. This reads the tag directly
+        // instead of `Scene::dock_surface_rect`, whose window-rect FALLBACK made every
+        // window an outer-dock target — including a torn-off panel's own floating
+        // window, which hosts no dock at all. The consequence was a silent regression
+        // of the R1124 live floater→main redock: dragging a floater by its header put
+        // the cursor inside the floater's OWN (fallback) edge band, so the router
+        // resolved an own-window `OUTER_DOCK_ZONE_TAG` drop point; that sentinel is not
+        // the dragged panel's own subtree, so `own_drop_is_self` said false,
+        // `resolve_drag_targets` took the own-window-first arm, and the cross-window
+        // redock (which needs `over_window: Some`) never fired — the gesture degraded to
+        // a bare `window_move`. It is the exact bug class R1124 fixed (an own-window hit
+        // masking the cross-window redock), reintroduced by R1167's NEW synthetic
+        // own-window target, and R1203's proportional band made it near-certain (most of
+        // a 420x320 floater is within its own band). A window with no dock area cannot
+        // receive a dock, so it must not synthesize the zone in the first place —
+        // fixing the CLASS, not just the floater instance.
+        let root = paint.rect_for_tag_absolute(pinion_core::external::DOCK_SURFACE_TAG)?;
         let (rx, ry) = (f64::from(root.x), f64::from(root.y));
         let (rw, rh) = (f64::from(root.w), f64::from(root.h));
         if rw <= 0.0 || rh <= 0.0 {
@@ -2401,6 +2417,32 @@ fn resolve_outer_dock_zone(
     let mut best: Option<(f64, String, (f64, f64), Rect)> = None; // (edge dist, window, local, root)
     for &(spec_id, scene, (ox, oy)) in windows {
         let (lx, ly) = (abs_cursor.0 - ox, abs_cursor.1 - oy);
+        // (R1322 §5.51) A window with NO DOCK AREA is not an outer-dock host — the
+        // cross-window twin of the `resolve_own_outer_dock` rule. Pre-R1322 EVERY window
+        // advertised a perimeter, so a torn-off panel's own floating window (which hosts
+        // one panel, no dock, and whose panel deliberately opts OUT of being a drop
+        // target — `DockPanelStyle::drop_target = false`, the R1118 "a panel cannot dock
+        // into a sole floater" rule) still offered one. The synthesized zone BYPASSED
+        // that opt-out: a second panel torn off near a floater already on screen
+        // redocked INTO it instead of floating (`r1146_release_only_window_move` E), and
+        // a floater dragged back over main resolved its OWN band instead of main's
+        // redock (`r1124`). The dock area is the SSOT for "this window can receive a
+        // dock": no wrapper, no zone.
+        //
+        // The BAND GEOMETRY deliberately stays the WINDOW rect (below), not the dock-area
+        // rect the same-window band uses (R1205). Moving it here would pull the top band
+        // below a client-side toolbar, and a floater approaching main's top edge from
+        // OUTSIDE would then fall short of the straddle band entirely — losing top-edge
+        // cross-window docking for any window with a toolbar (`r1156_outer_dock` pins
+        // that gesture). The resolver-vs-preview geometry mismatch that follows from this
+        // (the preview paints the band on the dock area) is PRE-EXISTING and out of scope
+        // for a regression fix; it needs its own designed answer.
+        if scene
+            .rect_for_tag_absolute(pinion_core::external::DOCK_SURFACE_TAG)
+            .is_none()
+        {
+            continue;
+        }
         let root = scene.rect();
         let (rx, ry) = (f64::from(root.x), f64::from(root.y));
         let (rw, rh) = (f64::from(root.w), f64::from(root.h));
@@ -3763,6 +3805,35 @@ mod tests {
         root
     }
 
+    /// (R1322) A window that HOSTS A DOCK — the panel wrapped in the dock walker's
+    /// `DOCK_SURFACE_TAG` area, as every real dock window paints since R1205. Only such
+    /// a window advertises an outer-dock perimeter; a window with no dock area (a
+    /// torn-off panel's floating window) is not an outer-dock host.
+    fn dock_window_with_panel(tag: &str, rect: Rect) -> Scene {
+        use pinion_core::external::DOCK_SURFACE_TAG;
+        use pinion_core::style::LayoutStyle;
+        let mut panel = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag(tag.to_string())
+                .with_layout(LayoutStyle::new().with_drop_target(true))
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut panel {
+            c.rect = rect;
+        }
+        let mut surface = Scene::Container(
+            ContainerNode::new(vec![panel]).with_tag(DOCK_SURFACE_TAG.to_string()),
+        );
+        if let Scene::Container(c) = &mut surface {
+            c.rect = Rect::new(0, 0, 1000, 800);
+        }
+        let mut root = Scene::Container(ContainerNode::new(vec![surface]));
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 1000, 800);
+        }
+        root
+    }
+
     #[test]
     fn r1098_resolves_a_drop_in_the_other_window() {
         // main at the desktop origin holds a dock panel; a floating window at
@@ -3913,7 +3984,7 @@ mod tests {
         // a FULL-SPAN outer dock (the container-edge gesture), NOT an inner panel
         // split — even though a panel fills the area under it. Pass 0 wins the
         // perimeter over the inner exact pass.
-        let host = window_with_drop_panel("body", Rect::new(0, 0, 1000, 800));
+        let host = dock_window_with_panel("body", Rect::new(0, 0, 1000, 800));
         let windows = [("main", &host, (0.0, 0.0))];
         for (x, y, lbl) in [
             (100.0, 10.0, "top"),
@@ -3931,10 +4002,64 @@ mod tests {
     }
 
     #[test]
+    fn r1322_a_sole_floater_is_not_a_cross_window_outer_dock_host() {
+        // ★R1322 §5.51 — the CROSS-WINDOW twin of `r1322_no_dock_surface_no_outer_zone`.
+        //
+        // A torn-off panel's floating window hosts ONE panel and no dock area, and it
+        // deliberately exposes NO drop target (`DockPanelStyle::drop_target = false` —
+        // the R1118 "a panel cannot dock into a sole floater" rule). Pre-R1322
+        // `resolve_outer_dock_zone` measured its band against EVERY window's
+        // `scene.rect()`, so the floater still advertised a full outer perimeter and the
+        // synthesized zone BYPASSED that opt-out: a second panel torn off toward a
+        // floater already on screen redocked INTO it instead of floating
+        // (`r1146_release_only_window_move` section E, red since R1167).
+        use pinion_core::style::LayoutStyle;
+        let mut panel = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag("properties".to_string())
+                // The real floater's opt-out.
+                .with_layout(LayoutStyle::new().with_drop_target(false))
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut panel {
+            c.rect = Rect::new(0, 0, 360, 300);
+        }
+        let mut floater = Scene::Container(ContainerNode::new(vec![panel]));
+        if let Scene::Container(c) = &mut floater {
+            c.rect = Rect::new(0, 0, 360, 300);
+        }
+        let windows = [("torn-properties", &floater, (1000.0, 200.0))];
+        // A cursor deep in the floater's perimeter band — where the old whole-window
+        // fallback minted the sentinel — resolves NOTHING: no outer zone (no dock area)
+        // and no inner target (the panel opted out). So the drag FLOATS, as it must.
+        for (x, y, lbl) in [
+            (1006.0, 350.0, "left band"),
+            (1180.0, 206.0, "top band"),
+            (1354.0, 350.0, "right band"),
+        ] {
+            assert!(
+                resolve_cross_window_drop(windows, (x, y)).is_none(),
+                "★{lbl}: a sole floater must not advertise an outer dock",
+            );
+        }
+        // Non-tautological: the SAME band cursor over a window that DOES host a dock
+        // area still resolves the outer sentinel.
+        let host = dock_window_with_panel("body", Rect::new(0, 0, 1000, 800));
+        let hosts = [("main", &host, (0.0, 0.0))];
+        assert_eq!(
+            resolve_cross_window_drop(hosts, (6.0, 350.0))
+                .expect("a dock-hosting window still offers its perimeter")
+                .point
+                .tag,
+            OUTER_DOCK_ZONE_TAG,
+        );
+    }
+
+    #[test]
     fn r1156_interior_is_an_inner_panel_not_outer() {
         // Away from the perimeter the cursor resolves the inner panel (exact pass),
         // not an outer full-span dock — interior boundaries keep per-panel zones.
-        let host = window_with_drop_panel("body", Rect::new(0, 0, 1000, 800));
+        let host = dock_window_with_panel("body", Rect::new(0, 0, 1000, 800));
         let windows = [("main", &host, (0.0, 0.0))];
         let drop = resolve_cross_window_drop(windows, (500.0, 400.0)).expect("center resolves");
         assert_eq!(
@@ -3946,7 +4071,7 @@ mod tests {
     #[test]
     fn r1156_beyond_the_perimeter_band_floats() {
         // Far outside every window → no dock (float), not an outer snap.
-        let host = window_with_drop_panel("body", Rect::new(0, 0, 1000, 800));
+        let host = dock_window_with_panel("body", Rect::new(0, 0, 1000, 800));
         let windows = [("main", &host, (0.0, 0.0))];
         // 200px above the top edge, far beyond the 32px perimeter band.
         assert!(resolve_cross_window_drop(windows, (100.0, -200.0)).is_none());
@@ -3957,7 +4082,7 @@ mod tests {
         // The outer DropPoint carries the cursor normalised over the WHOLE window
         // (not a panel) so the dock consumer (`outer_zone_for`) derives the nearest
         // edge: a top-perimeter cursor has a small y_rel and an x_rel = x / width.
-        let host = window_with_drop_panel("body", Rect::new(0, 0, 1000, 800));
+        let host = dock_window_with_panel("body", Rect::new(0, 0, 1000, 800));
         let windows = [("main", &host, (0.0, 0.0))];
         let drop = resolve_cross_window_drop(windows, (300.0, 8.0)).expect("top perimeter");
         assert_eq!(drop.point.tag, OUTER_DOCK_ZONE_TAG);
@@ -6432,6 +6557,7 @@ mod tests {
     /// non-dock kind but the OUTER sentinel under the dock kind.
     #[test]
     fn r1167_same_window_outer_dock_override_for_dock_panel_drag() {
+        use pinion_core::external::DOCK_SURFACE_TAG;
         use pinion_core::scene::{BoxNode, ContainerNode};
         use pinion_core::style::{Color, LayoutStyle};
         use std::borrow::Cow;
@@ -6443,7 +6569,14 @@ mod tests {
             .with_tag("panel")
             .with_layout(LayoutStyle::new().with_drop_target(true));
         panel.rect = Rect::new(0, 0, 400, 400);
-        let scene = Scene::Container(panel);
+        // (R1322) The band is measured against the DOCK AREA, so the scene must carry
+        // the walker's `DOCK_SURFACE_TAG` wrapper — as every real dock-hosting window
+        // does since R1205. A window WITHOUT one hosts no dock and gets no outer zone
+        // (pinned by `r1322_no_dock_surface_no_outer_zone`).
+        let mut surface = ContainerNode::new(vec![Scene::Container(panel)])
+            .with_tag(DOCK_SURFACE_TAG.to_string());
+        surface.rect = Rect::new(0, 0, 400, 400);
+        let scene = Scene::Container(surface);
         let mut router = InputRouter::new();
         let (mut state_scene, _) = state_with_button();
         router.update_paint_scene(scene, &mut state_scene);
@@ -6506,6 +6639,59 @@ mod tests {
         assert!(
             router.resolve_own_outer_dock(410.0, 200.0).is_none(),
             "right of the window is an escape, not an outer dock",
+        );
+    }
+
+    #[test]
+    fn r1322_no_dock_surface_no_outer_zone() {
+        // ★R1322 §5.51 — a window with NO dock area synthesizes NO outer-dock zone.
+        //
+        // The regression this pins: `resolve_own_outer_dock` measured its band against
+        // `Scene::dock_surface_rect()`, which FALLS BACK to the window rect when the
+        // scene carries no `DOCK_SURFACE_TAG`. A torn-off panel's floating window has
+        // no dock area at all, so its whole edge band became an own-window outer-dock
+        // target — and since that sentinel is not the dragged panel's own subtree,
+        // `own_drop_is_self` was false, `resolve_drag_targets` kept own-window-first,
+        // and the R1124 live floater→main redock silently degraded to a bare
+        // `window_move` (demo `r1124_floater_drag_back_redock`, red since R1167).
+        //
+        // The floater scene below is exactly what `view_floating_panel` paints: a lone
+        // dock panel, no dock-surface wrapper.
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        use pinion_core::style::{Color, LayoutStyle};
+        use std::borrow::Cow;
+
+        let content = Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 420, 320), Color::default()).with_tag("panel#content"),
+        );
+        let mut panel = ContainerNode::new(vec![content])
+            .with_tag("panel")
+            .with_layout(LayoutStyle::new().with_drop_target(true));
+        panel.rect = Rect::new(0, 0, 420, 320);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        router.update_paint_scene(Scene::Container(panel), &mut state_scene);
+
+        // A cursor deep in the floater's edge band — where the fallback used to mint the
+        // sentinel — resolves NO outer zone…
+        assert!(
+            router.resolve_own_outer_dock(6.0, 160.0).is_none(),
+            "★a window with no dock area must not synthesize an outer-dock zone",
+        );
+        // …so the own-over stays the plain hit-test, which `own_drop_is_self` recognises
+        // as the dragged panel's own subtree and therefore yields to the cross-window
+        // redock (the R1124 rule, reachable again).
+        let dock = DragPayload {
+            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
+            value: IntrospectValue::Text("panel".into()),
+        };
+        assert_eq!(
+            router
+                .resolve_drag_own_over(&dock, 6.0, 160.0)
+                .expect("the inner hit-test still resolves")
+                .tag,
+            "panel",
+            "★the own hit is the panel itself (a self-drop), not an outer sentinel",
         );
     }
 
@@ -6586,15 +6772,18 @@ mod tests {
             "normalised over the dock surface → near its top (y_rel={})",
             top.y_rel,
         );
-        // Non-tautological: WITHOUT a dock surface the SAME chrome-strip cursor is
-        // the window's top band — the tagged surface is exactly what moves the band
-        // off the controls (the R1202 preview and this band read the same rect).
+        // (R1322) WITHOUT a dock surface there is NO band at all — not, as pre-R1322,
+        // the whole window rect via `dock_surface_rect`'s fallback. That fallback is
+        // what let a torn-off panel's own floating window mint an outer-dock sentinel
+        // and mask the R1124 cross-window redock; a window with no dock area cannot
+        // receive a dock. (This assertion previously pinned the fallback — i.e. it
+        // pinned the bug. See `r1322_no_dock_surface_no_outer_zone`.)
         let mut bare = ContainerNode::new(vec![]);
         bare.rect = Rect::new(0, 0, 400, 600);
         router.update_paint_scene(Scene::Container(bare), &mut state_scene);
         assert!(
-            router.resolve_own_outer_dock(200.0, 10.0).is_some(),
-            "no dock surface → the window's top band includes y=10",
+            router.resolve_own_outer_dock(200.0, 10.0).is_none(),
+            "no dock surface → no outer-dock zone anywhere in the window",
         );
     }
 
