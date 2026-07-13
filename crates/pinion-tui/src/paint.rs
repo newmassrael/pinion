@@ -412,8 +412,16 @@ fn color_to_tui(c: Color) -> TuiColor {
 }
 
 /// Paint a single `TextNode` into `buf` at cell coordinates derived
-/// from `t.rect`. Iterates grapheme clusters; each cluster is
-/// written into one cell (narrow) or one + one-skip pair (wide).
+/// from `t.rect`. Iterates grapheme clusters; a narrow cluster is
+/// written into one cell, a wide (CJK / fullwidth) cluster into its
+/// head cell while the column cursor advances by the cluster's
+/// display width. The wide cluster's continuation cell is left as
+/// `Buffer::empty`'s blank `" "` — matching ratatui's own
+/// `Buffer::set_stringn`, which resets continuation cells via
+/// `Cell::reset()` to `" "` (a space, NOT an empty string). That
+/// blank is never drawn: `Buffer::diff` skips it via the head cell's
+/// width, so the wide glyph occupies both columns cleanly (R1336
+/// locks this against the misdiagnosed CJK-continuation GAP report).
 /// Truncates at the buffer's right edge silently — R51.111+ adds
 /// the ellipsis / soft-wrap policy once the §5.36 text layout cache
 /// surface stabilises for the TUI backend.
@@ -682,11 +690,106 @@ mod tests {
         let scene = Scene::Text(text_at(0, 0, "한X"));
         to_buffer(&scene, &mut buf);
         assert_eq!(buf[(0, 0)].symbol(), "한");
-        // (1, 0) is the "wide grapheme spillover" cell — ratatui
-        // typically leaves this as the source cell's continuation;
-        // we don't assert its exact symbol since ratatui's
-        // rendering convention covers it.
+        // (1, 0) is the wide grapheme's continuation cell. The walker
+        // writes the glyph into the head cell only and advances `col`
+        // by the grapheme width, leaving this cell as `Buffer::empty`'s
+        // blank `" "`. That is EXACTLY ratatui's own convention: its
+        // `Buffer::set_stringn` resets continuation cells via
+        // `Cell::reset()`, which sets the symbol to `" "` (a space) —
+        // NOT to an empty string. The blank is never drawn on screen
+        // because `Buffer::diff` skips it via the head cell's width
+        // (see `cjk_wide_continuation_matches_ratatui`). R1336.
+        assert_eq!(buf[(1, 0)].symbol(), " ");
         assert_eq!(buf[(2, 0)].symbol(), "X");
+    }
+
+    /// R1336 — regression lock refuting the 2026-07-14 GAP report
+    /// `pinion-gap-tui-cjk-continuation-cell-not-blanked`. The report
+    /// claimed (a) ratatui's convention is to leave a wide grapheme's
+    /// continuation cell as an EMPTY string `""`, and (b) pinion's
+    /// `" "` continuation misaligns CJK on a real terminal. Both are
+    /// false for ratatui 0.29, and this test proves it two ways:
+    ///
+    /// 1. pinion's buffer is byte-identical (symbol AND width) to
+    ///    ratatui's OWN `Buffer::set_string` for the same text — so
+    ///    pinion follows ratatui's continuation convention exactly
+    ///    (`" "`, via `Cell::reset()`), not a divergent one.
+    /// 2. A fresh-screen `Buffer::diff` (what the crossterm backend
+    ///    actually draws) emits each glyph at its correct column and
+    ///    NEVER emits a continuation cell — so no space is ever drawn
+    ///    over the right half of a wide glyph. No misalignment.
+    ///
+    /// This guards against a future "fix" that rewrites continuation
+    /// cells to `""`: that would silently diverge from ratatui's
+    /// `set_string` for zero rendering benefit (the diff skips the
+    /// cell either way). The AI-introspection path that DOES want an
+    /// empty continuation is the `TextGrid`/`GridBuffer` RPC snapshot
+    /// (its `CellWidth::Trailer` carries `""` — a different, pinion-
+    /// owned surface), NOT a raw ratatui `Buffer` dump.
+    #[test]
+    fn cjk_wide_continuation_matches_ratatui() {
+        use ratatui::style::Style;
+        // The consumer's exact line, mixing wide CJK, narrow ASCII,
+        // spaces and punctuation.
+        let line = "D01 낮 · 갯들 (뻘이 열렸다)";
+        let w = 40u16;
+
+        let mut pin = Buffer::empty(TuiRect::new(0, 0, w, 1));
+        to_buffer(&Scene::Text(text_at(0, 0, line)), &mut pin);
+
+        // ratatui's own native render of the identical string.
+        let mut rat = Buffer::empty(TuiRect::new(0, 0, w, 1));
+        rat.set_string(0, 0, line, Style::default());
+
+        // (1) Cell-for-cell identity: symbol and display width.
+        for x in 0..w {
+            assert_eq!(
+                pin[(x, 0)].symbol(),
+                rat[(x, 0)].symbol(),
+                "symbol mismatch vs ratatui native at col {x}"
+            );
+            assert_eq!(
+                pin[(x, 0)].symbol().width(),
+                rat[(x, 0)].symbol().width(),
+                "width mismatch vs ratatui native at col {x}"
+            );
+        }
+
+        // (2) What a real terminal draws on a fresh screen. The
+        // crossterm backend prints exactly `previous.diff(current)`;
+        // on a blank screen `previous` is all spaces.
+        let blank = Buffer::empty(TuiRect::new(0, 0, w, 1));
+        let drawn: Vec<(u16, String)> = blank
+            .diff(&pin)
+            .into_iter()
+            .map(|(x, _y, c)| (x, c.symbol().to_owned()))
+            .collect();
+
+        // Every drawn cell sits at its correct column, and no drawn
+        // symbol is a bare continuation space sitting immediately
+        // after a wide glyph (which would prove overdraw). We rebuild
+        // the expected column→glyph placement from the source line and
+        // assert the draw list matches it exactly.
+        let mut expected: Vec<(u16, String)> = Vec::new();
+        let mut col = 0u16;
+        for g in line.graphemes(true) {
+            let gw = u16::try_from(g.width()).unwrap_or(u16::MAX);
+            if gw == 0 {
+                continue;
+            }
+            // A run of spaces collapses into the blank background, so
+            // ratatui's diff omits space cells that equal the prior
+            // (blank) buffer. Only non-space glyphs are drawn.
+            if g != " " {
+                expected.push((col, g.to_owned()));
+            }
+            col += gw;
+        }
+        assert_eq!(
+            drawn, expected,
+            "terminal draw list must place each glyph at its wide-aware \
+             column with no continuation overdraw"
+        );
     }
 
     #[test]
