@@ -84,14 +84,17 @@ _ROW_SEG = "measured-row:"
 
 
 def _row_index(tag: str):
-    """Row index from a slot tag in either scoped or bare form, else None."""
-    _, _, rest = tag.partition(_ROW_SEG)
-    if not rest:
+    """Row index from a slot tag in either scoped or bare form, else None.
+
+    Mirrors the Rust SSOT `measured_row_index` exactly: split on the LAST
+    `measured-row:` (rsplit, so a scope prefix that itself contained the segment
+    could not shadow the real index) and accept only a bare non-negative integer
+    (strict, like `usize::parse`). `partition` + `int()` diverged on pathological
+    tags (first-occurrence, and `int()` accepts `-5`/whitespace); this does not."""
+    if _ROW_SEG not in tag:
         return None
-    try:
-        return int(rest)
-    except ValueError:
-        return None
+    rest = tag.rsplit(_ROW_SEG, 1)[1]
+    return int(rest) if rest.isdigit() else None
 
 
 def present_rows(snap) -> set[int]:
@@ -119,17 +122,18 @@ def scroll_offset(snap) -> int:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
-        # R1332 — wait for the settled first frame. A measured list windows against
-        # the layout-measured heights, so the very first stored frame can carry the
-        # list container with zero rows before the first layout pass lands
-        # ([[measured-rect-reactive-seam-timing-and-verification]]); poll for the
-        # populated window ([[zero-flake-policy]]). This poll is NOT what was failing
-        # in CI — the R1326/R1327 "slow runner race" diagnosis was wrong. The rows
-        # WERE painted every frame; the demo's tag oracle grepped the bare
+        # R1332 — poll for the first populated frame ([[zero-flake-policy]]): this
+        # guards only the brief pre-first-paint boot window (before any frame is
+        # stored). This demo uses `view_measured_list` with an EXPLICIT `Rect`
+        # viewport, so it windows against the estimate table and rows are present on
+        # the first settled frame — it is NOT the flex-`AutoSizer` "zero rows until
+        # the measured viewport lands" case (that is `view_flex_virtual_list`).
+        # (R1333, corrected) The earlier note here cited that flex mechanism, which
+        # does not apply to this demo. What was actually failing in CI was neither a
+        # race nor the viewport seam: the tag oracle grepped the bare
         # `measured-row:<i>` prefix while R1199 had scoped the tag to
-        # `<scroll_tag>/measured-row:<i>`, so `present_rows` matched nothing at any
-        # speed (fixed in `_row_index` above). With the oracle corrected the window is
-        # present on frame 0.
+        # `<scroll_tag>/measured-row:<i>`, so it matched nothing at any speed (fixed
+        # in `_row_index` above).
         snap = wait_snap(
             tf, lambda s: bool(present_rows(s)), source="paint", viewport=WIN,
             desc="the measured list paints its first row window",

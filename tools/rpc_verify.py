@@ -128,8 +128,11 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # `PINION_ASSUME_BUILT` after its own batch build and turns this off; a
         # caller streaming many launches of a known-fresh binary can pass
         # `ensure_build=False`.
+        # R1333 — gate on the value `"1"` (not mere presence), matching the sibling
+        # `PINION_SWEEP_NO_BUILD` convention. Presence-checking made `…=0` disable the
+        # rebuild — the opposite of what a user setting `0` ("keep the gate on") means.
         self.ensure_build = ensure_build and (
-            os.environ.get(_ASSUME_BUILT_ENV) is None
+            os.environ.get(_ASSUME_BUILT_ENV) != "1"
         )
         self.boot_grace = boot_grace
         self.request_timeout = request_timeout
@@ -309,6 +312,16 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                     -32099,
                     f"cargo build -p {self.example} failed before launch",
                     exc.output[-4000:],
+                ) from exc
+            except FileNotFoundError as exc:
+                # R1333 — cargo succeeded but the expected binary is missing (a
+                # lib-only package, or a `[[bin]]` name != package name). Surface it
+                # through the same loud `-32099` path as a build failure rather than
+                # letting a raw `FileNotFoundError` escape.
+                raise RpcError(
+                    -32099,
+                    f"{self.example} built but no runnable binary was produced",
+                    str(exc),
                 ) from exc
         flavor = "release" if self.release else "debug"
         path = WORKSPACE_ROOT / "target" / flavor / self.example

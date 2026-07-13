@@ -88,19 +88,33 @@ fi
 # shell). The demo list rides across as positional args.
 # shellcheck disable=SC2016  # intentional: expands in the child bash, not here
 runner='
-  total=0; passed=0; n="$#"; failures=""
+  total=0; passed=0; n="$#"; failures=""; skipped=""; skip_count=0
   for f in "$@"; do
     total=$((total + 1))
     printf "[sweep %2d/%d] %s ... " "$total" "$n" "$(basename "$f")"
     if out="$(timeout 180 python3 "$f" 2>&1)"; then
-      passed=$((passed + 1)); echo "PASS"
+      # R1333 — a demo that exits 0 is only a REAL pass if it did not SKIP a
+      # phase. Several live-pixel / native-drag demos (r706 r707 r786 r794 r787
+      # r806) print an uppercase "SKIP" line and return 0 when an environment
+      # dep is absent (Pillow / XTEST / a locatable capture), so a bare exit-0
+      # tally reports "did nothing" as PASS and the gate looks greener than it
+      # is. Detect the marker and tally SKIP distinctly so the headline cannot
+      # hide vacuous coverage. Non-fatal (a dev box legitimately lacks some
+      # deps); the summary keeps the gap visible instead of hidden.
+      if echo "$out" | grep -q "SKIP"; then
+        skip_count=$((skip_count + 1)); skipped="$skipped $(basename "$f")"
+        echo "PASS (skipped a phase)"
+      else
+        passed=$((passed + 1)); echo "PASS"
+      fi
     else
       echo "FAIL"; failures="$failures $(basename "$f")"
       echo "$out" | sed "s/^/    | /" >&2
     fi
   done
   echo "----------------------------------------"
-  echo "[sweep] $passed/$total passed"
+  echo "[sweep] $passed asserted / $total run; $skip_count skipped a phase"
+  if [ "$skip_count" -gt 0 ]; then echo "[sweep] SKIPPED (env dep absent, coverage NOT exercised):$skipped" >&2; fi
   if [ -n "$failures" ]; then echo "[sweep] FAILURES:$failures" >&2; exit 1; fi
   exit 0
 '

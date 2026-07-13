@@ -96,9 +96,12 @@ jobs:
       # R1330 — the "Build workspace" step below is the freshness build, so the
       # sweep must not run its own `cargo build --release --workspace` on top of it
       # (it does so by default now, to protect a local run from a stale binary).
-      # This flag makes the sweep trust the prior step. If the build step is ever
-      # removed, `RpcSubprocess`'s `cargo run` fallback still rebuilds each example,
-      # so a missing binary self-heals rather than silently running stale.
+      # This flag makes the sweep trust the prior step. NOTE (R1333, corrected): the
+      # "Build workspace" step is LOAD-BEARING — with this flag set the harness runs
+      # `ensure_build=False`, so a present-but-stale `target/release/<ex>` is run
+      # DIRECTLY; only a MISSING binary self-heals via the `cargo run` fallback. Since
+      # rust-cache restores `target/`, removing the build step would silently run
+      # stale binaries. Keep the build step whenever this flag is set.
       PINION_SWEEP_NO_BUILD: "1"
     steps:
       - uses: actions/checkout@v5
@@ -128,6 +131,17 @@ jobs:
             ffmpeg x11-utils gcc libxtst-dev libx11-dev python3 \
             libasound2-dev libasound2-plugins alsa-utils \
             pulseaudio pulseaudio-utils
+          # R1333 — Pillow (python3-pil) is DELIBERATELY NOT installed yet. The 6
+          # live-pixel / native-drag demos (r706 r707 r786 r794 r787 r806) `import
+          # PIL` and SKIP the pixel guard without it, so their coverage is currently
+          # VACUOUS in CI — surfaced honestly now by the sweep's SKIP tally (R1333
+          # sweep_headless.sh) instead of being hidden as a fast PASS. Installing
+          # Pillow to ARM them was tried and rejected for now: with Pillow present
+          # r794 FAILS a native-drag assertion and r706/r707 cannot locate their
+          # feature in the capture (verified locally), so arming them would turn this
+          # REQUIRED gate red. Arm them (add python3-pil, make SKIP fatal) only after
+          # those demos are hardened — see the KNOWN GAPS note. Making a required gate
+          # honestly-partial beats making it flakily-red.
       - name: Silent audio device (userspace null sink) for the device-audio demo
         # R1325 — `hello_audio_device.py` drives a REAL cpal callback thread
         # concurrently with the RPC control thread, so it needs a real output device
