@@ -36,7 +36,6 @@ The witness is scene-as-data + introspection (§2 #7), no pixels:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -72,16 +71,44 @@ EXACT_TOTAL = sum(model_height(i) for i in range(N))  # 7920
 BASELINE = N * EST  # 5760
 
 
+# R1332 — the row-slot tag is SCROLL-SCOPED (`<scroll_tag>/measured-row:<i>`,
+# R1199 `measured_row_tag`), not the bare `measured-row:<i>` this demo grepped for.
+# The bare-prefix match found NOTHING once R1199 landed, so the demo reported "no
+# rows" though the rows were painted (the External still measured them — that is why
+# `measured_count` was non-zero while `present_rows` was empty). The Rust SSOT is
+# `pinion_core::widgets::measured_rows::measured_row_index`, which parses the index
+# out of EITHER form by splitting on the `measured-row:` segment; mirror it here so
+# the oracle cannot drift from the scope prefix again ([[section-citation]] class:
+# the demo must read the tag the shell actually emits, R1324).
+_ROW_SEG = "measured-row:"
+
+
+def _row_index(tag: str):
+    """Row index from a slot tag in either scoped or bare form, else None."""
+    _, _, rest = tag.partition(_ROW_SEG)
+    if not rest:
+        return None
+    try:
+        return int(rest)
+    except ValueError:
+        return None
+
+
 def present_rows(snap) -> set[int]:
     out: set[int] = set()
     for tag in abs_rects_of(snap):
-        if tag.startswith("measured-row:"):
-            out.add(int(tag.split(":", 1)[1]))
+        idx = _row_index(tag)
+        if idx is not None:
+            out.add(idx)
     return out
 
 
 def slot_rect(snap, i: int):
-    return abs_rects_of(snap)[f"measured-row:{i}"]
+    rects = abs_rects_of(snap)
+    for tag, rect in rects.items():
+        if _row_index(tag) == i:
+            return rect
+    raise KeyError(f"no measured-row slot for index {i} in {sorted(rects)}")
 
 
 def scroll_offset(snap) -> int:
@@ -92,35 +119,21 @@ def scroll_offset(snap) -> int:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
-        # (R1326) POLL for the first populated frame instead of asserting on
-        # whatever happens to be stored. A measured list renders its window from the
-        # MEASURED viewport height, which arrives from a layout pass — so the very
-        # first stored frame can legitimately carry the list container with ZERO rows
-        # ([[measured-rect-reactive-seam-timing-and-verification]]). A fast box paints
-        # the measured frame before the demo looks; a slow CI runner does not, which is
-        # why this demo passed locally and failed in the sweep ("row 0 rendered at the
-        # top") — a race in the DEMO, not in the shell. Polling for the settled
-        # observable is the [[zero-flake-policy]] form; the assertions below are
-        # unchanged and still pin virtualization.
-        # (R1327 diagnostic) The CI sweep sees ZERO rows here while every local run
-        # (real GPU, Xvfb+lavapipe, even pinned to one core) paints them immediately,
-        # and the 8s poll never converges — so this is structural on the runner, not
-        # slow. Dump what the app actually reports before asserting, so the sweep log
-        # says WHY instead of just "no rows".
-        for attempt in range(12):
-            snap = tf.snapshot(source="paint", viewport=WIN)
-            rects_d = abs_rects_of(snap)
-            print(
-                f"[diag {attempt}] rows={len(present_rows(snap))} "
-                f"list={rects_d.get(LIST_TAG)} scroll={rects_d.get(SCROLL_TAG)} "
-                f"measured={tf.query('/external/measured_count')} "
-                f"items={tf.query('/external/item_count')}",
-                flush=True,
-            )
-            if present_rows(snap):
-                break
-            time.sleep(0.5)
-        assert present_rows(snap), "the measured list never painted a row window"
+        # R1332 — wait for the settled first frame. A measured list windows against
+        # the layout-measured heights, so the very first stored frame can carry the
+        # list container with zero rows before the first layout pass lands
+        # ([[measured-rect-reactive-seam-timing-and-verification]]); poll for the
+        # populated window ([[zero-flake-policy]]). This poll is NOT what was failing
+        # in CI — the R1326/R1327 "slow runner race" diagnosis was wrong. The rows
+        # WERE painted every frame; the demo's tag oracle grepped the bare
+        # `measured-row:<i>` prefix while R1199 had scoped the tag to
+        # `<scroll_tag>/measured-row:<i>`, so `present_rows` matched nothing at any
+        # speed (fixed in `_row_index` above). With the oracle corrected the window is
+        # present on frame 0.
+        snap = wait_snap(
+            tf, lambda s: bool(present_rows(s)), source="paint", viewport=WIN,
+            desc="the measured list paints its first row window",
+        )
 
         # ── (A) boot window: a small window of 120 rows ──────────────
         rects = abs_rects_of(snap)
