@@ -49,7 +49,7 @@
 
 use pinion_core::CellMetric;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextGridNode, TextNode};
-use pinion_core::style::{BoxStyle, Color};
+use pinion_core::style::{BoxStyle, Color, FontStyle, FontWeight, TextStyle};
 use pinion_core::term_grid::{CellAttrs, CellWidth, TermColor};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect as TuiRect;
@@ -455,7 +455,10 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
         return;
     }
     let mut col = cell_col;
-    for grapheme in t.content.graphemes(true) {
+    // R1337 §5.41 §2#6 — `grapheme_indices` (not `graphemes`) so each
+    // cluster's UTF-8 byte offset resolves which `TextNode.runs` span
+    // (rich text) governs it; empty `runs` falls back to `t.style`.
+    for (byte_off, grapheme) in t.content.grapheme_indices(true) {
         let g_width_usize = grapheme.width();
         let g_width = i32::try_from(g_width_usize).unwrap_or(i32::MAX);
         if g_width == 0 {
@@ -478,9 +481,82 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
             continue;
         }
         if let Some((bx, by)) = cell_to_buf_xy(col, cell_row, buf_area) {
-            buf[(bx, by)].set_symbol(grapheme);
+            let style = effective_text_style(t, byte_off);
+            let cell = &mut buf[(bx, by)];
+            cell.set_symbol(grapheme);
+            apply_text_style(cell, style);
         }
         col = col.saturating_add(g_width);
+    }
+}
+
+/// R1337 §5.36 §5.41 — the effective [`TextStyle`] for the grapheme
+/// starting at UTF-8 `byte_off`: the first `StyleRun` whose
+/// `[start, end)` covers that byte, else the node's base `style`.
+/// `runs` are the §5.36 rich-text spans (documented non-overlapping
+/// and ordered); keying on the cluster's *start* byte assigns a
+/// grapheme wholly to one run, mirroring the parley run walk the
+/// Vello backend drives through `layout_with_runs`. First-match wins
+/// here; under the documented non-overlap invariant that equals the
+/// Vello side's last-push-wins, and the two only diverge if a caller
+/// violates the invariant with overlapping spans.
+fn effective_text_style(t: &TextNode, byte_off: usize) -> &TextStyle {
+    let b = u32::try_from(byte_off).unwrap_or(u32::MAX);
+    t.runs
+        .iter()
+        .find(|run| run.start <= b && b < run.end)
+        .map_or(&t.style, |run| &run.style)
+}
+
+/// R1337 §2#6 — apply a [`TextStyle`]'s terminal-representable
+/// attributes to a cell so the same `TextNode` style fields that the
+/// Vello backend renders (`paint_adapter::paint_text`) also drive the
+/// TUI, closing the "one scene, two backends" style-drop where only
+/// the symbol was written pre-R1337. The mapping is the terminal's
+/// representable subset, not a pixel-equal reproduction (see below).
+///
+/// Foreground: the framework-default `fg_color` is opaque black
+/// (`TextStyle::new`), but a terminal's default foreground is
+/// theme-driven (light-on-dark or dark-on-light). Forcing literal
+/// black would be invisible on a dark terminal, so **any black**
+/// (the default, at any alpha) — and any fully transparent colour —
+/// inherits the terminal's own foreground (leaving the cell's
+/// `Reset` fg), exactly as the `TermColor::Default` grid path does.
+/// Any *explicit* non-black, visible colour is honoured verbatim.
+/// This is a deliberate divergence from Vello (which paints literal
+/// black glyphs): default text follows the terminal theme instead.
+///
+/// Weight / style / decoration collapse onto the terminal's single
+/// bold / italic / underline / strikethrough intensities: CSS
+/// weight `>= 700` (`FontWeight::BOLD`) is bold (500 / 600 have no
+/// terminal intensity and stay normal); italic and oblique both map
+/// to the one terminal italic. All are additive, so default-styled
+/// text sets no modifier and stays byte-identical to the pre-R1337
+/// (and ratatui-native) unstyled output.
+fn apply_text_style(cell: &mut ratatui::buffer::Cell, style: &TextStyle) {
+    let fg = style.fg_color;
+    // Apply only a visible, non-black colour. Black (at any alpha) is
+    // the framework default and inherits the terminal's theme fg; the
+    // RGB-triplet test (not full-colour equality) keeps opaque and
+    // semi-transparent black consistent.
+    if fg.a > 0 && (fg.r, fg.g, fg.b) != (0, 0, 0) {
+        cell.set_fg(color_to_tui(fg));
+    }
+    let mut modifier = Modifier::empty();
+    if style.font_weight.0 >= FontWeight::BOLD.0 {
+        modifier |= Modifier::BOLD;
+    }
+    if matches!(style.font_style, FontStyle::Italic | FontStyle::Oblique(_)) {
+        modifier |= Modifier::ITALIC;
+    }
+    if style.decoration.underline {
+        modifier |= Modifier::UNDERLINED;
+    }
+    if style.decoration.strikethrough {
+        modifier |= Modifier::CROSSED_OUT;
+    }
+    if !modifier.is_empty() {
+        cell.set_style(Style::default().add_modifier(modifier));
     }
 }
 
@@ -790,6 +866,136 @@ mod tests {
             "terminal draw list must place each glyph at its wide-aware \
              column with no continuation overdraw"
         );
+    }
+
+    /// R1337 §2#6 — an explicitly-styled `TextNode` renders its
+    /// colour / weight / italic / decoration in the TUI, matching the
+    /// attributes the Vello backend draws (was dropped pre-R1337).
+    #[test]
+    fn text_style_maps_to_terminal_attrs() {
+        use pinion_core::style::{Color, FontStyle, FontWeight, TextDecoration};
+        use ratatui::style::{Color as TuiColor, Modifier};
+
+        let mut node = text_at(0, 0, "A");
+        node.style.fg_color = Color::rgb(0xff, 0, 0);
+        node.style.font_weight = FontWeight::BOLD;
+        node.style.font_style = FontStyle::Italic;
+        node.style.decoration = TextDecoration::both();
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(node), &mut buf);
+
+        let cell = &buf[(0, 0)];
+        assert_eq!(cell.symbol(), "A");
+        assert_eq!(cell.fg, TuiColor::Rgb(0xff, 0, 0));
+        assert!(cell.modifier.contains(Modifier::BOLD));
+        assert!(cell.modifier.contains(Modifier::ITALIC));
+        assert!(cell.modifier.contains(Modifier::UNDERLINED));
+        assert!(cell.modifier.contains(Modifier::CROSSED_OUT));
+    }
+
+    /// R1337 — the framework-default `fg_color` (opaque black) must
+    /// NOT force a black foreground: a terminal's default fg is
+    /// theme-driven, so default text keeps the cell's `Reset` fg and
+    /// stays readable on a dark terminal. Guards the R1336 ratatui
+    /// parity and the pre-R1337 behaviour against regression.
+    #[test]
+    fn default_black_text_inherits_terminal_fg() {
+        use ratatui::style::{Color as TuiColor, Modifier};
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(text_at(0, 0, "A")), &mut buf);
+        assert_eq!(buf[(0, 0)].symbol(), "A");
+        assert_eq!(buf[(0, 0)].fg, TuiColor::Reset);
+        assert_eq!(buf[(0, 0)].modifier, Modifier::empty());
+    }
+
+    /// R1337 — a fully transparent `fg_color` (a == 0) paints no
+    /// colour; the cell inherits the terminal default (mirrors the
+    /// alpha short-circuit the box / grid paths use).
+    #[test]
+    fn transparent_text_fg_is_not_applied() {
+        use pinion_core::style::Color;
+        use ratatui::style::Color as TuiColor;
+        let mut node = text_at(0, 0, "A");
+        node.style.fg_color = Color::rgba(0xff, 0, 0, 0);
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(node), &mut buf);
+        assert_eq!(buf[(0, 0)].fg, TuiColor::Reset);
+    }
+
+    /// R1337 §5.36 — rich-text `runs` colour each grapheme by the
+    /// span covering its start byte; bytes outside every run fall
+    /// back to the node's base style (here default → terminal fg).
+    #[test]
+    fn rich_text_runs_style_per_grapheme() {
+        use pinion_core::scene::StyleRun;
+        use pinion_core::style::{Color, TextStyle};
+        use ratatui::style::Color as TuiColor;
+
+        let mut red = TextStyle::new();
+        red.fg_color = Color::rgb(0xff, 0, 0);
+        let mut green = TextStyle::new();
+        green.fg_color = Color::rgb(0, 0xff, 0);
+
+        let mut node = text_at(0, 0, "RGB");
+        node.runs = vec![StyleRun::new(0, 1, red), StyleRun::new(1, 2, green)];
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(node), &mut buf);
+
+        assert_eq!(buf[(0, 0)].fg, TuiColor::Rgb(0xff, 0, 0), "run 0 red");
+        assert_eq!(buf[(1, 0)].fg, TuiColor::Rgb(0, 0xff, 0), "run 1 green");
+        // Byte 2 is outside every run → base style (default black) →
+        // terminal default fg.
+        assert_eq!(buf[(2, 0)].fg, TuiColor::Reset, "uncovered → base");
+    }
+
+    /// R1337 — a coloured WIDE (CJK) glyph: the head cell carries the
+    /// symbol + colour, the continuation cell stays default. Because
+    /// `Buffer::diff` skips the continuation via the head's width, the
+    /// terminal draws the wide glyph once in the head's colour across
+    /// both columns — the intersection of R1336 (wide) and R1337
+    /// (colour), which neither round tested alone.
+    #[test]
+    fn colored_wide_cjk_glyph_head_carries_color() {
+        use pinion_core::style::Color;
+        use ratatui::style::Color as TuiColor;
+        let mut node = text_at(0, 0, "한X");
+        node.style.fg_color = Color::rgb(0, 0, 0xff);
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(node), &mut buf);
+        assert_eq!(buf[(0, 0)].symbol(), "한");
+        assert_eq!(buf[(0, 0)].fg, TuiColor::Rgb(0, 0, 0xff), "head coloured");
+        // Continuation cell untouched; never drawn (diff skips by width).
+        assert_eq!(buf[(1, 0)].symbol(), " ");
+        assert_eq!(buf[(1, 0)].fg, TuiColor::Reset, "continuation default");
+        // Fresh-screen draw list: only the coloured head + narrow "X".
+        let blank = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        let cols: Vec<u16> = blank.diff(&buf).into_iter().map(|(x, _, _)| x).collect();
+        assert_eq!(cols, vec![0, 2], "continuation column not drawn");
+    }
+
+    /// R1337 — the bold threshold is CSS 700: `SEMI_BOLD` (600) has no
+    /// terminal intensity and stays normal; exactly `BOLD` (700) sets
+    /// the modifier. Locks the documented weight mapping.
+    #[test]
+    fn font_weight_bold_threshold_is_700() {
+        use pinion_core::style::FontWeight;
+        use ratatui::style::Modifier;
+        let mut semi = text_at(0, 0, "S");
+        semi.style.font_weight = FontWeight::SEMI_BOLD;
+        let mut bold = text_at(0, 0, "B");
+        bold.style.font_weight = FontWeight::BOLD;
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(semi), &mut buf);
+        assert!(
+            !buf[(0, 0)].modifier.contains(Modifier::BOLD),
+            "600 stays normal"
+        );
+        let mut buf2 = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(bold), &mut buf2);
+        assert!(buf2[(0, 0)].modifier.contains(Modifier::BOLD), "700 bold");
     }
 
     #[test]
