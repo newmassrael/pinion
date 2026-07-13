@@ -756,7 +756,8 @@ impl WidgetA11y for TabReorderView {
             "Editor tabs",
             &tabs,
             PANEL_TAG,
-            TABS[state.selected].0,
+            // (R1320) Static labels → explicit panel name (see `hello-tabs`).
+            Some(TABS[state.selected].0),
         )
     }
 

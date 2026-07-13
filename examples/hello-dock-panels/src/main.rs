@@ -503,8 +503,16 @@ fn floating_window_id(panel_id: &str) -> String {
 }
 
 /// Human-readable title for a floating window hosting `panel_id`.
+///
+/// (R1320 §5.16 §5.41) Uses the panel's DISPLAY title ([`panel_title_for`]), not its
+/// id: this binding has always shown "Inspector" in the panel header while its OS
+/// window title said "inspector" — the same identity-vs-display confusion R1318 split
+/// in the dock walker, in the one string R1319 made live.
 fn floating_window_title(panel_id: &str) -> String {
-    format!("hello-dock-panels — {panel_id} (floating)")
+    format!(
+        "hello-dock-panels — {} (floating)",
+        panel_title_for(panel_id)
+    )
 }
 
 /// R1087 §5.16 §5.41 PR-31 — the declared logical-pixel position a
@@ -869,6 +877,9 @@ where
 fn view_floating_placeholder_for(panel_id: &str, theme: &Theme) -> Scene {
     view_floating_placeholder(
         panel_id,
+        // (R1320) LABEL = the display title (what the panel's header shows); the TAG the
+        // placeholder carries stays the panel id (the redock drop target resolves it).
+        panel_title_for(panel_id),
         theme,
         &FloatingPlaceholderStyle::m3_default().with_label_font_size_px(PROPERTY_PANE_FONT_PX),
     )

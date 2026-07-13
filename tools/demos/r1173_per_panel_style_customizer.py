@@ -2,7 +2,8 @@
 """R1173 §5.16 §2 #7 — per-panel PAINT chrome via the walker style customizer.
 
 SCOPE — read this before the assertions. The dock WALKER
-(`view_dock_surface_styled`) takes a per-panel style customizer, so a host can
+(`view_dock_surface_chrome`, R1320; `view_dock_surface_styled` at R1173) takes a
+per-panel style customizer, so a host can
 compose panel chrome PER PANEL — a taller header, a suppressed header, a
 non-receiving drop target — while every other panel keeps the default. R1173
 introduced this seam; it was first demonstrated on the editor's toolbar.

@@ -315,7 +315,10 @@ impl WidgetA11y for TabsView {
             "Settings sections",
             &tabs,
             PANEL_TAG,
-            TAB_LABELS[active],
+            // (R1320) These labels are static, so name the panel explicitly; a caller
+            // whose labels are runtime app state passes `None` and is labelled by its
+            // tab (the dock's display titles).
+            Some(TAB_LABELS[active]),
         )
     }
 

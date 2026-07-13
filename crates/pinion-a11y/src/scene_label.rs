@@ -63,7 +63,14 @@ pub fn enrich_names_from_scene(nodes: &mut [AccessNode], scene: &Scene) -> usize
         if node.name.is_some() {
             continue;
         }
-        let Some(container) = find_container_by_tag(scene, &node.tag) else {
+        // R1320 §5.40 §5.27 — `name_from_tag` (the `aria-labelledby` relation) names
+        // this node from ANOTHER tag's painted label; absent, the node names itself
+        // from its own tag (the pre-R1320 name-from-contents path, unchanged). The
+        // dock's `tabpanel` uses it to take its tab's label, so the AT tree and the
+        // pixels cannot disagree about what a panel is called even when the label is
+        // app state the a11y walker never sees (R1318 display titles).
+        let lookup = node.name_from_tag.as_deref().unwrap_or(&node.tag);
+        let Some(container) = find_container_by_tag(scene, lookup) else {
             continue;
         };
         if let Some(label) = container.aria_label.as_deref() {

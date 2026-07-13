@@ -60,7 +60,7 @@ pub fn tablist_tab_nodes(
     list_name: &str,
     tabs: &[TabCell<'_>],
     panel_tag: &str,
-    panel_name: &str,
+    panel_name: Option<&str>,
 ) -> Vec<AccessNode> {
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(tabs.len() + 2);
     let mut tablist = AccessNode::new(list_tag, AriaRole::TabList).with_name(list_name);
@@ -81,7 +81,23 @@ pub fn tablist_tab_nodes(
         }
         nodes.push(node);
     }
-    nodes.push(AccessNode::new(panel_tag, AriaRole::TabPanel).with_name(panel_name));
+    // (R1320 §5.40 §5.27) `panel_name: None` = the WAI-ARIA 1.2 §5.3 default: a
+    // `tabpanel` is LABELLED BY ITS TAB. The node takes `name_from_tag` = the selected
+    // tab's tag, so `enrich_names_from_scene` gives it exactly the label that tab
+    // PAINTS — the two can never disagree, and a caller whose labels are app state it
+    // cannot hand to the a11y walker (the dock's R1318 display titles) needs to thread
+    // nothing. `Some(name)` keeps the explicit-name path for a caller whose panel has a
+    // name of its own.
+    let panel = AccessNode::new(panel_tag, AriaRole::TabPanel);
+    nodes.push(match panel_name {
+        Some(name) => panel.with_name(name),
+        None => match tabs.iter().find(|t| t.selected) {
+            Some(selected) => panel.with_name_from_tag(selected.tag),
+            // A well with no selected tab has nothing to be labelled by (an
+            // AT-discoverable but unnamed panel — the honest answer).
+            None => panel,
+        },
+    });
     nodes
 }
 
@@ -115,7 +131,7 @@ mod tests {
     #[test]
     fn emits_tablist_tabs_then_panel() {
         let t = tabs();
-        let nodes = tablist_tab_nodes("tl", "Sections", &t, "panel", "General");
+        let nodes = tablist_tab_nodes("tl", "Sections", &t, "panel", Some("General"));
         assert_eq!(nodes.len(), t.len() + 2, "tablist + N tabs + one panel");
         assert_eq!(nodes[0].role, AriaRole::TabList);
         assert_eq!(nodes[0].name.as_deref(), Some("Sections"));
@@ -134,7 +150,7 @@ mod tests {
 
     #[test]
     fn panel_is_not_a_child_of_the_tablist() {
-        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", "General");
+        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", Some("General"));
         assert!(
             !nodes[0].children.iter().any(|c| c == "panel"),
             "the tabpanel is a sibling of the tablist, not a child",
@@ -143,7 +159,7 @@ mod tests {
 
     #[test]
     fn only_selected_tab_carries_aria_selected() {
-        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", "General");
+        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", Some("General"));
         assert_eq!(nodes[1].selected, Some(true), "tab 0 selected");
         assert_eq!(nodes[2].selected, Some(false), "tab 1 not selected");
         assert_eq!(nodes[3].selected, Some(false), "tab 2 not selected");
@@ -151,7 +167,7 @@ mod tests {
 
     #[test]
     fn tabs_carry_posinset_and_setsize_over_the_slice() {
-        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", "General");
+        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", Some("General"));
         assert_eq!(nodes[1].position_in_set, Some(1));
         assert_eq!(nodes[1].size_of_set, Some(3));
         assert_eq!(nodes[3].position_in_set, Some(3));
@@ -160,7 +176,7 @@ mod tests {
 
     #[test]
     fn focused_tab_carries_focused_state() {
-        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", "General");
+        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", Some("General"));
         assert!(
             nodes[1].state.focused,
             "tab 0 is the roving active descendant"
@@ -172,7 +188,7 @@ mod tests {
 
     #[test]
     fn explicit_label_set_and_none_left_for_enrichment() {
-        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", "General");
+        let nodes = tablist_tab_nodes("tl", "Sections", &tabs(), "panel", Some("General"));
         assert_eq!(
             nodes[1].name.as_deref(),
             Some("General"),

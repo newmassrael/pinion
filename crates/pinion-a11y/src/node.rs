@@ -43,6 +43,20 @@ pub struct AccessNode {
     /// [`AccessNode::with_name`] and the enrichment will respect
     /// that override.
     pub name: Option<String>,
+    /// R1320 §5.40 §5.27 — name this node from ANOTHER tag's painted label
+    /// (the WAI-ARIA `aria-labelledby` relation), resolved by
+    /// [`crate::enrich_names_from_scene`] exactly like the self-tag path.
+    ///
+    /// The forcing consumer is the dock tab well: a `tabpanel` must be named by
+    /// its TAB (WAI-ARIA 1.2 §5.3), and after R1318 that tab's painted label is
+    /// the panel's DISPLAY title, which is app state the a11y walker has no
+    /// access to. Naming the tabpanel from the tab's tag makes the AT tree agree
+    /// with the pixels BY CONSTRUCTION — no title has to be threaded into the
+    /// a11y layer at all, and any future re-titling follows for free.
+    ///
+    /// Ignored when [`Self::name`] is already `Some` (an explicit name still
+    /// wins, per the enrichment's precedence).
+    pub name_from_tag: Option<String>,
     /// Current widget value (boolean for switch/check/radio, float
     /// for slider). Introspect schema reports the same value, by
     /// design (lockstep, single source of truth).
@@ -292,6 +306,7 @@ impl AccessNode {
             tag: tag.into(),
             role,
             name: None,
+            name_from_tag: None,
             value: None,
             state: AccessState::default(),
             bounds: None,
@@ -318,6 +333,14 @@ impl AccessNode {
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// (R1320 §5.40 §5.27) Name this node from `tag`'s painted label — the
+    /// WAI-ARIA `aria-labelledby` relation. See [`Self::name_from_tag`].
+    #[must_use]
+    pub fn with_name_from_tag(mut self, tag: impl Into<String>) -> Self {
+        self.name_from_tag = Some(tag.into());
         self
     }
 

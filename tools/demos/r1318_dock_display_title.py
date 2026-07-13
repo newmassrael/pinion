@@ -152,6 +152,15 @@ def _set_titles(tf: RpcSubprocess, titles: dict[str, str]) -> None:
     tf.intervene(TITLES, titles)
 
 
+def _access_nodes(tf: RpcSubprocess) -> list[dict]:
+    """The `scene/access` AT tree — the structured NAME channel (not the paint tree)."""
+    resp = tf.request("scene/access", {})
+    assert resp is not None and resp.result is not None, "scene/access must answer"
+    nodes = resp.result.get("nodes")
+    assert isinstance(nodes, list), f"scene/access.nodes must be a list; got {resp.result!r}"
+    return nodes
+
+
 def _windows(tf: RpcSubprocess) -> list[dict]:
     resp = tf.request("scene/windows", {})
     assert resp is not None and resp.result is not None, "scene/windows must answer"
@@ -264,6 +273,21 @@ def body() -> None:
             ALL_PANELS,
             "D.4 ★the tabified panel is still addressed by its id",
         )
+        # ★R1320 — the AT tree (`scene/access`) is the OTHER structured name channel,
+        # and it must agree with the pixels. R1318 named the `tab` from the painted
+        # label (→ the display title) but the `tabpanel` it controls EXPLICITLY from the
+        # panel id, so one panel was announced under two names to a screen reader / an
+        # AI reading `scene/access`. The TAG stays the id (it is what `activate_tab`
+        # addresses); only the NAME follows the display title.
+        # The AT tree is rebuilt on the next paint (like the r1096 tablist probe), so
+        # poll rather than race it.
+        wait_until(
+            lambda: any(n.get("role") == "tabpanel" for n in _access_nodes(tf)),
+            desc="D.5 scene/access grows the well's tabpanel node",
+        )
+        active = next(n for n in _access_nodes(tf) if n.get("role") == "tabpanel")
+        assert_eq(active.get("name"), HTOP, "D.6 ★the AT announces the panel's DISPLAY title")
+        assert_eq(active.get("tag"), VIEWPORT, "D.7 ★…while the node is ADDRESSED by the id")
 
         # ── (E) two panels, ONE display title ────────────────────────────
         # A label is not an address: two panes both running `vim` show `vim` twice
@@ -311,6 +335,22 @@ def body() -> None:
             )
             is not None
         ), "F.3 ★…and is still addressed by its panel id in its own window"
+        # ★R1320 — the TORN SLOT the panel left behind in the dock is the LAST painted
+        # panel string, and R1318 missed it: it took one `panel_id` for both its label
+        # and its tag, so a panel titled `vim README` left a slot reading
+        # `(console torn off)` — two names for one panel, on screen at the same time.
+        # The tag is load-bearing (`resolve_drop` recovers the panel id from it to
+        # resolve a redock), so label and address had to be split, not swapped.
+        slot = find_by_tag(
+            tf.snapshot(source="paint", viewport=(MW, MH), window=MAIN),
+            f"{CONSOLE}_placeholder",
+        )
+        assert slot is not None, "F.4 the torn slot is still TAGGED by the panel id"
+        assert_eq(
+            _texts(slot),
+            [f"({VIM} torn off)"],
+            "F.5 ★…and LABELLED by the display title (one name per panel, everywhere)",
+        )
 
         # ── (G) R1319: the OS window title follows a LIVE retitle ────────
         # The floating window opened while `console` was already titled `vim README`

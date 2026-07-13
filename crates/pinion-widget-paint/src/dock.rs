@@ -5241,11 +5241,22 @@ pub const PLACEHOLDER_TAG_SUFFIX: &str = "_placeholder";
 /// placeholder Container for a dock slot whose panel is currently
 /// floating.
 ///
-/// Subdued `SurfaceContainerLow` fill + centered
-/// `"({panel_id} torn off)"` Text in `OnSurfaceMuted` colour. The
-/// outer Container carries tag `"{panel_id}_placeholder"` so AI
-/// clients can detect placeholders via `scene/query` without
-/// descending into the panel's full content tree.
+/// Subdued `SurfaceContainerLow` fill + centered `"({display} torn off)"` Text in
+/// `OnSurfaceMuted` colour. The outer Container carries tag
+/// `"{panel_id}_placeholder"` so AI clients can detect placeholders via
+/// `scene/query` without descending into the panel's full content tree.
+///
+/// (R1320 §5.16 §5.51) `panel_id` and `display` are SEPARATE parameters — the one
+/// R1318 split the dock walker on, and this function is where the split was MISSED:
+/// pre-R1320 a single `panel_id` was both the painted label and the tag, so a panel
+/// retitled `vim README` left behind a slot reading `(console torn off)` next to a
+/// floating header reading `vim README`. The split cannot be worked around by a
+/// caller passing the display title, because the TAG is load-bearing: `resolve_drop`
+/// recovers the panel id from it (`strip_suffix(PLACEHOLDER_TAG_SUFFIX)`) to resolve
+/// a redock, and the walker detects the placeholder by that suffix. So the ADDRESS
+/// stays `panel_id` and only the LABEL takes the display name — exactly the
+/// [`DockPanelChrome`] contract. Pass `chrome.title_for(panel_id)` for `display`
+/// (or `panel_id` itself for the identity default).
 ///
 /// Used by both R685 dock consumers (`hello-dock-panels` after the
 /// R685 atomic 2 retrofit + `hello-dock-panels-editor` 2nd consumer).
@@ -5254,12 +5265,13 @@ pub const PLACEHOLDER_TAG_SUFFIX: &str = "_placeholder";
 #[must_use]
 pub fn view_floating_placeholder(
     panel_id: &str,
+    display: &str,
     theme: &Theme,
     style: &FloatingPlaceholderStyle,
 ) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            format!("({panel_id} torn off)"),
+            format!("({display} torn off)"),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(style.label_font_size_px)
@@ -5381,16 +5393,27 @@ pub struct DockSplitState {
 ///
 /// ## Why a struct and not more walker parameters
 ///
-/// Every optional axis added as its own walker parameter forks a new
-/// `view_dock_surface_*` entry point that must re-declare all the previous ones
-/// (R1173's `_styled` was the first fork). A second axis (this round's title) would
-/// take the walker to 7 arguments — one short of `clippy::too_many_arguments`, so
-/// the axis after it would break the pedantic gate and force this refactor anyway.
-/// Bundling the optional providers means a NEW axis (a per-panel icon, a close
-/// button, a tooltip) lands as a `with_*` builder on this struct — no new entry
-/// point, no new parameter, no generic explosion. `Default` IS the pre-R1318
-/// behaviour (identity style, title = `panel_id`), so [`view_dock_surface`] is
-/// byte-identical to its pre-R1318 self.
+/// The load-bearing reason is SSOT, not argument count. A binding paints a panel in
+/// TWO places — the walker (docked) and the panel's own floating window
+/// ([`view_dock_panel_with_actions`]) — names it in a THIRD (the
+/// [`dock_tablist_access_nodes`] AT tree), and labels its torn-out slot in a FOURTH
+/// ([`view_floating_placeholder`]). A provider passed only to the WALKER (the shape
+/// the PR-52 handoff proposed) leaves the other three to re-derive the name, which is
+/// precisely how a panel ends up called `vim README` in its header and `console` in
+/// its placeholder. As a value the binding CONSTRUCTS once and hands to all four
+/// ([`title_for`](Self::title_for) / [`style_for`](Self::style_for) are `pub` for
+/// exactly that), the chrome IS the single answer to "what is this panel called".
+///
+/// A secondary benefit: the walker stops forking an entry point per optional axis
+/// (R1173's `_styled` was the first fork, and every fork must re-declare each earlier
+/// axis), so a NEW axis (a per-panel icon, a close button, a tooltip) lands as a
+/// `with_*` builder here. That is a readability argument, NOT a hard constraint —
+/// `clippy::too_many_arguments` (a default-on complexity lint, threshold 7) would only
+/// fire on the axis after next, and this repo does `#[allow]` it where one-arg-per-axis
+/// reads better.
+///
+/// `Default` IS the pre-R1318 behaviour (identity style, title = `panel_id`), so
+/// [`view_dock_surface`] is byte-identical to its pre-R1318 self.
 ///
 /// ## Identity vs. display name (the R1318 separation)
 ///
@@ -5419,9 +5442,13 @@ pub struct DockSplitState {
 ///   panels' header row, so a tab label is the panel's header title relocated).
 /// * [`style`](Self::with_style) — applied to every LIVE panel (a `Leaf`, and a
 ///   well's active panel), NEVER to a torn-slot placeholder (a transient hole whose
-///   chrome the walker owns). The walker re-forces the invariants it owns AFTER the
-///   customizer runs — the tag (identity) and a well's active panel being
-///   headerless — so a binding cannot break the topology by styling it.
+///   chrome the walker owns, in a `Leaf` and in a well alike). The walker re-forces
+///   the invariants it owns AFTER the customizer runs — the tag (identity), and,
+///   inside a tab well, `show_header(false)` (the strip IS the header) +
+///   `drop_target(true)` (receptiveness belongs to the WELL, not to whichever tab is
+///   showing) — so a binding cannot break the topology, or the dock gesture, by
+///   styling a panel. A `with_drop_target(false)` lock therefore means what it says on
+///   a `Leaf` and is inert on a tabbed panel.
 ///
 /// A binding that also paints a panel OUTSIDE the walker (a torn-off panel in its
 /// own floating window, via [`view_dock_panel_with_actions`]) calls
@@ -5468,9 +5495,10 @@ impl<'f> DockPanelChrome<'f> {
     /// [`with_floatable`](DockPanelExternal::with_floatable)) and the global
     /// [`Theme`]. (R1173's `view_dock_surface_styled` parameter, moved here.)
     ///
-    /// The customizer tweaks FLAGS, not identity: the walker re-stamps the
-    /// `panel_id` tag afterwards, so a style that changes the tag is ignored rather
-    /// than allowed to desynchronise the paint tree from the topology.
+    /// The customizer tweaks FLAGS, not identity: the walker re-stamps the `panel_id`
+    /// tag afterwards (`walker_owned_tag`), so a style that changes the tag PANICS in
+    /// debug + test builds and is overridden (not honoured) in release — never allowed
+    /// to desynchronise the paint tree from the topology.
     #[must_use]
     pub fn with_style(
         mut self,
@@ -5773,22 +5801,50 @@ where
             );
             let active_panel = &panels[*active];
             let active_panel_id = active_panel.as_ref();
+            let active_content = panel_content(active_panel_id);
+            // (R1320 §5.16) A well whose ACTIVE tab is torn off paints a placeholder,
+            // and a placeholder's chrome is the WALKER's (a transient hole, not the
+            // panel's) — the same rule the `Leaf` arm applies, detected the same way.
+            // R1318 ran the customizer on it (the `Leaf` arm's `is_placeholder` guard
+            // was not mirrored here), contradicting this type's own contract.
+            let is_placeholder = active_content
+                .tag()
+                .is_some_and(|t| t.ends_with(PLACEHOLDER_TAG_SUFFIX));
             // (R1318 §5.16) The well's ACTIVE panel is a LIVE panel, so the binding's
             // style customizer applies to it exactly as it does to a `Leaf` (pre-R1318
-            // a panel silently LOST its customized chrome — a taller header, a
-            // non-receiving lock — the moment it was tabified, because the walker built
-            // this style without consulting the customizer at all). The walker then
-            // re-forces the two invariants it owns: the `panel_id` tag, and
-            // `show_header(false)` — the strip above IS this panel's header, so a
-            // customizer cannot reintroduce a redundant second title bar inside a well.
+            // a panel silently LOST its customized chrome — e.g. a taller header — the
+            // moment it was tabified, because the walker built this style without
+            // consulting the customizer at all).
+            //
+            // The walker then re-forces the three invariants it owns:
+            //
+            // 1. the `panel_id` tag (identity — `walker_owned_tag`);
+            // 2. `show_header(false)` — the strip above IS this panel's header, so a
+            //    customizer cannot reintroduce a redundant second title bar in a well;
+            // 3. (R1320) `drop_target(true)` — RECEPTIVENESS IS A PROPERTY OF THE WELL,
+            //    NOT OF WHICHEVER TAB HAPPENS TO BE SHOWING. The active panel's root IS
+            //    the well's drop target (a centre drop tabifies into the well, an edge
+            //    drop splits the whole well), so honouring a per-panel
+            //    `with_drop_target(false)` here — the "locked panel" recipe
+            //    [`DockPanelChrome::with_style`] itself prescribes — would make the
+            //    ENTIRE well undockable while that one tab is active, and receptive
+            //    again when a sibling tab is selected. R1318 had exactly that trap: a
+            //    panel's dockability flickering with its siblings' selection. The lock
+            //    is honoured where it means something (a `Leaf`), and the well keeps the
+            //    unconditional drop target it had pre-R1318.
             let style = walker_owned_tag(
-                chrome.style_for(
-                    active_panel_id,
-                    DockPanelStyle::m3_default(active_panel.clone()),
-                ),
+                if is_placeholder {
+                    DockPanelStyle::m3_default(active_panel.clone())
+                } else {
+                    chrome.style_for(
+                        active_panel_id,
+                        DockPanelStyle::m3_default(active_panel.clone()),
+                    )
+                },
                 active_panel.clone(),
             )
-            .with_show_header(false);
+            .with_show_header(false)
+            .with_drop_target(true);
             // (R1161 §5.51) The active tab's panel must FILL the well cell below
             // the fixed strip — give its OWN container `flex_grow(1.0)` so it claims
             // the Column's leftover height (the well's `align_items: Stretch` fills
@@ -5805,7 +5861,7 @@ where
                 // DISPLAY name, not its id: the walker never feeds identity into a
                 // paint string it would show if the header were ever shown.
                 &titles[*active],
-                panel_content(active_panel_id),
+                active_content,
                 theme,
                 &style,
                 drop_zone(active_panel_id),
@@ -5885,8 +5941,8 @@ fn walker_owned_tag(mut style: DockPanelStyle, panel_id: Cow<'static, str>) -> D
 
 /// R1095 §5.51 §5.27 §5.40 — the accessible name of every dock tab well's
 /// `tablist` (WAI-ARIA requires a tab list to be nameable; the per-tab and
-/// per-panel names come from the panel ids via scene name-from-contents
-/// enrichment).
+/// per-panel names come from each panel's DISPLAY title — R1320, see
+/// [`dock_tablist_access_nodes`]).
 const DOCK_TABLIST_NAME: &str = "Panel tabs";
 
 /// R1095 §5.51 §5.27 §5.40 — WAI-ARIA `tablist` / `tab` / `tabpanel`
@@ -5898,14 +5954,28 @@ const DOCK_TABLIST_NAME: &str = "Panel tabs";
 /// name-from-contents enrichment land on the right nodes: the `tablist` is
 /// the well's stable id (the [`view_tabs`] strip tag), each `tab` is
 /// [`composite_tab_tag`]`(id, i)` (the painted per-tab tag the router splits
-/// at `#`), and the `tabpanel` is the active panel's id (the
-/// header-suppressed active content [`view_dock_surface`] renders). Each
+/// at `#`), and the `tabpanel` is TAGGED by the active panel's id (the
+/// header-suppressed active content [`view_dock_surface_chrome`] renders). Each
 /// tab's `selected` lowers to `aria-selected`; `aria-posinset` /
-/// `aria-setsize` come from the slice. `label: None` defers each tab's name
-/// to enrichment of its painted panel-id label (the [[two-text-layouts-paint-vs-geometry]]
-/// name-from-contents path, like `hello-tabs`). `focused` (the focus
+/// `aria-setsize` come from the slice. `focused` (the focus
 /// manager's tag at emit time) drives the roving active descendant: when a
 /// well's strip owns focus, its active tab is the active descendant.
+///
+/// ## Every name comes from the PAINTED label (R1320 §5.51 §5.27)
+///
+/// No name is spelled out here, and no app state reaches this walker. Each tab's
+/// `label` is `None`, deferring its name to `enrich_names_from_scene` reading the
+/// PAINTED tab label — which R1318 made the panel's DISPLAY title. The `tabpanel` is
+/// `panel_name: None`, i.e. LABELLED BY ITS TAB (WAI-ARIA 1.2 §5.3, via
+/// [`pinion_a11y::AccessNode::name_from_tag`]) — so it resolves to that same painted
+/// label.
+///
+/// R1318 broke this: the tabpanel was named EXPLICITLY from the `panel_id` while its
+/// own tab was enriched from the painted display title, so `scene/access` announced ONE
+/// panel under TWO names ("vim README" the tab, "console" the panel it controls). Naming
+/// the panel from its tab fixes that BY CONSTRUCTION rather than by threading the title
+/// through a second pipeline that could drift again. The TAG — the address an
+/// `activate_tab` invoke uses — stays the `panel_id` throughout.
 ///
 /// Built on the lifted [`pinion_a11y::tablist_tab_nodes`] (the dock is its
 /// 3rd consumer after `hello-tabs` / `hello-tab-reorder`). Wells nested in
@@ -5936,6 +6006,9 @@ fn collect_dock_tablist_nodes(node: &DockNode, focused: Option<&str>, out: &mut 
                 .enumerate()
                 .map(|(i, tag)| TabCell {
                     tag: tag.as_str(),
+                    // `None` → the name is enriched from the PAINTED tab label, which
+                    // R1318 made the display title. The tabpanel below must be named
+                    // from the same source or the two disagree (R1320).
                     label: None,
                     selected: i == *active,
                     focused: group_focused && i == *active,
@@ -5946,8 +6019,12 @@ fn collect_dock_tablist_nodes(node: &DockNode, focused: Option<&str>, out: &mut 
                 id.as_ref(),
                 DOCK_TABLIST_NAME,
                 &cells,
+                // TAG = identity (what an `activate_tab` invoke addresses) …
                 active_panel,
-                active_panel,
+                // … NAME = `None` → labelled by its TAB (R1320), whose painted label is
+                // the panel's DISPLAY title. No app state reaches this walker, and the
+                // AT tree cannot drift from the pixels.
+                None,
             ));
         }
         DockNode::Split { first, second, .. } => {
@@ -7472,13 +7549,14 @@ mod tests {
     use super::{
         CONTENT_TAG_SUFFIX, DOCK_DROP_PREVIEW_TAG, DockDropZone, DockNode, DockPanelChrome,
         DockPanelExternal, DockPanelStyle, DockReorganizer, DockSplitState, DockTopology,
-        FloatPolicy, HEADER_TAG_SUFFIX, TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT,
-        TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, WINDOW_MOVE_EVENT, composite_tag,
-        dock_drop_preview_overlay, dock_drop_zone_highlight, dock_tablist_access_nodes,
-        view_dock_panel, view_dock_surface, view_dock_surface_chrome,
+        FloatPolicy, FloatingPlaceholderStyle, HEADER_TAG_SUFFIX, PLACEHOLDER_TAG_SUFFIX,
+        TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT,
+        WINDOW_MOVE_EVENT, composite_tag, dock_drop_preview_overlay, dock_drop_zone_highlight,
+        dock_tablist_access_nodes, view_dock_panel, view_dock_surface, view_dock_surface_chrome,
+        view_floating_placeholder,
     };
     use crate::tabs::composite_tab_tag;
-    use pinion_a11y::AccessNode;
+    use pinion_a11y::{AccessNode, AriaRole};
     use pinion_core::external::{
         DragPayload, DragUpdate, DropPoint, External, ExternalIntrospect, InterveneError,
         IntrospectValue, InvokeError,
@@ -8184,13 +8262,11 @@ mod tests {
     fn r1318_style_customizer_reaches_a_tabified_panel() {
         // R1318 closes an R1173 gap the chrome bundling exposed: the walker built a tab
         // well's active-panel style WITHOUT consulting the customizer, so a panel
-        // silently LOST its customized chrome (a taller header, a non-receiving lock)
-        // the moment it was tabified. The walker still re-forces the invariants it owns
-        // — the tag, and `show_header(false)` (the strip IS the header, so a customizer
-        // cannot reintroduce a second title bar inside a well).
+        // silently LOST its customized chrome (e.g. a taller header) the moment it was
+        // tabified.
         let topo = DockTopology::new(DockNode::tabs("well", vec!["a".into(), "b".into()], 0));
         let chrome = DockPanelChrome::default()
-            .with_style(|_, style| style.with_drop_target(false).with_show_header(true));
+            .with_style(|_, style| style.with_header_height_px(44).with_show_header(true));
         let scene = view_dock_surface_chrome(
             &topo,
             empty_panel,
@@ -8199,14 +8275,193 @@ mod tests {
             &chrome,
             &theme_light(),
         );
-        let panel = find_container(&scene, "a").expect("the active panel paints under its id");
         assert!(
-            !panel.layout.drop_target,
-            "★the customizer's flags now reach the well's active panel",
+            find_container(&scene, "a").is_some(),
+            "the active panel paints under its id",
         );
         assert!(
             !has_tag(&scene, "a#header"),
-            "★…but the walker still owns the well invariant: no per-panel header inside a strip",
+            "★the walker still owns the well invariant: no per-panel header inside a strip",
+        );
+    }
+
+    #[test]
+    fn r1320_a_locked_panels_style_cannot_make_its_well_undockable() {
+        // ★R1320 — the trap R1318 opened. `with_drop_target(false)` is the LOCKED-panel
+        // recipe `DockPanelChrome::with_style`'s own docs prescribe. Honouring it for a
+        // well's ACTIVE panel would strip the drop target off the whole well cell (the
+        // active panel's root IS the well's drop target), so the well would be
+        // undockable while `a` is showing and dockable again when `b` is — a panel's
+        // dockability flickering with its SIBLING's selection. Receptiveness belongs to
+        // the well; the walker re-forces it.
+        let chrome = DockPanelChrome::default()
+            .with_style(|_, style| style.with_show_header(false).with_drop_target(false));
+        // The lock DOES mean what it says on a Leaf (the unchanged R1173 contract).
+        let leaf_scene = view_dock_surface_chrome(
+            &ab_topology(),
+            empty_panel,
+            split_at,
+            |_| None,
+            &chrome,
+            &theme_light(),
+        );
+        let leaf = find_container(&leaf_scene, "a").expect("leaf panel paints");
+        assert!(
+            !leaf.layout.drop_target,
+            "a locked LEAF is non-receiving — the R1173 recipe still works",
+        );
+        // …and is INERT inside a well, for BOTH tab selections (no flicker).
+        for active in 0..2 {
+            let topo =
+                DockTopology::new(DockNode::tabs("well", vec!["a".into(), "b".into()], active));
+            let scene = view_dock_surface_chrome(
+                &topo,
+                empty_panel,
+                split_at,
+                |_| None,
+                &chrome,
+                &theme_light(),
+            );
+            let shown = if active == 0 { "a" } else { "b" };
+            let panel = find_container(&scene, shown).expect("the active panel paints");
+            assert!(
+                panel.layout.drop_target,
+                "★the well stays dockable whichever tab ({shown}) is active",
+            );
+        }
+    }
+
+    #[test]
+    fn r1320_a_torn_slot_in_a_well_is_not_customized() {
+        // The type contract says the style customizer NEVER runs on a torn-slot
+        // placeholder (a transient hole, walker-owned chrome). R1318 honoured that in
+        // the `Leaf` arm only; a well's active tab torn off still went through the
+        // customizer.
+        let topo = DockTopology::new(DockNode::tabs("well", vec!["a".into(), "b".into()], 0));
+        let chrome = DockPanelChrome::default().with_style(|_, _| {
+            panic!("★the customizer must not be consulted for a torn-slot placeholder")
+        });
+        let scene = view_dock_surface_chrome(
+            &topo,
+            // The active tab is torn off → its content is a placeholder.
+            |panel_id| {
+                view_floating_placeholder(
+                    panel_id,
+                    panel_id,
+                    &theme_light(),
+                    &FloatingPlaceholderStyle::m3_default(),
+                )
+            },
+            split_at,
+            |_| None,
+            &chrome,
+            &theme_light(),
+        );
+        assert!(
+            has_tag(&scene, &format!("a{PLACEHOLDER_TAG_SUFFIX}")),
+            "the torn slot paints its placeholder (tagged by the panel id — the redock \
+             drop target resolves through it)",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "must not change DockPanelStyle::tag")]
+    fn r1320_a_chrome_that_rewrites_the_tag_is_caught() {
+        // `walker_owned_tag` is the enforcement behind the "FLAGS, not identity"
+        // contract R1173 only DOCUMENTED. In debug + test builds a tag-rewriting
+        // customizer panics loudly; in release the walker overrides it, so a chrome bug
+        // can never desynchronise the paint tag from the topology.
+        let chrome = DockPanelChrome::default().with_style(|_, mut style| {
+            style.tag = Cow::Borrowed("hijacked");
+            style
+        });
+        let _ = view_dock_surface_chrome(
+            &ab_topology(),
+            empty_panel,
+            split_at,
+            |_| None,
+            &chrome,
+            &theme_light(),
+        );
+    }
+
+    #[test]
+    fn r1320_the_at_tree_names_a_panel_by_its_display_title() {
+        // ★The a11y leak R1318 opened: a tab's name is ENRICHED from its painted label
+        // (now the display title), while the tabpanel it controls was named EXPLICITLY
+        // from the panel id — so `scene/access` announced one panel under two names.
+        // WAI-ARIA wants the tabpanel named by its tab; the TAG (the `activate_tab`
+        // address) stays the panel id.
+        let topo = DockTopology::new(DockNode::tabs("well", vec!["a".into(), "b".into()], 0));
+        let chrome = DockPanelChrome::default().with_title(|id| match id {
+            "a" => Cow::Owned("vim README".to_string()),
+            _ => Cow::Borrowed(id),
+        });
+        let scene = view_dock_surface_chrome(
+            &topo,
+            empty_panel,
+            split_at,
+            |_| None,
+            &chrome,
+            &theme_light(),
+        );
+        let mut nodes = dock_tablist_access_nodes(&topo, None);
+        let panel = nodes
+            .iter()
+            .find(|n| n.role == AriaRole::TabPanel)
+            .expect("the well emits a tabpanel node");
+        assert_eq!(
+            panel.tag, "a",
+            "★the node is ADDRESSED by the panel id (what `activate_tab` resolves)",
+        );
+        assert_eq!(
+            panel.name_from_tag.as_deref(),
+            Some(composite_tab_tag("well", 0).as_str()),
+            "★…and LABELLED BY ITS TAB (WAI-ARIA), not by a name spelled out here",
+        );
+        // The shell's enrichment then resolves BOTH the tab and the panel it labels
+        // from the SAME painted string — the display title. One panel, one name.
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+        let named = |role: AriaRole| {
+            nodes
+                .iter()
+                .find(|n| n.role == role)
+                .and_then(|n| n.name.clone())
+        };
+        assert_eq!(
+            named(AriaRole::TabPanel).as_deref(),
+            Some("vim README"),
+            "★the AT announces the panel's DISPLAY title",
+        );
+        assert_eq!(
+            named(AriaRole::Tab).as_deref(),
+            Some("vim README"),
+            "★…the same string its tab announces (the R1318 divergence, closed)",
+        );
+    }
+
+    #[test]
+    fn r1320_a_torn_slot_is_labelled_by_the_display_title_but_tagged_by_the_id() {
+        // The last painted panel string R1318 missed: pre-R1320 the placeholder took ONE
+        // `panel_id` for both its label and its tag, so a panel retitled `vim README`
+        // left behind a slot reading `(console torn off)`. The tag is load-bearing
+        // (`resolve_drop` strips the suffix to recover the panel id), so the fix is the
+        // same split the walker makes — not "pass the title instead".
+        let scene = view_floating_placeholder(
+            "console",
+            "vim README",
+            &theme_light(),
+            &FloatingPlaceholderStyle::m3_default(),
+        );
+        assert_eq!(
+            painted_texts(&scene),
+            vec!["(vim README torn off)".to_string()],
+            "★the slot names the panel the way every other surface does",
+        );
+        assert_eq!(
+            scene.tag(),
+            Some(format!("console{PLACEHOLDER_TAG_SUFFIX}").as_str()),
+            "★…and is still ADDRESSED by the panel id (the redock drop target)",
         );
     }
 
@@ -14314,8 +14569,12 @@ mod placeholder_tests {
     #[test]
     fn r685_view_floating_placeholder_tags_with_panel_id_suffix() {
         let theme = Theme::light();
-        let scene =
-            view_floating_placeholder("inspector", &theme, &FloatingPlaceholderStyle::m3_default());
+        let scene = view_floating_placeholder(
+            "inspector",
+            "inspector",
+            &theme,
+            &FloatingPlaceholderStyle::m3_default(),
+        );
         let Scene::Container(outer) = &scene else {
             panic!()
         };
@@ -14334,6 +14593,7 @@ mod placeholder_tests {
         let theme = Theme::light();
         let scene = view_floating_placeholder(
             "properties",
+            "properties",
             &theme,
             &FloatingPlaceholderStyle::m3_default(),
         );
@@ -14349,8 +14609,12 @@ mod placeholder_tests {
     #[test]
     fn r685_view_floating_placeholder_contains_torn_off_label() {
         let theme = Theme::light();
-        let scene =
-            view_floating_placeholder("viewport", &theme, &FloatingPlaceholderStyle::m3_default());
+        let scene = view_floating_placeholder(
+            "viewport",
+            "viewport",
+            &theme,
+            &FloatingPlaceholderStyle::m3_default(),
+        );
         let Scene::Container(outer) = &scene else {
             panic!()
         };
@@ -14533,6 +14797,7 @@ mod surface_tests {
                 &topology,
                 |id| {
                     view_floating_placeholder(
+                        id,
                         id,
                         &theme_light(),
                         &FloatingPlaceholderStyle::m3_default(),

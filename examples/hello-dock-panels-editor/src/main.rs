@@ -172,7 +172,7 @@ const UNDOCK_BTN_CLICK_INTENT_TAG: &str = intent_tag!("undock_tab_btn", "click")
 const TOOLBAR_FRAME_HEIGHT_PX: u32 = 48;
 /// (R1206) The "pinned inspector" PROPERTIES panel's taller header (logical px,
 /// vs the `DockPanelStyle::m3_default` 28) — the editor's 2nd consumer of the
-/// R1173 per-panel `view_dock_surface_styled` style customizer.
+/// R1173 per-panel style customizer (now `DockPanelChrome::with_style`, R1318).
 const PINNED_INSPECTOR_HEADER_PX: u32 = 40;
 const SPLIT_INNER_V_RATIO_DEFAULT: f32 = 0.78;
 const SPLIT_MIDDLE_H_RATIO_DEFAULT: f32 = 0.18;
@@ -1096,6 +1096,10 @@ fn view_main_dock(state: ButtonState) -> Scene {
                 if is_panel_floating(&windows, panel_id) {
                     view_floating_placeholder(
                         panel_id,
+                        // (R1320) The torn slot names the panel by its DISPLAY title —
+                        // the same chrome the header + tab + AT tree use. Its TAG stays
+                        // the panel id (the redock drop target resolves through it).
+                        &chrome.title_for(panel_id),
                         &theme,
                         &FloatingPlaceholderStyle::m3_default()
                             .with_label_font_size_px(PANEL_BODY_FONT_PX),
@@ -1192,7 +1196,8 @@ fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let content = panel_content_for(panel_id, state, &theme);
     let titles = use_panel_titles().get().0;
-    let title = editor_chrome(&titles).title_for(panel_id).into_owned();
+    let chrome = editor_chrome(&titles);
+    let title = chrome.title_for(panel_id).into_owned();
     // (R1116/R1118 §5.51 PR-38) The floater is the SOLE content of its own
     // window, so `drop_target=false`: the floater exposes no drop target, so
     // another panel cannot be docked INTO it (cross-window-drop rejection — the
@@ -1201,7 +1206,17 @@ fn view_floating_panel(panel_id: &str, state: ButtonState) -> Scene {
     // driven by the dedicated `drag_to_at` branch (`source_window ==
     // floating_window`) → `WINDOW_MOVE_EVENT`, NOT by this flag. A drop onto the
     // MAIN dock still redocks cross-window (`over_window`, independent of this).
-    let style = DockPanelStyle::m3_default(panel_id.to_string()).with_drop_target(false);
+    // (R1320 §5.16) The panel's chrome comes from the SAME `editor_chrome` customizer
+    // the docked walker uses, so a torn-off panel keeps the per-panel style it had in
+    // the dock (the PROPERTIES "pinned inspector" 40-px header silently reverted to
+    // the 28-px `m3_default` on tear-off before this — style, like the title, is a
+    // property of the PANEL, not of where it currently lives). `drop_target(false)` is
+    // then re-forced: it is a property of the floating WINDOW (the sole-content floater
+    // exposes no drop target — the cross-window-drop rejection below), not of the panel,
+    // so it overrides whatever the binding's customizer said.
+    let style = chrome
+        .style_for(panel_id, DockPanelStyle::m3_default(panel_id.to_string()))
+        .with_drop_target(false);
     // (R1171 §5.16) The window controls (min / max / close) live IN the panel
     // header (the title bar that is already the redock drag handle) — ONE title
     // bar, auto-sized by the layout. This replaced the R1170 shell-overlay chrome
@@ -1585,6 +1600,10 @@ impl WidgetA11y for DockPanelsEditorView {
     /// `root_owner` scope, so the `Owner::cache` hook resolves). Empty
     /// surface (`None`) / a Leaf/Split-only topology → no nodes.
     fn access_node(_state: &Self::State, focused: Option<&str>) -> Vec<AccessNode> {
+        // (R1320 §5.51 §5.27) No display title is threaded here: the dock's `tabpanel`
+        // is LABELLED BY ITS TAB (WAI-ARIA), and every tab name is enriched from the
+        // painted strip — so the AT tree takes the panel's DISPLAY title (R1318) from
+        // the pixels themselves, and cannot drift from them.
         use_editor_topology()
             .get()
             .as_ref()
