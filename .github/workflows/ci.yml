@@ -93,6 +93,13 @@ jobs:
       # geometry / driver here if a demo OOMs or fails to find an adapter.
       PINION_HIDDEN_WINDOW: "1"
       PINION_SWEEP_DISPLAY: ":99"
+      # R1330 — the "Build workspace" step below is the freshness build, so the
+      # sweep must not run its own `cargo build --release --workspace` on top of it
+      # (it does so by default now, to protect a local run from a stale binary).
+      # This flag makes the sweep trust the prior step. If the build step is ever
+      # removed, `RpcSubprocess`'s `cargo run` fallback still rebuilds each example,
+      # so a missing binary self-heals rather than silently running stale.
+      PINION_SWEEP_NO_BUILD: "1"
     steps:
       - uses: actions/checkout@v5
         with:
