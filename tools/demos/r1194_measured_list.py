@@ -91,7 +91,22 @@ def scroll_offset(snap) -> int:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
-        snap = tf.snapshot(source="paint", viewport=WIN)
+        # (R1326) POLL for the first populated frame instead of asserting on
+        # whatever happens to be stored. A measured list renders its window from the
+        # MEASURED viewport height, which arrives from a layout pass — so the very
+        # first stored frame can legitimately carry the list container with ZERO rows
+        # ([[measured-rect-reactive-seam-timing-and-verification]]). A fast box paints
+        # the measured frame before the demo looks; a slow CI runner does not, which is
+        # why this demo passed locally and failed in the sweep ("row 0 rendered at the
+        # top") — a race in the DEMO, not in the shell. Polling for the settled
+        # observable is the [[zero-flake-policy]] form; the assertions below are
+        # unchanged and still pin virtualization.
+        snap = wait_snap(
+            tf,
+            lambda s: bool(present_rows(s)),
+            viewport=WIN,
+            desc="the measured list paints its first row window",
+        )
 
         # ── (A) boot window: a small window of 120 rows ──────────────
         rects = abs_rects_of(snap)
