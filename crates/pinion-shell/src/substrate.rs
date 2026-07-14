@@ -8614,6 +8614,159 @@ mod r1121_window_chrome_tests {
         );
     }
 
+    /// PR-55 refutation fixture — a binding whose view draws its OWN focus
+    /// indicator (an accent Box inside the focused pane), driven ONLY by
+    /// [`pinion_core::focus_state::focused`] (R1327 / R1335), with the framework
+    /// focus ring turned OFF (`focus_ring_style -> None`). This is sprag R142's
+    /// exact shape: two focusable panes, no framework ring, a view-drawn accent.
+    struct FocusPanes;
+    impl WidgetCore for FocusPanes {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+        fn create_external() -> Box<dyn External> {
+            Box::new(StubExternal)
+        }
+        fn tag() -> &'static str {
+            "root"
+        }
+        fn read_state(_: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+        fn view(_: Self::State, _: &Frame) -> Scene {
+            // The ONLY focus source a view fn has — and the exact API PR-55
+            // claims returns `None` in the RPC produce path.
+            let focused = pinion_core::focus_state::focused();
+            let make_pane = |tag: &str| {
+                let mut children: Vec<Scene> = Vec::new();
+                if focused.as_deref() == Some(tag) {
+                    let mut accent = BoxNode::new(
+                        Rect::new(0, 0, 0, 0),
+                        BoxStyle::filled(Color::rgb(0, 128, 255)),
+                    );
+                    accent.tag = Some(std::borrow::Cow::Owned(format!("accent-{tag}")));
+                    children.push(Scene::Box(accent));
+                }
+                let mut c = ContainerNode::new(children);
+                c.tag = Some(std::borrow::Cow::Owned(tag.to_owned()));
+                c.layout = LayoutStyle::new().with_focusable(true).with_size(
+                    Size::auto()
+                        .with_width(SizeValue::Percent(50))
+                        .with_height(SizeValue::Percent(100)),
+                );
+                Scene::Container(c)
+            };
+            let mut root = ContainerNode::new(vec![make_pane("pane.0"), make_pane("pane.1")]);
+            root.tag = Some(std::borrow::Cow::Borrowed("root"));
+            root.layout = LayoutStyle::new().with_size(
+                Size::auto()
+                    .with_width(SizeValue::Percent(100))
+                    .with_height(SizeValue::Percent(100)),
+            );
+            Scene::Container(root)
+        }
+        fn event_name(_: Self::Event) -> &'static str {
+            "__internal__"
+        }
+        fn title() -> &'static str {
+            "Focus Panes"
+        }
+    }
+    impl WidgetA11y for FocusPanes {}
+    impl WidgetView for FocusPanes {
+        type Renderer = TestRenderer;
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 400,
+                height: 300,
+            }
+        }
+        // sprag's exact config — the framework ring is OFF; the ONLY focus
+        // indicator is the view-drawn accent (driven by `focus_state::focused()`).
+        fn focus_ring_style(_focused_tag: &str) -> Option<crate::FocusRingStyle> {
+            None
+        }
+    }
+
+    /// Does `scene` (a `scene/snapshot` JSON response, or a live scene) carry a
+    /// child tagged `accent-<pane>`? Used to assert the focus-dependent accent
+    /// survived a given producer.
+    fn contains_accent(scene: &Scene, pane: &str) -> bool {
+        has_tag(scene, &format!("accent-{pane}"))
+    }
+
+    /// R1343 §5.39 §2 #7 (PR-55 refutation) — a view-drawn focus indicator
+    /// (`focus_state::focused()` → an accent inside the focused pane) is present
+    /// in EVERY paint-scene producer, byte-for-byte with the `FocusManager`. PR-55
+    /// reported `focus_state::focused()` returns `None` in the RPC
+    /// `scene/snapshot from: paint` / `scene/screenshot` produce path — a
+    /// producer-parity break where the framework ring shows in a snapshot but the
+    /// binding's own focus-dependent render does not. This test drives all three
+    /// producers and proves the opposite: R1335 published the mirror on the
+    /// binding's owner (funnelled through `FocusManager::commit_focus`), which
+    /// every producer runs the view under (`root_owner.run`), so the read is
+    /// seeded identically on each. The premise predates R1335's owner-scoped
+    /// mirror (it matches the retired R1327 thread-local, which a per-thread RPC
+    /// probe COULD miss); on the current substrate there is nothing to seed.
+    #[test]
+    fn r1343_view_drawn_focus_indicator_survives_every_producer() {
+        // Producer 1 — the WINIT paint path (`compute_paint_scene_for_window`),
+        // which is exactly what `scene/screenshot` re-renders through
+        // (`AppShell::render_window`). Faithful click-to-focus.
+        let mut sc = ShellCore::<FocusPanes>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+        rpc_click(&mut sc, 100, 150); // left half = pane.0
+        assert_eq!(
+            sc.focus().focused(),
+            Some("pane.0"),
+            "click committed focus on pane.0 (the FocusManager SSOT)",
+        );
+        assert_eq!(
+            sc.root_owner()
+                .run(pinion_core::focus_state::focused)
+                .as_deref(),
+            Some("pane.0"),
+            "the owner mirror a view reads agrees with the manager under root_owner",
+        );
+        let winit = sc.compute_paint_scene_for_window("main", 400, 300);
+        assert!(
+            contains_accent(&winit, "pane.0"),
+            "★the WINIT render path (= the scene/screenshot re-render) draws the \
+             view's focus accent — PR-55's screenshot-missing-accent premise fails here",
+        );
+        assert!(
+            !contains_accent(&winit, "pane.1"),
+            "the unfocused pane draws no accent (negative control)",
+        );
+
+        // Producer 2 — the STORED paint scene `scene/snapshot from: paint`
+        // serializes (the last finalized winit frame). It re-renders nothing;
+        // it must already carry the accent the winit frame drew.
+        sc.finalize_frame(winit);
+        let stored = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"","from":"paint","viewport":{"w":400,"h":300}},"id":1}"#;
+        let stored_resp = sc.dispatch_rpc(stored, &mut |_, _| {}).unwrap_or_default();
+        assert!(
+            stored_resp.contains("accent-pane.0"),
+            "★scene/snapshot from:paint (stored frame) carries the accent: {stored_resp}",
+        );
+
+        // Producer 3 — the RPC produce CLOSURE itself. A fresh shell whose focus
+        // is set but which never finalized a frame: `scene/snapshot from: paint`
+        // then falls back to running the produce closure and snapshots THAT
+        // scene. This is the exact `dispatch_rpc` produce path PR-55 blames.
+        let mut sc2 = ShellCore::<FocusPanes>::new();
+        let set = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"pane.0"},"id":1}"#;
+        let _ = sc2.dispatch_rpc(set, &mut |_, _| {});
+        let produced = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"","from":"paint","viewport":{"w":400,"h":300}},"id":2}"#;
+        let produced_resp = sc2
+            .dispatch_rpc(produced, &mut |_, _| {})
+            .unwrap_or_default();
+        assert!(
+            produced_resp.contains("accent-pane.0"),
+            "★the RPC produce closure draws the accent (focus_state seeded there too): {produced_resp}",
+        );
+    }
+
     /// Command count of the first `Scene::Path` whose rect equals `rect` (the
     /// glyph Path that `push_control` lays under a chrome button's hit Box).
     fn path_command_count_at(scene: &Scene, rect: Rect) -> Option<usize> {
