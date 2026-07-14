@@ -491,19 +491,28 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
 }
 
 /// R1337 §5.36 §5.41 — the effective [`TextStyle`] for the grapheme
-/// starting at UTF-8 `byte_off`: the first `StyleRun` whose
-/// `[start, end)` covers that byte, else the node's base `style`.
-/// `runs` are the §5.36 rich-text spans (documented non-overlapping
-/// and ordered); keying on the cluster's *start* byte assigns a
-/// grapheme wholly to one run, mirroring the parley run walk the
-/// Vello backend drives through `layout_with_runs`. First-match wins
-/// here; under the documented non-overlap invariant that equals the
-/// Vello side's last-push-wins, and the two only diverge if a caller
-/// violates the invariant with overlapping spans.
+/// starting at UTF-8 `byte_off`: the `StyleRun` whose `[start, end)`
+/// covers that byte, else the node's base `style`. Keying on the
+/// cluster's *start* byte assigns a grapheme wholly to one run.
+///
+/// R1339 — matches the `StyleRun` **last-push-wins** contract: runs
+/// apply in list order over the base style and, where they overlap, a
+/// later run wins for the shared bytes (parley's range resolution the
+/// Vello backend drives through `layout_with_runs`). Hence `rev().find`
+/// — the *last* run in list order that covers the byte; for the
+/// well-formed non-overlapping case that is the sole covering run, so
+/// this is identical to a forward scan there.
+///
+/// Cost is `O(runs)` per grapheme. The empty-`runs` fast path (every
+/// single-style node) is `O(1)`, and `runs` are not guaranteed sorted
+/// by `start` (the contract fixes *list* order, not byte order), so an
+/// `O(1)`-amortised advancing cursor is unsound without a sort/flatten
+/// pass — deferred until a many-run TUI text node forces it.
 fn effective_text_style(t: &TextNode, byte_off: usize) -> &TextStyle {
     let b = u32::try_from(byte_off).unwrap_or(u32::MAX);
     t.runs
         .iter()
+        .rev()
         .find(|run| run.start <= b && b < run.end)
         .map_or(&t.style, |run| &run.style)
 }
@@ -948,6 +957,36 @@ mod tests {
         // Byte 2 is outside every run → base style (default black) →
         // terminal default fg.
         assert_eq!(buf[(2, 0)].fg, TuiColor::Reset, "uncovered → base");
+    }
+
+    /// R1339 — overlapping `runs` resolve **last-push-wins** per the
+    /// `StyleRun` contract (matching parley / the Vello backend), NOT
+    /// first-match. Two runs both cover byte 0; the one later in list
+    /// order wins. Guards the R1337 divergence the reviewer flagged.
+    #[test]
+    fn rich_text_runs_overlap_is_last_push_wins() {
+        use pinion_core::scene::StyleRun;
+        use pinion_core::style::{Color, TextStyle};
+        use ratatui::style::Color as TuiColor;
+
+        let mut red = TextStyle::new();
+        red.fg_color = Color::rgb(0xff, 0, 0);
+        let mut green = TextStyle::new();
+        green.fg_color = Color::rgb(0, 0xff, 0);
+
+        let mut node = text_at(0, 0, "AB");
+        // Both runs cover byte 0; `green` is later in list order → wins.
+        node.runs = vec![StyleRun::new(0, 2, red), StyleRun::new(0, 1, green)];
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(node), &mut buf);
+        assert_eq!(
+            buf[(0, 0)].fg,
+            TuiColor::Rgb(0, 0xff, 0),
+            "byte 0: later run (green) wins the overlap"
+        );
+        // Byte 1 is covered only by `red`.
+        assert_eq!(buf[(1, 0)].fg, TuiColor::Rgb(0xff, 0, 0), "byte 1: red");
     }
 
     /// R1337 — a coloured WIDE (CJK) glyph: the head cell carries the
