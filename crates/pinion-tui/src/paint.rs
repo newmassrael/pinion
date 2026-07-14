@@ -503,11 +503,18 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
 /// well-formed non-overlapping case that is the sole covering run, so
 /// this is identical to a forward scan there.
 ///
-/// Cost is `O(runs)` per grapheme. The empty-`runs` fast path (every
-/// single-style node) is `O(1)`, and `runs` are not guaranteed sorted
-/// by `start` (the contract fixes *list* order, not byte order), so an
-/// `O(1)`-amortised advancing cursor is unsound without a sort/flatten
-/// pass — deferred until a many-run TUI text node forces it.
+/// Cost is `O(runs)` per grapheme — a linear attribute-list scan, the
+/// same shape as Pango's `PangoAttrList` (an arbitrary-overlap linear
+/// list, documented as fine at paragraph scale). The empty-`runs` fast
+/// path (every single-style node) is `O(1)`. Frameworks that resolve
+/// this to `O(1)` per position (parley's `RangedBuilder`, Pango's
+/// itemize step) do it **once at layout-build time and cache** the
+/// result — they do not re-flatten per frame. The TUI has no text
+/// layout cache yet (§5.36, deferred), so the resolve-once optimisation
+/// belongs *there*, with the rest of the per-frame text work, not as a
+/// bespoke per-frame flatten here (which would allocate every frame and
+/// slow the common few-run path). A naive advancing cursor is unsound
+/// regardless: the contract fixes *list* order, not `start` order.
 fn effective_text_style(t: &TextNode, byte_off: usize) -> &TextStyle {
     let b = u32::try_from(byte_off).unwrap_or(u32::MAX);
     t.runs
