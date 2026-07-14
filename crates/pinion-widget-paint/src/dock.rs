@@ -1231,24 +1231,50 @@ impl DockTopology {
         base.split_root(panel.to_string(), split_id, orientation, ratio, position)
     }
 
-    /// (R1201 §5.51) Would an OUTER full-span dock of `panel` at `zone` leave the
-    /// arrangement structurally unchanged? `true` = **redundant**: `panel`
-    /// already occupies that full-span edge (drag the right column to the right
-    /// edge, or pick an edge-flush panel up and drop it back), so the dock would
-    /// only re-seed the divider's id + ratio with no real layout change. The
-    /// resolver ([`resolve_drop_checked`]) maps such a drop to a stay-put
+    /// (R1201 §5.51, R1338) Would an OUTER full-span dock of `panel` at `zone` add
+    /// no arrangement an inner split does not already reach? `true` = **redundant**,
+    /// two disjoint reasons:
+    ///
+    /// 1. **Same shape (R1201)** — `panel` already occupies that full-span edge
+    ///    (drag the right column to the right edge, or pick an edge-flush panel up
+    ///    and drop it back), so the dock only re-seeds the divider's id + ratio
+    ///    with no real layout change. Detected by comparing the candidate tree
+    ///    ([`Self::outer_dock_next`]) to the current one via [`DockNode::same_shape`]
+    ///    (ignoring the always-re-minted split id + ratio).
+    /// 2. **Inner-split equivalent (R1338)** — removing a PRESENT `panel` leaves a
+    ///    single pane slot, so the outer band is a two-slot `Split[panel | lone]`
+    ///    that is structurally identical to an INNER split of that lone pane (only
+    ///    the thin `OUTER_DOCK_NEW_FRAC` ratio differs). Then the perimeter drop
+    ///    is a worse-ratio duplicate of the inner split — no unique full-span value
+    ///    — so it snaps back and the user gets the 50/50 inner split instead. This
+    ///    is ALWAYS the case with ≤2 PANE SLOTS ([`DockNode::leaf_count`] — a tab
+    ///    well counts as one slot however many panels it stacks); only ≥3 slots
+    ///    leave a multi-pane base an inner split cannot reproduce, where the
+    ///    full-span band keeps its unique worth (a row / column crossing every
+    ///    column). The presence gate
+    ///    matters: an ABSENT `panel` (a collapse-policy re-dock of a floated-out
+    ///    panel via [`DockReorganizer::dock_panel_outer`]) is an ADDITION, not a
+    ///    rearrangement, so it keeps its full-span dock even against a lone base.
+    ///
+    /// The resolver ([`resolve_drop_checked`]) maps a redundant drop to a stay-put
     /// [`DropResolution::SnapBack`] (no misleading full-span preview) and
-    /// [`DockReorganizer::dock_panel_outer`] no-ops it (RPC / §2 #2 parity).
-    /// Compares the candidate tree ([`Self::outer_dock_next`]) to the current one
-    /// via [`DockNode::same_shape`] (ignoring the always-re-minted split id +
-    /// ratio). A sole-pane `panel` (removal would empty the tree) is likewise
-    /// redundant — it already fills the whole area. This is the VS Code / Qt ADS
-    /// invariant: an outer drop indicator is offered only when the outcome
-    /// differs from the current layout.
+    /// [`DockReorganizer::dock_panel_outer`] no-ops it (RPC / §2 #2 parity). A
+    /// sole-pane `panel` (removal would empty the tree) is likewise redundant — it
+    /// already fills the whole area. This is the VS Code / Qt ADS invariant: an
+    /// outer drop indicator is offered only when the outcome differs from what is
+    /// already reachable.
     #[must_use]
     pub fn outer_dock_is_redundant(&self, panel: &str, zone: DockDropZone) -> bool {
         match self.outer_dock_next(panel, zone, REDUNDANCY_PROBE_SPLIT_ID) {
-            Ok(next) => next.root.same_shape(&self.root),
+            // (R1201) exact no-op, OR (R1338) a PRESENT panel whose removal leaves
+            // one pane → the outer band == an inner split of that pane (`next` is
+            // `Split[panel | lone]`, so `leaf_count() == 2` ⟺ the base was a single
+            // slot). An absent panel is an addition, not a rearrangement, so it is
+            // gated out and keeps its full-span dock.
+            Ok(next) => {
+                next.root.same_shape(&self.root)
+                    || (self.root.panel_ids().contains(&panel) && next.root.leaf_count() == 2)
+            }
             // A sole-pane removal (RootRemoval) — the panel already fills the
             // area, so an outer dock changes nothing.
             Err(_) => true,
@@ -3281,18 +3307,28 @@ impl DockReorganizer {
             self.note_outcome(&outcome);
             return Ok(outcome);
         }
-        // (R1201 §5.51) A redundant outer dock — `panel` already occupies that
-        // full-span edge (the RPC / §2 #2 peer of the pointer suppression the
-        // resolver applies) — changes nothing but the split id + ratio, so no-op
-        // it. Without this an AI `dock_panel_outer(right_column, Right)` would
-        // silently resize the column to the OUTER_DOCK_NEW_FRAC slice; the pointer
-        // path already stays put via `resolve_drop_checked`, so this keeps the two
-        // input paths in lockstep.
+        // (R1201 §5.51, R1338) A redundant outer dock — the RPC / §2 #2 peer of the
+        // pointer suppression the resolver applies — changes nothing an inner split
+        // does not already reach, so no-op it. Without this an AI
+        // `dock_panel_outer(right_column, Right)` would silently resize the column to
+        // the OUTER_DOCK_NEW_FRAC slice; the pointer path already stays put via
+        // `resolve_drop_checked`, so this keeps the two input paths in lockstep. The
+        // outcome names the REASON accurately (it must not claim "already occupies
+        // that edge" for the R1338 inner-split-equivalent case, where the panel does
+        // NOT span it). Branch on `leaf_count` = PANE SLOTS (a tab well is one slot,
+        // whatever it stacks): 2 slots → removing the dragged one leaves a lone pane,
+        // so the outer band duplicates an inner split of it; ≥3 → the panel already
+        // spans that edge (the only redundancy possible with a multi-pane base); a
+        // sole slot already fills the whole surface.
         if current.outer_dock_is_redundant(panel, zone) {
-            let outcome = format!(
-                "{panel}: already the outer {} band — no move",
-                zone_wire_name(zone)
-            );
+            let edge = zone_wire_name(zone);
+            let outcome = match current.leaf_count() {
+                0 | 1 => format!("{panel}: already fills the whole surface — no move"),
+                2 => format!(
+                    "{panel}: outer {edge} dock duplicates an inner split of the only other pane — no move"
+                ),
+                _ => format!("{panel}: already the outer {edge} band — no move"),
+            };
             self.note_outcome(&outcome);
             return Ok(outcome);
         }
@@ -12255,58 +12291,72 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r1201_outer_dock_is_redundant_only_at_the_occupied_edge() {
-        // Two panels side by side (the user's "가로로 두개") — Horizontal[a | b].
+    fn r1201_r1338_outer_dock_redundant_two_pane_all_edges_and_nested_occupied() {
+        // (R1338) Two panels side by side (the user's "가로로 두개") — Horizontal[a | b].
+        // With only TWO panes, removing either leaves a SINGLE pane, so an outer dock
+        // at ANY edge is just `Split[dragged | lone]` — structurally identical to an
+        // inner split of that lone pane (only the thin OUTER_DOCK_NEW_FRAC ratio
+        // differs). So EVERY edge is redundant: the perimeter drop snaps back and the
+        // user gets the 50/50 inner split, never the worse-ratio outer band.
         let ab = DockTopology::new(DockNode::split_horizontal(
             "h",
             0.5,
             DockNode::leaf("a"),
             DockNode::leaf("b"),
         ));
-        // b is the right column → docking it at the RIGHT edge is redundant (it
-        // already spans that full-height edge: the exact "두번째 창을 오른쪽 끝에" bug).
-        assert!(
-            ab.outer_dock_is_redundant("b", DockDropZone::Right),
-            "b already IS the right column"
-        );
-        // …but the OTHER edges move it (a real change) — non-tautological.
-        assert!(
-            !ab.outer_dock_is_redundant("b", DockDropZone::Left),
-            "b → left is a reorder"
-        );
-        assert!(
-            !ab.outer_dock_is_redundant("b", DockDropZone::Top),
-            "b → full-width top row is a change"
-        );
-        assert!(
-            !ab.outer_dock_is_redundant("b", DockDropZone::Bottom),
-            "b → full-width bottom row is a change"
-        );
-        // Symmetrically, a is the left column → left is redundant, right is a move.
-        assert!(
-            ab.outer_dock_is_redundant("a", DockDropZone::Left),
-            "a already IS the left column"
-        );
-        assert!(
-            !ab.outer_dock_is_redundant("a", DockDropZone::Right),
-            "a → right is a reorder"
-        );
-        // A NESTED leaf is not the full-span edge column: abc = H[a | H[b | c]].
-        // c is the innermost right leaf but NOT the root's full-height right column,
-        // so docking it right IS a change (it lifts to a full-span column).
+        for zone in [
+            DockDropZone::Left,
+            DockDropZone::Right,
+            DockDropZone::Top,
+            DockDropZone::Bottom,
+        ] {
+            assert!(
+                ab.outer_dock_is_redundant("b", zone),
+                "R1338: 2-pane → outer {zone:?} of b duplicates an inner split",
+            );
+            assert!(
+                ab.outer_dock_is_redundant("a", zone),
+                "R1338: 2-pane → outer {zone:?} of a duplicates an inner split",
+            );
+        }
+        // (R1201) ≥3 panes: the base after removal is MULTI-pane, so a full-span
+        // outer band is a row/column crossing every column that NO single inner
+        // split can reproduce → it keeps its unique value and is offered UNLESS the
+        // panel already spans that exact edge. abc = H[a | H[b | c]].
         let abc = abc_topology();
+        // c is the innermost right leaf but NOT the root's full-height right column,
+        // so docking it right IS a change (it lifts to a full-span column) — offered.
         assert!(
             !abc.outer_dock_is_redundant("c", DockDropZone::Right),
-            "c is nested, not the full-span right"
+            "c is nested, not the full-span right — a real full-span move"
         );
+        // …and the top/bottom full-span rows a single inner split cannot make.
+        assert!(
+            !abc.outer_dock_is_redundant("c", DockDropZone::Top),
+            "c → a full-width top row above all 3 panes is unique to the outer dock"
+        );
+        // a already IS the full-span left column → its left edge is redundant.
         assert!(
             abc.outer_dock_is_redundant("a", DockDropZone::Left),
             "a is the full-span left column"
+        );
+        assert!(
+            !abc.outer_dock_is_redundant("a", DockDropZone::Right),
+            "a → the full-span RIGHT edge it does not occupy is a real move"
         );
         // A sole pane already fills the whole area → every outer dock is redundant.
         let solo = DockTopology::new(DockNode::leaf("only"));
         assert!(solo.outer_dock_is_redundant("only", DockDropZone::Right));
         assert!(solo.outer_dock_is_redundant("only", DockDropZone::Top));
+        // (R1338) The presence gate — an ABSENT panel docking into a SOLE pane is an
+        // ADDITION (collapse-policy re-dock of a floated-out panel), not a
+        // rearrangement, so it is NOT suppressed even though the result is a two-slot
+        // split. Without the gate `dock_panel_outer(floater, Top)` on a solo window
+        // would silently do nothing.
+        assert!(
+            !solo.outer_dock_is_redundant("floater", DockDropZone::Top),
+            "R1338: docking an ABSENT panel next to a lone pane is a real addition"
+        );
     }
 
     #[test]
@@ -12391,34 +12441,103 @@ mod reorganize_tests {
     }
 
     #[test]
-    fn r1201_dock_panel_outer_noops_a_redundant_edge() {
-        // The RPC / §2 #2 peer of the pointer suppression: an AI
-        // `dock_panel_outer(right_column, Right)` must not silently resize it.
+    fn r1338_two_pane_outer_snaps_back_through_the_live_predicate() {
+        // End-to-end wiring for the R1338 2-pane case: the LIVE reorganizer predicate
+        // (not a hand-written closure) threaded through `resolve_drop_checked` — the
+        // exact path the same-window drag PREVIEW and RELEASE both take — must snap
+        // back for EVERY perimeter edge, so no misleading full-span band previews and
+        // the release stays put (the user then aims at the inner band for a 50/50
+        // split). Row[a | b], drag b.
+        use pinion_core::external::{DropPoint, OUTER_DOCK_ZONE_TAG};
+        let topology = Rc::new(Signal::new(Some(DockTopology::new(
+            DockNode::split_horizontal("h", 0.5, DockNode::leaf("a"), DockNode::leaf("b")),
+        ))));
+        let reorganizer = DockReorganizer::new(Rc::clone(&topology));
+        let is_panel = |t: &str| t == "a" || t == "b";
+        // Each corner-ish sentinel maps to a distinct perimeter edge via `outer_zone_for`.
+        for (x, y, edge) in [
+            (0.98_f32, 0.5_f32, DockDropZone::Right),
+            (0.02, 0.5, DockDropZone::Left),
+            (0.5, 0.02, DockDropZone::Top),
+            (0.5, 0.98, DockDropZone::Bottom),
+        ] {
+            let pt = DropPoint {
+                tag: OUTER_DOCK_ZONE_TAG.to_string(),
+                x_rel: x,
+                y_rel: y,
+            };
+            assert_eq!(
+                resolve_drop_checked(Some(&pt), "b", is_panel, true, |z| reorganizer
+                    .outer_dock_is_redundant("b", z)),
+                DropResolution::SnapBack {
+                    zone: DockDropZone::None
+                },
+                "R1338: the live 2-pane predicate snaps back the outer {edge:?} drop",
+            );
+        }
+    }
+
+    #[test]
+    fn r1201_r1338_dock_panel_outer_noops_redundant_and_moves_meaningful() {
+        // The RPC / §2 #2 peer of the pointer suppression: an AI `dock_panel_outer`
+        // must not silently resize/duplicate-split. (R1338) With only TWO panes EVERY
+        // edge is redundant (the outer band == an inner split), so BOTH the occupied
+        // edge AND the opposite edge no-op — the shape is left byte-identical.
         let topology = Rc::new(Signal::new(Some(DockTopology::new(
             DockNode::split_horizontal("h", 0.5, DockNode::leaf("a"), DockNode::leaf("b")),
         ))));
         let reorganizer = DockReorganizer::new(Rc::clone(&topology));
         let before = topology.get().unwrap();
+        // b IS the right column — the classic R1201 occupied-edge no-op.
         let outcome = reorganizer
             .dock_panel_outer("b", DockDropZone::Right)
             .unwrap();
         assert!(
-            outcome.contains("already the outer"),
-            "redundant outer dock no-ops: {outcome}"
+            outcome.contains("duplicates an inner split"),
+            "R1338: a 2-pane outer dock reports the inner-split duplication reason (not \
+             a false \"already occupies\" claim): {outcome}"
         );
-        assert!(
-            topology.get().unwrap().root().same_shape(before.root()),
-            "the topology shape is unchanged (no resize, no re-minted split)",
-        );
-        // A MEANINGFUL outer dock still mutates — b → the full-height LEFT column.
+        // b does NOT occupy the LEFT edge, yet with ≤2 panes the outer-left band is
+        // still just an inner split of a → no-op (was a real move before R1338). The
+        // message must NOT falsely claim b "already occupies" the left edge.
         let outcome = reorganizer
             .dock_panel_outer("b", DockDropZone::Left)
             .unwrap();
-        assert_eq!(outcome, "b -> outer Left");
+        assert!(
+            outcome.contains("duplicates an inner split"),
+            "R1338: 2-pane outer-left of the RIGHT column is redundant with an inner split: {outcome}"
+        );
+        assert!(
+            topology.get().unwrap().root().same_shape(before.root()),
+            "R1338: neither 2-pane outer dock changed the shape (no resize, no re-mint)",
+        );
+        // (R1201) ≥3 panes: the redundancy that DOES apply is the classic
+        // occupied-edge no-op — a already IS the full-span left column, so its Left
+        // edge no-ops with the accurate "already the outer" message (the multi-pane
+        // branch, distinct from the R1338 2-pane message above).
+        let abc = Rc::new(Signal::new(Some(abc_topology())));
+        let reorg3 = DockReorganizer::new(Rc::clone(&abc));
+        let occupied = reorg3.dock_panel_outer("a", DockDropZone::Left).unwrap();
+        assert!(
+            occupied.contains("already the outer"),
+            "R1201: a ≥3-pane occupied edge reports 'already the outer', not the 2-pane reason: {occupied}"
+        );
+        assert!(
+            abc.get().unwrap().root().same_shape(abc_topology().root()),
+            "the occupied-edge no-op left abc unchanged",
+        );
+        // (R1201) A MEANINGFUL outer dock — ≥3 panes leave a MULTI-pane base a single
+        // inner split cannot reproduce, so the full-span band still mutates. abc =
+        // H[a | H[b | c]]; docking a full-width BOTTOM row spans all three.
+        let outcome = reorg3.dock_panel_outer("a", DockDropZone::Bottom).unwrap();
         assert_eq!(
-            topology.get().unwrap().root().panel_ids().first(),
-            Some(&"b"),
-            "b is now the left column (a real move)",
+            outcome, "a -> outer Bottom",
+            "a real full-span move still mutates"
+        );
+        assert_eq!(
+            abc.get().unwrap().root().panel_ids().last(),
+            Some(&"a"),
+            "a is now the full-width bottom row across all panes",
         );
     }
 
