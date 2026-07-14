@@ -503,17 +503,21 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
 /// well-formed non-overlapping case that is the sole covering run, so
 /// this is identical to a forward scan there.
 ///
-/// Cost is `O(runs)` per grapheme — a linear attribute-list scan, the
-/// same shape as Pango's `PangoAttrList` (an arbitrary-overlap linear
-/// list, documented as fine at paragraph scale). The empty-`runs` fast
-/// path (every single-style node) is `O(1)`. Frameworks that resolve
-/// this to `O(1)` per position (parley's `RangedBuilder`, Pango's
-/// itemize step) do it **once at layout-build time and cache** the
-/// result — they do not re-flatten per frame. The TUI has no text
-/// layout cache yet (§5.36, deferred), so the resolve-once optimisation
-/// belongs *there*, with the rest of the per-frame text work, not as a
-/// bespoke per-frame flatten here (which would allocate every frame and
-/// slow the common few-run path). A naive advancing cursor is unsound
+/// Cost is `O(runs)` per grapheme — a linear attribute-list scan, like
+/// Pango's `PangoAttrList` (an arbitrary-overlap linear list, "fine at
+/// paragraph scale"); the empty-`runs` fast path (every single-style
+/// node) is `O(1)`. Those frameworks resolve to `O(1)` per position at
+/// layout-build time and cache it (parley `RangedBuilder` → `Layout`,
+/// Pango's itemize step) — but what that cache buys is skipping **glyph
+/// shaping**, and the terminal backend does none (no fonts / glyphs /
+/// rasterisation — only a width lookup + `set_symbol`), so the cost
+/// that justifies the cache is absent here. Measured, this scan is
+/// sub-µs even on a 100-char / 30-run code line (a few hundred ns over
+/// the single-style baseline), on damage-driven repaints — so any
+/// resolve-once optimisation belongs with a future §5.36 TUI text cache
+/// alongside the rest of the per-frame text work, not a bespoke
+/// per-frame flatten here (which would allocate every frame and slow
+/// the common few-run path). A naive advancing cursor is unsound
 /// regardless: the contract fixes *list* order, not `start` order.
 fn effective_text_style(t: &TextNode, byte_off: usize) -> &TextStyle {
     let b = u32::try_from(byte_off).unwrap_or(u32::MAX);
