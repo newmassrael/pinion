@@ -210,6 +210,18 @@ const PROPERTY_TEAR_OFF_INTENT_TAG: &str = intent_tag!("property", "tear_off");
 /// Viewport panel's `tear_off` intent (same convention).
 const VIEWPORT_TEAR_OFF_INTENT_TAG: &str = intent_tag!("viewport", "tear_off");
 
+/// R1346 §5.20 — the main splitter's drag-end commit intent. `intent_tag!`
+/// takes literals, so the widget half is spelled out here; the
+/// `r1346_main_splitter_commit_tag_matches_the_registered_tag` test pins it
+/// against [`MAIN_SPLITTER_TAG`] so the two cannot drift apart silently (a
+/// mismatched reducer arm is always `false` and always quiet).
+const MAIN_SPLITTER_COMMIT_INTENT_TAG: &str = intent_tag!("main_splitter", "ratio_committed");
+
+/// R1346 §2 #7 — paint tag of the committed-layout witness line. The demo
+/// (`tools/demos/r1346_splitter_ratio_commit.py`) reads this as scene-as-data
+/// to observe the settle edge over the RPC wire.
+const SPLIT_COMMIT_LOG_TAG: &str = "split_commit_log";
+
 /// R1094 §5.16 §5.41 PR-31 — the live-follow tear-off intents, one per
 /// panel. Emitted on every drag move that has escaped every drop target
 /// (the [`pinion_widget_paint::dock::TEAR_OFF_FOLLOW_EVENT`] the
@@ -330,6 +342,29 @@ fn use_main_split_ratio() -> Rc<Signal<f32>> {
         .expect("hello-dock-panels: view fn runs inside the substrate root owner scope")
         .cache("hello_dock_main_split_ratio", || {
             Signal::new(MAIN_SPLIT_RATIO_DEFAULT)
+        })
+}
+
+/// R1346 §5.20 — the **committed** main-split ratio: `(commit_count,
+/// last_committed_ratio)`.
+///
+/// The whole point of the `"ratio_committed"` channel, dogfooded. This is the
+/// state a real consumer persists — sprag mirrors it to its host process,
+/// an IDE writes it to a layout file. It is deliberately a *different* handle
+/// from [`use_main_split_ratio`]: that one is the **live preview** the drag
+/// writes at pointer rate, this one moves **only on the settle edge**, so the
+/// pair is a working demonstration of pinion's two-channel drag contract.
+///
+/// Written from the reducer's [`MAIN_SPLITTER_COMMIT_INTENT_TAG`] arm and
+/// nowhere else — never from the live stream. The count is what makes the
+/// contract falsifiable rather than decorative: it proves a click commits
+/// *zero* times and a drag commits exactly *once*, which no reading of the
+/// ratio alone could show.
+fn use_committed_split_log() -> Rc<Signal<(u32, f32)>> {
+    Owner::current()
+        .expect("hello-dock-panels: view fn runs inside the substrate root owner scope")
+        .cache("hello_dock_committed_split_log", || {
+            Signal::new((0, MAIN_SPLIT_RATIO_DEFAULT))
         })
 }
 
@@ -809,6 +844,23 @@ fn view_property_content(state: ButtonState, theme: &Theme) -> Scene {
             theme,
         )],
     };
+    // R1346 §5.20 §2 #7 — the committed-layout witness. Lives here rather
+    // than in the splitter's own subtree so the R684 / R1086 splitter
+    // geometry invariants keep measuring an unpadded two-panel row; the
+    // settled split ratio genuinely is a *property*, so the property pane is
+    // its honest home. Reading it costs no drag: it is scene-as-data.
+    let (commits, last) = use_committed_split_log().get();
+    let mut rows = rows;
+    rows.push(Scene::Text(
+        TextNode::styled(
+            format!("committed split: {commits} commits, last={last:.3}"),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(PROPERTY_PANE_FONT_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        )
+        .with_tag(SPLIT_COMMIT_LOG_TAG),
+    ));
     Scene::Container(
         ContainerNode::new(rows)
             .with_tag(PROPERTY_PANE_TAG)
@@ -1061,6 +1113,27 @@ impl WidgetCore for DockPanelsView {
     /// dock + cross-panel select arc.
     fn update(_state: Self::State, intent: &Intent) -> Vec<pinion_core::command::Command> {
         match intent.tag_str() {
+            // R1346 §5.20 — the splitter settled. This arm is the
+            // `onChangeEnd` hook a persisting consumer writes from: it fires
+            // once per drag that actually moved the ratio, never during the
+            // drag and never on a click. Note there is deliberately NO
+            // `ratio_changing` peer arm — the live value is read straight off
+            // the shared Signal by the view, so the intent channel carries
+            // only the edge worth persisting.
+            tag if tag == MAIN_SPLITTER_COMMIT_INTENT_TAG => {
+                if let IntrospectValue::Float(ratio) = intent.payload {
+                    let log = use_committed_split_log();
+                    let (count, _) = log.get();
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "the splitter's ratio is an f32 widened to f64 for the \
+                                  IntrospectValue::Float wire form; narrowing it back is \
+                                  exact for every value the splitter can emit"
+                    )]
+                    let ratio32 = ratio as f32;
+                    log.set((count + 1, ratio32));
+                }
+            }
             // Tear-off arms — one per panel. Payload carries the
             // panel id the DockPanelExternal was constructed with.
             tag if tag == INSPECTOR_TEAR_OFF_INTENT_TAG
@@ -1401,6 +1474,21 @@ mod tests {
     #[test]
     fn r683_c_tag_is_viewport_btn() {
         assert_eq!(<DockPanelsView as WidgetCore>::tag(), VIEWPORT_BTN_TAG);
+    }
+
+    /// R1346 §5.20 R22 — the reducer arm must name the tag the splitter is
+    /// actually registered under. `intent_tag!` takes literals, so the two
+    /// spellings are only coupled by this assertion; without it a rename of
+    /// `MAIN_SPLITTER_TAG` leaves an arm that silently never matches (tag
+    /// comparison is `false` and quiet — nothing logs, nothing panics, the
+    /// layout just stops persisting).
+    #[test]
+    fn r1346_main_splitter_commit_tag_matches_the_registered_tag() {
+        assert_eq!(
+            MAIN_SPLITTER_COMMIT_INTENT_TAG,
+            format!("{MAIN_SPLITTER_TAG}.ratio_committed"),
+            "the reducer arm and the paint-side splitter tag have drifted",
+        );
     }
 
     #[test]
