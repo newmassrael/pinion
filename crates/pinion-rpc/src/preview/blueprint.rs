@@ -18,6 +18,34 @@
 //! description owned by the wire surface, distinct from the runtime
 //! representation by design — not a workaround.
 //!
+//! ## Why a blueprint may carry a bare `rect` (R1345 §5.21)
+//!
+//! Every variant here states its geometry as a [`Rect`] and materialises into a
+//! node with a **default `LayoutStyle`**. Since R1344 that is normally a bug:
+//! `compute_layout` overwrites `rect` — it is an OUTPUT — so geometry authored
+//! there never reaches a pixel, and a view must state its intent in
+//! `LayoutStyle` instead.
+//!
+//! It is sound here for one reason, and only that reason:
+//! [`TypedProposal::ReplaceView`](super::TypedProposal) splices the materialised
+//! subtree into `DispatchContext::scene` — the **state** scene — and **no code
+//! path lays that scene out**. Both shells run `compute_layout` exclusively over
+//! the freshly-produced *paint* scene (`ShellCore::compute_paint_scene` /
+//! `ShellCoreTui::compute_paint_scene` lay out `V::view`'s result, never
+//! `CoreShell::scene_mut`). So a blueprint's rects survive verbatim and are the
+//! authoritative geometry for what reads them (`scene/query`, `scene/snapshot`
+//! `from:state`) — the same footing as a binding that runs no layout at all.
+//!
+//! **The constraint this rests on**: if a materialised blueprint is ever spliced
+//! into a scene that DOES run `compute_layout` — a paint scene, or a state scene
+//! that someone later decides to lay out — every `rect` here silently becomes
+//! dead intent and the subtree collapses to the block-flow default. At that
+//! point the wire form must carry layout intent (the v0 shape deliberately
+//! carries no layout-mode hints; widening it is the follow-up, not a workaround
+//! at the splice site). Verified at R1345, not assumed: the R1344/R1345 rounds
+//! exist because exactly this invariant was left undocumented elsewhere and a
+//! later round read the absence as a design.
+//!
 //! ## Variant coverage (R43)
 //!
 //! R40.11 landed `Box` + `Container`. R43 adds the remaining
@@ -396,5 +424,60 @@ mod tests {
             }
             _ => panic!("expected Container"),
         }
+    }
+
+    /// R1345 §5.21 — the constraint the bare `rect`s rest on, made executable.
+    ///
+    /// A blueprint's geometry is authoritative ONLY because `ReplaceView`
+    /// splices it into the state scene, which no code path lays out (see the
+    /// module docs). This test lays a materialised blueprint out on purpose and
+    /// asserts the rects DIE — so the day someone routes a blueprint into a
+    /// laid-out scene, or teaches the state scene to lay out, this fails and
+    /// says why instead of the subtree silently collapsing to block-flow.
+    ///
+    /// It is a *documentation* test: the assertion is the hazard, not a wish.
+    #[test]
+    fn r1345_materialised_rects_do_not_survive_a_layout_pass() {
+        use pinion_runtime::{LayoutCache, compute_layout};
+
+        let bp = ViewBlueprint::Container {
+            rect: Rect::new(0, 0, 400, 200),
+            style: BoxStyle::default(),
+            tag: Some("root".to_string()),
+            children: vec![ViewBlueprint::Box {
+                rect: Rect::new(100, 50, 120, 40),
+                style: BoxStyle::default(),
+                tag: Some("child".to_string()),
+            }],
+        };
+        let mut scene = bp.materialize();
+
+        // As spliced into the STATE scene today: verbatim, because nothing
+        // lays it out. THIS is the contract ReplaceView relies on.
+        let child_rect = |s: &Scene| match s {
+            Scene::Container(c) => match &c.children[0] {
+                Scene::Box(b) => b.rect,
+                _ => panic!("child is a Box"),
+            },
+            _ => panic!("root is a Container"),
+        };
+        assert_eq!(
+            child_rect(&scene),
+            Rect::new(100, 50, 120, 40),
+            "unlaid-out (the state-scene path): the wire rect is authoritative",
+        );
+
+        // And what a layout pass would do to it — the hazard, pinned.
+        let mut cache = LayoutCache::new();
+        compute_layout(&mut scene, &mut cache, 400, 200);
+        assert_ne!(
+            child_rect(&scene),
+            Rect::new(100, 50, 120, 40),
+            "a laid-out blueprint LOSES its wire geometry (LayoutStyle is \
+             default, so taffy block-flows it). If this assertion ever fails \
+             because the rects survived, layout stopped overwriting rect and \
+             this whole note can go. If it fails because a blueprint is now \
+             spliced somewhere laid out, the wire form must carry layout intent.",
+        );
     }
 }

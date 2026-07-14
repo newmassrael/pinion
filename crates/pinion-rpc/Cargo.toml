@@ -28,5 +28,11 @@ serde_json = { workspace = true }
 # feature is only active for test/bench builds, never in production.
 pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
 
+# R1345 §5.21 — pins the invariant `ViewBlueprint`'s bare rects rest on: that
+# `ReplaceView` targets the state scene, which is never laid out. The test lays
+# a materialised blueprint out on purpose to prove the rects would die if that
+# ever changed. Dev-only: the wire surface itself stays layout-free.
+pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
+
 [lints]
 workspace = true
