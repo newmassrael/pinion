@@ -753,6 +753,16 @@ impl<T: Copy> DragCalibration<T> {
     /// instead *focus*): gate both the live mutation and the trailing-click
     /// suppression on this so a sub-threshold press stays a click. Consumers
     /// with no click action (column resize, splitter) ignore it.
+    ///
+    /// R1346 — "ignore it" is about the *click-vs-drag* question only, and it
+    /// needs a **pixel basis** the caller must supply. A consumer whose
+    /// `pointer_move` sees normalised fractions and never learns its pixel
+    /// width (the splitter: its basis is implicitly `1.0`) cannot call this
+    /// meaningfully. Such a consumer answering "did this gesture settle on a
+    /// new value?" for a drag-end commit channel should instead compare the
+    /// released value against the press snapshot [`Self::end_payload`] hands
+    /// back — see that method. Do NOT reach for [`Self::end`]'s bool for that
+    /// question: under the real router it is `true` for a bare click.
     #[must_use]
     pub fn traveled_beyond(&self, basis: f64, threshold_px: f64) -> bool {
         self.anchor
@@ -761,12 +771,49 @@ impl<T: Copy> DragCalibration<T> {
     }
 
     /// Tear the drag down at release (`PointerUp` / `PointerCancel`). Returns
-    /// whether a drag had calibrated — a real drag ran — so the caller can
-    /// suppress the trailing click (a scrub must not also open the inline editor
-    /// or move the cursor as a plain click would). A press that never moved
-    /// returns `false`: it was a click, not a drag.
+    /// whether a drag had **calibrated** — so the caller can suppress the
+    /// trailing click (a scrub must not also open the inline editor or move
+    /// the cursor as a plain click would).
+    ///
+    /// ## What `true` does and does not mean (R1346)
+    ///
+    /// `true` means *an anchor existed*, i.e. at least one [`Self::drive`]
+    /// arrived and its `seed` accepted — **not** that the cursor travelled or
+    /// that any value changed. The distinction is load-bearing for capture
+    /// widgets: `InputRouter::pointer_down` forwards the press-time cursor as
+    /// an initial `pointer_move` to every widget with
+    /// `wants_pointer_capture()` (R51.35 click-to-position, pinned by
+    /// `pinion-runtime` `input.rs::pointer_down_forwards_initial_cursor`), so
+    /// under the real router a **bare click arms the anchor** and this returns
+    /// `true` with zero travel. Only a consumer the router never forwards a
+    /// press-time move to sees `false` here for a click.
+    ///
+    /// So: `true` is the right gate for *trailing-click suppression* (its
+    /// original purpose — a calibration ran, so the press was pointer-owned).
+    /// It is the **wrong** gate for a *drag-end commit* ("persist the settled
+    /// value"), which must additionally establish that something moved — via
+    /// [`Self::traveled_beyond`] where a pixel basis exists, or by comparing
+    /// the released value against the press snapshot [`Self::end_payload`]
+    /// returns.
     pub fn end(&self) -> bool {
-        self.anchor.take().is_some()
+        self.end_payload().is_some()
+    }
+
+    /// R1346 — tear the drag down and return the **press-time payload** the
+    /// calibration snapshotted (`None` when no drag had calibrated).
+    ///
+    /// The [`Self::end`] peer that keeps what `end` discards. A drag-end
+    /// *commit* channel needs the press snapshot to answer "did this gesture
+    /// actually settle on a new value, or did the user just click?" — compare
+    /// the payload against the released value and stay silent when they agree.
+    /// `SplitterExternal`'s `"ratio_committed"` is the first consumer: its
+    /// payload is the `ratio_at_press`, so a click (which calibrates but
+    /// mutates nothing) compares equal and correctly emits nothing.
+    ///
+    /// Value-typed like the rest of the primitive — `T: Copy` — so the caller
+    /// owns the snapshot after the teardown.
+    pub fn end_payload(&self) -> Option<T> {
+        self.anchor.take().map(|anchor| anchor.payload)
     }
 
     /// Whether a drag is live (calibrated and not yet released) — the AI-first

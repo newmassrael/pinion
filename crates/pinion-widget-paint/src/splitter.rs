@@ -72,6 +72,7 @@
 //! the contract is satisfied automatically.
 
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use pinion_core::external::{
@@ -79,6 +80,7 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::input::{DragCalibration, PointerWireEvent};
+use pinion_core::intent::Intent;
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Scene};
 use pinion_core::style::{
@@ -615,6 +617,54 @@ pub fn view_splitter(
 /// without the matching cursor-shape hint (CSS `cursor: col-resize`)
 /// would be misleading. R683.B atomic 3 / 4's first dock consumer
 /// will surface the real hover requirement.
+///
+/// ## Two channels: live ratio vs. committed ratio (R1346)
+///
+/// Like [`SliderExternal`](pinion_core::widgets::slider::SliderExternal)
+/// (`value_changing` / `value_committed`) and `ScrollBarExternal`
+/// (`scroll_committed`), the splitter separates the live preview from
+/// the settle edge:
+///
+/// * **live** — the attached `Signal<f32>` ratio handle
+///   ([`Self::attach_ratio`]). Each captured `pointer_move` *after* the
+///   press-time calibration frame writes it (the first only snapshots;
+///   see [`Self::pointer_move`]), so subscribers repaint continuously
+///   through the drag. Applications wanting a live preview read this
+///   directly.
+/// * **committed** — the `"ratio_committed"` §5.20 intent, carrying the
+///   settled ratio as [`IntrospectValue::Float`], emitted once on the
+///   `PointerUp` of a drag that actually moved the ratio (see
+///   `commit_drag_state` for why a click must not qualify). This is
+///   the `onChangeEnd` channel: persistence, analytics, mirroring
+///   layout to a host process. Consumers must not infer the settle from
+///   frame cadence — there is no guaranteed frame after a release (the
+///   shell idles on `ControlFlow::Wait`), whereas this intent drains
+///   inside the release dispatch itself.
+///
+/// ## Why the commit carries a payload when `ScrollBarExternal`'s does not
+///
+/// `scroll_committed` is a payload-less marker, and `scrollbar.rs`
+/// gives the rule: no payload *because* the authoritative offset
+/// already lives in `ScrollState` and reaches the application through
+/// that signal stream. By that rule alone the splitter — whose
+/// authoritative ratio likewise lives in a `Signal` the binding owns —
+/// would be payload-less too. It carries the `f32` anyway, siding with
+/// `value_committed` / `RangeSliderExternal` / `ColorAreaExternal` (the
+/// family majority), for a reason the scrollbar's rule does not weigh:
+/// §2 #2. An AI/RPC client harvesting this intent off the §5.20 channel
+/// would otherwise have to chase it with a separate `scene/query` for
+/// `ratio` to learn *what* settled — a second round-trip whose answer
+/// can already have moved on. A self-contained commit is the
+/// scene-as-data (§2 #7) shape: the edge and its value in one record.
+///
+/// The commit is emitted unprefixed; the §5.20 R22 walk namespaces it
+/// with the `Scene::External` node's tag, so a binding whose splitter
+/// node is tagged `"split"` matches `"split.ratio_committed"` in its
+/// `WidgetCore::update` reducer ([[intent-tag-dotted-wire-form]]).
+///
+/// `PointerCancel` is deliberately silent and does **not** roll the
+/// ratio back — see `clear_drag_state` for why (the family-wide
+/// R51.93 §5.35 invariant).
 pub struct SplitterExternal {
     orientation: SplitterOrientation,
     ratio: Option<Rc<Signal<f32>>>,
@@ -629,6 +679,16 @@ pub struct SplitterExternal {
     /// basis of `1.0`), so no pixel-width multiply is needed — the `[min_ratio,
     /// max_ratio]` clamp saturates a stray past the panel edge.
     drag: DragCalibration<f32>,
+    /// R1346 §5.20 — pending intents for the `"ratio_committed"`
+    /// drag-end channel (the [`SliderExternal`](pinion_core::widgets::slider::SliderExternal)
+    /// `"value_committed"` peer). Plain `VecDeque`, not the
+    /// `RefCell<VecDeque<_>>` the crate's dock Externals hold: those
+    /// need interior mutability because `External::begin_drag(&self)`
+    /// really does enqueue off a shared reference, whereas every
+    /// splitter enqueue reaches here from `invoke(&mut self)`. No
+    /// `&self` producer means no `RefCell`, hence no borrow-panic
+    /// surface to reason about.
+    pending_intents: VecDeque<Intent>,
 }
 
 impl core::fmt::Debug for SplitterExternal {
@@ -659,6 +719,7 @@ impl SplitterExternal {
             min_ratio: 0.05,
             max_ratio: 0.95,
             drag: DragCalibration::new(),
+            pending_intents: VecDeque::new(),
         }
     }
 
@@ -798,18 +859,124 @@ impl External for SplitterExternal {
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
     }
+
+    /// R1346 §5.20 — `true` while a `"ratio_committed"` intent is
+    /// queued (the short-circuit that spares the `drain_intents`
+    /// virtual call on the overwhelmingly common no-commit dispatch).
+    fn is_dirty(&self) -> bool {
+        !self.pending_intents.is_empty()
+    }
+
+    /// R1346 §5.20 — flush the drag-end commit channel into `sink`.
+    /// Drained by `walk_scene_and_drain` from `CoreShell::tail`, i.e.
+    /// within the same input dispatch that delivered the `PointerUp`.
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        while let Some(intent) = self.pending_intents.pop_front() {
+            sink(intent);
+        }
+    }
 }
 
 /// (R683.B §5.16) Reset drag state — drops the `drag_start`
 /// calibration snapshot + clears `is_dragging`. Called from
 /// [`ExternalIntrospect::invoke`] on the framework-dispatched
-/// `PointerUp` / `PointerCancel` symbolic events (R51.41 §5.35
-/// `dispatch_send` channel — the canonical drag-release notification
-/// path Pinion externals receive). Also reachable from tests via
-/// the introspect surface so the teardown path is exercised end-to-
-/// end without spinning up the full `InputRouter` capture lock.
+/// `PointerCancel` symbolic event (R51.41 §5.35 `dispatch_send`
+/// channel — the canonical drag-release notification path Pinion
+/// externals receive). Also reachable from tests via the introspect
+/// surface so the teardown path is exercised end-to-end without
+/// spinning up the full `InputRouter` capture lock.
+///
+/// R1346 §5.20 — the **silent** half of the release pair. Cancel tears
+/// the calibration down and emits nothing, and the ratio the in-flight
+/// `pointer_move`s already applied **stays applied**. That is not an
+/// oversight: it is the family-wide R51.93 §5.35 invariant this
+/// splitter now joins, pinned for the peer widget by
+/// `slider.rs::r51_93_pointer_cancel_during_drag_returns_to_idle_without_commit`
+/// ("`set_value` during drag stays applied across `PointerCancel`"). The
+/// rationale carries over verbatim — the ratio is a continuous-domain
+/// sidecar, not a commit-bound enum, so the live `Signal` writes are
+/// honest reports of where the drag was; the OS revoked the *commit*
+/// signal, not the user's in-flight updates. A binding that persists
+/// only on [`commit_drag_state`] therefore keeps the pre-drag ratio on
+/// disk, which is precisely what "the gesture was aborted" should mean.
 fn clear_drag_state(ext: &SplitterExternal) {
     ext.drag.end();
+}
+
+/// R1346 §5.20 — the **committing** half of the release pair, called
+/// from [`ExternalIntrospect::invoke`] on the framework-dispatched
+/// `PointerUp`.
+///
+/// Emits `"ratio_committed"` carrying the settled ratio. This is the
+/// `onChangeEnd` channel: the live `Signal<f32>` stream is the preview,
+/// this edge is "the drag ended, that was the final ratio, persist it
+/// now". Bindings that mirror layout to a host process / disk write
+/// here rather than heuristically inferring a settle from frame
+/// cadence — the drain is input-driven (`CoreShell::tail` runs at the
+/// end of the very dispatch that delivered this `PointerUp`), so the
+/// commit needs no follow-up frame and survives `ControlFlow::Wait`
+/// idling.
+///
+/// ## The gate: "the ratio moved", not "a drag calibrated"
+///
+/// The obvious gate — [`DragCalibration::end`]'s bool — is **wrong
+/// here**, and subtly so. `InputRouter::pointer_down` forwards the
+/// press-time cursor as an initial `pointer_move` to every widget with
+/// `wants_pointer_capture` (R51.35 click-to-position, pinned by
+/// `pinion-runtime` `input.rs::pointer_down_forwards_initial_cursor`),
+/// and this splitter opts in — so a **bare click arms the anchor** and
+/// `end()` returns `true` with zero travel. Gating on it makes every
+/// click on the handle emit a commit for a ratio that never moved, and
+/// a double-click emit two: spurious writes on the one channel whose
+/// entire purpose is persistence.
+///
+/// This is also exactly where the
+/// [`SliderExternal`](pinion_core::widgets::slider::SliderExternal)
+/// analogy breaks, so it is worth naming. The slider positions
+/// **absolutely** — its `pointer_move` writes `set_value` on every
+/// move, press-time forward included, so a track click genuinely moves
+/// the value and committing that release is right. The splitter is
+/// **press-anchored / relative**: the calibration frame mutates
+/// nothing by design. The two widgets are homomorphic in payload
+/// shape, not on this edge.
+///
+/// So the honest predicate for a persistence channel is *did this
+/// gesture settle on a different ratio than it started from?* —
+/// answered by comparing the released value against the press snapshot
+/// [`DragCalibration::end_payload`] hands back (the `ratio_at_press`
+/// that plain `end()` discards). A click compares equal and stays
+/// silent; so does a drag that wanders and returns home, or one that
+/// spends its whole travel saturated against a clamp bound — in every
+/// one of those there is genuinely nothing new to persist. Paint-only
+/// mode (no attached ratio) is silent too.
+fn commit_drag_state(ext: &mut SplitterExternal) {
+    // Tear the calibration down FIRST and unconditionally — every
+    // early return below must still leave a fresh cycle behind.
+    let Some(ratio_at_press) = ext.drag.end_payload() else {
+        return;
+    };
+    let Some(ratio) = ext.ratio.as_ref() else {
+        return;
+    };
+    let settled = ratio.get();
+    // Exact comparison deliberately mirrors `Signal::set`'s own R26
+    // equality-skip: "the Signal holds something other than what the
+    // press snapshotted" is precisely the question, and the Signal
+    // decides changed-ness by the same `==`.
+    #[allow(
+        clippy::float_cmp,
+        reason = "mirrors Signal::set's equality-skip — the question is literally \
+                  whether the stored f32 differs from the press snapshot, not \
+                  whether it differs by some tolerance"
+    )]
+    let unmoved = settled == ratio_at_press;
+    if unmoved {
+        return;
+    }
+    ext.pending_intents.push_back(Intent::new_static(
+        "ratio_committed",
+        IntrospectValue::Float(f64::from(settled)),
+    ));
 }
 
 impl ExternalIntrospect for SplitterExternal {
@@ -860,7 +1027,10 @@ impl ExternalIntrospect for SplitterExternal {
     /// releases or the OS cancels the pointer capture span the
     /// External holds. The splitter clears its drag calibration
     /// snapshot + the `is_dragging` flag so the next press starts a
-    /// fresh cycle. `PointerDown` / `PointerEnter` / `PointerLeave`
+    /// fresh cycle, and on `PointerUp` — not on `PointerCancel` —
+    /// queues the R1346 `"ratio_committed"` intent
+    /// (`commit_drag_state` / `clear_drag_state`).
+    /// `PointerDown` / `PointerEnter` / `PointerLeave`
     /// arrive too but the splitter ignores them — drag calibration
     /// happens in the first `pointer_move` under capture lock, not
     /// in the `PointerDown` arrival.
@@ -870,6 +1040,17 @@ impl ExternalIntrospect for SplitterExternal {
     /// args: "PointerUp"}` shape — the demo's drag-release
     /// assertion goes through this channel to verify the substrate
     /// behaviour without RPC needing a separate "drag end" method.
+    ///
+    /// R1346 — but note that a bare `scene/invoke send PointerUp` is a
+    /// **teardown, not a commit**: nothing over that path ever
+    /// calibrated a drag (`pointer_move` is not an introspect slot and
+    /// `intervene` refuses `ratio` as `ReadOnly`), so there is no
+    /// press snapshot to have moved away from and
+    /// `commit_drag_state` correctly stays silent. The RPC verb that
+    /// *does* produce a `"ratio_committed"` — with full §2 #2 parity,
+    /// because it feeds the very same `InputRouter` arm the physical
+    /// release takes — is **`scene/drag`**, which synthesizes
+    /// press → interpolated moves → release.
     fn invoke(
         &mut self,
         path: &str,
@@ -880,7 +1061,16 @@ impl ExternalIntrospect for SplitterExternal {
         }
         let event_name = args.as_str().ok_or(InvokeError::TypeMismatch)?;
         match PointerWireEvent::from_wire_name(event_name) {
-            Some(PointerWireEvent::Up | PointerWireEvent::Cancel) => {
+            // R1346 §5.20 — the release pair diverges only in the
+            // commit channel: `Up` settles the gesture and emits
+            // `"ratio_committed"`, `Cancel` tears down silently
+            // (R51.93 §5.35). Both drop the calibration, so either way
+            // the next press starts a fresh cycle.
+            Some(PointerWireEvent::Up) => {
+                commit_drag_state(self);
+                Ok(IntrospectValue::Null)
+            }
+            Some(PointerWireEvent::Cancel) => {
                 clear_drag_state(self);
                 Ok(IntrospectValue::Null)
             }
@@ -925,7 +1115,7 @@ mod tests {
     //!    `ratio_signal` is inert (no panic on pointer events).
 
     use super::{
-        SplitterExternal, SplitterOrientation, SplitterStyle, apply_flex_main,
+        Intent, SplitterExternal, SplitterOrientation, SplitterStyle, apply_flex_main,
         handle_fill_for_dragging, view_splitter,
     };
     use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
@@ -1541,6 +1731,439 @@ mod tests {
             !ext.is_dragging(),
             "PointerCancel mirrors PointerUp for drag teardown",
         );
+    }
+
+    /// R1346 §5.20 — the drag-end commit channel. Harvest helper: drain
+    /// the External's pending intents into a plain Vec of
+    /// `(tag, payload)` so the assertions read as the wire-form the
+    /// binding's reducer sees.
+    fn harvest(ext: &mut SplitterExternal) -> Vec<Intent> {
+        let mut out = Vec::new();
+        ext.drain_intents(&mut |i| out.push(i));
+        out
+    }
+
+    #[test]
+    fn r1346_splitter_drag_end_emits_ratio_committed_with_final_ratio() {
+        let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
+        // Calibrate, then drag to 0.7. The live channel writes the
+        // Signal on every move; nothing is committed mid-drag.
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.7, 0.0);
+        assert!(
+            !ext.is_dirty(),
+            "the live Signal stream is the preview channel — an in-flight drag commits nothing",
+        );
+
+        ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .expect("invoke send PointerUp returns Ok");
+
+        assert!(ext.is_dirty(), "drag end must arm the commit channel");
+        let harvested = harvest(&mut ext);
+        assert_eq!(harvested.len(), 1, "exactly one commit per drag");
+        assert_eq!(harvested[0].tag_str(), "ratio_committed");
+        // Payload = the final ratio, homomorphic to SliderExternal's
+        // `value_committed`. 0.5 + (0.7 - 0.5) = 0.7.
+        let IntrospectValue::Float(committed) = harvested[0].payload else {
+            panic!(
+                "ratio_committed payload must be Float, got {:?}",
+                harvested[0].payload
+            );
+        };
+        assert!(
+            (committed - 0.7).abs() < 1e-6,
+            "committed payload must be the final ratio, got {committed}",
+        );
+        assert!(
+            (f64::from(ratio.get()) - committed).abs() < 1e-6,
+            "committed payload must agree with the live Signal",
+        );
+        assert!(
+            !ext.is_dirty(),
+            "drain clears the queue — no duplicate commit"
+        );
+    }
+
+    #[test]
+    fn r1346_splitter_pointer_cancel_keeps_ratio_but_suppresses_commit() {
+        let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.7, 0.0);
+
+        ext.invoke("send", IntrospectValue::Text("PointerCancel".to_string()))
+            .expect("invoke send PointerCancel returns Ok");
+
+        // The family-wide R51.93 §5.35 invariant, pinned for the peer by
+        // slider.rs::r51_93_pointer_cancel_during_drag_returns_to_idle_without_commit:
+        // the in-flight ratio writes stay applied (the OS revoked the
+        // commit, not the drag), and only the commit is suppressed.
+        assert!(
+            (ratio.get() - 0.7).abs() < f32::EPSILON,
+            "in-flight ratio writes stay applied across PointerCancel, got {}",
+            ratio.get(),
+        );
+        assert!(
+            !ext.is_dirty(),
+            "PointerCancel must not fire ratio_committed",
+        );
+        assert!(harvest(&mut ext).is_empty());
+    }
+
+    #[test]
+    fn r1346_splitter_uncalibrated_release_commits_nothing() {
+        let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
+        // A `PointerUp` with no calibration at all — an orphan release
+        // (no prior press) rather than a click. NOTE this is NOT the
+        // click case: under the real router a click DOES calibrate (the
+        // press-time forward), so the click arc lives in
+        // `r1346_real_router_bare_click_commits_nothing` and only a
+        // router-level test can cover it. This one pins the narrower
+        // "no anchor → nothing to compare → silence" branch.
+        ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .expect("invoke send PointerUp returns Ok");
+        assert!(!ext.is_dirty(), "an uncalibrated release must not commit");
+        assert!(harvest(&mut ext).is_empty());
+    }
+
+    #[test]
+    fn r1346_splitter_drag_returning_to_press_ratio_commits_nothing() {
+        let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
+        // Calibrate at 0.5, wander out to 0.7, then come back exactly
+        // home before releasing. The gate is "did the ratio settle
+        // somewhere new", not "did the cursor travel" — a round trip
+        // leaves nothing to persist, so the channel stays silent even
+        // though a very real drag ran.
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.7, 0.0);
+        assert!((ratio.get() - 0.7).abs() < f32::EPSILON);
+        ext.pointer_move(0.5, 0.0);
+        assert!(
+            (ratio.get() - 0.5).abs() < f32::EPSILON,
+            "back to the press ratio"
+        );
+
+        ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .expect("invoke send PointerUp returns Ok");
+        assert!(
+            !ext.is_dirty(),
+            "a drag that returned to its press ratio settled nothing to persist",
+        );
+        assert!(harvest(&mut ext).is_empty());
+    }
+
+    #[test]
+    fn r1346_splitter_drag_pinned_against_clamp_commits_nothing() {
+        let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.95));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
+        // Press while already saturated at max_ratio and shove further
+        // right: every move clamps back to 0.95, so the ratio never
+        // leaves the press snapshot and there is nothing new to write.
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.9, 0.0);
+        ext.pointer_move(1.4, 0.0);
+        assert!(
+            (ratio.get() - 0.95).abs() < f32::EPSILON,
+            "pinned at max_ratio"
+        );
+
+        ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .expect("invoke send PointerUp returns Ok");
+        assert!(
+            !ext.is_dirty(),
+            "a drag that stayed saturated against the clamp commits nothing",
+        );
+    }
+
+    #[test]
+    fn r1346_splitter_paint_only_mode_commits_nothing() {
+        // No attached ratio (the bring-up / snapshot-test mode): the
+        // drag wire is inert, so the release channel stays silent
+        // rather than committing a ratio that does not exist.
+        let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal);
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.7, 0.0);
+        ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .expect("invoke send PointerUp returns Ok");
+        assert!(!ext.is_dirty(), "paint-only mode has no ratio to commit");
+        assert!(harvest(&mut ext).is_empty());
+    }
+
+    #[test]
+    fn r1346_splitter_consecutive_drags_each_commit_once() {
+        let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+        let mut ext =
+            SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
+        // First drag: 0.5 → 0.7.
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.7, 0.0);
+        ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .expect("invoke send PointerUp returns Ok");
+        let first = harvest(&mut ext);
+        assert_eq!(first.len(), 1);
+
+        // Second drag re-calibrates from the settled ratio: 0.7 + (0.3
+        // - 0.5) = 0.5. The release must commit again — the teardown
+        // left no stale calibration that would swallow the next edge.
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.3, 0.0);
+        ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .expect("invoke send PointerUp returns Ok");
+        let second = harvest(&mut ext);
+        assert_eq!(second.len(), 1, "each drag commits exactly once");
+        let IntrospectValue::Float(committed) = second[0].payload else {
+            panic!("expected Float payload");
+        };
+        assert!(
+            (committed - 0.5).abs() < 1e-6,
+            "second commit carries the re-calibrated ratio, got {committed}",
+        );
+    }
+
+    /// R1346 §5.20 §5.35 — the arc that actually matters, over the real
+    /// `InputRouter` rather than hand-fed `invoke` calls.
+    ///
+    /// The consumer-visible failure this locks is an *integration* one:
+    /// a binding that persists the split ratio must learn the settled
+    /// value from the release itself, because there is no guaranteed
+    /// frame afterwards (`AppShell::about_to_wait` idles on
+    /// `ControlFlow::Wait`, so with nothing dirty frame N+1 never
+    /// arrives and any settle inferred from frame cadence is silently
+    /// dropped). Proving `SplitterExternal` queues an intent is not
+    /// enough — this drives a real capture-lock press / drag / release
+    /// and harvests through `walk_scene_and_drain`, which is verbatim
+    /// what `CoreShell::tail` runs at the end of the very dispatch that
+    /// delivered the `PointerUp`. Nothing here paints a frame.
+    #[test]
+    fn r1346_real_router_release_delivers_tag_prefixed_commit_without_a_frame() {
+        use pinion_core::scene::ExternalNode;
+        use pinion_runtime::input::{InputRouter, PointerId};
+        use pinion_runtime::{IntentQueue, walk_scene_and_drain};
+
+        run_in_owner(|| {
+            let parent_w: u32 = 1000;
+            let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+
+            // Paint scene: the laid-out splitter, so the router has a
+            // real rect for TEST_TAG and normalises the cursor against
+            // the true geometry (an x_rel the widget then reads as a
+            // ratio delta) — not a synthetic fraction.
+            let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
+            let mut paint = view_splitter(
+                empty_panel("left_panel"),
+                empty_panel("right_panel"),
+                &ratio,
+                &theme_light(),
+                &style,
+                false,
+            );
+            let mut cache = pinion_text::LayoutCache::new();
+            pinion_runtime::layout::compute_layout(&mut paint, &mut cache, parent_w, 300);
+
+            // State scene: the External the router dispatches into.
+            let mut state = Scene::External(
+                ExternalNode::new(Box::new(
+                    SplitterExternal::new(SplitterOrientation::Horizontal)
+                        .attach_ratio(Rc::clone(&ratio)),
+                ))
+                .with_tag(TEST_TAG),
+            );
+
+            let mut router = InputRouter::new();
+            router.update_paint_scene(paint, &mut state);
+
+            // Press at mid-splitter, drag right to 80% of the width,
+            // release. The splitter opts into capture, so the release
+            // reaches it through the framework's `send` wire.
+            router.cursor_moved(PointerId::MOUSE, 500.0, 150.0, &mut state);
+            router.pointer_down(PointerId::MOUSE, &mut state);
+            assert_eq!(
+                router.captured_target(PointerId::MOUSE),
+                Some(TEST_TAG),
+                "splitter captures the pointer for the drag span",
+            );
+            router.cursor_moved(PointerId::MOUSE, 800.0, 150.0, &mut state);
+            let dragged_to = ratio.get();
+            assert!(
+                dragged_to > 0.5,
+                "the live channel moved the ratio right during the drag, got {dragged_to}",
+            );
+
+            // Mid-drag the commit channel is still silent: an in-flight
+            // drag is a preview, not a settle.
+            let mut mid = IntentQueue::new();
+            walk_scene_and_drain(&mut state, &mut mid);
+            assert!(
+                mid.drain().is_empty(),
+                "no commit may escape before the release",
+            );
+
+            router.pointer_up(PointerId::MOUSE, &mut state);
+
+            // The harvest `CoreShell::tail` performs, in the same
+            // dispatch — no repaint in between.
+            let mut queue = IntentQueue::new();
+            walk_scene_and_drain(&mut state, &mut queue);
+            let intents = queue.drain();
+            assert_eq!(intents.len(), 1, "one commit per completed drag");
+            // §5.20 R22: the reducer matches the tag-prefixed wire form
+            // ([[intent-tag-dotted-wire-form]]), not the bare event name.
+            assert_eq!(
+                intents[0].tag_str(),
+                "test_splitter.ratio_committed",
+                "the commit reaches the binding namespaced by the node tag",
+            );
+            let IntrospectValue::Float(committed) = intents[0].payload else {
+                panic!("expected Float payload, got {:?}", intents[0].payload);
+            };
+            assert!(
+                (f64::from(dragged_to) - committed).abs() < 1e-6,
+                "the committed ratio is the one the drag settled on: \
+                 live={dragged_to}, committed={committed}",
+            );
+        });
+    }
+
+    /// R1346 §5.20 §5.35 — a bare **click** on the handle must not
+    /// commit.
+    ///
+    /// This is the arc a hand-fed `invoke("send", "PointerUp")` test
+    /// cannot reach, and the one that matters: `InputRouter::pointer_down`
+    /// forwards the press-time cursor as an initial `pointer_move` to
+    /// every capture-opting widget (R51.35 click-to-position, pinned by
+    /// `input.rs::pointer_down_forwards_initial_cursor`), and the
+    /// splitter opts into capture. So the press *always* arms the
+    /// [`DragCalibration`] anchor — `end()`'s bool is "a calibration
+    /// existed", NOT "the user dragged". Gating the commit on it alone
+    /// makes every click emit a `ratio_committed` for a ratio that never
+    /// moved, which for the persisting consumer this channel exists to
+    /// serve is a spurious write (and a double-click sends two).
+    #[test]
+    fn r1346_real_router_bare_click_commits_nothing() {
+        use pinion_core::scene::ExternalNode;
+        use pinion_runtime::input::{InputRouter, PointerId};
+        use pinion_runtime::{IntentQueue, walk_scene_and_drain};
+
+        run_in_owner(|| {
+            let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+            let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
+            let mut paint = view_splitter(
+                empty_panel("left_panel"),
+                empty_panel("right_panel"),
+                &ratio,
+                &theme_light(),
+                &style,
+                false,
+            );
+            let mut cache = pinion_text::LayoutCache::new();
+            pinion_runtime::layout::compute_layout(&mut paint, &mut cache, 1000, 300);
+
+            let mut state = Scene::External(
+                ExternalNode::new(Box::new(
+                    SplitterExternal::new(SplitterOrientation::Horizontal)
+                        .attach_ratio(Rc::clone(&ratio)),
+                ))
+                .with_tag(TEST_TAG),
+            );
+            let mut router = InputRouter::new();
+            router.update_paint_scene(paint, &mut state);
+
+            // Press and release without moving the cursor one pixel.
+            router.cursor_moved(PointerId::MOUSE, 500.0, 150.0, &mut state);
+            router.pointer_down(PointerId::MOUSE, &mut state);
+            router.pointer_up(PointerId::MOUSE, &mut state);
+
+            assert!(
+                (ratio.get() - 0.5).abs() < f32::EPSILON,
+                "a click moves no ratio (the press-time forward only calibrates), got {}",
+                ratio.get(),
+            );
+            let mut queue = IntentQueue::new();
+            walk_scene_and_drain(&mut state, &mut queue);
+            assert!(
+                queue.drain().is_empty(),
+                "a click that settled nothing must not reach the persistence channel",
+            );
+        });
+    }
+
+    /// R1346 §5.20 §5.35 — a click carrying ordinary mouse jitter.
+    ///
+    /// The honest boundary of the "did the ratio move" gate, stated
+    /// rather than hidden: a press with a few pixels of hand-shake
+    /// *does* move the ratio (the live channel already wrote it and the
+    /// pane already repainted there), so the commit fires and reports
+    /// it. That is correct — suppressing it would leave the persisted
+    /// ratio disagreeing with what is on screen, which is strictly
+    /// worse than one honest write. Pinned so the tradeoff is a
+    /// decision on record and not an accident: if a future round wants
+    /// jitter to be inert it must suppress the *live* write too (a
+    /// `DRAG_CLICK_THRESHOLD_PX` dead zone), not just the commit.
+    #[test]
+    fn r1346_real_router_jitter_click_commits_what_it_actually_moved() {
+        use pinion_core::scene::ExternalNode;
+        use pinion_runtime::input::{InputRouter, PointerId};
+        use pinion_runtime::{IntentQueue, walk_scene_and_drain};
+
+        run_in_owner(|| {
+            let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+            let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
+            let mut paint = view_splitter(
+                empty_panel("left_panel"),
+                empty_panel("right_panel"),
+                &ratio,
+                &theme_light(),
+                &style,
+                false,
+            );
+            let mut cache = pinion_text::LayoutCache::new();
+            pinion_runtime::layout::compute_layout(&mut paint, &mut cache, 1000, 300);
+
+            let mut state = Scene::External(
+                ExternalNode::new(Box::new(
+                    SplitterExternal::new(SplitterOrientation::Horizontal)
+                        .attach_ratio(Rc::clone(&ratio)),
+                ))
+                .with_tag(TEST_TAG),
+            );
+            let mut router = InputRouter::new();
+            router.update_paint_scene(paint, &mut state);
+
+            router.cursor_moved(PointerId::MOUSE, 500.0, 150.0, &mut state);
+            router.pointer_down(PointerId::MOUSE, &mut state);
+            router.cursor_moved(PointerId::MOUSE, 502.0, 150.0, &mut state); // 2 px shake
+            router.pointer_up(PointerId::MOUSE, &mut state);
+
+            let settled = ratio.get();
+            assert!(
+                (settled - 0.502).abs() < 1e-4,
+                "the live channel moved the pane 2px; got {settled}",
+            );
+            let mut queue = IntentQueue::new();
+            walk_scene_and_drain(&mut state, &mut queue);
+            let intents = queue.drain();
+            assert_eq!(
+                intents.len(),
+                1,
+                "the ratio genuinely moved, so the commit reports it rather than \
+                 leaving screen and persisted state disagreeing",
+            );
+            let IntrospectValue::Float(committed) = intents[0].payload else {
+                panic!("expected Float payload");
+            };
+            assert!(
+                (f64::from(settled) - committed).abs() < 1e-6,
+                "committed value tracks the screen",
+            );
+        });
     }
 
     #[test]
