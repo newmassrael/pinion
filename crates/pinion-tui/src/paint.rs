@@ -535,13 +535,19 @@ fn effective_text_style(t: &TextNode, byte_off: usize) -> &TextStyle {
 /// This is a deliberate divergence from Vello (which paints literal
 /// black glyphs): default text follows the terminal theme instead.
 ///
-/// Weight / style / decoration collapse onto the terminal's single
-/// bold / italic / underline / strikethrough intensities: CSS
-/// weight `>= 700` (`FontWeight::BOLD`) is bold (500 / 600 have no
-/// terminal intensity and stay normal); italic and oblique both map
-/// to the one terminal italic. All are additive, so default-styled
-/// text sets no modifier and stays byte-identical to the pre-R1337
-/// (and ratatui-native) unstyled output.
+/// R1340 — weight maps onto the terminal's two intensity steps the
+/// way every ANSI renderer does (`ansi_up`, ratatui's own `BOLD` ↔
+/// `font-weight: bold` HTML map, and this codebase's `paint_adapter`
+/// `CellAttrs.bold` → `FontWeight::BOLD`): **SGR 1 "bold"** for the CSS
+/// `bold` keyword and above (`>= 700`), **SGR 2 "faint"**
+/// (`Modifier::DIM`) for lighter-than-normal (`< 400`). `400..700`
+/// (medium / semi-bold) has no terminal intensity and stays normal —
+/// the terminal offers only these two steps, so the mapping follows
+/// the `bold` / `normal` keyword boundaries rather than inventing
+/// intermediate intensities. Italic and oblique map to the one
+/// terminal italic; underline / strikethrough map straight across.
+/// All are additive, so default-styled text sets no modifier and
+/// stays byte-identical to the pre-R1337 (and ratatui-native) output.
 fn apply_text_style(cell: &mut ratatui::buffer::Cell, style: &TextStyle) {
     let fg = style.fg_color;
     // Apply only a visible, non-black colour. Black (at any alpha) is
@@ -552,8 +558,13 @@ fn apply_text_style(cell: &mut ratatui::buffer::Cell, style: &TextStyle) {
         cell.set_fg(color_to_tui(fg));
     }
     let mut modifier = Modifier::empty();
+    // CSS weight → the terminal's two intensity steps: SGR 1 bold at
+    // the CSS `bold` boundary (>= 700), SGR 2 faint below normal
+    // (< 400). Terminals with no faint support degrade it to normal.
     if style.font_weight.0 >= FontWeight::BOLD.0 {
         modifier |= Modifier::BOLD;
+    } else if style.font_weight.0 < FontWeight::NORMAL.0 {
+        modifier |= Modifier::DIM;
     }
     if matches!(style.font_style, FontStyle::Italic | FontStyle::Oblique(_)) {
         modifier |= Modifier::ITALIC;
@@ -1014,27 +1025,39 @@ mod tests {
         assert_eq!(cols, vec![0, 2], "continuation column not drawn");
     }
 
-    /// R1337 — the bold threshold is CSS 700: `SEMI_BOLD` (600) has no
-    /// terminal intensity and stays normal; exactly `BOLD` (700) sets
-    /// the modifier. Locks the documented weight mapping.
+    /// R1340 — CSS weight maps onto the terminal's two intensity steps
+    /// per the ANSI-renderer convention: `>= 700` (CSS `bold`) → SGR 1
+    /// bold; `< 400` (lighter than normal) → SGR 2 faint (`DIM`);
+    /// `400..700` (medium / semi-bold) has no terminal step and stays
+    /// normal. Locks the full documented mapping.
     #[test]
-    fn font_weight_bold_threshold_is_700() {
+    fn font_weight_maps_to_bold_and_faint() {
         use pinion_core::style::FontWeight;
         use ratatui::style::Modifier;
-        let mut semi = text_at(0, 0, "S");
-        semi.style.font_weight = FontWeight::SEMI_BOLD;
-        let mut bold = text_at(0, 0, "B");
-        bold.style.font_weight = FontWeight::BOLD;
 
-        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
-        to_buffer(&Scene::Text(semi), &mut buf);
-        assert!(
-            !buf[(0, 0)].modifier.contains(Modifier::BOLD),
-            "600 stays normal"
-        );
-        let mut buf2 = Buffer::empty(TuiRect::new(0, 0, 40, 1));
-        to_buffer(&Scene::Text(bold), &mut buf2);
-        assert!(buf2[(0, 0)].modifier.contains(Modifier::BOLD), "700 bold");
+        let render = |w: FontWeight| {
+            let mut n = text_at(0, 0, "X");
+            n.style.font_weight = w;
+            let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+            to_buffer(&Scene::Text(n), &mut buf);
+            buf[(0, 0)].modifier
+        };
+
+        // Light (< 400) → faint, not bold.
+        let light = render(FontWeight::LIGHT);
+        assert!(light.contains(Modifier::DIM), "300 → faint");
+        assert!(!light.contains(Modifier::BOLD), "300 not bold");
+        // Medium / SemiBold (400..700) → neither step.
+        assert_eq!(render(FontWeight::MEDIUM), Modifier::empty(), "500 normal");
+        let semi = render(FontWeight::SEMI_BOLD);
+        assert!(!semi.contains(Modifier::BOLD), "600 not bold");
+        assert!(!semi.contains(Modifier::DIM), "600 not faint");
+        // Bold (>= 700) → bold, not faint.
+        let bold = render(FontWeight::BOLD);
+        assert!(bold.contains(Modifier::BOLD), "700 bold");
+        assert!(!bold.contains(Modifier::DIM), "700 not faint");
+        // Normal (400) → neither.
+        assert_eq!(render(FontWeight::NORMAL), Modifier::empty(), "400 normal");
     }
 
     #[test]
