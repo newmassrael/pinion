@@ -54,15 +54,21 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
     sub.fg_color = Color::rgb(0x55, 0x55, 0x55);
     sub.font_size_px = 13;
 
+    // R1345 §5.21 — `Rect::default()`, not an authored box: `compute_layout`
+    // overwrites `rect` (it is an OUTPUT), so the old `Rect::new(0, 0, 560, 28)`
+    // never reached a pixel. Harmless here — x/y were already 0 and the parent
+    // column places the rows — but the dead `w = 560` would have silently
+    // stopped constraining the wrap the day someone relied on it. The row's
+    // height comes from the backend's text measure.
     let body = ContainerNode::new(vec![
         Scene::Text(TextNode::styled(
             "Borderless window — pinion draws the title bar above.",
-            Rect::new(0, 0, 560, 28),
+            Rect::default(),
             head,
         )),
         Scene::Text(TextNode::styled(
             "Drag the dark bar to move. Minimize / maximize / close are at the top-right.",
-            Rect::new(0, 0, 560, 22),
+            Rect::default(),
             sub,
         )),
     ])

@@ -134,6 +134,7 @@ use pinion_core::external::{
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+use pinion_core::style::{Display, FlexDirection};
 use pinion_core::{Frame, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 
@@ -667,7 +668,6 @@ impl WidgetCore for HelloAudioDevice {
         let camera = rig.world.listener().position;
 
         let mut children: Vec<Scene> = Vec::new();
-        let mut y = 16u32;
 
         for line in [
             format!("hello-audio-device — real cpal callback + RPC ({state} live voice(s))"),
@@ -680,14 +680,27 @@ impl WidgetCore for HelloAudioDevice {
             "invoke: play / stop / stop_all / set_master_gain / set_voice_{gain,pan,position}"
                 .to_string(),
         ] {
-            children.push(Scene::Text(TextNode::new(line, Rect::new(16, y, 540, 16))));
-            y += 26;
+            // R1345 §5.21 — no authored `rect`: the column below places each
+            // row and the text measure sizes it, so a long line wraps rather
+            // than truncating.
+            children.push(Scene::Text(TextNode::new(line, Rect::default())));
         }
 
         // R55.G.17 — the paint scene carries a node tagged `tag()` so AI-side
         // path routing / `rect_for_tag` resolve.
         let mut root = ContainerNode::new(children).with_tag(TAG);
-        root.rect = Rect::new(0, 0, 560, y + 16);
+        // R1345 §5.21 — a padded column with a uniform row gap. The pre-R1345
+        // view authored `rect` from a running `y` cursor, none of which reached
+        // a pixel: `compute_layout` overwrites `rect` (it is an OUTPUT), so the
+        // rows painted flush at x=0 with none of the intended spacing.
+        //
+        // The old `y += 26` pitch was 16px of authored row + a 10px gap, so
+        // `gap: 10` reproduces the GAP — but not the pitch: a measured row is
+        // 24px, so the real pitch is 34. That is why the window grew.
+        root.layout.display = Display::Flex;
+        root.layout.flex_direction = FlexDirection::Column;
+        root.layout.gap = 10;
+        root.layout.padding = Rect::new(16, 16, 16, 16);
         Scene::Container(root)
     }
 
@@ -716,7 +729,10 @@ impl WidgetView for HelloAudioDevice {
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
         pinion_shell::SizeStrategy::Fixed {
             width: 560,
-            height: 220,
+            // R1345 §5.21 — 7 rows at a 24px measured line + a 10px gap + 16px
+            // padding top and bottom. The pre-R1345 window (220) assumed the
+            // authored 16px rows that never reached a pixel.
+            height: 300,
         }
     }
 }
@@ -735,6 +751,14 @@ mod tests {
     //! compile-time schema composition.
     //! (The clock + world protocol is tested in `pinion_audio::world`, where it
     //! now lives and where it needs no sound card.)
+    //!
+    //! R1345 §5.21 — this is why the R1345 column migration below has **no**
+    //! geometry test here, unlike its `hello-audio-rt` sibling: `view()` reads
+    //! `audio_rig()`, which opens a real output (and `process::exit(1)`s if it
+    //! cannot), so any test that lays out this view would open a device — a
+    //! zero-flake violation on a host without a sound card, and an abort of the
+    //! whole test binary rather than a test failure. `tools/demos/
+    //! hello_audio_device.py` covers the rendered window against a real device.
     use super::{DEVICE_FIELDS, DeviceChoice, RT_EXTERNAL_FIELDS, SCHEMA_FIELDS, resolve_device};
 
     /// A realistic ALSA list: a real (AUDIBLE) card plus the silent dummy under

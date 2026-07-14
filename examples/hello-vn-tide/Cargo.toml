@@ -43,3 +43,8 @@ pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# R1345 §5.21 — the geometry test runs the real layout pass over the real
+# script at the real window. Dev-only: the binding stays layout-agnostic.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }

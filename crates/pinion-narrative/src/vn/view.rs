@@ -10,17 +10,22 @@
 //! visual is TUI-native and the truth stays queryable.
 
 use pinion_core::scene::{ContainerNode, ImageNode, Rect, Scene, TextNode};
-use pinion_core::style::{LayoutStyle, Size};
+use pinion_core::style::{Display, FlexDirection, LayoutStyle, Size, SizeValue};
 
 use crate::vn::model::VnStep;
 use crate::vn::stage::VnStage;
 use crate::vn::state::{VnMode, VnState};
 
-/// Left margin, in pixels (2 cells at the default 8×16 metric).
+/// Padding around the dialogue band, in pixels (2 cells at the default 8×16
+/// metric). Applied on all four sides by [`dialogue_column`].
 const MARGIN: u32 = 16;
-/// Content row width, in pixels.
-const WIDTH: u32 = 760;
-/// Text row height, in pixels (one cell).
+/// One blank line's worth of vertical space, in pixels — the unit
+/// [`spaced_row`] uses to open a block.
+///
+/// NOT a row height: rows are sized by the backend's text measure (a Vello row
+/// measures ~24px at the default font, a TUI row 16px). R1345 §5.21 — the
+/// pre-R1345 view used this as an authored row height, which never reached a
+/// pixel.
 const LINE: u32 = 16;
 /// Number of cells in the countdown bar.
 const BAR_CELLS: usize = 20;
@@ -40,79 +45,69 @@ pub fn vn_scene(state: &VnState) -> Scene {
     let mut children: Vec<Scene> = Vec::new();
 
     // ── the visual stage (§2 #1 Image nodes, §2 #7 queryable references) ──
+    // Absolutely positioned, so out of flow: the dialogue column below places
+    // itself against the root, not after the sprites.
     stage_nodes(state.stage(), &mut children);
 
-    let mut y: u32 = STAGE_H + 16;
+    // ── the dialogue band ──
+    let mut rows: Vec<Scene> = Vec::new();
 
     let step_no = usize::from(state.runtime().step) + 1;
     let step_count = state.step_count();
-    children.push(text_row(
-        format!(
-            "the-tide · VN · {} · 스텝 {step_no}/{step_count}",
-            mode_label(state.mode())
-        ),
-        y,
-    ));
-    y += 30;
+    rows.push(text_row(format!(
+        "the-tide · VN · {} · 스텝 {step_no}/{step_count}",
+        mode_label(state.mode())
+    )));
 
     match state.current_step() {
         Some(VnStep::Line { speaker, .. }) => {
             if speaker.is_empty() {
-                children.push(text_row("(나레이션)".to_string(), y));
+                rows.push(spaced_row("(나레이션)".to_string()));
             } else {
-                children.push(text_row(format!("{speaker}:"), y));
+                rows.push(spaced_row(format!("{speaker}:")));
             }
-            y += 24;
             // The revealed prefix, with a caret while still typing.
             let mut line = state.revealed_text();
             if !state.fully_revealed() {
                 line.push('▌');
             }
-            children.push(text_row(format!("  {line}"), y));
-            y += 30;
-            children.push(text_row(
+            rows.push(text_row(format!("  {line}")));
+            rows.push(spaced_row(
                 "invoke tick <ms> 로 글자가 드러남 · advance 로 넘김".to_string(),
-                y,
             ));
         }
         Some(VnStep::TimedChoice {
             prompt, options, ..
         }) => {
-            children.push(text_row(format!("? {prompt}"), y));
-            y += 26;
-            children.push(text_row(countdown_bar(state), y));
-            y += 26;
+            rows.push(spaced_row(format!("? {prompt}")));
+            rows.push(text_row(countdown_bar(state)));
             for (i, opt) in options.iter().enumerate() {
-                children.push(text_row(format!("  {}) {}", i + 1, opt.label), y));
-                y += 20;
+                rows.push(text_row(format!("  {}) {}", i + 1, opt.label)));
             }
-            y += 6;
-            children.push(text_row(
+            rows.push(spaced_row(
                 "invoke choose <index> · 시간이 다하면 기본 선택으로 결정".to_string(),
-                y,
             ));
         }
         None => {
-            children.push(text_row("— 끝 —".to_string(), y));
-            y += 26;
+            rows.push(spaced_row("— 끝 —".to_string()));
             if let Some(opt) = state.resolved_option() {
                 let how = if state.resolution().is_some_and(|r| r.timed_out) {
                     "시간 초과"
                 } else {
                     "선택"
                 };
-                children.push(text_row(
-                    format!("결말: {} ({how}) → {}", opt.label, opt.outcome),
-                    y,
-                ));
+                rows.push(text_row(format!(
+                    "결말: {} ({how}) → {}",
+                    opt.label, opt.outcome
+                )));
             } else {
-                children.push(text_row("결말: (선택 없음)".to_string(), y));
+                rows.push(text_row("결말: (선택 없음)".to_string()));
             }
         }
     }
 
-    y += LINE + MARGIN;
-    root(children, y)
+    children.push(dialogue_column(rows));
+    root(children)
 }
 
 /// A block-character countdown bar plus the remaining time in seconds — a
@@ -192,13 +187,64 @@ fn image_at(source: String, tag: String, x: u32, y: u32, w: u32, h: u32) -> Scen
     )
 }
 
-fn text_row(content: impl Into<String>, y: u32) -> Scene {
-    Scene::Text(TextNode::new(content, Rect::new(MARGIN, y, WIDTH, LINE)))
+/// One dialogue row. Carries no `rect`: the dialogue column places it and the
+/// backend's text measure sizes it, so a long line wraps to as many rows as it
+/// needs and the rows below move down.
+///
+/// R1345 §5.21 — this used to author `Rect::new(MARGIN, y, WIDTH, LINE)` from a
+/// running `y` cursor. Those coordinates never reached a pixel: `compute_layout`
+/// overwrites every `rect` (it is an OUTPUT, not an input), so the whole
+/// dialogue block was painted at `x = 0, y = 0` — flush into the top-left of the
+/// **stage artwork** — instead of in the dialogue band below it. The sibling
+/// [`image_at`] already knew this and states its geometry as `LayoutStyle`; the
+/// text rows did not.
+fn text_row(content: impl Into<String>) -> Scene {
+    Scene::Text(TextNode::new(content, Rect::default()))
 }
 
-fn root(children: Vec<Scene>, height: u32) -> Scene {
+/// A row that opens a new block: one blank line above it. The pre-R1345 view
+/// spelled this as a bigger jump in its `y` cursor.
+fn spaced_row(content: impl Into<String>) -> Scene {
+    let mut row = text_row(content);
+    if let Scene::Text(t) = &mut row {
+        t.layout.margin.y = LINE;
+    }
+    row
+}
+
+/// The dialogue band: a padded column pinned **below the stage**, holding the
+/// rows in flow.
+///
+/// Absolutely positioned for the same reason [`image_at`] is — the stage is a
+/// fixed-geometry canvas and the dialogue sits at a known band under it — but
+/// its *children* stay in flow, so a long line wraps and the rows below move
+/// down, which an absolute `y` per row could not do.
+///
+/// Width is `Px(STAGE_W)`, so prose reflows to the **stage width**, not to the
+/// window: this projection is a fixed 800px canvas (the sprites are placed
+/// against `STAGE_W`), and a dialogue band that reflowed independently of the
+/// art it sits under would drift out of register with it. A window-relative VN
+/// stage is a real feature, but it is a whole-canvas change (sprite placement,
+/// background fit, `SpritePos::center_x`) and not something to smuggle in here.
+fn dialogue_column(rows: Vec<Scene>) -> Scene {
     let mut node = ContainerNode::default();
-    node.rect = Rect::new(0, 0, 800, height);
+    node.layout = LayoutStyle::new().with_absolute_position(0, STAGE_H);
+    node.layout.display = Display::Flex;
+    node.layout.flex_direction = FlexDirection::Column;
+    node.layout.size.width = SizeValue::Px(STAGE_W);
+    node.layout.padding = Rect::new(MARGIN, MARGIN, MARGIN, MARGIN);
+    node.children = rows;
+    Scene::Container(node)
+}
+
+/// The projection root — the canvas the stage and the dialogue band both
+/// position themselves absolutely against.
+///
+/// Authors NO size: `compute_layout` gives the root its viewport, so a size
+/// here would be dead intent — the very thing this module's R1345 fix is about.
+/// (Verified: an authored `Px` root size is overwritten by the viewport.)
+fn root(children: Vec<Scene>) -> Scene {
+    let mut node = ContainerNode::default();
     node.children = children;
     Scene::Container(node)
 }
@@ -331,6 +377,134 @@ mod tests {
             assert!(out.contains("— 끝 —"), "end marker: {out}");
             assert!(out.contains("결말: 돌아본다"), "outcome label: {out}");
             assert!(out.contains("answer"), "outcome tag: {out}");
+        });
+    }
+
+    /// R1345 §5.21 — the dialogue lands BELOW the stage, not on top of it.
+    ///
+    /// The pre-R1345 view authored `Rect::new(MARGIN, y, WIDTH, LINE)` from a
+    /// running `y` cursor starting at `STAGE_H + 16`. None of it reached a
+    /// pixel: `compute_layout` overwrites `rect`, so every dialogue row painted
+    /// from `(0, 0)` — flush into the top-left of the stage artwork — while the
+    /// sibling `image_at` (which states its geometry as `LayoutStyle`) placed
+    /// the art correctly. The tests here read the scene's TEXT, so they passed
+    /// through the entire bug; this pins the GEOMETRY.
+    #[test]
+    fn r1345_dialogue_sits_below_the_stage_and_reflows() {
+        use pinion_runtime::{LayoutCache, compute_layout};
+
+        fn text_rects(s: &Scene, out: &mut Vec<Rect>) {
+            match s {
+                Scene::Text(t) => out.push(t.rect),
+                Scene::Container(c) => c.children.iter().for_each(|ch| text_rects(ch, out)),
+                _ => {}
+            }
+        }
+
+        let owner = Owner::new();
+        owner.run(|| {
+            let state = VnState::new(VnScript::new(vec![VnStep::line(
+                "무녀",
+                "돌아오지 마라. 물때가 널 데려간다. 이 대사는 한 줄에 담기지 않을 만큼 \
+                 충분히 길어서 반드시 여러 줄로 접혀야 하며, 그 아래 행은 밀려나야 한다.",
+            )]));
+            // Reveal it: a VnState starts at `revealed_chars = 0`, so without
+            // ticking the typewriter the row's content is literally "  ▌" and
+            // the reflow this test claims to check never happens.
+            let _ = state.tick(60_000);
+            assert!(state.fully_revealed(), "the line is on screen to wrap");
+            let mut scene = vn_scene(&state);
+            let mut cache = LayoutCache::new();
+            compute_layout(&mut scene, &mut cache, STAGE_W, 600);
+
+            let mut rs = Vec::new();
+            text_rects(&scene, &mut rs);
+            assert!(rs.len() >= 3, "header + speaker + line: {rs:?}");
+            for r in &rs {
+                assert!(
+                    r.y >= STAGE_H,
+                    "no dialogue row may paint over the stage band (y < {STAGE_H}): {r:?}",
+                );
+                assert_eq!(r.x, MARGIN, "the column's left padding is real: {r:?}");
+                assert!(r.w > 0 && r.h > 0, "every row is a real box: {r:?}");
+            }
+            for pair in rs.windows(2) {
+                assert!(
+                    pair[1].y >= pair[0].y + pair[0].h,
+                    "rows stack without overlap even when one wraps: {:?} then {:?}",
+                    pair[0],
+                    pair[1],
+                );
+            }
+            // The point of putting the rows in flow: a long line occupies
+            // several lines and pushes its neighbours down, which an absolute
+            // `y` per row could never do.
+            assert!(
+                rs.iter().any(|r| r.h > 32),
+                "the long line must occupy more than one measured line: {rs:?}",
+            );
+        });
+    }
+
+    /// R1345 §5.21 — the sprites keep their solved stage geometry.
+    ///
+    /// `image_at` already authored `LayoutStyle`; the R1345 restructure (the
+    /// dialogue moved into its own absolutely-positioned column) must not
+    /// disturb the stage, whose art is placed by `SpritePos`.
+    #[test]
+    fn r1345_stage_art_keeps_its_absolute_geometry() {
+        use pinion_runtime::{LayoutCache, compute_layout};
+
+        fn images(s: &Scene, out: &mut Vec<(Rect, Option<String>)>) {
+            match s {
+                Scene::Image(i) => out.push((i.rect, i.tag.as_ref().map(ToString::to_string))),
+                Scene::Container(c) => c.children.iter().for_each(|ch| images(ch, out)),
+                _ => {}
+            }
+        }
+
+        let owner = Owner::new();
+        owner.run(|| {
+            let state = VnState::new(VnScript::new(vec![VnStep::narration("밀물").with_stage(
+                vec![
+                    crate::vn::StageOp::Background {
+                        source: "bg.png".to_string(),
+                    },
+                    crate::vn::StageOp::Show {
+                        sprite: crate::vn::VnSprite::new(
+                            "mudang",
+                            "mudang.png",
+                            crate::vn::SpritePos::Center,
+                            1,
+                        ),
+                    },
+                ],
+            )]));
+            let mut scene = vn_scene(&state);
+            let mut cache = LayoutCache::new();
+            compute_layout(&mut scene, &mut cache, STAGE_W, 600);
+
+            let mut imgs = Vec::new();
+            images(&scene, &mut imgs);
+            assert_eq!(imgs.len(), 2, "background + one sprite: {imgs:?}");
+            let bg = imgs
+                .iter()
+                .find(|(_, t)| t.as_deref() == Some("vn.background"))
+                .expect("background tagged");
+            assert_eq!(
+                bg.0,
+                Rect::new(0, 0, STAGE_W, STAGE_H),
+                "the background fills the stage band",
+            );
+            let sprite = imgs
+                .iter()
+                .find(|(_, t)| t.as_deref() == Some("vn.sprite.mudang"))
+                .expect("sprite tagged");
+            assert!(
+                sprite.0.y + sprite.0.h == STAGE_H,
+                "the sprite's feet rest on the stage floor: {:?}",
+                sprite.0,
+            );
         });
     }
 }

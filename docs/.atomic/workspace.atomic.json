@@ -1103,7 +1103,10 @@
         "R23: pinion-runtime::layout::compute_layout(&mut Scene, viewport_w, viewport_h) entry point.",
         "R23: Modifier {margin, padding} fold into taffy padding/margin; Modifier.align retained for anchor.",
         "R23: Grid display + transforms (translate/rotate/scale) explicit carry-forward; flex-only v0.",
-        "R30 §5.26: full-recompute (§5.21 R24) refined to incremental + damage tracking for AAA perf."
+        "R30 §5.26: full-recompute (§5.21 R24) refined to incremental + damage tracking for AAA perf.",
+        "R1345: rect-is-output cleared its Vello-path victims (vn dialogue painted OVER the stage)",
+        "R1345 lesson: fixing dead geometry makes content taller — the window must be re-measured",
+        "R1345: test a view at its SHIPPING viewport; a self-chosen one hides an off-window regression"
       ],
       "alternatives_rejected": [
         {

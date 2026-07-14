@@ -1836,6 +1836,7 @@ dependencies = [
  "pinion-audio",
  "pinion-core",
  "pinion-forge",
+ "pinion-runtime",
  "pinion-shell",
  "vello",
 ]
@@ -3434,6 +3435,7 @@ dependencies = [
  "pinion-forge",
  "pinion-narrative",
  "pinion-platform-storage",
+ "pinion-runtime",
  "pinion-shell",
  "serde_json",
  "vello",

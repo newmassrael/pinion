@@ -370,11 +370,116 @@ impl WidgetView for HelloVnTide {
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
         pinion_shell::SizeStrategy::Fixed {
             width: 800,
-            height: 320,
+            // R1345 §5.21 — MEASURED, not guessed: the 240px stage plus the
+            // dialogue band's tallest step (a TimedChoice: prompt + countdown +
+            // both options + hint) lays out to 432px at this width. The window
+            // was 320 — so before R1345 the choices simply did not fit, which
+            // went unnoticed only because the authored `rect`s never reached a
+            // pixel and every row painted at (0, 0) inside the stage.
+            // `r1345_the_window_fits_every_step` pins this against the view.
+            height: 460,
         }
     }
 }
 
 fn main() {
     pinion_shell::run::<HelloVnTide>();
+}
+
+#[cfg(test)]
+mod r1345_layout_tests {
+    //! R1345 §5.21 — the whole script fits the shipping window.
+    //!
+    //! The VN dialogue used to author `Rect::new(MARGIN, y, ...)` from a `y`
+    //! cursor starting below the stage. None of it reached a pixel — layout
+    //! overwrites `rect` — so every row painted at (0, 0), *inside the stage
+    //! artwork*. Fixing that made the dialogue land in its real band, which
+    //! immediately exposed a second bug the lie had been hiding: the window was
+    //! never tall enough for the content. Sized for the authored 16px rows, a
+    //! real (measured, wrapped) row is 24px, so the choices fell off the bottom.
+    //!
+    //! Hence this walks EVERY step of the real script at the REAL window: a
+    //! test that picks its own viewport proves nothing about the demo.
+    use super::{HelloVnTide, tide_script};
+    use pinion_core::reactive::Owner;
+    use pinion_core::scene::{Rect, Scene};
+    use pinion_narrative::{VnState, use_vn_state};
+    use pinion_runtime::{LayoutCache, compute_layout};
+    use pinion_shell::WidgetView;
+
+    fn text_rects(s: &Scene, out: &mut Vec<Rect>) {
+        match s {
+            Scene::Text(t) => out.push(t.rect),
+            Scene::Container(c) => c.children.iter().for_each(|ch| text_rects(ch, out)),
+            _ => {}
+        }
+    }
+
+    fn shipping_viewport() -> (u32, u32) {
+        match <HelloVnTide as WidgetView>::initial_size_strategy() {
+            pinion_shell::SizeStrategy::Fixed { width, height } => (width, height),
+            other => panic!("this binding pins a Fixed window; got {other:?}"),
+        }
+    }
+
+    /// Lay out the projection at `step` and return its text rects.
+    fn rows_at_step(step: u16, w: u32, h: u32) -> Vec<Rect> {
+        let state = VnState::new(tide_script());
+        for _ in 0..step {
+            let _ = state.advance();
+        }
+        let mut scene = pinion_narrative::vn_scene(&state);
+        let mut cache = LayoutCache::new();
+        compute_layout(&mut scene, &mut cache, w, h);
+        let mut rs = Vec::new();
+        text_rects(&scene, &mut rs);
+        rs
+    }
+
+    #[test]
+    fn r1345_every_step_fits_the_shipping_window() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let (w, h) = shipping_viewport();
+            let steps = tide_script().len();
+            // `..=steps` includes the End state (no current step).
+            for step in 0..=u16::try_from(steps).unwrap() {
+                for r in rows_at_step(step, w, h) {
+                    assert!(
+                        r.y + r.h <= h,
+                        "step {step}: row {r:?} falls off the bottom of the \
+                         {w}x{h} window — the dialogue is invisible in the demo",
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn r1345_no_step_paints_dialogue_over_the_stage() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let (w, h) = shipping_viewport();
+            let steps = tide_script().len();
+            for step in 0..=u16::try_from(steps).unwrap() {
+                for r in rows_at_step(step, w, h) {
+                    assert!(
+                        r.y >= 240,
+                        "step {step}: row {r:?} paints over the 240px stage band",
+                    );
+                }
+            }
+        });
+    }
+
+    /// The `use_vn_state` cache key the binding uses is untouched by R1345 —
+    /// guards that the test above drives the same script the demo does.
+    #[test]
+    fn r1345_test_drives_the_binding_script() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let live = use_vn_state(super::VN_KEY, tide_script);
+            assert_eq!(live.step_count(), tide_script().len(), "same script");
+        });
+    }
 }

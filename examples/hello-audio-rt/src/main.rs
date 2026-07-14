@@ -131,6 +131,7 @@ use pinion_core::external::{
 };
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+use pinion_core::style::{Display, FlexDirection};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::{Frame, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -442,57 +443,49 @@ impl WidgetCore for HelloAudioRt {
 
     fn view(state: u16, _frame: &Frame) -> Scene {
         let mut children: Vec<Scene> = Vec::new();
-        let mut y = 16u32;
-
-        children.push(text_row(
-            format!("hello-audio-rt — real-time device audio over RPC ({state} live voice(s))"),
-            y,
-        ));
-        y += 30;
-        children.push(text_row(
+        children.push(text_row(format!(
+            "hello-audio-rt — real-time device audio over RPC ({state} live voice(s))"
+        )));
+        children.push(section_row(
             "The shipping RT path (AudioController + AudioRenderer) on the wire.".to_string(),
-            y,
         ));
-        y += 24;
         children.push(text_row(
             "Driven over JSON-RPC — no keyboard. `invoke render N` steps the mixer.".to_string(),
-            y,
         ));
-        y += 30;
-        children.push(text_row(
+        children.push(section_row(
             "query: voice_count / max_voices / peak / frames_rendered / rejected / stolen / voices"
                 .to_string(),
-            y,
         ));
-        y += 22;
         children.push(text_row(
             "     / listener / attenuation / voice_policy".to_string(),
-            y,
         ));
-        y += 22;
         children.push(text_row(
             "invoke: play / stop / stop_all / set_master_gain / set_voice_{gain,pan,position}"
                 .to_string(),
-            y,
         ));
-        y += 22;
         children.push(text_row(
             "     / set_listener / set_attenuation / set_voice_policy / render".to_string(),
-            y,
         ));
-        y += 26;
-        children.push(text_row(
+        children.push(section_row(
             "Also: the retained single-thread engine at /engine/external/* (intervene-write)."
                 .to_string(),
-            y,
         ));
-        y += 26;
 
         // R55.G.17 — the paint scene carries a node tagged `tag()` so AI-side
         // path-routing / `rect_for_tag` resolve, even though this harness drives
         // the RT surface through the `/external/` state-scene path.
         let mut root = ContainerNode::new(children).with_tag(TAG);
-        root.rect = Rect::new(0, 0, 560, y + 16);
+        // R1345 §5.21 — a padded column. This authored `rect` from a running
+        // `y` cursor, none of which reached a pixel: `compute_layout`
+        // overwrites `rect` (it is an OUTPUT), so the rows painted flush at
+        // x=0 with none of the intended spacing. Intent now lives in
+        // `LayoutStyle`, which is what the pass actually reads.
+        // No root size: the layout root's declared size is replaced by the
+        // viewport, so authoring one here would be dead intent — the very thing
+        // this round is clearing (see `pinion_narrative::vn::view::root`).
+        root.layout.display = Display::Flex;
+        root.layout.flex_direction = FlexDirection::Column;
+        root.layout.padding = Rect::new(16, 16, 16, 16);
         Scene::Container(root)
     }
 
@@ -507,8 +500,20 @@ impl WidgetCore for HelloAudioRt {
     }
 }
 
-fn text_row(content: String, y: u32) -> Scene {
-    Scene::Text(TextNode::new(content, Rect::new(16, y, 540, 16)))
+/// R1345 §5.21 — one row, authored with no `rect` (the column places it and
+/// the text measure sizes it, so a long line wraps instead of truncating).
+fn text_row(content: String) -> Scene {
+    Scene::Text(TextNode::new(content, Rect::default()))
+}
+
+/// A row that opens a new block: one blank line above it. The pre-R1345 view
+/// spelled this as a bigger jump in its `y` cursor.
+fn section_row(content: String) -> Scene {
+    let mut row = text_row(content);
+    if let Scene::Text(t) = &mut row {
+        t.layout.margin.y = 16;
+    }
+    row
 }
 
 impl WidgetA11y for HelloAudioRt {
@@ -527,7 +532,10 @@ impl WidgetView for HelloAudioRt {
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
         pinion_shell::SizeStrategy::Fixed {
             width: 560,
-            height: 320,
+            // R1345 §5.21 — MEASURED: the help column lays out to 348px at this
+            // width (wrapped rows are 24px, not the 16px the pre-R1345 authored
+            // rects assumed). Pinned by `r1345_help_rows_fit_the_window`.
+            height: 380,
         }
     }
 }
@@ -651,5 +659,93 @@ mod tests {
             ext.query("voice_count"),
             Some(IntrospectValue::Int(0))
         ));
+    }
+}
+
+#[cfg(test)]
+mod r1345_layout_tests {
+    //! R1345 §5.21 — the help rows are a real padded column.
+    //!
+    //! This view authored `Rect::new(16, y, 540, 16)` from a running `y`
+    //! cursor. None of it reached a pixel: `compute_layout` overwrites `rect`
+    //! (it is an OUTPUT), so every row painted flush at `x = 0` with none of
+    //! the intended spacing. The tests above lock the External's logic and
+    //! never look at geometry, so the bug was invisible to `cargo test`.
+    use super::HelloAudioRt;
+    use pinion_core::reactive::Owner;
+    use pinion_core::scene::{Rect, Scene};
+    use pinion_core::{Frame, WidgetCore};
+    use pinion_runtime::{LayoutCache, compute_layout};
+
+    fn text_rects(s: &Scene, out: &mut Vec<Rect>) {
+        match s {
+            Scene::Text(t) => out.push(t.rect),
+            Scene::Container(c) => c.children.iter().for_each(|ch| text_rects(ch, out)),
+            _ => {}
+        }
+    }
+
+    /// The SHIPPING window, read from the binding itself — never a rounder
+    /// number that happens to fit. R1345's first cut tested at 400 tall while
+    /// the real window is 380, and so stayed green while the last help row was
+    /// clipped off the bottom of the actual demo.
+    fn shipping_viewport() -> (u32, u32) {
+        match <HelloAudioRt as pinion_shell::WidgetView>::initial_size_strategy() {
+            pinion_shell::SizeStrategy::Fixed { width, height } => (width, height),
+            other => panic!("this binding pins a Fixed window; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r1345_help_rows_stack_in_a_padded_column() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let (w, h) = shipping_viewport();
+            let mut scene = HelloAudioRt::view(0, &Frame::default());
+            let mut cache = LayoutCache::new();
+            compute_layout(&mut scene, &mut cache, w, h);
+            let mut rs = Vec::new();
+            text_rects(&scene, &mut rs);
+            assert!(rs.len() >= 5, "the help block: {rs:?}");
+            for r in &rs {
+                assert_eq!(r.x, 16, "the column's left padding is real: {r:?}");
+                assert!(r.w > 0 && r.h > 0, "every row is a real box: {r:?}");
+            }
+            for pair in rs.windows(2) {
+                assert!(
+                    pair[1].y >= pair[0].y + pair[0].h,
+                    "rows stack without overlap: {:?} then {:?}",
+                    pair[0],
+                    pair[1],
+                );
+            }
+        });
+    }
+
+    /// Every help row fits INSIDE the shipping window.
+    ///
+    /// The regression R1345's first cut shipped: making the geometry correct
+    /// made the content taller (a measured row is 24px, not the 16px the dead
+    /// authored rects assumed), so the last row fell off the bottom of a window
+    /// sized for the old lie. A geometry test that picks its own viewport
+    /// cannot see that — this one reads the binding's.
+    #[test]
+    fn r1345_help_rows_fit_the_window() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let (w, h) = shipping_viewport();
+            let mut scene = HelloAudioRt::view(0, &Frame::default());
+            let mut cache = LayoutCache::new();
+            compute_layout(&mut scene, &mut cache, w, h);
+            let mut rs = Vec::new();
+            text_rects(&scene, &mut rs);
+            for r in &rs {
+                assert!(
+                    r.y + r.h <= h,
+                    "row {r:?} falls off the bottom of the {w}x{h} window",
+                );
+                assert!(r.x + r.w <= w, "row {r:?} overruns the {w}px width");
+            }
+        });
     }
 }
