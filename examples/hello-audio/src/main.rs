@@ -34,6 +34,7 @@ use pinion_audio::{AudioClip, AudioEngine, AudioEngineExternal, decode_compresse
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+use pinion_core::style::{Display, FlexDirection, SizeValue};
 use pinion_core::{Frame, WidgetCore};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
@@ -113,41 +114,37 @@ impl WidgetCore for HelloAudio {
         let engine = audio_engine();
         let engine = engine.borrow();
         let mut children: Vec<Scene> = Vec::new();
-        let mut y = 16u32;
 
-        children.push(text_row(
-            format!("the-tide audio — {} voice(s) playing", engine.voice_count()),
-            y,
-        ));
-        y += 32;
+        children.push(text_row(format!(
+            "the-tide audio — {} voice(s) playing",
+            engine.voice_count()
+        )));
 
         if engine.voice_count() == 0 {
-            children.push(text_row("(silence)".to_string(), y));
-            y += 24;
+            children.push(section_row("(silence)".to_string()));
         } else {
             for (id, voice) in engine.voices() {
-                children.push(text_row(
-                    format!(
-                        "  #{id} {}  gain {:.2}  pan {:+.2}  {}",
-                        voice.label(),
-                        voice.gain(),
-                        voice.pan(),
-                        if voice.looping() { "loop" } else { "one-shot" },
-                    ),
-                    y,
-                ));
-                y += 20;
+                children.push(text_row(format!(
+                    "  #{id} {}  gain {:.2}  pan {:+.2}  {}",
+                    voice.label(),
+                    voice.gain(),
+                    voice.pan(),
+                    if voice.looping() { "loop" } else { "one-shot" },
+                )));
             }
         }
 
-        y += 12;
-        children.push(text_row(
+        children.push(section_row(
             "b bell · w waves · c chime (FLAC) · s stop all · Esc quit".to_string(),
-            y,
         ));
 
         let mut root = ContainerNode::default();
-        root.rect = Rect::new(0, 0, 640, y + 32);
+        // R1344 §5.21 — a padded column that fills its viewport, so the
+        // voice list reflows to the terminal instead of a fixed page.
+        root.layout.display = Display::Flex;
+        root.layout.flex_direction = FlexDirection::Column;
+        root.layout.size.width = SizeValue::Percent(100);
+        root.layout.padding = Rect::new(16, 16, 16, 16);
         root.children = children;
         Scene::Container(root)
     }
@@ -178,8 +175,25 @@ impl WidgetCore for HelloAudio {
     }
 }
 
-fn text_row(content: String, y: u32) -> Scene {
-    Scene::Text(TextNode::new(content, Rect::new(16, y, 600, 16)))
+/// R1344 §5.21 §5.41 — one content row, authored with no `rect`.
+///
+/// Layout runs on the TUI path now, so `rect` is a pure OUTPUT on both
+/// backends and a hand-authored `y` cursor would simply be overwritten
+/// (on Vello it always was). The root's column flex places each row and
+/// the backend's text measure sizes it, so a long row wraps to as many
+/// rows as it needs instead of truncating.
+fn text_row(content: String) -> Scene {
+    Scene::Text(TextNode::new(content, Rect::default()))
+}
+
+/// A row that opens a new section: one blank line above it. The
+/// pre-R1344 view spelled this as a larger jump in its `y` cursor.
+fn section_row(content: String) -> Scene {
+    let mut row = text_row(content);
+    if let Scene::Text(t) = &mut row {
+        t.layout.margin.y = 16;
+    }
+    row
 }
 
 impl WidgetA11y for HelloAudio {
@@ -227,8 +241,46 @@ mod tests {
             }
         }
         let mut text = Vec::new();
-        walk(&core.compute_paint_scene(), &mut text);
+        walk(&core.compute_paint_scene(80, 24), &mut text);
         text.join("\n")
+    }
+
+    /// R1344 §5.21 §5.41 — the migrated column flex actually renders.
+    ///
+    /// This view was a running `y` cursor writing absolute `rect`s; the TUI
+    /// layout pass overwrites `rect`, so the intent moved into `LayoutStyle`
+    /// (a padded column). The existing tests here read the scene's TEXT, so
+    /// they passed either way — this pins the GEOMETRY: rows stack in order
+    /// and the padding is real.
+    #[test]
+    fn r1344_voice_rows_stack_in_a_padded_column() {
+        fn rects(s: &Scene, out: &mut Vec<pinion_core::scene::Rect>) {
+            match s {
+                Scene::Text(t) => out.push(t.rect),
+                Scene::Container(c) => c.children.iter().for_each(|ch| rects(ch, out)),
+                _ => {}
+            }
+        }
+        let core: ShellCoreTui<HelloAudio> = ShellCoreTui::new();
+        let scene = core.compute_paint_scene(80, 24);
+        let mut rs = Vec::new();
+        rects(&scene, &mut rs);
+        assert!(rs.len() >= 2, "header + silence row at least: {rs:?}");
+        for r in &rs {
+            assert_eq!(r.x, 16, "16px (2-cell) left padding is real: {r:?}");
+            assert!(
+                r.h > 0 && r.w > 0,
+                "every row resolves to a real box: {r:?}"
+            );
+        }
+        for pair in rs.windows(2) {
+            assert!(
+                pair[1].y >= pair[0].y + pair[0].h,
+                "rows stack without overlap: {:?} then {:?}",
+                pair[0],
+                pair[1],
+            );
+        }
     }
 
     #[test]

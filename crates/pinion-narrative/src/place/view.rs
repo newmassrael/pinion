@@ -13,7 +13,7 @@ use pinion_core::Color;
 use pinion_core::scene::{
     BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, Scene, TextNode,
 };
-use pinion_core::style::{Border, BoxStyle, PathStyle, Stroke};
+use pinion_core::style::{Border, BoxStyle, LayoutStyle, PathStyle, SizeValue, Stroke};
 
 use crate::place::layout::PlaceLayout;
 
@@ -31,7 +31,8 @@ const EDGE_COLOR: Color = Color::rgb(0x70, 0x78, 0x90);
 pub fn place_map_scene(layout: &PlaceLayout) -> Scene {
     if layout.is_empty() {
         let mut node = ContainerNode::default();
-        node.rect = Rect::new(0, 0, 400, 80);
+        node.layout.size.width = SizeValue::Percent(100);
+        node.layout.size.height = SizeValue::Percent(100);
         node.children
             .push(text_row("(장소가 없습니다)", 16, 16, 360));
         return Scene::Container(node);
@@ -78,38 +79,66 @@ pub fn place_map_scene(layout: &PlaceLayout) -> Scene {
 
     let (w, h) = map_extent(layout);
     let mut root = ContainerNode::default();
-    root.rect = Rect::new(0, 0, w, h);
+    // The map is a fixed-extent canvas the solver sized; its children place
+    // themselves absolutely against it.
+    root.layout.size.width = SizeValue::Px(w);
+    root.layout.size.height = SizeValue::Px(h);
     root.children = children;
     Scene::Container(root)
 }
 
+/// R1344 §5.21 §5.41 — a solver-placed box.
+///
+/// The map's geometry comes from the `solve_layout` domain algorithm, not from
+/// flex, so every node states its solved rect as `LayoutStyle` intent
+/// (`absolute_position` + `size`, R55.D.6) rather than writing `rect` directly.
+/// `rect` is an OUTPUT of the layout pass on both backends: the Vello path has
+/// always overwritten it, and since R1344 the TUI does too — an authored rect
+/// would collapse to the block-flow default (every box `h = 0`, the whole map
+/// flattened into a label list). All of these are children of the root at
+/// `(0, 0)`, so `absolute_position` (parent-content-relative) equals the solved
+/// absolute coordinate.
 fn box_node(rect: Rect, fill: Color, border: Color, tag: Option<String>) -> Scene {
     let mut node = BoxNode::new(
         rect,
         BoxStyle::filled(fill).with_border(Border::new(border, 1)),
     );
+    place_at(&mut node.layout, rect);
     node.tag = tag.map(Cow::Owned);
     Scene::Box(node)
+}
+
+/// State `rect` as authored layout intent: absolute position + explicit size.
+/// See [`box_node`] for why the map positions absolutely.
+fn place_at(layout: &mut LayoutStyle, rect: Rect) {
+    layout.absolute_position = Some((rect.x, rect.y));
+    layout.size.width = SizeValue::Px(rect.w);
+    layout.size.height = SizeValue::Px(rect.h);
 }
 
 fn edge_line(a: Rect, b: Rect) -> Scene {
     let (ax, ay) = center(a);
     let (bx, by) = center(b);
-    Scene::Path(PathNode::new(
-        segment_bounds(a, b),
+    let bounds = segment_bounds(a, b);
+    let mut node = PathNode::new(
+        bounds,
         vec![
             PathCommand::MoveTo(PathPoint::new(ax, ay)),
             PathCommand::LineTo(PathPoint::new(bx, by)),
         ],
         PathStyle::stroked(Stroke::new(EDGE_COLOR, 2)),
-    ))
+    );
+    // The path's COMMANDS are absolute map coordinates; only its bounding box
+    // participates in layout, so it is placed like every other solved node.
+    place_at(&mut node.layout, bounds);
+    Scene::Path(node)
 }
 
 fn text_row(content: &str, x: u32, y: u32, w: u32) -> Scene {
-    Scene::Text(TextNode::new(
-        content.to_string(),
-        Rect::new(x, y, w.max(1), 16),
-    ))
+    let rect = Rect::new(x, y, w.max(1), 16);
+    let mut node = TextNode::new(content.to_string(), rect);
+    place_at(&mut node.layout, rect);
+    Scene::Text(node)
 }
 
 fn area(rect: Rect) -> u32 {

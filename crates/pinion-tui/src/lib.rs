@@ -68,6 +68,7 @@ pub mod input;
 pub mod paint;
 pub mod shell;
 pub mod substrate;
+pub mod text_layout;
 pub mod widget;
 
 // R51.178 §5.41 — shared TUI-side test fixture surface. Exposes the

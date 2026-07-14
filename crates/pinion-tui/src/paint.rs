@@ -21,8 +21,9 @@
 //! pinion-core's [`pinion_core::scene::Rect`] is u32 pixel-space
 //! geometry (DPI-aware logical pixels, same axis as Vello's render
 //! target). Terminal cells are character-grid units; the conversion
-//! goes through [`CellMetric`] (the R968 §5.41 cell-native metric).
-//! This adapter renders against [`CellMetric::DEFAULT`] — the 8×16
+//! goes through [`pinion_core::CellMetric`] (the R968 §5.41
+//! cell-native metric).
+//! This adapter renders against [`crate::text_layout::CELL`] — the 8×16
 //! bitmap font baseline — so behaviour is byte-unchanged from the
 //! pre-R968 `PIXEL_PER_CELL_*` constants it replaced. A
 //! [`Scene::TextGrid`] (R994) maps each of
@@ -47,7 +48,7 @@
 //! The column cursor advances by the cluster width so wide graphemes
 //! reserve their second cell implicitly.
 
-use pinion_core::CellMetric;
+use crate::text_layout::{CellTextLayout, grapheme_cells};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, Color, FontStyle, FontWeight, TextStyle};
 use pinion_core::term_grid::{CellAttrs, CellWidth, TermColor};
@@ -55,7 +56,6 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect as TuiRect;
 use ratatui::style::{Color as TuiColor, Modifier, Style};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 /// R968 §5.41 — the cell-native metric this TUI paint adapter renders
 /// against. Sourced from [`CellMetric::DEFAULT`] (the behaviour-preserving
@@ -64,7 +64,11 @@ use unicode_width::UnicodeWidthStr;
 /// metric sizes Vello glyphs but is irrelevant to a character buffer (R994
 /// maps grid cells 1:1) — with the shared `Rect` geometry staying in logical
 /// pixels per the R968 ratify.
-const CELL: CellMetric = CellMetric::DEFAULT;
+/// R1344 §5.41 — re-export of the crate's single cell metric
+/// ([`crate::text_layout::CELL`]). The paint walker floors `rect` back to cells
+/// with the same metric the layout pass budgeted them with; naming it twice is
+/// how those two silently drift.
+use crate::text_layout::CELL;
 
 // R51.130 §5.41 — Unicode light box-drawing set (U+2500..U+2518).
 // Lifted as `\u{XXXX}`-escaped constants so the Rust source carries
@@ -439,37 +443,103 @@ pub fn paint_text(t: &TextNode, buf: &mut Buffer) {
 /// scroll cascade reaches here via [`to_buffer_inner`]'s Text arm;
 /// the public [`paint_text`] forwards `(full-clip, no-offset)`.
 ///
-/// Vertical reject: a single-line `TextNode` either falls on a row
-/// inside the clip or is entirely skipped. Horizontal walk: each
-/// grapheme either fits inside the clip horizontally (write) or
-/// straddles a boundary (skip but still advance the column cursor
-/// so the rest of the line lays out correctly).
+/// R1344 §5.41 — the node's **own** `rect` bounds the text, not just
+/// the ancestor clip. Two boundaries compose:
+///
+/// * `rect.w` is the wrap budget AND the horizontal bound. Lines come
+///   from [`CellTextLayout::wrap_px`] — the same SSOT the measure pass
+///   ([`crate::text_layout`]) sizes the node with, so the box always
+///   holds exactly the rows painted here.
+/// * `rect.h` bounds the row count; rows past the box are dropped.
+///
+/// Pre-R1344 neither was read: text painted from `rect.x` straight to
+/// the ancestor clip edge on ONE row, so a paragraph truncated to its
+/// first row and a long line overwrote its siblings' cells. Both are
+/// §2 #6 divergences from the Vello backend, which wraps at `rect.w`
+/// via parley and never leaves its box.
+///
+/// Vertical walk: each wrapped line maps to one cell row; rows outside
+/// the clip strip are skipped individually (a multi-row node may
+/// straddle the clip). Horizontal walk: each grapheme either fits
+/// inside both bounds (write) or straddles one (skip but still advance
+/// the column cursor so the rest of the line lays out correctly).
 fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (i32, i32)) {
     let buf_area = buf.area;
     let screen_col_px = i64::from(t.rect.x) + i64::from(offset_px.0);
     let screen_row_px = i64::from(t.rect.y) + i64::from(offset_px.1);
     let cell_col = pixels_to_cell_floor(screen_col_px, CELL.cell_w());
     let cell_row = pixels_to_cell_floor(screen_row_px, CELL.cell_h());
-    // Quick vertical reject — entire line outside the clip strip.
-    if cell_row < clip.y0 || cell_row >= clip.y1 {
+
+    // The node's own box, in cells, intersected with the inherited
+    // clip. `rect.w` / `rect.h` floor to whole cells: a box 2.5 cells
+    // wide holds 2, matching `CellTextLayout`'s px→cell conversion.
+    let layout = CellTextLayout::new(CELL);
+    let box_cols = t.rect.w / CELL.cell_w();
+    let box_rows = t.rect.h / CELL.cell_h();
+    let node_clip = CellClip {
+        x0: cell_col,
+        y0: cell_row,
+        x1: cell_col.saturating_add(clamp_to_i32(i64::from(box_cols))),
+        y1: cell_row.saturating_add(clamp_to_i32(i64::from(box_rows))),
+    };
+    let clip = clip.intersect(node_clip);
+    if clip.is_empty() {
         return;
     }
+
+    for (line_idx, line) in layout.wrap_px(&t.content, t.rect.w).into_iter().enumerate() {
+        let row =
+            cell_row.saturating_add(clamp_to_i32(i64::try_from(line_idx).unwrap_or(i64::MAX)));
+        // Rows below the box / clip: every later line is lower still.
+        if row >= clip.y1 {
+            break;
+        }
+        if row < clip.y0 {
+            continue;
+        }
+        // `line_text` drops the trailing UAX #14 break codepoint, so no
+        // control byte can reach a cell (a raw `\n` in the buffer would
+        // emit a line feed mid-frame and corrupt the terminal).
+        let text = layout.line_text(&t.content, line);
+        paint_text_line(t, text, line.start, row, cell_col, buf, buf_area, clip);
+    }
+}
+
+/// R1344 §5.41 — paint one wrapped line's graphemes across `row`.
+///
+/// `line_start` is the line's byte offset within `t.content`, so each
+/// cluster's absolute offset still resolves its `TextNode.runs` span
+/// (R1337 rich text) after wrapping.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the cumulative-state walker's context: node + line slice + placement + clip"
+)]
+fn paint_text_line(
+    t: &TextNode,
+    text: &str,
+    line_start: usize,
+    row: i32,
+    cell_col: i32,
+    buf: &mut Buffer,
+    buf_area: TuiRect,
+    clip: CellClip,
+) {
     let mut col = cell_col;
     // R1337 §5.41 §2#6 — `grapheme_indices` (not `graphemes`) so each
     // cluster's UTF-8 byte offset resolves which `TextNode.runs` span
     // (rich text) governs it; empty `runs` falls back to `t.style`.
-    for (byte_off, grapheme) in t.content.grapheme_indices(true) {
-        let g_width_usize = grapheme.width();
-        let g_width = i32::try_from(g_width_usize).unwrap_or(i32::MAX);
+    for (byte_off, grapheme) in text.grapheme_indices(true) {
+        // R1344 — the SSOT advance rule, shared with the measure pass.
+        // Zero-width: joiners / combining marks (the segmenter emits
+        // these as separate clusters before joining) and control
+        // characters no cell can hold. Skipping both keeps the painted
+        // width equal to the measured width.
+        let g_width = i32::try_from(grapheme_cells(grapheme)).unwrap_or(i32::MAX);
         if g_width == 0 {
-            // Zero-width joiner / combining mark — the segmenter
-            // emits these as separate clusters before joining; the
-            // simplest correct behaviour at this layer is to skip
-            // (ratatui's `set_symbol` would clobber the cell).
             continue;
         }
-        // Past right clip edge — truncate. R51.111+ adds the
-        // ellipsis policy.
+        // Past the right bound (node box ∩ ancestor clip) — truncate.
+        // R51.111+ adds the ellipsis policy.
         if col >= clip.x1 || col.saturating_add(g_width) > clip.x1 {
             break;
         }
@@ -480,8 +550,8 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
             col = col.saturating_add(g_width);
             continue;
         }
-        if let Some((bx, by)) = cell_to_buf_xy(col, cell_row, buf_area) {
-            let style = effective_text_style(t, byte_off);
+        if let Some((bx, by)) = cell_to_buf_xy(col, row, buf_area) {
+            let style = effective_text_style(t, line_start + byte_off);
             let cell = &mut buf[(bx, by)];
             cell.set_symbol(grapheme);
             apply_text_style(cell, style);
@@ -651,7 +721,8 @@ fn cell_attrs_to_modifier(attrs: CellAttrs) -> Modifier {
 ///
 /// Each grid cell maps **1:1** onto one ratatui character cell — a terminal
 /// projection is already a character grid, so the node's GUI pixel
-/// [`CellMetric`] is irrelevant here (it sizes Vello glyphs). The grid's
+/// [`pinion_core::CellMetric`] is irrelevant here (it sizes Vello
+/// glyphs). The grid's
 /// `rect` only positions its origin, mapped through the buffer's [`CELL`]
 /// metric exactly like [`paint_text_inner`]; the scroll cascade's `clip` /
 /// `offset_px` carry through unchanged.
@@ -754,15 +825,27 @@ mod tests {
     use super::*;
     use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
     use ratatui::layout::Rect as TuiRect;
+    use unicode_width::UnicodeWidthStr;
 
-    /// Construct a minimal `TextNode` for tests at pixel `(x, y)`
-    /// with the given content. Width / height fields are set to the
-    /// content's grapheme count × cell metrics; the paint walker
-    /// only consults `rect.x` / `rect.y` for placement.
+    /// Construct a minimal single-line `TextNode` for tests at pixel
+    /// `(x, y)` with the given content, sized to hold it exactly: one
+    /// row tall and as wide as the content measures in cells.
+    ///
+    /// R1344 §5.41 — this now does what its name and its pre-R1344
+    /// docstring always *claimed* ("width / height set to the
+    /// content's grapheme count × cell metrics"). It previously
+    /// hardcoded `w = 100` (12.5 cells) regardless of content, which
+    /// only worked because the walker ignored `rect.w` entirely — a
+    /// fixture artifact of the bug. Now that the box bounds the text,
+    /// a fixture that under-sizes its content would clip it, so the
+    /// helper measures through the same SSOT the painter uses.
+    ///
+    /// Callers testing clip / wrap behaviour build their own rect.
     fn text_at(x: u32, y: u32, content: &str) -> TextNode {
+        let cols = u32::try_from(crate::text_layout::cell_width(content)).unwrap_or(u32::MAX);
         let mut node = TextNode::default();
         node.content = content.to_owned();
-        node.rect = Rect::new(x, y, 100, 16);
+        node.rect = Rect::new(x, y, cols * CELL.cell_w(), CELL.cell_h());
         node
     }
 
@@ -1578,5 +1661,357 @@ mod tests {
             "(1,0) truecolor fg"
         );
         assert_eq!(buf[(3, 0)].fg, TuiColor::Reset, "(3,0) default fg → Reset");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1344 §5.41 §2 #6 — text box + wrap regressions.
+    //
+    // Every test here fails against the pre-R1344 walker, which read
+    // only `rect.x` / `rect.y`, never wrapped, and wrote whatever
+    // `unicode-segmentation` handed it straight into a cell. The
+    // defects were found by a consumer targeting BOTH backends from
+    // one `view()` (the first to localize a pinion app): its prose
+    // rendered as a paragraph on Vello and as one truncated row on the
+    // terminal.
+    // ─────────────────────────────────────────────────────────────
+
+    /// Render `scene` into a `cols`×`rows` buffer and return the rows as
+    /// trimmed strings — the shape most of these assertions want.
+    fn render_rows(scene: &Scene, cols: u16, rows: u16) -> Vec<String> {
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, cols, rows));
+        to_buffer(scene, &mut buf);
+        (0..rows)
+            .map(|y| {
+                (0..cols)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    /// A `TextNode` with an explicitly authored box, for the wrap / clip
+    /// tests (`text_at` sizes itself to its content instead).
+    fn text_in_box(x: u32, y: u32, w: u32, h: u32, content: &str) -> TextNode {
+        let mut node = TextNode::default();
+        node.content = content.to_owned();
+        node.rect = Rect::new(x, y, w, h);
+        node
+    }
+
+    // ---- D1: a control character must never reach a cell ----
+
+    #[test]
+    fn r1344_hard_line_break_starts_a_new_row_and_never_inks_a_control_char() {
+        // Pre-R1344: `"\n".width() == 1` (unicode-width scores C0
+        // controls as ONE cell, not zero), so the walker's zero-width
+        // skip missed it and `set_symbol("\n")` put a raw U+000A in a
+        // cell. ratatui's crossterm backend `Print`s the symbol with no
+        // sanitisation, so a line feed hit the terminal mid-frame: the
+        // cursor jumped and the frame corrupted.
+        let scene = Scene::Text(text_in_box(0, 0, 240, 64, "line1\nline2"));
+        let rows = render_rows(&scene, 30, 4);
+        assert_eq!(rows[0], "line1", "hard break ends row 0");
+        assert_eq!(rows[1], "line2", "and the tail starts row 1");
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 30, 4));
+        to_buffer(&scene, &mut buf);
+        for y in 0..4u16 {
+            for x in 0..30u16 {
+                let sym = buf[(x, y)].symbol();
+                assert!(
+                    !sym.chars().any(char::is_control),
+                    "cell ({x},{y}) holds control char {sym:?} — it would reach the terminal",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn r1344_every_hard_break_form_and_blank_line_survives_paint() {
+        // CRLF, lone CR, and the Unicode separators are all UAX #14
+        // mandatory breaks; a blank line must stay a blank row rather
+        // than collapse.
+        for (content, want) in [
+            ("a\r\nb", vec!["a", "b"]),
+            ("a\u{2028}b", vec!["a", "b"]),
+            ("a\n\nb", vec!["a", "", "b"]),
+        ] {
+            let scene = Scene::Text(text_in_box(0, 0, 240, 64, content));
+            let rows = render_rows(&scene, 30, 4);
+            for (i, w) in want.iter().enumerate() {
+                assert_eq!(&rows[i], w, "row {i} of {content:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn r1344_interior_tab_is_not_inked() {
+        // A tab is not a line break, so the breaker passes it through —
+        // but a raw HT in a cell would move the terminal cursor just as
+        // a LF would. `cell_width` scores it 0 and the walker skips it,
+        // which is why the two must agree (see `text_layout`).
+        let scene = Scene::Text(text_in_box(0, 0, 240, 16, "a\tb"));
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 30, 1));
+        to_buffer(&scene, &mut buf);
+        assert_eq!(buf[(0, 0)].symbol(), "a");
+        assert_eq!(buf[(1, 0)].symbol(), "b", "the tab occupies no cell");
+    }
+
+    // ---- D2: soft wrap at rect.w ----
+
+    #[test]
+    fn r1344_paragraph_soft_wraps_at_the_box_width() {
+        // Pre-R1344 this rendered as ONE row truncated at the terminal
+        // edge, while Vello wrapped the same node into a paragraph —
+        // the §2 #6 divergence a dual-backend consumer hits first.
+        let scene = Scene::Text(text_in_box(
+            0,
+            0,
+            240, // 30 cells
+            64,  // 4 rows
+            "the quick brown fox jumps over the lazy dog again",
+        ));
+        let rows = render_rows(&scene, 30, 4);
+        assert_eq!(rows[0], "the quick brown fox jumps");
+        assert_eq!(rows[1], "over the lazy dog again");
+        assert!(rows[2].is_empty(), "no third row needed");
+    }
+
+    #[test]
+    fn r1344_wrap_tracks_the_box_not_the_terminal() {
+        // The budget is the NODE's width. Same text, same terminal, two
+        // boxes → two different wraps. Pre-R1344 both produced the same
+        // single truncated row, because only the terminal edge bounded
+        // the text.
+        let text = "alpha beta gamma delta";
+        let wide = render_rows(&Scene::Text(text_in_box(0, 0, 240, 64, text)), 30, 4);
+        let narrow = render_rows(&Scene::Text(text_in_box(0, 0, 80, 64, text)), 30, 4);
+        assert_eq!(
+            wide[0], "alpha beta gamma delta",
+            "30-cell box holds it all"
+        );
+        // "alpha beta " measures 11 cells against a 10-cell box, so the
+        // break lands after "alpha ". Trailing-whitespace hang (the UAX
+        // #14 refinement that lets a line's trailing spaces exceed the
+        // width) is a deferral of pinion's breaker, inherited here — see
+        // `pinion_text_unicode::wrap`. Not a claim of parity with parley,
+        // which wraps the pixel backend and has its own break points.
+        assert_eq!(narrow[0], "alpha", "10-cell box wraps after 'alpha '");
+        assert_eq!(narrow[1], "beta");
+    }
+
+    #[test]
+    fn r1344_wide_graphemes_wrap_at_two_cells_each() {
+        // CJK is 2 cells: a 4-cell box holds exactly two per row. The
+        // wrap budget must count display cells, not chars or bytes.
+        let ga = "\u{AC00}"; // 가
+        let text = format!("{ga}{ga}{ga}{ga}");
+        let scene = Scene::Text(text_in_box(0, 0, 32, 64, &text)); // 4 cells
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 20, 4));
+        to_buffer(&scene, &mut buf);
+        // Asserted per cell, not per row string: a wide grapheme owns cell
+        // N and ratatui blanks its continuation cell N+1 (the R1336
+        // convention), so a naive row join reads "가 가".
+        for row in 0..2u16 {
+            assert_eq!(buf[(0, row)].symbol(), ga, "row {row} col 0");
+            assert_eq!(buf[(2, row)].symbol(), ga, "row {row} col 2");
+            assert_eq!(
+                buf[(4, row)].symbol(),
+                " ",
+                "row {row}: only two wide graphemes fit a 4-cell box",
+            );
+        }
+    }
+
+    #[test]
+    fn r1344_an_unbreakable_token_overflows_rather_than_vanishing() {
+        // The breaker's documented overflow rule: a segment with no
+        // interior opportunity is emitted on its own line even though it
+        // exceeds the budget. Paint then clips it to the box — but it
+        // must never silently drop the row or loop.
+        let scene = Scene::Text(text_in_box(0, 0, 40, 32, "wwwwwwwwwwwwww short"));
+        let rows = render_rows(&scene, 20, 2);
+        assert_eq!(rows[0], "wwwww", "clipped to the 5-cell box, not dropped");
+        assert_eq!(rows[1], "short");
+    }
+
+    // ---- D3: the node's box bounds the text ----
+
+    #[test]
+    fn r1344_text_never_paints_outside_its_own_box() {
+        // Pre-R1344 `rect.w` / `rect.h` were never read: text ran from
+        // `rect.x` to the ancestor clip edge on one row.
+        let scene = Scene::Text(text_in_box(0, 0, 40, 16, "AAAAAAAAAABBBBBBBBBB"));
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 30, 3));
+        to_buffer(&scene, &mut buf);
+        for x in 5..30u16 {
+            assert_eq!(
+                buf[(x, 0)].symbol(),
+                " ",
+                "col {x} is outside the 5-cell box and must stay blank",
+            );
+        }
+    }
+
+    #[test]
+    fn r1344_rect_h_bounds_the_row_count() {
+        // A box one row tall shows one row, however many the text wraps
+        // to — the vertical half of the same bound.
+        let scene = Scene::Text(text_in_box(0, 0, 80, 16, "alpha beta gamma delta"));
+        let rows = render_rows(&scene, 20, 4);
+        assert_eq!(rows[0], "alpha");
+        assert!(rows[1].is_empty(), "row 1 is outside a 1-row box");
+    }
+
+    #[test]
+    fn r1344_long_text_does_not_destroy_a_sibling_pane() {
+        // The concrete harm D3 caused: a left pane's prose ran straight
+        // across the pane boundary and interleaved with its neighbour
+        // ("LEFT PANE PROSERIGHT IS LONG"). Two panes, rects fully
+        // resolved — exactly the shape the TUI contract expects.
+        let mut root = ContainerNode::default();
+        root.rect = Rect::new(0, 0, 240, 32);
+
+        let mut left = ContainerNode::default();
+        left.rect = Rect::new(0, 0, 120, 32); // 15 cells
+        left.children.push(Scene::Text(text_in_box(
+            0,
+            0,
+            120,
+            32,
+            "LEFT PANE PROSE THAT IS LONG",
+        )));
+
+        let mut right = ContainerNode::default();
+        right.rect = Rect::new(120, 0, 120, 32);
+        right
+            .children
+            .push(Scene::Text(text_in_box(120, 0, 120, 16, "RIGHT")));
+
+        root.children.push(Scene::Container(left));
+        root.children.push(Scene::Container(right));
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 30, 2));
+        to_buffer(&Scene::Container(root), &mut buf);
+        let row0: String = (0..30).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row0.starts_with("LEFT PANE"),
+            "left pane keeps its text: {row0:?}",
+        );
+        assert_eq!(
+            &row0[15..20],
+            "RIGHT",
+            "the right pane's cells are intact: {row0:?}",
+        );
+    }
+
+    // ---- measure/paint SSOT coherence ----
+
+    #[test]
+    fn r1344_painted_rows_equal_measured_rows() {
+        // The invariant that keeps a laid-out box and its content in
+        // agreement: whatever height the measure pass gives a node, the
+        // paint walker fills exactly that many rows. If these two ever
+        // drift, a box is sized for N rows and shows N±1.
+        use crate::text_layout::CellTextLayout;
+        use pinion_runtime::layout::TextMeasure;
+
+        let layout = CellTextLayout::default();
+        for text in [
+            "short",
+            "the quick brown fox jumps over the lazy dog",
+            "hard\nbreaks\nhere",
+            "가나다 mixed 폭 width text that must wrap somewhere",
+        ] {
+            let box_w = 80u32; // 10 cells
+            let measured = layout
+                .measure_text(text, &TextStyle::default(), &[], Some(box_w), false)
+                .expect("cell layout always measures");
+            let measured_h = measured.height;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let measured_rows = (measured_h as u32) / CELL.cell_h();
+
+            // Paint into a box tall enough to hold every measured row.
+            let scene = Scene::Text(text_in_box(
+                0,
+                0,
+                box_w,
+                measured_rows * CELL.cell_h(),
+                text,
+            ));
+            let rows = render_rows(&scene, 10, u16::try_from(measured_rows + 2).unwrap());
+            let painted = rows.iter().filter(|r| !r.is_empty()).count();
+            let expected = u32::try_from(
+                (0..measured_rows)
+                    .filter(|i| {
+                        let l = layout.wrap_px(text, box_w);
+                        layout
+                            .line_text(text, l[*i as usize])
+                            .chars()
+                            .next()
+                            .is_some()
+                    })
+                    .count(),
+            )
+            .unwrap();
+            assert_eq!(
+                u32::try_from(painted).unwrap(),
+                expected,
+                "painted rows must match the measured layout for {text:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn r1344_empty_content_paints_nothing_and_stays_in_its_box() {
+        let scene = Scene::Text(text_in_box(0, 0, 80, 16, ""));
+        let rows = render_rows(&scene, 10, 2);
+        assert!(rows.iter().all(String::is_empty), "empty text inks nothing");
+    }
+
+    #[test]
+    fn r1344_zero_width_box_paints_nothing_but_does_not_panic() {
+        // An unresolved / collapsed box. The layout still reports the
+        // text's hard structure (see `CellTextLayout::wrap`), but paint
+        // clips every row away horizontally.
+        let scene = Scene::Text(text_in_box(0, 0, 0, 16, "abc\ndef"));
+        let rows = render_rows(&scene, 10, 2);
+        assert!(
+            rows.iter().all(String::is_empty),
+            "nothing fits a 0-cell box"
+        );
+    }
+
+    // ---- rich text survives wrapping (R1337 interaction) ----
+
+    #[test]
+    fn r1344_style_runs_still_resolve_after_a_wrap() {
+        // R1337 mapped `TextNode.runs` onto cells by byte offset. Wrapping
+        // splits content into line slices, so the walker must offset each
+        // line's byte positions back into the ORIGINAL content or every
+        // row after the first picks up the wrong run.
+        use pinion_core::scene::StyleRun;
+
+        let mut red = TextStyle::new();
+        red.fg_color = Color::rgb(0xff, 0, 0);
+        let mut node = text_in_box(0, 0, 40, 32, "aaaa bbbb");
+        // Colour only the second word (bytes 5..9), which lands on row 1.
+        node.runs = vec![StyleRun::new(5, 9, red)];
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 10, 2));
+        to_buffer(&Scene::Text(node), &mut buf);
+        assert_eq!(buf[(0, 0)].symbol(), "a", "row 0 is the first word");
+        assert_eq!(buf[(0, 1)].symbol(), "b", "row 1 is the second word");
+        assert_eq!(
+            buf[(0, 1)].fg,
+            TuiColor::Rgb(0xff, 0, 0),
+            "the run must follow its bytes onto the wrapped row",
+        );
+        assert_ne!(
+            buf[(0, 0)].fg,
+            TuiColor::Rgb(0xff, 0, 0),
+            "row 0 is outside the run",
+        );
     }
 }

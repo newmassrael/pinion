@@ -48,7 +48,7 @@
 //!   the R968 §5.41 `CellMetric` type (default 8×16); a per-node
 //!   metric arrives with `Scene::TextGrid` (R968 carry).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io;
 use std::sync::Arc;
 use std::time::Instant;
@@ -58,10 +58,11 @@ use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene, SceneRevision};
 use pinion_rpc::{DeferredInput, DispatchContext, PreviewLedger, dispatch_parsed};
 use pinion_runtime::{
-    CommandExecutor, CoreShell, DispatchTail, FocusManager, PointerId, clamp_frame_dt,
+    CommandExecutor, CoreShell, DispatchTail, FocusManager, LayoutCache, PointerId, clamp_frame_dt,
 };
 
 use crate::WidgetViewTui;
+use crate::text_layout::{layout_for_terminal, layout_for_viewport_px};
 
 /// R51.117 §5.41 — TUI shell dispatch substrate.
 ///
@@ -154,6 +155,17 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// starts moving ones stay at construction baseline until the
     /// second paint measures the elapsed delta.
     last_paint_instant: Cell<Option<Instant>>,
+
+    /// R1344 §5.41 §5.36 — the layout pass's cache, the TUI peer of
+    /// `pinion_shell::ShellCore::text_cache`.
+    ///
+    /// [`RefCell`] for the same reason [`Self::last_paint_instant`] is a
+    /// [`Cell`]: [`Self::compute_paint_scene`] keeps its `&self` shape
+    /// because the surface's `commit_paint` holds the substrate by shared
+    /// borrow. Unlike `Instant` a cache is not `Copy`, so the runtime-checked
+    /// cell is the pattern; the borrow is confined to the layout call and
+    /// never overlaps a `V::view` re-entry, so it cannot panic.
+    layout_cache: RefCell<LayoutCache>,
 }
 
 impl<V: WidgetViewTui> Default for ShellCoreTui<V> {
@@ -188,6 +200,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             focus: FocusManager::new(),
             log_sink: None,
             last_paint_instant: Cell::new(None),
+            layout_cache: RefCell::new(LayoutCache::new()),
         };
         // R1335 §5.39 (PR-53) — attach this binding's root owner so RPC-driven
         // focus mutations publish the focused tag to the owner mirror an AI
@@ -284,15 +297,57 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
 
     /// Build the binding's paint scene from the current cached
     /// state. Pure sync per §6.3 R51.27 `dry_run`: identical
-    /// `(state, frame, owner_state)` always yields the same `Scene`.
+    /// `(state, frame, owner_state, cols, rows)` always yields the same
+    /// `Scene`.
     ///
-    /// R51.124 §5.41 — the substrate no longer drives
+    /// R1344 §5.41 — the viewport joined that tuple when the layout pass
+    /// landed: `rect` is now resolved against the terminal size, so the same
+    /// state legitimately yields different geometry at a different size (that
+    /// IS reflow). Determinism is unaffected — the layout pass is a pure
+    /// function of `(scene, viewport)` and the cache is keyed on its inputs, so
+    /// warm and cold caches agree.
+    ///
+    /// R1344 §5.41 §5.36 — runs the **same** `compute_layout` pass the
+    /// Vello sibling runs, against a cell-grid text measure
+    /// ([`crate::text_layout::CellTextLayout`]). `cols` / `rows` are the
+    /// terminal's size;
+    /// they convert to the logical pixels taffy and `Scene.rect` speak
+    /// through [`pinion_core::CellMetric`].
+    ///
+    /// ## Why this reversed R51.124's note
+    ///
+    /// R51.124's rustdoc said "the substrate no longer drives
     /// `compute_layout`; the TUI paint walker maps the
-    /// `Scene::Container.rect` cells directly via
-    /// [`crate::paint::to_buffer`]. The Vello sibling
-    /// (`pinion_shell::ShellCore::compute_paint_scene`) keeps its
-    /// own (w, h) signature because parley needs the viewport to
-    /// shape text against.
+    /// `Scene::Container.rect` cells directly". That described an
+    /// *absence*, not a ratified decision — `compute_layout` was never
+    /// called from this crate at all, and §5.41's own open item
+    /// ("`TextAlign` wrap policy = R51.109 substrate 결정") shows the
+    /// question was left open, while §5.36 defines the text layout
+    /// primitive as "모든 backend(Vello/Headless/TUI/미래) 공유
+    /// backend-orthogonal". The absence had a real cost: the two
+    /// backends read **disjoint halves** of the same scene —
+    ///
+    /// | | authoritative | ignored |
+    /// |---|---|---|
+    /// | Vello | `LayoutStyle` | the view's authored `rect` (overwritten) |
+    /// | TUI (pre-R1344) | the view's authored `rect` | `LayoutStyle` (inert) |
+    ///
+    /// — so §2 #6 ("one scene, two render dispatch paths") held only in
+    /// name: a `Scene` that laid out correctly on one backend could not
+    /// lay out on the other, and nothing checked the two halves agreed.
+    /// A binding built from `pinion-widget-paint` (whose nodes carry
+    /// `Rect::default()` and rely on taffy) could not render here at
+    /// all.
+    ///
+    /// Running the pass makes `rect` a pure **output** on both backends
+    /// and `LayoutStyle` the single authored contract, which is what
+    /// [`pinion_runtime::compute_layout`]'s own "mutates each node's `rect` field in
+    /// place" contract already implied.
+    ///
+    /// The cell measure never defers to parley (see
+    /// [`crate::text_layout::CellTextLayout`]'s `TextMeasure` impl), so no
+    /// font work
+    /// happens on this path.
     ///
     /// R51.144 §5.28 — per-paint pump now measures `dt` against the
     /// previous paint's [`Instant`], advances every animation
@@ -307,7 +362,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// takes the substrate by shared borrow; the timing field uses
     /// [`Cell`] interior mutability so the signature stays sync.
     #[must_use]
-    pub fn compute_paint_scene(&self) -> Scene {
+    pub fn compute_paint_scene(&self, cols: u16, rows: u16) -> Scene {
         let now = Instant::now();
         let raw_dt = self
             .last_paint_instant
@@ -328,7 +383,33 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // [`pinion_core::Owner`] argument land on the framework-owned
         // scope, dropping together with this substrate.
         let cached_state = *self.core.cached_state();
-        self.core.root_owner().run(|| V::view(cached_state, &frame))
+        let run_view = || self.core.root_owner().run(|| V::view(cached_state, &frame));
+
+        // R1344 §5.41 §5.36 — the layout pass, mirroring the Vello
+        // sibling's `compute_paint_scene_internal` shape.
+        let mut scene = run_view();
+        let scroll_dirty = self.run_layout(&mut scene, cols, rows);
+        // R57.X.scrollbar §5.45 — the first-paint chicken-and-egg the
+        // Vello sibling documents: the layout pass writes
+        // `ScrollState::set_max` AFTER `V::view` already read it, so a
+        // scrollbar's first frame would paint a full-track thumb. Re-run
+        // once when the pass actually moved a bound. Idempotent on
+        // steady-state frames (Signal equality-skip floors it at false).
+        if scroll_dirty {
+            scene = run_view();
+            let _ = self.run_layout(&mut scene, cols, rows);
+        }
+        scene
+    }
+
+    /// R1344 §5.41 — one layout pass over `scene`. Returns taffy's
+    /// scroll-dirty flag (see [`Self::compute_paint_scene`]'s re-pass).
+    ///
+    /// The [`RefCell`] borrow is scoped to this call and never spans a
+    /// `V::view` re-entry, so it cannot collide with a re-entrant paint.
+    fn run_layout(&self, scene: &mut Scene, cols: u16, rows: u16) -> bool {
+        let mut cache = self.layout_cache.borrow_mut();
+        layout_for_terminal(scene, cols, rows, &mut cache)
     }
 
     /// Hand a freshly-painted scene to the substrate's
@@ -1004,20 +1085,35 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 .scene_mut_and_last_paint_for_window(pinion_runtime::DEFAULT_WINDOW);
             let previews = &self.previews;
             let revision = &self.revision;
+            let layout_cache = &self.layout_cache;
             let focus_ptr = &mut self.focus;
-            // R670 §5.41 §5.12 — TUI paint scene producer. The
-            // view-fn already sets every container rect (no parley
-            // shaping pass), so the produced scene carries the
-            // geometry an AI client expects from `scene/layout`. The
-            // `(w, h)` arguments are unused — TUI scenes are
-            // cell-based and their internal coordinates come from
-            // the view fn, not a hypothetical viewport. `root_owner`
-            // clone above wraps the view fn so `Owner::current()`
-            // inside the synthetic-paint path resolves to this
-            // binding's reactive scope (mirrors the Vello side).
-            let mut produce = |_w: u32, _h: u32| -> Scene {
+            // R1344 §5.41 §5.12 §2 #2 — TUI paint scene producer. Runs the
+            // layout pass against the caller's hypothetical viewport, exactly
+            // as `DispatchContext::paint_producer`'s contract requires ("the
+            // application is expected to run `compute_layout` inside the
+            // closure so the returned `Scene` carries measured rects") and as
+            // the Vello sibling does.
+            //
+            // Pre-R1344 this returned a raw `V::view` result and justified it
+            // with "the view-fn already sets every container rect". That was
+            // only ever true by accident — views authored rects because the
+            // TUI ran no layout. R1344 makes `rect` an OUTPUT, so a raw view
+            // result is an all-zero rect tree, and this is the §2 #2 AI-primary
+            // path: `scene/layout {viewport}` plus the never-painted fallback
+            // for `scene/click` / `scene/hover` / `scene/drag` / `scene/snapshot`.
+            // Leaving it unlaid-out would have relocated the §2 #6 divergence
+            // this round closes from the pixel path onto the AI path.
+            //
+            // `(w, h)` arrive in logical px (the §5.12 unit), so this takes the
+            // px entry rather than the cell-dimensioned one. `root_owner` clone
+            // above wraps the view fn so `Owner::current()` inside the
+            // synthetic-paint path resolves to this binding's reactive scope.
+            let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
-                root_owner.run(|| V::view(cached_state, &frame))
+                let mut scene = root_owner.run(|| V::view(cached_state, &frame));
+                let mut cache = layout_cache.borrow_mut();
+                let _ = layout_for_viewport_px(&mut scene, w, h, &mut cache);
+                scene
             };
             // R984 §5.40 §2 #7 — TUI `scene/access` producer, closing the
             // §2 #6 dual-backend asymmetry (pre-R984 the TUI returned
@@ -1278,7 +1374,7 @@ mod tests {
         // dispatch returns `true` (visible state changed) so the
         // surface caller repaints.
         let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-        let paint = core.compute_paint_scene();
+        let paint = core.compute_paint_scene(80, 24);
         core.update_paint_scene(paint);
 
         // Move into the button rect (pixel (0..32, 0..48)).
@@ -1350,7 +1446,7 @@ mod tests {
         // exercises the full click cycle to cover both
         // `log_intent` and `log_state_change` paths.
         let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-        let paint = core.compute_paint_scene();
+        let paint = core.compute_paint_scene(80, 24);
         core.update_paint_scene(paint);
         let _ = core.cursor_moved(8.0, 8.0);
         let _ = core.pointer_down();
@@ -1372,7 +1468,7 @@ mod tests {
         let buf = SharedBuffer(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
         let mut core: ShellCoreTui<TestButtonView> =
             ShellCoreTui::new().with_log_sink(Box::new(buf.clone()));
-        let paint = core.compute_paint_scene();
+        let paint = core.compute_paint_scene(80, 24);
         core.update_paint_scene(paint);
 
         assert!(core.cursor_moved(8.0, 8.0));
@@ -1473,7 +1569,7 @@ mod tests {
             let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
             core.root_owner().register_animation(recorder.clone());
 
-            let _scene = core.compute_paint_scene();
+            let _scene = core.compute_paint_scene(80, 24);
 
             assert_eq!(recorder.ticks.get(), 1);
             assert_eq!(
@@ -1493,9 +1589,9 @@ mod tests {
             let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
             core.root_owner().register_animation(recorder.clone());
 
-            let _scene1 = core.compute_paint_scene();
+            let _scene1 = core.compute_paint_scene(80, 24);
             sleep(Duration::from_millis(5));
-            let _scene2 = core.compute_paint_scene();
+            let _scene2 = core.compute_paint_scene(80, 24);
 
             assert_eq!(recorder.ticks.get(), 2);
             let dt = recorder.last_dt.get();
@@ -1514,8 +1610,8 @@ mod tests {
             let core_ref: &ShellCoreTui<TestButtonView> = &core;
             // Compile + run two shared-borrow calls in sequence —
             // proves the field's interior mutability path works.
-            let _a = core_ref.compute_paint_scene();
-            let _b = core_ref.compute_paint_scene();
+            let _a = core_ref.compute_paint_scene(80, 24);
+            let _b = core_ref.compute_paint_scene(80, 24);
         }
     }
 
@@ -1632,7 +1728,7 @@ mod tests {
 
             let core: ShellCoreTui<OwnerObservingButton> = ShellCoreTui::new();
             let expected = core.root_owner().id();
-            let _scene = core.compute_paint_scene();
+            let _scene = core.compute_paint_scene(80, 24);
 
             let observed = OBSERVED_OWNER_ID.with(Cell::get);
             assert_eq!(
@@ -1651,7 +1747,7 @@ mod tests {
             REGISTER_ANIMATION_OBSERVED.with(|c| c.set(false));
 
             let core: ShellCoreTui<OwnerObservingButton> = ShellCoreTui::new();
-            let _scene = core.compute_paint_scene();
+            let _scene = core.compute_paint_scene(80, 24);
 
             assert!(
                 Owner::current().is_none(),
@@ -1674,9 +1770,9 @@ mod tests {
 
             let core: ShellCoreTui<OwnerObservingButton> = ShellCoreTui::new();
             let expected = core.root_owner().id();
-            let _scene1 = core.compute_paint_scene();
+            let _scene1 = core.compute_paint_scene(80, 24);
             let after_first = OBSERVED_OWNER_ID.with(Cell::get);
-            let _scene2 = core.compute_paint_scene();
+            let _scene2 = core.compute_paint_scene(80, 24);
             let after_second = OBSERVED_OWNER_ID.with(Cell::get);
 
             assert_eq!(after_first, Some(expected));
@@ -2047,7 +2143,7 @@ mod tests {
         // (8, 8) would see an empty hover map and miss the button
         // rect even though the rect is in the unrendered paint scene.
         let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-        let paint = core.compute_paint_scene();
+        let paint = core.compute_paint_scene(80, 24);
         core.update_paint_scene(paint);
         core
     }
@@ -2354,6 +2450,181 @@ mod tests {
                 FOCUSED_WAS_NONE.with(Cell::get),
                 Some(true),
                 "apply_key must run with focused == None for a no-primary binding",
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1344 §5.41 §2 #6 — the TUI runs the layout pass.
+    // ─────────────────────────────────────────────────────────────
+    mod r1344_layout_pass {
+        use super::TestButtonView;
+        use crate::ShellCoreTui;
+        use crate::text_layout::layout_for_terminal;
+        use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+        use pinion_core::style::{Display, FlexDirection, SizeValue};
+        use pinion_runtime::LayoutCache;
+
+        /// Resolve `scene` exactly as the TUI substrate does — through the
+        /// same entry point, not a re-derivation of it.
+        fn lay_out(scene: &mut Scene, cols: u16, rows: u16) {
+            let mut cache = LayoutCache::new();
+            let _ = layout_for_terminal(scene, cols, rows, &mut cache);
+        }
+
+        /// A column of text rows authored with NO rect at all — intent
+        /// lives entirely in `LayoutStyle`, the way the Vello backend has
+        /// always required.
+        fn layout_style_only_view() -> Scene {
+            let mut root = ContainerNode::default();
+            root.layout.display = Display::Flex;
+            root.layout.flex_direction = FlexDirection::Column;
+            root.layout.size.width = SizeValue::Percent(100);
+            for s in ["first row", "second row", "third row"] {
+                root.children
+                    .push(Scene::Text(TextNode::new(s, Rect::default())));
+            }
+            Scene::Container(root)
+        }
+
+        fn walk(s: &Scene, out: &mut Vec<Rect>) {
+            match s {
+                Scene::Text(t) => out.push(t.rect),
+                Scene::Container(c) => {
+                    for ch in &c.children {
+                        walk(ch, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Every `Scene::Text` rect, in tree order.
+        fn rows_of(scene: &Scene) -> Vec<Rect> {
+            let mut out = Vec::new();
+            walk(scene, &mut out);
+            out
+        }
+
+        #[test]
+        fn r1344_layout_style_only_view_resolves_on_the_tui_path() {
+            // THE regression. Pre-R1344 the TUI ran no layout, so a view
+            // that authored its intent in `LayoutStyle` (the ONLY thing
+            // the Vello backend reads — it overwrites every authored
+            // `rect`) left every rect at `Default`, and all three rows
+            // painted on top of each other at (0,0): the terminal showed
+            // "third roww". The two backends read disjoint halves of one
+            // scene, so §2 #6 held in name only.
+            let mut scene = layout_style_only_view();
+            lay_out(&mut scene, 30, 8);
+            let rects = rows_of(&scene);
+            assert_eq!(rects.len(), 3);
+            for (i, pair) in rects.windows(2).enumerate() {
+                assert!(
+                    pair[1].y > pair[0].y,
+                    "row {} must sit below row {}, got {:?} then {:?}",
+                    i + 1,
+                    i,
+                    pair[0],
+                    pair[1],
+                );
+            }
+            assert!(
+                rects.iter().all(|r| r.w > 0 && r.h > 0),
+                "every row resolves to a real box: {rects:?}",
+            );
+        }
+
+        #[test]
+        fn r1344_layout_resolves_rects_onto_the_cell_grid() {
+            // The cell measure returns whole-cell boxes, so taffy's
+            // arithmetic lands every text row on a cell boundary — no
+            // half-cell rows for the paint walker to floor away.
+            let mut scene = layout_style_only_view();
+            lay_out(&mut scene, 30, 8);
+            for r in rows_of(&scene) {
+                assert_eq!(r.h % 16, 0, "row height {r:?} is a whole number of cells");
+                assert_eq!(r.y % 16, 0, "row origin {r:?} sits on a cell boundary");
+            }
+        }
+
+        #[test]
+        fn r1344_text_wraps_to_the_flex_resolved_width() {
+            // The consumer's actual case: prose authored with no rect,
+            // wrapping to whatever width the flex pass hands it. The node
+            // must grow TALLER than one row.
+            let mut root = ContainerNode::default();
+            root.layout.display = Display::Flex;
+            root.layout.flex_direction = FlexDirection::Column;
+            root.layout.size.width = SizeValue::Percent(100);
+            root.children.push(Scene::Text(TextNode::new(
+                "a paragraph long enough that it cannot possibly fit on one row",
+                Rect::default(),
+            )));
+            let mut scene = Scene::Container(root);
+            lay_out(&mut scene, 20, 8);
+            let r = rows_of(&scene)[0];
+            assert!(
+                r.h > 16,
+                "the paragraph must occupy several cell rows, got {r:?}",
+            );
+            assert!(r.w <= 160, "and stay inside the 20-cell viewport: {r:?}");
+        }
+
+        #[test]
+        fn r1344_narrower_terminal_reflows_taller() {
+            // Layout is a function of the terminal size — the property an
+            // authored `rect` could never have.
+            let text = "alpha beta gamma delta epsilon zeta eta theta";
+            let height_at = |cols: u16| {
+                let mut root = ContainerNode::default();
+                root.layout.display = Display::Flex;
+                root.layout.flex_direction = FlexDirection::Column;
+                root.layout.size.width = SizeValue::Percent(100);
+                root.children
+                    .push(Scene::Text(TextNode::new(text, Rect::default())));
+                let mut scene = Scene::Container(root);
+                lay_out(&mut scene, cols, 20);
+                rows_of(&scene)[0].h
+            };
+            assert!(
+                height_at(20) > height_at(60),
+                "a narrower terminal must wrap the same prose taller",
+            );
+        }
+
+        #[test]
+        fn r1344_compute_paint_scene_returns_a_laid_out_scene() {
+            // The substrate entry point itself: the scene handed to the
+            // paint walker is already resolved.
+            let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            let scene = core.compute_paint_scene(80, 24);
+            if let Scene::Container(c) = &scene {
+                assert!(
+                    c.rect.w > 0 && c.rect.h > 0,
+                    "the paint scene is laid out, not raw: {:?}",
+                    c.rect,
+                );
+            } else {
+                panic!("fixture view is a Container");
+            }
+        }
+
+        #[test]
+        fn r1344_paint_scene_tracks_the_terminal_size() {
+            // Two terminal sizes → two layouts, from one unchanged view.
+            let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            let small = core.compute_paint_scene(20, 6);
+            let large = core.compute_paint_scene(100, 30);
+            let w = |s: &Scene| match s {
+                Scene::Container(c) => c.rect.w,
+                _ => 0,
+            };
+            assert!(
+                w(&large) > w(&small),
+                "a wider terminal must resolve a wider root ({} vs {})",
+                w(&large),
+                w(&small),
             );
         }
     }

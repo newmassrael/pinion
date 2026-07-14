@@ -95,6 +95,16 @@ unicode-segmentation = "1.12"
 # cursor by the actual cell-width to avoid overlapping placement.
 unicode-width = "0.2"
 
+# R1344 §5.41 §5.37.7 — the UAX #14 line breaker the cell text layout
+# (`crate::text_layout`) wraps against. Break opportunities are a
+# property of the text, not the font, so the cell backend reuses the
+# SAME breaker the Vello backend does and supplies only a cell-width
+# measure closure. This crate carries ZERO external dependencies
+# (pure Unicode tables), so the TUI gains no font / parley / wgpu
+# weight from it — the shaping half stays in pinion-text-font, which
+# pinion-tui does not depend on.
+pinion-text-unicode = { path = "../pinion-text-unicode", version = "0.0.1" }
+
 # R51.160 §5.23 — tokio multi-thread runtime backs the TUI shell's
 # concrete `Executor` impl, sibling of `pinion_shell::TokioExecutor`.
 # Per-backend duplication is intentional at this round: each shell

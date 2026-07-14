@@ -535,7 +535,7 @@ fn commit_paint<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>
     rows: u16,
     renderer: &mut TuiRenderer<CrosstermBackend<Stdout>>,
 ) -> io::Result<Scene> {
-    let paint_scene = core.compute_paint_scene();
+    let paint_scene = core.compute_paint_scene(cols, rows);
     let mut buf = Buffer::empty(Rect::new(0, 0, cols, rows));
     crate::paint::to_buffer(&paint_scene, &mut buf);
     renderer.render(&buf, TuiContext::default())?;

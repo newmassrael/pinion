@@ -135,12 +135,52 @@ mod tests {
     #[test]
     fn bundled_map_solves_and_projects() {
         let core: ShellCoreTui<HelloPlaceMap> = ShellCoreTui::new();
-        let (boxes, paths, texts) = count(&core.compute_paint_scene());
+        let (boxes, paths, texts) = count(&core.compute_paint_scene(80, 24));
         // 7 place boxes + 2 container boxes (village, mudflat).
         assert_eq!(boxes, 9, "place + container boxes");
         // 5 adjacency lines.
         assert_eq!(paths, 5, "one line per adjacency");
         // At least one label per place.
         assert!(texts >= 7, "labels present: {texts}");
+    }
+
+    /// R1344 §5.21 §5.41 — the solved map keeps its GEOMETRY, not just its
+    /// node count.
+    ///
+    /// `bundled_map_solves_and_projects` above counts node *kinds*, which is
+    /// invariant under total geometric collapse — when the TUI gained its
+    /// layout pass, `place_map_scene`'s authored rects were overwritten and
+    /// every box flattened to `h = 0` (the 2-D map became a label list) while
+    /// that test stayed green. Exactly the repo's unit-green / demo-red
+    /// pattern, so the geometry gets its own pin.
+    #[test]
+    fn r1344_solved_map_keeps_its_geometry_through_the_layout_pass() {
+        fn boxes_of(s: &Scene, out: &mut Vec<pinion_core::scene::Rect>) {
+            match s {
+                Scene::Box(b) => out.push(b.rect),
+                Scene::Container(c) => c.children.iter().for_each(|ch| boxes_of(ch, out)),
+                _ => {}
+            }
+        }
+        let core: ShellCoreTui<HelloPlaceMap> = ShellCoreTui::new();
+        let scene = core.compute_paint_scene(80, 24);
+        let mut rects = Vec::new();
+        boxes_of(&scene, &mut rects);
+        assert_eq!(rects.len(), 9, "9 solved boxes");
+        for r in &rects {
+            assert!(r.w > 0 && r.h > 0, "a solved box has real extent: {r:?}");
+        }
+        // A 2-D map: the boxes must NOT all share one column/row (which is
+        // exactly what block-flow collapse produces).
+        let distinct_x = rects
+            .iter()
+            .map(|r| r.x)
+            .collect::<std::collections::HashSet<_>>();
+        let distinct_y = rects
+            .iter()
+            .map(|r| r.y)
+            .collect::<std::collections::HashSet<_>>();
+        assert!(distinct_x.len() > 1, "boxes spread across x: {rects:?}");
+        assert!(distinct_y.len() > 1, "boxes spread across y: {rects:?}");
     }
 }

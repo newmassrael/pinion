@@ -61,8 +61,8 @@ use std::io::Stdout;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
-use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{Border, BoxStyle};
+use pinion_core::scene::{ContainerNode, Scene, TextNode};
+use pinion_core::style::{Border, BoxStyle, SizeValue};
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, WidgetCore, WidgetStateName, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
@@ -173,13 +173,25 @@ impl WidgetCore for HelloButtonTui {
         // Label sits inside the button border:
         // button rect cell (2..18, 2..5) = pixel (16..144, 32..80);
         // label rect cell (4..15, 3..4) = pixel (32..120, 48..64).
-        label.rect = Rect::new(32, 48, 88, 16);
+        // R1344 §5.21 §5.41 — layout now runs on the TUI path too, so
+        // `rect` is a pure OUTPUT on both backends and the authored
+        // intent moves into `LayoutStyle`. This label sat at an
+        // absolute (32, 48) while its parent button sits at (16, 32);
+        // `absolute_position` is parent-content-relative, hence
+        // (16, 16). Chrome like this is genuinely absolute, so the
+        // R55.D.6 absolute override is the faithful translation — a
+        // flex re-design would change the demo, not preserve it.
+        label.layout.absolute_position = Some((16, 16));
+        label.layout.size.width = SizeValue::Px(88);
+        label.layout.size.height = SizeValue::Px(16);
         label.style = style::TextStyle::default();
 
         let mut button = ContainerNode::default();
         // Button rect = 16 cells × 3 rows so the border has room
         // for distinct corners + edges + interior text.
-        button.rect = Rect::new(16, 32, 128, 48);
+        button.layout.absolute_position = Some((16, 32));
+        button.layout.size.width = SizeValue::Px(128);
+        button.layout.size.height = SizeValue::Px(48);
         button.tag = Some(std::borrow::Cow::Borrowed(Self::tag()));
         button.style = BoxStyle::filled(bg_fill).with_border(Border::new(border_color, 1));
         button.children.push(Scene::Text(label));
@@ -187,11 +199,16 @@ impl WidgetCore for HelloButtonTui {
         let mut hint = TextNode::default();
         "Space/Enter/click = activate, d/e = disable/enable, Esc = quit"
             .clone_into(&mut hint.content);
-        hint.rect = Rect::new(16, 96, 512, 16);
+        hint.layout.absolute_position = Some((16, 96));
+        hint.layout.size.width = SizeValue::Px(512);
+        hint.layout.size.height = SizeValue::Px(16);
         hint.style = style::TextStyle::default();
 
         let mut container = ContainerNode::default();
-        container.rect = Rect::new(0, 0, 640, 240);
+        // The root fills its viewport; every child positions itself
+        // absolutely against it (see the label comment above).
+        container.layout.size.width = SizeValue::Percent(100);
+        container.layout.size.height = SizeValue::Percent(100);
         container.children.push(Scene::Container(button));
         container.children.push(Scene::Text(hint));
 
@@ -265,5 +282,52 @@ fn main() {
         // alternate screen.
         eprintln!("hello-button-tui: shell error: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HelloButtonTui;
+    use pinion_core::reactive::Owner;
+    use pinion_core::widgets::button::ButtonState;
+
+    /// R1344 §5.21 §5.41 — the chrome lands where the view asks it to.
+    ///
+    /// This view was migrated from authored `rect`s to
+    /// `LayoutStyle::absolute_position` when the TUI gained its layout
+    /// pass (layout overwrites `rect`, so the old coordinates would have
+    /// silently collapsed to the block-flow default). Nothing asserted the
+    /// example's geometry before, so the migration could have broken the
+    /// demo while every test stayed green — this pins it.
+    #[test]
+    fn r1344_button_chrome_lands_at_its_authored_cells() {
+        // The view drives a hover spring, so it needs a reactive scope —
+        // the shell supplies its `root_owner`; a test supplies its own.
+        let owner = Owner::new();
+        let buf =
+            owner.run(|| pinion_tui::render_one_frame::<HelloButtonTui>(ButtonState::Idle, 80, 24));
+        // Button box: absolute (16, 32) px = cell (2, 2), 128×48 px =
+        // 16×3 cells. The BoxStyle border draws the corners.
+        assert_eq!(
+            buf[(2, 2)].symbol(),
+            "\u{250c}",
+            "border top-left at cell (2,2)"
+        );
+        assert_eq!(
+            buf[(17, 2)].symbol(),
+            "\u{2510}",
+            "border top-right at cell (17,2)"
+        );
+        assert_eq!(
+            buf[(2, 4)].symbol(),
+            "\u{2514}",
+            "border bottom-left at cell (2,4)"
+        );
+        // Label: absolute (16, 16) INSIDE the button = cell (4, 3) on screen.
+        let label: String = (4..13).map(|x| buf[(x, 3)].symbol()).collect();
+        assert_eq!(label, "Click me!", "label centred inside the button box");
+        // Hint: absolute (16, 96) px = cell (2, 6).
+        let hint: String = (2..8).map(|x| buf[(x, 6)].symbol()).collect();
+        assert_eq!(hint, "Space/", "hint row starts at cell (2,6)");
     }
 }

@@ -6731,7 +6731,19 @@
         "test_fixtures doc: rust,no_run + # hidden imports (Rust canonical); compile-check 보존 (R588).",
         "R1013.1: GUI grid font policy decided in 5.37 (self-hosted, Nanum/Noto OFL), not an open question",
         "R1013.1: 5.36 system-fallback under-fills CJK ~70.8%; no 5.36 stopgap, resolves in 5.37",
-        "R1014.1: 'decided in 5.37' overclaimed - Nanum/Noto=5.37.1 fixtures, 5.37=parser, policy undecided"
+        "R1014.1: 'decided in 5.37' overclaimed - Nanum/Noto=5.37.1 fixtures, 5.37=parser, policy undecided",
+        "R1344 ratify: TextAlign wrap policy (R51.109 open item) = UAX #14 greedy wrap at rect.w, in cells",
+        "Pre-R1344 no pinion-widget-paint binding (Rect::default+taffy) could render on TUI; now they lay out",
+        "R1344: cell wrap reuses the pixel breaker via a measure closure (breaking is text-prop, not shaping)",
+        "R1344 reverse: TUI substrate DOES drive compute_layout; rect is an output on BOTH backends now",
+        "R51.124 'no longer drives compute_layout' described an absence, not a ratified call",
+        "Pre-R1344 backends read disjoint halves: Vello=LayoutStyle, TUI=authored rect — §2#6 in name only",
+        "R1344: unicode-width scores C0 controls 1, so cell_width MUST score 0 or a raw LF hits the TTY",
+        "R1344 scope: 'widget-paint could not render on TUI' is inferred from code (Rect::default+taffy)",
+        "R1344 carry: no test renders a pinion-widget-paint widget on TUI — demonstrate it before re-claiming",
+        "R1344 defer: TextMeasure conflates min/max-content (row-flex text overflows); both backends alike",
+        "R1344: two production breakers remain — parley (pixels) vs cell greedy; §5.37 is not the pixel path",
+        "R1344 defer: remainder cell-snapping (flex_grow splits floor off-grid, lose columns); no consumer"
       ],
       "alternatives_rejected": [
         {

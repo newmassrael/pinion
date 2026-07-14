@@ -57,8 +57,27 @@ pub use input::{
 };
 pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
 pub use layout::{
-    TextMeasure, compute_layout, compute_layout_with_scroll_dirty, compute_layout_with_text_measure,
+    TextBox, TextMeasure, compute_layout, compute_layout_with_scroll_dirty,
+    compute_layout_with_text_measure,
 };
 pub use paint_cache_stats::FragmentCacheStats;
+/// R1344 §5.36 — re-export of the cache every `compute_layout*` entry takes by
+/// `&mut`. Without it a caller cannot name the parameter type of this crate's
+/// own public functions.
+///
+/// This is API completeness, NOT dependency relief: `pinion-text` is a
+/// non-optional dependency of this crate, so every consumer already links
+/// parley / swash transitively — the re-export saves a `Cargo.toml` line, not
+/// weight.
+///
+/// **Known wart** (R1344, deferred): `compute_layout_with_text_measure` takes
+/// `&mut LayoutCache` unconditionally, even when the supplied [`TextMeasure`]
+/// never defers to parley. The TUI backend therefore constructs and carries a
+/// parley shaping LRU it provably never populates ([`TextBox`]-returning cell
+/// measure always answers `Some`). The textbook seam is `Option<&mut
+/// LayoutCache>`, or a measure that owns its own cache; both change every
+/// `compute_layout*` call site across both backends, so it wants its own round
+/// rather than a drive-by.
+pub use pinion_text::LayoutCache;
 pub use render_fidelity::{GridFidelity, RenderFidelity};
 pub use window::WindowRouter;

@@ -97,6 +97,42 @@ pub enum NodeContext {
 /// so a documentable, ratified seam reads better than an anonymous closure and can
 /// gain methods without becoming a second measure entry point. The single-method
 /// `(f32, f32)` shape is the single-line interim; expect it to widen.
+/// R1344 §5.36 §5.12 — a measured text box: its size plus the number of visual
+/// lines it resolved into.
+///
+/// `line_count` is not decoration — it is the §5.12 `LayoutNode.line_count`
+/// datum an AI client reads to verify text WITHOUT pixel inspection (§2 #7
+/// scene-as-data), and only the measure impl knows it. The pre-R1344 seam
+/// returned `(width, height)` and the caller hardcoded `1`, which was sound
+/// while the only impl declined anything that would wrap (R1070's
+/// `single_line_overflows`). The TUI's cell measure genuinely wraps, so a
+/// hardcoded `1` became an active lie: a node 5 rows tall reporting "1 line",
+/// with the two backends disagreeing on the exact datum §2 #7 exists to make
+/// backend-neutral.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextBox {
+    /// Measured width in unrounded px.
+    pub width: f32,
+    /// Measured height in unrounded px.
+    pub height: f32,
+    /// Visual lines the content resolved into against `max_width` — the
+    /// [`TextNode::line_count`](pinion_core::scene::TextNode::line_count)
+    /// semantic (soft breaks induced by the width count; hard breaks count).
+    pub line_count: u32,
+}
+
+impl TextBox {
+    /// A single-line box — the shape an impl that never wraps always returns.
+    #[must_use]
+    pub const fn single_line(width: f32, height: f32) -> Self {
+        Self {
+            width,
+            height,
+            line_count: 1,
+        }
+    }
+}
+
 pub trait TextMeasure {
     /// Measure a `Scene::Text` leaf, or return `None` to defer to the parley
     /// measure (every ineligible / declining case).
@@ -121,7 +157,7 @@ pub trait TextMeasure {
         runs: &[StyleRun],
         max_width: Option<u32>,
         caret_bearing: bool,
-    ) -> Option<(f32, f32)>;
+    ) -> Option<TextBox>;
 }
 
 /// Compute the layout of `scene` against the given viewport extents.
@@ -356,15 +392,20 @@ fn compute_layout_inner(
                     // ineligible, or a single line that would soft-wrap — is the
                     // unchanged parley measure, so `text_measure == None` is
                     // byte-identical to the pre-R1070 path.
-                    if let Some((w, h)) = text_measure.and_then(|tm| {
+                    if let Some(measured) = text_measure.and_then(|tm| {
                         tm.measure_text(content, style, runs, max_width, *caret_bearing)
                     }) {
-                        // The §5.37 arm renders exactly one line by construction.
-                        text_lines.insert(node_id, 1);
+                        // R1344 §5.12 — the impl reports its own line count.
+                        // Pre-R1344 this hardcoded `1` on the premise that "the
+                        // §5.37 arm renders exactly one line by construction" —
+                        // true of R1070's engine (it declines anything that would
+                        // wrap), false of any measure that wraps, so the premise
+                        // belongs to the impl, not to this call site.
+                        text_lines.insert(node_id, measured.line_count);
                         // R47.7.6 integer pixel snapping (see the parley branch).
                         TaffySize {
-                            width: w.ceil(),
-                            height: h.ceil(),
+                            width: measured.width.ceil(),
+                            height: measured.height.ceil(),
                         }
                     } else {
                         let layout = cache.layout_with_runs(content, style, runs, max_width);

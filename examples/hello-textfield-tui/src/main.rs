@@ -51,8 +51,8 @@ use std::io::Stdout;
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
-use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{Border, BoxStyle};
+use pinion_core::scene::{ContainerNode, Scene, TextNode};
+use pinion_core::style::{Border, BoxStyle, SizeValue};
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::{Color, Frame, WidgetCore, WidgetStateName, style};
@@ -85,8 +85,8 @@ const HINT_TOP_PX: u32 = 128; // row 8
 const TEXT_ROW_HEIGHT_PX: u32 = 16;
 const TEXT_BLOCK_WIDTH_PX: u32 = 640;
 
-const ROOT_WIDTH_PX: u32 = 640;
-const ROOT_HEIGHT_PX: u32 = 240;
+// R1344 §5.21 — the root's fixed page size is retired: it now fills the
+// terminal (`Percent(100)`) and children position absolutely against it.
 
 const TITLE_TOP_PX: u32 = 16; // row 1
 
@@ -313,12 +313,17 @@ impl WidgetCore for HelloTextFieldTui {
         // the IME provisional run.
         let mut text_node = TextNode::default();
         effective_text.clone_into(&mut text_node.content);
-        text_node.rect = Rect::new(
-            FIELD_LEFT_PX + TEXT_INNER_PAD_PX,
-            FIELD_TOP_PX,
-            FIELD_WIDTH_PX - TEXT_INNER_PAD_PX,
-            CELL_PX_Y,
-        );
+        // R1344 §5.21 §5.41 — layout runs on the TUI path now, so `rect`
+        // is a pure OUTPUT on both backends and the authored intent moves
+        // into `LayoutStyle`. These overlays (caret / selection / preedit
+        // bands) are genuinely absolute — they sit at a computed cell
+        // column — so `absolute_position` (R55.D.6) is the faithful
+        // translation. It is parent-content-relative, and this node's
+        // parent `field_container` sits at (FIELD_LEFT_PX, FIELD_TOP_PX),
+        // so each child's authored absolute x/y loses that origin.
+        text_node.layout.absolute_position = Some((TEXT_INNER_PAD_PX, 0));
+        text_node.layout.size.width = SizeValue::Px(FIELD_WIDTH_PX - TEXT_INNER_PAD_PX);
+        text_node.layout.size.height = SizeValue::Px(CELL_PX_Y);
         text_node.style = style::TextStyle::default();
 
         // R56.1.f.3 §5.22 — selection band. Reads selection_range
@@ -334,8 +339,9 @@ impl WidgetCore for HelloTextFieldTui {
         // maps to a single-row box with `+`/`-`/`|` ASCII border per
         // its conventions.
         let mut field_container = ContainerNode::default();
-        field_container.rect =
-            Rect::new(FIELD_LEFT_PX, FIELD_TOP_PX, FIELD_WIDTH_PX, FIELD_HEIGHT_PX);
+        field_container.layout.absolute_position = Some((FIELD_LEFT_PX, FIELD_TOP_PX));
+        field_container.layout.size.width = SizeValue::Px(FIELD_WIDTH_PX);
+        field_container.layout.size.height = SizeValue::Px(FIELD_HEIGHT_PX);
         field_container.tag = Some(Cow::Borrowed(TF_TAG));
         field_container.style =
             BoxStyle::filled(field_fill).with_border(Border::new(border_color, 1));
@@ -361,12 +367,14 @@ impl WidgetCore for HelloTextFieldTui {
                 let sel_start_col = cell_column_for_byte_offset(&effective_text, sel_start);
                 let sel_end_col = cell_column_for_byte_offset(&effective_text, sel_end);
                 let sel_cells = sel_end_col.saturating_sub(sel_start_col);
-                let sel_left_px = FIELD_LEFT_PX
-                    .saturating_add(TEXT_INNER_PAD_PX)
-                    .saturating_add(sel_start_col.saturating_mul(CELL_PX_X));
+                // Relative to `field_container` (see the text-node note).
+                let sel_left_px =
+                    TEXT_INNER_PAD_PX.saturating_add(sel_start_col.saturating_mul(CELL_PX_X));
                 let sel_width_px = sel_cells.saturating_mul(CELL_PX_X);
                 let mut sel_band = ContainerNode::default();
-                sel_band.rect = Rect::new(sel_left_px, FIELD_TOP_PX, sel_width_px, CELL_PX_Y);
+                sel_band.layout.absolute_position = Some((sel_left_px, 0));
+                sel_band.layout.size.width = SizeValue::Px(sel_width_px);
+                sel_band.layout.size.height = SizeValue::Px(CELL_PX_Y);
                 sel_band.style = BoxStyle::filled(Color::rgb(0x20, 0x4a, 0x7a));
                 field_container.children.push(Scene::Container(sel_band));
             }
@@ -390,12 +398,14 @@ impl WidgetCore for HelloTextFieldTui {
                 let pre_start_col = cell_column_for_byte_offset(&effective_text, pre_start);
                 let pre_end_col = cell_column_for_byte_offset(&effective_text, pre_end);
                 let pre_cells = pre_end_col.saturating_sub(pre_start_col);
-                let pre_left_px = FIELD_LEFT_PX
-                    .saturating_add(TEXT_INNER_PAD_PX)
-                    .saturating_add(pre_start_col.saturating_mul(CELL_PX_X));
+                // Relative to `field_container` (see the text-node note).
+                let pre_left_px =
+                    TEXT_INNER_PAD_PX.saturating_add(pre_start_col.saturating_mul(CELL_PX_X));
                 let pre_width_px = pre_cells.saturating_mul(CELL_PX_X);
                 let mut pre_band = ContainerNode::default();
-                pre_band.rect = Rect::new(pre_left_px, FIELD_TOP_PX, pre_width_px, CELL_PX_Y);
+                pre_band.layout.absolute_position = Some((pre_left_px, 0));
+                pre_band.layout.size.width = SizeValue::Px(pre_width_px);
+                pre_band.layout.size.height = SizeValue::Px(CELL_PX_Y);
                 pre_band.style = BoxStyle::filled(Color::rgb(0x7a, 0x52, 0x20));
                 field_container.children.push(Scene::Container(pre_band));
             }
@@ -417,10 +427,12 @@ impl WidgetCore for HelloTextFieldTui {
             let mut cursor_node = TextNode::default();
             CURSOR_GLYPH.clone_into(&mut cursor_node.content);
             let cursor_col = cell_column_for_byte_offset(&effective_text, visual_caret_byte);
-            let cursor_left_px = FIELD_LEFT_PX
-                .saturating_add(TEXT_INNER_PAD_PX)
-                .saturating_add(cursor_col.saturating_mul(CELL_PX_X));
-            cursor_node.rect = Rect::new(cursor_left_px, FIELD_TOP_PX, CELL_PX_X, CELL_PX_Y);
+            // Relative to `field_container` (see the text-node note).
+            let cursor_left_px =
+                TEXT_INNER_PAD_PX.saturating_add(cursor_col.saturating_mul(CELL_PX_X));
+            cursor_node.layout.absolute_position = Some((cursor_left_px, 0));
+            cursor_node.layout.size.width = SizeValue::Px(CELL_PX_X);
+            cursor_node.layout.size.height = SizeValue::Px(CELL_PX_Y);
             cursor_node.style = style::TextStyle::default();
             field_container.children.push(Scene::Text(cursor_node));
         }
@@ -429,12 +441,11 @@ impl WidgetCore for HelloTextFieldTui {
         // Vello sibling's "TextField" header.
         let mut title = TextNode::default();
         "TextField (TUI)".clone_into(&mut title.content);
-        title.rect = Rect::new(
-            FIELD_LEFT_PX,
-            TITLE_TOP_PX,
-            TEXT_BLOCK_WIDTH_PX,
-            TEXT_ROW_HEIGHT_PX,
-        );
+        // Direct child of `root` (origin 0,0), so the authored
+        // absolute coordinate carries over unchanged.
+        title.layout.absolute_position = Some((FIELD_LEFT_PX, TITLE_TOP_PX));
+        title.layout.size.width = SizeValue::Px(TEXT_BLOCK_WIDTH_PX);
+        title.layout.size.height = SizeValue::Px(TEXT_ROW_HEIGHT_PX);
         title.style = style::TextStyle::default();
 
         // Status line — text-only mirror so the AI side can verify
@@ -461,28 +472,29 @@ impl WidgetCore for HelloTextFieldTui {
             text,
         );
         status_str.clone_into(&mut status.content);
-        status.rect = Rect::new(
-            FIELD_LEFT_PX,
-            STATUS_TOP_PX,
-            TEXT_BLOCK_WIDTH_PX,
-            TEXT_ROW_HEIGHT_PX,
-        );
+        // Direct child of `root` (origin 0,0), so the authored
+        // absolute coordinate carries over unchanged.
+        status.layout.absolute_position = Some((FIELD_LEFT_PX, STATUS_TOP_PX));
+        status.layout.size.width = SizeValue::Px(TEXT_BLOCK_WIDTH_PX);
+        status.layout.size.height = SizeValue::Px(TEXT_ROW_HEIGHT_PX);
         status.style = style::TextStyle::default();
 
         // Hint line — keyboard cheatsheet, single line so the
         // paint walker's row floor does not split it.
         let mut hint = TextNode::default();
         "Type/Backspace/Arrow/Home/End/Delete, d/e disable, Esc quit".clone_into(&mut hint.content);
-        hint.rect = Rect::new(
-            FIELD_LEFT_PX,
-            HINT_TOP_PX,
-            TEXT_BLOCK_WIDTH_PX,
-            TEXT_ROW_HEIGHT_PX,
-        );
+        // Direct child of `root` (origin 0,0), so the authored
+        // absolute coordinate carries over unchanged.
+        hint.layout.absolute_position = Some((FIELD_LEFT_PX, HINT_TOP_PX));
+        hint.layout.size.width = SizeValue::Px(TEXT_BLOCK_WIDTH_PX);
+        hint.layout.size.height = SizeValue::Px(TEXT_ROW_HEIGHT_PX);
         hint.style = style::TextStyle::default();
 
         let mut root = ContainerNode::default();
-        root.rect = Rect::new(0, 0, ROOT_WIDTH_PX, ROOT_HEIGHT_PX);
+        // Root fills its viewport; every child positions itself
+        // absolutely against it.
+        root.layout.size.width = SizeValue::Percent(100);
+        root.layout.size.height = SizeValue::Percent(100);
         root.children.push(Scene::Text(title));
         root.children.push(Scene::Container(field_container));
         root.children.push(Scene::Text(status));

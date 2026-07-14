@@ -17,7 +17,7 @@
 //! paint arm ([`crate::paint_adapter::to_vello_with_text_engine`]) consumes a
 //! [`SelfHostedTextEngine`] built from it; the parley path stays the default.
 
-use crate::layout::TextMeasure;
+use crate::layout::{TextBox, TextMeasure};
 use pinion_core::scene::StyleRun;
 use pinion_core::style::{LineHeight, TextAlign, TextStyle};
 use pinion_text::{CaretRect, TextLayout, VisualLineMetric};
@@ -213,7 +213,7 @@ impl TextMeasure for SelfHostedTextEngine {
         runs: &[StyleRun],
         max_width: Option<u32>,
         caret_bearing: bool,
-    ) -> Option<(f32, f32)> {
+    ) -> Option<TextBox> {
         if !self_hosted_text_eligible(content, style, runs, caret_bearing) {
             return None;
         }
@@ -246,7 +246,12 @@ impl TextMeasure for SelfHostedTextEngine {
             reason = "a single line box height is a small positive px value — fits f32"
         )]
         let height = metrics.height_px as f32;
-        Some((shaped.advance, height))
+        // R1344 §5.12 — single-line BY CONSTRUCTION: `self_hosted_text_eligible`
+        // rejects hard breaks and the `single_line_overflows` check above
+        // declines anything that would soft-wrap, so this arm only ever measures
+        // one line. That premise now travels WITH the impl that holds it rather
+        // than being assumed by the layout caller.
+        Some(TextBox::single_line(shaped.advance, height))
     }
 }
 
@@ -572,7 +577,7 @@ mod tests {
         let engine = noto_engine();
         let f = engine.font();
         let px = 20.0_f32;
-        let (_w, h) = engine
+        let measured = engine
             .measure_text(
                 "Measure",
                 &TextStyle::new().with_size_px(20),
@@ -581,6 +586,11 @@ mod tests {
                 false,
             )
             .expect("eligible single-line text measures via §5.37");
+        assert_eq!(
+            measured.line_count, 1,
+            "R1344 §5.12 — the §5.37 arm is single-line by construction",
+        );
+        let h = measured.height;
         let upem = f64::from(f.units_per_em());
         let expected_h = (f64::from(f.ascender()) - f64::from(f.descender())
             + f64::from(f.line_gap()))

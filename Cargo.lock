@@ -4871,6 +4871,7 @@ version = "0.0.1"
 dependencies = [
  "pinion-a11y",
  "pinion-core",
+ "pinion-runtime",
  "serde",
  "serde_json",
 ]
@@ -5030,6 +5031,7 @@ dependencies = [
  "pinion-core",
  "pinion-rpc",
  "pinion-runtime",
+ "pinion-text-unicode",
  "pinion-tui",
  "ratatui",
  "tokio",

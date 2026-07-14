@@ -6,38 +6,43 @@
 //! paragraph into logical lines so each line is as full as possible without
 //! exceeding the width — the classic greedy (first-fit) line breaker.
 //!
-//! Two entry points share one greedy core (`greedy_break`), differing only in
-//! how each segment's advance is measured: [`wrap_paragraph`] measures in a
-//! single font, [`wrap_paragraph_with_fallback`] measures across a font stack
-//! with per-codepoint fallback (§5.37.10) so a mixed-script paragraph wraps at
-//! its true advances rather than the primary font's `.notdef` widths.
+//! Two entry points share one greedy core, differing only in how each segment's
+//! advance is measured: [`wrap_paragraph`] measures in a single font,
+//! [`wrap_paragraph_with_fallback`] measures across a font stack with
+//! per-codepoint fallback (§5.37.10) so a mixed-script paragraph wraps at its
+//! true advances rather than the primary font's `.notdef` widths.
+//!
+//! R1344 §5.41 — that core is no longer here. Both entry points are now thin
+//! `measure`-closure wrappers over
+//! [`pinion_text_unicode::wrap_paragraph_with_measure`], which owns the UAX #14
+//! greedy breaker for every measurement model. The lift's forcing consumer was
+//! the TUI backend (`pinion_tui::text_layout`), which wraps in terminal cells:
+//! break opportunities are font-independent, so a second breaker would have been
+//! pure duplication. This module keeps only the font-specific half — how wide a
+//! segment is — plus the re-export of [`LineRange`] for existing callers.
 //!
 //! Lines are byte ranges in **logical** order. Visual reordering and per-line
 //! shaping are a later step ([`crate::shape_paragraph`] applied per line, with
 //! paragraph-context BIDI levels); the line *width* used here is the sum of
 //! advances, which is reorder-invariant, so the break points are correct
-//! regardless of direction. Mandatory breaks (UAX #14 LB4/LB5 — hard line
-//! separators) always end a line. A single segment wider than `max_width` with
-//! no interior opportunity is emitted on its own (overflow) line rather than
-//! looping. Trailing-whitespace hang (the UAX #14 width refinement that lets a
-//! line's trailing spaces exceed the width) and Knuth-Plass optimal breaking are
-//! deferred; production paint is still §5.36 swash, so this is a test
-//! forcing-consumer until the paint path wires the self-hosted layout.
+//! regardless of direction.
+//!
+//! The breaker's own behaviour and its honest deferrals (trailing-whitespace
+//! hang, Knuth-Plass) are documented with the breaker — see
+//! [`pinion_text_unicode::wrap`]. Production **pixel** paint is still §5.36
+//! parley/swash, so these two entry points remain a test forcing-consumer until
+//! the paint path wires the self-hosted layout; the cell backend
+//! (`pinion_tui::text_layout`) is the breaker's first production consumer.
 
 use crate::Font;
 use crate::fallback::shape_with_fallback;
 use crate::shape::shape_run;
-use pinion_text_unicode::{BreakOpportunity, line_break_opportunities};
+use pinion_text_unicode::wrap_paragraph_with_measure;
 
-/// One laid-out line: a byte range `start..end` (`end` exclusive) into the
-/// source paragraph, in logical order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct LineRange {
-    /// Byte offset of the line's first codepoint.
-    pub start: usize,
-    /// Byte offset just past the line's last codepoint.
-    pub end: usize,
-}
+/// R1344 §5.37.7 — re-export of the lifted line range so existing
+/// `pinion_text_font::LineRange` callers are unaffected by the move to
+/// [`pinion_text_unicode`].
+pub use pinion_text_unicode::LineRange;
 
 /// Greedily break `paragraph` into lines no wider than `max_width` (device px at
 /// `px_per_em`), at UAX #14 opportunities (§5.37.7). Returns the logical line
@@ -51,14 +56,9 @@ pub fn wrap_paragraph(
     px_per_em: f32,
     max_width: f32,
 ) -> Vec<LineRange> {
-    let breaks = line_break_opportunities(paragraph);
-    if breaks.is_empty() {
-        return Vec::new();
-    }
-    let adv_to = cumulative_advances(paragraph, &breaks, |seg| {
+    wrap_paragraph_with_measure(paragraph, max_width, |seg| {
         shape_run(font, seg, px_per_em).advance
-    });
-    greedy_break(&breaks, &adv_to, max_width)
+    })
 }
 
 /// Greedily break `paragraph` into lines no wider than `max_width`, measuring
@@ -83,93 +83,12 @@ pub fn wrap_paragraph_with_fallback(
     px_per_em: f32,
     max_width: f32,
 ) -> Vec<LineRange> {
-    let breaks = line_break_opportunities(paragraph);
-    if fonts.is_empty() || breaks.is_empty() {
+    if fonts.is_empty() {
         return Vec::new();
     }
-    let adv_to = cumulative_advances(paragraph, &breaks, |seg| {
+    wrap_paragraph_with_measure(paragraph, max_width, |seg| {
         shape_with_fallback(fonts, seg, px_per_em).advance
-    });
-    greedy_break(&breaks, &adv_to, max_width)
-}
-
-/// Cumulative advance to each break offset, segment by segment. `adv_to[i]` is
-/// the summed advance of `paragraph[0..breaks[i].offset]`, each inter-break
-/// segment measured once by `measure` (O(n) shaping). Kerning is dropped at
-/// every interior opportunity within a line (each segment is measured
-/// independently), so the summed width is a slight under-estimate vs a
-/// single-run shape; for typical fonts this is sub-pixel, and at the chosen
-/// break point it is exact. The `measure` closure abstracts the font model —
-/// a single font ([`wrap_paragraph`]) or a fallback stack
-/// ([`wrap_paragraph_with_fallback`]).
-fn cumulative_advances(
-    paragraph: &str,
-    breaks: &[BreakOpportunity],
-    measure: impl Fn(&str) -> f32,
-) -> Vec<f32> {
-    let mut adv_to: Vec<f32> = Vec::with_capacity(breaks.len());
-    let mut seg_start = 0usize;
-    let mut cumulative = 0.0_f32;
-    for bp in breaks {
-        cumulative += measure(&paragraph[seg_start..bp.offset]);
-        adv_to.push(cumulative);
-        seg_start = bp.offset;
-    }
-    adv_to
-}
-
-/// The greedy (first-fit) line breaker, shared by [`wrap_paragraph`] and
-/// [`wrap_paragraph_with_fallback`]: only the per-segment advance differs between
-/// them, so the break decision — width check, mandatory-break handling, overflow
-/// fallback — lives here as the single SSOT. `adv_to[i]` is the cumulative
-/// advance at `breaks[i]`; a line's width is `adv_to[i] - base`. The width check
-/// precedes the mandatory-ness check so an optional break that fits is taken
-/// before a following mandatory break whose segment would overflow.
-fn greedy_break(breaks: &[BreakOpportunity], adv_to: &[f32], max_width: f32) -> Vec<LineRange> {
-    let mut lines: Vec<LineRange> = Vec::new();
-    let mut line_start = 0usize;
-    let mut base = 0.0_f32; // cumulative advance at the current line's start
-    let mut last_fit: Option<usize> = None; // break index that fits the current line
-    let mut i = 0usize;
-    while i < breaks.len() {
-        let bp = breaks[i];
-        let width = adv_to[i] - base;
-        if width <= max_width {
-            if bp.mandatory {
-                lines.push(LineRange {
-                    start: line_start,
-                    end: bp.offset,
-                });
-                line_start = bp.offset;
-                base = adv_to[i];
-                last_fit = None;
-            } else {
-                last_fit = Some(i);
-            }
-            i += 1;
-        } else if let Some(fit) = last_fit {
-            // Overflow: end the line at the last fitting opportunity, then
-            // re-examine the current break on the next line.
-            lines.push(LineRange {
-                start: line_start,
-                end: breaks[fit].offset,
-            });
-            line_start = breaks[fit].offset;
-            base = adv_to[fit];
-            last_fit = None;
-        } else {
-            // Overflow with no earlier opportunity: emit this segment alone.
-            lines.push(LineRange {
-                start: line_start,
-                end: bp.offset,
-            });
-            line_start = bp.offset;
-            base = adv_to[i];
-            last_fit = None;
-            i += 1;
-        }
-    }
-    lines
+    })
 }
 
 #[cfg(test)]

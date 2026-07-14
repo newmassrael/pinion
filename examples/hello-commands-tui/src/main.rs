@@ -60,8 +60,8 @@ use std::sync::Arc;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
-use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{Border, BoxStyle};
+use pinion_core::scene::{ContainerNode, Scene, TextNode};
+use pinion_core::style::{Border, BoxStyle, SizeValue};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Command, Frame, Intent, WidgetCore, WidgetStateName, style};
 use pinion_runtime::{Handler, HandlerFuture, HandlerRegistry};
@@ -120,11 +120,24 @@ impl WidgetCore for HelloCommandsTui {
 
         let mut label = TextNode::default();
         label_str.clone_into(&mut label.content);
-        label.rect = Rect::new(32, 48, 88, 16);
+        // R1344 §5.21 §5.41 — layout runs on the TUI path now, so
+        // `rect` is a pure OUTPUT on both backends; the authored
+        // intent moves to `LayoutStyle`. These coordinates were
+        // absolute screen px (the pre-R1344 walker never accumulated
+        // a parent offset), and `absolute_position` is
+        // parent-content-relative — hence the child offsets below are
+        // the authored value minus the parent's origin. This chrome is
+        // genuinely absolute, so the R55.D.6 override is the faithful
+        // translation rather than a flex re-design.
+        label.layout.absolute_position = Some((16, 16));
+        label.layout.size.width = SizeValue::Px(88);
+        label.layout.size.height = SizeValue::Px(16);
         label.style = style::TextStyle::default();
 
         let mut button = ContainerNode::default();
-        button.rect = Rect::new(16, 32, 128, 48);
+        button.layout.absolute_position = Some((16, 32));
+        button.layout.size.width = SizeValue::Px(128);
+        button.layout.size.height = SizeValue::Px(48);
         button.tag = Some(std::borrow::Cow::Borrowed(Self::tag()));
         let bg_fill = match state {
             ButtonState::Idle | ButtonState::Hover => Color::rgb(0xe0, 0xe0, 0xe8),
@@ -140,11 +153,16 @@ impl WidgetCore for HelloCommandsTui {
 
         let mut hint = TextNode::default();
         "PINION_TUI_LOG=/tmp/cmd.log to see traces, Esc = quit".clone_into(&mut hint.content);
-        hint.rect = Rect::new(16, 96, 512, 16);
+        hint.layout.absolute_position = Some((16, 96));
+        hint.layout.size.width = SizeValue::Px(512);
+        hint.layout.size.height = SizeValue::Px(16);
         hint.style = style::TextStyle::default();
 
         let mut container = ContainerNode::default();
-        container.rect = Rect::new(0, 0, 640, 240);
+        // Root fills its viewport; children position absolutely
+        // against it (see the note above).
+        container.layout.size.width = SizeValue::Percent(100);
+        container.layout.size.height = SizeValue::Percent(100);
         container.children.push(Scene::Container(button));
         container.children.push(Scene::Text(hint));
 
@@ -252,5 +270,38 @@ fn main() {
     if let Err(e) = pinion_tui::run_with_handlers::<HelloCommandsTui>(build_handler_registry()) {
         eprintln!("hello-commands-tui: shell error: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HelloCommandsTui;
+    use pinion_core::reactive::Owner;
+    use pinion_core::widgets::button::ButtonState;
+
+    /// R1344 §5.21 §5.41 — the chrome lands where the view asks it to.
+    /// See the sibling test in `hello-button-tui` for the rationale.
+    #[test]
+    fn r1344_commands_chrome_lands_at_its_authored_cells() {
+        let owner = Owner::new();
+        let buf = owner
+            .run(|| pinion_tui::render_one_frame::<HelloCommandsTui>(ButtonState::Idle, 80, 24));
+        // Button box: absolute (16, 32) px = cell (2, 2); 128×48 px = 16×3 cells.
+        assert_eq!(
+            buf[(2, 2)].symbol(),
+            "\u{250c}",
+            "border top-left at cell (2,2)"
+        );
+        assert_eq!(
+            buf[(17, 2)].symbol(),
+            "\u{2510}",
+            "border top-right at cell (17,2)"
+        );
+        // Label: absolute (16, 16) INSIDE the button = cell (4, 3). The
+        // label is wider than the box, so it clips at the box edge —
+        // which is itself the R1344 rect.w bound working.
+        assert_eq!(buf[(4, 3)].symbol(), "C", "label starts inside the button");
+        // Hint: absolute (16, 96) px = cell (2, 6).
+        assert_eq!(buf[(2, 6)].symbol(), "P", "hint row starts at cell (2,6)");
     }
 }

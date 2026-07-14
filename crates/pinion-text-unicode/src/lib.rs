@@ -194,6 +194,9 @@ pub use bidi::{BidiClass, bidi_class, is_removed_by_x9, reorder_visual, resolved
 pub mod linebreak;
 pub use linebreak::{BreakOpportunity, LineBreak, line_break_class, line_break_opportunities};
 
+pub mod wrap;
+pub use wrap::{LineRange, trim_trailing_break, wrap_paragraph_with_measure};
+
 pub mod script;
 pub use script::{Script, ScriptRun, script, script_runs};
 

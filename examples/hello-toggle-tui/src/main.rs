@@ -53,8 +53,8 @@ use std::io::Stdout;
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
-use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{Border, BoxStyle};
+use pinion_core::scene::{ContainerNode, Scene, TextNode};
+use pinion_core::style::{Border, BoxStyle, SizeValue};
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{Color, Frame, WidgetCore, WidgetStateName, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
@@ -127,12 +127,25 @@ impl WidgetCore for HelloToggleTui {
         // Label sits inside the toggle border:
         // toggle rect cell (2..12, 2..5) = pixel (16..96, 32..80);
         // label rect cell (3..8, 3..4) = pixel (24..64, 48..64).
-        label.rect = Rect::new(24, 48, 40, 16);
+        // R1344 §5.21 §5.41 — layout runs on the TUI path now, so
+        // `rect` is a pure OUTPUT on both backends; the authored
+        // intent moves to `LayoutStyle`. These coordinates were
+        // absolute screen px (the pre-R1344 walker never accumulated
+        // a parent offset), and `absolute_position` is
+        // parent-content-relative — hence the child offsets below are
+        // the authored value minus the parent's origin. This chrome is
+        // genuinely absolute, so the R55.D.6 override is the faithful
+        // translation rather than a flex re-design.
+        label.layout.absolute_position = Some((8, 16));
+        label.layout.size.width = SizeValue::Px(40);
+        label.layout.size.height = SizeValue::Px(16);
         label.style = style::TextStyle::default();
 
         let mut toggle_box = ContainerNode::default();
         // Toggle rect = 10 cells × 3 rows so the border has room.
-        toggle_box.rect = Rect::new(16, 32, 80, 48);
+        toggle_box.layout.absolute_position = Some((16, 32));
+        toggle_box.layout.size.width = SizeValue::Px(80);
+        toggle_box.layout.size.height = SizeValue::Px(48);
         toggle_box.tag = Some(Cow::Borrowed(Self::tag()));
         toggle_box.style = BoxStyle::filled(bg_fill).with_border(Border::new(border_color, 1));
         toggle_box.children.push(Scene::Text(label));
@@ -144,17 +157,24 @@ impl WidgetCore for HelloToggleTui {
             if on { "On" } else { "Off" },
         );
         status_str.clone_into(&mut status.content);
-        status.rect = Rect::new(16, 96, 400, 16);
+        status.layout.absolute_position = Some((16, 96));
+        status.layout.size.width = SizeValue::Px(400);
+        status.layout.size.height = SizeValue::Px(16);
         status.style = style::TextStyle::default();
 
         let mut hint = TextNode::default();
         "Space/Enter/click = toggle, d/e = disable/enable, Esc = quit"
             .clone_into(&mut hint.content);
-        hint.rect = Rect::new(16, 128, 480, 16);
+        hint.layout.absolute_position = Some((16, 128));
+        hint.layout.size.width = SizeValue::Px(480);
+        hint.layout.size.height = SizeValue::Px(16);
         hint.style = style::TextStyle::default();
 
         let mut container = ContainerNode::default();
-        container.rect = Rect::new(0, 0, 640, 240);
+        // Root fills its viewport; children position absolutely
+        // against it (see the note above).
+        container.layout.size.width = SizeValue::Percent(100);
+        container.layout.size.height = SizeValue::Percent(100);
         container.children.push(Scene::Container(toggle_box));
         container.children.push(Scene::Text(status));
         container.children.push(Scene::Text(hint));
@@ -224,5 +244,43 @@ fn main() {
     if let Err(e) = pinion_tui::run::<HelloToggleTui>() {
         eprintln!("hello-toggle-tui: shell error: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HelloToggleTui;
+    use pinion_core::reactive::Owner;
+    use pinion_core::widgets::toggle::ToggleState;
+
+    /// R1344 §5.21 §5.41 — the chrome lands where the view asks it to.
+    ///
+    /// Migrated from authored `rect`s to `LayoutStyle::absolute_position`
+    /// when the TUI gained its layout pass (layout overwrites `rect`, so
+    /// the old coordinates would have silently collapsed to block flow).
+    /// Nothing asserted this example's geometry before, so the migration
+    /// could have broken the demo with every test still green.
+    #[test]
+    fn r1344_toggle_chrome_lands_at_its_authored_cells() {
+        let owner = Owner::new();
+        let buf = owner.run(|| {
+            pinion_tui::render_one_frame::<HelloToggleTui>((ToggleState::Idle, false), 80, 24)
+        });
+        // Toggle box: absolute (16, 32) px = cell (2, 2); 80×48 px = 10×3 cells.
+        assert_eq!(
+            buf[(2, 2)].symbol(),
+            "\u{250c}",
+            "border top-left at cell (2,2)"
+        );
+        assert_eq!(
+            buf[(11, 2)].symbol(),
+            "\u{2510}",
+            "border top-right at cell (11,2)"
+        );
+        // Label: absolute (8, 16) INSIDE the box = screen (24, 48) = cell (3, 3).
+        let label: String = (3..8).map(|x| buf[(x, 3)].symbol()).collect();
+        assert_eq!(label, " OFF ", "label sits inside the toggle box");
+        // Status: absolute (16, 96) px = cell (2, 6).
+        assert_eq!(buf[(2, 6)].symbol(), "s", "status row starts at cell (2,6)");
     }
 }

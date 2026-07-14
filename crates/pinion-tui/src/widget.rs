@@ -19,9 +19,11 @@
 
 use pinion_core::Frame;
 use pinion_core::renderer::WidgetRenderer;
+use pinion_runtime::LayoutCache;
 use ratatui::buffer::Buffer;
 
 use crate::TuiContext;
+use crate::text_layout::layout_for_terminal;
 
 /// R51.121 §5.41 — TUI-specific application-side widget binding.
 ///
@@ -65,14 +67,26 @@ pub trait WidgetViewTui: pinion_a11y::WidgetA11y {
 /// `cols` / `rows` are cell dimensions; the resulting buffer is
 /// sized to match. The view fn receives the standard
 /// `pinion_core::Frame` (a ZST sentinel — pinion-core's view-fn
-/// surface intentionally carries no per-frame dimensions, the
-/// scene's `rect` fields are pixel-absolute), and the paint walker
-/// (`paint::to_buffer`) maps pixel coords to cells via the R968
-/// §5.41 `CellMetric` (default 8×16).
+/// surface intentionally carries no per-frame dimensions; layout
+/// resolves the geometry).
+///
+/// R1344 §5.41 §5.36 — runs the **layout pass** before painting, exactly
+/// as [`crate::ShellCoreTui::compute_paint_scene`] does. Both entry points
+/// must resolve a scene identically: a view authors its intent in
+/// `LayoutStyle` and `rect` is a pure output, so painting a raw `V::view`
+/// result would render an unresolved scene (every `rect` at its
+/// `Default`) and diverge from what the real shell shows. Pre-R1344 this
+/// helper painted the view directly, which only worked while the TUI ran
+/// no layout at all.
+///
+/// The cache is per-call: this is a one-shot helper, so there is no frame
+/// to amortise across.
 #[must_use]
 pub fn render_one_frame<V: WidgetViewTui>(state: V::State, cols: u16, rows: u16) -> Buffer {
     let frame = Frame::new();
-    let scene = V::view(state, &frame);
+    let mut scene = V::view(state, &frame);
+    let mut cache = LayoutCache::new();
+    let _scroll_dirty = layout_for_terminal(&mut scene, cols, rows, &mut cache);
     let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, cols, rows));
     crate::paint::to_buffer(&scene, &mut buf);
     buf
@@ -83,7 +97,8 @@ mod tests {
     use super::*;
     use pinion_core::WidgetCore;
     use pinion_core::external::External;
-    use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+    use pinion_core::scene::{ContainerNode, Scene, TextNode};
+    use pinion_core::style::SizeValue;
 
     /// A minimal `WidgetViewTui` impl for testing the helper +
     /// trait shape end-to-end without a real SCXML widget.
@@ -147,11 +162,19 @@ mod tests {
             // Render the counter at the upper-left cell. The helper
             // converts pixel coords → cells via the standard 8×16
             // baseline, so pixel (8, 0) lands at cell (1, 0).
+            // R1344 §5.21 §5.41 — `render_one_frame` runs the layout
+            // pass, so `rect` is an OUTPUT: the offset has to be
+            // authored in `LayoutStyle` or taffy overwrites it. This
+            // fixture wants the text one cell in from the left, which
+            // `absolute_position` states directly.
             let mut text = TextNode::default();
-            text.rect = Rect::new(8, 0, 100, 16);
+            text.layout.absolute_position = Some((8, 0));
+            text.layout.size.width = SizeValue::Px(100);
+            text.layout.size.height = SizeValue::Px(16);
             text.content = format!("counter={}", state.counter);
             let mut container = ContainerNode::default();
-            container.rect = Rect::new(0, 0, 320, 160);
+            container.layout.size.width = SizeValue::Percent(100);
+            container.layout.size.height = SizeValue::Percent(100);
             container.children.push(Scene::Text(text));
             Scene::Container(container)
         }

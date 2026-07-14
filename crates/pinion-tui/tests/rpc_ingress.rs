@@ -34,7 +34,7 @@ fn r670_dispatch_rpc_scene_snapshot_returns_json_with_external_node() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     // Prime the paint snapshot so `scene/snapshot` from: paint works
     // identically to the Vello side post-first-paint.
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
 
     let request = r#"{"jsonrpc":"2.0","id":1,"method":"scene/snapshot","params":{"path":""}}"#;
@@ -65,7 +65,7 @@ fn r670_dispatch_rpc_scene_snapshot_returns_json_with_external_node() {
 #[test]
 fn r670_dispatch_rpc_scene_click_drains_to_hover_state() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
     assert_eq!(*core.cached_state(), ButtonState::Idle);
 
@@ -93,7 +93,7 @@ fn r670_dispatch_rpc_scene_click_drains_to_hover_state() {
 #[test]
 fn r670_dispatch_rpc_scene_key_named_space_fires_click_intent() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
     assert_eq!(*core.cached_state(), ButtonState::Idle);
 
@@ -119,7 +119,7 @@ fn r670_dispatch_rpc_scene_key_named_space_fires_click_intent() {
 #[test]
 fn r670_dispatch_rpc_scene_key_character_d_disables_button() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
     assert_eq!(*core.cached_state(), ButtonState::Idle);
 
@@ -143,7 +143,7 @@ fn r670_dispatch_rpc_scene_key_character_d_disables_button() {
 #[test]
 fn r670_dispatch_rpc_scene_invoke_send_disable_flips_state() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
     assert_eq!(*core.cached_state(), ButtonState::Idle);
 
@@ -233,7 +233,7 @@ fn r670_dispatch_rpc_focus_set_targets_button_tag() {
 #[test]
 fn r670_dispatch_rpc_mutating_call_bumps_revision_counter() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
     let revision_before = core.revision();
 
@@ -260,7 +260,7 @@ fn r670_dispatch_rpc_mutating_call_bumps_revision_counter() {
 #[test]
 fn r984_dispatch_rpc_scene_access_returns_tree_not_unavailable() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
 
     let request = r#"{"jsonrpc":"2.0","id":9,"method":"scene/access","params":{}}"#;
@@ -309,7 +309,7 @@ fn r984_1_tui_access_bounds_resolve_over_a_real_paint_scene() {
     use pinion_a11y::{AccessNode, AriaRole, resolve_access_bounds};
 
     let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
 
     // The button externalises through the `test_btn` tag; the view lays it at a
     // known rect (the same one the click tests hit at (8, 8)).
@@ -379,7 +379,7 @@ fn r885_input_state_reports_null_modifiers_and_real_held_keys() {
 #[test]
 fn r886_1_input_state_cursor_follows_tui_click() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
 
     let read = r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state","params":{}}"#;
@@ -486,7 +486,7 @@ fn r890_layout_viewport_null_projects_router_scene_with_canonical_paths() {
     );
     // After the commit hand-off, the projection answers with the
     // canonical "/0" root path (GUI parity).
-    let paint = core.compute_paint_scene();
+    let paint = core.compute_paint_scene(80, 24);
     core.update_paint_scene(paint);
     let read = r#"{"jsonrpc":"2.0","id":2,"method":"scene/layout","params":{}}"#;
     let response = core.dispatch_rpc(read).expect("read must respond");
@@ -497,5 +497,39 @@ fn r890_layout_viewport_null_projects_router_scene_with_canonical_paths() {
     assert!(
         !response.contains(r#""path":"""#),
         "the retired bare-prefix mirror shape must not reappear: {response}",
+    );
+}
+
+/// R1344 §5.41 §5.12 §2 #2 — `scene/layout {viewport}` (the AI-primary,
+/// never-painted path) returns MEASURED rects, not zeros.
+///
+/// `DispatchContext::paint_producer`'s contract requires the application to
+/// run `compute_layout` inside the producer so the returned `Scene` carries
+/// measured rects, and `layout_query` calls this arm "`dry_run` semantics".
+/// Pre-R1344 the TUI producer returned a raw `V::view` result and got away
+/// with it only because views authored their own rects. R1344 makes `rect` an
+/// output, so an unlaid-out producer would hand every headless AI client an
+/// all-zero rect tree — relocating the §2 #6 divergence this round closes onto
+/// the §2 #2 primary path. Nothing covered this arm before; now it is pinned.
+#[test]
+fn r1344_scene_layout_viewport_returns_measured_rects_not_zeros() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    // NOTE: deliberately no `compute_paint_scene` / `update_paint_scene` —
+    // this is the never-painted hypothetical-viewport arm.
+    let request = r#"{"jsonrpc":"2.0","id":7,"method":"scene/layout","params":{"viewport":{"width":640,"height":384}}}"#;
+    let response = core
+        .dispatch_rpc(request)
+        .expect("scene/layout must produce a response");
+    assert!(response.contains("\"id\":7"), "id round-trips: {response}");
+    assert!(
+        !response.contains("\"error\""),
+        "must not error: {response}",
+    );
+    // The fixture's root resolves against the supplied viewport. A raw
+    // (unlaid-out) view reports the authored `Rect::new(0, 0, 32, 48)`; a
+    // laid-out one fills the requested 640×384.
+    assert!(
+        response.contains(r#""rect":{"h":384,"w":640,"x":0,"y":0}"#),
+        "the root must resolve to the requested viewport: {response}",
     );
 }

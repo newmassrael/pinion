@@ -7477,11 +7477,11 @@ mod r1072_text_engine_wiring_tests {
         let engine = SelfHostedTextEngine::from_font(font);
         // The exact §5.37 box width the shell measure should size the eligible
         // label to (its own measure arm, computed before the engine is moved in).
-        let (w, _h) = engine
+        let measured = engine
             .measure_text(LABEL, &TextStyle::new().with_size_px(PX), &[], None, false)
             .expect("the eligible label is measurable via §5.37");
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let expected_label_w = w.ceil() as u32;
+        let expected_label_w = measured.width.ceil() as u32;
 
         let mut sc = ShellCore::<TextEngineFixture>::new();
         // Engine OFF (PINION_TEXT_ENGINE unset in the test process): parley measure.

@@ -192,7 +192,7 @@ mod tests {
 
     fn paint_text(core: &ShellCoreTui<HelloNarrativeWalk>) -> String {
         let mut text = Vec::new();
-        collect_text(&core.compute_paint_scene(), &mut text);
+        collect_text(&core.compute_paint_scene(80, 24), &mut text);
         text.join("\n")
     }
 
