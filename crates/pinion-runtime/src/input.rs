@@ -1436,8 +1436,9 @@ impl InputRouter {
             let cursor = self.cursors.get(&id).copied();
             // R1167 §5.51 — same-window OUTER-dock override (dock-panel drag only),
             // shared with the move path so preview (`update_drag`) == result here.
-            let own_over =
-                cursor.and_then(|(x, y)| self.resolve_drag_own_over(&session.payload, x, y));
+            let own_over = cursor.and_then(|(x, y)| {
+                self.resolve_drag_own_over(&session.payload, &session.source_tag, x, y, state_scene)
+            });
             // R1124 §5.51 PR-33 — a SELF-DROP (the own hit is the dragged panel's
             // own header / content) must not mask the cross-window redock below: a
             // floater being dragged onto another window has the cursor over its OWN
@@ -1907,7 +1908,7 @@ impl InputRouter {
         // override for a dock-panel drag (a cursor in this window's outer band →
         // full-span outer dock), so a docked panel reaches the window-edge full-span
         // dock without leaving its window. Non-dock drags keep the plain hit-test.
-        let own_over = self.resolve_drag_own_over(&payload, x, y);
+        let own_over = self.resolve_drag_own_over(&payload, &source, x, y, state_scene);
         let own_is_self_drop = own_over
             .as_ref()
             .is_some_and(|p| self.own_drop_is_self(p, &source));
@@ -2053,10 +2054,71 @@ impl InputRouter {
     /// ([`Self::update_drag`]) and the release (the `pointer_up` drag branch) cannot
     /// diverge on it — the [[verify-seed-claims-audit-first]] / debt-D lesson: a
     /// resolver that handles a case the input cannot produce is an SSOT hole.
-    fn resolve_drag_own_over(&self, payload: &DragPayload, x: f64, y: f64) -> Option<DropPoint> {
+    ///
+    /// (R1348 §5.51 PR-57) The claim is VETOABLE: the band is offered to the drag
+    /// SOURCE ([`External::accepts_outer_dock`](pinion_core::external::External::accepts_outer_dock))
+    /// before it is claimed, and a refusal falls through to the plain hit-test —
+    /// the same path the band's INTERIOR already takes, so a vetoed perimeter
+    /// behaves exactly like any other interior pixel (no new concept). Only the
+    /// source knows whether a perimeter drop would reach anything (for a dock,
+    /// whether an outer band at that edge is redundant against the live topology);
+    /// the router holds geometry, not topology, and `pinion-widget-paint` is this
+    /// crate's SIBLING, so the question travels through the `External` contract
+    /// rather than a dependency this crate cannot have.
+    ///
+    /// Pre-R1348 the claim was UNCONDITIONAL and only the OUTCOME was suppressed
+    /// (R1201's redundancy check inside `resolve_drop_checked`), so a redundant
+    /// perimeter stayed claimed while resolving to a stay-put `SnapBack`: it
+    /// previewed nothing, did nothing, and — because the sentinel replaced the
+    /// hit-test — made the split bands of the panel BENEATH it unreachable. That
+    /// dead strip is what this veto retires.
+    ///
+    /// WHAT THE FALL-THROUGH RESOLVES IS NOT GUARANTEED TO BE A DOCK. "The
+    /// perimeter is just interior" is the whole rule, and the interior's outcome
+    /// over a non-panel (a splitter gutter, a tab-strip background) or a dead-zone
+    /// ring is `DropResolution::Float` — a TEAR-OFF for a floatable panel (R1158,
+    /// deliberate). So a vetoed band inherits that too, where pre-R1348 it was
+    /// inert. This is not a new class: measured on the R1348 demo's 2-slot shape,
+    /// a cursor 40px in (INTERIOR, outside the band) over the same tab-strip
+    /// background floats identically — the band now simply agrees with the pixel
+    /// next to it. Suppressing only the band's float would restore the very
+    /// perimeter-vs-interior asymmetry this round removes, so the float rule is
+    /// R1158's to revisit, not this one's.
+    ///
+    /// The resolve-side `outer_redundant` arm in `resolve_drop_checked` STAYS, but
+    /// NOT — as an earlier draft of this comment claimed — as "the cross-window
+    /// path's guard": that path resolves through `resolve_drop`, which hardwires an
+    /// always-`false` predicate, so the arm is inert there and guards nothing. Its
+    /// real live role is the fallback for the case [`source_accepts_outer_dock`]
+    /// cannot ask — an unresolvable source tag ACCEPTS (`is_none_or`), and the
+    /// resolve-side check still suppresses the outcome — plus defence in depth for
+    /// a third-party `External` that leaves `accepts_outer_dock` at its `true`
+    /// default. (The false claim was inherited verbatim from `resolve_drop`'s
+    /// docstring: a floater's panel is NOT generally absent from the topology —
+    /// `FloatPolicy::Placeholder` is the DEFAULT and KEEPS the leaf, measured.)
+    ///
+    /// ★KNOWN GAP (carried, R1348): the CROSS-window perimeter
+    /// ([`resolve_outer_dock_zone`]) is NOT vetoable and has the SAME claim/outcome
+    /// gap — a floater redocking onto a 2-slot host previews a full-span band that
+    /// `dock_panel_outer`'s redundancy no-op then refuses. Same bug class, sibling
+    /// path, out of scope here (this round answers the same-window report). It needs
+    /// its own answer because the redundancy question there belongs to the TARGET
+    /// window's topology, not the source's — a target-side hook, which the
+    /// `External::begin_drag` contract already anticipates.
+    fn resolve_drag_own_over(
+        &self,
+        payload: &DragPayload,
+        source_tag: &str,
+        x: f64,
+        y: f64,
+        state_scene: &mut Scene,
+    ) -> Option<DropPoint> {
         if payload.kind == DOCK_PANEL_DRAG_KIND {
             if let Some(outer) = self.resolve_own_outer_dock(x, y) {
-                return Some(outer);
+                if source_accepts_outer_dock(state_scene, source_tag, payload, &outer) {
+                    return Some(outer);
+                }
+                // Vetoed → fall through: the perimeter is just interior here.
             }
         }
         self.resolve_drop_point(x, y)
@@ -2189,6 +2251,28 @@ fn widget_begin_drag(state_scene: &mut Scene, target_tag: &str) -> Option<DragPa
     find_external_by_tag(state_scene, primary)?
         .handle
         .begin_drag()
+}
+
+/// (R1348 §5.51 PR-57) Ask the drag SOURCE at `source_tag` whether it accepts the
+/// synthetic outer-dock zone at `point`
+/// ([`External::accepts_outer_dock`](pinion_core::external::External::accepts_outer_dock))
+/// — the veto [`InputRouter::resolve_drag_own_over`] consults BEFORE claiming the
+/// perimeter. Resolves the source's `ExternalNode` from the primary half of its
+/// (possibly composite) paint tag, exactly like [`widget_begin_drag`], so the
+/// widget that opened the session is the one that answers.
+///
+/// An unresolvable source (an out-of-sync tag) ACCEPTS: the veto is a refinement
+/// of the claim, so when the source cannot be asked the router keeps its
+/// pre-R1348 behaviour rather than silently dropping the zone.
+fn source_accepts_outer_dock(
+    state_scene: &mut Scene,
+    source_tag: &str,
+    payload: &DragPayload,
+    point: &DropPoint,
+) -> bool {
+    let (primary, _) = split_subindex(source_tag);
+    find_external_by_tag(state_scene, primary)
+        .is_none_or(|node| node.handle.accepts_outer_dock(payload, point))
 }
 
 /// Dispatch a synthetic input event to the state scene's matching
@@ -6599,9 +6683,11 @@ mod tests {
         assert!((outer.x_rel - 0.025).abs() < 1e-4 && (outer.y_rel - 0.5).abs() < 1e-4);
 
         // The override fires for a dock-panel drag near the edge...
+        // (R1348) `state_with_button`'s source is not a dock panel, so it takes the
+        // default `accepts_outer_dock` (accept) — the claim is unchanged here.
         assert_eq!(
             router
-                .resolve_drag_own_over(&dock, 10.0, 200.0)
+                .resolve_drag_own_over(&dock, "panel", 10.0, 200.0, &mut state_scene)
                 .expect("dock outer")
                 .tag,
             OUTER_DOCK_ZONE_TAG,
@@ -6610,7 +6696,7 @@ mod tests {
         // ...but NOT for a non-dock drag (the gate): the inner hit-test wins.
         assert_eq!(
             router
-                .resolve_drag_own_over(&tree, 10.0, 200.0)
+                .resolve_drag_own_over(&tree, "panel", 10.0, 200.0, &mut state_scene)
                 .expect("tree inner")
                 .tag,
             "panel",
@@ -6624,7 +6710,7 @@ mod tests {
         );
         assert_eq!(
             router
-                .resolve_drag_own_over(&dock, 200.0, 200.0)
+                .resolve_drag_own_over(&dock, "panel", 200.0, 200.0, &mut state_scene)
                 .expect("inner")
                 .tag,
             "panel",
@@ -6639,6 +6725,158 @@ mod tests {
         assert!(
             router.resolve_own_outer_dock(410.0, 200.0).is_none(),
             "right of the window is an escape, not an outer dock",
+        );
+    }
+
+    /// (R1348) A dock-panel-shaped drag source that refuses the LEFT perimeter when
+    /// `refuse_left` — the router-side stand-in for
+    /// `DockPanelExternal::accepts_outer_dock`'s live redundancy answer (the real
+    /// predicate is topology-owned and lives in the sibling crate; what the ROUTER
+    /// must be pinned on is that it HONOURS a refusal).
+    struct VetoSource {
+        refuse_left: bool,
+    }
+
+    impl std::fmt::Debug for VetoSource {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("VetoSource").finish()
+        }
+    }
+
+    impl pinion_core::external::External for VetoSource {
+        // §5.15 mandatory declarations (inert for a pure drag-source stub).
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn begin_drag(&self) -> Option<DragPayload> {
+            Some(DragPayload {
+                kind: std::borrow::Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
+                value: IntrospectValue::Text("panel".into()),
+            })
+        }
+        fn accepts_outer_dock(&self, _payload: &DragPayload, point: &DropPoint) -> bool {
+            assert_eq!(
+                point.tag, OUTER_DOCK_ZONE_TAG,
+                "the veto is only ever asked about the perimeter sentinel",
+            );
+            // "Left" ONLY for the two points this test feeds (x_rel near 0 / near 1
+            // at mid-height). Deliberately NOT `outer_zone_for`'s real nearest-edge
+            // classification — that lives in the sibling crate this one cannot dep
+            // on, and the router's contract under test is "a refusal is honoured",
+            // not "the source classifies edges correctly".
+            !(point.x_rel < 0.5 && self.refuse_left)
+        }
+    }
+
+    /// (R1348) A dock surface filling a 400x400 window with ONE drop-target panel —
+    /// so a perimeter the router does not claim resolves to `"panel"` instead.
+    fn r1348_dock_paint_scene() -> Scene {
+        use pinion_core::external::DOCK_SURFACE_TAG;
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        use pinion_core::style::{Color, LayoutStyle};
+        let content = Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 400, 400), Color::default()).with_tag("panel#content"),
+        );
+        let mut panel = ContainerNode::new(vec![content])
+            .with_tag("panel")
+            .with_layout(LayoutStyle::new().with_drop_target(true));
+        panel.rect = Rect::new(0, 0, 400, 400);
+        let mut surface = ContainerNode::new(vec![Scene::Container(panel)])
+            .with_tag(DOCK_SURFACE_TAG.to_string());
+        surface.rect = Rect::new(0, 0, 400, 400);
+        Scene::Container(surface)
+    }
+
+    /// ★R1348 §5.51 PR-57 — the drag SOURCE vetoes the OUTER perimeter claim, and
+    /// the vetoed band falls through to the panel beneath it.
+    ///
+    /// The bug this pins: R1201 declared "an outer drop indicator is offered only
+    /// when the outcome differs" but enforced it at RESOLVE only — the router
+    /// claimed the perimeter UNCONDITIONALLY, so a redundant edge kept the claim
+    /// (the sentinel replaced the inner hit-test) while the outcome died as a
+    /// `SnapBack`. The band previewed nothing, did nothing, AND made the split
+    /// bands of the panel underneath unreachable: a dead strip. With exactly 2
+    /// pane slots EVERY edge is redundant (R1338), so the ENTIRE perimeter of a
+    /// 2-pane dock was dead — the most common IDE / terminal layout there is.
+    ///
+    /// The claim now asks the source first, so "claimed but inert" is
+    /// unrepresentable rather than merely unwanted.
+    #[test]
+    fn r1348_a_vetoed_outer_claim_falls_through_to_the_panel_beneath() {
+        use pinion_core::scene::ExternalNode;
+        use std::borrow::Cow;
+
+        let paint = r1348_dock_paint_scene;
+        let dock = DragPayload {
+            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
+            value: IntrospectValue::Text("panel".into()),
+        };
+
+        // ── ACCEPTING source: the claim stands (the R1167 baseline) ──────────
+        let mut router = InputRouter::new();
+        let mut state = Scene::External(
+            ExternalNode::new(Box::new(VetoSource { refuse_left: false })).with_tag("src"),
+        );
+        router.update_paint_scene(paint(), &mut state);
+        assert_eq!(
+            router
+                .resolve_drag_own_over(&dock, "src", 10.0, 200.0, &mut state)
+                .expect("accepted claim")
+                .tag,
+            OUTER_DOCK_ZONE_TAG,
+            "an accepting source keeps the full-span outer sentinel (R1167 unchanged)",
+        );
+
+        // ── VETOING source: the band becomes ordinary interior ───────────────
+        let mut router = InputRouter::new();
+        let mut state = Scene::External(
+            ExternalNode::new(Box::new(VetoSource { refuse_left: true })).with_tag("src"),
+        );
+        router.update_paint_scene(paint(), &mut state);
+        // The geometric band is UNCHANGED — the veto is a claim decision, not a
+        // band-geometry change (so a non-vetoed edge is unaffected, below).
+        assert_eq!(
+            router
+                .resolve_own_outer_dock(10.0, 200.0)
+                .expect("the left band is still geometrically outer")
+                .tag,
+            OUTER_DOCK_ZONE_TAG,
+        );
+        assert_eq!(
+            router
+                .resolve_drag_own_over(&dock, "src", 10.0, 200.0, &mut state)
+                .expect("★the vetoed band resolves the panel underneath")
+                .tag,
+            "panel",
+            "★a vetoed perimeter falls through to the inner hit-test — the panel \
+             beneath keeps its own split bands instead of a dead strip",
+        );
+        // ★Non-tautological: the SAME source still claims an edge it does NOT
+        // refuse, so the veto is per-edge, not a blanket opt-out of outer docking.
+        assert_eq!(
+            router
+                .resolve_drag_own_over(&dock, "src", 390.0, 200.0, &mut state)
+                .expect("right claim")
+                .tag,
+            OUTER_DOCK_ZONE_TAG,
+            "an un-refused edge still claims the perimeter",
+        );
+        // A source the state scene cannot resolve accepts (the claim is unchanged
+        // when the source cannot be asked) — an out-of-sync tag must not silently
+        // drop the zone.
+        assert_eq!(
+            router
+                .resolve_drag_own_over(&dock, "gone", 10.0, 200.0, &mut state)
+                .expect("unresolvable source")
+                .tag,
+            OUTER_DOCK_ZONE_TAG,
+            "an unresolvable source keeps the pre-R1348 claim",
         );
     }
 
@@ -6687,7 +6925,7 @@ mod tests {
         };
         assert_eq!(
             router
-                .resolve_drag_own_over(&dock, 6.0, 160.0)
+                .resolve_drag_own_over(&dock, "panel", 6.0, 160.0, &mut state_scene)
                 .expect("the inner hit-test still resolves")
                 .tag,
             "panel",

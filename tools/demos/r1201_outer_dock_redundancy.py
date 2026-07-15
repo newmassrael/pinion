@@ -33,6 +33,18 @@ This drives it with real same-window `scene/drag`s and observes §2 #7 scene-as-
   (E) Re-drag the outliner to the RIGHT edge it now spans → suppressed again.
   (F) Integrity + determinism.
 
+R1348 UPDATE — read this before trusting the mechanism described above. The rule
+is unchanged and every assertion below still holds, but sections (C) / (E) now
+reach it one layer EARLIER and by a different route. R1348 (PR-57) moved the
+redundancy question to the CLAIM: the router asks the drag source
+(`External::accepts_outer_dock`) before minting the outer sentinel, so a redundant
+edge is never claimed. In (C) / (E) the outliner ITSELF spans the edge under the
+cursor, so the un-claimed band falls through to the plain hit-test, lands on the
+outliner, and snaps back as an R1162 SELF-DROP — not through `resolve_drop_checked`'s
+`outer_redundant` arm this docstring describes. Same observable (no full-span
+preview, no topology change), different mechanism. `r1348_outer_dock_claim_veto.py`
+covers the claim rule directly.
+
 The live FEEL is HW-gated; this pins what is observable as scene-as-data.
 """
 

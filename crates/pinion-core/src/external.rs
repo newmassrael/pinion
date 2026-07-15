@@ -840,6 +840,44 @@ pub trait External: core::fmt::Debug {
         None
     }
 
+    /// (R1348 §5.51 PR-57) Does this drag source ACCEPT the synthetic
+    /// [`OUTER_DOCK_ZONE_TAG`] perimeter zone the router is about to CLAIM at
+    /// `point`? `false` ⇒ the router does not claim it and the plain inner
+    /// hit-test applies instead, exactly as in the band's interior — so the
+    /// widget UNDER the perimeter keeps its own drop bands. Default `true`
+    /// (claim as before), so every pre-R1348 `External` is unaffected: the
+    /// router only ASKS on the same-window override, which is gated on
+    /// [`DOCK_PANEL_DRAG_KIND`]. (That gate is not a claim that a non-dock drag
+    /// never meets the sentinel — the CROSS-window perimeter resolver is
+    /// drag-kind-BLIND and can put [`OUTER_DOCK_ZONE_TAG`] in a non-dock drag's
+    /// `over`. It is unvetoable today; see the carry on
+    /// `InputRouter::resolve_drag_own_over`.)
+    ///
+    /// **Why the SOURCE answers.** Whether a perimeter zone is worth claiming is
+    /// a question about the source's own model (for a dock: "does an outer band
+    /// at that edge reach any arrangement an inner split does not?"), which the
+    /// router cannot answer — it holds geometry, not topology, and the crate that
+    /// owns the topology is its SIBLING, not its dependency. This is the
+    /// [`begin_drag`](Self::begin_drag) contract carried one step further: the
+    /// source *is* the resolver, so the source also decides which synthetic
+    /// targets are offered to it. The router asks BEFORE stealing the hit-test,
+    /// so a zone the source would only reject cannot be claimed in the first
+    /// place.
+    ///
+    /// **The invariant this closes.** R1201 declared the VS Code / Qt ADS rule —
+    /// *an outer drop indicator is offered only when the outcome differs* — but
+    /// enforced it one layer too LATE, at RESOLVE (`resolve_drop_checked` mapped a
+    /// redundant perimeter drop to a stay-put `SnapBack`). The claim still
+    /// happened, so the outcome died while the CLAIM survived: the band previewed
+    /// nothing, did nothing, and masked the split bands of the panel beneath it —
+    /// a dead strip. A source that answers this the same way it resolves makes
+    /// "claimed but inert" unrepresentable, rather than merely unwanted.
+    /// Implementors MUST therefore answer with the SAME predicate their
+    /// `drag_release` resolves with, so claim and outcome cannot drift.
+    fn accepts_outer_dock(&self, _payload: &DragPayload, _point: &DropPoint) -> bool {
+        true
+    }
+
     /// R742 §5.51 — live drag update. Called on every cursor move while a
     /// session this widget started via [`begin_drag`](Self::begin_drag)
     /// is in flight. `over` is the drop location currently under the

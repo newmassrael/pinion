@@ -1256,8 +1256,13 @@ impl DockTopology {
     ///    panel via [`DockReorganizer::dock_panel_outer`]) is an ADDITION, not a
     ///    rearrangement, so it keeps its full-span dock even against a lone base.
     ///
-    /// The resolver ([`resolve_drop_checked`]) maps a redundant drop to a stay-put
-    /// [`DropResolution::SnapBack`] (no misleading full-span preview) and
+    /// (R1348) The pointer path asks this at CLAIM time — the drag source answers
+    /// [`External::accepts_outer_dock`]
+    /// with it, so a redundant perimeter is never claimed and the cursor reaches the
+    /// panel beneath (pre-R1348 the claim stood and only the outcome died, leaving a
+    /// dead strip). The resolver ([`resolve_drop_checked`]) still maps a redundant
+    /// drop to a stay-put [`DropResolution::SnapBack`] as the fallback for a source
+    /// the router could not ask, and
     /// [`DockReorganizer::dock_panel_outer`] no-ops it (RPC / §2 #2 parity). A
     /// sole-pane `panel` (removal would empty the tree) is likewise redundant — it
     /// already fills the whole area. This is the VS Code / Qt ADS invariant: an
@@ -2510,6 +2515,17 @@ pub fn resolve_drop(
 /// outcome differs. [`resolve_drop`] delegates here with an always-`false`
 /// predicate (the cross-window / test path), so preview == result still holds by
 /// construction on every path. See `docs/dock-drop-resolution.md`.
+///
+/// (R1348) The same-window pointer path normally settles this ONE LAYER UP: the
+/// router asks the drag source
+/// ([`External::accepts_outer_dock`],
+/// wired to the same `outer_redundant` predicate) BEFORE claiming the perimeter, so
+/// a redundant edge never mints the sentinel and never arrives here — it falls
+/// through to the inner hit-test, which is the whole point of PR-57 (the claim, not
+/// just the outcome, must follow the offered-only-when-different rule). This arm
+/// remains live for the source the router could NOT ask (an unresolvable source tag
+/// accepts) and for an `External` that leaves the `true` default; it is NOT reached
+/// by the cross-window path, whose predicate is always-`false` by construction.
 pub fn resolve_drop_checked(
     over: Option<&DropPoint>,
     source: &str,
@@ -3349,12 +3365,17 @@ impl DockReorganizer {
 
     /// (R1201 §5.51) Whether an OUTER full-span dock of `panel` at `zone` would be
     /// a redundant no-op against the LIVE topology — `panel` already occupies that
-    /// full-span edge. The reorganizer-level accessor over
-    /// [`DockTopology::outer_dock_is_redundant`], the predicate
-    /// [`resolve_drop_checked`] threads so a same-window drag whose release edge
-    /// the dragged panel already spans previews + resolves as a stay-put
-    /// [`DropResolution::SnapBack`] instead of a resize. An empty surface has
-    /// nothing to dock against → redundant.
+    /// full-span edge (or, R1338, the band duplicates an inner split). The
+    /// reorganizer-level accessor over [`DockTopology::outer_dock_is_redundant`].
+    /// An empty surface has nothing to dock against → redundant.
+    ///
+    /// (R1348) Its LIVE pointer-path consumer is now the CLAIM veto — both dock
+    /// drag sources answer
+    /// [`External::accepts_outer_dock`]
+    /// with this, so a redundant perimeter is never claimed and the cursor falls
+    /// through to the panel beneath. [`resolve_drop_checked`] still threads it as
+    /// the fallback for a source the router could not ask. `dock_panel_outer`
+    /// no-ops the same case for the RPC / §2 #2 path, so all three agree.
     #[must_use]
     pub fn outer_dock_is_redundant(&self, panel: &str, zone: DockDropZone) -> bool {
         self.topology
@@ -4171,6 +4192,26 @@ impl External for TabWellExternal {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(panel),
         })
+    }
+
+    /// (R1348 §5.51 PR-57) The tab twin of
+    /// [`DockPanelExternal::accepts_outer_dock`] — "a tab drag IS a panel drag"
+    /// holds for the CLAIM as well, so a tab dragged toward an edge whose outer
+    /// dock is redundant leaves the perimeter to the panel underneath instead of
+    /// masking it with a band that would only snap back. Reads the dragged panel
+    /// from the `payload` (the pressed tab's, exactly as [`Self::drag_to_at`]
+    /// does) and answers with the same live-topology predicate the release
+    /// resolves with. An unreadable payload accepts (nothing to judge).
+    fn accepts_outer_dock(&self, payload: &DragPayload, point: &DropPoint) -> bool {
+        let Some(edge) =
+            outer_drop_zone(&point.tag, f64::from(point.x_rel), f64::from(point.y_rel))
+        else {
+            return true;
+        };
+        payload
+            .value
+            .as_str()
+            .is_none_or(|panel| !self.reorganizer.outer_dock_is_redundant(panel, edge))
     }
 
     /// (R1158 §5.51, R1159 SSOT) Live preview during a tab drag — paint the bold
@@ -6881,6 +6922,52 @@ impl External for DockPanelExternal {
             kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
             value: IntrospectValue::Text(self.panel_id.to_string()),
         })
+    }
+
+    /// (R1348 §5.51 PR-57) Refuse the router's OUTER perimeter claim at an edge
+    /// this panel's outer dock would only SNAP BACK from — the R1201/R1338
+    /// redundancy, asked at CLAIM time instead of only at resolve time.
+    ///
+    /// Answers with the SAME predicate [`Self::drag_release`] resolves with
+    /// ([`DockReorganizer::outer_dock_is_redundant`] against the LIVE topology),
+    /// so claim ⟺ the outcome differs, by construction — the two cannot drift,
+    /// and the R1201 rule ("an outer drop indicator is offered only when the
+    /// outcome differs") now governs the hit-test too, not just the outcome.
+    /// Refusing hands the cursor back to the panel UNDER the perimeter, whose
+    /// ordinary split bands were unreachable while the sentinel held the band:
+    /// with exactly 2 pane slots EVERY edge is redundant (R1338), so the whole
+    /// perimeter of a 2-pane dock — an IDE's editor+console, a left/right split —
+    /// was a dead strip that previewed nothing and blocked the inner split it
+    /// was covering.
+    ///
+    /// What the refused band falls through TO is the ordinary hit-test, and that
+    /// is not always a dock: over a non-panel (a splitter gutter, a tab-strip
+    /// background) or a dead-zone ring the resolution is `Float` — a tear-off for
+    /// a floatable panel (R1158, deliberate) — where pre-R1348 the band was inert.
+    /// That is the rule working, not a leak: measured on the 2-slot demo shape, a
+    /// cursor 40px in (INTERIOR, outside the band) over the same tab-strip
+    /// background floats identically, so the band now merely agrees with the pixel
+    /// beside it. Exempting the band from the float would rebuild the
+    /// perimeter-vs-interior asymmetry this round exists to remove.
+    ///
+    /// A TEAR-OFF-ONLY panel (no coordinator) ACCEPTS: with no topology its
+    /// perimeter release resolves to a real `Float` (R1323), not a `SnapBack`,
+    /// so the band is not dead and the claim keeps the drag-out gesture intact.
+    /// (A `!floatable` tear-off-only panel — R1172 rewrites that `Float` back to a
+    /// `SnapBack`, so its band IS dead — is a degenerate config this accepts for:
+    /// "tear-off-only" and "cannot float" together leave the panel no gesture at
+    /// all, which is R1172's call to make, not the claim's.)
+    fn accepts_outer_dock(&self, _payload: &DragPayload, point: &DropPoint) -> bool {
+        let Some(reorg) = self.reorganizer.as_ref() else {
+            return true;
+        };
+        let Some(edge) =
+            outer_drop_zone(&point.tag, f64::from(point.x_rel), f64::from(point.y_rel))
+        else {
+            // Not the perimeter sentinel — nothing to veto.
+            return true;
+        };
+        !reorg.outer_dock_is_redundant(&self.panel_id, edge)
     }
 
     /// (R1081 §5.51) R742 live update — resolve the drop the cursor is
@@ -12019,13 +12106,17 @@ mod reorganize_tests {
     use std::rc::Rc;
 
     use super::{
-        DockDropPreview, DockDropZone, DockNode, DockReorganizeExternal, DockReorganizeIntent,
-        DockReorganizer, DockSplitPosition, DockTopology, DropResolution, FloatPolicy,
-        TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TabWellExternal, TopologyError,
-        outer_zone_for, resolve_dock_drop, resolve_drop, resolve_drop_checked,
+        DockDropPreview, DockDropZone, DockNode, DockPanelExternal, DockReorganizeExternal,
+        DockReorganizeIntent, DockReorganizer, DockSplitPosition, DockTopology, DropResolution,
+        FloatPolicy, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TabWellExternal,
+        TopologyError, outer_drop_zone, outer_zone_for, resolve_dock_drop, resolve_drop,
+        resolve_drop_checked,
     };
     use crate::splitter::SplitterOrientation as Orient;
-    use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
+    use pinion_core::external::{
+        DOCK_PANEL_DRAG_KIND, DragPayload, External, ExternalIntrospect, InterveneError,
+        IntrospectValue, InvokeError,
+    };
     use pinion_core::reactive::Signal;
     use pinion_core::scene::Rect;
 
@@ -12359,6 +12450,168 @@ mod reorganize_tests {
         );
     }
 
+    /// (R1348) The four edges an outer dock can name.
+    const R1348_EDGES: [DockDropZone; 4] = [
+        DockDropZone::Left,
+        DockDropZone::Right,
+        DockDropZone::Top,
+        DockDropZone::Bottom,
+    ];
+
+    /// (R1348) The perimeter sentinel drop point for `edge`, as the router mints it
+    /// (normalised over the WHOLE dock surface). Asserts the point classifies back
+    /// to the edge it names through the SAME `outer_drop_zone` production reads, so
+    /// the fixture cannot disagree with production about which edge a point is.
+    fn r1348_outer_point(edge: DockDropZone) -> super::DropPoint {
+        let (x_rel, y_rel) = match edge {
+            DockDropZone::Left => (0.02, 0.5),
+            DockDropZone::Right => (0.98, 0.5),
+            DockDropZone::Top => (0.5, 0.02),
+            DockDropZone::Bottom => (0.5, 0.98),
+            other => panic!("not an edge: {other:?}"),
+        };
+        let point = super::DropPoint {
+            tag: pinion_core::external::OUTER_DOCK_ZONE_TAG.to_string(),
+            x_rel,
+            y_rel,
+        };
+        assert_eq!(
+            outer_drop_zone(&point.tag, f64::from(point.x_rel), f64::from(point.y_rel)),
+            Some(edge),
+            "fixture sanity: the point must classify as the edge it names",
+        );
+        point
+    }
+
+    /// (R1348) A dock-panel drag payload naming `panel`.
+    fn r1348_payload(panel: &str) -> DragPayload {
+        DragPayload {
+            kind: std::borrow::Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
+            value: IntrospectValue::Text(panel.to_string()),
+        }
+    }
+
+    /// ★R1348 §5.51 PR-57 — a dock PANEL source REFUSES the router's perimeter
+    /// claim exactly where its own release would only snap back.
+    ///
+    /// R1201 suppressed the redundant outer dock's OUTCOME; the router's CLAIM was
+    /// unconditional, so the band stayed stolen from the panel beneath it and went
+    /// inert — previewing nothing, doing nothing, and blocking the inner split it
+    /// covered. This pins the source answering `accepts_outer_dock` with the SAME
+    /// live-topology predicate it resolves with, so claim ⟺ outcome-differs holds
+    /// by construction (the two cannot drift).
+    #[test]
+    fn r1348_panel_source_refuses_the_perimeter_claim_when_the_outer_dock_is_redundant() {
+        let payload = r1348_payload;
+        let outer_point = r1348_outer_point;
+
+        // ── 2 PANE SLOTS: the whole perimeter is refused (the sprag / IDE case) ──
+        let two = Rc::new(Signal::new(Some(DockTopology::new(
+            DockNode::split_horizontal("h", 0.5, DockNode::leaf("a"), DockNode::leaf("b")),
+        ))));
+        let reorg2 = Rc::new(DockReorganizer::new(Rc::clone(&two)));
+        let panel_a = DockPanelExternal::new("a").with_reorganizer(Rc::clone(&reorg2));
+        for edge in R1348_EDGES {
+            assert!(
+                !panel_a.accepts_outer_dock(&payload("a"), &outer_point(edge)),
+                "★2-pane: the {edge:?} perimeter is refused — every edge is redundant \
+                 (R1338), so claiming it would only mask b's split bands with a dead strip",
+            );
+        }
+
+        // ── ≥3 PANE SLOTS: a MEANINGFUL outer dock is still claimed ─────────────
+        // Non-tautological: same widget, same mechanism — only the topology differs.
+        let three = Rc::new(Signal::new(Some(abc_topology()))); // H[a | H[b | c]]
+        let reorg3 = Rc::new(DockReorganizer::new(Rc::clone(&three)));
+        let panel_c = DockPanelExternal::new("c").with_reorganizer(Rc::clone(&reorg3));
+        assert!(
+            panel_c.accepts_outer_dock(&payload("c"), &outer_point(DockDropZone::Top)),
+            "★3-pane: a full-width top row crossing every pane is unique to the outer \
+             dock — still claimed (R1167 unregressed)",
+        );
+        // …and the ONE edge it already spans is still refused, per-edge.
+        let panel_a3 = DockPanelExternal::new("a").with_reorganizer(Rc::clone(&reorg3));
+        assert!(
+            !panel_a3.accepts_outer_dock(&payload("a"), &outer_point(DockDropZone::Left)),
+            "a already IS the full-span left column → that edge alone is refused",
+        );
+        assert!(
+            panel_a3.accepts_outer_dock(&payload("a"), &outer_point(DockDropZone::Right)),
+            "…while the right edge it does NOT occupy is a real move → claimed",
+        );
+
+        // ── a TEAR-OFF-ONLY panel (no coordinator) ACCEPTS ──────────────────────
+        // Its perimeter release resolves to a real `Float` (R1323), not a SnapBack,
+        // so the band is not dead and the drag-out gesture must keep it.
+        let bare = DockPanelExternal::new("lonely");
+        for edge in R1348_EDGES {
+            assert!(
+                bare.accepts_outer_dock(&payload("lonely"), &outer_point(edge)),
+                "a tear-off-only panel has no topology to be redundant against ({edge:?})",
+            );
+        }
+
+        // ── a NON-sentinel point is never vetoed (nothing to judge) ─────────────
+        let inner = super::DropPoint {
+            tag: "b".to_string(),
+            x_rel: 0.02,
+            y_rel: 0.5,
+        };
+        assert!(
+            panel_a.accepts_outer_dock(&payload("a"), &inner),
+            "an ordinary panel hit is not a perimeter claim — nothing to refuse",
+        );
+    }
+
+    /// ★R1348 §5.51 PR-57 — the TAB twin: "a tab drag IS a panel drag" holds for
+    /// the CLAIM as well, so a tab dragged toward an edge whose outer dock is
+    /// redundant leaves the perimeter to the panel underneath.
+    #[test]
+    fn r1348_tab_source_refuses_the_perimeter_claim_when_the_outer_dock_is_redundant() {
+        use std::borrow::Cow;
+
+        let payload = r1348_payload;
+        let outer_point = r1348_outer_point;
+
+        // NOTE the predicate turns on what remains AFTER REMOVING THE SOURCE, not on
+        // the current slot count: pulling a tab out of a well leaves its SIBLING tabs
+        // behind. So a well of two tabs AT THE ROOT is the refusing case (removing `a`
+        // leaves the lone well `[b]`, and the outer band is then just the well's own
+        // undock-split at a worse ratio)…
+        let root_well = Rc::new(Signal::new(Some(DockTopology::new(DockNode::tabs(
+            "w",
+            [Cow::from("a"), Cow::from("b")],
+            0,
+        )))));
+        let lone = TabWellExternal::new("w", Rc::new(DockReorganizer::new(Rc::clone(&root_well))));
+        for edge in R1348_EDGES {
+            assert!(
+                !lone.accepts_outer_dock(&payload("a"), &outer_point(edge)),
+                "★a root well's tab refuses {edge:?} — undocking it leaves ONE slot, so \
+                 the outer band only re-ratios the undock-split the well's own band gives",
+            );
+        }
+        // …while the SAME widget with a pane left over ACCEPTS: H[Tabs[a,b] | c] minus
+        // `a` leaves TWO panes (b and c), so a full-span band crossing both is real.
+        // The tab veto tracks the topology, exactly as the panel's does.
+        let (_topo, _reorg, well) = r1158_tab_well_fixture(); // H[Tabs[a,b] | c]
+        assert!(
+            well.accepts_outer_dock(&payload("a"), &outer_point(DockDropZone::Top)),
+            "★a tab whose undock still leaves 2 panes gets a MEANINGFUL full-span row \
+             → claimed (the claim is per-topology, not a blanket tab opt-out)",
+        );
+        assert!(
+            well.accepts_outer_dock(
+                &DragPayload {
+                    kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
+                    value: IntrospectValue::Int(7),
+                },
+                &outer_point(DockDropZone::Left),
+            ),
+            "an unreadable payload names no panel to judge → accept",
+        );
+    }
+
     #[test]
     fn r1201_redundant_matches_editor_boot_after_bottom_dock() {
         // The exact hello-dock-panels-editor boot shape, then the R1167 gesture
@@ -12443,11 +12696,19 @@ mod reorganize_tests {
     #[test]
     fn r1338_two_pane_outer_snaps_back_through_the_live_predicate() {
         // End-to-end wiring for the R1338 2-pane case: the LIVE reorganizer predicate
-        // (not a hand-written closure) threaded through `resolve_drop_checked` — the
-        // exact path the same-window drag PREVIEW and RELEASE both take — must snap
-        // back for EVERY perimeter edge, so no misleading full-span band previews and
-        // the release stays put (the user then aims at the inner band for a 50/50
-        // split). Row[a | b], drag b.
+        // (not a hand-written closure) threaded through `resolve_drop_checked` must
+        // snap back for EVERY perimeter edge, so no misleading full-span band
+        // previews and the release stays put. Row[a | b], drag b.
+        //
+        // (R1348) This is the resolve-side FALLBACK path, no longer the path a
+        // same-window drag normally takes: the router now asks the source
+        // (`accepts_outer_dock`) BEFORE claiming the perimeter, so a redundant edge
+        // never mints the sentinel and never reaches this arm — the user's cursor
+        // falls through to the inner band instead of having to re-aim at it. The arm
+        // still fires when the router could not ask (an unresolvable source tag
+        // ACCEPTS) or for an `External` that leaves the `true` default, which is what
+        // this pins. The comment previously called this "the exact path the
+        // same-window drag PREVIEW and RELEASE both take"; R1348 made that false.
         use pinion_core::external::{DropPoint, OUTER_DOCK_ZONE_TAG};
         let topology = Rc::new(Signal::new(Some(DockTopology::new(
             DockNode::split_horizontal("h", 0.5, DockNode::leaf("a"), DockNode::leaf("b")),
