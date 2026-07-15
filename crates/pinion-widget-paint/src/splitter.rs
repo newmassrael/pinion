@@ -975,7 +975,7 @@ fn commit_drag_state(ext: &mut SplitterExternal) {
         return;
     }
     ext.pending_intents.push_back(Intent::new_static(
-        "ratio_committed",
+        pinion_core::widgets::commit::RATIO_COMMITTED_EVENT,
         IntrospectValue::Float(f64::from(settled)),
     ));
 }

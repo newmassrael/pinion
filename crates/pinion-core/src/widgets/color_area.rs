@@ -175,7 +175,10 @@ impl WidgetTransition for ColorArea {
         if matches!(before_state, ColorAreaState::Dragging)
             && matches!(after_state, ColorAreaState::Hover)
         {
-            vec![Intent::new_static("value_committed", xy_json(x, y))]
+            vec![Intent::new_static(
+                crate::widgets::commit::VALUE_COMMITTED_EVENT,
+                xy_json(x, y),
+            )]
         } else {
             Vec::new()
         }

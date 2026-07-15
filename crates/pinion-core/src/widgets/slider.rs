@@ -275,7 +275,7 @@ impl WidgetTransition for Slider {
             && matches!(after_state, SliderState::Hover)
         {
             vec![Intent::new_static(
-                "value_committed",
+                crate::widgets::commit::VALUE_COMMITTED_EVENT,
                 IntrospectValue::Float(f64::from(after_value)),
             )]
         } else {

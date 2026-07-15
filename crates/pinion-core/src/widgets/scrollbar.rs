@@ -689,7 +689,7 @@ impl WidgetTransition for ScrollBar {
     fn detect(before: Self::Snapshot, _event: Self::Event, after: Self::Snapshot) -> Vec<Intent> {
         if matches!(before, ScrollBarState::Dragging) && matches!(after, ScrollBarState::Hover) {
             vec![Intent::new_static(
-                "scroll_committed",
+                crate::widgets::commit::SCROLL_COMMITTED_EVENT,
                 IntrospectValue::Null,
             )]
         } else {

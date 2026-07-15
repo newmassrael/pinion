@@ -211,10 +211,12 @@ const PROPERTY_TEAR_OFF_INTENT_TAG: &str = intent_tag!("property", "tear_off");
 const VIEWPORT_TEAR_OFF_INTENT_TAG: &str = intent_tag!("viewport", "tear_off");
 
 /// R1346 §5.20 — the main splitter's drag-end commit intent. `intent_tag!`
-/// takes literals, so the widget half is spelled out here; the
-/// `r1346_main_splitter_commit_tag_matches_the_registered_tag` test pins it
-/// against [`MAIN_SPLITTER_TAG`] so the two cannot drift apart silently (a
-/// mismatched reducer arm is always `false` and always quiet).
+/// takes literals, so BOTH halves are spelled out here; the
+/// `r1346_main_splitter_commit_tag_matches_the_registered_tag` test pins them —
+/// the widget half against [`MAIN_SPLITTER_TAG`], and (R1349) the event half
+/// against `pinion_core::widgets::commit::RATIO_COMMITTED_EVENT`, the word's
+/// upstream SSOT. Neither can drift silently (a mismatched reducer arm is
+/// always `false` and always quiet: the layout just stops persisting).
 const MAIN_SPLITTER_COMMIT_INTENT_TAG: &str = intent_tag!("main_splitter", "ratio_committed");
 
 /// R1346 §2 #7 — paint tag of the committed-layout witness line. The demo
@@ -1486,7 +1488,10 @@ mod tests {
     fn r1346_main_splitter_commit_tag_matches_the_registered_tag() {
         assert_eq!(
             MAIN_SPLITTER_COMMIT_INTENT_TAG,
-            format!("{MAIN_SPLITTER_TAG}.ratio_committed"),
+            format!(
+                "{MAIN_SPLITTER_TAG}.{}",
+                pinion_core::widgets::commit::RATIO_COMMITTED_EVENT
+            ),
             "the reducer arm and the paint-side splitter tag have drifted",
         );
     }

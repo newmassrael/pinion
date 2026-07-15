@@ -360,7 +360,7 @@ impl RangeSliderExternal {
         if matches!(before, SliderState::Dragging) && matches!(after, SliderState::Hover) {
             let committed = self.active_value();
             self.em.push(Intent::new_static(
-                "value_committed",
+                crate::widgets::commit::VALUE_COMMITTED_EVENT,
                 IntrospectValue::Float(committed),
             ));
         }

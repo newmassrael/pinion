@@ -901,11 +901,12 @@ pub fn composite_row_tag(tree_tag: &str, node_id: &str) -> String {
 /// [`pinion_core::WidgetCore::update`] reducers match against (per
 /// [[intent-tag-dotted-wire-form]]).
 ///
-/// Bindings compose the literal via
-/// `pinion_core::intent_tag!("<tree_tag>", TREE_ROW_CLICK_EVENT)` —
-/// the macro is `literal`-only at the stable-Rust layer so the tree
-/// tag has to be a literal at the call site (matches the
-/// `intent_tag!` contract used everywhere else).
+/// Bindings compose the dotted form by joining this constant to their
+/// tree tag at runtime — `format!("{tree_tag}.{TREE_ROW_CLICK_EVENT}")`.
+/// [`intent_tag!`](pinion_core::intent_tag) cannot do it: the macro
+/// matches `literal`-only on *both* arguments (stable `concat!` takes no
+/// `const` ref), so passing this symbol to it does not compile. R1349
+/// corrected this doc, which advertised exactly that form.
 pub const TREE_ROW_CLICK_EVENT: &str = "click";
 
 /// R678 §5.16 §5.20 §5.50 — bare event name [`TreeRowClickExternal`]
@@ -924,9 +925,10 @@ pub const TREE_ROW_CLICK_EVENT: &str = "click";
 /// new tag — the consumer sees two `hover` intents (`Null` then
 /// `Text(new_id)`) in that order.
 ///
-/// Mirrors [`TREE_ROW_CLICK_EVENT`]'s compose-via-`intent_tag!`
-/// contract — `pinion_core::intent_tag!("<tree_tag>", TREE_ROW_HOVER_EVENT)`
-/// at the binding's reducer match arm.
+/// Mirrors [`TREE_ROW_CLICK_EVENT`]'s composition contract — join this
+/// constant to the tree tag at runtime,
+/// `format!("{tree_tag}.{TREE_ROW_HOVER_EVENT}")`, at the binding's
+/// reducer match arm.
 pub const TREE_ROW_HOVER_EVENT: &str = "hover";
 
 /// R675 §5.16 §5.20 §5.50 — tree-row click + hover router External.
@@ -1813,8 +1815,8 @@ mod r675_tree_row_click_external_tests {
     fn r675_event_name_constant_is_canonical_click() {
         // Pin the substrate constant so a future rename to e.g.
         // "activate" surfaces the lockstep break immediately. Tree
-        // consumer reducers compose the dotted form via
-        // intent_tag!(MY_TREE_TAG, TREE_ROW_CLICK_EVENT) literally.
+        // consumer reducers compose the dotted form by joining this
+        // constant to their tree tag at runtime (format!).
         assert_eq!(TREE_ROW_CLICK_EVENT, "click");
     }
 }
@@ -2163,9 +2165,9 @@ mod r678_tree_row_hover_external_tests {
     #[test]
     fn r678_hover_event_constant_is_canonical_hover() {
         // Pin the substrate constant so a future rename surfaces the
-        // lockstep break against every consumer. Bindings compose
-        // the dotted intent name via
-        // intent_tag!(MY_TREE_TAG, TREE_ROW_HOVER_EVENT) literally.
+        // lockstep break against every consumer. Bindings compose the
+        // dotted intent name by joining this constant to their tree tag
+        // at runtime (format!).
         assert_eq!(TREE_ROW_HOVER_EVENT, "hover");
     }
 }

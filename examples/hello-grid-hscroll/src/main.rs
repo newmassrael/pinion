@@ -387,6 +387,19 @@ mod tests {
     /// then applies the §5.20 R22 suffix the walk appends. This way a drift in
     /// `col_header`'s spelling breaks the test, which a hard-coded literal
     /// would silently survive while the runtime coupling broke.
+    /// R1349 — the suffix this binding matches on is pinion's word, not a
+    /// lookalike. Without this the whole `column_of_width_commit` suite is
+    /// self-referential: it builds its wire strings from `WIDTH_COMMITTED_SUFFIX`
+    /// and then asserts they parse, so it stays green if pinion renames the
+    /// event and every real commit stops matching.
+    #[test]
+    fn r1349_width_committed_suffix_tracks_the_upstream_word() {
+        assert_eq!(
+            WIDTH_COMMITTED_SUFFIX,
+            format!(".{}", pinion_core::widgets::commit::WIDTH_COMMITTED_EVENT),
+        );
+    }
+
     #[test]
     fn r1347_width_commit_tag_round_trips_the_column() {
         use pinion_core::composite_tag::GridTag;

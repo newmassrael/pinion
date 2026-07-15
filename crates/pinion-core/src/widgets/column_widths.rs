@@ -516,7 +516,7 @@ impl ColumnResizeExternal {
             return;
         }
         self.pending_intents.push_back(Intent::new_static(
-            "width_committed",
+            crate::widgets::commit::WIDTH_COMMITTED_EVENT,
             IntrospectValue::Int(i64::from(settled)),
         ));
     }

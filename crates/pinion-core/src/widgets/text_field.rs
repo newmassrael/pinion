@@ -735,7 +735,10 @@ impl WidgetTransition for TextField {
         let exited_editing =
             matches!(before, TextFieldState::Editing) && !matches!(after, TextFieldState::Editing);
         if commit_via_event && exited_editing {
-            vec![Intent::new_static("text_committed", IntrospectValue::Null)]
+            vec![Intent::new_static(
+                crate::widgets::commit::TEXT_COMMITTED_EVENT,
+                IntrospectValue::Null,
+            )]
         } else {
             Vec::new()
         }
@@ -1066,7 +1069,7 @@ impl TextFieldExternal {
         self.em.inner.send(TextFieldEvent::CommitEdit);
         if was_composing && !committed.is_empty() {
             self.em.push(Intent::new_static(
-                "text_committed",
+                crate::widgets::commit::TEXT_COMMITTED_EVENT,
                 IntrospectValue::Text(committed.to_string()),
             ));
         }
