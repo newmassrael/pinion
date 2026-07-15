@@ -3037,7 +3037,7 @@ mod tests {
 
     impl ExternalIntrospect for CaptureExternal {
         fn schema(&self) -> IntrospectSchema {
-            IntrospectSchema::new(&[])
+            IntrospectSchema::new(const { &[] })
         }
         fn query(&self, _path: &str) -> Option<IntrospectValue> {
             None
@@ -3443,7 +3443,7 @@ mod tests {
 
     impl ExternalIntrospect for DragCaptureExternal {
         fn schema(&self) -> IntrospectSchema {
-            IntrospectSchema::new(&[])
+            IntrospectSchema::new(const { &[] })
         }
         fn query(&self, _path: &str) -> Option<IntrospectValue> {
             None
@@ -7166,7 +7166,7 @@ mod tests {
 
     impl ExternalIntrospect for DragExternal {
         fn schema(&self) -> IntrospectSchema {
-            IntrospectSchema::new(&[])
+            IntrospectSchema::new(const { &[] })
         }
         fn query(&self, _path: &str) -> Option<IntrospectValue> {
             None

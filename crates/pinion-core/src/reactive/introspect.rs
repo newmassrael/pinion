@@ -22,7 +22,7 @@ use serde::de::DeserializeOwned;
 use crate::event::Event;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
 };
 
 use super::signal::Signal;
@@ -275,16 +275,16 @@ where
 
 /// Compile-time schema field lookup. One `'static` slice per scalar type so
 /// `IntrospectSchema::new` keeps its `&'static [...]` contract.
-fn schema_fields<T: IntoIntrospectValue>() -> &'static [(&'static str, &'static str)] {
+fn schema_fields<T: IntoIntrospectValue>() -> &'static [SchemaField] {
     // Match against the TYPE_TAG constant: same slice for the same tag, so
     // distinct T sharing a tag (e.g. i32 / i64 both -> "int") still resolve
     // to a single `'static` schema entry.
     match T::TYPE_TAG {
-        "int" => &[("value", "int")],
-        "float" => &[("value", "float")],
-        "bool" => &[("value", "bool")],
-        "string" => &[("value", "string")],
-        "json" => &[("value", "json")],
+        "int" => const { &[SchemaField::new("value", "int")] },
+        "float" => const { &[SchemaField::new("value", "float")] },
+        "bool" => const { &[SchemaField::new("value", "bool")] },
+        "string" => const { &[SchemaField::new("value", "string")] },
+        "json" => const { &[SchemaField::new("value", "json")] },
         _ => &[],
     }
 }
@@ -391,19 +391,25 @@ mod tests {
     fn schema_declares_value_field_with_typed_tag() {
         let s_int = Signal::new(0_i32);
         let ext_int = SignalExternal::new(s_int);
-        assert_eq!(ext_int.schema().fields, &[("value", "int")]);
+        assert_eq!(ext_int.schema().fields, &[SchemaField::new("value", "int")]);
 
         let s_bool = Signal::new(false);
         let ext_bool = SignalExternal::new(s_bool);
-        assert_eq!(ext_bool.schema().fields, &[("value", "bool")]);
+        assert_eq!(
+            ext_bool.schema().fields,
+            &[SchemaField::new("value", "bool")]
+        );
 
         let s_text = Signal::new(String::new());
         let ext_text = SignalExternal::new(s_text);
-        assert_eq!(ext_text.schema().fields, &[("value", "string")]);
+        assert_eq!(
+            ext_text.schema().fields,
+            &[SchemaField::new("value", "string")]
+        );
 
         let s_f = Signal::new(0.0_f64);
         let ext_f = SignalExternal::new(s_f);
-        assert_eq!(ext_f.schema().fields, &[("value", "float")]);
+        assert_eq!(ext_f.schema().fields, &[SchemaField::new("value", "float")]);
     }
 
     #[test]
@@ -496,6 +502,6 @@ mod tests {
             age: 36,
         }));
         let ext = SignalExternal::new(s);
-        assert_eq!(ext.schema().fields, &[("value", "json")]);
+        assert_eq!(ext.schema().fields, &[SchemaField::new("value", "json")]);
     }
 }

@@ -67,7 +67,8 @@ use pinion_a11y::{AccessAction, AccessFocus, AccessNode, TabCell, WidgetA11y, ta
 use pinion_a11y::AriaRole;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -312,18 +313,22 @@ impl External for ReorderableTabsExternal {
 
 impl ExternalIntrospect for ReorderableTabsExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("order", "json"),
-            ("labels", "json"),
-            ("selected_id", "int"),
-            ("selected_visual", "int"),
-            ("preview", "json"),
-            ("focused_index", "int"),
-            ("grabbed", "bool"),
-            ("move", "int"),
-            ("grab", "bool"),
-            ("grab_cancel", "null"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("order", "json"),
+                    SchemaField::new("labels", "json"),
+                    SchemaField::new("selected_id", "int"),
+                    SchemaField::new("selected_visual", "int"),
+                    SchemaField::new("preview", "json"),
+                    SchemaField::new("focused_index", "int"),
+                    SchemaField::new("grabbed", "bool"),
+                    SchemaField::new("move", "int"),
+                    SchemaField::new("grab", "bool"),
+                    SchemaField::new("grab_cancel", "null"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

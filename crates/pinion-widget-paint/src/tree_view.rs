@@ -58,7 +58,7 @@ use pinion_core::composite_tag::GridTag;
 use pinion_core::composite_tag::{compose_send_payload, parse_send_payload};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::Modifiers;
 use pinion_core::input::PointerWireEvent;
@@ -1137,13 +1137,17 @@ impl External for TreeRowClickExternal {
 
 impl ExternalIntrospect for TreeRowClickExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("pressed_id", "string"),
-            ("hovered_id", "string"),
-            ("send", "string"),
-            ("click", "string"),
-            ("hover", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("pressed_id", "string"),
+                    SchemaField::new("hovered_id", "string"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("click", "string"),
+                    SchemaField::new("hover", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -2146,7 +2150,7 @@ mod r678_tree_row_hover_external_tests {
     fn r678_schema_includes_hover_axis_slots() {
         let handler = TreeRowClickExternal::new();
         let schema: IntrospectSchema = handler.schema();
-        let names: Vec<&str> = schema.fields.iter().map(|(name, _)| *name).collect();
+        let names: Vec<&str> = schema.fields.iter().map(|f| f.path).collect();
         // Press axis (pre-R678).
         assert!(names.contains(&"pressed_id"));
         assert!(names.contains(&"send"));

@@ -31,7 +31,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::animation::Tickable;
-use crate::external::{IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource};
+use crate::external::{
+    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaField,
+};
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
 
@@ -199,11 +201,15 @@ pub type SnackbarIntrospect = QueryOnlyIntrospect<SnackbarTimer>;
 /// action handler), never by rewinding the introspect node.
 impl QuerySource for SnackbarTimer {
     fn introspect_schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("visible", "bool"),
-            ("remaining", "float"),
-            ("duration", "float"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("visible", "bool"),
+                    SchemaField::new("remaining", "float"),
+                    SchemaField::new("duration", "float"),
+                ]
+            },
+        )
     }
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
@@ -374,9 +380,9 @@ mod tests {
         assert_eq!(
             node.schema().fields,
             &[
-                ("visible", "bool"),
-                ("remaining", "float"),
-                ("duration", "float")
+                SchemaField::new("visible", "bool"),
+                SchemaField::new("remaining", "float"),
+                SchemaField::new("duration", "float")
             ],
         );
     }

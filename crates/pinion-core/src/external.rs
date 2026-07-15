@@ -119,24 +119,310 @@ pub struct StateUpdate;
 // §5.15 item 8 — Optional symbolic introspection (opt-in sub-trait).
 // ---------------------------------------------------------------------------
 
+/// R1353 §5.12 §2 #2 — where a **parametric** path's argument is allowed to
+/// come from, so a client can enumerate valid arguments instead of guessing
+/// them.
+///
+/// The domain is expressed as a *reference to another path on the same
+/// surface*, never as a literal bound. A surface's shape is live (a grid gains
+/// columns, a tree collapses), so a literal `0..8` baked into a schema would be
+/// stale the moment the model changed — and a schema that lies is worse than one
+/// that says nothing. Pointing at `cols` instead means the bound is always read
+/// fresh, from the one place that owns it.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgDomain {
+    /// Valid arguments are the indices `0..query(<count_path>)` — the argument
+    /// is an offset into a sequence whose length the surface publishes.
+    /// (`width.<col>` with `IndexOf("cols")`: read `cols`, then `width.0` …
+    /// `width.<cols-1>` are exactly the answerable paths.)
+    IndexOf(&'static str),
+    /// Valid arguments are the values the surface lists at `<values_path>` —
+    /// the argument is a key, not an offset (a panel id, a voice id).
+    ValuesOf(&'static str),
+    /// Any well-typed argument is answerable; the surface constrains nothing.
+    /// Rare and worth suspicion: an unconstrained domain usually means the
+    /// bound exists but is not published, which leaves the client guessing.
+    Open,
+}
+
+impl ArgDomain {
+    /// The `$schema` wire form of this domain.
+    ///
+    /// Rendered **here**, in the crate that defines the enum, rather than in
+    /// `pinion-rpc` where `$schema` is assembled. `ArgDomain` is
+    /// `#[non_exhaustive]`, so a match in any other crate needs a `_` arm — and
+    /// a `_` arm would render a future variant as some silent placeholder,
+    /// telling clients "unconstrained" about a domain that constrains. Inside
+    /// the defining crate the match is exhaustive, so adding a variant fails to
+    /// compile here until its wire form is decided. The type owns its wire form;
+    /// the transport only forwards it.
+    #[must_use]
+    pub fn to_wire(self) -> serde_json::Value {
+        match self {
+            Self::IndexOf(count_path) => {
+                serde_json::json!({ "kind": "index_of", "count_path": count_path })
+            }
+            Self::ValuesOf(values_path) => {
+                serde_json::json!({ "kind": "values_of", "values_path": values_path })
+            }
+            Self::Open => serde_json::json!({ "kind": "open" }),
+        }
+    }
+}
+
+/// R1353 §5.12 §2 #2 — the argument a **parametric** [`SchemaField`] takes.
+///
+/// See [`SchemaField::parametric`] for what parametric means and why it must be
+/// declared rather than left implicit in the `query` impl.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaArg {
+    /// What the argument means, for a human and for an AI's prompt: `"col"`,
+    /// `"pos"`, `"id"`. Not a type — [`Self::ty`] is.
+    pub name: &'static str,
+    /// The argument's type tag, in the same vocabulary as [`SchemaField::ty`]
+    /// (`"int"`, `"string"`).
+    pub ty: &'static str,
+    /// Where the answerable arguments come from.
+    pub domain: ArgDomain,
+}
+
+impl SchemaArg {
+    /// An index argument bounded by the sequence length at `count_path`
+    /// (`ArgDomain::IndexOf`) — the overwhelmingly common shape.
+    #[must_use]
+    pub const fn index(name: &'static str, count_path: &'static str) -> Self {
+        Self {
+            name,
+            ty: "int",
+            domain: ArgDomain::IndexOf(count_path),
+        }
+    }
+
+    /// A key argument drawn from the values listed at `values_path`
+    /// ([`ArgDomain::ValuesOf`]).
+    #[must_use]
+    pub const fn key(name: &'static str, ty: &'static str, values_path: &'static str) -> Self {
+        Self {
+            name,
+            ty,
+            domain: ArgDomain::ValuesOf(values_path),
+        }
+    }
+
+    /// An argument the surface does not constrain ([`ArgDomain::Open`]).
+    #[must_use]
+    pub const fn open(name: &'static str, ty: &'static str) -> Self {
+        Self {
+            name,
+            ty,
+            domain: ArgDomain::Open,
+        }
+    }
+}
+
+/// One declared member of an [`ExternalIntrospect`] surface: a path, the type of
+/// the value it reads, and — R1353 — whether it takes an **argument**.
+///
+/// # Why this is a struct and not the `(path, type)` pair it replaced
+///
+/// (R1353 §2 #2, the PR-61 root cause.) The pair could not say that a path is
+/// parametric. `("width", "int")` and `("total", "int")` rendered *identically*
+/// through `$schema`, yet `total` is read as-is while `width` must be spelled
+/// `width.<col>` — the argument rides the path (see
+/// [`ExternalIntrospect::query`]). The arity lived only in the `query` impl's
+/// `strip_prefix`, so the one surface an agent is *supposed* to discover the
+/// contract from could not express it. Agents had to guess, and the guess failed
+/// in both directions: `query("width")` answered `UnknownIntrospectPath` for a
+/// path `$schema` had just advertised, while `query("width.999")` answered with a
+/// plausible wrong number.
+///
+/// That is not a documentation problem. §2 #2 makes RPC the AI's *primary* path,
+/// so a contract the surface cannot state is a contract that does not exist. A
+/// consumer read the argument-free `query` signature, concluded a parameterized
+/// read was impossible, routed it through `invoke` instead — and bought a ~30Hz
+/// livelock that burned a core at idle, because `invoke` is a mutation and bumps
+/// the scene revision its own `waitFor` was parked on.
+///
+/// A struct rather than a richer *string* (`"width.<col>"`, the URI-template
+/// shape): the pair is already short of a second dimension — nothing here
+/// distinguishes a readable value from an `invoke` action, so `float_policy` and
+/// `set_float_policy` both render as bare `string`. A template string would fix
+/// arity and have to be redone for that. Const constructors + defaulted fields
+/// mean the next dimension lands additively.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaField {
+    /// The declared path, as the wire **template**: a scalar spells itself
+    /// (`"total"`), a parametric family spells its placeholders inline
+    /// (`"width.<col>"`, `"cell.<row>.<col>"`, `"voice.<id>.gain"`).
+    ///
+    /// The template — rather than a bare stem plus trailing args — because an
+    /// argument is not always trailing: `voice.<id>.gain` carries a literal
+    /// *after* its argument, and a stem model cannot say that. It also happens
+    /// to be the form the workspace's schemas were already hand-spelling before
+    /// R1353 gave the arguments types; those strings were right, they were just
+    /// unaccompanied.
+    ///
+    /// [`stem`](Self::stem) recovers the literal prefix a `query` impl strips.
+    pub path: &'static str,
+    /// Type tag of the value read at this path.
+    pub ty: &'static str,
+    /// The arguments the path takes, in wire order — empty for a plain scalar.
+    ///
+    /// A slice rather than an `Option<SchemaArg>` because a family can be keyed
+    /// by more than one argument: `Table` reads a cell as `cell.<row>.<col>`.
+    /// Modelling one argument would have forced that field back to a hand-spelled
+    /// template string — the exact under-declaration this type exists to end.
+    pub args: &'static [SchemaArg],
+}
+
+impl SchemaField {
+    /// A placeholder for `const fn` schema COMPOSITION — the fill value for a
+    /// fixed-size array a `const fn` builds before overwriting every slot
+    /// (`hello-audio-device` concatenates the RT surface's fields with its own
+    /// this way, so a field added upstream cannot silently go missing
+    /// downstream).
+    ///
+    /// It exists because `#[non_exhaustive]` denies other crates the struct
+    /// literal such a composer would otherwise use, and a composer cannot invent
+    /// a placeholder from a name it does not have. Never declare it: an empty
+    /// path matches no query, so a slot left un-overwritten shows up as a blank
+    /// row in `$schema` rather than as something plausible.
+    pub const EMPTY: Self = Self::new("", "");
+
+    /// A plain scalar path: read it as spelled, no argument.
+    #[must_use]
+    pub const fn new(path: &'static str, ty: &'static str) -> Self {
+        Self {
+            path,
+            ty,
+            args: &[],
+        }
+    }
+
+    /// A **parametric** path: `path` is the wire template with a `<name>`
+    /// placeholder per entry of `args`, in order (`"width.<col>"`,
+    /// `"cell.<row>.<col>"`, `"voice.<id>.gain"`).
+    ///
+    /// `args` is a slice even for the overwhelmingly common single-argument case:
+    /// a `const fn` cannot build a `&'static` slice out of a by-value parameter,
+    /// so a one-arg convenience constructor could not delegate here and would be
+    /// a second, drifting definition of the same thing.
+    ///
+    /// The template's placeholders and `args` must agree in name and order —
+    /// enforced by `r1353_every_declared_template_matches_its_args`, since a
+    /// `const fn` cannot parse the string to check it here.
+    #[must_use]
+    pub const fn parametric(
+        path: &'static str,
+        ty: &'static str,
+        args: &'static [SchemaArg],
+    ) -> Self {
+        Self { path, ty, args }
+    }
+
+    /// The literal prefix before this field's first argument — what a `query`
+    /// impl's `strip_prefix` matches (`"width."` → stem `"width"`). Equal to
+    /// [`path`](Self::path) for a scalar.
+    #[must_use]
+    pub fn stem(&self) -> &'static str {
+        match self.path.find('<') {
+            // Trim the separator the placeholder sits behind: `width.<col>` has
+            // stem `width`, not `width.`.
+            Some(i) => self.path[..i].trim_end_matches('.'),
+            None => self.path,
+        }
+    }
+
+    /// Does `probe` address this field? An exact hit for a scalar; for a
+    /// parametric family, a probe that matches the template with a non-empty
+    /// value in each placeholder.
+    ///
+    /// The membership question every caller actually means — a parametric family
+    /// is addressed by its members, never by its template, so a bare
+    /// `fields.iter().any(|f| f.path == probe)` answers "no such path" for
+    /// `width.0`, a path the surface answers perfectly well. That mistake is the
+    /// §2 #7 lie [`read_only_or_unknown`] exists to prevent, so it routes here.
+    ///
+    /// Deliberately checks that an argument is *present*, not that it is
+    /// *well-formed* or in range — only the `query` impl knows that. This
+    /// answers "does this field own this path", which is what an error-kind
+    /// decision needs; `width.zzz` belongs to `width` and is malformed, not
+    /// unknown.
+    #[must_use]
+    pub fn addresses(&self, probe: &str) -> bool {
+        if self.args.is_empty() {
+            return self.path == probe;
+        }
+        // Walk the template's literal segments across `probe`, requiring a
+        // non-empty run wherever a placeholder sits.
+        let mut rest = probe;
+        let mut tmpl = self.path;
+        let mut first = true;
+        while let Some(open) = tmpl.find('<') {
+            let literal = &tmpl[..open];
+            let Some(after) = rest.strip_prefix(literal) else {
+                return false;
+            };
+            if !first && literal.is_empty() {
+                // Two placeholders with no literal between them cannot be
+                // delimited; such a template is malformed, not matchable.
+                return false;
+            }
+            rest = after;
+            let Some(close) = tmpl[open..].find('>') else {
+                return false;
+            };
+            tmpl = &tmpl[open + close + 1..];
+            // The argument runs until the template's next literal (or the end).
+            let next_lit_end = tmpl.find('<').unwrap_or(tmpl.len());
+            let next_lit = &tmpl[..next_lit_end];
+            let arg_len = if next_lit.is_empty() {
+                rest.len()
+            } else {
+                match rest.find(next_lit) {
+                    Some(i) => i,
+                    None => return false,
+                }
+            };
+            if arg_len == 0 {
+                return false;
+            }
+            rest = &rest[arg_len..];
+            first = false;
+        }
+        rest == tmpl
+    }
+}
+
 /// Schema declaring which paths an [`ExternalIntrospect`] exposes.
 ///
-/// Minimal skeleton today: a static slice of `(path, type_name)` pairs.
-/// Future expansion (structured `Type` enum, nested paths, units of
-/// measure) lands via `#[non_exhaustive]` — additive only.
+/// R1353: a static slice of [`SchemaField`]s — a path, its type, and whether it
+/// takes an argument. Future expansion (a structured `Type` enum, read-vs-action
+/// kind, units of measure) lands via `#[non_exhaustive]` + defaulted const
+/// constructors — additive only.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntrospectSchema {
-    /// Declared paths and their type-name tags. Authors are responsible
-    /// for keeping this in sync with `query` / `intervene`; mismatches
-    /// surface as test failures, not silent corruption.
-    pub fields: &'static [(&'static str, &'static str)],
+    /// Declared fields. Authors are responsible for keeping this in sync with
+    /// `query` / `intervene`; mismatches surface as test failures, not silent
+    /// corruption.
+    pub fields: &'static [SchemaField],
 }
 
 impl IntrospectSchema {
     #[must_use]
-    pub const fn new(fields: &'static [(&'static str, &'static str)]) -> Self {
+    pub const fn new(fields: &'static [SchemaField]) -> Self {
         Self { fields }
+    }
+
+    /// The field addressing `probe`, if any — exact for a scalar, stem-matched
+    /// for a parametric family ([`SchemaField::addresses`]).
+    #[must_use]
+    pub fn field_for(&self, probe: &str) -> Option<&SchemaField> {
+        self.fields.iter().find(|f| f.addresses(probe))
     }
 }
 
@@ -480,24 +766,29 @@ pub trait ExternalIntrospect {
     /// (`("width", "int")`); `query("width")` with no index correctly
     /// resolves to `None`, so a parametric path never pollutes a snapshot.
     ///
-    /// ## OPEN GAP: the schema cannot say a path is parametric
+    /// ## The schema SAYS a path is parametric — do not make a client guess
     ///
-    /// (R1352 §2 #2, carried — do not read this section as settled.) A stem
-    /// declares `("width", "int")` and a scalar declares `("total", "int")`.
-    /// **They are indistinguishable on the wire.** Nothing in `$schema`'s
-    /// `{path, type}` render says which needs a `.<arg>`, what the argument's
-    /// type or domain is, or how a multi-part argument would be delimited and
-    /// escaped (the convention survives today only because every argument in
-    /// the workspace is an integer index). So an agent must GUESS the arity —
-    /// and the guess can fail quietly: `width.<col>` answers an out-of-range
-    /// column with the min clamp rather than an error, a plausible wrong value.
+    /// (R1352 found this hole; R1353 closed it.) A parametric family is declared
+    /// with [`SchemaField::parametric`], which carries the wire template and a
+    /// typed [`SchemaArg`] per placeholder — so `$schema` renders
+    /// `{"path": "width.<col>", "type": "int", "args": [{"name": "col",
+    /// "type": "int", "domain": {"kind": "index_of", "count_path": "cols"}}]}`
+    /// where a scalar renders a bare `{"path": "total", "type": "int"}`.
+    /// A client reads the arity, the argument's type, and where its valid values
+    /// come from, instead of inferring any of it.
     ///
-    /// That is a real §2 #2 discovery hole, and it is why a consumer reading
-    /// this trait concluded a parameterized read was impossible: the convention
-    /// is genuinely undiscoverable from the surface it is meant to be
-    /// discovered from. Fixing it means giving [`IntrospectSchema`] a slot for
-    /// arity — NOT giving `query` an `args` parameter, which would fork the read
-    /// surface in two and orphan the four families listed above.
+    /// It briefly did not. `("width", "int")` and `("total", "int")` rendered
+    /// identically, so an agent had to guess that one of them took an argument —
+    /// and the guess failed quietly, because an out-of-range `width.999` answered
+    /// with the min clamp rather than an error. That hole is why a consumer
+    /// reading this signature concluded a parameterized read was impossible at
+    /// all: the convention was undiscoverable from the surface built to reveal
+    /// it. Both halves are fixed — the declaration states the contract, and an
+    /// out-of-range read is now `None`.
+    ///
+    /// The fix went into [`IntrospectSchema`], **not** into an `args` parameter
+    /// here: that would fork the read surface in two and orphan every family
+    /// listed above.
     ///
     /// # Why this matters more than it looks
     ///
@@ -1154,9 +1445,14 @@ pub use query_proxy_external_impl;
 /// re-typed: `QueryOnlyIntrospect` below and `pinion-audio`'s RT External (whose
 /// own copy admitted, in its docstring, to mirroring this one) both route through
 /// it.
+/// (R1353) Parametric members resolve through [`SchemaField::addresses`], so
+/// `width.0` reports `ReadOnly` like the family it belongs to. Matching the
+/// declared path exactly would have answered `UnknownPath` for it — telling an
+/// agent that a path it can plainly `query` does not exist, which is the precise
+/// lie this function was written to prevent.
 #[must_use]
 pub fn read_only_or_unknown(schema: &IntrospectSchema, path: &str) -> InterveneError {
-    if schema.fields.iter().any(|(name, _)| *name == path) {
+    if schema.field_for(path).is_some() {
         InterveneError::ReadOnly
     } else {
         InterveneError::UnknownPath
@@ -1414,7 +1710,7 @@ impl External for CountedExternal {
 
 impl ExternalIntrospect for CountedExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("count", "int")])
+        IntrospectSchema::new(const { &[SchemaField::new("count", "int")] })
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1466,6 +1762,365 @@ impl ExternalIntrospect for CountedExternal {
 mod tests {
     use super::*;
     use crate::event::WindowEvent;
+
+    /// R1353 §2 #2 — a declared arity that does not match the `query` impl is
+    /// worse than no declaration: it is a confident lie on the one surface an
+    /// agent is told to trust. These pin the two directions the declaration can
+    /// be wrong, on a real widget.
+    #[test]
+    fn r1353_declared_arity_matches_the_real_query_impl() {
+        use crate::widgets::column_widths::{ColumnWidthExternal, ColumnWidths};
+        use std::rc::Rc;
+
+        let ext = ColumnWidthExternal::new(Rc::new(ColumnWidths::new(vec![100, 200, 300])));
+        let schema = ext.schema();
+
+        // Direction 1: a PARAMETRIC declaration must not be answerable bare, and
+        // must be answerable with an argument. (`width` declared parametric but
+        // secretly readable as a scalar would make the arg a lie.)
+        let width = schema
+            .fields
+            .iter()
+            .find(|f| f.stem() == "width")
+            .expect("width is declared");
+        let [arg] = width.args else {
+            panic!("width declares exactly one argument");
+        };
+        assert_eq!(width.path, "width.<col>", "the declared wire template");
+        assert!(
+            ext.query("width").is_none(),
+            "a parametric stem must not answer bare",
+        );
+        assert!(ext.query("width.0").is_some(), "…but answers with an arg");
+
+        // Direction 2: the declared DOMAIN must be true. `IndexOf("cols")`
+        // promises that `cols` is readable and that exactly `0..cols` answer —
+        // the promise a client plans against instead of probing.
+        let ArgDomain::IndexOf(count_path) = arg.domain else {
+            panic!("width's domain is IndexOf");
+        };
+        let Some(IntrospectValue::Int(cols)) = ext.query(count_path) else {
+            panic!("the declared count_path {count_path:?} must itself be readable");
+        };
+        assert_eq!(cols, 3);
+        for col in 0..cols {
+            assert!(
+                ext.query(&format!("width.{col}")).is_some(),
+                "every index below the declared count answers ({col})",
+            );
+        }
+        assert!(
+            ext.query(&format!("width.{cols}")).is_none(),
+            "and the first index at/above it does NOT — an out-of-range read that \
+             answered would be the fabricated value R1353 removed",
+        );
+
+        // Direction 3: a SCALAR declaration must answer bare. (`total` declared
+        // scalar but secretly needing an arg is the original defect inverted.)
+        assert!(
+            schema
+                .fields
+                .iter()
+                .find(|f| f.path == "total")
+                .expect("total is declared")
+                .args
+                .is_empty(),
+        );
+        assert!(ext.query("total").is_some(), "a scalar answers bare");
+    }
+
+    /// R1353 §2 #2 — run every parametric widget's DECLARED arity against its
+    /// real `query` impl.
+    ///
+    /// One validator, N widgets, because the per-widget alternative is N tests
+    /// nobody writes for widget N+1. A declaration is a promise a client plans
+    /// against without probing; an unchecked promise is how `$schema` came to
+    /// say `("width","int")` about a path that answers nothing.
+    #[test]
+    fn r1353_declared_domains_hold_on_real_widgets() {
+        use crate::widgets::column_widths::{ColumnWidthExternal, ColumnWidths};
+        use crate::widgets::disclosure_group::DisclosureGroupExternal;
+        use crate::widgets::listbox::ListBoxExternal;
+        use crate::widgets::radio_group::RadioGroupExternal;
+        use crate::widgets::row_search::{RowSearchExternal, RowSearchState};
+        use crate::widgets::table::TableExternal;
+        use std::rc::Rc;
+
+        /// Assert every declared field of `ext` tells the truth about itself.
+        fn audit(label: &str, ext: &dyn ExternalIntrospect) {
+            for f in ext.schema().fields {
+                if f.args.is_empty() {
+                    // A scalar promises it reads as spelled. (`send` / action
+                    // slots legitimately read `None` — they are write channels —
+                    // so absence alone is not a defect here; the claim under test
+                    // is only that a scalar never needs an argument.)
+                    assert!(
+                        !f.path.contains('<'),
+                        "{label}: {:?} spells a placeholder but declares no args",
+                        f.path,
+                    );
+                    continue;
+                }
+                // A parametric field promises its stem is NOT a readable path —
+                // that is what makes the argument mandatory rather than optional.
+                //
+                // UNLESS the surface separately declares that stem as its own
+                // scalar. A family and a scalar may legitimately share a name:
+                // `Table` reads `selected` as "is anything selected at all" and
+                // `selected.<row>` as "is row N selected". Two fields, two
+                // meanings, one prefix — so the stem answering is only a defect
+                // when nothing declares it. (This test asserted otherwise first;
+                // the widget was right.)
+                let stem_is_declared_scalar = ext
+                    .schema()
+                    .fields
+                    .iter()
+                    .any(|g| g.args.is_empty() && g.path == f.stem());
+                if !stem_is_declared_scalar {
+                    assert!(
+                        ext.query(f.stem()).is_none(),
+                        "{label}: {:?} is declared parametric, but its bare stem \
+                         {:?} answers while no field declares it — so the argument \
+                         is not actually required and the declaration misleads",
+                        f.path,
+                        f.stem(),
+                    );
+                }
+                for a in f.args {
+                    let ArgDomain::IndexOf(count_path) = a.domain else {
+                        // `ValuesOf` / `Open` are audited by their own surfaces;
+                        // only `IndexOf` makes a bound claim this test can check.
+                        continue;
+                    };
+                    // The promise: `count_path` is itself readable, and it is an
+                    // int. A domain pointing at a path that does not exist is a
+                    // dead end a client cannot follow.
+                    let Some(IntrospectValue::Int(n)) = ext.query(count_path) else {
+                        panic!(
+                            "{label}: {:?} declares domain IndexOf({count_path:?}), \
+                             but that path does not read as an int",
+                            f.path,
+                        );
+                    };
+                    // A single-arg family is fully checkable: every index below
+                    // the count answers, and the first one at it does not.
+                    if f.args.len() == 1 && n > 0 {
+                        let inside = f.path.replace(&format!("<{}>", a.name), "0");
+                        assert!(
+                            ext.query(&inside).is_some(),
+                            "{label}: {inside:?} is inside the declared domain but \
+                             does not answer",
+                        );
+                        // Outside the declared domain, a read must not produce a
+                        // VALUE. Two spellings of that are already in the tree and
+                        // both are honest: `None` (listbox / table / column_widths
+                        // — "no such path") and `Some(Null)` (everything routed
+                        // through `at_index` — "the position holds nothing"). The
+                        // invariant that matters is neither of those; it is that
+                        // nothing plausible comes back. `width.999` answering `40`
+                        // — a real-looking width for a column that does not exist —
+                        // is what R1353 removed, and it is what this catches.
+                        let outside = f.path.replace(&format!("<{}>", a.name), &n.to_string());
+                        let answer = ext.query(&outside);
+                        assert!(
+                            matches!(answer, None | Some(IntrospectValue::Null)),
+                            "{label}: {outside:?} is OUTSIDE the declared domain \
+                             (count={n}) yet answered {answer:?} — a client that \
+                             trusts the declaration cannot tell that apart from a \
+                             real value",
+                        );
+                    }
+                }
+            }
+        }
+
+        audit(
+            "column_widths",
+            &ColumnWidthExternal::new(Rc::new(ColumnWidths::new(vec![100, 200, 300]))),
+        );
+        audit("listbox", &ListBoxExternal::new(4));
+        audit("radio_group", &RadioGroupExternal::new(3));
+        audit("disclosure_group", &DisclosureGroupExternal::new(3));
+        audit(
+            "row_search",
+            &RowSearchExternal::new(Rc::new(RowSearchState::new(
+                2,
+                vec![vec!["a".into(), "b".into()], vec!["c".into(), "d".into()]],
+            ))),
+        );
+        audit(
+            "table",
+            &TableExternal::new(
+                vec!["a".into(), "b".into()],
+                vec![vec!["1".into(), "2".into()], vec!["3".into(), "4".into()]],
+            ),
+        );
+    }
+
+    /// R1353 — the template's `<placeholders>` must match `args` in name and
+    /// order.
+    ///
+    /// `SchemaField::parametric` cannot check this: a `const fn` cannot parse
+    /// its own path string. So the invariant the whole model rests on — that
+    /// `"cell.<row>.<col>"` really does take `row` then `col` — is only true if
+    /// something asserts it. A template naming an arg the args slice does not
+    /// declare would render a placeholder with no type and no domain: the exact
+    /// under-declaration R1353 exists to end, reintroduced by a typo.
+    #[test]
+    fn r1353_every_declared_template_matches_its_args() {
+        fn placeholders(template: &str) -> Vec<&str> {
+            let mut out = Vec::new();
+            let mut rest = template;
+            while let Some(open) = rest.find('<') {
+                rest = &rest[open + 1..];
+                let close = rest.find('>').expect("an unclosed <placeholder>");
+                out.push(&rest[..close]);
+                rest = &rest[close + 1..];
+            }
+            out
+        }
+        let check = |f: &SchemaField| {
+            let names: Vec<&str> = f.args.iter().map(|a| a.name).collect();
+            assert_eq!(
+                placeholders(f.path),
+                names,
+                "template {:?} and its declared args disagree",
+                f.path,
+            );
+        };
+        check(&SchemaField::new("total", "int"));
+        check(&SchemaField::parametric(
+            "width.<col>",
+            "int",
+            const { &[SchemaArg::index("col", "cols")] },
+        ));
+        check(&SchemaField::parametric(
+            "cell.<row>.<col>",
+            "string",
+            const {
+                &[
+                    SchemaArg::index("row", "rows"),
+                    SchemaArg::index("col", "cols"),
+                ]
+            },
+        ));
+        // The infix shape: a literal AFTER the argument. This is why `path` holds
+        // the template rather than a stem plus trailing args.
+        check(&SchemaField::parametric(
+            "voice.<id>.gain",
+            "float",
+            const { &[SchemaArg::key("id", "int", "voices")] },
+        ));
+    }
+
+    /// R1353 — `stem` recovers the literal prefix a `query` impl strips, for
+    /// every template shape.
+    #[test]
+    fn r1353_stem_is_the_literal_prefix_a_query_impl_strips() {
+        assert_eq!(SchemaField::new("total", "int").stem(), "total");
+        assert_eq!(
+            SchemaField::parametric(
+                "width.<col>",
+                "int",
+                const { &[SchemaArg::open("col", "int")] }
+            )
+            .stem(),
+            "width",
+            "the separator belongs to neither side",
+        );
+        assert_eq!(
+            SchemaField::parametric(
+                "voice.<id>.gain",
+                "float",
+                const { &[SchemaArg::open("id", "int")] }
+            )
+            .stem(),
+            "voice",
+        );
+    }
+
+    /// R1353 — an INFIX argument (a literal after the placeholder) matches only
+    /// when the trailing literal is present. `voice.3` is not `voice.3.gain`.
+    #[test]
+    fn r1353_addresses_handles_an_infix_argument() {
+        let f = SchemaField::parametric(
+            "voice.<id>.gain",
+            "float",
+            const { &[SchemaArg::key("id", "int", "voices")] },
+        );
+        assert!(f.addresses("voice.3.gain"));
+        assert!(
+            f.addresses("voice.abc.gain"),
+            "well-formedness is query's job"
+        );
+        assert!(!f.addresses("voice.3"), "the trailing literal is required");
+        assert!(
+            !f.addresses("voice..gain"),
+            "an empty argument is not a member"
+        );
+        assert!(!f.addresses("voice.3.pan"), "a DIFFERENT field's template");
+    }
+
+    /// R1353 — `addresses` is the membership question, so a parametric family is
+    /// addressed by its MEMBERS. Pinned because `read_only_or_unknown` routes
+    /// through it: matching the stem exactly would tell an agent that `width.0`
+    /// — a path it can plainly read — does not exist.
+    #[test]
+    fn r1353_addresses_matches_members_not_the_bare_stem() {
+        let scalar = SchemaField::new("total", "int");
+        assert!(scalar.addresses("total"));
+        assert!(!scalar.addresses("total.0"), "a scalar has no members");
+
+        let param = SchemaField::parametric(
+            "width.<col>",
+            "int",
+            const { &[SchemaArg::index("col", "cols")] },
+        );
+        assert!(param.addresses("width.0"));
+        assert!(param.addresses("width.12"));
+        assert!(
+            !param.addresses("width"),
+            "the bare stem addresses nothing — it is not a readable path",
+        );
+        assert!(
+            !param.addresses("width."),
+            "an empty argument is not a member",
+        );
+        assert!(
+            !param.addresses("widths"),
+            "a longer path that merely shares the prefix is a DIFFERENT field \
+             (column_widths declares both `width` and `widths`)",
+        );
+    }
+
+    #[test]
+    fn r1353_read_only_or_unknown_sees_parametric_members() {
+        let schema = IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("total", "int"),
+                    SchemaField::parametric(
+                        "width.<col>",
+                        "int",
+                        const { &[SchemaArg::index("col", "cols")] },
+                    ),
+                ]
+            },
+        );
+        assert_eq!(
+            read_only_or_unknown(&schema, "width.0"),
+            InterveneError::ReadOnly,
+            "a real, readable member is read-only — not 'no such path'",
+        );
+        assert_eq!(
+            read_only_or_unknown(&schema, "total"),
+            InterveneError::ReadOnly,
+        );
+        assert_eq!(
+            read_only_or_unknown(&schema, "nope"),
+            InterveneError::UnknownPath,
+        );
+    }
 
     #[test]
     fn stub_declares_gui_only_with_skip_fallback() {
@@ -1643,7 +2298,7 @@ mod tests {
     fn counted_schema_lists_count_field() {
         let counted = CountedExternal::new(0);
         let schema = counted.schema();
-        assert_eq!(schema.fields, &[("count", "int")]);
+        assert_eq!(schema.fields, &[SchemaField::new("count", "int")]);
     }
 
     #[test]
@@ -1796,7 +2451,7 @@ mod tests {
         struct NullIntrospect;
         impl ExternalIntrospect for NullIntrospect {
             fn schema(&self) -> IntrospectSchema {
-                IntrospectSchema::new(&[])
+                IntrospectSchema::new(const { &[] })
             }
             fn query(&self, _: &str) -> Option<IntrospectValue> {
                 None

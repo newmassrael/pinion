@@ -28,7 +28,7 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::widgets::button::{Button, ButtonEvent, ButtonState};
 use crate::{WidgetEventName, WidgetStateName};
@@ -251,17 +251,21 @@ impl ExternalIntrospect for SpinButtonExternal {
         // `min` / `max` / `step` — construction-fixed range descriptors
         //   (query only). `send` — the R51.42 §5.35 composite pointer channel
         //   for the decrement / increment paint regions.
-        IntrospectSchema::new(&[
-            ("value", "float"),
-            ("min", "float"),
-            ("max", "float"),
-            ("step", "float"),
-            // R734.2 — per-stepper interaction state (paint state-layer +
-            // AI-observable hover / pressed feedback).
-            ("dec_state", "string"),
-            ("inc_state", "string"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("value", "float"),
+                    SchemaField::new("min", "float"),
+                    SchemaField::new("max", "float"),
+                    SchemaField::new("step", "float"),
+                    // R734.2 — per-stepper interaction state (paint state-layer +
+                    // AI-observable hover / pressed feedback).
+                    SchemaField::new("dec_state", "string"),
+                    SchemaField::new("inc_state", "string"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

@@ -80,7 +80,7 @@ crate::widget_event_name!(
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -480,15 +480,19 @@ impl External for SliderExternal {
 
 impl ExternalIntrospect for SliderExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("value", "float"),
-            ("orientation", "string"),
-            // R737 §5.38 — discrete snap increment (normalised units);
-            // `0.0` is the continuous-slider sentinel.
-            ("step", "float"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("value", "float"),
+                    SchemaField::new("orientation", "string"),
+                    // R737 §5.38 — discrete snap increment (normalised units);
+                    // `0.0` is the continuous-slider sentinel.
+                    SchemaField::new("step", "float"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -761,11 +765,11 @@ mod tests {
         assert_eq!(
             schema.fields,
             &[
-                ("state", "string"),
-                ("value", "float"),
-                ("orientation", "string"),
-                ("step", "float"),
-                ("send", "string"),
+                SchemaField::new("state", "string"),
+                SchemaField::new("value", "float"),
+                SchemaField::new("orientation", "string"),
+                SchemaField::new("step", "float"),
+                SchemaField::new("send", "string"),
             ]
         );
     }
@@ -935,7 +939,7 @@ mod tests {
         // schema-driven AI clients pick it up automatically.
         let sx = SliderExternal::new();
         let schema = sx.schema();
-        let fields: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
+        let fields: Vec<&str> = schema.fields.iter().map(|f| f.path).collect();
         assert!(fields.contains(&"orientation"), "fields = {fields:?}");
     }
 }

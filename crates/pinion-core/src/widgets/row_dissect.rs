@@ -54,8 +54,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
+    SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal, batch};
 use crate::widgets::tree_nav::{TreeNode, set_expanded_in, toggle_expanded};
@@ -515,21 +515,45 @@ impl ExternalIntrospect for RowDissectionExternal {
         // `node_count` — visible detail-row count (query only).
         // `path`/`name`/`value`/`kind`/`depth` — `<token>.<i>` per visible row.
         // `select`/`toggle`/`expand`/`collapse`/`clear` — invoke channels.
-        IntrospectSchema::new(&[
-            ("selected", "int"),
-            ("row_count", "int"),
-            ("node_count", "int"),
-            ("path", "string"),
-            ("name", "string"),
-            ("value", "string"),
-            ("kind", "string"),
-            ("depth", "int"),
-            ("select", "int"),
-            ("toggle", "string"),
-            ("expand", "string"),
-            ("collapse", "string"),
-            ("clear", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("selected", "int"),
+                    SchemaField::new("row_count", "int"),
+                    SchemaField::new("node_count", "int"),
+                    SchemaField::parametric(
+                        "path.<idx>",
+                        "string",
+                        const { &[SchemaArg::index("idx", "node_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "name.<idx>",
+                        "string",
+                        const { &[SchemaArg::index("idx", "node_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "value.<idx>",
+                        "string",
+                        const { &[SchemaArg::index("idx", "node_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "kind.<idx>",
+                        "string",
+                        const { &[SchemaArg::index("idx", "node_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "depth.<idx>",
+                        "int",
+                        const { &[SchemaArg::index("idx", "node_count")] },
+                    ),
+                    SchemaField::new("select", "int"),
+                    SchemaField::new("toggle", "string"),
+                    SchemaField::new("expand", "string"),
+                    SchemaField::new("collapse", "string"),
+                    SchemaField::new("clear", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

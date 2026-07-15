@@ -79,7 +79,8 @@ use std::rc::Rc;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use crate::reactive::{Computed, Owner, Signal};
 use crate::widgets::tree_nav::VisibleRow;
@@ -321,13 +322,25 @@ impl ExternalIntrospect for TreeFilterExternal {
         // `visible_at`   — `visible_at.<pos>` filtered position → node id.
         // `label_at`     — `label_at.<pos>` filtered position → node label.
         // `set_filter`   — invoke channel (Text sets, Null clears).
-        IntrospectSchema::new(&[
-            ("query", "string"),
-            ("visible_count", "int"),
-            ("visible_at", "string"),
-            ("label_at", "string"),
-            ("set_filter", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("query", "string"),
+                    SchemaField::new("visible_count", "int"),
+                    SchemaField::parametric(
+                        "visible_at.<pos>",
+                        "string",
+                        const { &[SchemaArg::index("pos", "visible_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "label_at.<pos>",
+                        "string",
+                        const { &[SchemaArg::index("pos", "visible_count")] },
+                    ),
+                    SchemaField::new("set_filter", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

@@ -41,7 +41,7 @@ use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_core::composite_tag::parse_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Effect, Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
@@ -1409,12 +1409,16 @@ impl ExternalIntrospect for TodoDeleteExternal {
     /// shortcut (RPC AI-driving path); returns `Bool(was_present)`
     /// so callers distinguish "deleted existing" from "no-op stale id".
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("ids", "json"),
-            ("send", "string"),
-            ("delete", "int"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("ids", "json"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("delete", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1546,13 +1550,17 @@ impl ExternalIntrospect for TodoToggleExternal {
     /// derived state. `send` = composite-tag wire (`PointerDown` flips).
     /// `toggle` = direct typed-id shortcut; returns `Bool(new_completed)`.
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("completed_count", "int"),
-            ("ids_completed", "json"),
-            ("send", "string"),
-            ("toggle", "int"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("completed_count", "int"),
+                    SchemaField::new("ids_completed", "json"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("toggle", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1769,7 +1777,15 @@ impl ExternalIntrospect for TodoEditExternal {
     /// `Bool(was_present)` so callers distinguish "row existed +
     /// editing now" from "no-op stale id".
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("editing_id", "json"), ("send", "string"), ("begin", "int")])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("editing_id", "json"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("begin", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

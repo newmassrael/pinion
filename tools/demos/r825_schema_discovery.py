@@ -12,9 +12,20 @@ because `query("id_at")` without a `.<pos>` index resolves to `None` and so
 those paths never appear in a snapshot. `$schema` is how an AI discovers
 the full surface without hard-coded knowledge.
 
+R1353 made that discovery complete. `$schema` used to render a parametric
+path exactly like a scalar (`{"path": "id_at", "type": "string"}` vs
+`{"path": "row_count", "type": "int"}`), so it revealed that `id_at` EXISTS
+while saying nothing about it needing an argument — an agent still had to
+guess. It now renders the template plus a typed `args` entry per placeholder.
+
 Verifies:
   (A) `$schema` on the tree-state introspect returns all 7 declared paths
       with their type tags.
+  (A2) R1353: a parametric path DECLARES its argument — the wire template
+      (`id_at.<pos>`), the arg's name and type, and the domain its valid
+      values come from — so a client never guesses that a path needs `.0`
+      appended, nor where the bound is. A scalar carries no `args` at all,
+      which is what makes the two distinguishable.
   (B) the decisive value-add: the parametric paths are in `$schema` yet are
       absent from the same external's `scene/snapshot` introspect map.
   (C) every scalar path `$schema` declares is actually queryable.
@@ -80,13 +91,48 @@ def body() -> None:
         assert isinstance(sc, list), f"$schema is a JSON array of field descriptors, got {type(sc)}"
         paths = {f["path"]: f["type"] for f in sc}
         assert len(paths) == 7, f"7 declared paths, got {sorted(paths)}"
-        for p in ("row_count", "cursor", "cursor_index", "id_at", "label_at", "level_at", "expanded_at"):
+        for p in (
+            "row_count", "cursor", "cursor_index",
+            "id_at.<pos>", "label_at.<pos>", "level_at.<pos>", "expanded_at.<pos>",
+        ):
             assert p in paths, f"$schema declares {p}; got {sorted(paths)}"
         assert paths["row_count"] == "int", "row_count typed int"
         assert paths["cursor"] == "string", "cursor typed string"
         assert paths["cursor_index"] == "int", "cursor_index typed int"
-        assert paths["level_at"] == "int", "level_at typed int"
-        assert paths["expanded_at"] == "bool", "expanded_at typed bool"
+        assert paths["level_at.<pos>"] == "int", "level_at typed int"
+        assert paths["expanded_at.<pos>"] == "bool", "expanded_at typed bool"
+
+        # ── (A2) R1353: the argument is DECLARED, not guessed ───────
+        by_path = {f["path"]: f for f in sc}
+        # A scalar carries no `args` — that absence is the signal a client
+        # reads it as spelled.
+        for p in ("row_count", "cursor", "cursor_index"):
+            assert "args" not in by_path[p], f"{p} is scalar: no args declared"
+        for p in ("id_at.<pos>", "label_at.<pos>", "level_at.<pos>", "expanded_at.<pos>"):
+            args = by_path[p].get("args")
+            assert args, f"{p} declares its argument; got {by_path[p]}"
+            assert len(args) == 1, f"{p} takes exactly one argument, got {args}"
+            arg = args[0]
+            assert arg["name"] == "pos", f"{p} names its argument pos, got {arg}"
+            assert arg["type"] == "int", f"{p}'s argument is an int, got {arg}"
+            # The whole point: the bound is a PATH on this same surface, so a
+            # client reads it live instead of probing for the end of the range.
+            assert arg["domain"] == {"kind": "index_of", "count_path": "row_count"}, (
+                f"{p}'s domain points at the readable row_count, got {arg['domain']}"
+            )
+
+        # Follow the declaration end-to-end, exactly as an agent would: read the
+        # count the domain names, then read each member the template describes.
+        n = tf.query(f"/{STATE_TAG}/external/row_count")
+        assert isinstance(n, int) and n > 0, f"the declared count_path reads an int, got {n!r}"
+        ids = [tf.query(f"/{STATE_TAG}/external/id_at.{i}") for i in range(n)]
+        assert all(isinstance(i, str) and i for i in ids), (
+            f"every index inside the declared domain answers; got {ids}"
+        )
+        # …and the first index outside it does not fabricate a row.
+        assert tf.query(f"/{STATE_TAG}/external/id_at.{n}") is None, (
+            "an index past the declared count must not answer with a value"
+        )
 
         # ── (B) parametric paths: in $schema, absent from snapshot ──
         # The RPC-only introspect node paints nothing, so it lives in the
@@ -95,9 +141,9 @@ def body() -> None:
         snap_names = introspect_names(snap, STATE_TAG)
         assert "row_count" in snap_names, "snapshot shows the scalar paths"
         assert "cursor" in snap_names, "snapshot shows cursor"
-        for p in ("id_at", "label_at", "level_at", "expanded_at"):
-            assert p in paths, f"$schema reveals parametric {p}"
-            assert p not in snap_names, f"snapshot omits parametric {p} (query(bare) -> None)"
+        for stem in ("id_at", "label_at", "level_at", "expanded_at"):
+            assert f"{stem}.<pos>" in paths, f"$schema reveals parametric {stem}"
+            assert stem not in snap_names, f"snapshot omits parametric {stem} (a family is unbounded)"
 
         # ── (C) every scalar path the schema declares is queryable ──
         assert tf.query(f"/{STATE_TAG}/external/row_count") == 6, "row_count queryable per the contract"

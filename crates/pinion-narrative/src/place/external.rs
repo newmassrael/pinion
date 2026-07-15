@@ -8,7 +8,7 @@
 //! derived geometry, so there is nothing to author here; re-solving means
 //! re-reading the graph upstream.
 
-use pinion_core::external::{IntrospectSchema, IntrospectValue, QuerySource, int_of};
+use pinion_core::external::{IntrospectSchema, IntrospectValue, QuerySource, SchemaField, int_of};
 use serde::Serialize;
 
 use crate::place::layout::PlaceLayout;
@@ -29,12 +29,16 @@ struct NodeGeom<'a> {
 
 impl QuerySource for PlaceLayout {
     fn introspect_schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("node_count", "int"),
-            ("edge_count", "int"),
-            ("nodes", "json"),
-            ("edges", "json"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("node_count", "int"),
+                    SchemaField::new("edge_count", "int"),
+                    SchemaField::new("nodes", "json"),
+                    SchemaField::new("edges", "json"),
+                ]
+            },
+        )
     }
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {

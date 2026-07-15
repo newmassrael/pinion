@@ -43,7 +43,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -500,19 +501,31 @@ impl ExternalIntrospect for DatePickerExternal {
         // way `send` documents its `"<day>:<EventName>"` wire format —
         // discovery metadata for AI clients (`scene/schema` RPC), not a
         // static enumeration of concrete paths.
-        IntrospectSchema::new(&[
-            ("year", "int"),
-            ("month", "int"),
-            ("days", "int"),
-            ("selected", "bool"),
-            ("selected_year", "int"),
-            ("selected_month", "int"),
-            ("selected_day", "int"),
-            ("focused_day", "int"),
-            ("state.<day>", "string"),
-            ("selected.<day>", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("year", "int"),
+                    SchemaField::new("month", "int"),
+                    SchemaField::new("days", "int"),
+                    SchemaField::new("selected", "bool"),
+                    SchemaField::new("selected_year", "int"),
+                    SchemaField::new("selected_month", "int"),
+                    SchemaField::new("selected_day", "int"),
+                    SchemaField::new("focused_day", "int"),
+                    SchemaField::parametric(
+                        "state.<day>",
+                        "string",
+                        const { &[SchemaArg::open("day", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "selected.<day>",
+                        "bool",
+                        const { &[SchemaArg::open("day", "int")] },
+                    ),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

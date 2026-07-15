@@ -30,7 +30,8 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{
-    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, int_of,
+    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaField,
+    int_of,
 };
 use pinion_core::intent::Intent;
 use pinion_core::print::{
@@ -176,18 +177,22 @@ struct PrintIntrospect {
 
 impl QuerySource for PrintIntrospect {
     fn introspect_schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("backend_kind", "string"),
-            ("printer_count", "int"),
-            ("selected", "int"),
-            ("selected_id", "string"),
-            ("copies", "int"),
-            ("submit_count", "int"),
-            ("last_printer", "string"),
-            ("last_copies", "int"),
-            ("last_job", "string"),
-            ("last_content", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("backend_kind", "string"),
+                    SchemaField::new("printer_count", "int"),
+                    SchemaField::new("selected", "int"),
+                    SchemaField::new("selected_id", "string"),
+                    SchemaField::new("copies", "int"),
+                    SchemaField::new("submit_count", "int"),
+                    SchemaField::new("last_printer", "string"),
+                    SchemaField::new("last_copies", "int"),
+                    SchemaField::new("last_job", "string"),
+                    SchemaField::new("last_content", "string"),
+                ]
+            },
+        )
     }
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {

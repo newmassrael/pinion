@@ -55,7 +55,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::disclosure::{Disclosure, DisclosureEvent, DisclosureState};
@@ -324,13 +325,25 @@ impl ExternalIntrospect for DisclosureGroupExternal {
         // same way `send` documents its `"<index>:<EventName>"` wire
         // format — discovery metadata for AI clients (`scene/schema`
         // RPC), not a static enumeration of concrete paths.
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("expanded_index", "int"),
-            ("state.<index>", "string"),
-            ("expanded.<index>", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("expanded_index", "int"),
+                    SchemaField::parametric(
+                        "state.<index>",
+                        "string",
+                        const { &[SchemaArg::index("index", "count")] },
+                    ),
+                    SchemaField::parametric(
+                        "expanded.<index>",
+                        "bool",
+                        const { &[SchemaArg::index("index", "count")] },
+                    ),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -685,7 +698,7 @@ mod tests {
     fn schema_advertises_paths() {
         let ext = DisclosureGroupExternal::new(1);
         let schema = ext.schema();
-        let names: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
+        let names: Vec<&str> = schema.fields.iter().map(|f| f.path).collect();
         for expected in [
             "count",
             "expanded_index",

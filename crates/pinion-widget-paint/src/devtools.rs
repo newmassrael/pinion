@@ -54,7 +54,7 @@ use std::collections::HashMap;
 use pinion_core::Color;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Scene};
@@ -753,10 +753,14 @@ impl External for ClickRouter {
 
 impl ExternalIntrospect for ClickRouter {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            (CLICK_ROUTER_LAST_CLICKED_SLOT, "string"),
-            (CLICK_ROUTER_INVOKE_PATH, "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new(CLICK_ROUTER_LAST_CLICKED_SLOT, "string"),
+                    SchemaField::new(CLICK_ROUTER_INVOKE_PATH, "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1513,7 +1517,7 @@ mod tests {
         fn r683_router_schema_exposes_canonical_slot_names() {
             let router = ClickRouter::new();
             let schema = router.schema();
-            let names: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
+            let names: Vec<&str> = schema.fields.iter().map(|f| f.path).collect();
             assert!(names.contains(&CLICK_ROUTER_LAST_CLICKED_SLOT));
             assert!(names.contains(&CLICK_ROUTER_INVOKE_PATH));
         }

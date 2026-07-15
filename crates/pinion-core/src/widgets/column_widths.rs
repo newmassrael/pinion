@@ -33,7 +33,8 @@ use std::rc::Rc;
 use crate::composite_tag::split_send_payload;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::{DragCalibration, PointerWireEvent};
 use crate::intent::Intent;
@@ -293,22 +294,44 @@ impl ExternalIntrospect for ColumnWidthExternal {
         // `min_width`     — the resize floor (query only).
         // `width.<col>`   — one column's width (query only).
         // `set_col_width` — `"<col>=<width>"` invoke; returns the applied width.
-        IntrospectSchema::new(&[
-            ("widths", "string"),
-            ("total", "int"),
-            ("cols", "int"),
-            ("min_width", "int"),
-            ("width", "int"),
-            ("set_col_width", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("widths", "string"),
+                    SchemaField::new("total", "int"),
+                    SchemaField::new("cols", "int"),
+                    SchemaField::new("min_width", "int"),
+                    // R1353 §2 #2 — `width.<col>` is PARAMETRIC, and now says so:
+                    // an agent reads the declared arg instead of guessing that a
+                    // path typed `int` like `total` needs `.0` appended, and
+                    // reads `cols` for the bound instead of probing for it.
+                    SchemaField::parametric(
+                        "width.<col>",
+                        "int",
+                        const { &[SchemaArg::index("col", "cols")] },
+                    ),
+                    SchemaField::new("set_col_width", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
-        // `width.<col>` reads one column's width; an out-of-range column
-        // reports its width as the min clamp (present-but-floored), never
-        // absence.
+        // `width.<col>` reads one column's width.
+        //
+        // (R1353) An out-of-range column is `None` — ABSENT. It used to report
+        // the min clamp, because `ColumnWidths::width` floors an unknown column
+        // for the paint path (a layout loop wants a sane number, not a panic).
+        // Reporting that number over introspection made the surface *lie*: a
+        // client probing `width.999` on a 3-column grid got `40` — a plausible,
+        // confidently wrong answer, indistinguishable from a real column's
+        // width. A read that does not know the answer must say so; the paint
+        // path's tolerance is not the wire's.
         if let Some(rest) = path.strip_prefix("width.") {
             let col: usize = rest.parse().ok()?;
+            if col >= self.state.col_count() {
+                return None;
+            }
             return Some(IntrospectValue::Int(i64::from(self.state.width(col))));
         }
         match path {
@@ -605,7 +628,15 @@ impl ExternalIntrospect for ColumnResizeExternal {
         // `dragging`— live drag-in-progress flag (query only).
         // `send`    — framework synthetic pointer-event channel (PointerUp /
         //             PointerCancel teardown).
-        IntrospectSchema::new(&[("col", "int"), ("dragging", "bool"), ("send", "string")])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("col", "int"),
+                    SchemaField::new("dragging", "bool"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

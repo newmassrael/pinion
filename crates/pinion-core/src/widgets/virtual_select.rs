@@ -40,7 +40,7 @@
 use crate::Scene;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::IntentEmitter;
@@ -616,14 +616,18 @@ impl ExternalIntrospect for VirtualSelectExternal {
         // `mode` — `"single"` / `"multi"` cardinality policy (query only).
         // `item_count` — construction-fixed dataset size (query only).
         // `send` — the R51.42 §5.35 composite pointer channel (`<i>:Event`).
-        IntrospectSchema::new(&[
-            ("selected", "int"),
-            ("selection", "json"),
-            ("anchor", "int"),
-            ("mode", "string"),
-            ("item_count", "int"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("selected", "int"),
+                    SchemaField::new("selection", "json"),
+                    SchemaField::new("anchor", "int"),
+                    SchemaField::new("mode", "string"),
+                    SchemaField::new("item_count", "int"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

@@ -55,7 +55,8 @@
 use std::rc::Rc;
 
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, int_of,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    SchemaField, int_of,
 };
 use pinion_core::intent::Intent;
 
@@ -230,31 +231,35 @@ pinion_core::intent_query_external_impl!(VnExternal);
 
 impl ExternalIntrospect for VnExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("mode", "text"),
-            ("step", "int"),
-            ("step_count", "int"),
-            ("speaker", "text"),
-            ("line", "text"),
-            ("revealed", "text"),
-            ("revealed_chars", "int"),
-            ("line_len", "int"),
-            ("fully_revealed", "bool"),
-            ("prompt", "text"),
-            ("options", "json"),
-            ("option_count", "int"),
-            ("timeout_ms", "int"),
-            ("remaining_ms", "int"),
-            ("expired", "bool"),
-            ("resolved", "bool"),
-            ("outcome", "text"),
-            ("outcome_label", "text"),
-            ("timed_out", "bool"),
-            ("script", "json"),
-            ("background", "text"),
-            ("sprites", "json"),
-            ("sprite_count", "int"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("mode", "text"),
+                    SchemaField::new("step", "int"),
+                    SchemaField::new("step_count", "int"),
+                    SchemaField::new("speaker", "text"),
+                    SchemaField::new("line", "text"),
+                    SchemaField::new("revealed", "text"),
+                    SchemaField::new("revealed_chars", "int"),
+                    SchemaField::new("line_len", "int"),
+                    SchemaField::new("fully_revealed", "bool"),
+                    SchemaField::new("prompt", "text"),
+                    SchemaField::new("options", "json"),
+                    SchemaField::new("option_count", "int"),
+                    SchemaField::new("timeout_ms", "int"),
+                    SchemaField::new("remaining_ms", "int"),
+                    SchemaField::new("expired", "bool"),
+                    SchemaField::new("resolved", "bool"),
+                    SchemaField::new("outcome", "text"),
+                    SchemaField::new("outcome_label", "text"),
+                    SchemaField::new("timed_out", "bool"),
+                    SchemaField::new("script", "json"),
+                    SchemaField::new("background", "text"),
+                    SchemaField::new("sprites", "json"),
+                    SchemaField::new("sprite_count", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

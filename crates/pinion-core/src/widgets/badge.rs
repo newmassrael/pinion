@@ -49,7 +49,7 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
 };
 
 /// R759 §5.38 — count / dot status-overlay value holder.
@@ -205,16 +205,20 @@ impl External for BadgeExternal {
 
 impl ExternalIntrospect for BadgeExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("max", "int"),
-            ("dot", "bool"),
-            // Derived, read-only — the capped display string + the
-            // visibility verdict, exposed so an AI client reads exactly
-            // what the binding paints / announces.
-            ("label", "string"),
-            ("visible", "bool"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("max", "int"),
+                    SchemaField::new("dot", "bool"),
+                    // Derived, read-only — the capped display string + the
+                    // visibility verdict, exposed so an AI client reads exactly
+                    // what the binding paints / announces.
+                    SchemaField::new("label", "string"),
+                    SchemaField::new("visible", "bool"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

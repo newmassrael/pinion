@@ -470,7 +470,16 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                     .schema()
                     .fields
                     .iter()
-                    .filter_map(|(name, _ty)| intro.query(name).map(|v| ((*name).to_string(), v)))
+                    // R1353 — a snapshot is the SCALAR view of a surface, so a
+                    // parametric family is skipped BY DECLARATION rather than by
+                    // accident. It used to fall out of `query(stem)` returning
+                    // `None`; the skip is the same, but now it is a decision the
+                    // code states. It stays the right one: a family is unbounded
+                    // (a million-row grid's `width.<col>`), and expanding it here
+                    // would turn every snapshot into a full table scan. A client
+                    // that wants a member asks for it by name.
+                    .filter(|f| f.args.is_empty())
+                    .filter_map(|f| intro.query(f.path).map(|v| (f.path.to_string(), v)))
                     .collect()
             });
             SnapshotNode::External(ExternalSnapshot {

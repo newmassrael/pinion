@@ -79,7 +79,8 @@ use pinion_core::command::Command;
 use pinion_core::composite_tag::{prefixed_index, split_send_payload};
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
+    SchemaField,
 };
 use pinion_core::input::{
     Modifiers, MultiSelectKeyOp, SelectionChord, edit_field_keymap, is_activation_event,
@@ -1156,59 +1157,87 @@ query_proxy_external_impl!(InspectorExternal);
 
 impl ExternalIntrospect for InspectorExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("object_count", "int"),
-            ("selected", "int"),
-            ("selection", "json"),
-            ("selection_count", "int"),
-            ("selection_summary", "string"),
-            ("mode", "string"),
-            ("row_count", "int"),
-            ("object_name.<j>", "string"),
-            ("name.<i>", "string"),
-            ("kind.<i>", "string"),
-            ("value.<i>", "json"),
-            ("mixed.<i>", "bool"),
-            ("modified.<i>", "bool"),
-            ("any_modified", "bool"),
-            ("select", "int"),
-            ("toggle", "int"),
-            ("extend_to", "int"),
-            ("select_all", "null"),
-            ("clear", "null"),
-            ("send", "string"),
-            ("reset", "int"),
-            ("reset_all", "null"),
-            // R1221 — the Details inline-edit verbs (the AI-first peers of the
-            // value-cell click gestures): flip a common Bool across the whole
-            // selection, or step a common numeric (arg "<i>,<dir>", dir a signed
-            // unit count). Both write across every selected object.
-            ("toggle_property", "int"),
-            ("step_property", "string"),
-            // R1225 — cycle a common Choice across the selection (arg "<i>,<dir>",
-            // the enum peer of step_property; the value-cell click twin).
-            ("cycle_property", "string"),
-            // R1224 — the keyboard-focus surface (§2 #2: the region + property
-            // cursor the Arrow keys drive are observable + drivable over RPC).
-            // `focus_region` reads/sets which pane owns the cursor ("objects" /
-            // "details"); `prop_cursor` reads the active Details row (clamped);
-            // `focus_property` places the cursor at a row (and focuses Details).
-            ("focus_region", "string"),
-            ("prop_cursor", "int"),
-            ("focus_property", "int"),
-            // R1249 — the inline absolute type-in editor surface (§2 #2: the
-            // editor's open row + live buffer are observable, and the AI drives
-            // the whole edit over RPC without char-by-char keys). `editing` reads
-            // the common-property index the field is open on (Null when closed);
-            // `edit_text` reads the live buffer. `begin_edit` opens it on a
-            // numeric row, `commit_edit` writes the wire text across the selection
-            // and closes, `cancel_edit` closes without writing.
-            ("editing", "int"),
-            ("edit_text", "string"),
-            ("begin_edit", "int"),
-            ("commit_edit", "string"),
-            ("cancel_edit", "null"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("object_count", "int"),
+                    SchemaField::new("selected", "int"),
+                    SchemaField::new("selection", "json"),
+                    SchemaField::new("selection_count", "int"),
+                    SchemaField::new("selection_summary", "string"),
+                    SchemaField::new("mode", "string"),
+                    SchemaField::new("row_count", "int"),
+                    SchemaField::parametric(
+                        "object_name.<j>",
+                        "string",
+                        const { &[SchemaArg::open("j", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "name.<i>",
+                        "string",
+                        const { &[SchemaArg::open("i", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "kind.<i>",
+                        "string",
+                        const { &[SchemaArg::open("i", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "value.<i>",
+                        "json",
+                        const { &[SchemaArg::open("i", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "mixed.<i>",
+                        "bool",
+                        const { &[SchemaArg::open("i", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "modified.<i>",
+                        "bool",
+                        const { &[SchemaArg::open("i", "int")] },
+                    ),
+                    SchemaField::new("any_modified", "bool"),
+                    SchemaField::new("select", "int"),
+                    SchemaField::new("toggle", "int"),
+                    SchemaField::new("extend_to", "int"),
+                    SchemaField::new("select_all", "null"),
+                    SchemaField::new("clear", "null"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("reset", "int"),
+                    SchemaField::new("reset_all", "null"),
+                    // R1221 — the Details inline-edit verbs (the AI-first peers of the
+                    // value-cell click gestures): flip a common Bool across the whole
+                    // selection, or step a common numeric (arg "<i>,<dir>", dir a signed
+                    // unit count). Both write across every selected object.
+                    SchemaField::new("toggle_property", "int"),
+                    SchemaField::new("step_property", "string"),
+                    // R1225 — cycle a common Choice across the selection (arg "<i>,<dir>",
+                    // the enum peer of step_property; the value-cell click twin).
+                    SchemaField::new("cycle_property", "string"),
+                    // R1224 — the keyboard-focus surface (§2 #2: the region + property
+                    // cursor the Arrow keys drive are observable + drivable over RPC).
+                    // `focus_region` reads/sets which pane owns the cursor ("objects" /
+                    // "details"); `prop_cursor` reads the active Details row (clamped);
+                    // `focus_property` places the cursor at a row (and focuses Details).
+                    SchemaField::new("focus_region", "string"),
+                    SchemaField::new("prop_cursor", "int"),
+                    SchemaField::new("focus_property", "int"),
+                    // R1249 — the inline absolute type-in editor surface (§2 #2: the
+                    // editor's open row + live buffer are observable, and the AI drives
+                    // the whole edit over RPC without char-by-char keys). `editing` reads
+                    // the common-property index the field is open on (Null when closed);
+                    // `edit_text` reads the live buffer. `begin_edit` opens it on a
+                    // numeric row, `commit_edit` writes the wire text across the selection
+                    // and closes, `cancel_edit` closes without writing.
+                    SchemaField::new("editing", "int"),
+                    SchemaField::new("edit_text", "string"),
+                    SchemaField::new("begin_edit", "int"),
+                    SchemaField::new("commit_edit", "string"),
+                    SchemaField::new("cancel_edit", "null"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -2879,7 +2908,7 @@ mod tests {
     #[test]
     fn r1221_edit_verbs_are_schema_declared() {
         let e = ext();
-        let fields: Vec<&str> = e.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = e.schema().fields.iter().map(|f| f.path).collect();
         assert!(
             fields.contains(&"toggle_property"),
             "toggle_property schema-declared"
@@ -3734,7 +3763,7 @@ mod tests {
     #[test]
     fn r1225_cycle_verb_schema_declared_and_choice_cell_click_cycles() {
         let mut e = ext();
-        let fields: Vec<&str> = e.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = e.schema().fields.iter().map(|f| f.path).collect();
         assert!(
             fields.contains(&"cycle_property"),
             "cycle_property schema-declared"

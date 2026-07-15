@@ -36,7 +36,7 @@ use pinion_a11y::{
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, Color};
@@ -106,7 +106,7 @@ impl External for TestExternal {
 
 impl ExternalIntrospect for TestExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("value", "i32")])
+        IntrospectSchema::new(const { &[SchemaField::new("value", "i32")] })
     }
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {

@@ -460,7 +460,7 @@ use std::rc::Rc;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::reactive::{Owner, Signal};
@@ -976,11 +976,15 @@ impl External for ScrollBarExternal {
 
 impl ExternalIntrospect for ScrollBarExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("orientation", "string"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("orientation", "string"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1204,6 +1208,7 @@ mod r55_d2_tests {
         ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation, ScrollBarState,
         scroll_bar_orientation_name,
     };
+    use crate::external::SchemaField;
     use crate::external::{
         Backend, External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
         RepaintOwner, ThreadOwnership,
@@ -1462,9 +1467,9 @@ mod r55_d2_tests {
         assert_eq!(
             schema.fields,
             &[
-                ("state", "string"),
-                ("orientation", "string"),
-                ("send", "string"),
+                SchemaField::new("state", "string"),
+                SchemaField::new("orientation", "string"),
+                SchemaField::new("send", "string"),
             ],
         );
     }

@@ -38,7 +38,9 @@
 
 use std::rc::Rc;
 
-use crate::external::{IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource};
+use crate::external::{
+    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaField,
+};
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
 
@@ -126,7 +128,7 @@ pub type ModalIntrospect = QueryOnlyIntrospect<ModalState>;
 /// invoke), never by rewinding the introspect node.
 impl QuerySource for ModalState {
     fn introspect_schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("open", "bool")])
+        IntrospectSchema::new(const { &[SchemaField::new("open", "bool")] })
     }
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
@@ -319,7 +321,7 @@ mod tests {
             let node = ModalIntrospect::new(use_modal("m"));
             assert_eq!(
                 node.schema().fields,
-                &[("open", "bool")],
+                &[SchemaField::new("open", "bool")],
                 "the schema advertises the single read-only `open` bool slot",
             );
         });

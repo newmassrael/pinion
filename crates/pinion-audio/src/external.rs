@@ -22,8 +22,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, int_of,
-    read_only_or_unknown,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
+    SchemaField, int_of, read_only_or_unknown,
 };
 use pinion_core::intent::Intent;
 use serde::Serialize;
@@ -195,19 +195,35 @@ pinion_core::intent_query_external_impl!(AudioEngineExternal);
 
 impl ExternalIntrospect for AudioEngineExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("voice_count", "int"),
-            ("sample_rate", "int"),
-            ("master_gain", "float"),
-            ("voices", "json"),
-            ("clips", "json"),
-            ("listener", "json"),
-            ("attenuation", "json"),
-            // Per-voice writes (the read twins are the `voices` array fields).
-            ("voice.<id>.gain", "float"),
-            ("voice.<id>.pan", "float"),
-            ("voice.<id>.position", "json"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("voice_count", "int"),
+                    SchemaField::new("sample_rate", "int"),
+                    SchemaField::new("master_gain", "float"),
+                    SchemaField::new("voices", "json"),
+                    SchemaField::new("clips", "json"),
+                    SchemaField::new("listener", "json"),
+                    SchemaField::new("attenuation", "json"),
+                    // Per-voice writes (the read twins are the `voices` array fields).
+                    SchemaField::parametric(
+                        "voice.<id>.gain",
+                        "float",
+                        const { &[SchemaArg::open("id", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "voice.<id>.pan",
+                        "float",
+                        const { &[SchemaArg::open("id", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "voice.<id>.position",
+                        "json",
+                        const { &[SchemaArg::open("id", "int")] },
+                    ),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -471,25 +487,25 @@ pub fn shared_controller(controller: AudioController) -> SharedController {
 /// `device` / `sample_rate` / `channels`, say) can compose its own schema from
 /// this list instead of hand-copying it, which would be a second source of truth
 /// that silently drifts the moment a field is added here.
-pub const RT_EXTERNAL_FIELDS: &[(&str, &str)] = &[
-    ("voice_count", "int"),
-    ("max_voices", "int"),
-    ("peak", "float"),
-    ("frames_rendered", "int"),
-    ("rejected", "int"),
-    ("stolen", "int"),
+pub const RT_EXTERNAL_FIELDS: &[SchemaField] = &[
+    SchemaField::new("voice_count", "int"),
+    SchemaField::new("max_voices", "int"),
+    SchemaField::new("peak", "float"),
+    SchemaField::new("frames_rendered", "int"),
+    SchemaField::new("rejected", "int"),
+    SchemaField::new("stolen", "int"),
     // Per-voice detail read off the lock-free per-voice slots + the
     // control-thread label map.
-    ("voices", "json"),
+    SchemaField::new("voices", "json"),
     // The 3D listener / attenuation, read from the control-thread
     // mirror. Query-readable but driven via `invoke set_listener` /
     // `set_attenuation` (the RT surface's read-via-query,
     // write-via-invoke split), so an `intervene` of them is `ReadOnly`.
-    ("listener", "json"),
-    ("attenuation", "json"),
+    SchemaField::new("listener", "json"),
+    SchemaField::new("attenuation", "json"),
     // The full-pool policy, read from the control-thread mirror; driven
     // via `invoke set_voice_policy`.
-    ("voice_policy", "text"),
+    SchemaField::new("voice_policy", "text"),
 ];
 
 impl ExternalIntrospect for AudioControllerExternal {

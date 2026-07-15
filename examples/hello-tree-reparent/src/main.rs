@@ -65,7 +65,8 @@ use pinion_a11y::{
 use pinion_core::composite_tag::{parse_send_payload, split_subindex};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::reactive::{Owner, Signal};
@@ -446,15 +447,34 @@ impl External for OutlinerExternal {
 
 impl ExternalIntrospect for OutlinerExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("row_count", "int"),
-            ("id_at", "string"),
-            ("depth_at", "string"),
-            ("parent_of", "string"),
-            ("preview", "json"),
-            ("focused", "string"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("row_count", "int"),
+                    SchemaField::parametric(
+                        "id_at.<pos>",
+                        "string",
+                        const { &[SchemaArg::index("pos", "row_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "depth_at.<pos>",
+                        "string",
+                        const { &[SchemaArg::index("pos", "row_count")] },
+                    ),
+                    // R1353 — keyed by a node ID, not an index: the answerable
+                    // arguments are the ids `id_at.<pos>` enumerates, which is
+                    // what `ValuesOf` points a client at.
+                    SchemaField::parametric(
+                        "parent_of.<id>",
+                        "string",
+                        const { &[SchemaArg::key("id", "string", "id_at")] },
+                    ),
+                    SchemaField::new("preview", "json"),
+                    SchemaField::new("focused", "string"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

@@ -28,7 +28,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::WidgetTransition;
@@ -250,18 +251,30 @@ impl External for PaginationExternal {
 
 impl ExternalIntrospect for PaginationExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("selected_index", "int"),
-            ("focused_index", "int"),
-            ("state.<index>", "string"),
-            ("selected.<index>", "bool"),
-            ("can_prev", "bool"),
-            ("can_next", "bool"),
-            ("prev.state", "string"),
-            ("next.state", "string"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("selected_index", "int"),
+                    SchemaField::new("focused_index", "int"),
+                    SchemaField::parametric(
+                        "state.<index>",
+                        "string",
+                        const { &[SchemaArg::open("index", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "selected.<index>",
+                        "bool",
+                        const { &[SchemaArg::open("index", "int")] },
+                    ),
+                    SchemaField::new("can_prev", "bool"),
+                    SchemaField::new("can_next", "bool"),
+                    SchemaField::new("prev.state", "string"),
+                    SchemaField::new("next.state", "string"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

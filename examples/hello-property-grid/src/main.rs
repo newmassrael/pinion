@@ -117,7 +117,8 @@ use pinion_core::composite_tag::{prefixed_index, split_send_payload};
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
 use pinion_core::reactive::{Owner, Signal, batch};
@@ -2217,58 +2218,98 @@ impl ExternalIntrospect for PropertyGridExternal {
         // `cursor` / `id_at.<pos>` / `level_at.<pos>` / `expanded_at.<pos>`).
         // This coordinator owns the value-index-keyed value model + the
         // per-branch collapse / struct aggregate / edit / popup state.
-        IntrospectSchema::new(&[
-            ("row_count", "int"),
-            ("editing", "json"),
-            ("name.<index>", "string"),
-            ("kind.<index>", "string"),
-            ("value.<index>", "json"),
-            // R964 — a bounded scalar's `"<lo>..<hi>"` interval ("none" when
-            // unranged); the AI reads it before a `value.<i>` write. Same wire
-            // as the data-grid R894 `col_range.<col>` sibling.
-            ("range.<index>", "string"),
-            // R919 / R936 — the modified-from-default reads + the reset writes.
-            // `modified.<addr>` takes a scalar index ("6") OR an element address
-            // ("elem.2"), the unified `ValueRef` vocabulary; `reset` likewise.
-            ("modified.<addr>", "bool"),
-            ("any_modified", "bool"),
-            ("reset", "int"),
-            ("reset_all", "json"),
-            // R931 — the dynamic array: element count + the add / remove /
-            // reorder verbs. Element values read / write through the same
-            // `value.elem.<k>` / `kind.elem.<k>` / `name.elem.<k>` paths as a
-            // scalar (the unified `ValueRef` wire address).
-            ("elem_count", "int"),
-            ("add_elem", "int"),
-            ("remove_elem", "int"),
-            ("move_elem", "string"),
-            // R936 — the array branch's modified roll-up (length or any element
-            // differs) + its wholesale reset, the array peer of
-            // `struct_modified.<id>` / `reset_struct`.
-            ("array_modified.<branch_id>", "bool"),
-            ("reset_array", "bool"),
-            // R921 — per-branch collapse (read + intervene + toggle) and the
-            // struct aggregate (summary tuple + modified roll-up + reset-all).
-            ("expanded.<branch_id>", "bool"),
-            ("struct_summary.<struct_id>", "string"),
-            ("struct_modified.<struct_id>", "bool"),
-            ("toggle_branch", "bool"),
-            ("reset_struct", "int"),
-            // R921 — the roving keyboard cursor's node id (read + intervene; a
-            // leaf value-index string "6" or a branch `cat.` / `struct.` id,
-            // Null when unset). The AI-first cursor move (no click side effect).
-            ("cursor", "string"),
-            ("popup_cursor", "int"),
-            // R875 — live numeric-scrub flag (true between the first drag move
-            // and the release); the AI-first witness of a scrub in flight.
-            ("scrubbing", "bool"),
-            ("send", "string"),
-            ("toggle", "int"),
-            ("begin", "int"),
-            ("choose", "int"),
-            ("pick_color", "int"),
-            ("close_popup", "json"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("row_count", "int"),
+                    SchemaField::new("editing", "json"),
+                    SchemaField::parametric(
+                        "name.<index>",
+                        "string",
+                        const { &[SchemaArg::open("index", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "kind.<index>",
+                        "string",
+                        const { &[SchemaArg::open("index", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "value.<index>",
+                        "json",
+                        const { &[SchemaArg::open("index", "int")] },
+                    ),
+                    // R964 — a bounded scalar's `"<lo>..<hi>"` interval ("none" when
+                    // unranged); the AI reads it before a `value.<i>` write. Same wire
+                    // as the data-grid R894 `col_range.<col>` sibling.
+                    SchemaField::parametric(
+                        "range.<index>",
+                        "string",
+                        const { &[SchemaArg::open("index", "int")] },
+                    ),
+                    // R919 / R936 — the modified-from-default reads + the reset writes.
+                    // `modified.<addr>` takes a scalar index ("6") OR an element address
+                    // ("elem.2"), the unified `ValueRef` vocabulary; `reset` likewise.
+                    SchemaField::parametric(
+                        "modified.<addr>",
+                        "bool",
+                        const { &[SchemaArg::open("addr", "string")] },
+                    ),
+                    SchemaField::new("any_modified", "bool"),
+                    SchemaField::new("reset", "int"),
+                    SchemaField::new("reset_all", "json"),
+                    // R931 — the dynamic array: element count + the add / remove /
+                    // reorder verbs. Element values read / write through the same
+                    // `value.elem.<k>` / `kind.elem.<k>` / `name.elem.<k>` paths as a
+                    // scalar (the unified `ValueRef` wire address).
+                    SchemaField::new("elem_count", "int"),
+                    SchemaField::new("add_elem", "int"),
+                    SchemaField::new("remove_elem", "int"),
+                    SchemaField::new("move_elem", "string"),
+                    // R936 — the array branch's modified roll-up (length or any element
+                    // differs) + its wholesale reset, the array peer of
+                    // `struct_modified.<id>` / `reset_struct`.
+                    SchemaField::parametric(
+                        "array_modified.<branch_id>",
+                        "bool",
+                        const { &[SchemaArg::open("branch_id", "string")] },
+                    ),
+                    SchemaField::new("reset_array", "bool"),
+                    // R921 — per-branch collapse (read + intervene + toggle) and the
+                    // struct aggregate (summary tuple + modified roll-up + reset-all).
+                    SchemaField::parametric(
+                        "expanded.<branch_id>",
+                        "bool",
+                        const { &[SchemaArg::open("branch_id", "string")] },
+                    ),
+                    SchemaField::parametric(
+                        "struct_summary.<struct_id>",
+                        "string",
+                        const { &[SchemaArg::open("struct_id", "string")] },
+                    ),
+                    SchemaField::parametric(
+                        "struct_modified.<struct_id>",
+                        "bool",
+                        const { &[SchemaArg::open("struct_id", "string")] },
+                    ),
+                    SchemaField::new("toggle_branch", "bool"),
+                    SchemaField::new("reset_struct", "int"),
+                    // R921 — the roving keyboard cursor's node id (read + intervene; a
+                    // leaf value-index string "6" or a branch `cat.` / `struct.` id,
+                    // Null when unset). The AI-first cursor move (no click side effect).
+                    SchemaField::new("cursor", "string"),
+                    SchemaField::new("popup_cursor", "int"),
+                    // R875 — live numeric-scrub flag (true between the first drag move
+                    // and the release); the AI-first witness of a scrub in flight.
+                    SchemaField::new("scrubbing", "bool"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("toggle", "int"),
+                    SchemaField::new("begin", "int"),
+                    SchemaField::new("choose", "int"),
+                    SchemaField::new("pick_color", "int"),
+                    SchemaField::new("close_popup", "json"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

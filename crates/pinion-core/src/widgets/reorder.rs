@@ -631,7 +631,7 @@ mod tests {
 
     impl ExternalIntrospect for Probe {
         fn schema(&self) -> crate::external::IntrospectSchema {
-            crate::external::IntrospectSchema::new(&[])
+            crate::external::IntrospectSchema::new(const { &[] })
         }
         fn query(&self, path: &str) -> Option<IntrospectValue> {
             self.0.query(path)

@@ -44,7 +44,8 @@ use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::composite_tag::send_activation_index;
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
+    SchemaField,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -242,17 +243,25 @@ query_proxy_external_impl!(PaletteExternal);
 
 impl ExternalIntrospect for PaletteExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("query", "string"),
-            ("result_count", "int"),
-            ("result.<i>", "string"),
-            ("selected", "int"),
-            ("selected_command", "string"),
-            ("last_executed", "string"),
-            ("select", "int"),
-            ("execute", "json"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("query", "string"),
+                    SchemaField::new("result_count", "int"),
+                    SchemaField::parametric(
+                        "result.<i>",
+                        "string",
+                        const { &[SchemaArg::open("i", "int")] },
+                    ),
+                    SchemaField::new("selected", "int"),
+                    SchemaField::new("selected_command", "string"),
+                    SchemaField::new("last_executed", "string"),
+                    SchemaField::new("select", "int"),
+                    SchemaField::new("execute", "json"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

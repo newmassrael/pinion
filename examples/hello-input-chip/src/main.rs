@@ -53,7 +53,8 @@ use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::composite_tag::parse_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -452,17 +453,25 @@ impl ExternalIntrospect for ChipDeleteExternal {
     /// button; the click edge deletes). `delete` = direct typed-id shortcut
     /// (RPC AI-driving path), returns `Bool(was_present)`.
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("ids", "json"),
-            // Parameterized read key — queried as `state:<id>` (e.g.
-            // `state:2`) for chip `<id>`'s `×` button-posture variant name;
-            // the literal key advertises the `:<id>` suffix so the introspect
-            // contract (§5.21) matches what `query` actually accepts.
-            ("state:<id>", "string"),
-            ("send", "string"),
-            ("delete", "int"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("ids", "json"),
+                    // Parameterized read key — queried as `state:<id>` (e.g.
+                    // `state:2`) for chip `<id>`'s `×` button-posture variant name;
+                    // the literal key advertises the `:<id>` suffix so the introspect
+                    // contract (§5.21) matches what `query` actually accepts.
+                    SchemaField::parametric(
+                        "state:<id>",
+                        "string",
+                        const { &[SchemaArg::open("id", "int")] },
+                    ),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("delete", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

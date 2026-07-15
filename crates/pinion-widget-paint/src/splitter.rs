@@ -77,7 +77,7 @@ use std::rc::Rc;
 
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::{DragCalibration, PointerWireEvent};
 use pinion_core::intent::Intent;
@@ -982,12 +982,16 @@ fn commit_drag_state(ext: &mut SplitterExternal) {
 
 impl ExternalIntrospect for SplitterExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("orientation", "string"),
-            ("ratio", "float"),
-            ("dragging", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("orientation", "string"),
+                    SchemaField::new("ratio", "float"),
+                    SchemaField::new("dragging", "bool"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -2171,7 +2175,7 @@ mod tests {
     fn r683_splitter_external_introspect_schema_lists_canonical_paths() {
         let ext = SplitterExternal::new(SplitterOrientation::Horizontal);
         let schema = ext.schema();
-        let slot_names: Vec<&str> = schema.fields.iter().map(|(name, _)| *name).collect();
+        let slot_names: Vec<&str> = schema.fields.iter().map(|f| f.path).collect();
         assert!(slot_names.contains(&"orientation"));
         assert!(slot_names.contains(&"ratio"));
         assert!(slot_names.contains(&"dragging"));

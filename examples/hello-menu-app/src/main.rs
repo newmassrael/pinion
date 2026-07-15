@@ -51,7 +51,7 @@ use pinion_a11y::{
 };
 use pinion_core::external::{
     External, ExternalIntrospect, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect,
-    QuerySource, int_of,
+    QuerySource, SchemaField, int_of,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Owner, Signal, batch};
@@ -183,12 +183,16 @@ impl DocModel {
 
 impl QuerySource for DocModel {
     fn introspect_schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("content_len", "int"),
-            ("line_count", "int"),
-            ("dirty", "bool"),
-            ("empty", "bool"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("content_len", "int"),
+                    SchemaField::new("line_count", "int"),
+                    SchemaField::new("dirty", "bool"),
+                    SchemaField::new("empty", "bool"),
+                ]
+            },
+        )
     }
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {

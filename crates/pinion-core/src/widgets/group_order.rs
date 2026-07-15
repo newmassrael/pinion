@@ -80,8 +80,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, at_index,
-    query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
+    SchemaField, at_index, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::scene::Scene;
@@ -885,23 +885,55 @@ impl ExternalIntrospect for GroupOrderExternal {
         // `cursor`          — the roving keyboard cursor visual position
         //                     (query + intervene; Null when unset). R848.
         // `toggle_group`/`collapse_all`/`expand_all`/`send` — invoke channels.
-        IntrospectSchema::new(&[
-            ("visible_len", "int"),
-            ("count", "int"),
-            ("group_count", "int"),
-            ("kind_at", "string"),
-            ("source_at", "int"),
-            ("group_at", "int"),
-            ("label_at", "string"),
-            ("member_count_at", "int"),
-            ("collapsed_at", "bool"),
-            ("collapsed", "bool"),
-            ("cursor", "int"),
-            ("toggle_group", "int"),
-            ("collapse_all", "int"),
-            ("expand_all", "int"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("visible_len", "int"),
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("group_count", "int"),
+                    SchemaField::parametric(
+                        "kind_at.<pos>",
+                        "string",
+                        const { &[SchemaArg::index("pos", "visible_len")] },
+                    ),
+                    SchemaField::parametric(
+                        "source_at.<pos>",
+                        "int",
+                        const { &[SchemaArg::index("pos", "visible_len")] },
+                    ),
+                    SchemaField::parametric(
+                        "group_at.<pos>",
+                        "int",
+                        const { &[SchemaArg::index("pos", "visible_len")] },
+                    ),
+                    SchemaField::parametric(
+                        "label_at.<pos>",
+                        "string",
+                        const { &[SchemaArg::index("pos", "visible_len")] },
+                    ),
+                    SchemaField::parametric(
+                        "member_count_at.<pos>",
+                        "int",
+                        const { &[SchemaArg::index("pos", "visible_len")] },
+                    ),
+                    SchemaField::parametric(
+                        "collapsed_at.<pos>",
+                        "bool",
+                        const { &[SchemaArg::index("pos", "visible_len")] },
+                    ),
+                    SchemaField::parametric(
+                        "collapsed.<g>",
+                        "bool",
+                        const { &[SchemaArg::index("g", "group_count")] },
+                    ),
+                    SchemaField::new("cursor", "int"),
+                    SchemaField::new("toggle_group", "int"),
+                    SchemaField::new("collapse_all", "int"),
+                    SchemaField::new("expand_all", "int"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

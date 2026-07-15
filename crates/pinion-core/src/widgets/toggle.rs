@@ -81,7 +81,7 @@ use sm::TogglePolicy;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -327,7 +327,15 @@ impl ExternalIntrospect for ToggleExternal {
         //           mutable via intervene; `state` mutates only
         //           through `send` to keep the SCXML the single
         //           source of truth for interaction transitions.
-        IntrospectSchema::new(&[("state", "string"), ("value", "bool"), ("send", "string")])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("value", "bool"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -441,7 +449,14 @@ impl External for ToggleStateSnapshot {
 
 impl ExternalIntrospect for ToggleStateSnapshot {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("state", "string"), ("value", "bool")])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("value", "bool"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -682,7 +697,11 @@ mod tests {
         let tx = ToggleExternal::new();
         assert_eq!(
             tx.schema().fields,
-            &[("state", "string"), ("value", "bool"), ("send", "string")]
+            &[
+                SchemaField::new("state", "string"),
+                SchemaField::new("value", "bool"),
+                SchemaField::new("send", "string")
+            ]
         );
     }
 

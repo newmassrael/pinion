@@ -63,7 +63,7 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -233,14 +233,18 @@ impl External for TooltipExternal {
 
 impl ExternalIntrospect for TooltipExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("visible", "bool"),
-            ("hovered", "bool"),
-            ("focused", "bool"),
-            ("dismissed", "bool"),
-            ("send", "string"),
-            ("dismiss", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("visible", "bool"),
+                    SchemaField::new("hovered", "bool"),
+                    SchemaField::new("focused", "bool"),
+                    SchemaField::new("dismissed", "bool"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("dismiss", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -520,12 +524,12 @@ mod tests {
         assert_eq!(
             t.schema().fields,
             &[
-                ("visible", "bool"),
-                ("hovered", "bool"),
-                ("focused", "bool"),
-                ("dismissed", "bool"),
-                ("send", "string"),
-                ("dismiss", "string"),
+                SchemaField::new("visible", "bool"),
+                SchemaField::new("hovered", "bool"),
+                SchemaField::new("focused", "bool"),
+                SchemaField::new("dismissed", "bool"),
+                SchemaField::new("send", "string"),
+                SchemaField::new("dismiss", "string"),
             ]
         );
     }

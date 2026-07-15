@@ -65,7 +65,7 @@ use serde::de::DeserializeOwned;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::input::Modifiers;
 use crate::reactive::{Owner, Signal};
@@ -672,17 +672,21 @@ impl ExternalIntrospect for UndoStackExternal {
         // `count`            — total recorded commands (query only).
         // `undo_label`/`redo_label` — next step's label, or Null (query).
         // `undo`/`redo`/`clear` — invoke channels.
-        IntrospectSchema::new(&[
-            ("can_undo", "bool"),
-            ("can_redo", "bool"),
-            ("index", "int"),
-            ("count", "int"),
-            ("undo_label", "string"),
-            ("redo_label", "string"),
-            ("undo", "bool"),
-            ("redo", "bool"),
-            ("clear", "int"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("can_undo", "bool"),
+                    SchemaField::new("can_redo", "bool"),
+                    SchemaField::new("index", "int"),
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("undo_label", "string"),
+                    SchemaField::new("redo_label", "string"),
+                    SchemaField::new("undo", "bool"),
+                    SchemaField::new("redo", "bool"),
+                    SchemaField::new("clear", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

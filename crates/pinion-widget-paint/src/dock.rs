@@ -67,7 +67,7 @@ use std::collections::{HashMap, VecDeque};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DOCK_SURFACE_TAG, DragPayload, DragUpdate, DropPoint,
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    RepaintOwner, ThreadOwnership,
+    RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
@@ -3834,52 +3834,56 @@ impl External for DockReorganizeExternal {
 
 impl ExternalIntrospect for DockReorganizeExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("topology", "json"),
-            ("split_seq", "int"),
-            // (R1084.1 §5.51) Symmetric with `split_seq` — how many tab-well
-            // ids the coordinator has minted (one per applied `Tabify`), so an
-            // AI auto-discovering capabilities sees tab-well-mint progress as a
-            // first-class observable, not only split-mint progress.
-            ("tabs_seq", "int"),
-            // (R1112 §5.51 §2 #7 PR-37) This dock surface's tab-docking policy
-            // (`false` = split-only), so an AI discovers whether a centre drop
-            // tabifies before classifying one — the single policy the pointer
-            // preview + `drop` RPC + cross-window redock all honour.
-            ("tabbing", "bool"),
-            // R1134 §5.51.1 §2 #7 — this surface's torn-slot policy
-            // (`"placeholder"` / `"collapse"`), read here + driven by the
-            // `set_float_policy` invoke so an AI toggles collapse vs placeholder.
-            ("float_policy", "string"),
-            ("set_float_policy", "string"),
-            // (R1350 §5.51.1 §2 #7 PR-59) Whether `float_policy` was DECLARED by
-            // the binding (`with_float_policy`) and is therefore refused to the
-            // wire. Modelled exactly on `tabbing` above — a readable policy an
-            // agent consults BEFORE attempting the action it governs, rather
-            // than a capability it discovers by being rejected. `set_float_policy`
-            // stays advertised for the same reason `reorganize` stays advertised
-            // on a `tabbing: false` surface: the action exists, and the policy
-            // beside it says when it is honoured.
-            ("float_policy_locked", "bool"),
-            ("last_outcome", "string"),
-            // R1082.1 §5.51 — the in-flight pointer drag observed on the
-            // canonical reorganize surface (`{source, target, zone}` or
-            // null), so an AI client watching one tag sees both the
-            // committed `last_outcome` and the live drag.
-            ("drop_preview", "json"),
-            ("drop", "json"),
-            ("reorganize", "json"),
-            // (R1085 §5.51) Tab-well navigation: make tab `index` of well
-            // `well_id` visible (`{"well_id": "...", "index": N}`). The
-            // AI-first primary for tab activation — discoverable here so an
-            // agent reasoning over a `Tabs` well can switch tabs symbolically
-            // (no pixels), the §2 #2 RPC-as-primary-path contract.
-            ("activate_tab", "json"),
-            // (R1145 §5.51) Undock a tabbed panel back into a split sibling
-            // (`"<panel_id>"`) — the reverse of a centre-zone tabify, the AI-first
-            // primary for separating merged tabs (no pixels, no floating window).
-            ("undock_tab", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("topology", "json"),
+                    SchemaField::new("split_seq", "int"),
+                    // (R1084.1 §5.51) Symmetric with `split_seq` — how many tab-well
+                    // ids the coordinator has minted (one per applied `Tabify`), so an
+                    // AI auto-discovering capabilities sees tab-well-mint progress as a
+                    // first-class observable, not only split-mint progress.
+                    SchemaField::new("tabs_seq", "int"),
+                    // (R1112 §5.51 §2 #7 PR-37) This dock surface's tab-docking policy
+                    // (`false` = split-only), so an AI discovers whether a centre drop
+                    // tabifies before classifying one — the single policy the pointer
+                    // preview + `drop` RPC + cross-window redock all honour.
+                    SchemaField::new("tabbing", "bool"),
+                    // R1134 §5.51.1 §2 #7 — this surface's torn-slot policy
+                    // (`"placeholder"` / `"collapse"`), read here + driven by the
+                    // `set_float_policy` invoke so an AI toggles collapse vs placeholder.
+                    SchemaField::new("float_policy", "string"),
+                    SchemaField::new("set_float_policy", "string"),
+                    // (R1350 §5.51.1 §2 #7 PR-59) Whether `float_policy` was DECLARED by
+                    // the binding (`with_float_policy`) and is therefore refused to the
+                    // wire. Modelled exactly on `tabbing` above — a readable policy an
+                    // agent consults BEFORE attempting the action it governs, rather
+                    // than a capability it discovers by being rejected. `set_float_policy`
+                    // stays advertised for the same reason `reorganize` stays advertised
+                    // on a `tabbing: false` surface: the action exists, and the policy
+                    // beside it says when it is honoured.
+                    SchemaField::new("float_policy_locked", "bool"),
+                    SchemaField::new("last_outcome", "string"),
+                    // R1082.1 §5.51 — the in-flight pointer drag observed on the
+                    // canonical reorganize surface (`{source, target, zone}` or
+                    // null), so an AI client watching one tag sees both the
+                    // committed `last_outcome` and the live drag.
+                    SchemaField::new("drop_preview", "json"),
+                    SchemaField::new("drop", "json"),
+                    SchemaField::new("reorganize", "json"),
+                    // (R1085 §5.51) Tab-well navigation: make tab `index` of well
+                    // `well_id` visible (`{"well_id": "...", "index": N}`). The
+                    // AI-first primary for tab activation — discoverable here so an
+                    // agent reasoning over a `Tabs` well can switch tabs symbolically
+                    // (no pixels), the §2 #2 RPC-as-primary-path contract.
+                    SchemaField::new("activate_tab", "json"),
+                    // (R1145 §5.51) Undock a tabbed panel back into a split sibling
+                    // (`"<panel_id>"`) — the reverse of a centre-zone tabify, the AI-first
+                    // primary for separating merged tabs (no pixels, no floating window).
+                    SchemaField::new("undock_tab", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -4570,15 +4574,19 @@ impl External for TabWellExternal {
 
 impl ExternalIntrospect for TabWellExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("well_id", "string"),
-            // The live visible-tab index of this well, read from the shared
-            // topology (never stored here — the topology owns it). Null when
-            // the well is gone (a reorganize collapsed it) / the surface is
-            // empty.
-            ("active", "int"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("well_id", "string"),
+                    // The live visible-tab index of this well, read from the shared
+                    // topology (never stored here — the topology owns it). Null when
+                    // the well is gone (a reorganize collapsed it) / the surface is
+                    // empty.
+                    SchemaField::new("active", "int"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -7580,57 +7588,61 @@ impl External for DockPanelExternal {
 
 impl ExternalIntrospect for DockPanelExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("panel_id", "string"),
-            // R1111 §5.51 §2 #7 PR-37 — whether a centre drop tabifies. A
-            // split-only consumer sets it false; an AI discovers the policy.
-            ("tabbing", "bool"),
-            // R1134 §5.51.1 §2 #7 — the torn-slot policy (`"placeholder"` /
-            // `"collapse"`) this panel's float follows.
-            ("float_policy", "string"),
-            // R1172 §5.16 §2 #7 — the panel MOVE / FLOAT policy: `movable` false =
-            // a LOCKED panel (no drag at all — a fixed toolbar); `floatable` false =
-            // dock-only (drags + reorders, but an escaped drag snaps back).
-            ("movable", "bool"),
-            ("floatable", "bool"),
-            ("dragging", "bool"),
-            ("tear_off_fired", "bool"),
-            // R1081 §5.51 — the live drop the in-flight drag is over
-            // (`{source, target, zone}` or null), so an AI agent observes
-            // the same drop-zone affordance the user sees.
-            ("drop_preview", "json"),
-            // R1093 §5.15 §5.51 §2 #7 — the absolute window-logical cursor
-            // of the in-flight/last drag (`[x, y]` or null), so an AI reads
-            // the live pointer the router forwards even when the cursor has
-            // escaped every tagged region (the tear-off case `drop_preview`
-            // goes null on).
-            ("drag_cursor", "json"),
-            // R1094 §5.16 §5.41 §5.51 — whether the in-flight/last drag
-            // tore the panel into a live floating follower (escaped a drop
-            // target). Paired with `scene/windows` (the floating window's
-            // live declared position), an AI observes a tear-off + follow.
-            ("detached", "bool"),
-            // R1102 §5.51 §2 #7 PR-33 — the last cross-window dock-at
-            // (`{panel, window, target, x_rel, y_rel}` or null), so an AI
-            // observes that a drag redocked into ANOTHER window's zone — the
-            // live firing of the R1100 contract the R1102 shell wiring enables.
-            ("redock_at", "json"),
-            // R1149 §5.51 §2 #7 — the IN-FLIGHT would-dock: where a release NOW
-            // redocks (`{window, target, x_rel, y_rel}` or null = would float),
-            // so a held-drag snapshot diagnoses a preview-vs-drop divergence.
-            ("redock_pending", "json"),
-            // R1107 §5.51 §2 #7 — the window the last follow-drag move was
-            // measured in (`"main"` / a `torn-<panel>` id / null).
-            ("source_window", "string"),
-            ("send", "string"),
-            // R683.C §5.16 §5.49 — direct tear-off invoke channel.
-            // See `invoke` rustdoc.
-            (TEAR_OFF_EVENT, "string"),
-            // R1103 §5.51 §2 #7 PR-33 — direct cross-window redock invoke
-            // (the AI-primary driver for the executable floater→slot-window
-            // case). JSON payload `{window, target, x_rel, y_rel}`.
-            (TEAR_OFF_REDOCK_AT_EVENT, "json"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("panel_id", "string"),
+                    // R1111 §5.51 §2 #7 PR-37 — whether a centre drop tabifies. A
+                    // split-only consumer sets it false; an AI discovers the policy.
+                    SchemaField::new("tabbing", "bool"),
+                    // R1134 §5.51.1 §2 #7 — the torn-slot policy (`"placeholder"` /
+                    // `"collapse"`) this panel's float follows.
+                    SchemaField::new("float_policy", "string"),
+                    // R1172 §5.16 §2 #7 — the panel MOVE / FLOAT policy: `movable` false =
+                    // a LOCKED panel (no drag at all — a fixed toolbar); `floatable` false =
+                    // dock-only (drags + reorders, but an escaped drag snaps back).
+                    SchemaField::new("movable", "bool"),
+                    SchemaField::new("floatable", "bool"),
+                    SchemaField::new("dragging", "bool"),
+                    SchemaField::new("tear_off_fired", "bool"),
+                    // R1081 §5.51 — the live drop the in-flight drag is over
+                    // (`{source, target, zone}` or null), so an AI agent observes
+                    // the same drop-zone affordance the user sees.
+                    SchemaField::new("drop_preview", "json"),
+                    // R1093 §5.15 §5.51 §2 #7 — the absolute window-logical cursor
+                    // of the in-flight/last drag (`[x, y]` or null), so an AI reads
+                    // the live pointer the router forwards even when the cursor has
+                    // escaped every tagged region (the tear-off case `drop_preview`
+                    // goes null on).
+                    SchemaField::new("drag_cursor", "json"),
+                    // R1094 §5.16 §5.41 §5.51 — whether the in-flight/last drag
+                    // tore the panel into a live floating follower (escaped a drop
+                    // target). Paired with `scene/windows` (the floating window's
+                    // live declared position), an AI observes a tear-off + follow.
+                    SchemaField::new("detached", "bool"),
+                    // R1102 §5.51 §2 #7 PR-33 — the last cross-window dock-at
+                    // (`{panel, window, target, x_rel, y_rel}` or null), so an AI
+                    // observes that a drag redocked into ANOTHER window's zone — the
+                    // live firing of the R1100 contract the R1102 shell wiring enables.
+                    SchemaField::new("redock_at", "json"),
+                    // R1149 §5.51 §2 #7 — the IN-FLIGHT would-dock: where a release NOW
+                    // redocks (`{window, target, x_rel, y_rel}` or null = would float),
+                    // so a held-drag snapshot diagnoses a preview-vs-drop divergence.
+                    SchemaField::new("redock_pending", "json"),
+                    // R1107 §5.51 §2 #7 — the window the last follow-drag move was
+                    // measured in (`"main"` / a `torn-<panel>` id / null).
+                    SchemaField::new("source_window", "string"),
+                    SchemaField::new("send", "string"),
+                    // R683.C §5.16 §5.49 — direct tear-off invoke channel.
+                    // See `invoke` rustdoc.
+                    SchemaField::new(TEAR_OFF_EVENT, "string"),
+                    // R1103 §5.51 §2 #7 PR-33 — direct cross-window redock invoke
+                    // (the AI-primary driver for the executable floater→slot-window
+                    // case). JSON payload `{window, target, x_rel, y_rel}`.
+                    SchemaField::new(TEAR_OFF_REDOCK_AT_EVENT, "json"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -9064,7 +9076,7 @@ mod tests {
     fn r683_dock_panel_external_introspect_schema_includes_canonical_paths() {
         let ext = DockPanelExternal::new("p1");
         let schema = ext.schema();
-        let fields: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
+        let fields: Vec<&str> = schema.fields.iter().map(|f| f.path).collect();
         for needed in [
             "panel_id",
             "dragging",
@@ -12348,12 +12360,7 @@ mod reorganize_tests {
         assert_eq!(obj.get("target").and_then(|v| v.as_str()), Some("b"));
         assert_eq!(obj.get("zone").and_then(|v| v.as_str()), Some("Right"));
         // The slot is declared in the schema.
-        assert!(
-            ext.schema()
-                .fields
-                .iter()
-                .any(|(n, _)| *n == "drop_preview")
-        );
+        assert!(ext.schema().fields.iter().any(|f| f.path == "drop_preview"));
     }
 
     #[test]
@@ -13749,7 +13756,7 @@ mod reorganize_tests {
         // would make the lock knowable only by absence, and would force the
         // schema (a `&'static` slice) into a per-configuration variant that does
         // not generalise past one lockable field.
-        let keys: Vec<&str> = ext.schema().fields.iter().map(|(k, _)| *k).collect();
+        let keys: Vec<&str> = ext.schema().fields.iter().map(|f| f.path).collect();
         for expected in ["float_policy", "float_policy_locked", "set_float_policy"] {
             assert!(
                 keys.contains(&expected),
@@ -14365,7 +14372,7 @@ mod reorganize_tests {
         let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&signal)));
         let ext = DockReorganizeExternal::from_reorganizer(Rc::clone(&reorganizer));
         assert!(
-            ext.schema().fields.iter().any(|(k, _)| *k == "tabs_seq"),
+            ext.schema().fields.iter().any(|f| f.path == "tabs_seq"),
             "tabs_seq is advertised in the schema",
         );
         assert_eq!(ext.query("tabs_seq"), Some(IntrospectValue::Int(0)));
@@ -14532,10 +14539,7 @@ mod reorganize_tests {
         let signal = Rc::new(Signal::new(Some(well_topology())));
         let ext = DockReorganizeExternal::new(signal);
         assert!(
-            ext.schema()
-                .fields
-                .iter()
-                .any(|(k, _)| *k == "activate_tab"),
+            ext.schema().fields.iter().any(|f| f.path == "activate_tab"),
             "activate_tab is discoverable in the schema (AI-first primary)",
         );
     }
@@ -14700,7 +14704,7 @@ mod reorganize_tests {
     #[test]
     fn r1096_tab_well_schema_advertises_send_and_active() {
         let (_signal, _reorg, ext) = tab_well_fixture();
-        let keys: Vec<&str> = ext.schema().fields.iter().map(|(k, _)| *k).collect();
+        let keys: Vec<&str> = ext.schema().fields.iter().map(|f| f.path).collect();
         for expected in ["well_id", "active", "send"] {
             assert!(keys.contains(&expected), "schema advertises {expected}");
         }

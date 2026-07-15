@@ -65,7 +65,7 @@ crate::widget_event_name!(
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -278,7 +278,15 @@ impl External for CheckboxExternal {
 
 impl ExternalIntrospect for CheckboxExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("state", "string"), ("checked", "bool"), ("send", "string")])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("checked", "bool"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -473,7 +481,11 @@ mod tests {
         let schema = cx.schema();
         assert_eq!(
             schema.fields,
-            &[("state", "string"), ("checked", "bool"), ("send", "string")]
+            &[
+                SchemaField::new("state", "string"),
+                SchemaField::new("checked", "bool"),
+                SchemaField::new("send", "string")
+            ]
         );
     }
 

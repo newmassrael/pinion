@@ -62,7 +62,7 @@ use sm::RadioPolicy;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -285,11 +285,15 @@ impl External for RadioExternal {
 
 impl ExternalIntrospect for RadioExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("selected", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("selected", "bool"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -486,9 +490,9 @@ mod tests {
         assert_eq!(
             schema.fields,
             &[
-                ("state", "string"),
-                ("selected", "bool"),
-                ("send", "string")
+                SchemaField::new("state", "string"),
+                SchemaField::new("selected", "bool"),
+                SchemaField::new("send", "string")
             ]
         );
     }

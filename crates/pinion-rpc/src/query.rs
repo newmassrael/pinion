@@ -34,13 +34,21 @@ use crate::resolve::{ResolveExternalError, introspect_at, resolve_external_path}
 /// value. The discovery primitive under the whole introspection surface: a
 /// plain `scene/query` reads one *known* path, and `scene/snapshot` shows
 /// the current value of each *scalar* path — but neither reveals the
-/// **contract** (the parametric paths like `id_at` / `level_at`, which
-/// `query("id_at")` without a `.<pos>` index resolves to `None`, so they
-/// never appear in a snapshot). Querying `/<tag>/external/$schema` returns
-/// the full `IntrospectSchema` as JSON, so an AI client discovers what it
-/// can ask for without hard-coded knowledge ([[ai-first-rpc-introspection-obligation]]).
+/// **contract**. Querying `/<tag>/external/$schema` returns the full
+/// `IntrospectSchema` as JSON, so an AI client discovers what it can ask for
+/// without hard-coded knowledge ([[ai-first-rpc-introspection-obligation]]).
 /// The `$` prefix cannot collide with a real introspect path (no widget
 /// declares one).
+///
+/// R1353 — this is where **parametric** paths (`id_at.<pos>`, `width.<col>`,
+/// `cell.<row>.<col>`) become discoverable rather than merely mentioned. They
+/// are absent from a snapshot by declaration (a family is unbounded, so
+/// expanding it would be a table scan), which used to make `$schema` their only
+/// witness while `$schema` itself could not say they were parametric — it
+/// rendered `("width","int")` exactly like the scalar `("total","int")`. The
+/// render now carries the template and a typed `args` entry per placeholder;
+/// see [`pinion_core::external::SchemaField`] for the declaration and for why
+/// the under-declaration cost a consumer a livelock.
 pub const SCHEMA_PATH: &str = "$schema";
 
 /// R828 §5.12 — the schema-or-value decision SSOT shared by the
@@ -62,14 +70,46 @@ fn introspect_or_schema(
     }
 }
 
-/// Render an external's declared schema as a JSON array of
-/// `{"path", "type"}` objects, in the schema's declared field order.
+/// Render an external's declared schema as a JSON array of `{"path", "type"}`
+/// objects, in the schema's declared field order.
+///
+/// R1353 §2 #2 — a **parametric** field additionally carries `"arg"`, and its
+/// `"path"` is rendered as the wire TEMPLATE (`"width.<col>"`) rather than the
+/// bare stem. That template is composed here from the declared stem and arg, so
+/// the discovery render and the `query` impl's `strip_prefix(stem)` cannot
+/// disagree about what the path is.
+///
+/// Why both a template and a structured `arg`: the template is what a reader
+/// (human or model) needs to see the shape at a glance; the `arg` object is what
+/// a client needs to act without parsing prose — the argument's name, its type,
+/// and where its valid values come from. Before R1353 the schema said only
+/// `{"path":"width","type":"int"}`, indistinguishable from a scalar like
+/// `total`, so an agent had to guess that an argument existed at all. See
+/// [`pinion_core::external::SchemaField`] for what that guess cost.
 fn schema_value(intro: &dyn ExternalIntrospect) -> IntrospectValue {
     let fields: Vec<Value> = intro
         .schema()
         .fields
         .iter()
-        .map(|(path, ty)| json!({ "path": path, "type": ty }))
+        .map(|f| {
+            if f.args.is_empty() {
+                return json!({ "path": f.path, "type": f.ty });
+            }
+            let args: Vec<Value> = f
+                .args
+                .iter()
+                .map(|a| {
+                    json!({
+                        "name": a.name,
+                        "type": a.ty,
+                        // Rendered by the enum itself — see `ArgDomain::to_wire`
+                        // for why the match does not live here.
+                        "domain": a.domain.to_wire(),
+                    })
+                })
+                .collect();
+            json!({ "path": f.path, "type": f.ty, "args": args })
+        })
         .collect();
     IntrospectValue::Json(Value::Array(fields))
 }
@@ -457,7 +497,7 @@ mod tests {
 
     // ---- R828 §2 #4 §5.12 — immediate-mode driver introspect ----
 
-    use pinion_core::external::{InterveneError, IntrospectSchema};
+    use pinion_core::external::{InterveneError, IntrospectSchema, SchemaField};
     use pinion_core::scene::{ContainerNode, ImmediateMode, ImmediateModeNode};
 
     /// Read-only immediate-mode driver exposing one `pos` float — the
@@ -475,7 +515,7 @@ mod tests {
 
     impl ExternalIntrospect for PosDriver {
         fn schema(&self) -> IntrospectSchema {
-            IntrospectSchema::new(&[("pos", "float")])
+            IntrospectSchema::new(const { &[SchemaField::new("pos", "float")] })
         }
         fn query(&self, path: &str) -> Option<IntrospectValue> {
             (path == "pos").then_some(IntrospectValue::Float(self.pos))

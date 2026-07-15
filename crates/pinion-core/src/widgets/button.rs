@@ -54,7 +54,7 @@ crate::widget_event_name!(
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -246,7 +246,15 @@ impl ExternalIntrospect for ButtonExternal {
         // accepting a `ButtonEvent` variant name (invoke); §5.15
         // schema does not yet distinguish state slots from actions
         // syntactically, that classification lands with §5.3 DSL.
-        IntrospectSchema::new(&[("state", "string"), ("focused", "bool"), ("send", "string")])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("focused", "bool"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -356,7 +364,7 @@ impl External for ButtonStateSnapshot {
 
 impl ExternalIntrospect for ButtonStateSnapshot {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("state", "string")])
+        IntrospectSchema::new(const { &[SchemaField::new("state", "string")] })
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -603,7 +611,12 @@ mod tests {
     fn button_external_schema_declares_state_slot() {
         let bx = ButtonExternal::new();
         let schema = bx.schema();
-        assert!(schema.fields.iter().any(|f| f == &("state", "string")));
+        assert!(
+            schema
+                .fields
+                .iter()
+                .any(|f| f.path == "state" && f.ty == "string")
+        );
     }
 
     #[test]
@@ -679,7 +692,11 @@ mod tests {
         assert_eq!(
             schema.fields,
             // R694 §5.39 — `focused` joins the read-only state slot.
-            &[("state", "string"), ("focused", "bool"), ("send", "string")]
+            &[
+                SchemaField::new("state", "string"),
+                SchemaField::new("focused", "bool"),
+                SchemaField::new("send", "string")
+            ]
         );
     }
 

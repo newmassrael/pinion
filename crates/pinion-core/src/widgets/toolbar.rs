@@ -109,7 +109,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -475,15 +476,27 @@ impl External for ToolbarExternal {
 
 impl ExternalIntrospect for ToolbarExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("focus", "int"),
-            ("focused", "bool"),
-            ("kind.<i>", "string"),
-            ("pressed.<i>", "bool"),
-            ("send", "string"),
-            ("key", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("focus", "int"),
+                    SchemaField::new("focused", "bool"),
+                    SchemaField::parametric(
+                        "kind.<i>",
+                        "string",
+                        const { &[SchemaArg::open("i", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "pressed.<i>",
+                        "bool",
+                        const { &[SchemaArg::open("i", "int")] },
+                    ),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("key", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -922,14 +935,22 @@ mod tests {
         assert_eq!(
             e.schema().fields,
             &[
-                ("count", "int"),
-                ("focus", "int"),
+                SchemaField::new("count", "int"),
+                SchemaField::new("focus", "int"),
                 // R694 §5.39 — group shell-focus posture for the ring gate.
-                ("focused", "bool"),
-                ("kind.<i>", "string"),
-                ("pressed.<i>", "bool"),
-                ("send", "string"),
-                ("key", "string"),
+                SchemaField::new("focused", "bool"),
+                SchemaField::parametric(
+                    "kind.<i>",
+                    "string",
+                    const { &[SchemaArg::open("i", "int")] }
+                ),
+                SchemaField::parametric(
+                    "pressed.<i>",
+                    "bool",
+                    const { &[SchemaArg::open("i", "int")] }
+                ),
+                SchemaField::new("send", "string"),
+                SchemaField::new("key", "string"),
             ]
         );
     }

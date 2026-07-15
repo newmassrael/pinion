@@ -44,7 +44,7 @@ use std::time::Duration;
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, SchemaField,
 };
 use pinion_core::scene::{
     ContainerNode, ImmediateMode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
@@ -296,14 +296,18 @@ impl ImmediateMode for BouncingBallDriver {
 /// timer-driven rather than RPC-driven).
 impl ExternalIntrospect for BouncingBallDriver {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("pos", "float"),
-            ("velocity", "float"),
-            ("bounces", "int"),
-            ("clicked", "bool"),
-            ("last_click_x", "float"),
-            ("last_click_y", "float"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("pos", "float"),
+                    SchemaField::new("velocity", "float"),
+                    SchemaField::new("bounces", "int"),
+                    SchemaField::new("clicked", "bool"),
+                    SchemaField::new("last_click_x", "float"),
+                    SchemaField::new("last_click_y", "float"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -688,12 +692,12 @@ mod r827_immediate_intent_tests {
         assert_eq!(
             intro.schema().fields,
             &[
-                ("pos", "float"),
-                ("velocity", "float"),
-                ("bounces", "int"),
-                ("clicked", "bool"),
-                ("last_click_x", "float"),
-                ("last_click_y", "float"),
+                SchemaField::new("pos", "float"),
+                SchemaField::new("velocity", "float"),
+                SchemaField::new("bounces", "int"),
+                SchemaField::new("clicked", "bool"),
+                SchemaField::new("last_click_x", "float"),
+                SchemaField::new("last_click_y", "float"),
             ],
         );
     }

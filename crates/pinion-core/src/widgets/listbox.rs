@@ -65,7 +65,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::listbox_item::{ListBoxItem, ListboxItemEvent, ListboxItemState};
@@ -613,15 +614,27 @@ impl ExternalIntrospect for ListBoxExternal {
         // an array-typed `IntrospectValue` is still a substrate
         // carry); `selected_index` returns `null` in multi-mode and
         // rejects intervene.
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("multiselect", "bool"),
-            ("selected_index", "int"),
-            ("focused_index", "int"),
-            ("state.<index>", "string"),
-            ("selected.<index>", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("multiselect", "bool"),
+                    SchemaField::new("selected_index", "int"),
+                    SchemaField::new("focused_index", "int"),
+                    SchemaField::parametric(
+                        "state.<index>",
+                        "string",
+                        const { &[SchemaArg::index("index", "count")] },
+                    ),
+                    SchemaField::parametric(
+                        "selected.<index>",
+                        "bool",
+                        const { &[SchemaArg::index("index", "count")] },
+                    ),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

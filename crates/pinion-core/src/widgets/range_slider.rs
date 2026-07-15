@@ -55,7 +55,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::slider::{SliderAxis, SliderEvent, SliderPolicy, SliderState};
@@ -486,15 +487,19 @@ impl External for RangeSliderExternal {
 
 impl ExternalIntrospect for RangeSliderExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("low", "float"),
-            ("high", "float"),
-            // Which thumb a value mutation last landed on ("low"/"high").
-            ("active", "string"),
-            ("orientation", "string"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("low", "float"),
+                    SchemaField::new("high", "float"),
+                    // Which thumb a value mutation last landed on ("low"/"high").
+                    SchemaField::new("active", "string"),
+                    SchemaField::new("orientation", "string"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

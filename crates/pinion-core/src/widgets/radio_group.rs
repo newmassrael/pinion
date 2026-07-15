@@ -40,7 +40,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
@@ -406,14 +407,26 @@ impl ExternalIntrospect for RadioGroupExternal {
         // running on top of `RadioGroupExternal` can read each
         // radio's interaction state + selected bit through the same
         // introspect surface AI agents use.
-        IntrospectSchema::new(&[
-            ("count", "int"),
-            ("selected_index", "int"),
-            ("focused_index", "int"),
-            ("state.<index>", "string"),
-            ("selected.<index>", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("selected_index", "int"),
+                    SchemaField::new("focused_index", "int"),
+                    SchemaField::parametric(
+                        "state.<index>",
+                        "string",
+                        const { &[SchemaArg::index("index", "count")] },
+                    ),
+                    SchemaField::parametric(
+                        "selected.<index>",
+                        "bool",
+                        const { &[SchemaArg::index("index", "count")] },
+                    ),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -888,12 +901,20 @@ mod tests {
         assert_eq!(
             g.schema().fields,
             &[
-                ("count", "int"),
-                ("selected_index", "int"),
-                ("focused_index", "int"),
-                ("state.<index>", "string"),
-                ("selected.<index>", "bool"),
-                ("send", "string"),
+                SchemaField::new("count", "int"),
+                SchemaField::new("selected_index", "int"),
+                SchemaField::new("focused_index", "int"),
+                SchemaField::parametric(
+                    "state.<index>",
+                    "string",
+                    const { &[SchemaArg::index("index", "count")] }
+                ),
+                SchemaField::parametric(
+                    "selected.<index>",
+                    "bool",
+                    const { &[SchemaArg::index("index", "count")] }
+                ),
+                SchemaField::new("send", "string"),
             ]
         );
     }

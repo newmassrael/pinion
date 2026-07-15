@@ -39,7 +39,7 @@ use std::rc::Rc;
 use crate::animation::Tickable;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::reactive::{Owner, Signal};
 
@@ -160,12 +160,16 @@ impl External for ProgressBarExternal {
 
 impl ExternalIntrospect for ProgressBarExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("value", "float"),
-            ("min", "float"),
-            ("max", "float"),
-            ("indeterminate", "bool"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("value", "float"),
+                    SchemaField::new("min", "float"),
+                    SchemaField::new("max", "float"),
+                    SchemaField::new("indeterminate", "bool"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

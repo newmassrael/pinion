@@ -43,7 +43,8 @@ use std::rc::Rc;
 use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
+    SchemaField,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -286,28 +287,48 @@ query_proxy_external_impl!(TrayExternal);
 
 impl ExternalIntrospect for TrayExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("available", "bool"),
-            ("publish_count", "int"),
-            ("published_in_sync", "bool"),
-            ("title", "string"),
-            ("icon", "string"),
-            ("status", "string"),
-            ("tooltip", "string"),
-            ("menu", "string"),
-            ("menu_count", "int"),
-            ("window_visible", "bool"),
-            ("dark_mode", "bool"),
-            ("build_running", "bool"),
-            ("quit_requested", "bool"),
-            ("item.<id>.label", "string"),
-            ("item.<id>.enabled", "bool"),
-            ("item.<id>.checked", "bool"),
-            ("item.<id>.activatable", "bool"),
-            ("activate", "json"),
-            ("menu_item", "string"),
-            ("republish", "json"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("available", "bool"),
+                    SchemaField::new("publish_count", "int"),
+                    SchemaField::new("published_in_sync", "bool"),
+                    SchemaField::new("title", "string"),
+                    SchemaField::new("icon", "string"),
+                    SchemaField::new("status", "string"),
+                    SchemaField::new("tooltip", "string"),
+                    SchemaField::new("menu", "string"),
+                    SchemaField::new("menu_count", "int"),
+                    SchemaField::new("window_visible", "bool"),
+                    SchemaField::new("dark_mode", "bool"),
+                    SchemaField::new("build_running", "bool"),
+                    SchemaField::new("quit_requested", "bool"),
+                    SchemaField::parametric(
+                        "item.<id>.label",
+                        "string",
+                        const { &[SchemaArg::open("id", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "item.<id>.enabled",
+                        "bool",
+                        const { &[SchemaArg::open("id", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "item.<id>.checked",
+                        "bool",
+                        const { &[SchemaArg::open("id", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "item.<id>.activatable",
+                        "bool",
+                        const { &[SchemaArg::open("id", "int")] },
+                    ),
+                    SchemaField::new("activate", "json"),
+                    SchemaField::new("menu_item", "string"),
+                    SchemaField::new("republish", "json"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

@@ -114,7 +114,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -1078,24 +1079,44 @@ impl External for MenuBarExternal {
 
 impl ExternalIntrospect for MenuBarExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("menu_count", "int"),
-            ("open", "int"),
-            // R985 — the open submenu descent + the full active path (dotted),
-            // so an AI client reads the whole cascade state, not just the top.
-            ("open_path", "string"),
-            ("active", "int"),
-            ("active_path", "string"),
-            ("bar_focus", "int"),
-            // R985 — `<path>` is a dotted index path (`<menu>` top, `<menu>.<item>`,
-            // `<menu>.<item>.<sub>` …), so the same slots address nested items.
-            ("item_count.<path>", "int"),
-            ("item_kind.<path>", "string"),
-            ("checked.<path>", "bool"),
-            ("enabled.<path>", "bool"),
-            ("send", "string"),
-            ("key", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("menu_count", "int"),
+                    SchemaField::new("open", "int"),
+                    // R985 — the open submenu descent + the full active path (dotted),
+                    // so an AI client reads the whole cascade state, not just the top.
+                    SchemaField::new("open_path", "string"),
+                    SchemaField::new("active", "int"),
+                    SchemaField::new("active_path", "string"),
+                    SchemaField::new("bar_focus", "int"),
+                    // R985 — `<path>` is a dotted index path (`<menu>` top, `<menu>.<item>`,
+                    // `<menu>.<item>.<sub>` …), so the same slots address nested items.
+                    SchemaField::parametric(
+                        "item_count.<path>",
+                        "int",
+                        const { &[SchemaArg::open("path", "string")] },
+                    ),
+                    SchemaField::parametric(
+                        "item_kind.<path>",
+                        "string",
+                        const { &[SchemaArg::open("path", "string")] },
+                    ),
+                    SchemaField::parametric(
+                        "checked.<path>",
+                        "bool",
+                        const { &[SchemaArg::open("path", "string")] },
+                    ),
+                    SchemaField::parametric(
+                        "enabled.<path>",
+                        "bool",
+                        const { &[SchemaArg::open("path", "string")] },
+                    ),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("key", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1742,18 +1763,34 @@ mod tests {
         assert_eq!(
             e.schema().fields,
             &[
-                ("menu_count", "int"),
-                ("open", "int"),
-                ("open_path", "string"),
-                ("active", "int"),
-                ("active_path", "string"),
-                ("bar_focus", "int"),
-                ("item_count.<path>", "int"),
-                ("item_kind.<path>", "string"),
-                ("checked.<path>", "bool"),
-                ("enabled.<path>", "bool"),
-                ("send", "string"),
-                ("key", "string"),
+                SchemaField::new("menu_count", "int"),
+                SchemaField::new("open", "int"),
+                SchemaField::new("open_path", "string"),
+                SchemaField::new("active", "int"),
+                SchemaField::new("active_path", "string"),
+                SchemaField::new("bar_focus", "int"),
+                SchemaField::parametric(
+                    "item_count.<path>",
+                    "int",
+                    const { &[SchemaArg::open("path", "string")] }
+                ),
+                SchemaField::parametric(
+                    "item_kind.<path>",
+                    "string",
+                    const { &[SchemaArg::open("path", "string")] }
+                ),
+                SchemaField::parametric(
+                    "checked.<path>",
+                    "bool",
+                    const { &[SchemaArg::open("path", "string")] }
+                ),
+                SchemaField::parametric(
+                    "enabled.<path>",
+                    "bool",
+                    const { &[SchemaArg::open("path", "string")] }
+                ),
+                SchemaField::new("send", "string"),
+                SchemaField::new("key", "string"),
             ]
         );
     }

@@ -47,7 +47,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership, int_of,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership, int_of,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -1018,53 +1019,82 @@ impl ExternalIntrospect for TableExternal {
         // placeholders the same way `send` documents its
         // `"<row>_<col>:<EventName>"` wire format — discovery metadata
         // for AI clients (`scene/schema` RPC), not a static enumeration.
-        IntrospectSchema::new(&[
-            ("rows", "int"),
-            ("cols", "int"),
-            // R735 §5.38 — `multiselect` (bool) is read-only mode
-            // metadata. `selected.<row>` becomes write-enabled in
-            // multi-select mode (the canonical per-row admin path);
-            // `selected_row` returns `null` in multi-mode and rejects
-            // intervene.
-            ("multiselect", "bool"),
-            // R955.1 §5.38 — what a click selects (rows vs cells); the AI-first
-            // peer of `with_select_items` (the `multiselect` introspection
-            // sibling): `"rows"` (SelectRows) or `"items"` (SelectItems).
-            ("selection_behavior", "string"),
-            ("selected", "bool"),
-            ("selected_row", "int"),
-            ("focused_row", "int"),
-            ("focused_col", "int"),
-            ("header.<col>", "string"),
-            ("cell.<row>.<col>", "string"),
-            ("state.<row>", "string"),
-            ("selected.<row>", "bool"),
-            ("send", "string"),
-            // R730 §5.40 — sort surface. `sort_col` is the sort key column
-            // (`-1` when unsorted); `sort_dir` is "none"/"ascending"/
-            // "descending"; `order.<visual>` is the data-row index painted
-            // at visual position `<visual>`; `sort` (invoke) cycles a
-            // column's sort the way a header click does.
-            ("sort_col", "int"),
-            ("sort_dir", "string"),
-            ("order.<visual>", "int"),
-            ("sort", "int"),
-            // R952 §5.38 — cell range selection (the spreadsheet / Qt
-            // `SelectItems` model, distinct from the `selected.<row>` row
-            // selection). `cell_selection` reads the selected rectangle as
-            // "row0,col0,row1,col1" (data coords, inclusive) or `null`;
-            // `cell_selection_count` is its cell area. `select-cell` (arg
-            // "row,col") starts a single-cell selection at the cursor;
-            // `extend-cell` (arg "row,col") grows the rectangle to that cell;
-            // `clear-cell-selection` (arg `null`) drops it. The AI-first peer
-            // of click / Shift+click / Shift+Arrow.
-            ("cell_selection", "string"),
-            ("cell_selection_count", "int"),
-            ("cell_selection_tsv", "string"),
-            ("select-cell", "boolean"),
-            ("extend-cell", "boolean"),
-            ("clear-cell-selection", "boolean"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("rows", "int"),
+                    SchemaField::new("cols", "int"),
+                    // R735 §5.38 — `multiselect` (bool) is read-only mode
+                    // metadata. `selected.<row>` becomes write-enabled in
+                    // multi-select mode (the canonical per-row admin path);
+                    // `selected_row` returns `null` in multi-mode and rejects
+                    // intervene.
+                    SchemaField::new("multiselect", "bool"),
+                    // R955.1 §5.38 — what a click selects (rows vs cells); the AI-first
+                    // peer of `with_select_items` (the `multiselect` introspection
+                    // sibling): `"rows"` (SelectRows) or `"items"` (SelectItems).
+                    SchemaField::new("selection_behavior", "string"),
+                    SchemaField::new("selected", "bool"),
+                    SchemaField::new("selected_row", "int"),
+                    SchemaField::new("focused_row", "int"),
+                    SchemaField::new("focused_col", "int"),
+                    SchemaField::parametric(
+                        "header.<col>",
+                        "string",
+                        const { &[SchemaArg::index("col", "cols")] },
+                    ),
+                    SchemaField::parametric(
+                        "cell.<row>.<col>",
+                        "string",
+                        const {
+                            &[
+                                SchemaArg::index("row", "rows"),
+                                SchemaArg::index("col", "cols"),
+                            ]
+                        },
+                    ),
+                    SchemaField::parametric(
+                        "state.<row>",
+                        "string",
+                        const { &[SchemaArg::index("row", "rows")] },
+                    ),
+                    SchemaField::parametric(
+                        "selected.<row>",
+                        "bool",
+                        const { &[SchemaArg::index("row", "rows")] },
+                    ),
+                    SchemaField::new("send", "string"),
+                    // R730 §5.40 — sort surface. `sort_col` is the sort key column
+                    // (`-1` when unsorted); `sort_dir` is "none"/"ascending"/
+                    // "descending"; `order.<visual>` is the data-row index painted
+                    // at visual position `<visual>`; `sort` (invoke) cycles a
+                    // column's sort the way a header click does.
+                    SchemaField::new("sort_col", "int"),
+                    SchemaField::new("sort_dir", "string"),
+                    SchemaField::parametric(
+                        "order.<visual>",
+                        "int",
+                        const { &[SchemaArg::open("visual", "int")] },
+                    ),
+                    SchemaField::new("sort", "int"),
+                    // R952 §5.38 — cell range selection (the spreadsheet / Qt
+                    // `SelectItems` model, distinct from the `selected.<row>` row
+                    // selection). `cell_selection` reads the selected rectangle as
+                    // "row0,col0,row1,col1" (data coords, inclusive) or `null`;
+                    // `cell_selection_count` is its cell area. `select-cell` (arg
+                    // "row,col") starts a single-cell selection at the cursor;
+                    // `extend-cell` (arg "row,col") grows the rectangle to that cell;
+                    // `clear-cell-selection` (arg `null`) drops it. The AI-first peer
+                    // of click / Shift+click / Shift+Arrow.
+                    SchemaField::new("cell_selection", "string"),
+                    SchemaField::new("cell_selection_count", "int"),
+                    SchemaField::new("cell_selection_tsv", "string"),
+                    SchemaField::new("select-cell", "boolean"),
+                    SchemaField::new("extend-cell", "boolean"),
+                    SchemaField::new("clear-cell-selection", "boolean"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1998,7 +2028,7 @@ mod tests {
             Some(IntrospectValue::Text("1\t2\n3\t4".to_string())),
             "the query mirrors Table::selected_tsv over the wire",
         );
-        let fields: Vec<&str> = ext.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = ext.schema().fields.iter().map(|f| f.path).collect();
         assert!(
             fields.contains(&"cell_selection_tsv"),
             "cell_selection_tsv is schema-declared",

@@ -109,7 +109,7 @@ use crate::clipboard::{Clipboard, ClipboardSelection};
 use crate::composite_tag::split_send_payload;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::input::is_activation_event;
 use crate::intent::Intent;
@@ -1282,119 +1282,123 @@ impl ExternalIntrospect for TextFieldExternal {
         // `composition` invoke takes a Json action surface so the AI
         // client driving an IME flows through one method per W3C
         // lifecycle event.
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("text", "string"),
-            ("caret", "number"),
-            ("selection", "object"),
-            // R769.1 §5.36 §5.22 — applied rich-text formatting as a JSON
-            // array of `{start, end, style}` runs (the same shape the
-            // field's Text node carries in `scene/snapshot`), so an AI
-            // client reads bold / italic / colour over the buffer directly
-            // without walking the paint tree.
-            ("style_runs", "json"),
-            ("preedit", "string"),
-            ("send", "string"),
-            ("key", "string"),
-            ("composition", "string"),
-            // R56.2.e §5.22 — middle-mouse PRIMARY paste action.
-            // No payload (`Null`); returns `Bool(handled)`. Mirrors
-            // the X11 / Wayland "middle-click pastes the PRIMARY
-            // selection" convention so AI clients can drive the
-            // same code path the shell's middle-click handler hits.
-            ("paste-primary", "boolean"),
-            // R768 §5.36 §5.22 — rich-text formatting actions over a
-            // byte range. `apply-style` takes Json
-            // `{"start": int, "end": int, "fg": "#rrggbb", "size"?: int}`
-            // and overlays one colour [`StyleRun`] on the range
-            // (setCharFormat); `clear-style` takes
-            // `{"start": int, "end": int}` and strips styling back to
-            // the base. Both return `Bool(handled)` (`false` when no
-            // [`TextEditState`] is attached) — the AI-first peer of the
-            // toolbar's apply-to-selection click.
-            //
-            // [`StyleRun`]: crate::scene::StyleRun
-            ("apply-style", "boolean"),
-            ("clear-style", "boolean"),
-            // R967 §5.36 — toggle ONE style field (bold / italic / underline /
-            // strikethrough) over the selection / caret, preserving the run's
-            // other fields (the AI-first peer of the toolbar B / I toggle —
-            // mergeCharFormat). Text arg = the field name; returns the new state.
-            ("toggle-format", "boolean"),
-            // R903 §5.22 — find &amp; replace. `find_query` /
-            // `find_case_sensitive` / `find_whole_word` are query+intervene
-            // (the needle + its flags); `find_matches` is a derived read
-            // (`{query, case_sensitive, whole_word, count, current, ranges}`).
-            // `find-next` / `find-prev` navigate (return the new selection or
-            // `Null`); `replace` (arg = replacement `Text`) replaces the
-            // current match and advances (returns `Bool`); `replace-all` (arg =
-            // replacement `Text`) rewrites every match as one undo step
-            // (returns the count). The AI-first peer of the find bar's
-            // keyboard.
-            ("find_query", "string"),
-            ("find_case_sensitive", "boolean"),
-            ("find_whole_word", "boolean"),
-            ("find_matches", "json"),
-            ("find-next", "object"),
-            ("find-prev", "object"),
-            ("replace", "boolean"),
-            ("replace-all", "number"),
-            // R926 §5.22 — matching-bracket read. Derived from the live
-            // buffer + caret: `{"open": int, "close": int}` when the
-            // caret sits adjacent to a balanced bracket, `Null`
-            // otherwise. The AI-first peer of the editor's
-            // matching-brace highlight — an agent reasoning about code
-            // structure reads where a brace closes without re-scanning.
-            ("bracket_match", "object"),
-            // R933 §5.36 — code-folding surface. `fold_regions` is a
-            // derived read: a JSON array of `{open, close, start_line,
-            // end_line, collapsed}`, one per foldable bracket block (≥ 2
-            // logical lines), opener-ordered. The three actions are the
-            // AI-first peers of the gutter chevron: `toggle-fold` (arg =
-            // the opener's line `Int`) returns `Bool` (did a region
-            // toggle?), `fold-all` / `unfold-all` (arg `Null`) return the
-            // resulting collapsed-region `Int` count.
-            ("fold_regions", "json"),
-            ("toggle-fold", "boolean"),
-            ("fold-all", "number"),
-            ("unfold-all", "number"),
-            // R938 §5.22 — multi-line indent / dedent (the Tab / Shift+Tab
-            // twins). `Null` arg; returns `Bool` (did the lines shift?). R941 —
-            // schema-listed (R938 added the verbs but not the slots — cleared here).
-            ("indent", "boolean"),
-            ("dedent", "boolean"),
-            // R939 §5.22 — line-comment toggle (the Ctrl+/ twin). `Null` arg;
-            // returns `Bool` (R941 — schema-listed, cleared with the above).
-            ("toggle-comment", "boolean"),
-            // R941 §5.22 — go-to-line navigation. `line_count` is the logical
-            // (newline-delimited) line count (the navigation bound + a gutter /
-            // prompt max); `go-to-line` (arg = a 1-based line `Int`) jumps the
-            // caret to that line's start and returns the resolved (clamped) line.
-            ("line_count", "number"),
-            ("go-to-line", "number"),
-            // R945 §5.22 — line manipulation (the Alt+Up / Alt+Down move +
-            // Shift+Alt copy twins). `Null` arg; each returns `Bool` (did the
-            // buffer change? a boundary move — first line up, last line down —
-            // is `false`).
-            ("move-line-up", "boolean"),
-            ("move-line-down", "boolean"),
-            ("duplicate-line-up", "boolean"),
-            ("duplicate-line-down", "boolean"),
-            // R951 §5.36 §5.22 — active typing mark (collapsed-caret formatting,
-            // ProseMirror `storedMarks`). `style_at_caret` reads the style the
-            // next char would carry (armed mark, else inherited-from-left) as
-            // the full TextStyle object (the `apply-style` `style` shape), or
-            // Null for the field base; `pending_style` reads only the *armed*
-            // mark (Null when merely inherited). `mark` (Json = the
-            // `style_at_caret` read shape, bare or `{"style": {...}}`) arms it
-            // so the next typed text is styled; `clear-mark` (Null) drops it.
-            // The AI-first peer of pressing Bold with nothing selected, then
-            // typing — `apply-style` remains the selection path.
-            ("style_at_caret", "json"),
-            ("pending_style", "json"),
-            ("mark", "boolean"),
-            ("clear-mark", "boolean"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("text", "string"),
+                    SchemaField::new("caret", "number"),
+                    SchemaField::new("selection", "object"),
+                    // R769.1 §5.36 §5.22 — applied rich-text formatting as a JSON
+                    // array of `{start, end, style}` runs (the same shape the
+                    // field's Text node carries in `scene/snapshot`), so an AI
+                    // client reads bold / italic / colour over the buffer directly
+                    // without walking the paint tree.
+                    SchemaField::new("style_runs", "json"),
+                    SchemaField::new("preedit", "string"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("key", "string"),
+                    SchemaField::new("composition", "string"),
+                    // R56.2.e §5.22 — middle-mouse PRIMARY paste action.
+                    // No payload (`Null`); returns `Bool(handled)`. Mirrors
+                    // the X11 / Wayland "middle-click pastes the PRIMARY
+                    // selection" convention so AI clients can drive the
+                    // same code path the shell's middle-click handler hits.
+                    SchemaField::new("paste-primary", "boolean"),
+                    // R768 §5.36 §5.22 — rich-text formatting actions over a
+                    // byte range. `apply-style` takes Json
+                    // `{"start": int, "end": int, "fg": "#rrggbb", "size"?: int}`
+                    // and overlays one colour [`StyleRun`] on the range
+                    // (setCharFormat); `clear-style` takes
+                    // `{"start": int, "end": int}` and strips styling back to
+                    // the base. Both return `Bool(handled)` (`false` when no
+                    // [`TextEditState`] is attached) — the AI-first peer of the
+                    // toolbar's apply-to-selection click.
+                    //
+                    // [`StyleRun`]: crate::scene::StyleRun
+                    SchemaField::new("apply-style", "boolean"),
+                    SchemaField::new("clear-style", "boolean"),
+                    // R967 §5.36 — toggle ONE style field (bold / italic / underline /
+                    // strikethrough) over the selection / caret, preserving the run's
+                    // other fields (the AI-first peer of the toolbar B / I toggle —
+                    // mergeCharFormat). Text arg = the field name; returns the new state.
+                    SchemaField::new("toggle-format", "boolean"),
+                    // R903 §5.22 — find &amp; replace. `find_query` /
+                    // `find_case_sensitive` / `find_whole_word` are query+intervene
+                    // (the needle + its flags); `find_matches` is a derived read
+                    // (`{query, case_sensitive, whole_word, count, current, ranges}`).
+                    // `find-next` / `find-prev` navigate (return the new selection or
+                    // `Null`); `replace` (arg = replacement `Text`) replaces the
+                    // current match and advances (returns `Bool`); `replace-all` (arg =
+                    // replacement `Text`) rewrites every match as one undo step
+                    // (returns the count). The AI-first peer of the find bar's
+                    // keyboard.
+                    SchemaField::new("find_query", "string"),
+                    SchemaField::new("find_case_sensitive", "boolean"),
+                    SchemaField::new("find_whole_word", "boolean"),
+                    SchemaField::new("find_matches", "json"),
+                    SchemaField::new("find-next", "object"),
+                    SchemaField::new("find-prev", "object"),
+                    SchemaField::new("replace", "boolean"),
+                    SchemaField::new("replace-all", "number"),
+                    // R926 §5.22 — matching-bracket read. Derived from the live
+                    // buffer + caret: `{"open": int, "close": int}` when the
+                    // caret sits adjacent to a balanced bracket, `Null`
+                    // otherwise. The AI-first peer of the editor's
+                    // matching-brace highlight — an agent reasoning about code
+                    // structure reads where a brace closes without re-scanning.
+                    SchemaField::new("bracket_match", "object"),
+                    // R933 §5.36 — code-folding surface. `fold_regions` is a
+                    // derived read: a JSON array of `{open, close, start_line,
+                    // end_line, collapsed}`, one per foldable bracket block (≥ 2
+                    // logical lines), opener-ordered. The three actions are the
+                    // AI-first peers of the gutter chevron: `toggle-fold` (arg =
+                    // the opener's line `Int`) returns `Bool` (did a region
+                    // toggle?), `fold-all` / `unfold-all` (arg `Null`) return the
+                    // resulting collapsed-region `Int` count.
+                    SchemaField::new("fold_regions", "json"),
+                    SchemaField::new("toggle-fold", "boolean"),
+                    SchemaField::new("fold-all", "number"),
+                    SchemaField::new("unfold-all", "number"),
+                    // R938 §5.22 — multi-line indent / dedent (the Tab / Shift+Tab
+                    // twins). `Null` arg; returns `Bool` (did the lines shift?). R941 —
+                    // schema-listed (R938 added the verbs but not the slots — cleared here).
+                    SchemaField::new("indent", "boolean"),
+                    SchemaField::new("dedent", "boolean"),
+                    // R939 §5.22 — line-comment toggle (the Ctrl+/ twin). `Null` arg;
+                    // returns `Bool` (R941 — schema-listed, cleared with the above).
+                    SchemaField::new("toggle-comment", "boolean"),
+                    // R941 §5.22 — go-to-line navigation. `line_count` is the logical
+                    // (newline-delimited) line count (the navigation bound + a gutter /
+                    // prompt max); `go-to-line` (arg = a 1-based line `Int`) jumps the
+                    // caret to that line's start and returns the resolved (clamped) line.
+                    SchemaField::new("line_count", "number"),
+                    SchemaField::new("go-to-line", "number"),
+                    // R945 §5.22 — line manipulation (the Alt+Up / Alt+Down move +
+                    // Shift+Alt copy twins). `Null` arg; each returns `Bool` (did the
+                    // buffer change? a boundary move — first line up, last line down —
+                    // is `false`).
+                    SchemaField::new("move-line-up", "boolean"),
+                    SchemaField::new("move-line-down", "boolean"),
+                    SchemaField::new("duplicate-line-up", "boolean"),
+                    SchemaField::new("duplicate-line-down", "boolean"),
+                    // R951 §5.36 §5.22 — active typing mark (collapsed-caret formatting,
+                    // ProseMirror `storedMarks`). `style_at_caret` reads the style the
+                    // next char would carry (armed mark, else inherited-from-left) as
+                    // the full TextStyle object (the `apply-style` `style` shape), or
+                    // Null for the field base; `pending_style` reads only the *armed*
+                    // mark (Null when merely inherited). `mark` (Json = the
+                    // `style_at_caret` read shape, bare or `{"style": {...}}`) arms it
+                    // so the next typed text is styled; `clear-mark` (Null) drops it.
+                    // The AI-first peer of pressing Bold with nothing selected, then
+                    // typing — `apply-style` remains the selection path.
+                    SchemaField::new("style_at_caret", "json"),
+                    SchemaField::new("pending_style", "json"),
+                    SchemaField::new("mark", "boolean"),
+                    SchemaField::new("clear-mark", "boolean"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -2739,6 +2743,7 @@ mod tests {
     //! commit-on-blur path, introspect surface.
 
     use super::{TextField, TextFieldEvent, TextFieldExternal, TextFieldState};
+    use crate::external::SchemaField;
     use crate::external::{
         Backend, External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
         RepaintOwner, ThreadOwnership,
@@ -2957,45 +2962,45 @@ mod tests {
         assert_eq!(
             schema.fields,
             &[
-                ("state", "string"),
-                ("text", "string"),
-                ("caret", "number"),
-                ("selection", "object"),
-                ("style_runs", "json"),
-                ("preedit", "string"),
-                ("send", "string"),
-                ("key", "string"),
-                ("composition", "string"),
-                ("paste-primary", "boolean"),
-                ("apply-style", "boolean"),
-                ("clear-style", "boolean"),
-                ("toggle-format", "boolean"),
-                ("find_query", "string"),
-                ("find_case_sensitive", "boolean"),
-                ("find_whole_word", "boolean"),
-                ("find_matches", "json"),
-                ("find-next", "object"),
-                ("find-prev", "object"),
-                ("replace", "boolean"),
-                ("replace-all", "number"),
-                ("bracket_match", "object"),
-                ("fold_regions", "json"),
-                ("toggle-fold", "boolean"),
-                ("fold-all", "number"),
-                ("unfold-all", "number"),
-                ("indent", "boolean"),
-                ("dedent", "boolean"),
-                ("toggle-comment", "boolean"),
-                ("line_count", "number"),
-                ("go-to-line", "number"),
-                ("move-line-up", "boolean"),
-                ("move-line-down", "boolean"),
-                ("duplicate-line-up", "boolean"),
-                ("duplicate-line-down", "boolean"),
-                ("style_at_caret", "json"),
-                ("pending_style", "json"),
-                ("mark", "boolean"),
-                ("clear-mark", "boolean"),
+                SchemaField::new("state", "string"),
+                SchemaField::new("text", "string"),
+                SchemaField::new("caret", "number"),
+                SchemaField::new("selection", "object"),
+                SchemaField::new("style_runs", "json"),
+                SchemaField::new("preedit", "string"),
+                SchemaField::new("send", "string"),
+                SchemaField::new("key", "string"),
+                SchemaField::new("composition", "string"),
+                SchemaField::new("paste-primary", "boolean"),
+                SchemaField::new("apply-style", "boolean"),
+                SchemaField::new("clear-style", "boolean"),
+                SchemaField::new("toggle-format", "boolean"),
+                SchemaField::new("find_query", "string"),
+                SchemaField::new("find_case_sensitive", "boolean"),
+                SchemaField::new("find_whole_word", "boolean"),
+                SchemaField::new("find_matches", "json"),
+                SchemaField::new("find-next", "object"),
+                SchemaField::new("find-prev", "object"),
+                SchemaField::new("replace", "boolean"),
+                SchemaField::new("replace-all", "number"),
+                SchemaField::new("bracket_match", "object"),
+                SchemaField::new("fold_regions", "json"),
+                SchemaField::new("toggle-fold", "boolean"),
+                SchemaField::new("fold-all", "number"),
+                SchemaField::new("unfold-all", "number"),
+                SchemaField::new("indent", "boolean"),
+                SchemaField::new("dedent", "boolean"),
+                SchemaField::new("toggle-comment", "boolean"),
+                SchemaField::new("line_count", "number"),
+                SchemaField::new("go-to-line", "number"),
+                SchemaField::new("move-line-up", "boolean"),
+                SchemaField::new("move-line-down", "boolean"),
+                SchemaField::new("duplicate-line-up", "boolean"),
+                SchemaField::new("duplicate-line-down", "boolean"),
+                SchemaField::new("style_at_caret", "json"),
+                SchemaField::new("pending_style", "json"),
+                SchemaField::new("mark", "boolean"),
+                SchemaField::new("clear-mark", "boolean"),
             ],
         );
     }
@@ -4257,7 +4262,7 @@ mod r56_1_d_tests {
             schema
                 .fields
                 .iter()
-                .any(|(name, ty)| *name == "key" && *ty == "string"),
+                .any(|f| f.path == "key" && f.ty == "string"),
             "key slot must be in schema",
         );
     }
@@ -6363,7 +6368,7 @@ mod r56_1_g_2_tests {
     fn r56_1_g_2_schema_contains_preedit_and_composition_slots() {
         let tfx = TextFieldExternal::new();
         let schema = tfx.schema();
-        let names: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
+        let names: Vec<&str> = schema.fields.iter().map(|f| f.path).collect();
         assert!(names.contains(&"preedit"));
         assert!(names.contains(&"composition"));
     }

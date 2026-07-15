@@ -71,7 +71,7 @@ crate::widget_event_name!(
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -272,11 +272,15 @@ impl External for DisclosureExternal {
 
 impl ExternalIntrospect for DisclosureExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("state", "string"),
-            ("expanded", "bool"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("state", "string"),
+                    SchemaField::new("expanded", "bool"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -468,9 +472,9 @@ mod tests {
         assert_eq!(
             dx.schema().fields,
             &[
-                ("state", "string"),
-                ("expanded", "bool"),
-                ("send", "string")
+                SchemaField::new("state", "string"),
+                SchemaField::new("expanded", "bool"),
+                SchemaField::new("send", "string")
             ]
         );
     }

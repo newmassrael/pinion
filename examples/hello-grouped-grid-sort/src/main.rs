@@ -43,7 +43,8 @@ use pinion_a11y::{
     grouped_grid_access_nodes,
 };
 use pinion_core::external::{
-    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, int_of,
+    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaArg,
+    SchemaField, int_of,
 };
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -174,13 +175,25 @@ impl GroupAggregates {
 
 impl QuerySource for GroupAggregates {
     fn introspect_schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("group_count", "int"),
-            ("total_count", "int"),
-            ("total_size", "int"),
-            ("group.<g>.count", "int"),
-            ("group.<g>.size", "int"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("group_count", "int"),
+                    SchemaField::new("total_count", "int"),
+                    SchemaField::new("total_size", "int"),
+                    SchemaField::parametric(
+                        "group.<g>.count",
+                        "int",
+                        const { &[SchemaArg::open("g", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "group.<g>.size",
+                        "int",
+                        const { &[SchemaArg::open("g", "int")] },
+                    ),
+                ]
+            },
+        )
     }
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {

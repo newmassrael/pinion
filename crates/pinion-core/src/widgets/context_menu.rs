@@ -34,7 +34,7 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -354,16 +354,20 @@ impl External for ContextMenuExternal {
 
 impl ExternalIntrospect for ContextMenuExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("item_count", "int"),
-            ("open", "bool"),
-            ("open_x", "float"),
-            ("open_y", "float"),
-            ("active", "int"),
-            ("send", "string"),
-            ("key", "string"),
-            ("open_at", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("item_count", "int"),
+                    SchemaField::new("open", "bool"),
+                    SchemaField::new("open_x", "float"),
+                    SchemaField::new("open_y", "float"),
+                    SchemaField::new("active", "int"),
+                    SchemaField::new("send", "string"),
+                    SchemaField::new("key", "string"),
+                    SchemaField::new("open_at", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

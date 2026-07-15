@@ -178,7 +178,7 @@ use pinion_core::composite_tag::{GridSendKey, prefixed_index, split_subindex};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint, External,
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    RepaintOwner, ThreadOwnership, int_of,
+    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of,
 };
 use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
 use pinion_core::reactive::{Owner, Signal};
@@ -2644,75 +2644,125 @@ impl External for DataGridExternal {
     }
 }
 
+/// R1353 — this binding's declared introspect surface, lifted out of
+/// `schema()` so the fn stays under the workspace line cap now that each
+/// parametric field declares its argument rather than hand-spelling a
+/// template string. Same shape as `pinion_audio::RT_EXTERNAL_FIELDS`.
+const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
+    SchemaField::new("row_count", "int"),
+    SchemaField::new("col_count", "int"),
+    SchemaField::new("focused_row", "int"),
+    SchemaField::new("focused_col", "int"),
+    SchemaField::new("editing_row", "int"),
+    SchemaField::new("editing_col", "int"),
+    SchemaField::parametric(
+        "col_name.<col>",
+        "string",
+        const { &[SchemaArg::open("col", "int")] },
+    ),
+    SchemaField::parametric(
+        "col_kind.<col>",
+        "string",
+        const { &[SchemaArg::open("col", "int")] },
+    ),
+    SchemaField::parametric(
+        "col_range.<col>",
+        "string",
+        const { &[SchemaArg::open("col", "int")] },
+    ),
+    SchemaField::parametric(
+        "value.<row>.<col>",
+        "json",
+        const { &[SchemaArg::open("row", "int"), SchemaArg::open("col", "int")] },
+    ),
+    SchemaField::new("sort", "string"),
+    SchemaField::new("filter", "string"),
+    SchemaField::new("view_len", "int"),
+    SchemaField::new("group", "string"),
+    SchemaField::new("group_count", "int"),
+    SchemaField::new("visible_len", "int"),
+    SchemaField::parametric(
+        "source_at.<pos>",
+        "int",
+        const { &[SchemaArg::open("pos", "int")] },
+    ),
+    SchemaField::parametric(
+        "kind_at.<pos>",
+        "string",
+        const { &[SchemaArg::open("pos", "int")] },
+    ),
+    SchemaField::parametric(
+        "label_at.<pos>",
+        "string",
+        const { &[SchemaArg::open("pos", "int")] },
+    ),
+    SchemaField::parametric(
+        "collapsed.<group>",
+        "bool",
+        const { &[SchemaArg::open("group", "string")] },
+    ),
+    SchemaField::new("scrubbing", "bool"),
+    SchemaField::new("send", "string"),
+    SchemaField::new("toggle", "json"),
+    SchemaField::new("begin", "json"),
+    SchemaField::new("cycle_sort", "json"),
+    SchemaField::new("set_filter", "string"),
+    SchemaField::new("set_group", "string"),
+    SchemaField::new("toggle_group", "int"),
+    SchemaField::new("collapse_all", "json"),
+    SchemaField::new("expand_all", "json"),
+    SchemaField::new("add_row", "json"),
+    SchemaField::new("remove_row", "int"),
+    // R1237 — paste a TSV block at the cursor; returns the cells written.
+    SchemaField::new("paste", "string"),
+    // R937 — row drag-to-reorder: whether reorder is enabled now (the
+    // plain view), the live drop gap a drag is hovering, and the move verb.
+    SchemaField::new("reorder_enabled", "bool"),
+    SchemaField::new("drag_preview", "int"),
+    SchemaField::new("move_row", "string"),
+    // R940 — choice dropdown: whether a popup is open + its keyboard
+    // cursor (read side), and the open / commit / close verbs (the
+    // AI-first peer of a pointer click on the cell + an option).
+    SchemaField::new("popup_open", "bool"),
+    SchemaField::new("popup_cursor", "int"),
+    SchemaField::new("open_choice", "json"),
+    SchemaField::new("choose", "int"),
+    SchemaField::new("close_popup", "json"),
+    // R943 — colour swatch popup: open it on the focused cell + commit a
+    // preset swatch (the choice popup's colour peer; the AI-first path for
+    // an arbitrary colour is `intervene value` with a `#RRGGBB` hex).
+    SchemaField::new("open_color", "json"),
+    SchemaField::new("pick_color", "int"),
+    // R960 — per-cell modified-from-default + reset-to-default (the
+    // editable grid's Unreal / Qt "reset property to default" affordance).
+    SchemaField::parametric(
+        "modified.<row>.<col>",
+        "bool",
+        const { &[SchemaArg::open("row", "int"), SchemaArg::open("col", "int")] },
+    ),
+    // R966 — does ANY cell in the column / row differ from default (the
+    // header reset dot's AI-first read peer, the 1-D `modified.<…>`).
+    SchemaField::parametric(
+        "col_modified.<col>",
+        "bool",
+        const { &[SchemaArg::open("col", "int")] },
+    ),
+    SchemaField::parametric(
+        "row_modified.<row>",
+        "bool",
+        const { &[SchemaArg::open("row", "int")] },
+    ),
+    SchemaField::new("modified_count", "int"),
+    SchemaField::new("reset", "string"),
+    SchemaField::new("reset_all", "json"),
+    // R965 — reset a whole row / column to its column default(s).
+    SchemaField::new("reset_row", "int"),
+    SchemaField::new("reset_col", "int"),
+];
+
 impl ExternalIntrospect for DataGridExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("row_count", "int"),
-            ("col_count", "int"),
-            ("focused_row", "int"),
-            ("focused_col", "int"),
-            ("editing_row", "int"),
-            ("editing_col", "int"),
-            ("col_name.<col>", "string"),
-            ("col_kind.<col>", "string"),
-            ("col_range.<col>", "string"),
-            ("value.<row>.<col>", "json"),
-            ("sort", "string"),
-            ("filter", "string"),
-            ("view_len", "int"),
-            ("group", "string"),
-            ("group_count", "int"),
-            ("visible_len", "int"),
-            ("source_at.<pos>", "int"),
-            ("kind_at.<pos>", "string"),
-            ("label_at.<pos>", "string"),
-            ("collapsed.<group>", "bool"),
-            ("scrubbing", "bool"),
-            ("send", "string"),
-            ("toggle", "json"),
-            ("begin", "json"),
-            ("cycle_sort", "json"),
-            ("set_filter", "string"),
-            ("set_group", "string"),
-            ("toggle_group", "int"),
-            ("collapse_all", "json"),
-            ("expand_all", "json"),
-            ("add_row", "json"),
-            ("remove_row", "int"),
-            // R1237 — paste a TSV block at the cursor; returns the cells written.
-            ("paste", "string"),
-            // R937 — row drag-to-reorder: whether reorder is enabled now (the
-            // plain view), the live drop gap a drag is hovering, and the move verb.
-            ("reorder_enabled", "bool"),
-            ("drag_preview", "int"),
-            ("move_row", "string"),
-            // R940 — choice dropdown: whether a popup is open + its keyboard
-            // cursor (read side), and the open / commit / close verbs (the
-            // AI-first peer of a pointer click on the cell + an option).
-            ("popup_open", "bool"),
-            ("popup_cursor", "int"),
-            ("open_choice", "json"),
-            ("choose", "int"),
-            ("close_popup", "json"),
-            // R943 — colour swatch popup: open it on the focused cell + commit a
-            // preset swatch (the choice popup's colour peer; the AI-first path for
-            // an arbitrary colour is `intervene value` with a `#RRGGBB` hex).
-            ("open_color", "json"),
-            ("pick_color", "int"),
-            // R960 — per-cell modified-from-default + reset-to-default (the
-            // editable grid's Unreal / Qt "reset property to default" affordance).
-            ("modified.<row>.<col>", "bool"),
-            // R966 — does ANY cell in the column / row differ from default (the
-            // header reset dot's AI-first read peer, the 1-D `modified.<…>`).
-            ("col_modified.<col>", "bool"),
-            ("row_modified.<row>", "bool"),
-            ("modified_count", "int"),
-            ("reset", "string"),
-            ("reset_all", "json"),
-            // R965 — reset a whole row / column to its column default(s).
-            ("reset_row", "int"),
-            ("reset_col", "int"),
-        ])
+        IntrospectSchema::new(GRID_SCHEMA_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

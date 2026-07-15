@@ -35,7 +35,8 @@ use crate::composite_tag::split_subindex;
 use crate::directory::{DirEntry, Directory};
 use crate::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::{PointerWireEvent, is_activation_event};
 use crate::reactive::{Owner, Signal};
@@ -897,36 +898,48 @@ impl ExternalIntrospect for DirectoryExternal {
         // up         — invoke: to the parent; returns the cwd.
         // select     — "<name>" invoke: select a leaf; returns the selection.
         // open       — "<path>" invoke: absolute jump; returns the cwd.
-        IntrospectSchema::new(&[
-            ("cwd", "string"),
-            ("count", "int"),
-            ("entries", "string"),
-            ("selected", "string"),
-            // R792 — the roving keyboard cursor's row (query; intervene =
-            // admin set, the aria-activedescendant write peer). The effective
-            // active row: the first row when unmoved, Null only when empty.
-            ("cursor", "int"),
-            ("name", "string"),
-            ("is_dir", "bool"),
-            ("navigate", "string"),
-            ("up", "string"),
-            ("select", "string"),
-            ("open", "string"),
-            ("send", "string"),
-            // R789 write surface (file-manager mutations).
-            ("mkdir", "bool"),
-            ("touch", "bool"),
-            ("delete", "bool"),
-            // R791 — rename the selection to the string arg.
-            ("rename", "bool"),
-            // R794 — the in-flight drag-to-move state (§2 #7 — the live
-            // drag is scene-as-data). `dragging` (bool) is whether a row is
-            // armed; `drop_target` (query) is the resolved target under the
-            // cursor: Text "up" (the parent breadcrumb), Text "row:<i>" (a
-            // folder row), or Null (no valid target).
-            ("dragging", "bool"),
-            ("drop_target", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("cwd", "string"),
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("entries", "string"),
+                    SchemaField::new("selected", "string"),
+                    // R792 — the roving keyboard cursor's row (query; intervene =
+                    // admin set, the aria-activedescendant write peer). The effective
+                    // active row: the first row when unmoved, Null only when empty.
+                    SchemaField::new("cursor", "int"),
+                    SchemaField::parametric(
+                        "name.<idx>",
+                        "string",
+                        const { &[SchemaArg::index("idx", "count")] },
+                    ),
+                    SchemaField::parametric(
+                        "is_dir.<idx>",
+                        "bool",
+                        const { &[SchemaArg::index("idx", "count")] },
+                    ),
+                    SchemaField::new("navigate", "string"),
+                    SchemaField::new("up", "string"),
+                    SchemaField::new("select", "string"),
+                    SchemaField::new("open", "string"),
+                    SchemaField::new("send", "string"),
+                    // R789 write surface (file-manager mutations).
+                    SchemaField::new("mkdir", "bool"),
+                    SchemaField::new("touch", "bool"),
+                    SchemaField::new("delete", "bool"),
+                    // R791 — rename the selection to the string arg.
+                    SchemaField::new("rename", "bool"),
+                    // R794 — the in-flight drag-to-move state (§2 #7 — the live
+                    // drag is scene-as-data). `dragging` (bool) is whether a row is
+                    // armed; `drop_target` (query) is the resolved target under the
+                    // cursor: Text "up" (the parent breadcrumb), Text "row:<i>" (a
+                    // folder row), or Null (no valid target).
+                    SchemaField::new("dragging", "bool"),
+                    SchemaField::new("drop_target", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

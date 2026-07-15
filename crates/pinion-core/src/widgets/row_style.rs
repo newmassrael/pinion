@@ -32,8 +32,8 @@
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
+    SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::style::Color;
@@ -378,17 +378,33 @@ impl ExternalIntrospect for RowStyleExternal {
         // `match`        — `match.<row>` first matching rule index / -1 (query only).
         // `tint`         — `tint.<row>` the matched tint "<bg>;<fg>" / "none" (query).
         // `add_rule`/`clear` — invoke channels.
-        IntrospectSchema::new(&[
-            ("rules", "string"),
-            ("rule_count", "int"),
-            ("rows", "int"),
-            ("matched_rows", "int"),
-            ("rule", "string"),
-            ("match", "int"),
-            ("tint", "string"),
-            ("add_rule", "string"),
-            ("clear", "int"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("rules", "string"),
+                    SchemaField::new("rule_count", "int"),
+                    SchemaField::new("rows", "int"),
+                    SchemaField::new("matched_rows", "int"),
+                    SchemaField::parametric(
+                        "rule.<i>",
+                        "string",
+                        const { &[SchemaArg::index("i", "rule_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "match.<i>",
+                        "int",
+                        const { &[SchemaArg::index("i", "rule_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "tint.<i>",
+                        "string",
+                        const { &[SchemaArg::index("i", "rule_count")] },
+                    ),
+                    SchemaField::new("add_rule", "string"),
+                    SchemaField::new("clear", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

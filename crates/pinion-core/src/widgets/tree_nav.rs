@@ -32,7 +32,8 @@ use super::virtual_list::scroll_offset_to_reveal;
 use super::virtual_select::clamp_nav;
 use crate::Signal;
 use crate::external::{
-    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, at_index,
+    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaArg, SchemaField,
+    at_index,
 };
 use crate::reactive::batch;
 use crate::widget_core::ExtraExternal;
@@ -678,15 +679,39 @@ impl QuerySource for TreeViewIntrospect {
         // `level_at`    — `level_at.<pos>` → WAI-ARIA aria-level (depth + 1).
         // `expanded_at` — `expanded_at.<pos>` → aria-expanded (Bool for a
         //                 branch, Null for a leaf).
-        IntrospectSchema::new(&[
-            ("row_count", "int"),
-            ("cursor", "string"),
-            ("cursor_index", "int"),
-            ("id_at", "string"),
-            ("label_at", "string"),
-            ("level_at", "int"),
-            ("expanded_at", "bool"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("row_count", "int"),
+                    SchemaField::new("cursor", "string"),
+                    SchemaField::new("cursor_index", "int"),
+                    // R1353 §2 #2 — these four are PARAMETRIC and now say so.
+                    // They read a VISIBLE position, so the bound is `row_count`
+                    // (the flattened visible rows), not the tree's node count: a
+                    // client enumerating them walks what is on screen.
+                    SchemaField::parametric(
+                        "id_at.<pos>",
+                        "string",
+                        const { &[SchemaArg::index("pos", "row_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "label_at.<pos>",
+                        "string",
+                        const { &[SchemaArg::index("pos", "row_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "level_at.<pos>",
+                        "int",
+                        const { &[SchemaArg::index("pos", "row_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "expanded_at.<pos>",
+                        "bool",
+                        const { &[SchemaArg::index("pos", "row_count")] },
+                    ),
+                ]
+            },
+        )
     }
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
@@ -1357,10 +1382,32 @@ mod tests {
             .introspect_schema()
             .fields
             .iter()
-            .map(|(n, _)| *n)
+            .map(|f| f.path)
             .collect();
+        // (R1353) The four `_at` axes declare their wire TEMPLATE, so this pins
+        // what an agent actually reads out of `$schema` — `id_at.<pos>`, not the
+        // stem `id_at`, which is not a readable path at all. `stem()` recovers
+        // the prefix the `query` impl strips.
         assert_eq!(
             names,
+            [
+                "row_count",
+                "cursor",
+                "cursor_index",
+                "id_at.<pos>",
+                "label_at.<pos>",
+                "level_at.<pos>",
+                "expanded_at.<pos>"
+            ],
+        );
+        let stems: Vec<&str> = src
+            .introspect_schema()
+            .fields
+            .iter()
+            .map(crate::external::SchemaField::stem)
+            .collect();
+        assert_eq!(
+            stems,
             [
                 "row_count",
                 "cursor",

@@ -84,7 +84,7 @@ use pinion_core::composite_tag::{GridTag, split_send_payload};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, QueryOnlyIntrospect, QuerySource, RepaintOwner,
-    StubExternal, ThreadOwnership,
+    SchemaArg, SchemaField, StubExternal, ThreadOwnership,
 };
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -305,7 +305,29 @@ impl QuerySource for CellsIntrospect {
         // `cell_at`   — `cell_at.<pos>.<col>` visible position + metadata column
         //               index -> the cell's display value (string), Null when
         //               the position or column is out of range.
-        IntrospectSchema::new(&[("col_count", "int"), ("cell_at", "string")])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("col_count", "int"),
+                    // R1353 §2 #2 — two arguments: a visible position and a metadata
+                    // column. `col` is bounded by this surface's own `col_count`;
+                    // `pos` is `open` because the visible-row count belongs to the
+                    // tree state external, not here — an unpublished bound is
+                    // declared as unknown rather than pointed at a path that does
+                    // not exist on this surface.
+                    SchemaField::parametric(
+                        "cell_at.<pos>.<col>",
+                        "string",
+                        const {
+                            &[
+                                SchemaArg::open("pos", "int"),
+                                SchemaArg::index("col", "col_count"),
+                            ]
+                        },
+                    ),
+                ]
+            },
+        )
     }
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
@@ -818,11 +840,15 @@ impl ExternalIntrospect for TreeSelectExternal {
         // R905 — `delete_selected` / `rename_selected` / `undo` / `redo` are the
         // batch-edit `invoke` ops (delete/rename return the count, undo/redo a
         // bool).
-        IntrospectSchema::new(&[
-            ("selection", "json"),
-            ("count", "int"),
-            ("anchor", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("selection", "json"),
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("anchor", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

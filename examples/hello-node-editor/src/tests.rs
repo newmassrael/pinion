@@ -275,7 +275,7 @@ fn r917_detail_mirror_is_complete_and_schema_declared() {
             "Multiply has 1 output"
         );
         // The schema declares the full mirror (no undeclared-but-resolvable path).
-        let fields: Vec<&str> = intro.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = intro.schema().fields.iter().map(|f| f.path).collect();
         for f in [
             "detail.outputs",
             "detail.input_types",
@@ -2101,7 +2101,7 @@ fn r1220_rpc_surface_open_filter_commit_cancel_and_schema() {
         let _ = boot_scene();
         let mut coord = coordinator();
         // The verbs are all schema-declared.
-        let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|f| f.path).collect();
         for v in [
             "pin_create",
             "open_pin_create",
@@ -5408,7 +5408,7 @@ fn r948_layout_verbs_dispatch_and_are_schema_declared() {
             "distribute_h over a same-x set moves nothing",
         );
         // Every layout verb is schema-declared (AI-discoverable).
-        let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|f| f.path).collect();
         for v in [
             "align_left",
             "align_center_h",
@@ -5528,7 +5528,7 @@ fn r1226_cut_wires_verb_schema_and_wire_form() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let mut coord = coordinator();
-        let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|f| f.path).collect();
         assert!(fields.contains(&"cut_wires"), "cut_wires schema-declared");
         // The verb returns the CSV of cut ids (mirrors `edge_ids`).
         assert_eq!(
@@ -5687,7 +5687,7 @@ fn r1227_frame_introspection_contains_and_verb_schema() {
             Some(IntrospectValue::Text("0,1".to_owned()))
         );
         // The AI-first verbs + read handles are schema-declared.
-        let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|f| f.path).collect();
         for v in ["add_frame", "remove_frame", "frame_count", "frame_ids"] {
             assert!(fields.contains(&v), "{v} schema-declared");
         }
@@ -6095,7 +6095,7 @@ fn r1235_add_reroute_unknown_edge_is_none_and_verb_errors() {
             coord.invoke("add_reroute", IntrospectValue::Int(0)),
             Ok(IntrospectValue::Int(_))
         ));
-        let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|f| f.path).collect();
         assert!(
             fields.contains(&"add_reroute"),
             "add_reroute schema-declared"
@@ -6188,7 +6188,7 @@ fn r1236_dissolve_selected_verb_and_gate() {
             coord.invoke("dissolve_node", IntrospectValue::Text("x".to_owned())),
             Err(InvokeError::TypeMismatch),
         );
-        let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|f| f.path).collect();
         assert!(
             fields.contains(&"dissolve_node"),
             "dissolve_node schema-declared"

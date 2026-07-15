@@ -37,7 +37,7 @@ use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::composite_tag::send_activation_key;
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaField,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -144,18 +144,22 @@ query_proxy_external_impl!(StatusBarExternal);
 
 impl ExternalIntrospect for StatusBarExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("line", "int"),
-            ("col", "int"),
-            ("position", "string"),
-            ("mode", "string"),
-            ("mode_index", "int"),
-            ("encoding", "string"),
-            ("message", "string"),
-            ("cycle_mode", "json"),
-            ("cycle_encoding", "json"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("line", "int"),
+                    SchemaField::new("col", "int"),
+                    SchemaField::new("position", "string"),
+                    SchemaField::new("mode", "string"),
+                    SchemaField::new("mode_index", "int"),
+                    SchemaField::new("encoding", "string"),
+                    SchemaField::new("message", "string"),
+                    SchemaField::new("cycle_mode", "json"),
+                    SchemaField::new("cycle_encoding", "json"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

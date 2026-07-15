@@ -21,7 +21,8 @@
 use std::rc::Rc;
 
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, int_of,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    SchemaField, int_of,
 };
 use pinion_core::intent::Intent;
 
@@ -78,20 +79,24 @@ pinion_core::intent_query_external_impl!(NarrativeExternal);
 
 impl ExternalIntrospect for NarrativeExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("telling", "text"),
-            ("world", "int"),
-            ("scene", "int"),
-            ("world_count", "int"),
-            ("scene_count", "int"),
-            ("branch_id", "text"),
-            ("title", "text"),
-            ("intent", "text"),
-            ("disclosure_count", "int"),
-            ("disclosures", "json"),
-            ("world_ids", "json"),
-            ("fork_tree", "json"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("telling", "text"),
+                    SchemaField::new("world", "int"),
+                    SchemaField::new("scene", "int"),
+                    SchemaField::new("world_count", "int"),
+                    SchemaField::new("scene_count", "int"),
+                    SchemaField::new("branch_id", "text"),
+                    SchemaField::new("title", "text"),
+                    SchemaField::new("intent", "text"),
+                    SchemaField::new("disclosure_count", "int"),
+                    SchemaField::new("disclosures", "json"),
+                    SchemaField::new("world_ids", "json"),
+                    SchemaField::new("fork_tree", "json"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

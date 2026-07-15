@@ -5327,7 +5327,9 @@ mod tests {
         }
         impl ExternalIntrospect for CountedDriver {
             fn schema(&self) -> crate::external::IntrospectSchema {
-                crate::external::IntrospectSchema::new(&[("count", "int")])
+                crate::external::IntrospectSchema::new(
+                    const { &[crate::external::SchemaField::new("count", "int")] },
+                )
             }
             fn query(&self, path: &str) -> Option<IntrospectValue> {
                 (path == "count").then_some(IntrospectValue::Int(self.count))

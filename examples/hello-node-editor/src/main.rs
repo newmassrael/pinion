@@ -253,7 +253,7 @@ use pinion_core::event::LINE_HEIGHT_PX;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint, External,
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    RepaintOwner, ThreadOwnership, int_of,
+    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of,
 };
 use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{
@@ -5965,140 +5965,248 @@ impl External for NodeGraphExternal {
     }
 }
 
+/// R1353 — this binding's declared introspect surface, lifted out of
+/// `schema()` so the fn stays under the workspace line cap now that each
+/// parametric field declares its argument rather than hand-spelling a
+/// template string. Same shape as `pinion_audio::RT_EXTERNAL_FIELDS`.
+const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
+    SchemaField::new("node_count", "int"),
+    SchemaField::new("edge_count", "int"),
+    SchemaField::new("node_ids", "string"),
+    SchemaField::new("edge_ids", "string"),
+    // R1242 — the reroute-knot discriminator + enumeration.
+    SchemaField::new("reroute_ids", "string"),
+    SchemaField::parametric(
+        "node.<id>.is_reroute",
+        "bool",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R1256 — the rename-stable compute identity (Add/Multiply/...).
+    SchemaField::parametric(
+        "node.<id>.op",
+        "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R1257 — is-authorable-source flag (its `value` is intervene-able).
+    SchemaField::parametric(
+        "node.<id>.is_source",
+        "bool",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R1241 — dissolve-eligibility reads (the twins of the dissolve verb).
+    SchemaField::new("dissolvable_ids", "string"),
+    SchemaField::parametric(
+        "dissolvable.<id>",
+        "bool",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R1227 — comment-frame introspection: the annotation layer as data.
+    SchemaField::new("frame_count", "int"),
+    SchemaField::new("frame_ids", "string"),
+    SchemaField::parametric(
+        "frame.<id>.title",
+        "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "frame.<id>.x",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "frame.<id>.y",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "frame.<id>.w",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "frame.<id>.h",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "frame.<id>.contains",
+        "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::new("selected", "int"),
+    SchemaField::new("selected_ids", "string"),
+    SchemaField::new("selected_edge", "int"),
+    SchemaField::new("renaming", "int"),
+    SchemaField::new("editing", "json"),
+    SchemaField::new("begin_rename", "int"),
+    SchemaField::new("begin_edit_default", "string"),
+    SchemaField::new("begin_edit_value", "int"),
+    SchemaField::new("begin_edit_detail", "string"),
+    SchemaField::parametric(
+        "node.<id>.title",
+        "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "node.<id>.x",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "node.<id>.y",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "node.<id>.inputs",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "node.<id>.outputs",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "node.<id>.input_types",
+        "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "node.<id>.output_types",
+        "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "node.<id>.input_default.<port>",
+        "json",
+        const {
+            &[
+                SchemaArg::open("id", "int"),
+                SchemaArg::open("port", "string"),
+            ]
+        },
+    ),
+    // R1260 — the debugger read: the value that actually resolves into
+    // an input port (wired source coerced, else the default; null on a
+    // cycle).
+    SchemaField::parametric(
+        "node.<id>.resolved_input.<port>",
+        "json",
+        const {
+            &[
+                SchemaArg::open("id", "int"),
+                SchemaArg::open("port", "string"),
+            ]
+        },
+    ),
+    // R1255 — the evaluated output value (a `Float` reads float, a
+    // `Vector` a `{hex,r,g,b,a}` object, `null` on a cycle) — hence json.
+    SchemaField::parametric(
+        "node.<id>.value",
+        "json",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R916 — the Details panel's selection-relative addressing: each
+    // `detail.<field>` resolves against the *single* selected node (the
+    // R909 inspector pattern, now inside the node-graph editor). `Null`
+    // when the selection is not exactly one node. R917 — the mirror is
+    // *complete*: every readable `node.<id>.<field>` above has a
+    // `detail.<field>` twin (the delegation answers any field), so the
+    // schema declares the full set, not a subset. `detail.node` is the
+    // selected id, read-only (write the selection via `selected` /
+    // `selected_ids`); the rest are read + intervene.
+    SchemaField::new("detail.node", "int"),
+    SchemaField::new("detail.title", "string"),
+    SchemaField::new("detail.op", "string"),
+    SchemaField::new("detail.is_source", "bool"),
+    SchemaField::new("detail.x", "int"),
+    SchemaField::new("detail.y", "int"),
+    SchemaField::new("detail.inputs", "int"),
+    SchemaField::new("detail.outputs", "int"),
+    SchemaField::new("detail.input_types", "string"),
+    SchemaField::new("detail.output_types", "string"),
+    SchemaField::parametric(
+        "detail.input_default.<port>",
+        "json",
+        const { &[SchemaArg::open("port", "string")] },
+    ),
+    SchemaField::parametric(
+        "detail.resolved_input.<port>",
+        "json",
+        const { &[SchemaArg::open("port", "string")] },
+    ),
+    SchemaField::new("detail.value", "json"),
+    SchemaField::parametric(
+        "edge.<id>",
+        "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R1255 — the graph-evaluation reads (no write twin — derived).
+    SchemaField::new("eval.output", "json"),
+    SchemaField::new("eval.acyclic", "bool"),
+    // R1260 — the ids of the nodes ON a cycle (CSV), localising a null.
+    SchemaField::new("eval.cycle_nodes", "string"),
+    SchemaField::new("viewport.x", "float"),
+    SchemaField::new("viewport.y", "float"),
+    SchemaField::new("viewport.zoom", "float"),
+    SchemaField::new("send", "string"),
+    SchemaField::new("add_node", "string"),
+    SchemaField::new("frame_all", "json"),
+    SchemaField::new("add_edge", "string"),
+    SchemaField::new("remove_edge", "int"),
+    SchemaField::new("reconnect_edge", "string"),
+    // R1226 — the wire knife: cut every edge the segment "x1,y1,x2,y2"
+    // (graph units) crosses, as one undo step. Returns the CSV of cut
+    // edge ids (mirrors `edge_ids`), empty when nothing was crossed.
+    SchemaField::new("cut_wires", "string"),
+    // R1235 — splice a reroute node into edge `<int>`; returns the new
+    // node id (`Null` for an unknown edge).
+    SchemaField::new("add_reroute", "int"),
+    // R1227 — comment-frame verbs: `add_frame` (no arg) frames the
+    // current node selection, returning the new frame id (`Null` when
+    // nothing is selected); `remove_frame` deletes a frame by id.
+    SchemaField::new("add_frame", "int"),
+    SchemaField::new("remove_frame", "int"),
+    SchemaField::new("delete_node", "int"),
+    SchemaField::new("delete_selected", "json"),
+    // R1236 — dissolve = delete + reconnect through a 1-in/1-out node
+    // (the reroute inverse). `dissolve_node <id>`; `dissolve_selected`
+    // (no arg) dissolves the lone selected node.
+    SchemaField::new("dissolve_node", "int"),
+    SchemaField::new("dissolve_selected", "json"),
+    SchemaField::new("select_all", "json"),
+    SchemaField::new("nudge", "string"),
+    // R948 — align / distribute the selection (no args; the AI-first
+    // peer of an editor's align toolbar). Each returns whether the
+    // graph changed.
+    SchemaField::new("align_left", "json"),
+    SchemaField::new("align_center_h", "json"),
+    SchemaField::new("align_right", "json"),
+    SchemaField::new("align_top", "json"),
+    SchemaField::new("align_center_v", "json"),
+    SchemaField::new("align_bottom", "json"),
+    SchemaField::new("distribute_h", "json"),
+    SchemaField::new("distribute_v", "json"),
+    SchemaField::new("serialized", "string"),
+    SchemaField::new("set_graph", "string"),
+    SchemaField::new("save", "json"),
+    SchemaField::new("load", "json"),
+    // R1220 — the pin-drop create menu (drag off a pin → typed menu →
+    // auto-wire). `pin_create` reads the open menu (Null when closed);
+    // the verbs open / filter / rove / commit / cancel it — the AI-first
+    // peer of the live gesture, funnelling through the same coordinator.
+    SchemaField::new("pin_create", "json"),
+    SchemaField::new("open_pin_create", "string"),
+    SchemaField::new("pin_create_filter", "string"),
+    SchemaField::new("pin_create_highlight", "string"),
+    SchemaField::new("commit_pin_create", "string"),
+    SchemaField::new("cancel_pin_create", "json"),
+];
+
 impl ExternalIntrospect for NodeGraphExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("node_count", "int"),
-            ("edge_count", "int"),
-            ("node_ids", "string"),
-            ("edge_ids", "string"),
-            // R1242 — the reroute-knot discriminator + enumeration.
-            ("reroute_ids", "string"),
-            ("node.<id>.is_reroute", "bool"),
-            // R1256 — the rename-stable compute identity (Add/Multiply/...).
-            ("node.<id>.op", "string"),
-            // R1257 — is-authorable-source flag (its `value` is intervene-able).
-            ("node.<id>.is_source", "bool"),
-            // R1241 — dissolve-eligibility reads (the twins of the dissolve verb).
-            ("dissolvable_ids", "string"),
-            ("dissolvable.<id>", "bool"),
-            // R1227 — comment-frame introspection: the annotation layer as data.
-            ("frame_count", "int"),
-            ("frame_ids", "string"),
-            ("frame.<id>.title", "string"),
-            ("frame.<id>.x", "int"),
-            ("frame.<id>.y", "int"),
-            ("frame.<id>.w", "int"),
-            ("frame.<id>.h", "int"),
-            ("frame.<id>.contains", "string"),
-            ("selected", "int"),
-            ("selected_ids", "string"),
-            ("selected_edge", "int"),
-            ("renaming", "int"),
-            ("editing", "json"),
-            ("begin_rename", "int"),
-            ("begin_edit_default", "string"),
-            ("begin_edit_value", "int"),
-            ("begin_edit_detail", "string"),
-            ("node.<id>.title", "string"),
-            ("node.<id>.x", "int"),
-            ("node.<id>.y", "int"),
-            ("node.<id>.inputs", "int"),
-            ("node.<id>.outputs", "int"),
-            ("node.<id>.input_types", "string"),
-            ("node.<id>.output_types", "string"),
-            ("node.<id>.input_default.<port>", "json"),
-            // R1260 — the debugger read: the value that actually resolves into
-            // an input port (wired source coerced, else the default; null on a
-            // cycle).
-            ("node.<id>.resolved_input.<port>", "json"),
-            // R1255 — the evaluated output value (a `Float` reads float, a
-            // `Vector` a `{hex,r,g,b,a}` object, `null` on a cycle) — hence json.
-            ("node.<id>.value", "json"),
-            // R916 — the Details panel's selection-relative addressing: each
-            // `detail.<field>` resolves against the *single* selected node (the
-            // R909 inspector pattern, now inside the node-graph editor). `Null`
-            // when the selection is not exactly one node. R917 — the mirror is
-            // *complete*: every readable `node.<id>.<field>` above has a
-            // `detail.<field>` twin (the delegation answers any field), so the
-            // schema declares the full set, not a subset. `detail.node` is the
-            // selected id, read-only (write the selection via `selected` /
-            // `selected_ids`); the rest are read + intervene.
-            ("detail.node", "int"),
-            ("detail.title", "string"),
-            ("detail.op", "string"),
-            ("detail.is_source", "bool"),
-            ("detail.x", "int"),
-            ("detail.y", "int"),
-            ("detail.inputs", "int"),
-            ("detail.outputs", "int"),
-            ("detail.input_types", "string"),
-            ("detail.output_types", "string"),
-            ("detail.input_default.<port>", "json"),
-            ("detail.resolved_input.<port>", "json"),
-            ("detail.value", "json"),
-            ("edge.<id>", "string"),
-            // R1255 — the graph-evaluation reads (no write twin — derived).
-            ("eval.output", "json"),
-            ("eval.acyclic", "bool"),
-            // R1260 — the ids of the nodes ON a cycle (CSV), localising a null.
-            ("eval.cycle_nodes", "string"),
-            ("viewport.x", "float"),
-            ("viewport.y", "float"),
-            ("viewport.zoom", "float"),
-            ("send", "string"),
-            ("add_node", "string"),
-            ("frame_all", "json"),
-            ("add_edge", "string"),
-            ("remove_edge", "int"),
-            ("reconnect_edge", "string"),
-            // R1226 — the wire knife: cut every edge the segment "x1,y1,x2,y2"
-            // (graph units) crosses, as one undo step. Returns the CSV of cut
-            // edge ids (mirrors `edge_ids`), empty when nothing was crossed.
-            ("cut_wires", "string"),
-            // R1235 — splice a reroute node into edge `<int>`; returns the new
-            // node id (`Null` for an unknown edge).
-            ("add_reroute", "int"),
-            // R1227 — comment-frame verbs: `add_frame` (no arg) frames the
-            // current node selection, returning the new frame id (`Null` when
-            // nothing is selected); `remove_frame` deletes a frame by id.
-            ("add_frame", "int"),
-            ("remove_frame", "int"),
-            ("delete_node", "int"),
-            ("delete_selected", "json"),
-            // R1236 — dissolve = delete + reconnect through a 1-in/1-out node
-            // (the reroute inverse). `dissolve_node <id>`; `dissolve_selected`
-            // (no arg) dissolves the lone selected node.
-            ("dissolve_node", "int"),
-            ("dissolve_selected", "json"),
-            ("select_all", "json"),
-            ("nudge", "string"),
-            // R948 — align / distribute the selection (no args; the AI-first
-            // peer of an editor's align toolbar). Each returns whether the
-            // graph changed.
-            ("align_left", "json"),
-            ("align_center_h", "json"),
-            ("align_right", "json"),
-            ("align_top", "json"),
-            ("align_center_v", "json"),
-            ("align_bottom", "json"),
-            ("distribute_h", "json"),
-            ("distribute_v", "json"),
-            ("serialized", "string"),
-            ("set_graph", "string"),
-            ("save", "json"),
-            ("load", "json"),
-            // R1220 — the pin-drop create menu (drag off a pin → typed menu →
-            // auto-wire). `pin_create` reads the open menu (Null when closed);
-            // the verbs open / filter / rove / commit / cancel it — the AI-first
-            // peer of the live gesture, funnelling through the same coordinator.
-            ("pin_create", "json"),
-            ("open_pin_create", "string"),
-            ("pin_create_filter", "string"),
-            ("pin_create_highlight", "string"),
-            ("commit_pin_create", "string"),
-            ("cancel_pin_create", "json"),
-        ])
+        IntrospectSchema::new(NODE_GRAPH_SCHEMA_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

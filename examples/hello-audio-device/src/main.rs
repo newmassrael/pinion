@@ -129,7 +129,7 @@ use pinion_audio::{
 };
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    forward_intents, read_only_or_unknown,
+    SchemaField, forward_intents, read_only_or_unknown,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
@@ -179,22 +179,22 @@ const TONE_AMPLITUDE: f32 = 0.9;
 /// it is `invoke set_device "<name>"`. A device change is an *action* with real
 /// consequences (the old stream stops, live voices are lost), not a slot to poke —
 /// so it is a verb, and the reads report the outcome.
-const DEVICE_FIELDS: &[(&str, &str)] = &[
-    ("device", "text"),
-    ("devices", "json"),
-    ("sample_rate", "int"),
-    ("channels", "int"),
-    ("sample_format", "text"),
-    ("stream_errors", "int"),
+const DEVICE_FIELDS: &[SchemaField] = &[
+    SchemaField::new("device", "text"),
+    SchemaField::new("devices", "json"),
+    SchemaField::new("sample_rate", "int"),
+    SchemaField::new("channels", "int"),
+    SchemaField::new("sample_format", "text"),
+    SchemaField::new("stream_errors", "int"),
     // The WORLD pose the game owns (see `set_camera` / [`AudioFollowClock`]).
     // Read-only like the rest: it is moved with `invoke set_camera`, because a
     // camera move is an event in the world, not a slot in the audio surface.
-    ("camera", "json"),
+    SchemaField::new("camera", "json"),
     // How many times the per-frame audio sync has run — "is my audio sync
     // running?". Declared, because a field that `query` answers but `$schema`
     // hides and `intervene` calls UnknownPath tells an agent three different
     // things about one path.
-    ("frame_ticks", "int"),
+    SchemaField::new("frame_ticks", "int"),
 ];
 
 /// Length of the composed schema.
@@ -204,8 +204,8 @@ const SCHEMA_LEN: usize = RT_EXTERNAL_FIELDS.len() + DEVICE_FIELDS.len();
 /// **compile time** from [`RT_EXTERNAL_FIELDS`] rather than hand-copied — so the
 /// RT External stays the single source of truth for its own schema and a field
 /// added there cannot silently go missing here.
-const fn compose_schema() -> [(&'static str, &'static str); SCHEMA_LEN] {
-    let mut fields = [("", ""); SCHEMA_LEN];
+const fn compose_schema() -> [SchemaField; SCHEMA_LEN] {
+    let mut fields = [SchemaField::EMPTY; SCHEMA_LEN];
     let mut i = 0;
     while i < RT_EXTERNAL_FIELDS.len() {
         fields[i] = RT_EXTERNAL_FIELDS[i];
@@ -221,7 +221,7 @@ const fn compose_schema() -> [(&'static str, &'static str); SCHEMA_LEN] {
 
 /// The composed field list, in a `static` so it outlives the `IntrospectSchema`
 /// borrow.
-static SCHEMA_FIELDS: [(&str, &str); SCHEMA_LEN] = compose_schema();
+static SCHEMA_FIELDS: [SchemaField; SCHEMA_LEN] = compose_schema();
 
 /// What matching `requested` against the host's device list produced.
 #[derive(Debug, PartialEq, Eq)]
@@ -845,11 +845,11 @@ mod tests {
             "frame_ticks",
         ] {
             assert!(
-                DEVICE_FIELDS.iter().any(|(name, _)| *name == field),
+                DEVICE_FIELDS.iter().any(|f| f.path == field),
                 "{field} is answered by `query` but not declared in DEVICE_FIELDS"
             );
             assert!(
-                SCHEMA_FIELDS.iter().any(|(name, _)| *name == field),
+                SCHEMA_FIELDS.iter().any(|f| f.path == field),
                 "{field} must reach the composed schema"
             );
         }
@@ -857,9 +857,10 @@ mod tests {
 
     #[test]
     fn the_device_fields_do_not_shadow_any_rt_field() {
-        for (device_field, _) in DEVICE_FIELDS {
+        for device in DEVICE_FIELDS {
+            let device_field = &device.path;
             assert!(
-                !RT_EXTERNAL_FIELDS.iter().any(|(rt, _)| rt == device_field),
+                !RT_EXTERNAL_FIELDS.iter().any(|rt| &rt.path == device_field),
                 "{device_field:?} is declared by BOTH the RT surface and this \
                  binding: the wire would list it twice and `query` would shadow \
                  the RT value. Rename this binding's field, or drop it and \

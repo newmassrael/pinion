@@ -37,7 +37,7 @@
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{AlignItems, FlexDirection, LayoutStyle, Size};
@@ -176,18 +176,22 @@ impl External for GridPointerExternal {
 
 impl ExternalIntrospect for GridPointerExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("cell", "string"),
-            ("cell_col", "int"),
-            ("cell_row", "int"),
-            ("cols", "int"),
-            ("rows", "int"),
-            ("cell_at", "string"),
-            // R1009 — the last key apply_key forwarded (read) + the record
-            // channel apply_key writes through (invoke).
-            ("last_key", "string"),
-            ("key", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("cell", "string"),
+                    SchemaField::new("cell_col", "int"),
+                    SchemaField::new("cell_row", "int"),
+                    SchemaField::new("cols", "int"),
+                    SchemaField::new("rows", "int"),
+                    SchemaField::new("cell_at", "string"),
+                    // R1009 — the last key apply_key forwarded (read) + the record
+                    // channel apply_key writes through (invoke).
+                    SchemaField::new("last_key", "string"),
+                    SchemaField::new("key", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

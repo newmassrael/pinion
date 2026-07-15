@@ -63,8 +63,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
+    SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::undo::{UndoCommand, UndoStack};
@@ -767,19 +767,27 @@ impl ExternalIntrospect for GridSortExternal {
         // `cols`      — column count (query only).
         // `source_at` — `source_at.<pos>` visual→source map (query only).
         // `cycle_sort`/`set_filter`/`send` — invoke channels.
-        IntrospectSchema::new(&[
-            ("sort", "string"),
-            ("sort_col", "int"),
-            ("sort_dir", "string"),
-            ("filter", "string"),
-            ("view_len", "int"),
-            ("count", "int"),
-            ("cols", "int"),
-            ("source_at", "int"),
-            ("cycle_sort", "int"),
-            ("set_filter", "string"),
-            ("send", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("sort", "string"),
+                    SchemaField::new("sort_col", "int"),
+                    SchemaField::new("sort_dir", "string"),
+                    SchemaField::new("filter", "string"),
+                    SchemaField::new("view_len", "int"),
+                    SchemaField::new("count", "int"),
+                    SchemaField::new("cols", "int"),
+                    SchemaField::parametric(
+                        "source_at.<pos>",
+                        "int",
+                        const { &[SchemaArg::index("pos", "view_len")] },
+                    ),
+                    SchemaField::new("cycle_sort", "int"),
+                    SchemaField::new("set_filter", "string"),
+                    SchemaField::new("send", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

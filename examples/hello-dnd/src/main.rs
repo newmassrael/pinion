@@ -33,7 +33,8 @@ use std::borrow::Cow;
 use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -198,16 +199,20 @@ impl External for ReorderListExternal {
 
 impl ExternalIntrospect for ReorderListExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("order", "json"),
-            ("labels", "json"),
-            ("preview", "json"),
-            ("focused_index", "int"),
-            ("grabbed", "bool"),
-            ("move", "int"),
-            ("grab", "bool"),
-            ("grab_cancel", "null"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("order", "json"),
+                    SchemaField::new("labels", "json"),
+                    SchemaField::new("preview", "json"),
+                    SchemaField::new("focused_index", "int"),
+                    SchemaField::new("grabbed", "bool"),
+                    SchemaField::new("move", "int"),
+                    SchemaField::new("grab", "bool"),
+                    SchemaField::new("grab_cancel", "null"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

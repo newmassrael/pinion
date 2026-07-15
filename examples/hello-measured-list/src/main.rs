@@ -40,7 +40,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership, int_of,
+    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
+    int_of,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -258,16 +259,28 @@ impl External for MeasuredListExternal {
 
 impl ExternalIntrospect for MeasuredListExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("item_count", "int"),
-            ("estimated", "int"),
-            ("measured_count", "int"),
-            ("is_fully_measured", "bool"),
-            ("total_height", "int"),
-            ("exact_total", "int"),
-            ("model_height.<row>", "int"),
-            ("measured_height.<row>", "int"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("item_count", "int"),
+                    SchemaField::new("estimated", "int"),
+                    SchemaField::new("measured_count", "int"),
+                    SchemaField::new("is_fully_measured", "bool"),
+                    SchemaField::new("total_height", "int"),
+                    SchemaField::new("exact_total", "int"),
+                    SchemaField::parametric(
+                        "model_height.<row>",
+                        "int",
+                        const { &[SchemaArg::open("row", "int")] },
+                    ),
+                    SchemaField::parametric(
+                        "measured_height.<row>",
+                        "int",
+                        const { &[SchemaArg::open("row", "int")] },
+                    ),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

@@ -5517,7 +5517,7 @@ mod tests {
 
     use pinion_core::external::{
         Backend, BackendFallback, BackendSupport, ExternalIntrospect, InterveneError,
-        IntrospectSchema, RepaintOwner, ThreadOwnership,
+        IntrospectSchema, RepaintOwner, SchemaField, ThreadOwnership,
     };
 
     thread_local! {
@@ -5569,7 +5569,14 @@ mod tests {
 
     impl ExternalIntrospect for PolicyExternal {
         fn schema(&self) -> IntrospectSchema {
-            IntrospectSchema::new(&[("seq", "int"), ("policy", "int")])
+            IntrospectSchema::new(
+                const {
+                    &[
+                        SchemaField::new("seq", "int"),
+                        SchemaField::new("policy", "int"),
+                    ]
+                },
+            )
         }
 
         fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -5925,7 +5932,7 @@ mod tests {
 
     impl ExternalIntrospect for SendSpyExternal {
         fn schema(&self) -> IntrospectSchema {
-            IntrospectSchema::new(&[("last_send", "string")])
+            IntrospectSchema::new(const { &[SchemaField::new("last_send", "string")] })
         }
         fn query(&self, path: &str) -> Option<IntrospectValue> {
             match path {

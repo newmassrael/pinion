@@ -49,6 +49,7 @@
 use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y, tree_row_tag, windowed_tree_access_nodes};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    SchemaField,
 };
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -344,11 +345,15 @@ pinion_core::external::query_proxy_external_impl!(TreeSortExternal);
 
 impl ExternalIntrospect for TreeSortExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("sort", "string"),
-            ("cycle_sort", "string"),
-            ("set_sort", "string"),
-        ])
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("sort", "string"),
+                    SchemaField::new("cycle_sort", "string"),
+                    SchemaField::new("set_sort", "string"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
