@@ -94,7 +94,8 @@ const COLS_KEY: &str = "ghs_cols";
 /// R1347 §5.20 — the per-column resize handles are tagged `ghs_ch<col>`, so a
 /// drag-end commit reaches the reducer as `ghs_ch<col>.width_committed` (the
 /// §5.20 R22 tag prefix applied to the widget's `"width_committed"` event). The
-/// reducer keys on this suffix after stripping the `<table>_ch<col>.` prefix.
+/// reducer recovers the column by stripping the `<table>_ch` prefix and this
+/// suffix, then parsing what remains (`column_of_width_commit`).
 const WIDTH_COMMITTED_SUFFIX: &str = ".width_committed";
 /// R1347 §2 #7 — paint tag of the committed-width witness row, read as
 /// scene-as-data by `tools/demos/r1347_column_width_commit.py`.
@@ -378,19 +379,24 @@ mod tests {
         assert_eq!(cells[0], "00042", "PID is the zero-padded index");
     }
 
-    /// R1347 §5.20 R22 — the reducer's `width_committed` parse must match the
-    /// tag the `ColumnResizeExternal`s are actually registered under
-    /// (`column_resize_externals` builds `<TABLE_TAG>_ch<col>`). The two are
-    /// coupled only by convention, so pin the round trip: build the wire form
-    /// the §5.20 R22 walk produces, parse it back, and require the column.
+    /// R1347 §5.20 R22 — the reducer's `width_committed` parse must recover the
+    /// column from the tag the `ColumnResizeExternal`s are ACTUALLY registered
+    /// under. That tag is `GridTag::col_header(TABLE_TAG, col)`
+    /// (`column_resize_externals` builds it), so the test constructs the wire
+    /// form through that same function — NOT a hand-spelled `_ch` literal —
+    /// then applies the §5.20 R22 suffix the walk appends. This way a drift in
+    /// `col_header`'s spelling breaks the test, which a hard-coded literal
+    /// would silently survive while the runtime coupling broke.
     #[test]
     fn r1347_width_commit_tag_round_trips_the_column() {
+        use pinion_core::composite_tag::GridTag;
         for col in [0usize, 3, NCOLS - 1] {
-            let wire = format!("{TABLE_TAG}_ch{col}{WIDTH_COMMITTED_SUFFIX}");
+            let registered = GridTag::col_header(TABLE_TAG, col);
+            let wire = format!("{registered}{WIDTH_COMMITTED_SUFFIX}");
             assert_eq!(
                 column_of_width_commit(&wire),
                 Some(col),
-                "reducer must recover column {col} from {wire:?}",
+                "reducer must recover column {col} from the registered tag {wire:?}",
             );
         }
         // Foreign tags must not be misread as a width commit.

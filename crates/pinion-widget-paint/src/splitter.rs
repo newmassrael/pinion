@@ -920,11 +920,12 @@ fn clear_drag_state(ext: &SplitterExternal) {
 /// ## The gate: "the ratio moved", not "a drag calibrated"
 ///
 /// The obvious gate — [`DragCalibration::end`]'s bool — is **wrong
-/// here**, and subtly so. `InputRouter::pointer_down` forwards the
-/// press-time cursor as an initial `pointer_move` to every widget with
-/// `wants_pointer_capture` (R51.35 click-to-position, pinned by
-/// `pinion-runtime` `input.rs::pointer_down_forwards_initial_cursor`),
-/// and this splitter opts in — so a **bare click arms the anchor** and
+/// here**, and subtly so. On a press over a widget that opts into
+/// `wants_pointer_capture`, `InputRouter::pointer_down` forwards the
+/// press-time cursor to that widget as an initial `pointer_move`
+/// (R51.35 click-to-position, pinned by `pinion-runtime`
+/// `input.rs::pointer_down_forwards_initial_cursor`), and this splitter
+/// opts in — so a **bare click arms the anchor** and
 /// `end()` returns `true` with zero travel. Gating on it makes every
 /// click on the handle emit a commit for a ratio that never moved, and
 /// a double-click emit two: spurious writes on the one channel whose

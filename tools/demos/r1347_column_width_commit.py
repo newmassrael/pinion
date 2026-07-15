@@ -61,10 +61,22 @@ _LOG_RE = re.compile(r"committed width: (\d+) commits, last col (\d+) = (\d+)px"
 
 
 def _find_tagged(node: Any, tag: str) -> Optional[dict]:
+    """Depth-first search of a snapshot tree for the node carrying `tag`.
+
+    Recurses BOTH `children` (Container) AND `content` (Scroll) — the snapshot
+    serializes a `Scroll` node's subtree under `content`, not `children`
+    (snapshot.rs), so a `children`-only walk would miss everything inside the
+    grid's scroll viewport and wrongly conclude the tree is shallow.
+    """
     if isinstance(node, dict):
         if node.get("tag") == tag:
             return node
         for child in node.get("children") or []:
+            hit = _find_tagged(child, tag)
+            if hit is not None:
+                return hit
+        content = node.get("content")
+        for child in content if isinstance(content, list) else ([content] if isinstance(content, dict) else []):
             hit = _find_tagged(child, tag)
             if hit is not None:
                 return hit
@@ -90,12 +102,14 @@ def _commit_log(tf: RpcSubprocess) -> tuple[int, int, int]:
 def _grabber_path(col: int) -> str:
     """`from_path` of column `col`'s resize grabber (`ghs_ch<col>#resize`).
 
-    Targeted by tag, not coordinate: `scene/drag`'s `from_path` resolves against
-    the LIVE paint scene the router hit-tests, which carries the grabber even
-    though `scene/snapshot` truncates the virtual-table subtree below the root
-    container (only `ghs` / `ghs_hscroll` / the witness serialize). A computed
-    x would also have to track the h-scroll offset and the grabber moving after
-    each resize; the tag is stable and lets the framework do the geometry.
+    Targeted by tag, not by a computed coordinate: `scene/drag`'s `from_path`
+    resolves the grabber's live rect against the paint scene the router
+    hit-tests (`resolve_drag_endpoint` → `rect_for_tag_absolute`), so the
+    framework does the geometry. A computed x would instead have to track the
+    h-scroll offset and the fact that the grabber MOVES after each resize —
+    fragile and redundant. (The grabber does serialize in `scene/snapshot`, so
+    reading its rect would also work; letting the drag verb resolve the tag is
+    simply less to get wrong.)
     """
     return f"{_TABLE}_ch{col}#resize"
 

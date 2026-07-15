@@ -780,13 +780,14 @@ impl<T: Copy> DragCalibration<T> {
     /// `true` means *an anchor existed*, i.e. at least one [`Self::drive`]
     /// arrived and its `seed` accepted — **not** that the cursor travelled or
     /// that any value changed. The distinction is load-bearing for capture
-    /// widgets: `InputRouter::pointer_down` forwards the press-time cursor as
-    /// an initial `pointer_move` to every widget with
-    /// `wants_pointer_capture()` (R51.35 click-to-position, pinned by
-    /// `pinion-runtime` `input.rs::pointer_down_forwards_initial_cursor`), so
-    /// under the real router a **bare click arms the anchor** and this returns
-    /// `true` with zero travel. Only a consumer the router never forwards a
-    /// press-time move to sees `false` here for a click.
+    /// widgets: on a press over a widget that opts into
+    /// `wants_pointer_capture()`, `InputRouter::pointer_down` forwards the
+    /// press-time cursor to *that captured widget* as an initial `pointer_move`
+    /// (R51.35 click-to-position, pinned by `pinion-runtime`
+    /// `input.rs::pointer_down_forwards_initial_cursor`), so under the real
+    /// router a **bare click arms the anchor** and this returns `true` with
+    /// zero travel. Only a consumer the router never forwards a press-time move
+    /// to sees `false` here for a click.
     ///
     /// So: `true` is the right gate for *trailing-click suppression* (its
     /// original purpose — a calibration ran, so the press was pointer-owned).

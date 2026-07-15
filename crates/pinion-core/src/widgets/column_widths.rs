@@ -497,8 +497,8 @@ impl ColumnResizeExternal {
     ///
     /// This is the column peer of the splitter's `commit_drag_state` (R1346)
     /// and carries the identical subtlety: the gate is "did the width change
-    /// since the press", NOT [`DragCalibration::end`]'s bool. The router
-    /// forwards a press-time `pointer_move` to every `wants_pointer_capture`
+    /// since the press", NOT [`DragCalibration::end`]'s bool. On a press over a
+    /// capture widget the router forwards a press-time `pointer_move` to that
     /// widget (R51.35), so `end()` is `true` for a bare click on the grabber —
     /// gating on it would emit a spurious persist write for a click that
     /// resized nothing. So compare the settled width against the
