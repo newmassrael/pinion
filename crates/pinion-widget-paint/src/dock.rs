@@ -2947,10 +2947,19 @@ pub struct DockReorganizer {
     /// consumer of this surface: the pointer path, the `drop` RPC
     /// ([`resolve_dock_drop`]), and cross-window redock
     /// ([`DockReorganizer::dock_panel_at_resolved_zone`]). A split-only surface never offers
-    /// `Center` from any path — a centre cursor resolves to the nearest split
-    /// edge. The explicit symbolic `reorganize` invoke (an AI naming a zone,
-    /// no classification) is NOT gated — tabbing governs the zone CLASSIFIER,
-    /// not direct topology edits.
+    /// `Center` from any classifier — a centre cursor resolves to the nearest
+    /// split edge.
+    ///
+    /// (R1351 §2 #2 PR-60) The symbolic `reorganize` invoke honours this too,
+    /// as a FOURTH path, by REJECTING (it names a zone rather than classifying
+    /// a cursor, so it has no edge to fall back to). It once did not honour it
+    /// at all — the flag was read as governing the zone CLASSIFIER rather than
+    /// direct topology edits, so an AI naming `zone:"Center"` tabified a
+    /// split-only surface. That made the policy self-violable through the
+    /// surface's own API: `false` means "tab wells do not exist here", so the
+    /// state is forbidden however it is reached. The binding's own
+    /// [`DockReorganizer::apply_intent`] stays ungated — the policy describes
+    /// what the binding implements, and the binding owns it.
     tabbing: bool,
     /// (R1134 §5.51.1) The torn-slot policy ([`FloatPolicy`]) for THIS dock
     /// surface — `Placeholder` (default) keeps a floated panel's leaf, `Collapse`
@@ -2964,6 +2973,31 @@ pub struct DockReorganizer {
     ///
     /// [`tabbing`]: Self::tabbing
     float_policy: Signal<FloatPolicy>,
+    /// (R1350 §5.51.1 §2 #2 PR-59) Whether [`Self::float_policy`] was
+    /// **declared by the builder** ([`Self::with_float_policy`]) rather than
+    /// left at the default — i.e. whether this binding has stated "my host
+    /// implements *this* float model". A declared policy LOCKS the wire
+    /// [`DockReorganizeExternal`] `set_float_policy` invoke, and is published
+    /// as the readable `float_policy_locked` path so an agent learns the fact
+    /// before probing (the [`tabbing`] shape).
+    ///
+    /// A plain `bool` rather than a [`Cell`], because unlike
+    /// [`Self::float_policy`] (whose `Signal` serves the `&self`
+    /// [`Self::set_float_policy`]) this is written only by the by-value
+    /// builder — the same shape as [`tabbing`] beside it.
+    ///
+    /// The asymmetry with the Rust [`Self::set_float_policy`] setter (which
+    /// the lock does NOT gate) is the point, not an oversight: a policy is a
+    /// statement about *what the binding implements*, so the binding is its
+    /// owner and may change its own mind (`hello-dock-panels-editor`'s GUI
+    /// toggle does exactly that). A wire client is not the owner — it cannot
+    /// implement the model it would be switching to, so letting it flip a
+    /// declared policy makes the surface lie about itself (§2 #2). A binding
+    /// that *wants* the runtime toggle simply does not call the builder, and
+    /// keeps the invoke (the editor's case).
+    ///
+    /// [`tabbing`]: Self::tabbing
+    float_policy_locked: bool,
     /// (R1134 §5.51.1) Captured home anchors for collapsed panels, keyed by panel
     /// id — the collapse-policy "where home is" SSOT. [`Self::float_out_panel`]
     /// stashes a leaf's [`DockLeafAnchor`] before removing it;
@@ -3024,6 +3058,9 @@ impl core::fmt::Debug for DockReorganizer {
             .field("reorganize_ratio", &self.reorganize_ratio)
             .field("tabbing", &self.tabbing)
             .field("float_policy", &self.float_policy.get())
+            // (R1350 PR-59) Surfaced beside the policy it governs: "the wire
+            // setter rejected" is otherwise indistinguishable from a bad arg.
+            .field("float_policy_locked", &self.float_policy_locked)
             .field("last_outcome", &self.last_outcome.borrow())
             .finish_non_exhaustive()
     }
@@ -3044,6 +3081,7 @@ impl DockReorganizer {
             reorganize_ratio: DEFAULT_REORGANIZE_RATIO,
             tabbing: true,
             float_policy: Signal::new(FloatPolicy::default()),
+            float_policy_locked: false,
             home_anchors: RefCell::new(HashMap::new()),
             last_outcome: RefCell::new(None),
             undo: None,
@@ -3063,8 +3101,19 @@ impl DockReorganizer {
 
     /// (R1112 §5.51 PR-37) Opt out of tab docking for this dock surface
     /// (default on). A split-only consumer — a terminal multiplexer — passes
-    /// `false`, so a centre drop resolves to the nearest split edge instead of
-    /// a tabify, on EVERY path (pointer + `drop` RPC + cross-window redock).
+    /// `false`, and no path on the surface can then produce a tab well.
+    ///
+    /// The honouring paths fall in two groups, and (R1351 PR-60) they answer
+    /// differently by design:
+    ///
+    /// * **classifiers** — the pointer path, the `drop` RPC, cross-window
+    ///   redock. These turn a CURSOR into a zone, so a centre cursor simply
+    ///   resolves to the nearest split edge instead of a tabify.
+    /// * **the symbolic `reorganize` invoke** — an AI NAMES `zone: "Center"`.
+    ///   There is no cursor to re-resolve and no second-choice intent, so it is
+    ///   `Rejected` rather than silently turned into a split the caller never
+    ///   asked for.
+    ///
     /// See [`tabbing`](Self::tabbing) for the layering rationale.
     #[must_use]
     pub fn with_tabbing(mut self, tabbing: bool) -> Self {
@@ -3083,18 +3132,63 @@ impl DockReorganizer {
     /// (R1134 §5.51.1) Set this dock surface's torn-slot [`FloatPolicy`] at
     /// construction — `Collapse` makes a float remove the leaf (neighbours reflow),
     /// `Placeholder` (the default) keeps it. Like [`with_tabbing`](Self::with_tabbing)
-    /// it is a per-surface policy the consumer picks; runtime toggling goes through
-    /// [`set_float_policy`](Self::set_float_policy).
+    /// it is a per-surface policy the consumer picks.
+    ///
+    /// # This DECLARES the policy, and a declaration locks the wire
+    ///
+    /// (R1350 §2 #2 PR-59) Calling this states "my host implements *this* float
+    /// model" — so it also LOCKS the [`DockReorganizeExternal`]
+    /// `set_float_policy` invoke, which then rejects. A wire client cannot
+    /// implement the model it would be switching the surface to, so a
+    /// client-flipped declaration would leave the surface advertising a policy
+    /// its binding does not follow — a surface lying about itself. The consumer
+    /// that forced this (a terminal multiplexer whose host removes the pane on
+    /// float, and which deleted its own placeholder mode) could be flipped back
+    /// to `Placeholder` by one stray invoke and then diverge from its host
+    /// permanently.
+    ///
+    /// The lock is published as the readable `float_policy_locked` path rather
+    /// than by withholding `set_float_policy` from the schema — the
+    /// [`with_tabbing`](Self::with_tabbing) shape, where the action stays
+    /// advertised and a policy beside it says when it is honoured. An agent
+    /// therefore learns the lock by READING, not by being rejected.
+    ///
+    /// Runtime toggling still works two ways:
+    ///
+    /// * the binding's own [`set_float_policy`](Self::set_float_policy) — the
+    ///   policy's OWNER, never gated (a GUI toggle, as
+    ///   `hello-dock-panels-editor` does);
+    /// * the wire invoke — on any surface that does NOT call this builder and
+    ///   so has not declared a model (the editor's case: it boots at the
+    ///   default and lets both the toggle and the AI drive one reactive SSOT).
     #[must_use]
-    pub fn with_float_policy(self, policy: FloatPolicy) -> Self {
+    pub fn with_float_policy(mut self, policy: FloatPolicy) -> Self {
         self.float_policy.set(policy);
+        self.float_policy_locked = true;
         self
     }
 
-    /// (R1134 §5.51.1) Switch the torn-slot policy at runtime — the `set_float_policy`
-    /// invoke + a "collapse vs placeholder" UI toggle drive this, so a dock review
-    /// flips the behaviour live without rebuilding the coordinator. Takes effect on
-    /// the NEXT float (an already-floated panel is unaffected until it docks back).
+    /// (R1350 §5.51.1 §2 #2 PR-59) Whether [`with_float_policy`](Self::with_float_policy)
+    /// declared this surface's policy — and therefore whether the wire
+    /// `set_float_policy` invoke is locked out (absent from
+    /// [`DockReorganizeExternal`]'s schema, `Rejected` if invoked).
+    #[must_use]
+    pub fn float_policy_locked(&self) -> bool {
+        self.float_policy_locked
+    }
+
+    /// (R1134 §5.51.1) Switch the torn-slot policy at runtime — a "collapse vs
+    /// placeholder" UI toggle and (on an undeclared surface) the
+    /// `set_float_policy` invoke drive this, so a dock review flips the behaviour
+    /// live without rebuilding the coordinator. Takes effect on the NEXT float (an
+    /// already-floated panel is unaffected until it docks back).
+    ///
+    /// (R1350 PR-59) The binding OWNS its policy, so this setter is never gated by
+    /// [`float_policy_locked`](Self::float_policy_locked) — the lock is
+    /// wire-facing only. A binding changing its own policy is changing its own
+    /// mind about what it implements, which is exactly the thing a declaration is
+    /// allowed to do; a wire client doing it is asserting an implementation it
+    /// does not have.
     pub fn set_float_policy(&self, policy: FloatPolicy) {
         self.float_policy.set(policy);
     }
@@ -3758,6 +3852,15 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // `set_float_policy` invoke so an AI toggles collapse vs placeholder.
             ("float_policy", "string"),
             ("set_float_policy", "string"),
+            // (R1350 §5.51.1 §2 #7 PR-59) Whether `float_policy` was DECLARED by
+            // the binding (`with_float_policy`) and is therefore refused to the
+            // wire. Modelled exactly on `tabbing` above — a readable policy an
+            // agent consults BEFORE attempting the action it governs, rather
+            // than a capability it discovers by being rejected. `set_float_policy`
+            // stays advertised for the same reason `reorganize` stays advertised
+            // on a `tabbing: false` surface: the action exists, and the policy
+            // beside it says when it is honoured.
+            ("float_policy_locked", "bool"),
             ("last_outcome", "string"),
             // R1082.1 §5.51 — the in-flight pointer drag observed on the
             // canonical reorganize surface (`{source, target, zone}` or
@@ -3807,6 +3910,15 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // R1134 §5.51.1 §2 #7 — the surface torn-slot (collapse) policy.
             "float_policy" => Some(IntrospectValue::Text(
                 self.reorganizer.float_policy().as_str().to_string(),
+            )),
+            // (R1350 §5.51.1 §2 #7 PR-59) The lock, as data — the `tabbing`
+            // shape. An agent reads this and knows `set_float_policy` is refused
+            // WITHOUT probing it; discovering the same fact from a missing schema
+            // entry would be ambiguous (locked? older pinion? another external
+            // type?), and discovering it from a rejection means having already
+            // tried to make the surface lie.
+            "float_policy_locked" => Some(IntrospectValue::Bool(
+                self.reorganizer.float_policy_locked(),
             )),
             "last_outcome" => Some(match self.reorganizer.last_outcome() {
                 Some(s) => IntrospectValue::Text(s),
@@ -3932,26 +4044,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     Err(_) => Err(InvokeError::Rejected),
                 }
             }
-            "reorganize" => {
-                let IntrospectValue::Json(obj) = args else {
-                    return Err(InvokeError::TypeMismatch);
-                };
-                let source = obj.get("source").and_then(serde_json::Value::as_str);
-                let target = obj.get("target").and_then(serde_json::Value::as_str);
-                let zone_str = obj.get("zone").and_then(serde_json::Value::as_str);
-                let (Some(source), Some(target), Some(zone_str)) = (source, target, zone_str)
-                else {
-                    return Err(InvokeError::TypeMismatch);
-                };
-                let zone = parse_drop_zone(zone_str).ok_or(InvokeError::Rejected)?;
-                // Zone → intent through the [`intent_for_zone`] SSOT; a
-                // `None`/unmappable zone is a rejected gesture.
-                let intent = intent_for_zone(source, target, zone).ok_or(InvokeError::Rejected)?;
-                match self.apply_intent(&intent) {
-                    Ok(summary) => Ok(IntrospectValue::Text(summary)),
-                    Err(_) => Err(InvokeError::Rejected),
-                }
-            }
+            "reorganize" => self.invoke_reorganize(args),
             "dock_outer" => self.invoke_dock_outer(args),
             "activate_tab" => {
                 let IntrospectValue::Json(obj) = args else {
@@ -3979,7 +4072,22 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // R1134 §5.51.1 §2 #2 — toggle this surface's torn-slot policy live.
             // Arg is the wire name (`"collapse"` / `"placeholder"`); an unknown
             // name is a rejected gesture. The next float honours the new policy.
+            //
+            // R1350 §2 #2 PR-59 — REJECTED when the binding DECLARED its policy
+            // (`with_float_policy`). A policy states what the binding's host
+            // implements; a wire client cannot implement the model it would flip
+            // to, so honouring it would leave the surface advertising a policy
+            // its binding does not follow. The readable `float_policy_locked`
+            // path tells a client this will reject before it tries; this arm is
+            // what makes that readable fact binding.
+            //
+            // The lock is checked BEFORE the payload type: on a locked surface
+            // the path is shut whatever the argument's shape, so `Rejected`
+            // (not `TypeMismatch`) is the honest answer even to a malformed arg.
             "set_float_policy" => {
+                if self.reorganizer.float_policy_locked() {
+                    return Err(InvokeError::Rejected);
+                }
                 let IntrospectValue::Text(name) = args else {
                     return Err(InvokeError::TypeMismatch);
                 };
@@ -3999,6 +4107,85 @@ impl ExternalIntrospect for DockReorganizeExternal {
 }
 
 impl DockReorganizeExternal {
+    /// (R1351 §5.51 §2 #2 PR-60) Extracted [`Self::invoke`] arm: the symbolic
+    /// reorganize — an AI NAMES a `zone` for a `source`/`target` pair (no cursor,
+    /// no classification), which routes through the [`intent_for_zone`] SSOT and
+    /// applies. Extracted to keep `invoke` under the workspace line cap, as
+    /// [`Self::invoke_dock_outer`] / [`Self::invoke_undock_tab`] already are.
+    ///
+    /// ## This path honours the surface's `tabbing` policy
+    ///
+    /// It once did not, and that was the defect PR-60 reported. R1112 lifted
+    /// `tabbing` to ONE surface SSOT that "EVERY path" honours (pointer, `drop`
+    /// RPC, cross-window redock) — but the flag was read as governing the zone
+    /// CLASSIFIER, and this path classifies nothing, so it was left ungated. A
+    /// client naming `zone:"Center"` on a `with_tabbing(false)` surface minted a
+    /// `Tabs` well regardless: the surface's own API violating the surface's own
+    /// declared policy, reachable by the *first* thing an agent does with a
+    /// discovered surface (enumerate the zone vocabulary) on the path the north
+    /// star makes primary.
+    ///
+    /// The cost lands on a split-only binding — a terminal multiplexer whose host
+    /// layout tree has no tab type. Its projection honestly refuses to write the
+    /// well back, which saves the session state; but the host's revision never
+    /// moves (it never learned of the tabify), so nothing re-syncs the client, and
+    /// it renders a tab well its host cannot represent until some unrelated layout
+    /// change happens by. Refusing the WRITE saves the host; only refusing the
+    /// TABIFY saves the client. So `with_tabbing(false)` reads as "tab wells do
+    /// not exist on this surface", not merely "the classifier will not pick
+    /// Center".
+    ///
+    /// Rejects rather than silently re-resolving to a split edge: `drop` has a
+    /// classifier with a nearest-edge fallback to fall back ON, but a NAMED zone
+    /// carries no second-choice intent — quietly substituting a different
+    /// topology would apply something the caller never asked for.
+    ///
+    /// Gated on the resolved INTENT, not the zone string: `Tabify` is the state
+    /// the policy forbids, and [`intent_for_zone`] is the one SSOT mapping zones
+    /// onto it — so a future zone that also maps to `Tabify` is covered here with
+    /// no second edit.
+    ///
+    /// The binding's own [`DockReorganizer::apply_intent`] is deliberately NOT
+    /// gated: a policy states what the BINDING implements, so the binding may
+    /// still drive `Tabify` directly if it means to. A wire client is not the
+    /// binding.
+    ///
+    /// That last sentence is the only thing this shares with R1350's
+    /// `set_float_policy` arm — the two are NOT one mechanism, and reading them
+    /// as one would mispredict both. This gate tests a policy's **value**
+    /// (`tabbing == false`) and forbids a **state** (a `Tabs` node cannot exist
+    /// here). R1350's tests **declaredness** (was the builder called) and
+    /// forbids no state at all — both `FloatPolicy` values stay legal, and a
+    /// surface that declares the *default* still locks. Value-gate vs
+    /// capability-lock; the shared premise is only "the binding owns its
+    /// policy, the wire does not".
+    fn invoke_reorganize(&mut self, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Json(obj) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let source = obj.get("source").and_then(serde_json::Value::as_str);
+        let target = obj.get("target").and_then(serde_json::Value::as_str);
+        let zone_str = obj.get("zone").and_then(serde_json::Value::as_str);
+        let (Some(source), Some(target), Some(zone_str)) = (source, target, zone_str) else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let zone = parse_drop_zone(zone_str).ok_or(InvokeError::Rejected)?;
+        // Zone → intent through the [`intent_for_zone`] SSOT; a
+        // `None`/unmappable zone is a rejected gesture.
+        let intent = intent_for_zone(source, target, zone).ok_or(InvokeError::Rejected)?;
+        if matches!(intent, DockReorganizeIntent::Tabify { .. }) && !self.reorganizer.tabbing() {
+            self.reorganizer
+                .note_outcome("rejected: tabbing disabled on this dock surface");
+            return Err(InvokeError::Rejected);
+        }
+        // `apply_intent` records the `"rejected: …"` outcome itself (the one
+        // SSOT), so the caller only maps the error.
+        match self.apply_intent(&intent) {
+            Ok(summary) => Ok(IntrospectValue::Text(summary)),
+            Err(_) => Err(InvokeError::Rejected),
+        }
+    }
+
     /// (R1156 §5.51) Extracted [`Self::invoke`] arm: OUTER full-span dock — drop
     /// `source` at the dock AREA's edge (`zone` = Top/Bottom/Left/Right), spanning
     /// every pane, via [`DockReorganizer::dock_panel_outer`]. The §2 #2 RPC peer of
@@ -4493,9 +4680,14 @@ impl ExternalIntrospect for TabWellExternal {
 /// R683.B §5.16 (R1081 §5.51) — symbolic event name the
 /// [`DockPanelExternal`] emits when a drag escapes every drop target
 /// and tears the panel off into a floating window. Constant (not raw
-/// literal) so binding-side reducer match arms can spell the dotted
-/// intent tag via [`intent_tag!`](pinion_core::intent_tag) without
-/// duplicating the literal: `intent_tag!(PANEL_TAG, dock::TEAR_OFF_EVENT)`.
+/// literal) so a binding-side reducer match arm spells the dotted intent
+/// tag without duplicating the literal — join it to the panel tag at
+/// runtime: `format!("{PANEL_TAG}.{}", dock::TEAR_OFF_EVENT)`.
+/// [`intent_tag!`](pinion_core::intent_tag) cannot compose it: the macro
+/// matches `literal`-only on both arguments (stable `concat!` takes no
+/// `const` ref). R1349 corrected this doc, which advertised
+/// `intent_tag!(PANEL_TAG, dock::TEAR_OFF_EVENT)` — a form that has never
+/// compiled.
 pub const TEAR_OFF_EVENT: &str = "tear_off";
 
 /// R1094 §5.16 §5.41 §5.51 — symbolic event the [`DockPanelExternal`]
@@ -13506,6 +13698,103 @@ mod reorganize_tests {
         ));
     }
 
+    #[test]
+    fn r1350_declared_float_policy_locks_the_wire_setter_but_not_the_binding() {
+        // (§2 #2 PR-59) A policy states what the BINDING implements. Declaring it
+        // via the builder withdraws the wire setter: an agent must not be able to
+        // flip a surface onto a model its host does not implement, because the
+        // surface would then advertise (`query("float_policy")`) a policy nothing
+        // honours — a surface lying about itself.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = Rc::new(
+            DockReorganizer::new(Rc::clone(&topology)).with_float_policy(FloatPolicy::Collapse),
+        );
+        let mut ext = DockReorganizeExternal::from_reorganizer(Rc::clone(&reorganizer));
+
+        assert!(reorganizer.float_policy_locked(), "builder declared it");
+        // The declaration is READABLE — locking the setter does not hide the
+        // policy, which is the whole point of advertising it.
+        assert_eq!(
+            ext.query("float_policy"),
+            Some(IntrospectValue::Text("collapse".to_string())),
+        );
+        // …and so is the LOCK itself, as data. This is the `tabbing` shape: an
+        // agent consults the policy before attempting the action it governs,
+        // instead of learning it from a rejection (having already tried to make
+        // the surface lie) or from a missing schema entry (ambiguous between
+        // locked, an older pinion, and a different external type).
+        assert_eq!(
+            ext.query("float_policy_locked"),
+            Some(IntrospectValue::Bool(true)),
+        );
+        // The wire flip is refused — and, decisively, does NOT take effect. A
+        // rejection that still mutated would be the original defect wearing an
+        // error code.
+        assert!(matches!(
+            ext.invoke(
+                "set_float_policy",
+                IntrospectValue::Text("placeholder".to_string())
+            ),
+            Err(InvokeError::Rejected),
+        ));
+        assert_eq!(
+            reorganizer.float_policy(),
+            FloatPolicy::Collapse,
+            "the declared policy survived the rejected flip",
+        );
+        // The schema still advertises the action + the policy that governs it —
+        // deliberately NOT the "withhold the entry" shape. R1112 already settled
+        // this on this very struct: a `tabbing: false` surface keeps advertising
+        // `reorganize` and publishes `tabbing` beside it. Withholding instead
+        // would make the lock knowable only by absence, and would force the
+        // schema (a `&'static` slice) into a per-configuration variant that does
+        // not generalise past one lockable field.
+        let keys: Vec<&str> = ext.schema().fields.iter().map(|(k, _)| *k).collect();
+        for expected in ["float_policy", "float_policy_locked", "set_float_policy"] {
+            assert!(
+                keys.contains(&expected),
+                "schema advertises {expected}: {keys:?}"
+            );
+        }
+        // The BINDING is the policy's owner and stays free to change its own mind
+        // — the lock is wire-facing only.
+        reorganizer.set_float_policy(FloatPolicy::Placeholder);
+        assert_eq!(reorganizer.float_policy(), FloatPolicy::Placeholder);
+    }
+
+    #[test]
+    fn r1350_undeclared_float_policy_keeps_the_wire_setter_live() {
+        // The other half of the rule, and the reason PR-59's "just delete the
+        // setter" option was refused: `hello-dock-panels-editor` ships a runtime
+        // collapse/placeholder toggle driven from BOTH a GUI button and the
+        // `set_float_policy` invoke (dogfooded by `r1134_dock_collapse.py` +
+        // `r1135_policy_toggle.py`). It never calls the builder, so it declares
+        // nothing and keeps the toggle.
+        let topology = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&topology)));
+        let mut ext = DockReorganizeExternal::from_reorganizer(Rc::clone(&reorganizer));
+
+        assert!(
+            !reorganizer.float_policy_locked(),
+            "no builder call = undeclared",
+        );
+        // The lock is readable on BOTH surfaces, so the answer is never inferred
+        // from a field's absence.
+        assert_eq!(
+            ext.query("float_policy_locked"),
+            Some(IntrospectValue::Bool(false)),
+        );
+        assert_eq!(
+            ext.invoke(
+                "set_float_policy",
+                IntrospectValue::Text("collapse".to_string())
+            )
+            .unwrap(),
+            IntrospectValue::Text("collapse".to_string()),
+        );
+        assert_eq!(reorganizer.float_policy(), FloatPolicy::Collapse);
+    }
+
     /// Side-by-side layout for the three panels (each 200×400).
     fn abc_rects() -> Vec<(&'static str, Rect)> {
         vec![
@@ -13820,6 +14109,83 @@ mod reorganize_tests {
             signal.get().unwrap().panel_ids().len(),
             3,
             "a move preserves the panel count"
+        );
+    }
+
+    #[test]
+    fn r1351_reorganize_invoke_center_on_split_only_surface_is_rejected() {
+        // (§5.51 §2 #2 PR-60) The sibling of the R1112 `drop` test above, on the
+        // path R1112 missed. `drop` CLASSIFIES a cursor and so was gated by
+        // resolving Center away; `reorganize` NAMES a zone and was not gated at
+        // all — so an agent enumerating the zone vocabulary (the first thing an
+        // AI does with a discovered surface, and the north star makes RPC the
+        // primary path) minted a `Tabs` well on a surface that declares it has
+        // none.
+        //
+        // Rejection, not silent re-resolution to an edge: `drop`'s classifier has
+        // a nearest-edge answer to fall back on, but a named `Center` carries no
+        // second-choice intent — quietly substituting a split would apply a
+        // topology the caller never asked for.
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
+        let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&signal)).with_tabbing(false));
+        let mut ext = DockReorganizeExternal::from_reorganizer(reorganizer);
+        assert_eq!(ext.query("tabbing"), Some(IntrospectValue::Bool(false)));
+
+        assert!(matches!(
+            ext.invoke(
+                "reorganize",
+                IntrospectValue::Json(serde_json::json!({
+                    "source": "a", "target": "b", "zone": "Center",
+                })),
+            ),
+            Err(InvokeError::Rejected),
+        ));
+        // The topology is UNTOUCHED — no well minted, nothing re-parented. A
+        // client that renders this tree stays in step with a host that cannot
+        // express tabs (the divergence PR-60 reported: refusing the host WRITE
+        // saved the session, but the client had already drawn the well).
+        assert_eq!(
+            ext.query("tabs_seq"),
+            Some(IntrospectValue::Int(0)),
+            "no tab well was minted",
+        );
+        // Asserted STRUCTURALLY, not by panel count: a `Tabify` re-parents `a`
+        // onto `b`'s pane and leaves all three panels present, so a count check
+        // would pass whether or not the gate fired — pinning nothing while
+        // reading like a proof.
+        assert_eq!(
+            signal.get().unwrap().root().tabs_well_count(),
+            0,
+            "no Tabs node exists on a split-only surface",
+        );
+        // The refusal is legible to the agent that caused it, on the same
+        // `last_outcome` channel every other rejection reports through.
+        let outcome = ext.query("last_outcome");
+        assert!(
+            matches!(&outcome, Some(IntrospectValue::Text(t)) if t.contains("tabbing")),
+            "the rejection names its reason: {outcome:?}",
+        );
+    }
+
+    #[test]
+    fn r1351_reorganize_invoke_center_still_tabifies_a_tab_docking_surface() {
+        // The control: the gate is the POLICY, not the path. A default surface
+        // (tabbing on — the IDE/editor affordance) still tabifies on the same
+        // call, so PR-60 removed a policy hole rather than the Center zone.
+        let signal = Rc::new(Signal::new(Some(abc_topology())));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        assert_eq!(ext.query("tabbing"), Some(IntrospectValue::Bool(true)));
+        ext.invoke(
+            "reorganize",
+            IntrospectValue::Json(serde_json::json!({
+                "source": "a", "target": "b", "zone": "Center",
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            ext.query("tabs_seq"),
+            Some(IntrospectValue::Int(1)),
+            "a tab well was minted",
         );
     }
 
