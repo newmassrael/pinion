@@ -1400,22 +1400,24 @@ mod tests {
                 "expanded_at.<pos>"
             ],
         );
-        let stems: Vec<&str> = src
+        let prefixes: Vec<&str> = src
             .introspect_schema()
             .fields
             .iter()
-            .map(crate::external::SchemaField::stem)
+            .map(crate::external::SchemaField::literal_prefix)
             .collect();
+        // `literal_prefix` is what each `query` arm strips, verbatim — the
+        // separator included, because the separator is the author's choice.
         assert_eq!(
-            stems,
+            prefixes,
             [
                 "row_count",
                 "cursor",
                 "cursor_index",
-                "id_at",
-                "label_at",
-                "level_at",
-                "expanded_at"
+                "id_at.",
+                "label_at.",
+                "level_at.",
+                "expanded_at."
             ],
         );
     }

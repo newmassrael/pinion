@@ -1092,6 +1092,11 @@ impl ExternalIntrospect for MenuBarExternal {
                     SchemaField::new("bar_focus", "int"),
                     // R985 — `<path>` is a dotted index path (`<menu>` top, `<menu>.<item>`,
                     // `<menu>.<item>.<sub>` …), so the same slots address nested items.
+                    // (R1353.1) `path` is a DOTTED INDEX PATH (`"0.1"` = item 1 of menu 0),
+                    // not a scalar: its domain is hierarchical — each segment bounded by the
+                    // item count of the level above. `ArgDomain` cannot express that, so this
+                    // says nothing rather than something false. A second hierarchical family
+                    // is what should force the variant.
                     SchemaField::parametric(
                         "item_count.<path>",
                         "int",

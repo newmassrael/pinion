@@ -184,12 +184,12 @@ impl QuerySource for GroupAggregates {
                     SchemaField::parametric(
                         "group.<g>.count",
                         "int",
-                        const { &[SchemaArg::open("g", "int")] },
+                        const { &[SchemaArg::index("g", "group_count")] },
                     ),
                     SchemaField::parametric(
                         "group.<g>.size",
                         "int",
-                        const { &[SchemaArg::open("g", "int")] },
+                        const { &[SchemaArg::index("g", "group_count")] },
                     ),
                 ]
             },

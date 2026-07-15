@@ -303,6 +303,10 @@ impl ExternalIntrospect for TrayExternal {
                     SchemaField::new("dark_mode", "bool"),
                     SchemaField::new("build_running", "bool"),
                     SchemaField::new("quit_requested", "bool"),
+                    // (R1353.1) Keyed by a tray-item ID, not an index: `menu_count`
+                    // bounds the menu list, not these ids, and no path LISTS them —
+                    // so neither `IndexOf` nor `ValuesOf` would be true. Declared
+                    // unknown rather than pointed at a bound it does not have.
                     SchemaField::parametric(
                         "item.<id>.label",
                         "string",

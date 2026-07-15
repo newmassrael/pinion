@@ -343,17 +343,17 @@ impl ExternalIntrospect for SelRowExternal {
                     SchemaField::parametric(
                         "selected.<i>",
                         "bool",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "count")] },
                     ),
                     SchemaField::parametric(
                         "label.<i>",
                         "string",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "count")] },
                     ),
                     SchemaField::parametric(
                         "id.<i>",
                         "int",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "count")] },
                     ),
                     SchemaField::new("send", "string"),
                     SchemaField::new("key", "string"),

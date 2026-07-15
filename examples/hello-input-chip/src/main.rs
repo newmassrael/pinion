@@ -462,6 +462,10 @@ impl ExternalIntrospect for ChipDeleteExternal {
                     // `state:2`) for chip `<id>`'s `×` button-posture variant name;
                     // the literal key advertises the `:<id>` suffix so the introspect
                     // contract (§5.21) matches what `query` actually accepts.
+                    // (R1353.1) A chip ID, not an index: `count` is the chip count, but ids are
+                    // minted and outlive removals, so `0..count` is NOT the id domain.
+                    // (Note the separator here is `:`, not `.` — the author's choice, which
+                    // `SchemaField::literal_prefix` reports verbatim.)
                     SchemaField::parametric(
                         "state:<id>",
                         "string",

@@ -271,12 +271,12 @@ impl ExternalIntrospect for MeasuredListExternal {
                     SchemaField::parametric(
                         "model_height.<row>",
                         "int",
-                        const { &[SchemaArg::open("row", "int")] },
+                        const { &[SchemaArg::index("row", "item_count")] },
                     ),
                     SchemaField::parametric(
                         "measured_height.<row>",
                         "int",
-                        const { &[SchemaArg::open("row", "int")] },
+                        const { &[SchemaArg::index("row", "item_count")] },
                     ),
                 ]
             },
@@ -296,10 +296,23 @@ impl ExternalIntrospect for MeasuredListExternal {
             _ => {
                 // `model_height.<row>` / `measured_height.<row>` — the modeled
                 // vs (nullable) measured height of a single row.
+                //
+                // (R1353.1) Both guard the row against `item_count`. `model_height`
+                // is a pure function of the index (`1 + index % MAX_LINES`), so
+                // without the guard it answers ANY row: `model_height.99999`
+                // returned a real-looking height for a row that does not exist —
+                // the `width.999 → 40` fabrication, in a binding. The declared
+                // `IndexOf("item_count")` domain is only true with this guard.
                 if let Some(row) = path.strip_prefix("model_height.").and_then(parse_index) {
+                    if row >= self.measured.item_count() {
+                        return None;
+                    }
                     return Some(IntrospectValue::Int(i64::from(model_height(row))));
                 }
                 if let Some(row) = path.strip_prefix("measured_height.").and_then(parse_index) {
+                    if row >= self.measured.item_count() {
+                        return None;
+                    }
                     return Some(match self.measured.measured_height(row) {
                         Some(h) => IntrospectValue::Int(i64::from(h)),
                         None => IntrospectValue::Null,

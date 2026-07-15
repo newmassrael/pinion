@@ -251,7 +251,7 @@ impl ExternalIntrospect for PaletteExternal {
                     SchemaField::parametric(
                         "result.<i>",
                         "string",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "result_count")] },
                     ),
                     SchemaField::new("selected", "int"),
                     SchemaField::new("selected_command", "string"),

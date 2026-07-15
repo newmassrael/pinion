@@ -1170,32 +1170,32 @@ impl ExternalIntrospect for InspectorExternal {
                     SchemaField::parametric(
                         "object_name.<j>",
                         "string",
-                        const { &[SchemaArg::open("j", "int")] },
+                        const { &[SchemaArg::index("j", "object_count")] },
                     ),
                     SchemaField::parametric(
                         "name.<i>",
                         "string",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "row_count")] },
                     ),
                     SchemaField::parametric(
                         "kind.<i>",
                         "string",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "row_count")] },
                     ),
                     SchemaField::parametric(
                         "value.<i>",
                         "json",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "row_count")] },
                     ),
                     SchemaField::parametric(
                         "mixed.<i>",
                         "bool",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "row_count")] },
                     ),
                     SchemaField::parametric(
                         "modified.<i>",
                         "bool",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "row_count")] },
                     ),
                     SchemaField::new("any_modified", "bool"),
                     SchemaField::new("select", "int"),

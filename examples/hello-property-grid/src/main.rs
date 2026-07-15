@@ -2223,6 +2223,12 @@ impl ExternalIntrospect for PropertyGridExternal {
                 &[
                     SchemaField::new("row_count", "int"),
                     SchemaField::new("editing", "json"),
+                    // (R1353.1) `index` is an ADDRESS, not a row index: `row_ref`
+                    // parses either a scalar row (`3`) or an element address
+                    // (`elem.2`) — a small grammar with two shapes. `row_count`
+                    // bounds only the first, so `IndexOf("row_count")` would deny
+                    // every `elem.<k>` address. Declared unknown rather than
+                    // half-true; `ArgDomain` cannot express a sum of two domains.
                     SchemaField::parametric(
                         "name.<index>",
                         "string",

@@ -2658,17 +2658,17 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::parametric(
         "col_name.<col>",
         "string",
-        const { &[SchemaArg::open("col", "int")] },
+        const { &[SchemaArg::index("col", "col_count")] },
     ),
     SchemaField::parametric(
         "col_kind.<col>",
         "string",
-        const { &[SchemaArg::open("col", "int")] },
+        const { &[SchemaArg::index("col", "col_count")] },
     ),
     SchemaField::parametric(
         "col_range.<col>",
         "string",
-        const { &[SchemaArg::open("col", "int")] },
+        const { &[SchemaArg::index("col", "col_count")] },
     ),
     SchemaField::parametric(
         "value.<row>.<col>",
@@ -2684,17 +2684,17 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::parametric(
         "source_at.<pos>",
         "int",
-        const { &[SchemaArg::open("pos", "int")] },
+        const { &[SchemaArg::index("pos", "visible_len")] },
     ),
     SchemaField::parametric(
         "kind_at.<pos>",
         "string",
-        const { &[SchemaArg::open("pos", "int")] },
+        const { &[SchemaArg::index("pos", "visible_len")] },
     ),
     SchemaField::parametric(
         "label_at.<pos>",
         "string",
-        const { &[SchemaArg::open("pos", "int")] },
+        const { &[SchemaArg::index("pos", "visible_len")] },
     ),
     SchemaField::parametric(
         "collapsed.<group>",

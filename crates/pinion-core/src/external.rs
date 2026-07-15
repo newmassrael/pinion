@@ -280,7 +280,8 @@ pub struct SchemaField {
     /// R1353 gave the arguments types; those strings were right, they were just
     /// unaccompanied.
     ///
-    /// [`stem`](Self::stem) recovers the literal prefix a `query` impl strips.
+    /// [`literal_prefix`](Self::literal_prefix) recovers the exact string a
+    /// `query` impl strips.
     pub path: &'static str,
     /// Type tag of the value read at this path.
     pub ty: &'static str,
@@ -341,15 +342,21 @@ impl SchemaField {
         Self { path, ty, args }
     }
 
-    /// The literal prefix before this field's first argument — what a `query`
-    /// impl's `strip_prefix` matches (`"width."` → stem `"width"`). Equal to
-    /// [`path`](Self::path) for a scalar.
+    /// The literal prefix before this field's first argument — exactly the
+    /// string a `query` impl's `strip_prefix` matches (`"width.<col>"` →
+    /// `"width."`, `"state:<id>"` → `"state:"`). Equal to [`path`](Self::path)
+    /// for a scalar.
+    ///
+    /// Verbatim, with the separator: the separator is whatever the author wrote
+    /// (`.` almost everywhere, `:` in `hello-input-chip`), and this type does not
+    /// get to assume one. R1353's first cut trimmed `'.'` specifically, which
+    /// made the same accessor answer `"width"` for a dotted template and
+    /// `"state:"` for a colon one — and its doc, which claimed to return what
+    /// `strip_prefix` matches, was then true only for the case it did not trim.
     #[must_use]
-    pub fn stem(&self) -> &'static str {
+    pub fn literal_prefix(&self) -> &'static str {
         match self.path.find('<') {
-            // Trim the separator the placeholder sits behind: `width.<col>` has
-            // stem `width`, not `width.`.
-            Some(i) => self.path[..i].trim_end_matches('.'),
+            Some(i) => &self.path[..i],
             None => self.path,
         }
     }
@@ -1827,7 +1834,7 @@ mod tests {
         let width = schema
             .fields
             .iter()
-            .find(|f| f.stem() == "width")
+            .find(|f| f.path == "width.<col>")
             .expect("width is declared");
         let [arg] = width.args else {
             panic!("width declares exactly one argument");
@@ -1875,13 +1882,23 @@ mod tests {
         assert!(ext.query("total").is_some(), "a scalar answers bare");
     }
 
-    /// R1353 §2 #2 — run every parametric widget's DECLARED arity against its
-    /// real `query` impl.
+    /// R1353.1 §2 #2 — run a parametric widget's DECLARED arity against its real
+    /// `query` impl.
     ///
-    /// One validator, N widgets, because the per-widget alternative is N tests
-    /// nobody writes for widget N+1. A declaration is a promise a client plans
-    /// against without probing; an unchecked promise is how `$schema` came to
-    /// say `("width","int")` about a path that answers nothing.
+    /// **Coverage is the widgets listed at the bottom, not all of them.** 32
+    /// files declare a `parametric` field; this audits the ones `pinion-core` can
+    /// construct, and a widget in another crate (`pinion-widget-paint`,
+    /// `pinion-audio`, every example) cannot be reached from here at all. R1353's
+    /// first cut claimed "every parametric widget" while auditing six — a test
+    /// that names a coverage it does not have is worse than no test, because it
+    /// answers the question "is this checked?" with a lie.
+    ///
+    /// What IS workspace-wide is the static half:
+    /// `r1353_1_every_real_declaration_matches_its_template` scans every real
+    /// declaration's source. This is the dynamic half — it needs a live widget,
+    /// so it goes as far as linkage allows. Adding widget N+1 here is a manual
+    /// line; the honest fix is a per-crate audit each crate runs over its own
+    /// externals, which nothing has forced yet.
     #[test]
     fn r1353_declared_domains_hold_on_real_widgets() {
         use crate::widgets::column_widths::{ColumnWidthExternal, ColumnWidths};
@@ -1910,31 +1927,14 @@ mod tests {
                     );
                     continue;
                 }
-                // A parametric field promises its stem is NOT a readable path —
-                // that is what makes the argument mandatory rather than optional.
-                //
-                // UNLESS the surface separately declares that stem as its own
-                // scalar. A family and a scalar may legitimately share a name:
-                // `Table` reads `selected` as "is anything selected at all" and
-                // `selected.<row>` as "is row N selected". Two fields, two
-                // meanings, one prefix — so the stem answering is only a defect
-                // when nothing declares it. (This test asserted otherwise first;
-                // the widget was right.)
-                let stem_is_declared_scalar = ext
-                    .schema()
-                    .fields
-                    .iter()
-                    .any(|g| g.args.is_empty() && g.path == f.stem());
-                if !stem_is_declared_scalar {
-                    assert!(
-                        ext.query(f.stem()).is_none(),
-                        "{label}: {:?} is declared parametric, but its bare stem \
-                         {:?} answers while no field declares it — so the argument \
-                         is not actually required and the declaration misleads",
-                        f.path,
-                        f.stem(),
-                    );
-                }
+                // NOTE: R1353's first cut also asserted "a parametric field's
+                // stem is not readable". It never caught anything: `Table`
+                // legitimately declares BOTH a scalar `selected` ("is anything
+                // selected") and a family `selected.<row>`, so the check needed a
+                // special-case to pass at all, and against a verbatim
+                // `literal_prefix` ("selected.") it is vacuous — that never reads.
+                // Removed rather than kept as reassurance. The three checks below
+                // are the ones that pin a real promise.
                 for a in f.args {
                     let ArgDomain::IndexOf(count_path) = a.domain else {
                         // `ValuesOf` / `Open` are audited by their own surfaces;
@@ -2178,29 +2178,49 @@ mod tests {
         ));
     }
 
-    /// R1353 — `stem` recovers the literal prefix a `query` impl strips, for
-    /// every template shape.
+    /// R1353.1 — `literal_prefix` returns exactly what a `query` impl strips,
+    /// for every template shape and **every separator**.
+    ///
+    /// The separator is the author's choice, not this type's: almost everything
+    /// uses `.`, `hello-input-chip` uses `:`. R1353's first cut trimmed `'.'`
+    /// specifically, so the same accessor answered `"width"` for one template and
+    /// `"state:"` for the other — and claimed, in its doc, to return the string
+    /// `strip_prefix` matches, which was then true only where it had not
+    /// trimmed. Verbatim is the only answer that is true for both.
     #[test]
-    fn r1353_stem_is_the_literal_prefix_a_query_impl_strips() {
-        assert_eq!(SchemaField::new("total", "int").stem(), "total");
+    fn r1353_1_literal_prefix_is_what_a_query_impl_strips() {
+        // A scalar is its own prefix.
+        assert_eq!(SchemaField::new("total", "int").literal_prefix(), "total");
+        // `column_widths::query` does `strip_prefix("width.")`.
         assert_eq!(
             SchemaField::parametric(
                 "width.<col>",
                 "int",
                 const { &[SchemaArg::open("col", "int")] }
             )
-            .stem(),
-            "width",
-            "the separator belongs to neither side",
+            .literal_prefix(),
+            "width.",
         );
+        // `hello-input-chip::query` does `strip_prefix("state:")` — a different
+        // separator, and the accessor must not assume one.
+        assert_eq!(
+            SchemaField::parametric(
+                "state:<id>",
+                "string",
+                const { &[SchemaArg::open("id", "int")] }
+            )
+            .literal_prefix(),
+            "state:",
+        );
+        // An infix template's prefix stops at its FIRST argument.
         assert_eq!(
             SchemaField::parametric(
                 "voice.<id>.gain",
                 "float",
                 const { &[SchemaArg::open("id", "int")] }
             )
-            .stem(),
-            "voice",
+            .literal_prefix(),
+            "voice.",
         );
     }
 
