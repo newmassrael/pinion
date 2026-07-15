@@ -36,9 +36,12 @@
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes};
-use pinion_core::external::{External, StubExternal};
-use pinion_core::scene::ContainerNode;
-use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
+use pinion_core::command::Command;
+use pinion_core::external::{External, IntrospectValue, StubExternal};
+use pinion_core::intent::Intent;
+use pinion_core::reactive::{Owner, Signal};
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::column_widths::{
@@ -88,9 +91,52 @@ const H_SCROLL_KEY: &str = "ghs_hscroll";
 /// scroll extent.
 const COLS_KEY: &str = "ghs_cols";
 
-// Display-only grid: no widget state of its own (`type State = ()`).
-// Repaints are driven by the theme + scroll-offset + measured-viewport
-// reactive `Signal` subscriptions the view opens.
+/// R1347 §5.20 — the per-column resize handles are tagged `ghs_ch<col>`, so a
+/// drag-end commit reaches the reducer as `ghs_ch<col>.width_committed` (the
+/// §5.20 R22 tag prefix applied to the widget's `"width_committed"` event). The
+/// reducer keys on this suffix after stripping the `<table>_ch<col>.` prefix.
+const WIDTH_COMMITTED_SUFFIX: &str = ".width_committed";
+/// R1347 §2 #7 — paint tag of the committed-width witness row, read as
+/// scene-as-data by `tools/demos/r1347_column_width_commit.py`.
+const WIDTH_COMMIT_LOG_TAG: &str = "ghs_width_commit_log";
+
+/// R1347 §5.20 — the **committed** column-resize log: `(commit_count, col,
+/// width)` of the most recent settle.
+///
+/// The dogfood consumer for `ColumnResizeExternal`'s new `"width_committed"`
+/// channel — the state a real grid persists (an IDE writes column widths to a
+/// layout file; sprag mirrors them to its host). Deliberately a SEPARATE handle
+/// from the live [`use_column_widths`] model the drag writes at pointer rate:
+/// this one moves only on the settle edge, so the pair demonstrates pinion's
+/// two-channel drag contract for the column-resize widget exactly as
+/// `hello-dock-panels` does for the splitter. The count makes the contract
+/// falsifiable: a click commits zero times, a drag exactly once.
+fn use_committed_width_log() -> Rc<Signal<(u32, usize, u32)>> {
+    Owner::current()
+        .expect("hello-grid-hscroll: view fn runs inside the substrate root owner scope")
+        .cache("ghs_committed_width_log", || Signal::new((0, 0, 0)))
+}
+
+/// R1347 — parse the column index out of a `ghs_ch<col>.width_committed` intent
+/// tag. Returns `None` for any other tag (the reducer ignores it). Keyed on the
+/// `<table>_ch` prefix + the `.width_committed` suffix so a future intent on the
+/// same widget (or a different table tag) cannot be misread as a width commit.
+fn column_of_width_commit(tag: &str) -> Option<usize> {
+    let prefix = concat_ch_prefix();
+    let rest = tag.strip_prefix(&prefix)?;
+    let col_str = rest.strip_suffix(WIDTH_COMMITTED_SUFFIX)?;
+    col_str.parse::<usize>().ok()
+}
+
+/// The `"ghs_ch"` prefix every per-column resize tag shares (`TABLE_TAG` +
+/// `_ch`). One place so the reducer's parse and the paint-side tag cannot drift.
+fn concat_ch_prefix() -> String {
+    format!("{TABLE_TAG}_ch")
+}
+
+// Display-only grid apart from the R1347 committed-width log: repaints are
+// driven by the theme + scroll-offset + measured-viewport reactive `Signal`
+// subscriptions the view opens, plus the committed-log signal.
 
 fn table_style() -> TableStyle {
     TableStyle {
@@ -165,8 +211,22 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         row_cells,
     );
 
+    // R1347 §5.20 §2 #7 — the committed-width witness, painted below the grid.
+    // Reads the reducer's settle-log signal as scene-as-data; a demo observes
+    // it over RPC to prove the drag-end commit completed the round trip through
+    // `V::update` (not merely that the External queued something).
+    let (commits, col, width) = use_committed_width_log().get();
+    let witness = Scene::Text(
+        TextNode::styled(
+            format!("committed width: {commits} commits, last col {col} = {width}px"),
+            Rect::default(),
+            TextStyle::new().with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        )
+        .with_tag(WIDTH_COMMIT_LOG_TAG),
+    );
+
     Scene::Container(
-        ContainerNode::new(vec![grid])
+        ContainerNode::new(vec![grid, witness])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
@@ -222,6 +282,25 @@ impl WidgetCore for GridHscrollView {
     }
 
     fn read_state(_scene: &Scene) {}
+
+    /// R1347 §5.20 — persist the settled column width. This is the
+    /// `onChangeEnd` arm a real grid writes from: it fires once per column-drag
+    /// that actually changed a width, never during the drag and never on a
+    /// click on the grabber. There is deliberately no live-`width_changing`
+    /// peer — the live width is read straight off the shared `ColumnWidths`
+    /// model by the view; the intent channel carries only the settle edge worth
+    /// persisting.
+    fn update(_state: (), intent: &Intent) -> Vec<Command> {
+        if let Some(col) = column_of_width_commit(intent.tag_str())
+            && let IntrospectValue::Int(width) = intent.payload
+        {
+            let log = use_committed_width_log();
+            let (count, _, _) = log.get();
+            let width32 = u32::try_from(width).unwrap_or(0);
+            log.set((count + 1, col, width32));
+        }
+        Vec::new()
+    }
 
     fn view(state: (), frame: &Frame) -> Scene {
         view(state, frame)
@@ -297,6 +376,27 @@ mod tests {
         let cells = row_cells(42);
         assert_eq!(cells.len(), NCOLS, "one cell per column");
         assert_eq!(cells[0], "00042", "PID is the zero-padded index");
+    }
+
+    /// R1347 §5.20 R22 — the reducer's `width_committed` parse must match the
+    /// tag the `ColumnResizeExternal`s are actually registered under
+    /// (`column_resize_externals` builds `<TABLE_TAG>_ch<col>`). The two are
+    /// coupled only by convention, so pin the round trip: build the wire form
+    /// the §5.20 R22 walk produces, parse it back, and require the column.
+    #[test]
+    fn r1347_width_commit_tag_round_trips_the_column() {
+        for col in [0usize, 3, NCOLS - 1] {
+            let wire = format!("{TABLE_TAG}_ch{col}{WIDTH_COMMITTED_SUFFIX}");
+            assert_eq!(
+                column_of_width_commit(&wire),
+                Some(col),
+                "reducer must recover column {col} from {wire:?}",
+            );
+        }
+        // Foreign tags must not be misread as a width commit.
+        assert_eq!(column_of_width_commit("ghs_ch2.dragging"), None);
+        assert_eq!(column_of_width_commit("other_ch2.width_committed"), None);
+        assert_eq!(column_of_width_commit("ghs_scroll"), None);
     }
 
     #[test]

@@ -27,6 +27,7 @@
 //! + the AI-first RPC path; a clicked-and-dragged column border is a follow-up.
 
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::composite_tag::split_send_payload;
@@ -35,6 +36,7 @@ use crate::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::input::{DragCalibration, PointerWireEvent};
+use crate::intent::Intent;
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
 use crate::widgets::scroll::ScrollState;
@@ -421,6 +423,14 @@ pub struct ColumnResizeExternal {
     /// anchor fraction, each later move yields the fraction delta the pixel
     /// travel scales from. Held until `PointerUp` tears it down.
     resize: DragCalibration<u32>,
+    /// R1347 §5.20 — pending intents for the `"width_committed"` drag-end
+    /// channel, the column analogue of the splitter's `"ratio_committed"`
+    /// (R1346). Plain `VecDeque`, not `RefCell<VecDeque<_>>`: every enqueue
+    /// reaches here from `invoke(&mut self)`, so there is no `&self` producer
+    /// and no borrow-panic surface (the same call the dock Externals need
+    /// interior mutability for — `begin_drag(&self)` — this widget does not
+    /// have).
+    pending_intents: VecDeque<Intent>,
 }
 
 impl core::fmt::Debug for ColumnResizeExternal {
@@ -453,6 +463,7 @@ impl ColumnResizeExternal {
             h_scroll,
             viewport_tag: viewport_tag.into(),
             resize: DragCalibration::new(),
+            pending_intents: VecDeque::new(),
         }
     }
 
@@ -469,11 +480,45 @@ impl ColumnResizeExternal {
         self.resize.is_active()
     }
 
-    /// Reset the calibration snapshot. Reached from the framework-dispatched
-    /// `PointerUp` / `PointerCancel` (the R51.41 `dispatch_send` channel) and
-    /// from tests, so the teardown is exercised without the full capture lock.
+    /// Reset the calibration snapshot **silently** — the `PointerCancel` half
+    /// of the release pair. The width the in-flight drag already applied to the
+    /// shared model stays applied (the R51.93 §5.35 family invariant: the OS
+    /// revoked the *commit* signal, not the user's in-flight updates; width is a
+    /// continuous-domain sidecar, not a commit-bound enum). A binding that
+    /// persists only on [`Self::commit_drag`] therefore keeps the pre-drag
+    /// width on disk, which is what "the resize was aborted" should mean.
     fn clear_drag(&self) {
         self.resize.end();
+    }
+
+    /// R1347 §5.20 — the `PointerUp` half: tear the calibration down and, when
+    /// the column actually settled on a **new** width, queue a
+    /// `"width_committed"` intent carrying it (`IntrospectValue::Int`).
+    ///
+    /// This is the column peer of the splitter's `commit_drag_state` (R1346)
+    /// and carries the identical subtlety: the gate is "did the width change
+    /// since the press", NOT [`DragCalibration::end`]'s bool. The router
+    /// forwards a press-time `pointer_move` to every `wants_pointer_capture`
+    /// widget (R51.35), so `end()` is `true` for a bare click on the grabber —
+    /// gating on it would emit a spurious persist write for a click that
+    /// resized nothing. So compare the settled width against the
+    /// [`DragCalibration::end_payload`] press snapshot and stay silent when they
+    /// agree (a click, a drag that returned home, a drag pinned at `min_width`).
+    ///
+    /// `&mut self` because the queue push needs it; reached only from
+    /// `invoke(&mut self)`, so no interior mutability is required.
+    fn commit_drag(&mut self) {
+        let Some(width_at_press) = self.resize.end_payload() else {
+            return;
+        };
+        let settled = self.state.width(self.col);
+        if settled == width_at_press {
+            return;
+        }
+        self.pending_intents.push_back(Intent::new_static(
+            "width_committed",
+            IntrospectValue::Int(i64::from(settled)),
+        ));
     }
 }
 
@@ -538,6 +583,20 @@ impl External for ColumnResizeExternal {
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
     }
+
+    /// R1347 §5.20 — `true` while a `"width_committed"` intent is queued.
+    fn is_dirty(&self) -> bool {
+        !self.pending_intents.is_empty()
+    }
+
+    /// R1347 §5.20 — flush the drag-end commit channel. Drained by
+    /// `walk_scene_and_drain` from `CoreShell::tail`, i.e. within the same
+    /// input dispatch that delivered the `PointerUp` — no follow-up frame.
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        while let Some(intent) = self.pending_intents.pop_front() {
+            sink(intent);
+        }
+    }
 }
 
 impl ExternalIntrospect for ColumnResizeExternal {
@@ -574,9 +633,12 @@ impl ExternalIntrospect for ColumnResizeExternal {
     /// `"<sub>:PointerCancel"` when the user releases or the OS cancels the
     /// capture span (the strip is a composite `"<tag>_ch<col>#resize"` target,
     /// so the payload carries the `"resize"` sub-index as the first segment).
-    /// The handle clears its calibration so the next press recalibrates.
-    /// `PointerDown` / `PointerEnter` / `PointerLeave` arrive too but need no
-    /// reaction (calibration happens in the first `pointer_move`).
+    /// On `PointerUp` the handle commits the settled width (R1347
+    /// `"width_committed"`, `Self::commit_drag`); on `PointerCancel` it tears
+    /// down silently (`Self::clear_drag`). Either way the calibration is
+    /// dropped so the next press recalibrates. `PointerDown` / `PointerEnter` /
+    /// `PointerLeave` arrive too but need no reaction (calibration happens in
+    /// the first `pointer_move`).
     fn invoke(
         &mut self,
         path: &str,
@@ -591,7 +653,14 @@ impl ExternalIntrospect for ColumnResizeExternal {
         // (the documented non-composite decode contract of the splitter).
         let event = split_send_payload(raw).map_or(raw, |(_, event, _)| event);
         match PointerWireEvent::from_wire_name(event) {
-            Some(PointerWireEvent::Up | PointerWireEvent::Cancel) => {
+            // R1347 §5.20 — the release pair diverges only in the commit
+            // channel: `Up` settles the gesture and emits `"width_committed"`,
+            // `Cancel` tears down silently (R51.93 §5.35).
+            Some(PointerWireEvent::Up) => {
+                self.commit_drag();
+                Ok(IntrospectValue::Null)
+            }
+            Some(PointerWireEvent::Cancel) => {
                 self.clear_drag();
                 Ok(IntrospectValue::Null)
             }
@@ -881,6 +950,130 @@ mod tests {
             180,
             "recalibrated against the post-drag width"
         );
+    }
+
+    /// R1347 §5.20 — drain the External's pending intents into a plain Vec.
+    fn harvest(ext: &mut ColumnResizeExternal) -> Vec<Intent> {
+        let mut out = Vec::new();
+        ext.drain_intents(&mut |i| out.push(i));
+        out
+    }
+
+    #[test]
+    fn r1347_resize_drag_end_emits_width_committed_with_settled_width() {
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 1); // column 1 = 90px
+        ext.pointer_move(0.5, 0.0); // calibrate
+        ext.pointer_move(0.7, 0.0); // +0.2*500 = +100 -> 190
+        assert!(!ext.is_dirty(), "an in-flight drag commits nothing");
+
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into()))
+            .unwrap();
+        assert!(ext.is_dirty(), "drag end arms the commit channel");
+        let harvested = harvest(&mut ext);
+        assert_eq!(harvested.len(), 1, "exactly one commit per drag");
+        assert_eq!(harvested[0].tag_str(), "width_committed");
+        assert_eq!(
+            harvested[0].payload,
+            IntrospectValue::Int(190),
+            "payload is the settled width",
+        );
+        assert!(!ext.is_dirty(), "drain clears the queue");
+    }
+
+    #[test]
+    fn r1347_resize_bare_click_commits_nothing() {
+        // The load-bearing case: the router forwards a press-time `pointer_move`
+        // to every capture widget (R51.35), so a bare click arms the anchor and
+        // `DragCalibration::end()` is `true`. A click resized nothing, so it
+        // must NOT reach the persistence channel.
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 1);
+        ext.pointer_move(0.5, 0.0); // the press-time forward: calibration only
+        assert_eq!(state.width(1), 90, "the click moved no width");
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into()))
+            .unwrap();
+        assert!(
+            !ext.is_dirty(),
+            "a click that resized nothing must not commit"
+        );
+        assert!(harvest(&mut ext).is_empty());
+    }
+
+    #[test]
+    fn r1347_resize_drag_returning_to_press_width_commits_nothing() {
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 1); // 90px
+        ext.pointer_move(0.5, 0.0); // calibrate at 90
+        ext.pointer_move(0.7, 0.0); // -> 190
+        ext.pointer_move(0.5, 0.0); // back to 90
+        assert_eq!(state.width(1), 90, "returned to the press width");
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into()))
+            .unwrap();
+        assert!(
+            !ext.is_dirty(),
+            "a drag that returned to its press width settled nothing",
+        );
+    }
+
+    #[test]
+    fn r1347_resize_drag_pinned_at_floor_commits_nothing() {
+        // Column already at the floor; shove further left every frame -> the
+        // clamp holds it at min_width, so the width never leaves the press
+        // snapshot and there is nothing new to persist.
+        let state = Rc::new(ColumnWidths::new(vec![DEFAULT_MIN_COL_WIDTH]));
+        let mut ext = resize_ext(&state, 0);
+        ext.pointer_move(0.5, 0.0); // calibrate at min
+        ext.pointer_move(0.2, 0.0); // -0.3*500 -> floored at min
+        ext.pointer_move(0.0, 0.0); // still floored
+        assert_eq!(state.width(0), DEFAULT_MIN_COL_WIDTH, "pinned at floor");
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into()))
+            .unwrap();
+        assert!(
+            !ext.is_dirty(),
+            "a drag pinned at the floor commits nothing"
+        );
+    }
+
+    #[test]
+    fn r1347_resize_pointer_cancel_keeps_width_but_suppresses_commit() {
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 1); // 90px
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.7, 0.0); // -> 190
+        ext.invoke("send", IntrospectValue::Text("resize:PointerCancel".into()))
+            .unwrap();
+        // R51.93 §5.35 family invariant: the in-flight width stays applied, only
+        // the commit is suppressed.
+        assert_eq!(
+            state.width(1),
+            190,
+            "in-flight width stays applied across PointerCancel",
+        );
+        assert!(
+            !ext.is_dirty(),
+            "PointerCancel must not fire width_committed"
+        );
+        assert!(harvest(&mut ext).is_empty());
+    }
+
+    #[test]
+    fn r1347_resize_consecutive_drags_each_commit_once() {
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 1); // 90px
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.7, 0.0); // -> 190
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into()))
+            .unwrap();
+        assert_eq!(harvest(&mut ext).len(), 1);
+        // Second drag recalibrates from 190.
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.4, 0.0); // -0.1*500 = -50 -> 140
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into()))
+            .unwrap();
+        let second = harvest(&mut ext);
+        assert_eq!(second.len(), 1, "each drag commits exactly once");
+        assert_eq!(second[0].payload, IntrospectValue::Int(140));
     }
 
     #[test]
