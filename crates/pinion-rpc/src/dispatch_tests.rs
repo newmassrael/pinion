@@ -6515,3 +6515,52 @@ mod r632_animation;
 
 #[path = "dispatch_tests_axes.rs"]
 mod r632_axes;
+
+#[test]
+fn r1352_parameterized_read_rides_the_path_and_bumps_no_revision() {
+    // (§5.12 §2 #2 PR-61) The wire proof that a read CAN take an argument
+    // without masquerading as a mutation.
+    //
+    // A consumer read `ExternalIntrospect::query(&self, path)`, saw no `args`
+    // parameter, concluded a parameterized read was inexpressible, and routed
+    // an offset-bearing read through `scene/invoke` — which is
+    // `MethodOcc::Mutate`, so every read bumped the scene revision and woke the
+    // client's own parked `scene/waitFor`. A ~30Hz livelock, a core burnt at
+    // idle. The premise was wrong, and only a test on the real wire can keep it
+    // from being re-derived from the same signature: the argument rides the
+    // PATH (`width.<col>` here — the same shape as `id_at.<pos>`,
+    // `name.<idx>`, `state.<idx>`).
+    use pinion_core::widgets::column_widths::{ColumnWidthExternal, ColumnWidths};
+    use std::rc::Rc;
+
+    let state = Rc::new(ColumnWidths::new(vec![100, 200, 300]));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(ColumnWidthExternal::new(
+        Rc::clone(&state),
+    ))));
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+
+    // Each read answers its OWN argument — this is a real parameterized read,
+    // not one path returning one fixed value.
+    for (col, expected) in [(0, 100), (1, 200), (2, 300)] {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"/external/width.{col}"}},"id":1}}"#
+        );
+        let resp = dispatch_full(&mut scene, &previews, &revision, &req)
+            .expect("scene/query returns a response");
+        assert!(
+            resp.contains(&format!(r#""result":{expected}"#)),
+            "width.{col} reads {expected}: {resp}",
+        );
+    }
+
+    // The property the whole thing turns on: reads are FREE. Had these gone
+    // through `scene/invoke` the revision would read 3 here, and any client
+    // parked on `scene/waitFor {since: 0}` would have been woken by its own
+    // reads — the measured livelock.
+    assert_eq!(
+        revision.current(),
+        0,
+        "a parameterized read is a Read: it bumps no revision and wakes no waitFor",
+    );
+}

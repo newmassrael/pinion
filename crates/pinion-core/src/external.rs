@@ -449,6 +449,71 @@ pub trait ExternalIntrospect {
 
     /// Read the value at `path`. `None` when `path` is not in the
     /// schema.
+    ///
+    /// # A read CAN take an argument: encode it in the path
+    ///
+    /// (R1352 §5.12 §2 #2 PR-61) There is no `args` parameter here, and that
+    /// reads at a glance like "a parameterized read is impossible" — a
+    /// consumer who reached exactly that conclusion from this signature
+    /// routed their offset-bearing read through [`invoke`](Self::invoke)
+    /// instead, and paid for it (see below). It is not impossible. The
+    /// **argument rides the path**, and the workspace does this widely:
+    ///
+    /// * `width.<col>` — [`ColumnWidthExternal`](crate::widgets::column_widths)
+    /// * `id_at.<pos>` / `level_at.<pos>` — [`tree_nav`](crate::widgets::tree_nav)
+    /// * `name.<idx>` / `is_dir.<idx>` — [`file_browser`](crate::widgets::file_browser)
+    /// * `state.<idx>` / `expanded.<idx>` — [`disclosure_group`](crate::widgets::disclosure_group)
+    ///
+    /// An impl serves one by matching the prefix before its exact-path arm:
+    ///
+    /// ```ignore
+    /// fn query(&self, path: &str) -> Option<IntrospectValue> {
+    ///     if let Some(rest) = path.strip_prefix("width.") {
+    ///         let col: usize = rest.parse().ok()?;
+    ///         return Some(IntrospectValue::Int(self.width(col).into()));
+    ///     }
+    ///     match path { /* argument-free paths */ _ => None }
+    /// }
+    /// ```
+    ///
+    /// Declare the family in [`schema`](Self::schema) under its bare stem
+    /// (`("width", "int")`); `query("width")` with no index correctly
+    /// resolves to `None`, so a parametric path never pollutes a snapshot.
+    ///
+    /// ## OPEN GAP: the schema cannot say a path is parametric
+    ///
+    /// (R1352 §2 #2, carried — do not read this section as settled.) A stem
+    /// declares `("width", "int")` and a scalar declares `("total", "int")`.
+    /// **They are indistinguishable on the wire.** Nothing in `$schema`'s
+    /// `{path, type}` render says which needs a `.<arg>`, what the argument's
+    /// type or domain is, or how a multi-part argument would be delimited and
+    /// escaped (the convention survives today only because every argument in
+    /// the workspace is an integer index). So an agent must GUESS the arity —
+    /// and the guess can fail quietly: `width.<col>` answers an out-of-range
+    /// column with the min clamp rather than an error, a plausible wrong value.
+    ///
+    /// That is a real §2 #2 discovery hole, and it is why a consumer reading
+    /// this trait concluded a parameterized read was impossible: the convention
+    /// is genuinely undiscoverable from the surface it is meant to be
+    /// discovered from. Fixing it means giving [`IntrospectSchema`] a slot for
+    /// arity — NOT giving `query` an `args` parameter, which would fork the read
+    /// surface in two and orphan the four families listed above.
+    ///
+    /// # Why this matters more than it looks
+    ///
+    /// `scene/query` is classified `MethodOcc::Read`, so it does **not** bump
+    /// the scene revision. `scene/invoke` is `Mutate` and does. A read
+    /// disguised as an invoke therefore *broadcasts a state change on every
+    /// read* — and a client that also parks on `scene/waitFor` (which waits on
+    /// that revision) wakes its own waiter with its own read. That loop was
+    /// measured at ~30Hz: a core burnt at idle, ~4 CPU-hours on a day-old
+    /// instance, and a wedged socket. Splitting the concept into extra
+    /// argument-free paths to dodge it (one slot for "live", one for
+    /// "historical") only moves the damage into the binding's wire vocabulary
+    /// — one concept, two addresses, forever.
+    ///
+    /// So: a read that needs an argument is a `query` with the argument in the
+    /// path. It is a read, and it stays free.
     fn query(&self, path: &str) -> Option<IntrospectValue>;
 
     /// Write `value` to `path`. Errors when the path is unknown, the
