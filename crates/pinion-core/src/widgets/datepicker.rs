@@ -512,6 +512,16 @@ impl ExternalIntrospect for DatePickerExternal {
                     SchemaField::new("selected_month", "int"),
                     SchemaField::new("selected_day", "int"),
                     SchemaField::new("focused_day", "int"),
+                    // (R1353.1) `day` is a CALENDAR day: `1..=days`, one-based and
+                    // inclusive (see `query`'s `day < 1 || day > days_in_…`
+                    // guard). `IndexOf("days")` means `0..days`, so declaring it
+                    // here would be false at BOTH ends — it would promise day 0
+                    // (which does not exist) and deny the last day of the month
+                    // (which does). `days` is published and readable; what is
+                    // missing is a way to SAY "one-based, inclusive", so this
+                    // says nothing rather than something wrong. A second
+                    // one-based family is what should force that variant, not
+                    // this one alone.
                     SchemaField::parametric(
                         "state.<day>",
                         "string",

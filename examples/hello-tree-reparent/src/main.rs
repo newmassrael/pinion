@@ -457,17 +457,27 @@ impl ExternalIntrospect for OutlinerExternal {
                         const { &[SchemaArg::index("pos", "row_count")] },
                     ),
                     SchemaField::parametric(
+                        // (R1353.1) `int`, not `string`: the query returns
+                        // `IntrospectValue::Int(r.depth)`. The wrong tag predates
+                        // R1353 and the migration carried it across faithfully —
+                        // harmless while the schema was decoration, a lie once it
+                        // is the contract an agent types against.
                         "depth_at.<pos>",
-                        "string",
+                        "int",
                         const { &[SchemaArg::index("pos", "row_count")] },
                     ),
-                    // R1353 — keyed by a node ID, not an index: the answerable
-                    // arguments are the ids `id_at.<pos>` enumerates, which is
-                    // what `ValuesOf` points a client at.
+                    // R1353.1 — keyed by a node ID, not an index. Declared
+                    // `open` rather than `ValuesOf`: this surface publishes no
+                    // path that LISTS the ids. They are enumerable, but only by
+                    // walking the `id_at.<pos>` family over `0..row_count`, and
+                    // `ValuesOf` names a path a client can read directly — aiming
+                    // it at `id_at` (R1353's first cut did) sends the client to
+                    // `query("id_at")`, which answers nothing. An unpublished
+                    // bound is declared unknown, not pointed at a dead end.
                     SchemaField::parametric(
                         "parent_of.<id>",
                         "string",
-                        const { &[SchemaArg::key("id", "string", "id_at")] },
+                        const { &[SchemaArg::open("id", "string")] },
                     ),
                     SchemaField::new("preview", "json"),
                     SchemaField::new("focused", "string"),

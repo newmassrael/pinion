@@ -209,17 +209,17 @@ impl ExternalIntrospect for AudioEngineExternal {
                     SchemaField::parametric(
                         "voice.<id>.gain",
                         "float",
-                        const { &[SchemaArg::open("id", "int")] },
+                        const { &[SchemaArg::key("id", "int", "voices")] },
                     ),
                     SchemaField::parametric(
                         "voice.<id>.pan",
                         "float",
-                        const { &[SchemaArg::open("id", "int")] },
+                        const { &[SchemaArg::key("id", "int", "voices")] },
                     ),
                     SchemaField::parametric(
                         "voice.<id>.position",
                         "json",
-                        const { &[SchemaArg::open("id", "int")] },
+                        const { &[SchemaArg::key("id", "int", "voices")] },
                     ),
                 ]
             },

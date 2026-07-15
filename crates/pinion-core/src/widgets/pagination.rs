@@ -260,12 +260,12 @@ impl ExternalIntrospect for PaginationExternal {
                     SchemaField::parametric(
                         "state.<index>",
                         "string",
-                        const { &[SchemaArg::open("index", "int")] },
+                        const { &[SchemaArg::index("index", "count")] },
                     ),
                     SchemaField::parametric(
                         "selected.<index>",
                         "bool",
-                        const { &[SchemaArg::open("index", "int")] },
+                        const { &[SchemaArg::index("index", "count")] },
                     ),
                     SchemaField::new("can_prev", "bool"),
                     SchemaField::new("can_next", "bool"),

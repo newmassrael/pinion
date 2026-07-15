@@ -390,15 +390,24 @@ impl ExternalIntrospect for RowStyleExternal {
                         "string",
                         const { &[SchemaArg::index("i", "rule_count")] },
                     ),
+                    // (R1353.1) Indexed by ROW, not by rule — `match.<row>` asks
+                    // "which rule does row N match", so the domain is the dataset
+                    // (`rows`), not the rule list. Declaring `rule_count` here
+                    // (R1353's first cut did) is the defect this whole round
+                    // exists to remove, inverted: on 2 rules over 100 rows a
+                    // client would enumerate 2 rows and believe that was the
+                    // grid; on 5 rules over 3 rows it would read `match.4` and
+                    // get `-1` — a real-looking "no rule matches" for a row that
+                    // does not exist.
                     SchemaField::parametric(
-                        "match.<i>",
+                        "match.<row>",
                         "int",
-                        const { &[SchemaArg::index("i", "rule_count")] },
+                        const { &[SchemaArg::index("row", "rows")] },
                     ),
                     SchemaField::parametric(
-                        "tint.<i>",
+                        "tint.<row>",
                         "string",
-                        const { &[SchemaArg::index("i", "rule_count")] },
+                        const { &[SchemaArg::index("row", "rows")] },
                     ),
                     SchemaField::new("add_rule", "string"),
                     SchemaField::new("clear", "int"),
@@ -421,11 +430,26 @@ impl ExternalIntrospect for RowStyleExternal {
         }
         if let Some(rest) = path.strip_prefix("match.") {
             let row = rest.parse::<usize>().ok()?;
+            // (R1353.1) A row past the dataset is ABSENT, not "matches no rule".
+            // `-1` is a real answer — it means "this row exists and no rule
+            // applies" — so returning it for row 99 of a 3-row grid invents a
+            // row. That is the `width.999 → 40` fabrication in another costume,
+            // and the declared `IndexOf("rows")` domain is only true with this
+            // guard.
+            if row >= self.row_count {
+                return None;
+            }
             let idx = self.match_index(row).and_then(|i| i64::try_from(i).ok());
             return Some(IntrospectValue::Int(idx.unwrap_or(-1)));
         }
         if let Some(rest) = path.strip_prefix("tint.") {
             let row = rest.parse::<usize>().ok()?;
+            // Same guard, same reason as `match.<row>` above: `"none"` means
+            // "this row exists and no rule tints it", so answering it for a row
+            // past the dataset fabricates one.
+            if row >= self.row_count {
+                return None;
+            }
             let wire = self
                 .match_index(row)
                 .and_then(|i| self.state.rules().get(i).map(|r| r.tint.to_wire()))

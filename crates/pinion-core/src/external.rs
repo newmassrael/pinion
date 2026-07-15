@@ -140,9 +140,24 @@ pub enum ArgDomain {
     /// Valid arguments are the values the surface lists at `<values_path>` —
     /// the argument is a key, not an offset (a panel id, a voice id).
     ValuesOf(&'static str),
-    /// Any well-typed argument is answerable; the surface constrains nothing.
-    /// Rare and worth suspicion: an unconstrained domain usually means the
-    /// bound exists but is not published, which leaves the client guessing.
+    /// The surface publishes nothing a client can enumerate the argument from.
+    ///
+    /// **Worth suspicion at every use, and common enough to matter**: this is
+    /// the majority variant today, and each one is a client still guessing. Two
+    /// honest reasons to reach for it, both real in-tree:
+    ///
+    /// * the bound exists but is **not expressible** — `datepicker`'s
+    ///   `state.<day>` runs `1..=days` (one-based, inclusive), which
+    ///   [`IndexOf`](Self::IndexOf)'s `0..count` cannot state, so claiming it
+    ///   would be false;
+    /// * the bound exists but lives on **another surface** — `hello-tree-grid`'s
+    ///   `cell_at.<pos>.<col>` bounds `pos` by a visible-row count that belongs
+    ///   to the tree-state external, not to this one.
+    ///
+    /// What it must NOT be is a default. `Open` on a surface that publishes the
+    /// count three lines up is an *affirmative false statement* — it tells an
+    /// agent there is nothing to know, which is worse than the pre-R1353 silence
+    /// it replaced, because now it carries a schema's authority.
     Open,
 }
 
@@ -311,9 +326,12 @@ impl SchemaField {
     /// so a one-arg convenience constructor could not delegate here and would be
     /// a second, drifting definition of the same thing.
     ///
-    /// The template's placeholders and `args` must agree in name and order —
-    /// enforced by `r1353_every_declared_template_matches_its_args`, since a
-    /// `const fn` cannot parse the string to check it here.
+    /// The template's placeholders and `args` must agree in name and order. A
+    /// `const fn` cannot parse the string to check that here, so it is enforced
+    /// by `r1353_1_every_real_declaration_matches_its_template`, which scans the
+    /// workspace's SOURCE for every real `parametric` call — a runtime test
+    /// cannot see a declaration in a crate this one does not link against, and
+    /// R1353's first cut cited a test that only checked its own fixtures.
     #[must_use]
     pub const fn parametric(
         path: &'static str,
@@ -762,9 +780,11 @@ pub trait ExternalIntrospect {
     /// }
     /// ```
     ///
-    /// Declare the family in [`schema`](Self::schema) under its bare stem
-    /// (`("width", "int")`); `query("width")` with no index correctly
-    /// resolves to `None`, so a parametric path never pollutes a snapshot.
+    /// Declare the family in [`schema`](Self::schema) with
+    /// [`SchemaField::parametric`], whose path is the wire TEMPLATE
+    /// (`"width.<col>"`) — see the next section. `query("width")` with no index
+    /// correctly resolves to `None`, and a snapshot skips parametric families by
+    /// declaration, so a family never pollutes one.
     ///
     /// ## The schema SAYS a path is parametric — do not make a client guess
     ///
@@ -783,12 +803,38 @@ pub trait ExternalIntrospect {
     /// with the min clamp rather than an error. That hole is why a consumer
     /// reading this signature concluded a parameterized read was impossible at
     /// all: the convention was undiscoverable from the surface built to reveal
-    /// it. Both halves are fixed — the declaration states the contract, and an
-    /// out-of-range read is now `None`.
+    /// it. Both halves are addressed — the declaration states the contract, and
+    /// an out-of-range read no longer fabricates a value.
     ///
     /// The fix went into [`IntrospectSchema`], **not** into an `args` parameter
     /// here: that would fork the read surface in two and orphan every family
     /// listed above.
+    ///
+    /// ## Two things it does NOT settle
+    ///
+    /// **The separator has no escape.** An argument is delimited by `.`, and
+    /// nothing escapes a `.` *inside* an argument. So a key that contains one is
+    /// not addressable: `voice.<id>.gain` cannot express the id `"x.gain"`
+    /// (matching takes the first trailing literal, so `voice.x.gain.gain` matches
+    /// nothing), and a template's final argument swallows the rest, so
+    /// `cell.<row>.<col>` reads `cell.1.2.3` as `col = "2.3"` — owned by the
+    /// field, malformed, `None` from `query`. This is safe today only because
+    /// every argument in the workspace is an integer index or a dot-free id. A
+    /// family keyed by a filename or a dotted path needs an escaping rule first;
+    /// declaring one without it would be a promise the wire cannot keep.
+    ///
+    /// **Out-of-range has two spellings**, both honest and both in the tree:
+    /// `None` — "no such path" — from the surfaces that guard the index
+    /// explicitly (`column_widths`, `listbox`, `radio_group`,
+    /// `disclosure_group`, `table`, `file_browser`, `row_style`, and any other
+    /// that bounds before reading), and `Some(Null)` — "that position holds
+    /// nothing" — from everything routed through `at_index`, which `map_or`s a
+    /// missing element to `Null` (`tree_nav`, `tree_filter`, `grid_sort`,
+    /// `view_order`, `group_order`, `row_search`, …). Treat neither list as
+    /// exhaustive; the rule, not the roster, is what holds: **neither
+    /// fabricates**, and that is the property
+    /// `r1353_declared_domains_hold_on_real_widgets` enforces. Unifying the two
+    /// spellings is a separate call nobody has needed to make.
     ///
     /// # Why this matters more than it looks
     ///
@@ -1841,9 +1887,12 @@ mod tests {
         use crate::widgets::column_widths::{ColumnWidthExternal, ColumnWidths};
         use crate::widgets::disclosure_group::DisclosureGroupExternal;
         use crate::widgets::listbox::ListBoxExternal;
+        use crate::widgets::pagination::PaginationExternal;
         use crate::widgets::radio_group::RadioGroupExternal;
         use crate::widgets::row_search::{RowSearchExternal, RowSearchState};
+        use crate::widgets::row_style::{RowStyleExternal, RowStyleState};
         use crate::widgets::table::TableExternal;
+        use crate::widgets::toolbar::{ToolItem, ToolbarExternal};
         use std::rc::Rc;
 
         /// Assert every declared field of `ext` tells the truth about itself.
@@ -1913,9 +1962,10 @@ mod tests {
                         );
                         // Outside the declared domain, a read must not produce a
                         // VALUE. Two spellings of that are already in the tree and
-                        // both are honest: `None` (listbox / table / column_widths
-                        // — "no such path") and `Some(Null)` (everything routed
-                        // through `at_index` — "the position holds nothing"). The
+                        // both are honest: `None` from the surfaces that guard the
+                        // index explicitly, and `Some(Null)` from everything routed
+                        // through `at_index`. (See `ExternalIntrospect::query`; the
+                        // rosters there are examples, not an exhaustive list.) The
                         // invariant that matters is neither of those; it is that
                         // nothing plausible comes back. `width.999` answering `40`
                         // — a real-looking width for a column that does not exist —
@@ -1949,6 +1999,19 @@ mod tests {
             ))),
         );
         audit(
+            "toolbar",
+            &ToolbarExternal::new(vec![ToolItem::Command, ToolItem::Toggle]),
+        );
+        audit("pagination", &PaginationExternal::new(4, 0));
+        // `with_source` is what makes `match.<row>` / `tint.<row>` answerable at
+        // all, so the audit must use it — a bare `RowStyleExternal` has
+        // `row_count = 0` and the domain check would skip.
+        audit(
+            "row_style",
+            &RowStyleExternal::new(Rc::new(RowStyleState::new()))
+                .with_source(3, |_row| vec!["a".to_string()]),
+        );
+        audit(
             "table",
             &TableExternal::new(
                 vec!["a".into(), "b".into()],
@@ -1957,15 +2020,117 @@ mod tests {
         );
     }
 
-    /// R1353 — the template's `<placeholders>` must match `args` in name and
-    /// order.
+    /// R1353.1 — the template's `<placeholders>` must match `args` in name and
+    /// order **at every real declaration in the workspace**, not just the
+    /// fixtures below.
     ///
-    /// `SchemaField::parametric` cannot check this: a `const fn` cannot parse
-    /// its own path string. So the invariant the whole model rests on — that
-    /// `"cell.<row>.<col>"` really does take `row` then `col` — is only true if
-    /// something asserts it. A template naming an arg the args slice does not
-    /// declare would render a placeholder with no type and no domain: the exact
-    /// under-declaration R1353 exists to end, reintroduced by a typo.
+    /// A source-text scan, for the same reason
+    /// `widgets::commit`'s literal guard is one: no runtime assertion can see a
+    /// declaration in a crate this one does not depend on, and a `const fn`
+    /// cannot parse its own path string. R1353's first cut asserted this about
+    /// four literals it wrote itself while `SchemaField::parametric`'s doc
+    /// claimed the invariant was "enforced" — a green test named for a coverage
+    /// it did not have, which is worse than no test. The invariant the whole
+    /// model rests on (that `"cell.<row>.<col>"` really does take `row` then
+    /// `col`) now gets checked where it is actually written.
+    #[test]
+    fn r1353_1_every_real_declaration_matches_its_template() {
+        fn placeholders(t: &str) -> Vec<String> {
+            let mut out = Vec::new();
+            let mut rest = t;
+            while let Some(o) = rest.find('<') {
+                rest = &rest[o + 1..];
+                let Some(c) = rest.find('>') else { break };
+                out.push(rest[..c].to_string());
+                rest = &rest[c + 1..];
+            }
+            out
+        }
+        // `parametric("<template>", "<ty>", const { &[SchemaArg::<k>("<name>", ..), ..] })`
+        // — matched textually across the workspace, including crates and examples
+        // that pinion-core cannot link against.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("workspace root is two levels above this crate");
+        let mut checked = 0usize;
+        let mut offenders: Vec<String> = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    let name = p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    if !matches!(name.as_str(), "target" | "vendor" | ".git") {
+                        stack.push(p);
+                    }
+                    continue;
+                }
+                if p.extension().is_none_or(|x| x != "rs") {
+                    continue;
+                }
+                let Ok(src) = std::fs::read_to_string(&p) else {
+                    continue;
+                };
+                for (i, _) in src.match_indices("SchemaField::parametric(") {
+                    let tail = &src[i..];
+                    // The declaration ends at its closing `)`, which the nested
+                    // `const { &[..] }` makes the LAST one before the next
+                    // declaration — bound the window at the next `SchemaField::`
+                    // to stay inside this literal.
+                    let end = tail[1..]
+                        .find("SchemaField::")
+                        .map_or(tail.len(), |n| n + 1);
+                    let win = &tail[..end];
+                    let Some(t0) = win.find('"') else { continue };
+                    let Some(t1) = win[t0 + 1..].find('"') else {
+                        continue;
+                    };
+                    let template = &win[t0 + 1..t0 + 1 + t1];
+                    let names: Vec<String> = win
+                        .match_indices("SchemaArg::")
+                        .filter_map(|(j, _)| {
+                            let a = &win[j..];
+                            let s = a.find('"')?;
+                            let e = a[s + 1..].find('"')?;
+                            Some(a[s + 1..s + 1 + e].to_string())
+                        })
+                        .collect();
+                    checked += 1;
+                    if placeholders(template) != names {
+                        offenders.push(format!(
+                            "{}: template {template:?} declares {:?} but its args are {names:?}",
+                            p.file_name().unwrap_or_default().to_string_lossy(),
+                            placeholders(template),
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 100,
+            "the scan must actually reach the workspace's declarations; saw {checked}",
+        );
+        assert!(
+            offenders.is_empty(),
+            "{} declaration(s) whose template and args disagree:\n{}",
+            offenders.len(),
+            offenders.join("\n"),
+        );
+    }
+
+    /// R1353 — the template's `<placeholders>` must match `args` in name and
+    /// order. Fixture-level companion to
+    /// `r1353_1_every_real_declaration_matches_its_template`: this one pins the
+    /// SHAPES the rule must handle (scalar, one arg, two args, an infix arg),
+    /// which a scan over today's declarations cannot guarantee stay represented.
     #[test]
     fn r1353_every_declared_template_matches_its_args() {
         fn placeholders(template: &str) -> Vec<&str> {
@@ -2059,6 +2224,67 @@ mod tests {
             "an empty argument is not a member"
         );
         assert!(!f.addresses("voice.3.pan"), "a DIFFERENT field's template");
+    }
+
+    /// R1353 — the separator has no escape, pinned as MEASURED behaviour rather
+    /// than left as a sentence in a doc.
+    ///
+    /// An argument is delimited by `.` and nothing escapes a `.` inside one, so
+    /// a key containing the separator is not addressable. These cases are the
+    /// boundary of what the convention can express; if someone later adds an
+    /// escaping rule, this test is the list of answers that must change (and
+    /// `ExternalIntrospect::query`'s "does NOT settle" section is the prose to
+    /// update with it).
+    #[test]
+    fn r1353_an_argument_cannot_contain_the_separator() {
+        let infix = SchemaField::parametric(
+            "voice.<id>.gain",
+            "float",
+            const { &[SchemaArg::key("id", "int", "voices")] },
+        );
+        // A dot-free id is fine — including one that spells the trailing literal.
+        assert!(infix.addresses("voice.3.gain"));
+        assert!(infix.addresses("voice.gain.gain"), "id = \"gain\"");
+        // …but the id "x.gain" is UNREACHABLE: matching binds the argument at the
+        // FIRST trailing literal, so this addresses nothing rather than silently
+        // binding a different id than the caller meant.
+        assert!(
+            !infix.addresses("voice.x.gain.gain"),
+            "an id containing the separator is not addressable",
+        );
+
+        // A template's FINAL argument has no trailing literal, so it takes the
+        // rest — `col` binds to "2.3". The field owns the path (that is what
+        // `addresses` answers); `query` then rejects it as malformed. Owned and
+        // malformed is deliberately distinct from unknown: the agent asked this
+        // field a bad question, it did not ask a question of nothing.
+        let two = SchemaField::parametric(
+            "cell.<row>.<col>",
+            "string",
+            const {
+                &[
+                    SchemaArg::index("row", "rows"),
+                    SchemaArg::index("col", "cols"),
+                ]
+            },
+        );
+        assert!(two.addresses("cell.1.2"));
+        assert!(
+            two.addresses("cell.1.2.3"),
+            "the final argument takes the rest"
+        );
+        assert!(
+            !two.addresses("cell.1"),
+            "a missing argument is not a member"
+        );
+        assert!(
+            !two.addresses("cell.1."),
+            "an empty final argument is not a member"
+        );
+        assert!(
+            !two.addresses("cell..2"),
+            "an empty leading argument is not a member"
+        );
     }
 
     /// R1353 — `addresses` is the membership question, so a parametric family is

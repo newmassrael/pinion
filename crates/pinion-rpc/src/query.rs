@@ -73,13 +73,15 @@ fn introspect_or_schema(
 /// Render an external's declared schema as a JSON array of `{"path", "type"}`
 /// objects, in the schema's declared field order.
 ///
-/// R1353 §2 #2 — a **parametric** field additionally carries `"arg"`, and its
-/// `"path"` is rendered as the wire TEMPLATE (`"width.<col>"`) rather than the
-/// bare stem. That template is composed here from the declared stem and arg, so
-/// the discovery render and the `query` impl's `strip_prefix(stem)` cannot
-/// disagree about what the path is.
+/// R1353 §2 #2 — a **parametric** field additionally carries `"args"` (an
+/// array, one entry per placeholder), and its `"path"` is the wire TEMPLATE
+/// (`"width.<col>"`). The template is forwarded verbatim from the declared
+/// `SchemaField::path` — nothing is composed here. What keeps the template
+/// honest against the `query` impl's own `strip_prefix` is
+/// `r1353_1_every_real_declaration_matches_its_template`, which scans every
+/// declaration's source; this function only renders.
 ///
-/// Why both a template and a structured `arg`: the template is what a reader
+/// Why both a template and structured `args`: the template is what a reader
 /// (human or model) needs to see the shape at a glance; the `arg` object is what
 /// a client needs to act without parsing prose — the argument's name, its type,
 /// and where its valid values come from. Before R1353 the schema said only

@@ -485,12 +485,12 @@ impl ExternalIntrospect for ToolbarExternal {
                     SchemaField::parametric(
                         "kind.<i>",
                         "string",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "count")] },
                     ),
                     SchemaField::parametric(
                         "pressed.<i>",
                         "bool",
-                        const { &[SchemaArg::open("i", "int")] },
+                        const { &[SchemaArg::index("i", "count")] },
                     ),
                     SchemaField::new("send", "string"),
                     SchemaField::new("key", "string"),
@@ -942,12 +942,12 @@ mod tests {
                 SchemaField::parametric(
                     "kind.<i>",
                     "string",
-                    const { &[SchemaArg::open("i", "int")] }
+                    const { &[SchemaArg::index("i", "count")] }
                 ),
                 SchemaField::parametric(
                     "pressed.<i>",
                     "bool",
-                    const { &[SchemaArg::open("i", "int")] }
+                    const { &[SchemaArg::index("i", "count")] }
                 ),
                 SchemaField::new("send", "string"),
                 SchemaField::new("key", "string"),

@@ -1074,7 +1074,7 @@ impl ExternalIntrospect for TableExternal {
                     SchemaField::parametric(
                         "order.<visual>",
                         "int",
-                        const { &[SchemaArg::open("visual", "int")] },
+                        const { &[SchemaArg::index("visual", "rows")] },
                     ),
                     SchemaField::new("sort", "int"),
                     // R952 §5.38 — cell range selection (the spreadsheet / Qt
