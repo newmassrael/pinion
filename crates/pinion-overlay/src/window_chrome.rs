@@ -46,7 +46,7 @@
 use pinion_core::scene::{
     BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, Scene, TextNode,
 };
-use pinion_core::style::{BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextStyle};
+use pinion_core::style::{BoxStyle, Color, LayoutStyle, PathStyle, Stroke, TextStyle};
 
 use crate::highlight::{
     has_top_level_tag, push_top_level, strip_children_with_prefix, strip_tag, wrap_into_container,
@@ -681,20 +681,20 @@ fn push_control(
     glyph: Color,
     tag: &'static str,
 ) {
+    // R1358 — the glyph's commands are relative to its rect, so the AUTHORED
+    // `rect` is now what places it. That is sound here for one reason: the
+    // whole strip is injected AFTER `compute_layout` (`apply_window_overlays`
+    // is the last step of every paint-scene producer), so no layout pass
+    // overwrites these rects — the same footing `preview/blueprint.rs`
+    // documents for a never-laid-out subtree. It is NOT layout intent: the
+    // strip itself authors `strip.rect` with a default `LayoutStyle` and is
+    // appended as the wrapper's last child, so laying this scene out would
+    // sink it below the content and collapse it (with the title and the hit
+    // Boxes). Declaring `absolute_position` on the glyph alone would not
+    // rescue that and would falsely signal the strip is layout-ready.
     children.push(Scene::Path(
-        glyph_path(rect, kind, is_maximized, glyph).with_layout(
-            LayoutStyle::new()
-                .with_pointer_transparent(true)
-                // R1358 — the glyph's commands are relative to its rect, so the
-                // rect IS the placement. The chrome strip is injected *after*
-                // `compute_layout` (`apply_window_overlays` is the last step of
-                // every paint-scene producer), so today these authored rects
-                // reach paint untouched; declaring the position keeps the glyph
-                // correct if the strip is ever laid out, and matches how every
-                // other `Scene::Path` producer pins a path to a region.
-                .with_absolute_position(rect.x, rect.y)
-                .with_size(Size::px(rect.w.max(1), rect.h.max(1))),
-        ),
+        glyph_path(rect, kind, is_maximized, glyph)
+            .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
     ));
     children.push(Scene::Box(
         BoxNode::new(rect, BoxStyle::filled(Color::TRANSPARENT)).with_tag(tag),
@@ -711,14 +711,26 @@ fn push_control(
 fn glyph_path(rect: Rect, kind: ButtonKind, is_maximized: bool, color: Color) -> PathNode {
     // R1358 — commands are rect-relative, so the glyph centres on the
     // button's own half-extents; the node's `rect` carries the placement.
-    let cx = rect.w / 2;
-    let cy = rect.h / 2;
-    let half = GLYPH_PX / 2;
-    let cyf = cy as f32;
-    let left = cx.saturating_sub(half) as f32;
-    let top = cy.saturating_sub(half) as f32;
-    let right = (cx + half) as f32;
-    let bottom = (cy + half) as f32;
+    // Integer halving is kept (an odd extent floors, as before); the
+    // centring arithmetic then runs in f32.
+    //
+    // The pre-R1358 `saturating_sub` here is deliberately GONE. It was an
+    // artifact of centring in unsigned WINDOW space: it clamped the glyph at
+    // window x = 0. In the node's own frame a negative coordinate is
+    // meaningful and correct — a glyph wider than its button overhangs, and
+    // `PathNode`'s contract says a command may fall outside its rect. The two
+    // agree for every non-degenerate button (with the default 46x32,
+    // `cx = 23 >= half = 5`, so neither clamps); they differ only when
+    // `button_width_px < GLYPH_PX`, where the old code squashed the glyph
+    // asymmetrically and this centres it.
+    let cx = (rect.w / 2) as f32;
+    let cy = (rect.h / 2) as f32;
+    let half = (GLYPH_PX / 2) as f32;
+    let cyf = cy;
+    let left = cx - half;
+    let top = cy - half;
+    let right = cx + half;
+    let bottom = cy + half;
 
     let commands = match kind {
         ButtonKind::Close => vec![
@@ -1369,6 +1381,21 @@ mod tests {
         assert!(
             (got.0 - want.0).abs() < f32::EPSILON && (got.1 - want.1).abs() < f32::EPSILON,
             "glyph's window position {got:?} must be the button-centred square {want:?}"
+        );
+        // A button NARROWER than the glyph overhangs symmetrically rather than
+        // squashing: `button_width_px` is a public field, and the pre-R1358
+        // window-space `saturating_sub` clamped this case asymmetrically. The
+        // rect is a bbox, not a clip, so a negative local coordinate is the
+        // correct answer here.
+        let narrow = glyph_path(Rect::new(100, 0, 8, 32), ButtonKind::Close, false, c);
+        let PathCommand::MoveTo(n_start) = narrow.commands[0] else {
+            panic!("Close glyph starts with MoveTo")
+        };
+        assert!(
+            (n_start.x - (4.0 - half)).abs() < f32::EPSILON,
+            "a glyph wider than its button overhangs (local x = {}, want {})",
+            n_start.x,
+            4.0 - half
         );
     }
 

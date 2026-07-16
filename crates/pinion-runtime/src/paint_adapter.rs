@@ -852,8 +852,7 @@ fn paint_immediate_mode_node(
     // Compose `parent_transform * translate(viewport.{x,y})` so
     // viewport-local `(0, 0)` lands at screen-space
     // `(viewport.x, viewport.y)` in the parent frame.
-    let local_transform =
-        parent_transform * Affine::translate((f64::from(viewport.x), f64::from(viewport.y)));
+    let local_transform = node_local_transform(parent_transform, viewport);
     let mut painter = VelloImmediatePainter {
         out,
         viewport,
@@ -2090,7 +2089,7 @@ fn paint_text_grid(
     // layout-resolved origin, composed with the inherited transform (e.g.
     // a parent `Scene::Scroll`'s shifted child transform) — exactly like
     // [`paint_text`].
-    let origin = transform * Affine::translate((f64::from(n.rect.x), f64::from(n.rect.y)));
+    let origin = node_local_transform(transform, n.rect);
     // The family is the generic monospace class (R1002 typed
     // `with_generic_family` — resolves to a real fixed-pitch face; see the
     // font-policy note above). [`grid_glyph_font_size`] resolves the size
@@ -2342,9 +2341,14 @@ fn paint_box_shadows(out: &mut VelloScene, r: Rect, style: &BoxStyle, transform:
     }
 }
 
-/// R721 §5.16 — convert a pinion [`PathPoint`] (absolute device-pixel
-/// `f32` coordinates, the same space as [`PathNode::rect`]) to a Vello
-/// [`KurboPoint`].
+/// R721 §5.16 — convert a pinion [`PathPoint`] to a Vello [`KurboPoint`].
+///
+/// R1358 — the point is in the node's own frame (relative to
+/// [`PathNode::rect`]'s origin), NOT device pixels: [`paint_path`] carries
+/// the rect origin in the transform it fills with, so the lowering here is
+/// a pure unit conversion and must stay one. Before R1358 this doc claimed
+/// the point was "absolute device-pixel, the same space as `PathNode::rect`"
+/// — the exact proposition R1358 falsified.
 fn path_point(p: PathPoint) -> KurboPoint {
     KurboPoint::new(f64::from(p.x), f64::from(p.y))
 }
@@ -2488,8 +2492,7 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
     // top-left, exactly as `paint_immediate_mode_node` places its
     // viewport-local driver. The path is positioned by layout's
     // `rect` output; the commands never carry window coordinates.
-    let local_transform =
-        transform * Affine::translate((f64::from(node.rect.x), f64::from(node.rect.y)));
+    let local_transform = node_local_transform(transform, node.rect);
     // The gradient's UV geometry anchors to the node's rect, which in
     // the local frame is at the origin — passing `node.rect` here
     // (whose x/y are already applied by `local_transform`) would offset
@@ -2562,6 +2565,21 @@ fn fill_rect_gradient(
     }
 }
 
+/// R1358.1 §5.16 — compose `parent` with `origin`'s translation: the
+/// **node-local paint frame** every leaf shares that positions its content
+/// by its own rect. The leaf authors content at `(0, 0)`; the returned
+/// transform lands it at `origin` within the parent's frame, so an
+/// ancestor's contribution (a [`Scene::Scroll`]'s shifted child transform,
+/// a `HiDPI` scale) composes for free and the leaf never learns about it.
+///
+/// Lifted at the 5th consumer, not the 2nd: the immediate-mode viewport
+/// (R681), the text-grid glyph frame (R991), both `paint_text` arms
+/// (R51.188 / §5.37), and — since R1358 — `Scene::Path`'s commands. They
+/// had drifted into five identical spellings of one rule.
+fn node_local_transform(parent: Affine, origin: Rect) -> Affine {
+    parent * Affine::translate((f64::from(origin.x), f64::from(origin.y)))
+}
+
 /// R722 §5.50 — build a peniko gradient [`PenikoBrush`] from a pinion
 /// [`Gradient`] whose box-relative UV geometry is anchored to `r`
 /// (`(0,0)` = top-left, `(1,1)` = bottom-right; a radial `radius` is a
@@ -2569,6 +2587,21 @@ fn fill_rect_gradient(
 /// (Box / Container fills) and [`paint_path`] (R721 vector paths) so
 /// the gradient lowering is single-source — only the filled *shape*
 /// (rect vs `BezPath`) differs.
+///
+/// # Caller contract (R1358)
+///
+/// **`r` must be expressed in the same frame as the transform you fill
+/// with.** The brush bakes `r`'s origin into absolute brush coordinates, so
+/// the origin must not also be in the transform — that double-offsets the
+/// gradient, silently and only for gradient fills. The two callers differ
+/// precisely here, and both are correct:
+///
+/// * [`fill_rect_gradient`] fills with the inherited `transform` and passes
+///   the window-space rect.
+/// * [`paint_path`] fills with `transform * translate(rect.xy)` and so
+///   passes a rect at the ORIGIN (`Rect::new(0, 0, w, h)`).
+///
+/// A third consumer picks one of those two shapes; there is no third.
 fn gradient_brush(gradient: &Gradient, r: Rect) -> PenikoBrush {
     let x0 = f64::from(r.x);
     let y0 = f64::from(r.y);
@@ -2765,8 +2798,7 @@ fn paint_text_self_hosted(
         return false;
     };
     let baseline = metrics.baseline_px;
-    let transform =
-        parent_transform * Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
+    let transform = node_local_transform(parent_transform, t.rect);
     let needs_clip = matches!(
         t.style.overflow,
         TextOverflow::Clip | TextOverflow::Ellipsis
@@ -2831,8 +2863,7 @@ fn paint_text(
     // `paint_text` assumed `Affine::IDENTITY` from the caller; the
     // composition keeps that path bit-identical (IDENTITY * T = T)
     // and lets scroll-embedded text track the scroll offset.
-    let transform =
-        parent_transform * Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
+    let transform = node_local_transform(parent_transform, t.rect);
     // R47.6 — Clip + Ellipsis (silent fallback to Clip until R47.x
     // ellipsis pass) wrap the emit in a Vello clip layer keyed to
     // `t.rect`. Visible skips the wrap entirely so a freshly-default
@@ -4254,8 +4285,11 @@ mod tests {
         // a cubic-Bezier arc — every PathCommand variant + both
         // PathStyle arms (fill / stroke), plus a combined fill+stroke.
         // R1358 — each shape's commands are relative to its OWN rect, so
-        // all three are authored in the same 0..60 box and the rects lay
-        // them out side by side.
+        // all three are authored in the same 0..60 box and their rects
+        // would place them side by side. This test asserts only that the
+        // arm does not panic; the placement itself is pinned by pixels in
+        // `pinion_shell`'s `r1358_path_commands_paint_relative_to_the_nodes_rect`
+        // (the `--ignored` lavapipe job).
         let tri = Scene::Path(PathNode::new(
             Rect::new(0, 0, 60, 60),
             vec![

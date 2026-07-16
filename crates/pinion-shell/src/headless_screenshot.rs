@@ -453,6 +453,94 @@ mod tests {
         assert_eq!(rgba8.len(), 64 * 32 * 4);
     }
 
+    /// R1358 §5.3 §5.16 — a `Scene::Path`'s commands are relative to its own
+    /// `rect`, and `paint_path` carries the rect origin in the paint
+    /// transform. This is the CI-gated pin for that translate: it is the ONE
+    /// place the coordinate contract is enforced, and no other gate can see
+    /// it — the four producer-side contract tests (chart / node-editor /
+    /// narrative / window-chrome) assert what the *producers emit*, and the
+    /// `r721_path.py` pixel demo proves the consumer only in the advisory
+    /// demo sweep. R1066.1 set the precedent for lifting exactly this kind of
+    /// CI-invisible paint proof into the `--ignored` lavapipe job.
+    ///
+    /// The square is authored 0-based and placed by a NON-ORIGIN rect, which
+    /// makes the test falsifiable in both directions:
+    /// * drop the translate -> ink lands at the bare command coords (the
+    ///   `AWAY` probe lights, the `INK` probe goes dark),
+    /// * apply it twice -> ink lands at `2 * origin` (both probes go dark).
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`. The `gpu-tests` CI job does exactly that.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1358_path_commands_paint_relative_to_the_nodes_rect() {
+        use pinion_core::scene::{PathCommand, PathNode, PathPoint, Rect, Scene};
+        use pinion_core::style::{Color, PathStyle};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const W: u32 = 64;
+        const H: u32 = 48;
+        // The node sits away from the origin on BOTH axes so a missing or
+        // doubled translate is unambiguous.
+        const OX: u32 = 24;
+        const OY: u32 = 16;
+        const SIDE_PX: u32 = 16;
+        const SIDE: f32 = 16.0;
+
+        let p = |x: f32, y: f32| PathPoint::new(x, y);
+        // A filled square authored at (0,0)..(16,16) — its OWN box.
+        let square = Scene::Path(PathNode::new(
+            Rect::new(OX, OY, SIDE_PX, SIDE_PX),
+            vec![
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::LineTo(p(SIDE, 0.0)),
+                PathCommand::LineTo(p(SIDE, SIDE)),
+                PathCommand::LineTo(p(0.0, SIDE)),
+                PathCommand::Close,
+            ],
+            PathStyle::filled(Color::rgb(0xFF, 0xFF, 0xFF)),
+        ));
+
+        let mut text_cache = LayoutCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut cache = FragmentCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &square,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba = shot
+            .render_to_rgba8(&vello, W, H, PenikoColor::BLACK)
+            .expect("render");
+
+        // Premultiplied RGBA8, row-major, top-left origin — the same
+        // `((y*W+x)*4) as usize` indexing the sibling tests use. White on
+        // black, so any bright R = lit.
+        let lit = |x: u32, y: u32| -> bool { rgba[((y * W + x) * 4) as usize] > 127 };
+
+        // Inside the placed square: rect.origin + the square's own centre.
+        let ink = (OX + 8, OY + 8);
+        // Where the BARE commands would land if the translate were dropped.
+        let away = (8, 8);
+
+        assert!(
+            lit(ink.0, ink.1),
+            "the square must paint at rect.origin + command {ink:?} — a dark \
+             pixel here means paint_path dropped or doubled its translate"
+        );
+        assert!(
+            !lit(away.0, away.1),
+            "nothing may paint at the bare command coords {away:?} — ink here \
+             means the commands were read as window-absolute"
+        );
+    }
+
     /// R1027 §5.16 — the shell lays the scene out in LOGICAL pixels and, on
     /// a `HiDPI` window, rasterizes it by appending into a scratch scene under
     /// `Affine::scale(scale)` before submit (the `render_window` `HiDPI` path).

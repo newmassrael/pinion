@@ -1216,12 +1216,19 @@ mod tests {
         let PathCommand::LineTo(l) = p.commands[1] else {
             panic!("second is LineTo")
         };
+        // R1358 — this is a PLOT-space claim, so read back the plot position:
+        // `rect.origin + command`. Asserting the bare command would pass here
+        // only by coincidence (this chart sits at the window origin and the
+        // stroke-padded bbox clamps to 0, so the rebase happens to subtract
+        // zero) and would then FAIL for a correct chart built anywhere else.
+        let (ox, oy) = (to_f32(p.rect.x), to_f32(p.rect.y));
+        let (m, l) = ((ox + m.x, oy + m.y), (ox + l.x, oy + l.y));
         assert!(
-            (m.x - 0.0).abs() < 0.01 && (m.y - 100.0).abs() < 0.01,
+            (m.0 - 0.0).abs() < 0.01 && (m.1 - 100.0).abs() < 0.01,
             "start at bottom-left, got {m:?}"
         );
         assert!(
-            (l.x - 200.0).abs() < 0.01 && (l.y - 0.0).abs() < 0.01,
+            (l.0 - 200.0).abs() < 0.01 && (l.1 - 0.0).abs() < 0.01,
             "end at top-right, got {l:?}"
         );
     }

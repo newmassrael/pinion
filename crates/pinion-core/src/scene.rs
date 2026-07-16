@@ -1962,17 +1962,35 @@ pub enum PathCommand {
 /// geometry with the gradient that shared the node, so a path is now
 /// positioned by `rect` alone.
 ///
-/// Commands are read against whatever `rect` the node carries **at paint
-/// time**. For a scene that is laid out, that is layout's *output*: the
+/// Commands are read against whatever `rect` the node carries when it is
+/// consumed. For a scene that is laid out, that is layout's *output*: the
 /// taffy pass overwrites `rect` from [`PathNode::layout`], so a path
-/// follows flex / dock / resize like any other node, and a producer
-/// pinning a path to an exact region declares it —
+/// **moves with** its rect — dock it, scroll it, resize its container, and
+/// the geometry goes along. A producer pinning a path to an exact region
+/// declares it —
 /// [`LayoutStyle::with_absolute_position`](crate::style::LayoutStyle::with_absolute_position)
-/// plus a size — rather than baking window coordinates into commands.
+/// plus a size — rather than baking window coordinates into commands, and
+/// every in-tree producer does exactly that.
+///
+/// What R1358 did **not** give you: the geometry *translates*, it does not
+/// *scale*. A path handed a bigger rect draws the same size in the new
+/// place; nothing rescales commands to fit (unlike a `Box`, whose fill IS
+/// its rect). An auto-sized path in a flex row therefore measures `0x0`
+/// (the layout pass has no intrinsic size for a command stream) — declare a
+/// size. A producer that wants geometry to track its box must rebuild the
+/// commands from the measured rect, which is the reactive measured-rect
+/// seam's job, not the primitive's.
+///
 /// A scene that is never laid out keeps its authored `rect` and the
-/// commands are read against that instead; the two cases in-tree are an
-/// overlay injected *after* the layout pass (`pinion-overlay`'s window
-/// chrome) and a `from:state` blueprint subtree.
+/// commands are read against that. The two in-tree cases are an overlay
+/// injected *after* the layout pass (`pinion-overlay`'s window chrome,
+/// which paints) and a `from:state` blueprint subtree (which is only ever
+/// introspected, never painted).
+///
+/// Inside a [`Scene::Scroll`] content tree `rect` is stored scroll-local,
+/// so `rect.origin + command` is a position in that content frame, not on
+/// screen; [`Scene::rect_for_tag_absolute`] is the single authority for
+/// "where on screen". A path is no different from a `Box` here.
 ///
 /// A command may fall outside `rect` (a stroke's join, a Bézier bowing
 /// past its endpoints); `rect` is a bounding box for layout and

@@ -2533,7 +2533,9 @@
         "R20 §5.3: PathCommand enum {MoveTo,LineTo,CurveTo,Close}; PathNode.data: Vec<PathCommand>.",
         "R20 §5.3: PathStyle {stroke:Stroke?, fill:Color?}; Stroke {color, width:u32, cap:StrokeCap}.",
         "R20 §5.3: Modifier {margin:Rect, padding:Rect, align:Align}; Align 9-pos (corners/edges/center).",
-        "R23 §5.21 taffy lock: Modifier margin/padding consumed by layout pass; align retained."
+        "R23 §5.21 taffy lock: Modifier margin/padding consumed by layout pass; align retained.",
+        "R1358 §5.3: PathNode.commands are rect-origin-relative; rect (layout output) places the path.",
+        "R1358 §5.3: R20 ratified the PathCommand enum shape only; no round ratified a coordinate basis."
       ],
       "alternatives_rejected": [
         {
@@ -23458,6 +23460,104 @@
         "Chart is still not layout-native: it resolves children against the absolute rect and its root declares no layout; emitting rect-relative children + measured-rect size discovery is the follow-up",
         "A path's rect is a bbox, never a clip — R1356's x-clip is still the chart's own job (y remains unclipped)",
         "window-chrome paths now depend on the strip being injected AFTER compute_layout; laying that scene out would collapse the buttons (pre-existing, now load-bearing, pinned by a test + documented)"
+      ]
+    },
+    "R1358.1": {
+      "decision_summary": "R1358.1: 3-reviewer remediation — a false CI claim, 3 stale docs, and 2 tests reading the old basis",
+      "changes_bullets": [
+        "CORRECTS R1358's carry: the \"no CI-gated pin\" claim was FALSE — ci.yml runs a lavapipe gpu-tests job (--ignored) and a demo sweep",
+        "New r1358 HeadlessScreenshot pixel test pins paint_path's translate in that job; falsified vs dropped AND doubled translate (R1066.1 precedent)",
+        "3 docs still asserted the OLD contract and are fixed: hello-path module header, path_point (called per command), hello-chart CHART_RECT",
+        "2 tests read the wrong basis and are fixed: hello-chart series_x_range (the only CI-gated reader) + chart coordinate_pipeline (green only via a coincident 0-clamp)",
+        "R1358 discharges R721's carry \"flex-relative commands need a transform pass\"; §5.3 body now records the basis (2 caveats)"
+      ],
+      "verification_bullets": [
+        "3 independent read-only reviewers (correctness / SSOT / §2-arch) on 15495ec8: 0 HIGH correctness bugs; findings were docs + test-integrity",
+        "Reviewer REFUTED the to_u32 sub-pixel hypothesis: to_u32 rounds and the rebase subtracts the same rounded origin paint translates by = bit-exact",
+        "gpu-tests job now covers the seam: cargo test -p pinion-shell --lib -- --ignored passes; falsify A (drop translate) and B (double-offset) both FAIL it",
+        "coordinate_pipeline fix falsified: a chart moved to (300,200) now reports (300,300), so the test reads plot space not a rect-local ~0",
+        "ws + clippy + fmt + cargo doc + validate T1=0 green; r721/r722/chart/node/vn demos pass"
+      ],
+      "impact_refs": [
+        "5.3",
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "window_chrome: the R1358 absolute_position was REMOVED — its stated rationale was false (the strip authors its own rect with default layout and is appended last, so laying the scene out would collapse it regardless)",
+        "glyph_path dropped a saturating_sub that was an artifact of unsigned window-space centring; identical for every non-degenerate button, and a button narrower than GLYPH_PX now overhangs symmetrically instead of squashing",
+        "Substrate lift NOT done: command - rect.origin is hand-rolled at 5 sites in 3 crates and two producers independently hit the same clamp trap — a PathNode::from_absolute lift is the 2nd-consumer-gated follow-up",
+        "paint_adapter now has 5 sites of `X * translate(N.xy)`; a shared node-local-transform helper crossed the 3-site threshold before this round",
+        "No wire discriminator announces the coordinate basis; an agent cannot detect it. Belongs to the §7 API stabilisation round"
+      ],
+      "publishable_decision_summary": "R1358.1: 3-reviewer remediation — a false CI claim, 3 stale docs, and 2 tests reading the old basis",
+      "publishable_changes_bullets": [
+        "CORRECTS R1358's carry: the \"no CI-gated pin\" claim was FALSE — ci.yml runs a lavapipe gpu-tests job (--ignored) and a demo sweep",
+        "New r1358 HeadlessScreenshot pixel test pins paint_path's translate in that job; falsified vs dropped AND doubled translate (R1066.1 precedent)",
+        "3 docs still asserted the OLD contract and are fixed: hello-path module header, path_point (called per command), hello-chart CHART_RECT",
+        "2 tests read the wrong basis and are fixed: hello-chart series_x_range (the only CI-gated reader) + chart coordinate_pipeline (green only via a coincident 0-clamp)",
+        "R1358 discharges R721's carry \"flex-relative commands need a transform pass\"; §5.3 body now records the basis (2 caveats)"
+      ],
+      "publishable_verification_bullets": [
+        "3 independent read-only reviewers (correctness / SSOT / §2-arch) on 15495ec8: 0 HIGH correctness bugs; findings were docs + test-integrity",
+        "Reviewer REFUTED the to_u32 sub-pixel hypothesis: to_u32 rounds and the rebase subtracts the same rounded origin paint translates by = bit-exact",
+        "gpu-tests job now covers the seam: cargo test -p pinion-shell --lib -- --ignored passes; falsify A (drop translate) and B (double-offset) both FAIL it",
+        "coordinate_pipeline fix falsified: a chart moved to (300,200) now reports (300,300), so the test reads plot space not a rect-local ~0",
+        "ws + clippy + fmt + cargo doc + validate T1=0 green; r721/r722/chart/node/vn demos pass"
+      ],
+      "publishable_impact_refs": [
+        "5.3",
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "window_chrome: the R1358 absolute_position was REMOVED — its stated rationale was false (the strip authors its own rect with default layout and is appended last, so laying the scene out would collapse it regardless)",
+        "glyph_path dropped a saturating_sub that was an artifact of unsigned window-space centring; identical for every non-degenerate button, and a button narrower than GLYPH_PX now overhangs symmetrically instead of squashing",
+        "Substrate lift NOT done: command - rect.origin is hand-rolled at 5 sites in 3 crates and two producers independently hit the same clamp trap — a PathNode::from_absolute lift is the 2nd-consumer-gated follow-up",
+        "paint_adapter now has 5 sites of `X * translate(N.xy)`; a shared node-local-transform helper crossed the 3-site threshold before this round",
+        "No wire discriminator announces the coordinate basis; an agent cannot detect it. Belongs to the §7 API stabilisation round"
+      ]
+    },
+    "R1358.2": {
+      "decision_summary": "R1358.2: the §2 #2 path round-trip R1358 claimed was broken on the wire (read emits type, write wanted op)",
+      "changes_bullets": [
+        "§2 #2 wire bug FOUND+FIXED: scene/snapshot emits a PathCommand as {type:..}, propose_change demanded {op:..}",
+        "A verbatim read->write of a path's commands was REJECTED; the R1358 docstring claimed that round trip worked",
+        "parse_path_command now accepts either key (R1253 precedent: widen the reader to the superset the writer emits)",
+        "Pinned by r1358_path_commands_round_trip_unchanged_at_a_non_origin_rect: read -> propose -> apply -> read is a fixed point"
+      ],
+      "verification_bullets": [
+        "Found by WRITING the test a reviewer said was missing — the claim was false, not merely untested",
+        "Falsified: reverting the `type` acceptance makes the round-trip test fail with the original Invalid params",
+        "The pre-existing `op` spelling still accepted: 123 pinion-rpc path tests green"
+      ],
+      "impact_refs": [
+        "2",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Read/write key asymmetry may exist on other wire forms; only PathCommand was audited here (R1253 fixed CellValue's)",
+        "A wire discriminator naming the coordinate basis is still absent — §7 API stabilisation"
+      ],
+      "publishable_decision_summary": "R1358.2: the §2 #2 path round-trip R1358 claimed was broken on the wire (read emits type, write wanted op)",
+      "publishable_changes_bullets": [
+        "§2 #2 wire bug FOUND+FIXED: scene/snapshot emits a PathCommand as {type:..}, propose_change demanded {op:..}",
+        "A verbatim read->write of a path's commands was REJECTED; the R1358 docstring claimed that round trip worked",
+        "parse_path_command now accepts either key (R1253 precedent: widen the reader to the superset the writer emits)",
+        "Pinned by r1358_path_commands_round_trip_unchanged_at_a_non_origin_rect: read -> propose -> apply -> read is a fixed point"
+      ],
+      "publishable_verification_bullets": [
+        "Found by WRITING the test a reviewer said was missing — the claim was false, not merely untested",
+        "Falsified: reverting the `type` acceptance makes the round-trip test fail with the original Invalid params",
+        "The pre-existing `op` spelling still accepted: 123 pinion-rpc path tests green"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Read/write key asymmetry may exist on other wire forms; only PathCommand was audited here (R1253 fixed CellValue's)",
+        "A wire discriminator naming the coordinate basis is still absent — §7 API stabilisation"
       ]
     },
     "R232": {

@@ -4828,6 +4828,109 @@ fn scene_propose_replace_view_with_path_round_trips() {
     }
 }
 
+/// R1358 §2 #2 §2 #7 — read -> write -> read is a FIXED POINT for a path at
+/// a NON-ORIGIN rect: an agent that snapshots a path, sends the commands
+/// straight back through `propose_change`, and snapshots again gets the same
+/// geometry. That is the AI primary path's read/write symmetry claim, and it
+/// is only meaningful away from the origin: every other Path wire test builds
+/// at `Rect::new(0, 0, ..)`, where rect-relative and window-absolute commands
+/// are numerically identical, so none of them can see the basis at all.
+///
+/// Falsifiable: were the write path to interpret the commands as
+/// window-absolute (or the read path to emit them that way), the re-read
+/// commands would differ from the originals by the rect origin.
+#[test]
+fn r1358_path_commands_round_trip_unchanged_at_a_non_origin_rect() {
+    use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect};
+    use pinion_core::style::PathStyle;
+
+    // A triangle authored in its OWN box, placed away from the origin.
+    let node = PathNode::new(
+        Rect::new(40, 24, 32, 32),
+        vec![
+            PathCommand::MoveTo(PathPoint::new(0.0, 32.0)),
+            PathCommand::LineTo(PathPoint::new(32.0, 32.0)),
+            PathCommand::LineTo(PathPoint::new(16.0, 0.0)),
+            PathCommand::Close,
+        ],
+        PathStyle::default(),
+    )
+    .with_tag("logo");
+    let mut c = ContainerNode::new(vec![Scene::Path(node)]);
+    c.rect = Rect::new(0, 0, 100, 100);
+    let mut scene = Scene::Container(c);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+
+    // READ.
+    let read = |scene: &mut Scene| -> (Value, Value) {
+        let resp = parse_response(&dispatch_t(scene, snapshot_request_root_state()).unwrap());
+        let root = resp.result.unwrap();
+        let child = root.get("children").unwrap().as_array().unwrap()[0].clone();
+        assert_eq!(child.get("type"), Some(&Value::String("Path".into())));
+        (
+            child.get("commands").unwrap().clone(),
+            child.get("rect").unwrap().clone(),
+        )
+    };
+    let (cmds_before, rect_before) = read(&mut scene);
+
+    // The read is rect-local, and rect + command is the window position.
+    let first = &cmds_before.as_array().unwrap()[0];
+    let (px, py) = (
+        first
+            .get("point")
+            .unwrap()
+            .get("x")
+            .unwrap()
+            .as_f64()
+            .unwrap(),
+        first
+            .get("point")
+            .unwrap()
+            .get("y")
+            .unwrap()
+            .as_f64()
+            .unwrap(),
+    );
+    assert!(
+        (px - 0.0).abs() < f64::EPSILON && (py - 32.0).abs() < f64::EPSILON,
+        "snapshot reports rect-local commands, got ({px}, {py})"
+    );
+    assert_eq!(rect_before.get("x"), Some(&Value::Number(40.into())));
+    assert_eq!(rect_before.get("y"), Some(&Value::Number(24.into())));
+
+    // WRITE the read-back geometry straight back.
+    let propose = format!(
+        r#"{{"jsonrpc":"2.0","method":"scene/propose_change","params":{{"kind":"ReplaceView","target_path":"/logo","replacement":{{"kind":"Path","rect":{rect_before},"style":{{"fill":255}},"commands":{cmds_before},"tag":"logo"}}}},"id":1358}}"#
+    );
+    let presp = parse_response(&dispatch_full(&mut scene, &previews, &revision, &propose).unwrap());
+    assert!(
+        presp.error.is_none(),
+        "the snapshot's own command shape must be accepted back: {:?}",
+        presp.error
+    );
+    let preview_id = presp
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+    let apply = format!(
+        r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":1359}}"#
+    );
+    let _ = dispatch_full(&mut scene, &previews, &revision, &apply).unwrap();
+
+    // READ again — a fixed point.
+    let (cmds_after, rect_after) = read(&mut scene);
+    assert_eq!(
+        cmds_after, cmds_before,
+        "commands must survive read -> write -> read unchanged (a basis \
+         mismatch would shift them by the rect origin)"
+    );
+    assert_eq!(rect_after, rect_before, "rect must survive the round trip");
+}
+
 #[test]
 fn scene_propose_replace_view_with_image_round_trips() {
     let mut scene = box_container_scene_for_set_style();

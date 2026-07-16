@@ -33,11 +33,13 @@
 //! solid fill could produce) and a `grad_radial` diamond whose centre
 //! pixel is the radial centre stop.
 //!
-//! Every path is positioned with `LayoutStyle::absolute_position` so
-//! its rect sits at a fixed window coordinate that matches the
-//! author-space command stream (path commands are absolute device
-//! pixels, untouched by the flex pass — see [[absolute-position-via-
-//! layoutstyle]]); this keeps the live-pixel anchors deterministic.
+//! Every path is authored in its own box — R1358 made path commands
+//! relative to the node's `rect` — and pinned to a fixed window
+//! coordinate with `LayoutStyle::absolute_position` (see
+//! [[absolute-position-via-layoutstyle]]), which is what keeps the
+//! live-pixel anchors deterministic. Shape and placement are separate
+//! here: each vertex set below is 0-based, and moving a shape means
+//! changing only its `origin` argument.
 //!
 //! ## Why a Toggle
 //!
@@ -228,10 +230,11 @@ fn path_node(
 /// stops, UV) and verified by the R722 demo.
 fn gradient_paths() -> Vec<Scene> {
     // Linear: a filled rect so any column samples the ramp. R1358 — the
-    // geometry now fills the node's rect corner-to-corner in the SAME frame
-    // the gradient's UV `(0,0)`..`(1,1)` anchors to, so the ramp spans the
-    // shape exactly; before R1358 the two halves of this node used different
-    // coordinate bases.
+    // geometry fills the node's rect corner-to-corner in the SAME frame the
+    // gradient's UV `(0,0)`..`(1,1)` anchors to. The ramp spanned the shape
+    // before R1358 too (nothing here looked wrong — the migration is
+    // pixel-identical); what changed is that the producer no longer has to
+    // keep two bases in agreement by hand, because there is only one.
     let linear_rect = vec![
         PathCommand::MoveTo(pt((0.0, 0.0))),
         PathCommand::LineTo(pt((95.0, 0.0))),

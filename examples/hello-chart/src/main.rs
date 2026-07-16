@@ -63,10 +63,13 @@ const BRUSH_TAG: &str = "chart_brush";
 const TITLE_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 12;
 
-/// Window-absolute plot region (see the `pinion-chart` coordinate
-/// contract — path commands are literal device pixels). Also the scrub
-/// capture basis: the `chart_scrub` box covers exactly this rect, so the
-/// slider value `0.0..=1.0` is the cursor fraction across it.
+/// Window-absolute plot region. The chart must be handed its final
+/// geometry before layout runs and resolves everything against this rect,
+/// so the constant stays (see the `pinion-chart` coordinate contract —
+/// R1358 removed the *primitive* blocker, but `build` still needs its rect
+/// up front). Also the scrub capture basis: the `chart_scrub` box covers
+/// exactly this rect, so the slider value `0.0..=1.0` is the cursor
+/// fraction across it.
 const CHART_RECT: Rect = Rect::new(14, 46, WIN_W - 28, WIN_H - 128);
 
 /// The brush strip sits under the plot, aligned to the plot's x range.
@@ -459,15 +462,24 @@ mod tests {
         owner.run(|| view(SliderState::Idle, scrub, low, high, &Frame::new()))
     }
 
-    fn series_x_range(scene: &Scene) -> (f32, f32) {
+    /// Series 0's x extent in WINDOW px.
+    ///
+    /// R1358 — path commands are relative to the node's own `rect`, so a
+    /// vertex's window x is `rect.x + command.x`. Reading the bare command
+    /// would silently turn every caller's position claim into a *span*
+    /// claim: a rect-local x is ~0-based by construction, so a series
+    /// translated wholly off-screen (origin 5000, span 100) would still
+    /// look like it sat inside the window.
+    fn series_window_x_range(scene: &Scene) -> (f32, f32) {
         let Scene::Path(p) = find(scene, "chart.series.0").expect("series") else {
             panic!("path")
         };
+        let ox = f32::from(u16::try_from(p.rect.x).expect("chart x fits u16"));
         let xs: Vec<f32> = p
             .commands
             .iter()
             .filter_map(|c| match *c {
-                PathCommand::MoveTo(pt) | PathCommand::LineTo(pt) => Some(pt.x),
+                PathCommand::MoveTo(pt) | PathCommand::LineTo(pt) => Some(ox + pt.x),
                 _ => None,
             })
             .collect();
@@ -503,7 +515,7 @@ mod tests {
         let full = rendered(0.5, 0.0, 1.0);
         let zoom = rendered(0.5, 0.4, 0.6);
         for scene in [&full, &zoom] {
-            let (min_x, max_x) = series_x_range(scene);
+            let (min_x, max_x) = series_window_x_range(scene);
             assert!(
                 min_x >= -0.5 && max_x <= f32::from(u16::try_from(WIN_W).unwrap()) + 0.5,
                 "series stays within the window: {min_x}..{max_x}"

@@ -137,12 +137,21 @@ pub struct TextSnapshot {
 /// the paint (stroke colour / width / cap, fill colour) — the
 /// commands describe the shape, the style describes the ink.
 ///
-/// R1358 — the commands are **relative to this node's `rect`**, so
-/// the shape and the placement are read from different fields: a
-/// vertex's window position is `rect.origin + command`. An agent
-/// asking "where is this drawn?" reads `rect` (uniform across every
-/// node type); one asking "what shape is it?" reads `commands`, which
-/// are comparable between two nodes regardless of where they sit.
+/// R1358 — the commands are **relative to this node's `rect`**, so the
+/// shape and the placement are read from different fields: a vertex sits
+/// at `rect.origin + command` *in the node's own rect frame*. An agent
+/// asking "where is this drawn?" reads `rect` (uniform across every node
+/// type); one asking "what shape is it?" reads `commands`, which are
+/// comparable between two nodes regardless of where they sit.
+///
+/// That sum is the **window** position only where `rect` itself is
+/// window-absolute. Inside a [`Scene::Scroll`](pinion_core::Scene) content
+/// tree rects are stored scroll-local and the screen position adds the
+/// accumulated `(viewport - offset)` of every enclosing Scroll — R1358 did
+/// not change that, and a path is no different from a Box here. The single
+/// authority is
+/// [`rect_for_tag_absolute`](pinion_core::scene::Scene::rect_for_tag_absolute);
+/// prefer it over hand-summing when the question is "where on screen".
 /// See [`PathNode`](pinion_core::scene::PathNode) for the contract.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]

@@ -6036,13 +6036,19 @@ fn parse_image_style(v: Option<&Value>) -> Result<pinion_core::style::ImageStyle
 }
 
 /// Wire→`Vec<PathCommand>` coercion. Each command is an object
-/// `{op: "MoveTo"|"LineTo"|"CurveTo"|"Close", ...args}`.
+/// `{op: "MoveTo"|"LineTo"|"CurveTo"|"Close", ...args}`; R1358.1 also
+/// accepts `type`, the key `scene/snapshot` emits, so the read form is a
+/// legal write form.
 ///
 /// R1358 — the points are relative to the node's own `rect`, the same
 /// basis `scene/snapshot` reports them in (see
-/// [`PathNode`](pinion_core::scene::PathNode)). A client that read a path
-/// back, edited a vertex, and wrote it here round-trips unchanged; one
-/// that authors window coordinates paints at `rect + command`.
+/// [`PathNode`](pinion_core::scene::PathNode)), so a client that reads a
+/// path back, edits a vertex, and writes it here round-trips unchanged —
+/// pinned at a non-origin rect by
+/// `r1358_path_commands_round_trip_unchanged_at_a_non_origin_rect`. R1358
+/// claimed that round trip before it worked: the reader demanded `op` while
+/// the writer emitted `type`, so a verbatim read→write was rejected until
+/// R1358.1.
 fn parse_path_commands(
     v: Option<&Value>,
 ) -> Result<Vec<pinion_core::scene::PathCommand>, RpcError> {
@@ -6059,9 +6065,22 @@ fn parse_path_commands(
 
 fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcError> {
     use pinion_core::scene::{PathCommand, PathPoint};
-    let Some(op) = v.get("op").and_then(Value::as_str) else {
+    // R1358.1 §2 #2 — accept the discriminator under EITHER key. The write
+    // surface (R40.11) named it `op`; the read surface (`path_command_to_json`,
+    // R51.198) emits `type`. An agent that snapshots a path and posts the
+    // commands straight back was therefore rejected — the §2 #2 primary path
+    // was not round-trippable, which the R1358 docstring wrongly claimed it
+    // was. Widening the reader to the superset the writer emits is the R1253
+    // precedent (`with_intervene` accepting `to_introspect`'s JSON), fixed at
+    // the same seam: the wire form, not the call site.
+    let Some(op) = v
+        .get("op")
+        .or_else(|| v.get("type"))
+        .and_then(Value::as_str)
+    else {
         return Err(RpcError::invalid_params(
-            "params.replacement.commands[].op missing or not a string",
+            "params.replacement.commands[].op missing or not a string \
+             (`type`, the key scene/snapshot emits, is also accepted)",
         ));
     };
     let read_point = |field: &str| -> Result<PathPoint, RpcError> {
