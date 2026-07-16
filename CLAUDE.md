@@ -5,6 +5,7 @@
 Reading order when entering this repo:
 
 1. **`docs/SEED_PROMPT.md`** — single-source entry point. Self-contained: 불변 운영 원칙 + 직전 세션 결과 + 다음 텍스트북 캐논 + watch out + lessons. New-session entry = `load` skill OR `@docs/SEED_PROMPT.md 읽고 R<현재 라운드> 진행`. Read this first; everything else is reference.
+   **It is `.gitignore`d** (a local working file, deliberately): a fresh clone has no SEED, and continuity there starts from the auto-loaded `memory/MEMORY.md` + `git log` + the atomic changelog instead. Per-round history does NOT live in SEED — it is kept slim on purpose, because a bloated SEED trips a `/load` auto-compaction bug ([[seed-must-stay-slim]]); replace its land block each round rather than accumulating.
 2. **Mnemosyne atomic store** (`docs/.atomic/workspace.atomic.json`) — full spec SSOT. Read with `mnemosyne-cli query --list-sections` then `mnemosyne-cli query §<id>` (the markdown-doc render `docs/GENERATED.md` was retired in Mnemosyne R395–R400).
 3. **`mnemosyne://concepts/overview`** — Mnemosyne contract; mutations to the store go through typed primitives, never direct edits.
 4. **This `CLAUDE.md`** — project-specific operational rules and structure map.
@@ -93,7 +94,7 @@ Spec phase summary:
 ## Repository structure
 
 ```
-Cargo.toml              workspace root (resolver=3, edition 2024, MSRV 1.85)
+Cargo.toml              workspace root (resolver=3, edition 2024, MSRV 1.88)
 rust-toolchain.toml     stable channel pin + rustfmt + clippy
 crates/
   pinion-core/          scene primitives, Style trait, Modifier, view-fn types, Event enum
