@@ -13,14 +13,14 @@
 //! crates (`pinion-rpc`, `pinion-tui`) hold the snapshot without
 //! dragging in the GPU stack. The wall-clock *measurement* lives in
 //! the surface (`pinion_shell::AppShell::render_window`, which brackets
-//! the three paint phases with [`std::time::Instant`] spans); this
+//! the paint phases with [`std::time::Instant`] spans); this
 //! module owns only the typed sample, the rolling accumulator, and the
 //! aggregate projection. Splitting measurement (surface) from
 //! aggregation (this substrate) keeps the substrate unit-testable with
 //! *injected* deterministic samples — wall-clock numbers never enter a
 //! test.
 //!
-//! ## The three phases
+//! ## The four phases
 //!
 //! Each painted frame is bracketed into the canonical desktop-app
 //! frame breakdown (cf. Unreal `stat unit` Game/Draw/GPU; Chrome
@@ -34,41 +34,54 @@
 //!   fragments (the §5.16 fragment cache short-circuits unchanged
 //!   subtrees here, so this phase and the cache hit-rate move
 //!   together).
-//! - **render** — `WidgetRenderer::render`: acquiring the swapchain
-//!   image, then recording and submitting the GPU command buffer.
-//!   **Not GPU execution wall-clock** — `wgpu` queue submission returns
-//!   before the GPU finishes the work; true GPU timing needs timestamp
-//!   queries (a deferred axis).
+//! - **acquire** (R1361.1) — `surface.get_current_texture()`: **waiting
+//!   for the compositor to release a swapchain image**. Not work at all
+//!   — the thread is blocked. Under `PresentMode::AutoVsync` (= Fifo)
+//!   this is the vsync pace-setter, so it is normally the *largest*
+//!   phase in a paced window and near-zero in an unpaced one.
 //!
-//!   **It is also not pure work.** The forge-generated `render` calls
-//!   `surface.get_current_texture()` inside this span, and the surface
-//!   is configured `PresentMode::AutoVsync` (= Fifo), so the acquire
-//!   *blocks until the compositor releases an image*. This phase
-//!   therefore carries presentation back-pressure — up to a vsync
-//!   interval in the healthy case, and up to `wgpu`'s ~1s acquire
-//!   timeout when nothing is presenting at all. R1361 measured
-//!   `render_us ≈ 998_000` against `build_us ≈ 400` on a live window,
-//!   which is the block, not the drawing.
+//!   It is its own phase because it answers a question no other phase
+//!   can: **"am I slow, or am I merely waiting?"** Measured on one
+//!   `hello-frame-profiler` window, idle machine:
 //!
-//!   Read it as "render + wait-for-image", and do not read a large
-//!   `render_us` as "drawing is slow" — an idle window blocked on vsync
-//!   reports exactly the same shape as a GPU-bound one. Splitting the
-//!   acquire into its own phase is the honest fix and needs the forge
-//!   template to report it separately (a deferred axis). This paragraph
-//!   exists because the pre-R1361 doc claimed the opposite
-//!   ("CPU-side cost only"), and a text readout hid the contradiction
-//!   for 450 rounds — the R1361 chart made it unmissable in one frame.
+//!   | | total | work | build | encode | acquire | render |
+//!   |---|---|---|---|---|---|---|
+//!   | unpaced | 1137 | 1107 | 139 | 105 | **9** | 863 |
+//!   | `set_fps 60` | 16273 | **696** | 214 | 83 | **15559** | 399 |
+//!
+//!   The paced frame spends 96% of itself blocked and 0.7ms working.
+//!   Both rows are healthy; only the split says so. (One machine, one
+//!   run: read the *ratio*, not the absolutes — `acquire ≈ 15.5ms` is
+//!   simply one 60Hz vsync interval, which is the point.)
+//!
+//! - **render** — `WidgetRenderer::render` minus the acquire:
+//!   `render_to_texture` plus the blit/present command-buffer record and
+//!   submit. **Not GPU execution wall-clock** — `wgpu` queue submission
+//!   returns before the GPU finishes the work; true GPU timing needs
+//!   timestamp queries (a deferred axis).
+//!
+//!   R1361 found this phase claiming "CPU-side cost only" while
+//!   *containing* the blocking acquire. In the 60fps row above the
+//!   pre-R1361.1 `render_us` would have read **`15_958µs`** — a window
+//!   doing 0.4ms of drawing reported as 16ms of "render", i.e. exactly
+//!   like a GPU-bound one. A text readout hid that for 450 rounds; the
+//!   first chart drawn from it made the flat line unmissable. R1361.1
+//!   split the acquire out, so `render_us` now means what it claimed.
 //!
 //! [`FrameTiming::total_us`] spans the whole productive frame (build
 //! start through the post-paint accessibility-emit / IME-publish /
-//! finalize work), so `total - (build + encode + render)` is a real
-//! "other / overhead" bucket — and `total >= build + encode + render`
-//! holds **by construction**: the three phases are disjoint
-//! sub-intervals of the total interval, and microsecond truncation
-//! preserves the inequality (`Σ⌊subᵢ⌋ <= ⌊Σsubᵢ⌋ <= ⌊total⌋`). That
-//! invariant is deterministic even though every individual value is
-//! wall-clock, which is exactly what lets a demo assert correctness
-//! without asserting timing.
+//! finalize work), so `total - (build + encode + acquire + render)` is
+//! a real "other / overhead" bucket — and `total >= build + encode +
+//! acquire + render` holds **by construction**: the four phases are
+//! disjoint sub-intervals of the total interval, and microsecond
+//! truncation preserves the inequality (`Σ⌊subᵢ⌋ <= ⌊Σsubᵢ⌋ <=
+//! ⌊total⌋`). That invariant is deterministic even though every
+//! individual value is wall-clock, which is exactly what lets a demo
+//! assert correctness without asserting timing.
+//!
+//! [`FrameTiming::work_us`] is the peer worth reaching for when the
+//! question is "how much room do I have?": `total` counts the vsync
+//! block, `work` does not.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -101,46 +114,74 @@ pub struct FrameTiming {
     /// (`to_vello_cached`); the §5.16 fragment cache short-circuits
     /// here.
     pub encode_us: u64,
-    /// Swapchain acquire + GPU command-buffer record + submit
-    /// (`WidgetRenderer::render`).
+    /// R1361.1 — blocking wait for a swapchain image
+    /// (`surface.get_current_texture()`), **idle time, not work**. The
+    /// vsync pace-setter under `PresentMode::AutoVsync`. Large here +
+    /// small elsewhere = presentation-bound with headroom to spare. See
+    /// the module doc's phase list.
+    pub acquire_us: u64,
+    /// GPU command-buffer record + submit (`WidgetRenderer::render`
+    /// **minus** [`Self::acquire_us`]). CPU-side cost only — `wgpu`
+    /// queue submission returns before the GPU finishes, so this is not
+    /// GPU execution wall-clock.
     ///
-    /// Neither GPU execution wall-clock nor pure CPU work: the acquire
-    /// blocks on vsync (`PresentMode::AutoVsync`), so this span carries
-    /// presentation back-pressure and can dominate a frame that drew
-    /// almost nothing. See the module doc's "three phases".
+    /// Pre-R1361.1 this silently contained the acquire, which made a
+    /// vsync-blocked idle window indistinguishable from a GPU-bound one.
     pub render_us: u64,
     /// Whole productive frame: build start through the post-paint
     /// accessibility / IME / finalize work. `>= build + encode +
-    /// render` by construction.
+    /// acquire + render` by construction.
     pub total_us: u64,
 }
 
 impl FrameTiming {
-    /// Construct a sample from the four measured phase durations.
+    /// Construct a sample from the measured phase durations.
     #[must_use]
-    pub fn new(build_us: u64, encode_us: u64, render_us: u64, total_us: u64) -> Self {
+    pub fn new(
+        build_us: u64,
+        encode_us: u64,
+        acquire_us: u64,
+        render_us: u64,
+        total_us: u64,
+    ) -> Self {
         Self {
             build_us,
             encode_us,
+            acquire_us,
             render_us,
             total_us,
         }
     }
 
-    /// `build + encode + render` (saturating). The measured part of
-    /// the frame; [`Self::other_us`] is the unmeasured remainder.
+    /// `build + encode + acquire + render` (saturating). The accounted
+    /// part of the frame; [`Self::other_us`] is the remainder.
     #[must_use]
     pub fn phase_sum_us(self) -> u64 {
+        self.build_us
+            .saturating_add(self.encode_us)
+            .saturating_add(self.acquire_us)
+            .saturating_add(self.render_us)
+    }
+
+    /// `build + encode + render` — the frame's real **work**, excluding
+    /// the [`Self::acquire_us`] block.
+    ///
+    /// This is the number a "can I afford more per frame?" question
+    /// wants: a window can sit at `total_us = 16_666` because it is
+    /// vsync-paced with 1ms of work, or because it spent 16ms working.
+    /// Only this distinguishes them.
+    #[must_use]
+    pub fn work_us(self) -> u64 {
         self.build_us
             .saturating_add(self.encode_us)
             .saturating_add(self.render_us)
     }
 
-    /// `total - (build + encode + render)`: the post-paint overhead
-    /// (accessibility emit, IME publish, cache-stats publish, frame
-    /// finalize) not captured by a named phase. Saturating, so the
-    /// by-construction `total >= phase_sum` invariant never
-    /// underflows even if a future caller violates it.
+    /// `total - (build + encode + acquire + render)`: the post-paint
+    /// overhead (accessibility emit, IME publish, cache-stats publish,
+    /// frame finalize) not captured by a named phase. Saturating, so the
+    /// by-construction `total >= phase_sum` invariant never underflows
+    /// even if a future caller violates it.
     #[must_use]
     pub fn other_us(self) -> u64 {
         self.total_us.saturating_sub(self.phase_sum_us())
@@ -255,8 +296,8 @@ impl FrameTimingStats {
         let last = *self.samples.back()?;
         let len = self.samples.len() as u64; // >= 1 past the `?`
         let (mut min_total, mut max_total) = (u64::MAX, 0u64);
-        let (mut sum_total, mut sum_build, mut sum_encode, mut sum_render) =
-            (0u64, 0u64, 0u64, 0u64);
+        let (mut sum_total, mut sum_build, mut sum_encode, mut sum_acquire, mut sum_render) =
+            (0u64, 0u64, 0u64, 0u64, 0u64);
         let mut over_budget_frames: u32 = 0;
         let mut worst_overrun_us: u64 = 0;
         for s in &self.samples {
@@ -265,6 +306,7 @@ impl FrameTimingStats {
             sum_total = sum_total.saturating_add(s.total_us);
             sum_build = sum_build.saturating_add(s.build_us);
             sum_encode = sum_encode.saturating_add(s.encode_us);
+            sum_acquire = sum_acquire.saturating_add(s.acquire_us);
             sum_render = sum_render.saturating_add(s.render_us);
             if let Some(budget) = budget_us {
                 if s.total_us > budget {
@@ -288,6 +330,7 @@ impl FrameTimingStats {
             max_total_us: max_total,
             mean_build_us: sum_build / len,
             mean_encode_us: sum_encode / len,
+            mean_acquire_us: sum_acquire / len,
             mean_render_us: sum_render / len,
             mean_fps: fps_from_mean_total_us(mean_total),
             budget_us,
@@ -356,7 +399,9 @@ pub struct FrameTimingsSnapshot {
     pub mean_build_us: u64,
     /// Mean encode-phase µs over the window.
     pub mean_encode_us: u64,
-    /// Mean render-phase µs over the window.
+    /// Mean acquire-phase (vsync block) µs over the window. R1361.1.
+    pub mean_acquire_us: u64,
+    /// Mean render-phase µs over the window (work only, acquire excluded).
     pub mean_render_us: u64,
     /// `1e6 / mean_total_us`, `0.0` for a zero mean.
     pub mean_fps: f32,
@@ -542,7 +587,7 @@ mod seam_tests {
         // that is the whole reason `samples` exists.
         let mut stats = FrameTimingStats::new();
         for total in [100_u64, 300, 200] {
-            stats.record(FrameTiming::new(10, 10, 10, total));
+            stats.record(FrameTiming::new(10, 10, 0, 10, total));
         }
         let got: Vec<u64> = stats.samples().map(|s| s.total_us).collect();
         assert_eq!(got, vec![100, 300, 200], "oldest first, insertion order");
@@ -553,11 +598,11 @@ mod seam_tests {
         // would be redundant — it cannot, and this pins why.
         let mut jagged = FrameTimingStats::new();
         for total in [1_000_u64, 15_000, 1_000, 15_000] {
-            jagged.record(FrameTiming::new(10, 10, 10, total));
+            jagged.record(FrameTiming::new(10, 10, 0, 10, total));
         }
         let mut steady = FrameTimingStats::new();
         for total in [1_000_u64, 15_000, 15_000, 1_000] {
-            steady.record(FrameTiming::new(10, 10, 10, total));
+            steady.record(FrameTiming::new(10, 10, 0, 10, total));
         }
         let (a, b) = (
             jagged.snapshot(None).unwrap(),
@@ -646,7 +691,7 @@ mod seam_tests {
     fn view_of(totals: &[u64], budget_us: Option<u64>) -> FrameTimingsView {
         let mut stats = FrameTimingStats::new();
         for &total in totals {
-            stats.record(FrameTiming::new(1, 1, 1, total));
+            stats.record(FrameTiming::new(1, 1, 0, 1, total));
         }
         FrameTimingsView {
             samples: stats.samples().copied().collect(),
@@ -671,11 +716,11 @@ mod tests {
     #[test]
     fn r907_single_frame_aggregates_to_itself() {
         let mut stats = FrameTimingStats::new();
-        stats.record(FrameTiming::new(300, 100, 80, 540));
+        stats.record(FrameTiming::new(300, 100, 0, 80, 540));
         let snap = stats.snapshot(None).expect("one sample yields a snapshot");
         assert_eq!(snap.frame_count, 1);
         assert_eq!(snap.window_len, 1);
-        assert_eq!(snap.last, FrameTiming::new(300, 100, 80, 540));
+        assert_eq!(snap.last, FrameTiming::new(300, 100, 0, 80, 540));
         // One sample: min == mean == max == that frame's total.
         assert_eq!(snap.min_total_us, 540);
         assert_eq!(snap.mean_total_us, 540);
@@ -691,13 +736,54 @@ mod tests {
     }
 
     #[test]
+    fn r1361_1_acquire_is_counted_by_total_but_not_by_work() {
+        // The whole point of splitting the phase. Two frames with the
+        // SAME total: one vsync-blocked doing almost nothing, one
+        // genuinely working. Pre-R1361.1 the acquire was billed to
+        // render, so these were indistinguishable.
+        let blocked = FrameTiming::new(400, 100, 15_000, 200, 15_800);
+        let working = FrameTiming::new(400, 100, 0, 15_200, 15_800);
+        assert_eq!(blocked.total_us, working.total_us, "same frame duration");
+        assert_eq!(
+            blocked.phase_sum_us(),
+            working.phase_sum_us(),
+            "both account for the same span",
+        );
+        // …but the WORK differs by two orders of magnitude, which is the
+        // only thing that answers "can I afford more per frame?".
+        assert_eq!(blocked.work_us(), 700, "blocked: idle, headroom to spare");
+        assert_eq!(working.work_us(), 15_700, "working: no headroom left");
+        assert!(
+            blocked.work_us() < working.work_us() / 10,
+            "the split must separate 'waiting' from 'slow'",
+        );
+        // The partition still closes over the four phases.
+        assert_eq!(blocked.other_us(), 100);
+        assert_eq!(
+            blocked.phase_sum_us() + blocked.other_us(),
+            blocked.total_us,
+        );
+    }
+
+    #[test]
+    fn r1361_1_a_zero_acquire_frame_has_work_equal_to_phase_sum() {
+        // The TUI / stub-renderer shape: no swapchain, so nothing blocks
+        // (`WidgetRenderer::last_acquire_us` defaults to 0) and the two
+        // sums coincide. This is also every pre-R1361.1 sample's shape,
+        // which is why the migration preserved their assertions.
+        let t = FrameTiming::new(300, 100, 0, 80, 540);
+        assert_eq!(t.work_us(), t.phase_sum_us());
+        assert_eq!(t.work_us(), 480);
+    }
+
+    #[test]
     fn r907_phase_sum_and_other_partition_total() {
-        let t = FrameTiming::new(300, 100, 80, 540);
+        let t = FrameTiming::new(300, 100, 0, 80, 540);
         assert_eq!(t.phase_sum_us(), 480);
         assert_eq!(t.other_us(), 60);
         // total >= phase_sum is the by-construction invariant; other
         // saturates to 0 rather than underflowing if it is violated.
-        let degenerate = FrameTiming::new(300, 100, 80, 100);
+        let degenerate = FrameTiming::new(300, 100, 0, 80, 100);
         assert_eq!(degenerate.other_us(), 0);
     }
 
@@ -705,9 +791,9 @@ mod tests {
     fn r907_min_mean_max_over_window() {
         let mut stats = FrameTimingStats::new();
         // totals: 400, 600, 980 -> min 400, max 980, mean 660.
-        stats.record(FrameTiming::new(200, 100, 50, 400));
-        stats.record(FrameTiming::new(300, 150, 70, 600));
-        stats.record(FrameTiming::new(500, 200, 120, 980));
+        stats.record(FrameTiming::new(200, 100, 0, 50, 400));
+        stats.record(FrameTiming::new(300, 150, 0, 70, 600));
+        stats.record(FrameTiming::new(500, 200, 0, 120, 980));
         let snap = stats.snapshot(None).unwrap();
         assert_eq!(snap.window_len, 3);
         assert_eq!(snap.frame_count, 3);
@@ -730,12 +816,12 @@ mod tests {
         // Fill the window with cheap frames, then overflow it with one
         // expensive frame so the cheap ones evict out.
         for _ in 0..FRAME_TIMING_WINDOW {
-            stats.record(FrameTiming::new(10, 10, 10, 100));
+            stats.record(FrameTiming::new(10, 10, 0, 10, 100));
         }
         assert_eq!(stats.window_len(), FRAME_TIMING_WINDOW);
         assert_eq!(stats.frame_count(), FRAME_TIMING_WINDOW as u64);
         // Push one more: ring stays capped, lifetime count keeps going.
-        stats.record(FrameTiming::new(900, 50, 50, 2000));
+        stats.record(FrameTiming::new(900, 50, 0, 50, 2000));
         assert_eq!(stats.window_len(), FRAME_TIMING_WINDOW);
         assert_eq!(stats.frame_count(), FRAME_TIMING_WINDOW as u64 + 1);
         let snap = stats.snapshot(None).unwrap();
@@ -750,12 +836,12 @@ mod tests {
     fn r907_full_window_evicts_all_old_samples_eventually() {
         let mut stats = FrameTimingStats::new();
         for _ in 0..FRAME_TIMING_WINDOW {
-            stats.record(FrameTiming::new(10, 10, 10, 100));
+            stats.record(FrameTiming::new(10, 10, 0, 10, 100));
         }
         // Overflow by a whole window of a different value: every
         // original sample must have evicted.
         for _ in 0..FRAME_TIMING_WINDOW {
-            stats.record(FrameTiming::new(20, 20, 20, 300));
+            stats.record(FrameTiming::new(20, 20, 0, 20, 300));
         }
         let snap = stats.snapshot(None).unwrap();
         assert_eq!(snap.window_len, u32::try_from(FRAME_TIMING_WINDOW).unwrap());
@@ -770,7 +856,7 @@ mod tests {
     fn r907_mean_fps_inverts_mean_total() {
         let mut stats = FrameTimingStats::new();
         // mean_total = 16_666 µs -> ~60 fps.
-        stats.record(FrameTiming::new(10_000, 4_000, 2_000, 16_666));
+        stats.record(FrameTiming::new(10_000, 4_000, 0, 2_000, 16_666));
         let snap = stats.snapshot(None).unwrap();
         let expected = 1_000_000.0_f32 / 16_666.0_f32;
         assert!(
@@ -788,7 +874,7 @@ mod tests {
     #[test]
     fn r907_zero_total_yields_zero_fps_not_infinity() {
         let mut stats = FrameTimingStats::new();
-        stats.record(FrameTiming::new(0, 0, 0, 0));
+        stats.record(FrameTiming::new(0, 0, 0, 0, 0));
         let snap = stats.snapshot(None).unwrap();
         assert_eq!(snap.mean_total_us, 0);
         assert!(
@@ -804,7 +890,7 @@ mod tests {
         // A window with no declared frame target: budget-relative
         // fields stay neutral regardless of how the frames timed.
         let mut stats = FrameTimingStats::new();
-        stats.record(FrameTiming::new(200, 100, 50, 9_999));
+        stats.record(FrameTiming::new(200, 100, 0, 50, 9_999));
         let snap = stats.snapshot(None).unwrap();
         assert_eq!(snap.budget_us, None);
         assert_eq!(snap.over_budget_frames, 0);
@@ -816,9 +902,9 @@ mod tests {
     fn r925_budget_classifies_over_and_under() {
         // budget 500µs; totals 400 / 600 / 980. Two of three exceed it.
         let mut stats = FrameTimingStats::new();
-        stats.record(FrameTiming::new(200, 100, 50, 400));
-        stats.record(FrameTiming::new(300, 150, 70, 600));
-        stats.record(FrameTiming::new(500, 200, 120, 980));
+        stats.record(FrameTiming::new(200, 100, 0, 50, 400));
+        stats.record(FrameTiming::new(300, 150, 0, 70, 600));
+        stats.record(FrameTiming::new(500, 200, 0, 120, 980));
         let snap = stats.snapshot(Some(500)).unwrap();
         assert_eq!(snap.budget_us, Some(500));
         assert_eq!(snap.over_budget_frames, 2, "600 and 980 exceed 500");
@@ -834,8 +920,8 @@ mod tests {
         // but the budget itself is still reported (distinct from "no
         // budget" — a client can tell "on budget" from "untracked").
         let mut stats = FrameTimingStats::new();
-        stats.record(FrameTiming::new(200, 100, 50, 400));
-        stats.record(FrameTiming::new(300, 150, 70, 600));
+        stats.record(FrameTiming::new(200, 100, 0, 50, 400));
+        stats.record(FrameTiming::new(300, 150, 0, 70, 600));
         let snap = stats.snapshot(Some(1_000_000)).unwrap();
         assert_eq!(snap.budget_us, Some(1_000_000));
         assert_eq!(snap.over_budget_frames, 0);
@@ -849,7 +935,7 @@ mod tests {
         // budget met it (a 60fps target is hit by a 16_666µs frame, not
         // missed). Only total > budget counts as a dropped frame.
         let mut stats = FrameTimingStats::new();
-        stats.record(FrameTiming::new(8_000, 4_000, 2_000, 16_666));
+        stats.record(FrameTiming::new(8_000, 4_000, 0, 2_000, 16_666));
         let snap = stats.snapshot(Some(16_666)).unwrap();
         assert_eq!(snap.over_budget_frames, 0, "== budget is on-budget");
         assert_eq!(snap.worst_overrun_us, 0);
@@ -864,7 +950,7 @@ mod tests {
         // A budget tighter than every frame: jank_ratio == 1.0.
         let mut stats = FrameTimingStats::new();
         for _ in 0..4 {
-            stats.record(FrameTiming::new(100, 50, 30, 300));
+            stats.record(FrameTiming::new(100, 50, 0, 30, 300));
         }
         let snap = stats.snapshot(Some(100)).unwrap();
         assert_eq!(snap.over_budget_frames, 4);
@@ -882,7 +968,7 @@ mod tests {
         // while frame_count keeps climbing.
         let mut stats = FrameTimingStats::new();
         for _ in 0..FRAME_TIMING_WINDOW {
-            stats.record(FrameTiming::new(10, 10, 10, 900));
+            stats.record(FrameTiming::new(10, 10, 0, 10, 900));
         }
         let busy = stats.snapshot(Some(500)).unwrap();
         assert_eq!(
@@ -890,7 +976,7 @@ mod tests {
             u32::try_from(FRAME_TIMING_WINDOW).unwrap()
         );
         for _ in 0..FRAME_TIMING_WINDOW {
-            stats.record(FrameTiming::new(10, 10, 10, 100));
+            stats.record(FrameTiming::new(10, 10, 0, 10, 100));
         }
         let calm = stats.snapshot(Some(500)).unwrap();
         assert_eq!(calm.over_budget_frames, 0, "over-budget frames evicted");

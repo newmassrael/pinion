@@ -72,12 +72,22 @@ _WIN_H = 460
 _WINDOW_CAP = 120
 
 # Top-level + nested wire keys the typed FrameTimingsOutcome carries.
-_LAST_KEYS = ("build_us", "encode_us", "render_us", "total_us", "other_us")
+_LAST_KEYS = (
+    "build_us",
+    "encode_us",
+    # R1361.1 — the swapchain-acquire block, split out of render_us.
+    "acquire_us",
+    "render_us",
+    "total_us",
+    "other_us",
+    "work_us",
+)
 _WINDOW_KEYS = (
     "min_total_us",
     "mean_total_us",
     "max_total_us",
     "mean_build_us",
+    "mean_acquire_us",
     "mean_encode_us",
     "mean_render_us",
 )
@@ -162,17 +172,45 @@ def _assert_wire_shape(ft: dict[str, Any]) -> None:
 
 
 def _assert_partition(ft: dict[str, Any]) -> None:
-    """(B) total >= build + encode + render, and the four-way partition
-    total == build + encode + render + other holds exactly."""
+    """(B) total >= build + encode + acquire + render, and the five-way
+    partition total == phases + other holds exactly (R1361.1 added the
+    acquire phase; before it, the vsync block was billed to render)."""
     last = ft["last"]
-    phase_sum = last["build_us"] + last["encode_us"] + last["render_us"]
+    phase_sum = (
+        last["build_us"] + last["encode_us"] + last["acquire_us"] + last["render_us"]
+    )
     assert last["total_us"] >= phase_sum, (
-        f"total_us ({last['total_us']}) must be >= build+encode+render "
+        f"total_us ({last['total_us']}) must be >= build+encode+acquire+render "
         f"({phase_sum}) — disjoint sub-intervals"
     )
     assert last["total_us"] == phase_sum + last["other_us"], (
         f"total must partition exactly into phases + other: "
         f"total={last['total_us']} phases={phase_sum} other={last['other_us']}"
+    )
+
+
+def _assert_work_excludes_the_acquire_block(ft: dict[str, Any]) -> None:
+    """(B2) R1361.1 — work_us == build + encode + render, i.e. the frame
+    minus the acquire BLOCK. This is the split's whole point: `total`
+    answers "how long was the frame", `work` answers "how much of it was
+    mine". They differ by exactly the vsync wait.
+
+    Structural, never a magnitude: acquire may legitimately be 0 (nothing
+    to wait for) or dominate (vsync-paced), and both are healthy."""
+    last = ft["last"]
+    expected = last["build_us"] + last["encode_us"] + last["render_us"]
+    assert last["work_us"] == expected, (
+        f"work_us ({last['work_us']}) must be build+encode+render "
+        f"({expected}) — the acquire block is excluded by definition"
+    )
+    assert last["work_us"] <= last["total_us"], (
+        f"work ({last['work_us']}) cannot exceed the frame ({last['total_us']})"
+    )
+    # total - work is the block plus post-paint overhead, never negative.
+    assert last["total_us"] - last["work_us"] == last["acquire_us"] + last["other_us"], (
+        f"the gap between total and work is exactly acquire+other: "
+        f"total={last['total_us']} work={last['work_us']} "
+        f"acquire={last['acquire_us']} other={last['other_us']}"
     )
 
 
@@ -226,6 +264,10 @@ def _assert_phase_means_bounded(ft: dict[str, Any]) -> None:
         f"mean_encode ({w['mean_encode_us']}) must be <= mean_total "
         f"({w['mean_total_us']})"
     )
+    assert w["mean_acquire_us"] <= w["mean_total_us"], (
+        f"mean_acquire ({w['mean_acquire_us']}) must be <= mean_total "
+        f"({w['mean_total_us']})"
+    )
     assert w["mean_render_us"] <= w["mean_total_us"], (
         f"mean_render ({w['mean_render_us']}) must be <= mean_total "
         f"({w['mean_total_us']})"
@@ -255,6 +297,7 @@ def body() -> None:
 
         # ── (B) Phase-partition invariant ────────────────────────
         _assert_partition(ft_a)
+        _assert_work_excludes_the_acquire_block(ft_a)
 
         # ── (C) Window ordering invariant ────────────────────────
         _assert_window_ordering(ft_a)
@@ -276,6 +319,7 @@ def body() -> None:
             )
             # Invariants must still hold on every fresh frame.
             _assert_partition(ft_loop)
+            _assert_work_excludes_the_acquire_block(ft_loop)
             _assert_window_ordering(ft_loop)
             prev_count = now_count
         assert prev_count - start_count_e >= 3, (
@@ -294,6 +338,7 @@ def body() -> None:
             ft_s = tf.frame_timings()
             _assert_wire_shape(ft_s)
             _assert_partition(ft_s)
+            _assert_work_excludes_the_acquire_block(ft_s)
             _assert_window_ordering(ft_s)
             _assert_fps_consistency(ft_s)
             _assert_phase_means_bounded(ft_s)

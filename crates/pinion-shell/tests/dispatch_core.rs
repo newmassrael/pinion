@@ -3455,13 +3455,13 @@ mod r907_frame_timing_substrate {
     fn r907_record_round_trips_projected_snapshot() {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
-        core.record_frame_timing("main", FrameTiming::new(300, 100, 80, 540));
+        core.record_frame_timing("main", FrameTiming::new(300, 100, 0, 80, 540));
         let snap = core
             .frame_timings_for_window("main")
             .expect("recorded → projectable");
         assert_eq!(snap.frame_count, 1);
         assert_eq!(snap.window_len, 1);
-        assert_eq!(snap.last, FrameTiming::new(300, 100, 80, 540));
+        assert_eq!(snap.last, FrameTiming::new(300, 100, 0, 80, 540));
         assert_eq!(snap.mean_total_us, 540);
         // total >= build + encode + render holds on the projected last.
         assert!(snap.last.total_us >= snap.last.phase_sum_us());
@@ -3471,8 +3471,8 @@ mod r907_frame_timing_substrate {
     fn r907_record_per_window_independent() {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
-        core.record_frame_timing("main", FrameTiming::new(100, 50, 30, 200));
-        core.record_frame_timing("inspector", FrameTiming::new(900, 80, 60, 1100));
+        core.record_frame_timing("main", FrameTiming::new(100, 50, 0, 30, 200));
+        core.record_frame_timing("inspector", FrameTiming::new(900, 80, 0, 60, 1100));
         let main = core.frame_timings_for_window("main").unwrap();
         let inspector = core.frame_timings_for_window("inspector").unwrap();
         assert_eq!(main.last.total_us, 200);
@@ -3487,9 +3487,9 @@ mod r907_frame_timing_substrate {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
         // Three frames of growing cost: count = 3, window folds all 3.
-        core.record_frame_timing("main", FrameTiming::new(100, 50, 30, 200));
-        core.record_frame_timing("main", FrameTiming::new(200, 60, 40, 400));
-        core.record_frame_timing("main", FrameTiming::new(300, 70, 50, 600));
+        core.record_frame_timing("main", FrameTiming::new(100, 50, 0, 30, 200));
+        core.record_frame_timing("main", FrameTiming::new(200, 60, 0, 40, 400));
+        core.record_frame_timing("main", FrameTiming::new(300, 70, 0, 50, 600));
         let snap = core.frame_timings_for_window("main").unwrap();
         assert_eq!(snap.frame_count, 3);
         assert_eq!(snap.window_len, 3);
@@ -3505,7 +3505,7 @@ mod r907_frame_timing_substrate {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
         core.register_window("inspector");
-        core.record_frame_timing("inspector", FrameTiming::new(100, 50, 30, 200));
+        core.record_frame_timing("inspector", FrameTiming::new(100, 50, 0, 30, 200));
         assert!(core.frame_timings_for_window("inspector").is_some());
         // Cleanup removes the per-window accumulator (the remove_window
         // OR-of-maps reports at least one map carried an entry).
@@ -3520,7 +3520,7 @@ mod r907_frame_timing_substrate {
     fn r925_no_target_fps_yields_no_budget() {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
-        core.record_frame_timing("main", FrameTiming::new(300, 100, 80, 540));
+        core.record_frame_timing("main", FrameTiming::new(300, 100, 0, 80, 540));
         let snap = core.frame_timings_for_window("main").unwrap();
         // No declared frame target → unpaced window → no jank concept.
         assert_eq!(snap.budget_us, None);
@@ -3535,8 +3535,8 @@ mod r907_frame_timing_substrate {
         // 60fps budget = ⌊1e6 / 60⌋ = 16_666µs. One frame under it, one
         // well over it: the over-budget frame is the dropped frame.
         core.set_target_fps_for_window("main", 60);
-        core.record_frame_timing("main", FrameTiming::new(8_000, 4_000, 2_000, 14_000));
-        core.record_frame_timing("main", FrameTiming::new(12_000, 5_000, 3_000, 20_000));
+        core.record_frame_timing("main", FrameTiming::new(8_000, 4_000, 0, 2_000, 14_000));
+        core.record_frame_timing("main", FrameTiming::new(12_000, 5_000, 0, 3_000, 20_000));
         let snap = core.frame_timings_for_window("main").unwrap();
         assert_eq!(snap.budget_us, Some(16_666), "⌊1e6/60⌋ µs budget");
         assert_eq!(
@@ -3551,7 +3551,7 @@ mod r907_frame_timing_substrate {
     fn r925_budget_is_the_pacing_budget_higher_fps_is_tighter() {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
-        core.record_frame_timing("main", FrameTiming::new(5_000, 3_000, 1_000, 12_000));
+        core.record_frame_timing("main", FrameTiming::new(5_000, 3_000, 0, 1_000, 12_000));
         // The reported budget IS 1/fps — the very deadline the render
         // loop paces to. A higher target gives a tighter budget, so a
         // frame that met the 60fps budget can miss the 120fps one.
@@ -3572,7 +3572,7 @@ mod r907_frame_timing_substrate {
     fn r925_paused_window_fps_zero_has_no_budget() {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
-        core.record_frame_timing("main", FrameTiming::new(300, 100, 80, 9_999));
+        core.record_frame_timing("main", FrameTiming::new(300, 100, 0, 80, 9_999));
         // fps = 0 is the paused sentinel: no deadline, hence no budget —
         // jank is undefined while the window is frame-stepped.
         core.set_target_fps_for_window("main", 0);
@@ -3590,7 +3590,7 @@ mod r907_frame_timing_substrate {
     fn r926_1_immediate_mode_window_gets_default_60fps_jank_budget() {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
-        core.record_frame_timing("game", FrameTiming::new(8_000, 4_000, 2_000, 20_000));
+        core.record_frame_timing("game", FrameTiming::new(8_000, 4_000, 0, 2_000, 20_000));
         // No target_fps override, but the painted scene carried an
         // immediate-mode subtree -> the render loop paces it at the
         // default 60fps, and the jank profiler must judge against that
@@ -3614,7 +3614,7 @@ mod r907_frame_timing_substrate {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
         // Default (no flag published): retained-tree -> no budget.
-        core.record_frame_timing("w", FrameTiming::new(100, 50, 30, 9_999));
+        core.record_frame_timing("w", FrameTiming::new(100, 50, 0, 30, 9_999));
         assert!(!core.immediate_subtree_for_window("w"));
         assert_eq!(core.frame_timings_for_window("w").unwrap().budget_us, None);
         // An explicit target_fps override wins over the immediate-mode

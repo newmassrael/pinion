@@ -395,6 +395,13 @@ macro_rules! vello_renderer_impl {
             fn resize(&mut self, width: u32, height: u32) {
                 <$name>::resize(self, width, height);
             }
+
+            // R1361.1 §5.16 — forward the template's recorded swapchain-acquire
+            // block so the shell can subtract it from the render span. Without
+            // this the trait default (`0`) would silently re-merge the phases.
+            fn last_acquire_us(&self) -> u64 {
+                <$name>::last_acquire_us(self)
+            }
         }
 
         impl $crate::VelloRenderer for $name {

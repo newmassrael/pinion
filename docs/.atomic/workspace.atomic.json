@@ -23822,6 +23822,60 @@
         "A HUD on a secondary window needs a per-window-keyed holder; deferred until a consumer needs it rather than guessed at"
       ]
     },
+    "R1361.1": {
+      "decision_summary": "R1361.1: split the swapchain acquire out of render_us — the phase R1361's chart proved was a lie — and retract two contaminated claims from R1361's carry",
+      "changes_bullets": [
+        "acquire_us is now a real 4th phase: the forge template times its own get_current_texture() span, WidgetRenderer::last_acquire_us reports it (default 0 = \"this backend cannot block\", true for TUI + stub renderers), and the shell subtracts it so render_us finally means what R907 claimed",
+        "FrameTiming::work_us() = build + encode + render — the frame minus the block. total answers \"how long was the frame\", work answers \"how much of it was mine\"; a capacity question wants the latter",
+        "Wire (§2#2): scene/frame_timings last gains acquire_us + work_us, window gains mean_acquire_us; r907 asserts the 5-way partition + that work excludes the block",
+        "The chart plots work beside total, so the GAP between those two lines IS the vsync block — the reading a profiler exists to give",
+        "This clears R1361's carry INLINE rather than deferring it: pinion-forge is an in-tree crate, so \"needs the forge template\" was never a valid carry (only vendor/sce + environment qualify). The user caught the rationalisation"
+      ],
+      "verification_bullets": [
+        "Clean idle measurement, one hello-frame-profiler window (us): unpaced total=1137 work=1107 acquire=9 render=863; set_fps 60 total=16273 work=696 acquire=15559 render=399. acquire ~15.5ms == one 60Hz vsync interval, which is the theory-predicted value",
+        "The split's value in one number: that paced frame's pre-R1361.1 render_us would have read 15_958us — a window doing 0.4ms of drawing reported as 16ms of \"render\", i.e. exactly like a GPU-bound one",
+        "r1361_1_acquire_is_counted_by_total_but_not_by_work: two frames with IDENTICAL total and phase_sum, one blocked + one working, must differ 20x in work_us — the property the pre-split shape could not express",
+        "3 gates green (clippy -D pedantic / cargo test --workspace 0 failures / cargo doc) + r907 PASS with the new partition assertions",
+        "63 FrameTiming::new call sites migrated mechanically with acquire=0, which preserves every pre-existing assertion's meaning exactly (0 == the no-block world they were written in)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "CORRECTION to R1361's carry — \"render_us ~998000 vs build ~400\" was CONTAMINATED: every one of those runs followed a cargo build/test, and the ~1s is a wgpu timeout, not a characterisation. The idle numbers are acquire=15559/render=399 at 60fps. The STRUCTURAL defect was real (the acquire provably sits inside the span, and the split is vindicated by the clean data); the MAGNITUDE I recorded was not. I published a number measured under a confound",
+        "CORRECTION to R1361's carry — \"r925 is PRE-EXISTING red\" is RETRACTED as unsubstantiated. That baseline was stash-verified during a full rebuild, so it too was load-confounded. r925 passed 3/3 idle, then failed 3/3 later, and the probe showed the ~1s block MOVING between phases run to run (acquire=15559 once, render=998863 later) — this box's present path is erratic, not r925. My change cannot affect it: it does not touch total_us",
+        "r925 local flakiness is an ENVIRONMENT carry (the one category the round rules allow): CI globs every demo under Xvfb and main is green there. Its section B does sit exactly on wgpu's ~1s timeout (budget 1_000_000us), which makes it maximally fragile to any such stall — worth revisiting if it ever reds in CI",
+        "present() / render_to_texture may block too (observed render_us~998863 with acquire~7 on an erratic run). The acquire split localised that, which is the split working; whether present deserves its own phase wants a real consumer, not a guess",
+        "paint_cycle test harness still 2 copies (3 triggers the lift). HUD subtree never fragment-caches (inherent to a live readout)"
+      ],
+      "publishable_decision_summary": "R1361.1: split the swapchain acquire out of render_us — the phase R1361's chart proved was a lie — and retract two contaminated claims from R1361's carry",
+      "publishable_changes_bullets": [
+        "acquire_us is now a real 4th phase: the forge template times its own get_current_texture() span, WidgetRenderer::last_acquire_us reports it (default 0 = \"this backend cannot block\", true for TUI + stub renderers), and the shell subtracts it so render_us finally means what R907 claimed",
+        "FrameTiming::work_us() = build + encode + render — the frame minus the block. total answers \"how long was the frame\", work answers \"how much of it was mine\"; a capacity question wants the latter",
+        "Wire (§2#2): scene/frame_timings last gains acquire_us + work_us, window gains mean_acquire_us; r907 asserts the 5-way partition + that work excludes the block",
+        "The chart plots work beside total, so the GAP between those two lines IS the vsync block — the reading a profiler exists to give",
+        "This clears R1361's carry INLINE rather than deferring it: pinion-forge is an in-tree crate, so \"needs the forge template\" was never a valid carry (only vendor/sce + environment qualify). The user caught the rationalisation"
+      ],
+      "publishable_verification_bullets": [
+        "Clean idle measurement, one hello-frame-profiler window (us): unpaced total=1137 work=1107 acquire=9 render=863; set_fps 60 total=16273 work=696 acquire=15559 render=399. acquire ~15.5ms == one 60Hz vsync interval, which is the theory-predicted value",
+        "The split's value in one number: that paced frame's pre-R1361.1 render_us would have read 15_958us — a window doing 0.4ms of drawing reported as 16ms of \"render\", i.e. exactly like a GPU-bound one",
+        "r1361_1_acquire_is_counted_by_total_but_not_by_work: two frames with IDENTICAL total and phase_sum, one blocked + one working, must differ 20x in work_us — the property the pre-split shape could not express",
+        "3 gates green (clippy -D pedantic / cargo test --workspace 0 failures / cargo doc) + r907 PASS with the new partition assertions",
+        "63 FrameTiming::new call sites migrated mechanically with acquire=0, which preserves every pre-existing assertion's meaning exactly (0 == the no-block world they were written in)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CORRECTION to R1361's carry — \"render_us ~998000 vs build ~400\" was CONTAMINATED: every one of those runs followed a cargo build/test, and the ~1s is a wgpu timeout, not a characterisation. The idle numbers are acquire=15559/render=399 at 60fps. The STRUCTURAL defect was real (the acquire provably sits inside the span, and the split is vindicated by the clean data); the MAGNITUDE I recorded was not. I published a number measured under a confound",
+        "CORRECTION to R1361's carry — \"r925 is PRE-EXISTING red\" is RETRACTED as unsubstantiated. That baseline was stash-verified during a full rebuild, so it too was load-confounded. r925 passed 3/3 idle, then failed 3/3 later, and the probe showed the ~1s block MOVING between phases run to run (acquire=15559 once, render=998863 later) — this box's present path is erratic, not r925. My change cannot affect it: it does not touch total_us",
+        "r925 local flakiness is an ENVIRONMENT carry (the one category the round rules allow): CI globs every demo under Xvfb and main is green there. Its section B does sit exactly on wgpu's ~1s timeout (budget 1_000_000us), which makes it maximally fragile to any such stall — worth revisiting if it ever reds in CI",
+        "present() / render_to_texture may block too (observed render_us~998863 with acquire~7 on an erratic run). The acquire split localised that, which is the split working; whether present deserves its own phase wants a real consumer, not a guess",
+        "paint_cycle test harness still 2 copies (3 triggers the lift). HUD subtree never fragment-caches (inherent to a live readout)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

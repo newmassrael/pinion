@@ -1434,6 +1434,7 @@ impl<V: WidgetView> AppShell<V> {
         // scope's `else { return; }` arms diverge, so the fall-through
         // path that reaches `record_frame_timing` always assigns both.
         let encode_us;
+        let acquire_us;
         let render_us;
         // R1036 PR-17 — the `renderer.render` outcome for this frame, fed into
         // the per-window render-fidelity record so `scene/render_fidelity`
@@ -1530,7 +1531,17 @@ impl<V: WidgetView> AppShell<V> {
             if let Some(frame) = captured {
                 slot.last_capture = Some(frame);
             }
-            render_us = instant_delta_us(render_start, Instant::now());
+            // R1361.1 §5.16 — split the swapchain acquire out of the render
+            // phase. `render` brackets `get_current_texture()`, which BLOCKS on
+            // vsync (`PresentMode::AutoVsync`), so the raw span is
+            // "work + wait-for-image". Only the backend can see the split, so it
+            // reports the block and we subtract: `render_us` becomes work, and
+            // `acquire_us` becomes the idle wait a profiler needs to tell
+            // "I am slow" from "I am merely waiting". Saturating because the two
+            // are measured by different clocks reads and must never underflow.
+            let render_span_us = instant_delta_us(render_start, Instant::now());
+            acquire_us = renderer.last_acquire_us().min(render_span_us);
+            render_us = render_span_us.saturating_sub(acquire_us);
         };
         // R1036 PR-17 §2 #7 — record the uncontaminated fidelity fingerprint of
         // the frame just ENCODED + presented for this window (per-TextGrid
@@ -1620,7 +1631,7 @@ impl<V: WidgetView> AppShell<V> {
         let total_us = instant_delta_us(frame_start, Instant::now());
         self.core.record_frame_timing(
             target_window,
-            pinion_runtime::FrameTiming::new(build_us, encode_us, render_us, total_us),
+            pinion_runtime::FrameTiming::new(build_us, encode_us, acquire_us, render_us, total_us),
         );
         // R1361 §5.16 §5.22 — hand the freshly-recorded history to any
         // in-app profiler HUD (`use_frame_timings`). Immediately after

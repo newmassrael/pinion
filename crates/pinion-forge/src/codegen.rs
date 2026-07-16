@@ -191,6 +191,22 @@ pub struct __NAME__ {
     context: ::vello::util::RenderContext,
     surface: ::vello::util::RenderSurface<'static>,
     renderer: ::vello::Renderer,
+    /// R1361.1 §5.16 — µs the last [`__NAME__::render`] spent BLOCKED in
+    /// `get_current_texture()` waiting for the compositor to release a
+    /// swapchain image. Idle time, not work: under `PresentMode::AutoVsync`
+    /// this is the vsync pace-setter, and it degrades to wgpu's ~1s acquire
+    /// timeout when nothing is presenting.
+    ///
+    /// Recorded here rather than measured by the caller because the acquire
+    /// is *inside* this method: the shell brackets `render` as one span and
+    /// cannot see the split. Before R1361.1 the block was silently billed to
+    /// the render phase, which made a vsync-blocked idle window read exactly
+    /// like a GPU-bound one (measured 998ms "render" against 0.4ms build).
+    ///
+    /// A plain `u64` on the struct, not a return-value change: `render`'s
+    /// signature is contracted with `pinion_shell::WidgetRenderer` and every
+    /// hand-written stub renderer mirrors it.
+    last_acquire_us: u64,
 }
 
 /// Errors returned by [`__NAME__`]. Closed enum so the caller can
@@ -299,7 +315,15 @@ impl __NAME__ {
                 pipeline_cache: ::std::option::Option::None,
             },
         )?;
-        ::std::result::Result::Ok(Self { context, surface, renderer })
+        ::std::result::Result::Ok(Self { context, surface, renderer, last_acquire_us: 0 })
+    }
+
+    /// R1361.1 §5.16 — µs the last [`Self::render`] spent blocked in the
+    /// swapchain acquire. See [`Self::last_acquire_us`]'s field doc; the
+    /// shell subtracts it from the render span so `render_us` measures work.
+    #[must_use]
+    pub fn last_acquire_us(&self) -> u64 {
+        self.last_acquire_us
     }
 
     /// Submit one Vello scene frame against the configured surface.
@@ -345,7 +369,16 @@ impl __NAME__ {
         // `Surface` error the shell logs). Timeout (transient, retry) and
         // Occluded (window hidden) are not surface invalidations — a
         // reconfigure neither helps nor is needed, so they only skip.
-        let surface_texture = match self.surface.surface.get_current_texture() {
+        let __acquire_start = ::std::time::Instant::now();
+        let __acquired = self.surface.surface.get_current_texture();
+        // Record BEFORE the error arms below return: a timeout/outdated
+        // frame is exactly the case whose block is worth reporting, and an
+        // early return must not leave a stale value from an older frame.
+        self.last_acquire_us = ::std::convert::TryFrom::try_from(
+            __acquire_start.elapsed().as_micros(),
+        )
+        .unwrap_or(u64::MAX);
+        let surface_texture = match __acquired {
             ::vello::wgpu::CurrentSurfaceTexture::Success(t)
             | ::vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             ::vello::wgpu::CurrentSurfaceTexture::Timeout => {

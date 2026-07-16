@@ -70,28 +70,39 @@
 //! window is the correct default for a retained tree, and `r925_frame_budget`
 //! pins that contract (section A: no target ⇒ no budget).
 //!
-//! ## What this chart exposed on its first run (R1361)
+//! ## What this chart found on its first run, and R1361.1 fixed
 //!
 //! The point of a forcing consumer is that it finds things, and this one did
-//! so immediately: the plot is dominated by a flat `render` line pinned near
-//! **1000ms**, against a `build` of ~0.4ms.
+//! so immediately: the plot came up dominated by a huge flat `render` line
+//! against a `build` of well under a millisecond.
 //!
-//! That is not this HUD being slow, and not the chart lying. `render_us`
+//! That was not this HUD being slow, nor the chart lying. `render_us`
 //! brackets `WidgetRenderer::render`, and the forge-generated `render` calls
 //! `surface.get_current_texture()` *inside* it under
-//! `PresentMode::AutoVsync` — so the phase includes a **blocking wait for a
-//! swapchain image**, which degrades to `wgpu`'s ~1s acquire timeout
-//! wherever nothing is presenting. `render_us` has therefore always measured
-//! "render + wait-for-image" while its doc claimed "CPU-side cost only";
-//! R1361 corrected that doc (`pinion_runtime::FrameTiming::render_us`).
+//! `PresentMode::AutoVsync` — so the phase contained a **blocking wait for a
+//! swapchain image**. `render_us` had measured "render + wait-for-image"
+//! since R907 while its doc claimed "CPU-side cost only", which made a
+//! vsync-blocked window read exactly like a GPU-bound one.
 //!
-//! Nothing about the substrate changed — R907's numbers were always this
-//! shape. What changed is that a *chart* makes a flat 1-second line
-//! unmissable in one frame, where a text table asking a reader to notice
-//! that `render_us: 998433` is implausible hid it for 450 rounds. Splitting
-//! the acquire into its own phase needs the forge template to report it
-//! separately; that is the follow-up, and until it lands a large `render_us`
-//! must not be read as "drawing is slow".
+//! **R1361.1 split it out.** The forge template records its own acquire span,
+//! `WidgetRenderer::last_acquire_us` reports it (defaulting to `0` for
+//! backends that cannot block), and the shell subtracts it. Measured on this
+//! window, idle machine, in µs:
+//!
+//! | | total | work | build | encode | acquire | render |
+//! |---|---|---|---|---|---|---|
+//! | unpaced | 1137 | 1107 | 139 | 105 | **9** | 863 |
+//! | `scene/set_fps 60` | 16273 | **696** | 214 | 83 | **15559** | 399 |
+//!
+//! The paced frame is 96% block and 0.7ms of work — the textbook
+//! vsync-bound picture (`acquire ≈ 15.5ms` is one 60Hz vsync interval).
+//! Pre-R1361.1 its `render_us` would have read **`15_958µs`**: "rendering
+//! takes 16ms", the opposite of the truth. One machine, one run — the ratio
+//! is the claim, not the absolutes.
+//!
+//! The chart plots `acquire` and `render` separately, plus `work` beside
+//! `total`: **the gap between the `total` and `work` lines is the vsync
+//! block**, which is the reading a profiler exists to give.
 //!
 //! ## The observer effect, stated plainly
 //!
@@ -164,16 +175,23 @@ const HOVER_OVERLAY_T: f32 = 0.08;
 const PRESSED_OVERLAY_T: f32 = 0.12;
 const DISABLED_OVERLAY_T: f32 = 0.50;
 
-/// The four plotted phases, in the canonical `stat unit` reading order:
-/// the headline span first, then the three disjoint sub-intervals that
-/// partition it. `total >= build + encode + render` holds by construction,
-/// so the total line is an envelope over the other three — the visual form
-/// of the substrate's own invariant.
+/// The plotted phases, in the canonical `stat unit` reading order: the
+/// headline span first, then the disjoint sub-intervals that partition it.
+/// `total >= build + encode + acquire + render` holds by construction, so
+/// the total line is an envelope over the rest — the visual form of the
+/// substrate's own invariant.
+///
+/// `work` (= `build + encode + render`, the acquire excluded) is plotted
+/// beside `total` because the gap between the two lines IS the vsync block:
+/// when they separate, the window is waiting, not labouring. That gap is
+/// what R1361.1 made visible — before it, the block hid inside `render`.
 type PhasePick = fn(&FrameTiming) -> u64;
-const PHASES: [(&str, PhasePick); 4] = [
+const PHASES: [(&str, PhasePick); 6] = [
     ("total", |s| s.total_us),
+    ("work", |s| s.work_us()),
     ("build", |s| s.build_us),
     ("encode", |s| s.encode_us),
+    ("acquire", |s| s.acquire_us),
     ("render", |s| s.render_us),
 ];
 
@@ -504,7 +522,7 @@ mod tests {
         for &total in totals {
             // A plausible partition: total >= build + encode + render.
             let (b, e, r) = (total / 2, total / 4, total / 8);
-            stats.record(FrameTiming::new(b, e, r, total));
+            stats.record(FrameTiming::new(b, e, 0, r, total));
         }
         let view = FrameTimingsView {
             samples: stats.samples().copied().collect(),
@@ -585,10 +603,16 @@ mod tests {
         // must draw the deadline it is actually paced to.
         let core: pinion_runtime::CoreShell<ProfilerView> = pinion_runtime::CoreShell::new();
 
+        // Derived, not hardcoded: the budget is appended after the phases,
+        // so its index moves whenever PHASES does. (It was pinned to `4`
+        // first, and adding the R1361.1 acquire+work series silently made
+        // that assertion point at a phase line instead.)
+        let budget_series = format!("chart.series.{}", PHASES.len());
+
         seed(core.root_owner(), &[2_000, 3_000], None);
         let unpaced = paint_cycle(&core, 760, 520);
         assert!(
-            find(&unpaced, "chart.series.4").is_none(),
+            find(&unpaced, &budget_series).is_none(),
             "an unpaced window must draw NO budget line — 'missed budget' is \
              meaningless without a declared frame target",
         );
@@ -596,8 +620,8 @@ mod tests {
         seed(core.root_owner(), &[2_000, 3_000], Some(16_666));
         let paced = paint_cycle(&core, 760, 520);
         assert!(
-            find(&paced, "chart.series.4").is_some(),
-            "a paced window draws its budget as the 5th series",
+            find(&paced, &budget_series).is_some(),
+            "a paced window draws its budget as the series after the phases",
         );
     }
 
@@ -606,7 +630,7 @@ mod tests {
         // The line must sit AT the budget, not merely exist. Built from the
         // published budget_us, so it tracks whatever target was declared.
         let view = FrameTimingsView {
-            samples: vec![FrameTiming::new(1, 1, 1, 4_000)],
+            samples: vec![FrameTiming::new(1, 1, 0, 1, 4_000)],
             snapshot: FrameTimingStats::default().snapshot(None),
         };
         assert_eq!(
@@ -616,8 +640,8 @@ mod tests {
         );
 
         let mut stats = FrameTimingStats::new();
-        stats.record(FrameTiming::new(1_000, 500, 250, 4_000));
-        stats.record(FrameTiming::new(1_000, 500, 250, 4_000));
+        stats.record(FrameTiming::new(1_000, 500, 0, 250, 4_000));
+        stats.record(FrameTiming::new(1_000, 500, 0, 250, 4_000));
         let paced = FrameTimingsView {
             samples: stats.samples().copied().collect(),
             snapshot: stats.snapshot(Some(16_666)),
@@ -673,7 +697,7 @@ mod tests {
         // The HUD's numbers must be the snapshot's — the same fold
         // `scene/frame_timings` returns — so RPC and pixels cannot drift.
         let mut stats = FrameTimingStats::new();
-        stats.record(FrameTiming::new(1_000, 500, 250, 4_000));
+        stats.record(FrameTiming::new(1_000, 500, 0, 250, 4_000));
         let view = FrameTimingsView {
             samples: stats.samples().copied().collect(),
             snapshot: stats.snapshot(Some(16_666)),

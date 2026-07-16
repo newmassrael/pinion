@@ -39,12 +39,14 @@
 //!     "frame_count": 142,
 //!     "window_len": 120,
 //!     "last": {
-//!       "build_us": 320, "encode_us": 110, "render_us": 80,
-//!       "total_us": 540, "other_us": 30
+//!       "build_us": 320, "encode_us": 110, "acquire_us": 8200,
+//!       "render_us": 80, "total_us": 8740, "other_us": 30,
+//!       "work_us": 510
 //!     },
 //!     "window": {
 //!       "min_total_us": 480, "mean_total_us": 533, "max_total_us": 980,
-//!       "mean_build_us": 310, "mean_encode_us": 105, "mean_render_us": 78
+//!       "mean_build_us": 310, "mean_encode_us": 105,
+//!       "mean_acquire_us": 8100, "mean_render_us": 78
 //!     },
 //!     "mean_fps": 1876.0,
 //!     "budget_us": 16666,
@@ -58,15 +60,25 @@
 //! - `frame_count` is cumulative across the window's whole lifetime;
 //!   `window_len` is the rolling-window size the `window` aggregates
 //!   fold over (capped at [`pinion_runtime::FRAME_TIMING_WINDOW`]).
-//! - `last.other_us = total_us - (build + encode + render)` — the
-//!   post-paint overhead (accessibility / IME / finalize) not in a
-//!   named phase. `total_us >= build + encode + render` always
-//!   (disjoint sub-intervals), so a client can assert the partition.
+//! - `last.other_us = total_us - (build + encode + acquire + render)`
+//!   — the post-paint overhead (accessibility / IME / finalize) not in
+//!   a named phase. `total_us >= build + encode + acquire + render`
+//!   always (disjoint sub-intervals), so a client can assert the
+//!   partition.
 //! - `mean_fps = 1e6 / window.mean_total_us` (`0.0` for a zero mean);
 //!   echoed so a client need not re-derive the rate.
-//! - `render_us` is **CPU-side GPU-submit cost**, not GPU execution
-//!   wall-clock (queue submission returns before the GPU finishes);
-//!   true GPU timing needs timestamp queries (a deferred axis).
+//! - **`acquire_us` is a BLOCK, not work** (R1361.1): the
+//!   `get_current_texture()` wait for a swapchain image. Under
+//!   `PresentMode::AutoVsync` it is the vsync pace-setter, so a healthy
+//!   60fps window spends most of its `total_us` here while doing almost
+//!   nothing. Read `work_us = build + encode + render` to answer "how
+//!   much room do I have?", and `total_us` to answer "how long was the
+//!   frame". Before R1361.1 the block was billed to `render_us`, which
+//!   made an idle vsync-blocked window read as GPU-bound.
+//! - `render_us` is **CPU-side GPU-submit cost** with the acquire
+//!   excluded, not GPU execution wall-clock (queue submission returns
+//!   before the GPU finishes); true GPU timing needs timestamp queries
+//!   (a deferred axis).
 //! - `budget_us` is the per-frame budget the window is judged against
 //!   (`1e6 / target_fps`, set via `scene/set_fps`). **Omitted entirely**
 //!   (`null`) for an unpaced window — an idle retained window has no
@@ -119,12 +131,21 @@ pub struct FrameTimingsLast {
     pub build_us: u64,
     /// Structured-scene → `vello` fragment encode.
     pub encode_us: u64,
-    /// GPU command-buffer record + submit (CPU-side only).
+    /// R1361.1 — blocking wait for a swapchain image. Idle, not work;
+    /// the vsync pace-setter under `AutoVsync`.
+    pub acquire_us: u64,
+    /// GPU command-buffer record + submit (CPU-side only, acquire
+    /// excluded).
     pub render_us: u64,
     /// Whole productive frame.
     pub total_us: u64,
-    /// `total - (build + encode + render)`: post-paint overhead.
+    /// `total - (build + encode + acquire + render)`: post-paint
+    /// overhead.
     pub other_us: u64,
+    /// R1361.1 — `build + encode + render`: the frame's real work, with
+    /// the `acquire_us` block excluded. Echoed so a client need not
+    /// re-derive the one number a capacity question actually wants.
+    pub work_us: u64,
 }
 
 /// Rolling-window aggregates, in microseconds.
@@ -140,7 +161,9 @@ pub struct FrameTimingsWindow {
     pub mean_build_us: u64,
     /// Mean encode-phase µs over the window.
     pub mean_encode_us: u64,
-    /// Mean render-phase µs over the window.
+    /// R1361.1 — mean acquire-phase (vsync block) µs over the window.
+    pub mean_acquire_us: u64,
+    /// Mean render-phase µs over the window (acquire excluded).
     pub mean_render_us: u64,
 }
 
@@ -201,9 +224,11 @@ pub fn frame_timings(
         last: FrameTimingsLast {
             build_us: s.last.build_us,
             encode_us: s.last.encode_us,
+            acquire_us: s.last.acquire_us,
             render_us: s.last.render_us,
             total_us: s.last.total_us,
             other_us: s.last.other_us(),
+            work_us: s.last.work_us(),
         },
         window: FrameTimingsWindow {
             min_total_us: s.min_total_us,
@@ -211,6 +236,7 @@ pub fn frame_timings(
             max_total_us: s.max_total_us,
             mean_build_us: s.mean_build_us,
             mean_encode_us: s.mean_encode_us,
+            mean_acquire_us: s.mean_acquire_us,
             mean_render_us: s.mean_render_us,
         },
         mean_fps: s.mean_fps,
@@ -251,7 +277,7 @@ mod tests {
 
     #[test]
     fn r907_single_frame_projects_field_for_field() {
-        let snap = snapshot_of(&[FrameTiming::new(300, 100, 80, 540)]);
+        let snap = snapshot_of(&[FrameTiming::new(300, 100, 0, 80, 540)]);
         let out = frame_timings(Some(snap)).unwrap();
         assert_eq!(out.frame_count, 1);
         assert_eq!(out.window_len, 1);
@@ -267,7 +293,7 @@ mod tests {
 
     #[test]
     fn r907_phase_partition_holds_on_wire() {
-        let snap = snapshot_of(&[FrameTiming::new(200, 90, 60, 400)]);
+        let snap = snapshot_of(&[FrameTiming::new(200, 90, 0, 60, 400)]);
         let out = frame_timings(Some(snap)).unwrap();
         // total == build + encode + render + other, by construction.
         assert_eq!(
@@ -279,9 +305,9 @@ mod tests {
     #[test]
     fn r907_window_ordering_invariant() {
         let snap = snapshot_of(&[
-            FrameTiming::new(200, 100, 50, 400),
-            FrameTiming::new(300, 150, 70, 600),
-            FrameTiming::new(500, 200, 120, 980),
+            FrameTiming::new(200, 100, 0, 50, 400),
+            FrameTiming::new(300, 150, 0, 70, 600),
+            FrameTiming::new(500, 200, 0, 120, 980),
         ]);
         let out = frame_timings(Some(snap)).unwrap();
         assert!(out.window.min_total_us <= out.window.mean_total_us);
@@ -292,7 +318,7 @@ mod tests {
 
     #[test]
     fn r907_serialized_nests_last_and_window() {
-        let snap = snapshot_of(&[FrameTiming::new(300, 100, 80, 540)]);
+        let snap = snapshot_of(&[FrameTiming::new(300, 100, 0, 80, 540)]);
         let out = frame_timings(Some(snap)).unwrap();
         let json = serde_json::to_value(out).unwrap();
         assert_eq!(
@@ -313,7 +339,7 @@ mod tests {
 
     #[test]
     fn r907_mean_fps_inverts_mean_total_on_wire() {
-        let snap = snapshot_of(&[FrameTiming::new(10_000, 4_000, 2_000, 16_666)]);
+        let snap = snapshot_of(&[FrameTiming::new(10_000, 4_000, 0, 2_000, 16_666)]);
         let out = frame_timings(Some(snap)).unwrap();
         #[allow(clippy::cast_precision_loss, reason = "test re-derivation")]
         let rederived = 1_000_000.0_f32 / out.window.mean_total_us as f32;
@@ -327,7 +353,7 @@ mod tests {
         // Unpaced window: budget_us absent from the wire, the three
         // jank fields present and zero (a client tells "untracked" from
         // "on budget" by budget_us presence).
-        let snap = snapshot_of(&[FrameTiming::new(200, 100, 50, 9_999)]);
+        let snap = snapshot_of(&[FrameTiming::new(200, 100, 0, 50, 9_999)]);
         let out = frame_timings(Some(snap)).unwrap();
         assert_eq!(out.budget_us, None);
         assert_eq!(out.over_budget_frames, 0);
@@ -358,9 +384,9 @@ mod tests {
         // budget 500µs; totals 400 / 600 / 980 -> 2 over, worst 480.
         let snap = snapshot_with_budget(
             &[
-                FrameTiming::new(200, 100, 50, 400),
-                FrameTiming::new(300, 150, 70, 600),
-                FrameTiming::new(500, 200, 120, 980),
+                FrameTiming::new(200, 100, 0, 50, 400),
+                FrameTiming::new(300, 150, 0, 70, 600),
+                FrameTiming::new(500, 200, 0, 120, 980),
             ],
             Some(500),
         );
@@ -374,7 +400,7 @@ mod tests {
     #[test]
     fn r925_serialized_emits_budget_us_when_paced() {
         let snap = snapshot_with_budget(
-            &[FrameTiming::new(8_000, 4_000, 2_000, 16_666)],
+            &[FrameTiming::new(8_000, 4_000, 0, 2_000, 16_666)],
             Some(16_666),
         );
         let out = frame_timings(Some(snap)).unwrap();
@@ -398,10 +424,10 @@ mod tests {
         // integer counts (over_budget_frames / window_len).
         let snap = snapshot_with_budget(
             &[
-                FrameTiming::new(100, 50, 30, 300),
-                FrameTiming::new(100, 50, 30, 300),
-                FrameTiming::new(10, 10, 10, 100),
-                FrameTiming::new(10, 10, 10, 100),
+                FrameTiming::new(100, 50, 0, 30, 300),
+                FrameTiming::new(100, 50, 0, 30, 300),
+                FrameTiming::new(10, 10, 0, 10, 100),
+                FrameTiming::new(10, 10, 0, 10, 100),
             ],
             Some(200),
         );
