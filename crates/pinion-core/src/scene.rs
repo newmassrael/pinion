@@ -1948,9 +1948,37 @@ pub enum PathCommand {
 /// Vector path primitive.
 ///
 /// v0 §5.3 R20 shape: `commands: Vec<PathCommand>` is the structured
-/// command stream the rasterizer consumes; `rect: Rect` is the
-/// absolute pixel bounding box for layout / hit-test; `style:
-/// PathStyle` carries stroke and fill specifications.
+/// command stream the rasterizer consumes; `rect: Rect` is the pixel
+/// bounding box for layout / hit-test; `style: PathStyle` carries
+/// stroke and fill specifications.
+///
+/// # Coordinate basis (R1358)
+///
+/// `commands` are **relative to `rect`'s origin**: a command at
+/// `(0, 0)` paints at the node's top-left corner, wherever layout puts
+/// it. This is the same basis [`ImmediateModeNode`] uses for its
+/// viewport, and the basis the R722 [`PathStyle::gradient`] already
+/// used (its UV `(0,0)`/`(1,1)` anchor to `rect`) — R1358 aligned the
+/// geometry with the gradient that shared the node, so a path is now
+/// positioned by `rect` alone.
+///
+/// Commands are read against whatever `rect` the node carries **at paint
+/// time**. For a scene that is laid out, that is layout's *output*: the
+/// taffy pass overwrites `rect` from [`PathNode::layout`], so a path
+/// follows flex / dock / resize like any other node, and a producer
+/// pinning a path to an exact region declares it —
+/// [`LayoutStyle::with_absolute_position`](crate::style::LayoutStyle::with_absolute_position)
+/// plus a size — rather than baking window coordinates into commands.
+/// A scene that is never laid out keeps its authored `rect` and the
+/// commands are read against that instead; the two cases in-tree are an
+/// overlay injected *after* the layout pass (`pinion-overlay`'s window
+/// chrome) and a `from:state` blueprint subtree.
+///
+/// A command may fall outside `rect` (a stroke's join, a Bézier bowing
+/// past its endpoints); `rect` is a bounding box for layout and
+/// hit-test, never a clip.
+///
+/// [`PathStyle::gradient`]: crate::style::PathStyle::gradient
 ///
 /// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]

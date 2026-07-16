@@ -6037,6 +6037,12 @@ fn parse_image_style(v: Option<&Value>) -> Result<pinion_core::style::ImageStyle
 
 /// Wire→`Vec<PathCommand>` coercion. Each command is an object
 /// `{op: "MoveTo"|"LineTo"|"CurveTo"|"Close", ...args}`.
+///
+/// R1358 — the points are relative to the node's own `rect`, the same
+/// basis `scene/snapshot` reports them in (see
+/// [`PathNode`](pinion_core::scene::PathNode)). A client that read a path
+/// back, edited a vertex, and wrote it here round-trips unchanged; one
+/// that authors window coordinates paints at `rect + command`.
 fn parse_path_commands(
     v: Option<&Value>,
 ) -> Result<Vec<pinion_core::scene::PathCommand>, RpcError> {

@@ -61,8 +61,12 @@ DEMO_ON_STROKE = (0x10, 0x10, 0x10)
 STROKE_TEAL = (0x00, 0x96, 0x88)
 STROKE_W = 8
 
-# Boot-frame (Off / Idle) pixel anchors, in window-absolute device px —
-# the same coordinate space the path commands are authored in.
+# Boot-frame (Off / Idle) pixel anchors, in window-absolute device px.
+# R1358 made the path COMMANDS rect-relative while these anchors stayed
+# put: the migration is pixel-identical by construction (each producer
+# rebased its geometry onto the very origin the paint adapter translates
+# by), so an unchanged pixel here is the proof that the coordinate-basis
+# change moved nothing on screen.
 TRI_INTERIOR = (90, 133)        # filled triangle centroid -> PATH_BLUE
 CHEVRON_STROKE = (185, 120)     # first chevron segment midpoint -> STROKE_TEAL
 DIAMOND_CENTRE = (160, 270)     # diamond interior (Off) -> PATH_BLUE
@@ -96,9 +100,32 @@ def body() -> None:
                   "triangle command stream")
         assert_color(tri["style"]["fill"], PATH_BLUE, "triangle fill")
         assert_eq(tri["style"]["stroke"], None, "triangle has no stroke")
-        # First vertex matches the authored coordinate.
-        assert_eq(tri["commands"][0]["point"]["x"], 50.0, "triangle start.x")
-        assert_eq(tri["commands"][0]["point"]["y"], 160.0, "triangle start.y")
+        # R1358 — commands are relative to the node's OWN rect, so the first
+        # vertex reads 0-based and `rect.origin + command` is the window px.
+        # Asserting the SUM (not merely the new literal) is what makes this a
+        # contract test rather than a transcription of the change: a producer
+        # that regressed to window-absolute commands would still satisfy the
+        # 0-based read only by moving its rect, and the sum would then double
+        # the origin and fail. The pixel phase below samples that same sum.
+        assert_eq(tri["commands"][0]["point"]["x"], 0.0,
+                  "triangle start.x is rect-local")
+        assert_eq(tri["commands"][0]["point"]["y"], 80.0,
+                  "triangle start.y is rect-local")
+        assert_eq(tri["rect"]["x"] + tri["commands"][0]["point"]["x"], 50.0,
+                  "triangle start.x in window px = rect.x + command")
+        assert_eq(tri["rect"]["y"] + tri["commands"][0]["point"]["y"], 160.0,
+                  "triangle start.y in window px = rect.y + command")
+        # Every vertex lands inside the node's own box — the property that
+        # makes the path movable by layout alone (it is false for absolute
+        # commands on any node not at the window origin).
+        for i, cmd in enumerate(tri["commands"]):
+            if "point" not in cmd:
+                continue
+            px, py = cmd["point"]["x"], cmd["point"]["y"]
+            assert 0.0 <= px <= tri["rect"]["w"], \
+                f"triangle vertex {i} x={px} within rect w={tri['rect']['w']}"
+            assert 0.0 <= py <= tri["rect"]["h"], \
+                f"triangle vertex {i} y={py} within rect h={tri['rect']['h']}"
 
         # Chevron — open stroke-only polyline, round cap.
         chevron = _path_of(snap, "chevron")

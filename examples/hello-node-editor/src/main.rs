@@ -513,6 +513,12 @@ fn upx(v: i32) -> u32 {
     u32::try_from(v.max(0)).unwrap_or(0)
 }
 
+/// `u32` → `i32`, [`upx`]'s inverse for arithmetic back in signed graph space
+/// (R1358 rebases a wire's commands by its `Rect`'s already-clamped origin).
+fn ipx(v: u32) -> i32 {
+    i32::try_from(v).unwrap_or(i32::MAX)
+}
+
 /// `usize` index → `i32` for port-row arithmetic (port counts are tiny).
 fn irow(i: usize) -> i32 {
     i32::try_from(i).unwrap_or(0)
@@ -7056,14 +7062,6 @@ fn view_edge(
         (wpx(c2.0, zoom), wpx(c2.1, zoom)),
     );
     let width = wstroke(width, zoom);
-    let commands = vec![
-        PathCommand::MoveTo(ppt(from.0, from.1)),
-        PathCommand::CurveTo {
-            c1: ppt(c1.0, c1.1),
-            c2: ppt(c2.0, c2.1),
-            end: ppt(to.0, to.1),
-        },
-    ];
     // Bounding box over ALL four control points (the curve bows outside the
     // endpoint box, so a snapshot bbox from endpoints alone understates the
     // true extent — an AI-first `scene/snapshot` bbox query must be honest).
@@ -7075,9 +7073,23 @@ fn view_edge(
     let oy = ys.iter().copied().min().unwrap_or(0);
     let bw = (xs.iter().copied().max().unwrap_or(0) - ox).max(1);
     let bh = (ys.iter().copied().max().unwrap_or(0) - oy).max(1);
+    let rect = Rect::new(upx(ox), upx(oy), upx(bw), upx(bh));
+    // R1358 — the commands are relative to the node's own rect. Rebase by the
+    // rect's origin rather than the raw minimum: `upx` clamps a negative min
+    // to 0, and the paint adapter translates by exactly `rect.{x,y}`, so only
+    // the clamped value is the true inverse of the placement.
+    let (org_x, org_y) = (ipx(rect.x), ipx(rect.y));
+    let commands = vec![
+        PathCommand::MoveTo(ppt(from.0 - org_x, from.1 - org_y)),
+        PathCommand::CurveTo {
+            c1: ppt(c1.0 - org_x, c1.1 - org_y),
+            c2: ppt(c2.0 - org_x, c2.1 - org_y),
+            end: ppt(to.0 - org_x, to.1 - org_y),
+        },
+    ];
     Scene::Path(
         PathNode::new(
-            Rect::new(upx(ox), upx(oy), upx(bw), upx(bh)),
+            rect,
             commands,
             PathStyle::stroked(Stroke::new(color, width).with_cap(StrokeCap::Round)),
         )

@@ -46,6 +46,17 @@
 //! exist because exactly this invariant was left undocumented elsewhere and a
 //! later round read the absence as a design.
 //!
+//! ## `Path` commands are rect-relative (R1358)
+//!
+//! [`ViewBlueprint::Path`]'s `commands` follow the [`PathNode`] contract:
+//! they are relative to that variant's own `rect`, not window
+//! coordinates. Nothing changed at
+//! R1358 — this materialises whatever the wire sent — but what a client
+//! must *send* did: a blueprint path is authored in its own box and placed
+//! by its `rect`. Recorded because the round that flips a wire form's
+//! meaning is the round that must say so; the pass-through would otherwise
+//! read as unaffected.
+//!
 //! ## Variant coverage (R43)
 //!
 //! R40.11 landed `Box` + `Container`. R43 adds the remaining

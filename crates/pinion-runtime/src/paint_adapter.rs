@@ -99,9 +99,9 @@ use crate::text_engine::{LineBoxMetrics, SelfHostedTextEngine, single_line_overf
 /// * [`Scene::Text`] — shape via [`LayoutCache::layout`], walk
 ///   `positioned_glyphs()` per `parley::GlyphRun`, emit one
 ///   [`vello::Scene::draw_glyphs`] call per run.
-/// * [`Scene::Path`] — lower `commands` to a Vello [`BezPath`] and
-///   fill (`style.fill`, non-zero winding) + stroke (`style.stroke`)
-///   via `paint_path` (R721).
+/// * [`Scene::Path`] — lower `commands` (rect-relative since R1358) to
+///   a Vello [`BezPath`] and fill (`style.fill`, non-zero winding) +
+///   stroke (`style.stroke`) via `paint_path` (R721).
 /// * [`Scene::External`] / [`Scene::Effect`] / [`Scene::Image`] —
 ///   no-op. The Image paint primitive attaches in a follow-up round.
 pub fn to_vello<F>(scene: &Scene, fill_hook: &F, text_cache: &mut LayoutCache, out: &mut VelloScene)
@@ -2360,18 +2360,6 @@ fn to_kurbo_cap(cap: StrokeCap) -> KurboCap {
     }
 }
 
-/// R721 §5.16 — rasterize a [`Scene::Path`] leaf: lower its
-/// `Vec<PathCommand>` into a Vello [`BezPath`] (absolute device
-/// coordinates), then fill the closed region (non-zero winding — the
-/// CSS / SVG default) with either the R722 `style.gradient` (box-
-/// relative to the node's `rect`) when present or the solid
-/// `style.fill`, and stroke the outline with `style.stroke`. All
-/// [`PathStyle`](pinion_core::style::PathStyle)
-/// arms are independently optional, so a fill-only, stroke-only, or
-/// empty style each paints only what it carries; an empty command
-/// stream is a no-op. Issued into the caller's fresh sub-scene before
-/// any child `append`, preserving the R706 "out receives appends only"
-/// invariant.
 /// R740 §5.16 — paint a [`Scene::Image`]
 /// leaf. Resolves `node.source` through the decode-once
 /// [`ImageCache`] (a missing / undecodable source paints nothing — the
@@ -2454,6 +2442,29 @@ fn paint_image(
     }
 }
 
+/// R721 §5.16 — rasterize a [`Scene::Path`] leaf: lower its
+/// `Vec<PathCommand>` into a Vello [`BezPath`], then fill the closed
+/// region (non-zero winding — the CSS / SVG default) with either the
+/// R722 `style.gradient` when present or the solid `style.fill`, and
+/// stroke the outline with `style.stroke`. All
+/// [`PathStyle`](pinion_core::style::PathStyle) arms are independently
+/// optional, so a fill-only, stroke-only, or empty style each paints
+/// only what it carries; an empty command stream is a no-op. Issued
+/// into the caller's fresh sub-scene before any child `append`,
+/// preserving the R706 "out receives appends only" invariant.
+///
+/// R1358 — both the geometry and the gradient are
+/// [`PathNode::rect`](pinion_core::scene::PathNode::rect)-relative: the
+/// node's resolved rect origin enters as a `translate` on the paint
+/// transform, so layout alone positions the path. Before R1358 the
+/// commands were window-absolute while the gradient was already
+/// rect-relative — the two halves of one node disagreed, and a path
+/// could not be laid out by flex at all.
+///
+/// (This paragraph pair sat on [`paint_image`] until R1358: the R740
+/// image text was appended to the same doc block, orphaning the R721
+/// description from the fn it describes and leaving `paint_path`
+/// undocumented. Found by adding to it.)
 fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
     if node.commands.is_empty() {
         return;
@@ -2472,15 +2483,28 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
             _ => {}
         }
     }
+    // R1358 — compose `transform * translate(rect.{x,y})` so a
+    // rect-local `(0, 0)` command lands at the node's resolved
+    // top-left, exactly as `paint_immediate_mode_node` places its
+    // viewport-local driver. The path is positioned by layout's
+    // `rect` output; the commands never carry window coordinates.
+    let local_transform =
+        transform * Affine::translate((f64::from(node.rect.x), f64::from(node.rect.y)));
+    // The gradient's UV geometry anchors to the node's rect, which in
+    // the local frame is at the origin — passing `node.rect` here
+    // (whose x/y are already applied by `local_transform`) would offset
+    // the gradient twice. `gradient_brush` is shared with the Box arm,
+    // where the rect IS the paint frame, so the rebase belongs here.
+    let local_rect = Rect::new(0, 0, node.rect.w, node.rect.h);
     // Fill: a gradient (R722) overrides the solid fill when present,
     // mirroring `fill_box_bg`'s Box gradient-over-solid precedence.
     if let Some(gradient) = &node.style.gradient {
-        let brush = gradient_brush(gradient, node.rect);
-        out.fill(Fill::NonZero, transform, &brush, None, &path);
+        let brush = gradient_brush(gradient, local_rect);
+        out.fill(Fill::NonZero, local_transform, &brush, None, &path);
     } else if let Some(fill) = node.style.fill
         && fill != Color::TRANSPARENT
     {
-        out.fill(Fill::NonZero, transform, to_peniko(fill), None, &path);
+        out.fill(Fill::NonZero, local_transform, to_peniko(fill), None, &path);
     }
     if let Some(stroke) = node.style.stroke
         && stroke.width > 0
@@ -2489,7 +2513,7 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
         let kurbo_stroke = Stroke::new(f64::from(stroke.width)).with_caps(to_kurbo_cap(stroke.cap));
         out.stroke(
             &kurbo_stroke,
-            transform,
+            local_transform,
             to_peniko(stroke.color),
             None,
             &path,
@@ -4229,6 +4253,9 @@ mod tests {
         // A closed filled triangle, a stroked (round-cap) chevron, and
         // a cubic-Bezier arc — every PathCommand variant + both
         // PathStyle arms (fill / stroke), plus a combined fill+stroke.
+        // R1358 — each shape's commands are relative to its OWN rect, so
+        // all three are authored in the same 0..60 box and the rects lay
+        // them out side by side.
         let tri = Scene::Path(PathNode::new(
             Rect::new(0, 0, 60, 60),
             vec![
@@ -4242,9 +4269,9 @@ mod tests {
         let chevron = Scene::Path(PathNode::new(
             Rect::new(60, 0, 60, 60),
             vec![
-                PathCommand::MoveTo(p(60.0, 60.0)),
-                PathCommand::LineTo(p(90.0, 0.0)),
-                PathCommand::LineTo(p(120.0, 60.0)),
+                PathCommand::MoveTo(p(0.0, 60.0)),
+                PathCommand::LineTo(p(30.0, 0.0)),
+                PathCommand::LineTo(p(60.0, 60.0)),
             ],
             PathStyle::stroked(
                 Stroke::new(Color::rgb(0, 0x96, 0x88), 8).with_cap(StrokeCap::Round),
@@ -4253,11 +4280,11 @@ mod tests {
         let arc = Scene::Path(PathNode::new(
             Rect::new(120, 0, 60, 60),
             vec![
-                PathCommand::MoveTo(p(120.0, 60.0)),
+                PathCommand::MoveTo(p(0.0, 60.0)),
                 PathCommand::CurveTo {
-                    c1: p(120.0, 0.0),
-                    c2: p(180.0, 0.0),
-                    end: p(180.0, 60.0),
+                    c1: p(0.0, 0.0),
+                    c2: p(60.0, 0.0),
+                    end: p(60.0, 60.0),
                 },
             ],
             PathStyle::filled(Color::rgb(0xe5, 0x39, 0x35))

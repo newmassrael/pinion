@@ -120,16 +120,18 @@ fn edge_line(a: Rect, b: Rect) -> Scene {
     let (ax, ay) = center(a);
     let (bx, by) = center(b);
     let bounds = segment_bounds(a, b);
+    // R1358 — path commands are relative to the node's rect, so the segment
+    // endpoints are rebased onto `bounds`' origin; `bounds` itself is placed
+    // absolutely like every other solved node on the map.
+    let (ox, oy) = origin(bounds);
     let mut node = PathNode::new(
         bounds,
         vec![
-            PathCommand::MoveTo(PathPoint::new(ax, ay)),
-            PathCommand::LineTo(PathPoint::new(bx, by)),
+            PathCommand::MoveTo(PathPoint::new(ax - ox, ay - oy)),
+            PathCommand::LineTo(PathPoint::new(bx - ox, by - oy)),
         ],
         PathStyle::stroked(Stroke::new(EDGE_COLOR, 2)),
     );
-    // The path's COMMANDS are absolute map coordinates; only its bounding box
-    // participates in layout, so it is placed like every other solved node.
     place_at(&mut node.layout, bounds);
     Scene::Path(node)
 }
@@ -151,11 +153,19 @@ fn center_i(rect: Rect) -> (u32, u32) {
     (rect.x + rect.w / 2, rect.y + rect.h / 2)
 }
 
-/// Floating-point centre for the absolute [`PathPoint`] endpoints.
+/// Floating-point centre, the map-space anchor an edge's [`PathPoint`]
+/// endpoints are derived from (R1358 rebases them onto the node's rect).
 #[allow(clippy::cast_precision_loss)] // map coordinates are small (< 2^24), exact in f32.
 fn center(rect: Rect) -> (f32, f32) {
     let (x, y) = center_i(rect);
     (x as f32, y as f32)
+}
+
+/// Floating-point rect origin — the offset R1358 rebases map-space edge
+/// endpoints by, so the commands become relative to the path's own rect.
+#[allow(clippy::cast_precision_loss)] // map coordinates are small (< 2^24), exact in f32.
+fn origin(rect: Rect) -> (f32, f32) {
+    (rect.x as f32, rect.y as f32)
 }
 
 fn segment_bounds(a: Rect, b: Rect) -> Rect {
@@ -257,5 +267,46 @@ mod tests {
         let layout = solve_layout(&PlaceGraph::default());
         let (text, _, _) = collect(&place_map_scene(&layout));
         assert!(text.iter().any(|t| t.contains("장소가 없습니다")));
+    }
+
+    /// R1358 — an edge's commands are relative to its own rect, so the map
+    /// position of an endpoint is `rect.origin + command`. Pins that sum
+    /// against the two places' centres the edge must connect: a regression to
+    /// map-absolute commands would double the origin and land off both.
+    #[test]
+    fn edge_line_commands_are_rect_relative_and_sum_to_the_place_centres() {
+        let a = Rect::new(40, 60, 80, 30);
+        let b = Rect::new(300, 160, 80, 30);
+        let Scene::Path(p) = edge_line(a, b) else {
+            panic!("edge_line builds a Scene::Path")
+        };
+        let [PathCommand::MoveTo(start), PathCommand::LineTo(end)] = p.commands[..] else {
+            panic!("an edge is MoveTo + LineTo, got {:?}", p.commands)
+        };
+        let (ox, oy) = origin(p.rect);
+        assert!(
+            ox > 0.0 && oy > 0.0,
+            "this edge's rect is away from the map origin"
+        );
+        let centre_a = center(a);
+        let centre_b = center(b);
+        assert!(
+            (ox + start.x - centre_a.0).abs() < f32::EPSILON
+                && (oy + start.y - centre_a.1).abs() < f32::EPSILON,
+            "rect.origin + MoveTo must equal place a's centre {centre_a:?}, got {:?}",
+            (ox + start.x, oy + start.y)
+        );
+        assert!(
+            (ox + end.x - centre_b.0).abs() < f32::EPSILON
+                && (oy + end.y - centre_b.1).abs() < f32::EPSILON,
+            "rect.origin + LineTo must equal place b's centre {centre_b:?}, got {:?}",
+            (ox + end.x, oy + end.y)
+        );
+        // The commands themselves are NOT map coordinates — the rect carries
+        // the placement, which is what lets the node be laid out.
+        assert!(
+            (start.x - centre_a.0).abs() > f32::EPSILON,
+            "MoveTo.x must be rect-local, not the map x"
+        );
     }
 }

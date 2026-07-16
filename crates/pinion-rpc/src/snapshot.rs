@@ -136,6 +136,14 @@ pub struct TextSnapshot {
 /// result. `style` mirrors `PathNode.style` so the agent also sees
 /// the paint (stroke colour / width / cap, fill colour) — the
 /// commands describe the shape, the style describes the ink.
+///
+/// R1358 — the commands are **relative to this node's `rect`**, so
+/// the shape and the placement are read from different fields: a
+/// vertex's window position is `rect.origin + command`. An agent
+/// asking "where is this drawn?" reads `rect` (uniform across every
+/// node type); one asking "what shape is it?" reads `commands`, which
+/// are comparable between two nodes regardless of where they sit.
+/// See [`PathNode`](pinion_core::scene::PathNode) for the contract.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathSnapshot {

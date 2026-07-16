@@ -8292,6 +8292,83 @@ fn r1261_large_graph_paints_the_full_structure_at_scale() {
     });
 }
 
+/// R1358 — a wire's painted geometry is relative to its own `rect`, so the
+/// window position of a control point is `rect.origin + command`. This pins
+/// that sum against the `edge_curve` SSOT the hit-test reads: paint and
+/// hit-test derive from one curve, and R1358 must not slide them apart.
+///
+/// Falsifiable in both directions — a producer that regressed to
+/// window-absolute commands would land at `2 * origin` here, and one that
+/// rebased by the raw (unclamped) minimum instead of the rect's origin would
+/// miss whenever a wire extends left of the canvas origin (the case the
+/// `zero_origin` arm below pins, where `upx` floors the minimum at 0).
+#[test]
+fn r1358_wire_commands_are_rect_relative_and_sum_to_the_curve() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let theme = use_theme(THEME_TAG).theme_animated();
+        // Counts the cases where "the command is NOT the window x" is a
+        // meaningful claim (rect.x > 0). Asserted non-zero after the loop so
+        // the check below can never be silently skipped into vacuity.
+        let mut local_checks = 0_u32;
+        // Two cases: a wire well inside the canvas, and one whose control
+        // points reach left of x = 0 (where `upx` clamps the rect origin).
+        for (label, from, to) in [
+            ("interior", (400_i32, 300_i32), (700_i32, 380_i32)),
+            ("zero_origin", (10_i32, 40_i32), (-90_i32, 120_i32)),
+        ] {
+            let scene = view_edge("w".to_string(), from, to, theme.on_surface, 2, 1.0);
+            let Scene::Path(p) = &scene else {
+                panic!("{label}: view_edge builds a Scene::Path")
+            };
+            let (c1, c2) = edge_curve(from, to);
+            // The four control points in window space, per the shared SSOT.
+            // `ppt` is the crate's i32 -> PathPoint helper, so both sides of
+            // the comparison are built by the same conversion the producer uses.
+            let want = [from, c1, c2, to].map(|(x, y)| ppt(x, y));
+            // R1358 — rebase back: rect.origin + command == the window point.
+            let org = ppt(ipx(p.rect.x), ipx(p.rect.y));
+            let got: Vec<PathPoint> = p
+                .commands
+                .iter()
+                .flat_map(|cmd| match *cmd {
+                    PathCommand::MoveTo(pt) | PathCommand::LineTo(pt) => vec![pt],
+                    PathCommand::CurveTo { c1, c2, end } => vec![c1, c2, end],
+                    _ => vec![],
+                })
+                .map(|pt| PathPoint::new(org.x + pt.x, org.y + pt.y))
+                .collect();
+            assert_eq!(got.len(), 4, "{label}: MoveTo + CurveTo = 4 control points");
+            for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+                assert!(
+                    (g.x - w.x).abs() < f32::EPSILON && (g.y - w.y).abs() < f32::EPSILON,
+                    "{label}: control point {i}: rect.origin + command = {:?} must \
+                     equal the edge_curve window point the hit-test reads {:?}",
+                    (g.x, g.y),
+                    (w.x, w.y)
+                );
+            }
+            // The commands themselves must NOT be window coordinates — that is
+            // the property that lets layout, not the producer, place the wire.
+            let PathCommand::MoveTo(start) = p.commands[0] else {
+                panic!("{label}: a wire starts with MoveTo")
+            };
+            if p.rect.x > 0 {
+                assert!(
+                    (start.x - want[0].x).abs() > f32::EPSILON,
+                    "{label}: MoveTo.x must be rect-local, not the window x"
+                );
+                local_checks += 1;
+            }
+        }
+        assert!(
+            local_checks > 0,
+            "at least one case must have a non-zero rect origin, or the \
+             rect-local claim above never ran"
+        );
+    });
+}
+
 #[test]
 fn r1261_wired_input_precompute_matches_the_per_node_scan() {
     // The precomputed wired-port map must equal the old per-node edge scan for

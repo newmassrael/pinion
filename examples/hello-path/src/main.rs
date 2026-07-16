@@ -125,23 +125,25 @@ const GRAD_A: Color = Color::rgb(0x21, 0x96, 0xf3); // blue
 const GRAD_B: Color = Color::rgb(0xe5, 0x39, 0x35); // red
 const GRAD_MID: Color = Color::rgb(0xff, 0xff, 0xff); // white
 
-/// Triangle vertices (window-absolute px). Centroid ≈ (90, 133) — the
-/// fill-arm live-pixel anchor.
-const TRI: [(f32, f32); 3] = [(50.0, 160.0), (130.0, 160.0), (90.0, 80.0)];
+// R1358 — every vertex set below is authored RELATIVE to its own node's
+// rect (`(0, 0)` = the node's top-left); `path_node`'s `origin` places it.
+// The window coordinates quoted as live-pixel anchors are `origin + vertex`,
+// which is exactly where the paint adapter's `translate(rect.{x,y})` puts
+// them.
 
-/// Chevron polyline vertices (window-absolute px). The midpoint of the
-/// first segment, (185, 120), lies on the stroke centreline — the
-/// stroke-arm live-pixel anchor.
-const CHEVRON: [(f32, f32); 3] = [(160.0, 150.0), (210.0, 90.0), (260.0, 150.0)];
+/// Triangle vertices, rect-relative to the `tri` node at (50, 80).
+/// Centroid ≈ (90, 133) in window px — the fill-arm live-pixel anchor.
+const TRI: [(f32, f32); 3] = [(0.0, 80.0), (80.0, 80.0), (40.0, 0.0)];
 
-/// Diamond vertices (window-absolute px). Centre (160, 270) is the
-/// Toggle-witness anchor: `PATH_BLUE` (Off) vs `DEMO_ON_FILL` (On).
-const DIAMOND: [(f32, f32); 4] = [
-    (160.0, 230.0),
-    (210.0, 270.0),
-    (160.0, 310.0),
-    (110.0, 270.0),
-];
+/// Chevron polyline vertices, rect-relative to the `chevron` node at
+/// (160, 90). The midpoint of the first segment, (185, 120) in window px,
+/// lies on the stroke centreline — the stroke-arm live-pixel anchor.
+const CHEVRON: [(f32, f32); 3] = [(0.0, 60.0), (50.0, 0.0), (100.0, 60.0)];
+
+/// Diamond vertices, rect-relative to the `demo_path` node at (110, 230).
+/// Centre (160, 270) in window px is the Toggle-witness anchor:
+/// `PATH_BLUE` (Off) vs `DEMO_ON_FILL` (On).
+const DIAMOND: [(f32, f32); 4] = [(50.0, 0.0), (100.0, 40.0), (50.0, 80.0), (0.0, 40.0)];
 
 fn pt(p: (f32, f32)) -> PathPoint {
     PathPoint::new(p.0, p.1)
@@ -177,21 +179,22 @@ fn open_polyline(verts: &[(f32, f32)]) -> Vec<PathCommand> {
 }
 
 /// A single cubic-Bezier arch: `MoveTo` the left foot, `CurveTo` up over
-/// two control points to the right foot.
+/// two control points to the right foot. Rect-relative to the `arc` node
+/// at (280, 80), so the arch spans its own 60x60 box corner to corner.
 fn arc_commands() -> Vec<PathCommand> {
     vec![
-        PathCommand::MoveTo(pt((280.0, 140.0))),
+        PathCommand::MoveTo(pt((0.0, 60.0))),
         PathCommand::CurveTo {
-            c1: pt((280.0, 80.0)),
-            c2: pt((340.0, 80.0)),
-            end: pt((340.0, 140.0)),
+            c1: pt((0.0, 0.0)),
+            c2: pt((60.0, 0.0)),
+            end: pt((60.0, 60.0)),
         },
     ]
 }
 
-/// Build an absolutely-positioned [`Scene::Path`]. `origin` / `size`
-/// pin the rect (hit-test / snapshot bbox) to the same window-absolute
-/// region the `commands` are authored in.
+/// Build an absolutely-positioned [`Scene::Path`]. `origin` / `size` place
+/// the node; its `commands` are authored relative to that rect (R1358), so
+/// moving a shape means changing `origin` alone — the geometry is untouched.
 fn path_node(
     tag: &'static str,
     origin: (u32, u32),
@@ -224,12 +227,16 @@ fn path_node(
 /// Both are introspectable as data via `scene/snapshot` (geometry kind,
 /// stops, UV) and verified by the R722 demo.
 fn gradient_paths() -> Vec<Scene> {
-    // Linear: a filled rect so any column samples the ramp.
+    // Linear: a filled rect so any column samples the ramp. R1358 — the
+    // geometry now fills the node's rect corner-to-corner in the SAME frame
+    // the gradient's UV `(0,0)`..`(1,1)` anchors to, so the ramp spans the
+    // shape exactly; before R1358 the two halves of this node used different
+    // coordinate bases.
     let linear_rect = vec![
-        PathCommand::MoveTo(pt((45.0, 168.0))),
-        PathCommand::LineTo(pt((140.0, 168.0))),
-        PathCommand::LineTo(pt((140.0, 220.0))),
-        PathCommand::LineTo(pt((45.0, 220.0))),
+        PathCommand::MoveTo(pt((0.0, 0.0))),
+        PathCommand::LineTo(pt((95.0, 0.0))),
+        PathCommand::LineTo(pt((95.0, 52.0))),
+        PathCommand::LineTo(pt((0.0, 52.0))),
         PathCommand::Close,
     ];
     let linear = path_node(
@@ -250,12 +257,7 @@ fn gradient_paths() -> Vec<Scene> {
         "grad_radial",
         (267, 160),
         (76, 70),
-        closed_polygon(&[
-            (305.0, 160.0),
-            (343.0, 195.0),
-            (305.0, 230.0),
-            (267.0, 195.0),
-        ]),
+        closed_polygon(&[(38.0, 0.0), (76.0, 35.0), (38.0, 70.0), (0.0, 35.0)]),
         PathStyle::default().with_gradient(
             Gradient::radial((0.5, 0.5), 0.5)
                 .with_stop(0.0, GRAD_B)

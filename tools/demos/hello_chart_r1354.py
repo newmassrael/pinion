@@ -74,9 +74,20 @@ def _cmd_types(node: dict) -> list[str]:
     return [c["type"] for c in node["commands"]]
 
 
-def _points(node: dict) -> list[tuple[float, float]]:
+def _window_points(node: dict) -> list[tuple[float, float]]:
+    """A path node's vertices in WINDOW px.
+
+    R1358 — path commands are relative to the node's own `rect`, so a
+    path's *position* lives in `rect` and its *shape* in `commands`; a
+    vertex's window position is the sum. Reading the command alone would
+    report the vertical crosshair below as motionless wherever it sits on
+    screen, since its shape never changes — only its rect moves.
+    """
+    ox, oy = node["rect"]["x"], node["rect"]["y"]
     return [
-        (c["point"]["x"], c["point"]["y"]) for c in node["commands"] if "point" in c
+        (ox + c["point"]["x"], oy + c["point"]["y"])
+        for c in node["commands"]
+        if "point" in c
     ]
 
 
@@ -131,14 +142,14 @@ def body() -> None:
             assert find_by_tag(snap, f"chart.inspect.marker.{i}") is not None, f"marker {i}"
             assert find_by_tag(snap, f"chart.inspect.value.{i}") is not None, f"value {i}"
 
-        crosshair_boot = _points(_path(snap, "chart.inspect.crosshair"))[0][0]
+        crosshair_boot = _window_points(_path(snap, "chart.inspect.crosshair"))[0][0]
 
         # ── Drive the scrub over RPC: the crosshair must move right ───
         d.intervene("/external/value", 0.9)
         moved = d.query("/external/value")
         assert abs(moved - 0.9) < 0.02, f"scrub value set to 0.9, got {moved}"
         snap2 = d.snapshot(source="paint", viewport=VIEWPORT)
-        crosshair_moved = _points(_path(snap2, "chart.inspect.crosshair"))[0][0]
+        crosshair_moved = _window_points(_path(snap2, "chart.inspect.crosshair"))[0][0]
         assert crosshair_moved > crosshair_boot + 20, (
             f"crosshair moved right with the scrub: {crosshair_boot} -> {crosshair_moved}"
         )
@@ -153,7 +164,7 @@ def body() -> None:
         )
 
         # Series 0's boot polyline bbox for the pixel phase.
-        series0_points = _points(_path(snap, "chart.series.0"))
+        series0_points = _window_points(_path(snap, "chart.series.0"))
 
         # ── Brush zoom (R1357): the sibling RangeSlider external ──────
         assert find_by_tag(snap, "chart_brush") is not None, "brush strip present"
@@ -178,7 +189,7 @@ def body() -> None:
         # margins -> x in [66, 730]. Without clipping the pinned domain
         # extrapolates far outside it.
         for i in range(3):
-            for x, _y in _points(_path(snap_zoom, f"chart.series.{i}")):
+            for x, _y in _window_points(_path(snap_zoom, f"chart.series.{i}")):
                 assert 65.0 <= x <= 731.0, (
                     f"series {i} vertex x={x} escaped the clipped plot [66,730]"
                 )

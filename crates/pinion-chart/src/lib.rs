@@ -57,14 +57,20 @@
 //!
 //! # Known limitations (do not build on these without reading)
 //!
-//! * **The chart is not layout-native.** [`LineChart::build`] takes a
-//!   *window-absolute* rect and must be handed its final geometry before
-//!   the layout pass runs, so it cannot flex, sit in a dock panel, or
-//!   respond to a resize. This is a consequence of `Scene::Path` commands
-//!   being painted at literal device pixels rather than relative to the
-//!   node's laid-out rect; [`LineChart::build`] documents the precise
-//!   consequence. Fixing the primitive is the prerequisite, and the
-//!   chart's `build` signature is expected to change with it.
+//! * **The chart is not layout-native — but the primitive no longer stops
+//!   it (R1358).** [`LineChart::build`] still takes the window-absolute
+//!   rect it will occupy and must be handed that geometry before the
+//!   layout pass runs, so it cannot yet flex, sit in a dock panel, or
+//!   respond to a resize, and must be embedded under a root at the window
+//!   origin. Until R1358 the *primitive* made this unfixable: `Scene::Path`
+//!   commands painted at literal device pixels, so a chart's geometry was
+//!   welded to a window position no matter what the chart did. R1358 made
+//!   path commands relative to the node's own rect, removing that blocker.
+//!   The remaining work is this crate's: emit children relative to a
+//!   placed chart root, and discover the size at view time (the
+//!   measured-rect reactive seam). See the `line` module's coordinate
+//!   contract for the specifics. `build`'s signature changes with that
+//!   follow-up.
 //! * **§2 #6 GUI/TUI dual does not hold for this crate.** The TUI backend
 //!   does not render `Scene::Path`, so in a terminal a chart loses its
 //!   series, axes, gridlines, crosshair and markers — only the background,

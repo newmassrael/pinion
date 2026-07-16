@@ -2,30 +2,35 @@
 //! retained [`Scene`] of axes, gridlines, tick labels, series polylines,
 //! optional area fills, and a legend.
 //!
-//! # Coordinate contract — a known limitation, not a design
+//! # Coordinate contract — a remaining limitation, no longer a primitive one
 //!
-//! [`LineChart::build`] takes a **window-absolute** [`Rect`] and must be
-//! given it *before* the layout pass runs. That is forced by the current
-//! `Scene::Path` primitive: the paint adapter lowers `commands` at literal
-//! device coordinates and never offsets them by the rect taffy assigned,
-//! so a path's geometry cannot participate in layout.
+//! [`LineChart::build`] takes the [`Rect`] the chart will occupy and must
+//! be given it *before* the layout pass runs, so the chart is still not a
+//! layout citizen: it cannot flex, dock, tab, or resize.
 //!
-//! The precise consequence — the distinction matters:
+//! Until R1358 that was **unfixable from this crate**: the `Scene::Path`
+//! primitive painted `commands` at literal device coordinates and never
+//! offset them by the rect layout assigned, so a path's geometry could not
+//! participate in layout at all. R1358 made path commands relative to the
+//! node's own rect (the basis the R722 gradient UV already used), so a
+//! path is now placed by its rect like any other node. Every path here
+//! declares `absolute_position` + size, which is why that migration was
+//! pixel-identical for this crate.
 //!
-//! * An ancestor that positions by **layout** (an ordinary flex
-//!   `Container`, a dock panel, a splitter) moves this chart's text and
-//!   boxes but **not** its paths, desyncing them. So the chart must be a
-//!   direct child of a root at the window origin, and **cannot be docked,
-//!   flexed, tabbed, or resized**.
-//! * An ancestor that positions by **transform** (`Scene::Scroll`) applies
-//!   that transform to paths *and* boxes alike, so they stay consistent —
-//!   the whole chart merely shifts by the scroll offset.
+//! What remains is a **chart-side** redesign — no longer blocked by the
+//! primitive, but not done either. Precisely:
 //!
-//! Do not read this section as a contract to design against: it records a
-//! defect. The fix is to make path commands relative to the node's rect
-//! (aligning them with the gradient UV basis, which is already
-//! rect-relative), after which `build` takes a size and the chart becomes
-//! an ordinary layout citizen. This signature is expected to change.
+//! * Every child is still resolved against the *absolute* `rect` handed to
+//!   [`LineChart::build`] and pinned with an `absolute_position` carrying
+//!   those absolute coordinates, and the chart's root
+//!   [`Container`](pinion_core::Scene) declares no layout of its own. So
+//!   the chart still only lands correctly under a root at the window
+//!   origin. Emitting children relative to a placed chart root is the work.
+//! * `build` also needs its *size* while the view fn runs, which is the
+//!   measured-rect reactive seam's job, not the path primitive's.
+//!
+//! `build`'s signature is expected to change with that follow-up — do not
+//! design against it yet.
 //!
 //! # Introspection
 //!
@@ -253,8 +258,9 @@ impl LineChart {
         &self.series
     }
 
-    /// Build the chart into a [`Scene`] occupying the window-absolute
-    /// `rect`. See the module-level coordinate contract.
+    /// Build the chart into a [`Scene`] occupying `rect`. The rect must be
+    /// the chart's final geometry — it is resolved here, before layout runs.
+    /// See the module-level coordinate contract.
     #[must_use]
     pub fn build(&self, rect: Rect, style: &ChartStyle) -> Scene {
         let plot = Plot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
@@ -697,8 +703,10 @@ fn push_unique(out: &mut Vec<DataPoint>, p: DataPoint) {
 /// instead of extrapolating outside it. Points must already be finite.
 ///
 /// Without this a pinned / zoomed x-domain paints its lines straight
-/// through the axes — `Scene::Path` commands are absolute device pixels
-/// and the paint adapter does not clip them to the node rect.
+/// through the axes: a path's `rect` is a bounding box for layout and
+/// hit-test, never a clip, so the paint adapter happily rasterizes a
+/// vertex that falls outside it (R1358 rebased the commands onto the
+/// rect's origin; it did not make the rect clip them).
 fn clip_to_x_domain(points: &[DataPoint], lo: f64, hi: f64) -> Vec<DataPoint> {
     let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
     let inside = |x: f64| x >= lo && x <= hi;
@@ -767,13 +775,14 @@ fn nearest_point_in(series: &Series, data_x: f64, lo: f64, hi: f64) -> Option<Da
 /// A filled circle marker at `(cx, cy)`, approximated by four cubic
 /// Béziers (no arc `PathCommand`; kappa = 0.5522847498).
 fn marker_node(cx: f32, cy: f32, r: u32, fill: Color, tag: String) -> Scene {
-    let commands = circle_commands(cx, cy, to_f32(r));
     let bbox = Rect::new(
         to_u32(cx - to_f32(r)),
         to_u32(cy - to_f32(r)),
         r * 2 + 1,
         r * 2 + 1,
     );
+    // R1358 — rect-relative commands; the circle centres on its own bbox.
+    let commands = circle_commands(cx - to_f32(bbox.x), cy - to_f32(bbox.y), to_f32(r));
     Scene::Path(
         PathNode::new(bbox, commands, PathStyle::filled(fill))
             .with_tag(tag)
@@ -889,10 +898,10 @@ fn clamp(value: f64, lo: f64, hi: f64) -> f64 {
     value.max(lo).min(hi)
 }
 
-/// A stroked polyline path from window-absolute points.
+/// A stroked polyline path from plot-space points.
 fn stroke_path(points: &[(f32, f32)], stroke: Stroke, tag: String) -> Scene {
     let bbox = bbox_of(points, stroke.width);
-    let commands = polyline_commands(points, false);
+    let commands = polyline_commands(&rebased(points, bbox), false);
     Scene::Path(
         PathNode::new(bbox, commands, PathStyle::stroked(stroke))
             .with_tag(tag)
@@ -902,19 +911,40 @@ fn stroke_path(points: &[(f32, f32)], stroke: Stroke, tag: String) -> Scene {
 
 /// A filled area path: the polyline dropped to `baseline_y` and closed.
 fn area_path(points: &[(f32, f32)], baseline_y: f32, fill: Color, tag: String) -> Scene {
-    let mut commands = polyline_commands(points, false);
-    if let (Some(&(last_x, _)), Some(&(first_x, _))) = (points.last(), points.first()) {
-        commands.push(PathCommand::LineTo(PathPoint::new(last_x, baseline_y)));
-        commands.push(PathCommand::LineTo(PathPoint::new(first_x, baseline_y)));
-        commands.push(PathCommand::Close);
-    }
+    // The bbox must be resolved BEFORE the commands: the baseline union can
+    // move the box's origin (a baseline above every point lifts `bbox.y`), and
+    // R1358 rebases the commands onto that final origin.
     let mut bbox = bbox_of(points, 0);
     bbox = bbox.union(Rect::new(bbox.x, to_u32(baseline_y), 1, 1));
+    let (ox, oy) = (to_f32(bbox.x), to_f32(bbox.y));
+    let mut commands = polyline_commands(&rebased(points, bbox), false);
+    if let (Some(&(last_x, _)), Some(&(first_x, _))) = (points.last(), points.first()) {
+        commands.push(PathCommand::LineTo(PathPoint::new(
+            last_x - ox,
+            baseline_y - oy,
+        )));
+        commands.push(PathCommand::LineTo(PathPoint::new(
+            first_x - ox,
+            baseline_y - oy,
+        )));
+        commands.push(PathCommand::Close);
+    }
     Scene::Path(
         PathNode::new(bbox, commands, PathStyle::filled(fill))
             .with_tag(tag)
             .with_layout(absolute(bbox)),
     )
+}
+
+/// R1358 — rebase plot-space points onto `bbox`'s origin so the emitted
+/// [`PathCommand`]s are relative to the path node's own rect, which is what
+/// positions it. Subtracting exactly the origin the node carries makes the
+/// rebase pixel-exact: the paint adapter translates by the same value, and a
+/// `bbox_of` origin clamped at 0 stays consistent with the commands built
+/// from it.
+fn rebased(points: &[(f32, f32)], bbox: Rect) -> Vec<(f32, f32)> {
+    let (ox, oy) = (to_f32(bbox.x), to_f32(bbox.y));
+    points.iter().map(|&(x, y)| (x - ox, y - oy)).collect()
 }
 
 fn polyline_commands(points: &[(f32, f32)], close: bool) -> Vec<PathCommand> {
@@ -1238,16 +1268,93 @@ mod tests {
         let Scene::Path(p) = find(&scene, "chart.series.0").expect("series") else {
             panic!("path")
         };
+        // R1358 — commands are relative to the path's OWN rect, so the vertex
+        // must be read back as `rect.x + command.x` to be a plot-space claim.
+        // Testing the bare command here would be vacuous: a rect-local x is
+        // ~0-based by construction and would sit inside 0..200 even for a
+        // series that escaped the plot entirely.
+        let origin = to_f32(p.rect.x);
         for cmd in &p.commands {
             let (PathCommand::MoveTo(pt) | PathCommand::LineTo(pt)) = *cmd else {
                 continue;
             };
+            let x = origin + pt.x;
             assert!(
-                (-0.01..=200.01).contains(&pt.x),
-                "vertex x={} escaped the 0..200 plot",
-                pt.x
+                (-0.01..=200.01).contains(&x),
+                "vertex x={x} escaped the 0..200 plot"
             );
         }
+    }
+
+    #[test]
+    fn r1358_series_commands_are_relative_to_the_paths_own_rect() {
+        // The R1358 contract, pinned at the chart's most-scrutinised producer:
+        // a series' geometry is authored in its own box and PLACED by its
+        // rect, so `rect.origin + command` is the plot pixel the scale maps to
+        // — and the bare commands are NOT those pixels.
+        //
+        // The chart is built away from the window origin so the two bases are
+        // distinguishable; before R1358 the commands WERE the window pixels
+        // and this test's second half would fail.
+        let series = vec![Series::new(
+            "s",
+            (0..=4).map(|i| DataPoint::new(f64::from(i), 5.0)).collect(),
+        )];
+        let scene = LineChart::new(series)
+            .with_x_domain(0.0, 4.0)
+            .with_y_domain(0.0, 10.0)
+            .build(Rect::new(300, 200, 200, 100), &no_legend_zero_margin());
+        let Scene::Path(p) = find(&scene, "chart.series.0").expect("series") else {
+            panic!("path")
+        };
+        // The rect sits at the plot's left edge less the stroke's bbox pad —
+        // near 300, and unambiguously far from the window origin, which is
+        // what makes "local vs window" distinguishable below.
+        assert!(
+            (250..=300).contains(&p.rect.x),
+            "series rect.x={} tracks the chart placed at x=300 (less stroke pad)",
+            p.rect.x
+        );
+        let verts: Vec<(f32, f32)> = p
+            .commands
+            .iter()
+            .filter_map(|cmd| match *cmd {
+                PathCommand::MoveTo(pt) | PathCommand::LineTo(pt) => Some((pt.x, pt.y)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(verts.len(), 5, "one vertex per data point");
+        // Every vertex is rect-local: inside its own box, and NOT the window px.
+        for (i, (vx, vy)) in verts.iter().enumerate() {
+            assert!(
+                *vx >= -0.01 && *vx <= to_f32(p.rect.w) + 0.01,
+                "vertex {i} x={vx} is local to the rect (w={})",
+                p.rect.w
+            );
+            assert!(
+                *vx < 300.0,
+                "vertex {i} x={vx} must NOT be the window px (the rect carries that)"
+            );
+            let _ = vy;
+        }
+        // …and the sum is the plot pixel: a flat y=5 series in domain 0..10
+        // over a 100px-tall plot placed at y=200 sits at the vertical middle.
+        let first_window_x = to_f32(p.rect.x) + verts[0].0;
+        let last_window_x = to_f32(p.rect.x) + verts[4].0;
+        assert!(
+            (first_window_x - 300.0).abs() < 1.5,
+            "x=0 maps to the plot's left edge (window 300), got {first_window_x}"
+        );
+        assert!(
+            (last_window_x - 500.0).abs() < 1.5,
+            "x=4 maps to the plot's right edge (window 500), got {last_window_x}"
+        );
+        let first_window_y = to_f32(p.rect.y) + verts[0].1;
+        assert!(
+            (first_window_y - 250.0).abs() < 1.5,
+            "y=5 of 0..10 maps to the plot's vertical middle (window 250), \
+             got {first_window_y}"
+        );
     }
 
     #[test]

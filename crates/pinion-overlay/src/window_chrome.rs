@@ -46,7 +46,7 @@
 use pinion_core::scene::{
     BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, Scene, TextNode,
 };
-use pinion_core::style::{BoxStyle, Color, LayoutStyle, PathStyle, Stroke, TextStyle};
+use pinion_core::style::{BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextStyle};
 
 use crate::highlight::{
     has_top_level_tag, push_top_level, strip_children_with_prefix, strip_tag, wrap_into_container,
@@ -682,8 +682,19 @@ fn push_control(
     tag: &'static str,
 ) {
     children.push(Scene::Path(
-        glyph_path(rect, kind, is_maximized, glyph)
-            .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
+        glyph_path(rect, kind, is_maximized, glyph).with_layout(
+            LayoutStyle::new()
+                .with_pointer_transparent(true)
+                // R1358 — the glyph's commands are relative to its rect, so the
+                // rect IS the placement. The chrome strip is injected *after*
+                // `compute_layout` (`apply_window_overlays` is the last step of
+                // every paint-scene producer), so today these authored rects
+                // reach paint untouched; declaring the position keeps the glyph
+                // correct if the strip is ever laid out, and matches how every
+                // other `Scene::Path` producer pins a path to a region.
+                .with_absolute_position(rect.x, rect.y)
+                .with_size(Size::px(rect.w.max(1), rect.h.max(1))),
+        ),
     ));
     children.push(Scene::Box(
         BoxNode::new(rect, BoxStyle::filled(Color::TRANSPARENT)).with_tag(tag),
@@ -698,9 +709,10 @@ fn push_control(
 // with `pinion_core::scene` / `paint_adapter` geometry).
 #[allow(clippy::cast_precision_loss)]
 fn glyph_path(rect: Rect, kind: ButtonKind, is_maximized: bool, color: Color) -> PathNode {
-    // Centre a GLYPH_PX square in the button rect.
-    let cx = rect.x + rect.w / 2;
-    let cy = rect.y + rect.h / 2;
+    // R1358 — commands are rect-relative, so the glyph centres on the
+    // button's own half-extents; the node's `rect` carries the placement.
+    let cx = rect.w / 2;
+    let cy = rect.h / 2;
     let half = GLYPH_PX / 2;
     let cyf = cy as f32;
     let left = cx.saturating_sub(half) as f32;
@@ -1318,6 +1330,46 @@ mod tests {
                 "exactly one {tag} after re-inject"
             );
         }
+    }
+
+    /// R1358 — a glyph's commands are relative to its own rect, so the glyph
+    /// centres on the button's half-extents and the rect carries the
+    /// placement. Pins that the glyph is centred wherever the button sits:
+    /// the SAME command stream must come back for two buttons at different x,
+    /// and `rect.origin + command` must land on each button's centre.
+    ///
+    /// This is load-bearing in a way it was not before R1358: the strip is
+    /// injected after `compute_layout`, so these authored rects reach paint
+    /// verbatim, and the commands are now read against them.
+    // Same house idiom as `glyph_path` itself: logical-pixel coordinates are
+    // far below f32's 2^23 exact-integer ceiling, so these casts are lossless.
+    #[allow(clippy::cast_precision_loss)]
+    #[test]
+    fn glyph_commands_are_rect_relative_so_the_glyph_centres_on_its_button() {
+        let c = Color::rgb(0xE0, 0xE0, 0xE0);
+        let left = Rect::new(100, 0, 46, 32);
+        let right = Rect::new(700, 0, 46, 32);
+        let a = glyph_path(left, ButtonKind::Close, false, c);
+        let b = glyph_path(right, ButtonKind::Close, false, c);
+        assert_eq!(
+            a.commands, b.commands,
+            "the same glyph at two positions is ONE command stream — the rect \
+             is what differs (it would not be, with window-absolute commands)"
+        );
+        // `rect.origin + command` centres on each button.
+        let PathCommand::MoveTo(start) = a.commands[0] else {
+            panic!("Close glyph starts with MoveTo")
+        };
+        let half = (GLYPH_PX / 2) as f32;
+        let want = (
+            (left.x + left.w / 2) as f32 - half,
+            (left.y + left.h / 2) as f32 - half,
+        );
+        let got = (left.x as f32 + start.x, left.y as f32 + start.y);
+        assert!(
+            (got.0 - want.0).abs() < f32::EPSILON && (got.1 - want.1).abs() < f32::EPSILON,
+            "glyph's window position {got:?} must be the button-centred square {want:?}"
+        );
     }
 
     #[test]
