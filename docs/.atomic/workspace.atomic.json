@@ -23712,6 +23712,52 @@
         "Fixed-height chrome rows (TITLE_H/STATUS_H) in a resizable window: the textbook fix is auto-height rows, which also removes the shortened-title workaround"
       ]
     },
+    "R1360.4": {
+      "decision_summary": "R1360.4: build(rect) was a landmine — one body, two placement policies, and auto-height chrome",
+      "changes_bullets": [
+        "build(rect) was CONDITIONALLY correct — it baked rect's origin into every child under an unplaced root, so it only landed right beneath a root at the window origin",
+        "Now: one private build_body(size) emits the local body; build(rect) places it with absolute(rect), build_fill(size) with fill_parent(). Same signatures, no landmine, correct under ANY parent",
+        "Kills the post-hoc mutation: build_fill used to call build then overwrite the root's layout through an `if let` that silently no-ops if build ever returns another variant (R832 class)",
+        "Chrome rows are auto-height: a definite width + auto height routes them through the text measure, so the title wraps and the flex slot absorbs it"
+      ],
+      "verification_bullets": [
+        "Pixel-identity oracle: hello_chart_r1354.py asserts window-absolute pixels and passes unchanged — build(rect)'s consumers see no difference",
+        "r1360_chart_layout_native.py (real scene/resize) + hello-chart-fill's 5 tests + pinion-chart's 48 all green",
+        "The r1358 test was rewritten to the new model rather than renumbered: it now pins BOTH contracts (commands local to their path rect; the ROOT carries the placement) and would fail if a child carried rect's origin again",
+        "Chrome reflow verified live at 300x260: the title wraps to 2 lines and the slot shrinks to 280x175 — no clip, no overflow"
+      ],
+      "impact_refs": [
+        "5.21",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Two reviewers disagreed here: SSOT called the 2-entry-point split correct composition; architecture called it a frozen dishonest contract. Both were right about different halves — the split is fine, the CONTRACT was the landmine, so the fix is the shared body + placement policies (the architecture reviewer's own MED-1), not a signature change",
+        "Size::fill() is still hand-rolled: 11 sites spell out with_width(Percent(100)) across shell/chart/examples. A pinion-core Size::fill() is the lift, deferred as its own round",
+        "Legend/tick-label overflow below a tight slot is DOCUMENTED, not clamped — it predates R1360 and the margins normally absorb it, but a docked narrow chart would paint over its neighbour"
+      ],
+      "publishable_decision_summary": "R1360.4: build(rect) was a landmine — one body, two placement policies, and auto-height chrome",
+      "publishable_changes_bullets": [
+        "build(rect) was CONDITIONALLY correct — it baked rect's origin into every child under an unplaced root, so it only landed right beneath a root at the window origin",
+        "Now: one private build_body(size) emits the local body; build(rect) places it with absolute(rect), build_fill(size) with fill_parent(). Same signatures, no landmine, correct under ANY parent",
+        "Kills the post-hoc mutation: build_fill used to call build then overwrite the root's layout through an `if let` that silently no-ops if build ever returns another variant (R832 class)",
+        "Chrome rows are auto-height: a definite width + auto height routes them through the text measure, so the title wraps and the flex slot absorbs it"
+      ],
+      "publishable_verification_bullets": [
+        "Pixel-identity oracle: hello_chart_r1354.py asserts window-absolute pixels and passes unchanged — build(rect)'s consumers see no difference",
+        "r1360_chart_layout_native.py (real scene/resize) + hello-chart-fill's 5 tests + pinion-chart's 48 all green",
+        "The r1358 test was rewritten to the new model rather than renumbered: it now pins BOTH contracts (commands local to their path rect; the ROOT carries the placement) and would fail if a child carried rect's origin again",
+        "Chrome reflow verified live at 300x260: the title wraps to 2 lines and the slot shrinks to 280x175 — no clip, no overflow"
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Two reviewers disagreed here: SSOT called the 2-entry-point split correct composition; architecture called it a frozen dishonest contract. Both were right about different halves — the split is fine, the CONTRACT was the landmine, so the fix is the shared body + placement policies (the architecture reviewer's own MED-1), not a signature change",
+        "Size::fill() is still hand-rolled: 11 sites spell out with_width(Percent(100)) across shell/chart/examples. A pinion-core Size::fill() is the lift, deferred as its own round",
+        "Legend/tick-label overflow below a tight slot is DOCUMENTED, not clamped — it predates R1360 and the margins normally absorb it, but a docked narrow chart would paint over its neighbour"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

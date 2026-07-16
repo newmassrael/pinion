@@ -87,9 +87,6 @@ const THEME_TAG: &str = "app";
 /// construction the thing painted.
 const CHART_TAG: &str = "chart";
 
-const TITLE_H: u32 = 34;
-const STATUS_H: u32 = 22;
-
 /// A deterministic sample feed — 24 buckets of two series. Data is programmatic
 /// (user-facing data input is a separate gap); the axis behaviour under resize
 /// is what this binding exists to show.
@@ -145,23 +142,28 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         .filled(true)
         .build_fill((cw, ch), &chart_style(&theme));
 
-    // Short enough not to wrap at the window's minimum width: the row is
-    // fixed-height, so a wrapping title would clip. (A resizable binding has
-    // to answer this for its chrome too, not just its chart.)
+    // R1360.4 — AUTO height, not a constant. A definite width with an `auto`
+    // height routes the row through the text measure, which wraps at that
+    // width and reports the real height; the flex-grow slot below absorbs
+    // whatever is left. So the title may be any length and the window any
+    // width, and the chrome simply reflows.
+    //
+    // The first cut pinned this row to a constant and then SHORTENED THE
+    // TITLE TEXT to fit — editing the prose to fit the layout, in the one
+    // binding whose whole thesis is that geometry must come from layout
+    // rather than constants. (It also mis-stated the failure: `TextStyle`
+    // defaults to `TextOverflow::Visible` and nothing clips a Container, so
+    // an over-long title would have *overflowed onto the chart*, not clipped.)
     let title = Scene::Text(
         TextNode::styled(
-            "Throughput (pkt/s) — resize me".to_string(),
+            "Throughput (pkt/s) — drag the window edge; the chart re-scales".to_string(),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(16)
                 .with_fg(theme.resolve(ColorRole::OnSurface)),
         )
         .with_layout(
-            LayoutStyle::new().with_size(
-                Size::auto()
-                    .with_width(SizeValue::Percent(100))
-                    .with_height(SizeValue::Px(TITLE_H)),
-            ),
+            LayoutStyle::new().with_size(Size::auto().with_width(SizeValue::Percent(100))),
         ),
     );
 
@@ -189,11 +191,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
                 .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         )
         .with_layout(
-            LayoutStyle::new().with_size(
-                Size::auto()
-                    .with_width(SizeValue::Percent(100))
-                    .with_height(SizeValue::Px(STATUS_H)),
-            ),
+            LayoutStyle::new().with_size(Size::auto().with_width(SizeValue::Percent(100))),
         ),
     );
 

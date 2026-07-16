@@ -274,11 +274,72 @@ impl LineChart {
         &self.series
     }
 
-    /// Build the chart into a [`Scene`] occupying `rect`. The rect must be
-    /// the chart's final geometry — it is resolved here, before layout runs.
-    /// See the module-level coordinate contract.
+    /// Build the chart PINNED to `rect` — the caller states the geometry and
+    /// the chart occupies exactly it.
+    ///
+    /// The body is authored in the chart's own `(0, 0)..(w, h)` frame and the
+    /// root is placed with `absolute_position(rect.xy)`, so — unlike the
+    /// pre-R1360.4 shape, which baked `rect`'s origin into every child and
+    /// was therefore correct **only** under a root at the window origin —
+    /// this is correct under any parent. Pixel-identical at the window
+    /// origin, which is where its one consumer sits.
+    ///
+    /// `rect` must still be known before the layout pass runs. When the
+    /// geometry should come *from* layout instead, use
+    /// [`Self::build_fill`].
     #[must_use]
     pub fn build(&self, rect: Rect, style: &ChartStyle) -> Scene {
+        Scene::Container(
+            self.build_body(Rect::new(0, 0, rect.w, rect.h), style)
+                .with_layout(absolute(rect)),
+        )
+    }
+
+    /// Build the chart as a **layout-native** subtree (R1360): the root fills
+    /// its layout slot, so the chart is *placed and sized by layout* — dock
+    /// it, flex it, resize its container.
+    ///
+    /// R1358 is the prerequisite: it made a [`Scene::Path`]'s commands
+    /// relative to its own rect, so the body's local paths paint correctly
+    /// wherever the root lands. Before it they were welded to a window
+    /// coordinate and no chart-side change could have helped.
+    ///
+    /// `size` is the slot to fill. The consumer gets it from
+    /// [`use_pane_viewport_size`](pinion_core::use_pane_viewport_size) keyed
+    /// on `tag_prefix`: the shell publishes the root's measured rect after
+    /// layout and its same-frame re-pass rebuilds at that size
+    /// (`examples/hello-chart-fill` is the worked example). The `(0, 0)` =
+    /// unmeasured sentinel returns an empty tagged root that still *measures*
+    /// — its size is its slot's, not its content's — so the size feeds back
+    /// on the very next paint and the loop can bootstrap.
+    ///
+    /// Read the module's "Known limitations" first: this seam is published
+    /// only by the live Vello paint, so on TUI the chart is empty, and a
+    /// `scene/layout {viewport}` query is incoherent for it.
+    #[must_use]
+    pub fn build_fill(&self, size: (u32, u32), style: &ChartStyle) -> Scene {
+        let (w, h) = size;
+        let body = if w == 0 || h == 0 {
+            ContainerNode::new(Vec::new()).with_tag(self.tag_prefix.clone())
+        } else {
+            self.build_body(Rect::new(0, 0, w, h), style)
+        };
+        Scene::Container(body.with_layout(fill_parent()))
+    }
+
+    /// The chart body, authored in the frame `rect` describes — the ONE
+    /// builder both entry points wrap.
+    ///
+    /// Split out at R1360.4 so placement is a policy applied by the caller
+    /// rather than a mutation of an already-returned tree: `build_fill` used
+    /// to call `build` and then overwrite the root's `layout` through an
+    /// `if let`, which silently no-ops the day `build` returns another
+    /// variant (the R832 class). Returning a `ContainerNode` makes the
+    /// wrapper's `with_layout` total.
+    ///
+    /// `rect` enters only as an additive origin, so callers pass a
+    /// zero-origin rect to get a local-frame body.
+    fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
         let plot = Plot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
         let (y_lo, y_hi) = plot.y.domain();
         let (x_lo, x_hi) = plot.x.domain();
@@ -319,50 +380,7 @@ impl LineChart {
         }
         children.extend(tooltip);
 
-        Scene::Container(ContainerNode::new(children).with_tag(self.tag_prefix.clone()))
-    }
-
-    /// Build the chart as a **layout-native** subtree (R1360): the returned
-    /// root fills its layout slot and every child is authored in the chart's
-    /// own `(0, 0)..(w, h)` frame, so the chart is *placed by layout* — dock
-    /// it, flex it, resize its container — instead of being pinned to a
-    /// window coordinate the way [`Self::build`] requires.
-    ///
-    /// How it works, and why R1358 is the prerequisite:
-    /// * The body is `self.build(Rect::new(0, 0, w, h), style)` — that call
-    ///   already uses `rect` only as an additive origin, so a zero origin
-    ///   yields commands, bboxes, and `absolute_position`s all local to
-    ///   `(0, 0)`. R1358 made a `Scene::Path`'s commands relative to its own
-    ///   rect, so those local paths paint correctly wherever the root lands;
-    ///   before R1358 they were welded to a window coordinate and this was
-    ///   impossible.
-    /// * The root carries `tag_prefix` and is switched to a fill-parent
-    ///   [`LayoutStyle`]. taffy measures + places it, and each child's
-    ///   `absolute_position` (parent-relative per R55.D.6) resolves against
-    ///   the placed origin.
-    ///
-    /// `size` is the slot the chart should fill. The consumer gets it from
-    /// [`use_pane_viewport_size`](pinion_core::use_pane_viewport_size)
-    /// keyed on `tag_prefix`: the shell publishes the root's measured rect
-    /// after layout, and the same-frame re-pass rebuilds at that size. The
-    /// `(0, 0)` = unmeasured sentinel returns an empty tagged root that still
-    /// gets measured (its size is its slot's, not its content's), so the
-    /// measured size feeds back on the very next paint.
-    #[must_use]
-    pub fn build_fill(&self, size: (u32, u32), style: &ChartStyle) -> Scene {
-        let (w, h) = size;
-        if w == 0 || h == 0 {
-            return Scene::Container(
-                ContainerNode::new(Vec::new())
-                    .with_tag(self.tag_prefix.clone())
-                    .with_layout(fill_parent()),
-            );
-        }
-        let mut scene = self.build(Rect::new(0, 0, w, h), style);
-        if let Scene::Container(root) = &mut scene {
-            root.layout = fill_parent();
-        }
-        scene
+        ContainerNode::new(children).with_tag(self.tag_prefix.clone())
     }
 
     /// Horizontal (per y-tick) and vertical (per x-tick) gridlines.
@@ -1366,14 +1384,19 @@ mod tests {
 
     #[test]
     fn r1358_series_commands_are_relative_to_the_paths_own_rect() {
-        // The R1358 contract, pinned at the chart's most-scrutinised producer:
-        // a series' geometry is authored in its own box and PLACED by its
-        // rect, so `rect.origin + command` is the plot pixel the scale maps to
-        // — and the bare commands are NOT those pixels.
+        // Two contracts at once, at the chart's most-scrutinised producer:
         //
-        // The chart is built away from the window origin so the two bases are
-        // distinguishable; before R1358 the commands WERE the window pixels
-        // and this test's second half would fail.
+        // * R1358 — a series' geometry is authored in its OWN box and placed
+        //   by its rect, so `rect.origin + command` is the pixel the scale
+        //   maps to, and the bare commands are NOT that pixel.
+        // * R1360.4 — `build(rect)` now emits a LOCAL body under a root
+        //   placed by `absolute(rect)`. Before it, every child carried
+        //   `rect`'s origin, which is why the chart only landed correctly
+        //   under a root at the window origin.
+        //
+        // The chart is built away from the origin so the two bases are
+        // distinguishable in both directions.
+        const AT: Rect = Rect::new(300, 200, 200, 100);
         let series = vec![Series::new(
             "s",
             (0..=4).map(|i| DataPoint::new(f64::from(i), 5.0)).collect(),
@@ -1381,16 +1404,30 @@ mod tests {
         let scene = LineChart::new(series)
             .with_x_domain(0.0, 4.0)
             .with_y_domain(0.0, 10.0)
-            .build(Rect::new(300, 200, 200, 100), &no_legend_zero_margin());
+            .build(AT, &no_legend_zero_margin());
+
+        // R1360.4: the ROOT carries the placement — the whole chart moves by
+        // changing one node, which is what makes it parent-agnostic.
+        let Scene::Container(root) = &scene else {
+            panic!("root Container")
+        };
+        assert_eq!(
+            root.layout.absolute_position,
+            Some((AT.x, AT.y)),
+            "build(rect) places the ROOT at rect; a child carrying rect's \
+             origin instead is the pre-R1360.4 landmine"
+        );
+
         let Scene::Path(p) = find(&scene, "chart.series.0").expect("series") else {
             panic!("path")
         };
-        // The rect sits at the plot's left edge less the stroke's bbox pad —
-        // near 300, and unambiguously far from the window origin, which is
-        // what makes "local vs window" distinguishable below.
+        // The series is local to the CHART, not the window: its rect sits near
+        // the chart's own left edge (0, less the stroke's bbox pad), nowhere
+        // near 300.
         assert!(
-            (250..=300).contains(&p.rect.x),
-            "series rect.x={} tracks the chart placed at x=300 (less stroke pad)",
+            p.rect.x < 50,
+            "series rect.x={} is local to the chart frame, not the window \
+             (the root carries the 300)",
             p.rect.x
         );
         let verts: Vec<(f32, f32)> = p
@@ -1402,36 +1439,31 @@ mod tests {
             })
             .collect();
         assert_eq!(verts.len(), 5, "one vertex per data point");
-        // Every vertex is rect-local: inside its own box, and NOT the window px.
-        for (i, (vx, vy)) in verts.iter().enumerate() {
+        // R1358: every vertex is local to its own path rect.
+        for (i, (vx, _vy)) in verts.iter().enumerate() {
             assert!(
                 *vx >= -0.01 && *vx <= to_f32(p.rect.w) + 0.01,
                 "vertex {i} x={vx} is local to the rect (w={})",
                 p.rect.w
             );
-            assert!(
-                *vx < 300.0,
-                "vertex {i} x={vx} must NOT be the window px (the rect carries that)"
-            );
-            let _ = vy;
         }
-        // …and the sum is the plot pixel: a flat y=5 series in domain 0..10
-        // over a 100px-tall plot placed at y=200 sits at the vertical middle.
-        let first_window_x = to_f32(p.rect.x) + verts[0].0;
-        let last_window_x = to_f32(p.rect.x) + verts[4].0;
+        // The sum is the plot pixel IN THE CHART'S FRAME: x=0..4 spans a
+        // zero-margin 200px plot, and a flat y=5 of domain 0..10 sits at the
+        // vertical middle of its 100px height.
         assert!(
-            (first_window_x - 300.0).abs() < 1.5,
-            "x=0 maps to the plot's left edge (window 300), got {first_window_x}"
+            (to_f32(p.rect.x) + verts[0].0).abs() < 1.5,
+            "x=0 maps to the chart's left edge (0), got {}",
+            to_f32(p.rect.x) + verts[0].0
         );
         assert!(
-            (last_window_x - 500.0).abs() < 1.5,
-            "x=4 maps to the plot's right edge (window 500), got {last_window_x}"
+            ((to_f32(p.rect.x) + verts[4].0) - 200.0).abs() < 1.5,
+            "x=4 maps to the chart's right edge (200), got {}",
+            to_f32(p.rect.x) + verts[4].0
         );
-        let first_window_y = to_f32(p.rect.y) + verts[0].1;
         assert!(
-            (first_window_y - 250.0).abs() < 1.5,
-            "y=5 of 0..10 maps to the plot's vertical middle (window 250), \
-             got {first_window_y}"
+            ((to_f32(p.rect.y) + verts[0].1) - 50.0).abs() < 1.5,
+            "y=5 of 0..10 maps to the chart's vertical middle (50), got {}",
+            to_f32(p.rect.y) + verts[0].1
         );
     }
 
