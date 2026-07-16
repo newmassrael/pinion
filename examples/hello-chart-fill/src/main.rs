@@ -408,11 +408,18 @@ mod tests {
     /// first cut of this binding filled nothing, so every pixel outside the
     /// chart body was `RGBA(0,0,0,0)`. A compositing desktop renders that
     /// black while the theme, assuming its own surface, picks a dark
-    /// on-surface text colour: dark-on-black, unreadable. It slipped through
-    /// because the scene-level tests below only ever asked about geometry,
-    /// and because a screenshot could not see it either (the capture path
-    /// flattens alpha=0 onto white, so the bug was invisible in PNGs while
-    /// being glaring on screen).
+    /// on-surface text colour: dark-on-black, unreadable.
+    ///
+    /// Why it slipped through, stated exactly — an earlier version of this
+    /// comment blamed the tooling and was **wrong**, which is worth more
+    /// than the fix. The scene-level tests below only ever asked about
+    /// geometry, so they were blind. The screenshot was **not**: the capture
+    /// preserves alpha verbatim (`encode_rgba8_png` writes
+    /// `ColorType::Rgba`), so `RGBA(0,0,0,0)` was sitting in the PNG the
+    /// whole time and one `sample_png_points` call would have printed it.
+    /// What flattens transparency onto white is an image *viewer* — and
+    /// looking at the rendered image is what I did instead of sampling the
+    /// pixel. The tools could see it; the observation method could not.
     #[test]
     fn the_root_paints_an_opaque_surface_behind_the_chrome() {
         let core: CoreShell<ChartFillView> = CoreShell::new();

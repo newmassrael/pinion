@@ -2,35 +2,50 @@
 //! retained [`Scene`] of axes, gridlines, tick labels, series polylines,
 //! optional area fills, and a legend.
 //!
-//! # Coordinate contract — a remaining limitation, no longer a primitive one
+//! # Coordinate contract — one body, two placements
 //!
-//! [`LineChart::build`] takes the [`Rect`] the chart will occupy and must
-//! be given it *before* the layout pass runs, so the chart is still not a
-//! layout citizen: it cannot flex, dock, tab, or resize.
+//! Every child is authored by resolving [`Plot`] against the `rect` this
+//! module is handed, and `rect` enters only as an **additive origin**. So
+//! the same builder yields either placement:
 //!
-//! Until R1358 that was **unfixable from this crate**: the `Scene::Path`
-//! primitive painted `commands` at literal device coordinates and never
-//! offset them by the rect layout assigned, so a path's geometry could not
-//! participate in layout at all. R1358 made path commands relative to the
-//! node's own rect (the basis the R722 gradient UV already used), so a
-//! path is now placed by its rect like any other node. Every path here
-//! declares `absolute_position` + size, which is why that migration was
-//! pixel-identical for this crate.
+//! * [`LineChart::build_fill(size)`](LineChart::build_fill) (R1360) passes
+//!   `Rect::new(0, 0, w, h)`, which makes every child local to `(0, 0)`,
+//!   and hands back a **fill-parent** root. taffy sizes and places that
+//!   root; each child's `absolute_position` is parent-relative (R55.D.6),
+//!   so it resolves against wherever the root lands. **This is the
+//!   layout-native entry point** — dock it, flex it, resize it.
+//! * [`LineChart::build(rect)`](LineChart::build) passes a window-absolute
+//!   rect, which makes every child window-absolute, under a root that
+//!   declares no layout. It is therefore correct **only under a root at the
+//!   window origin** — a real precondition, and the reason `build_fill` is
+//!   preferred for anything new.
 //!
-//! What remains is a **chart-side** redesign — no longer blocked by the
-//! primitive, but not done either. Precisely:
+//! R1358 is what made the first bullet possible: before it, `Scene::Path`
+//! painted `commands` at literal device coordinates and ignored the rect
+//! layout assigned, so a path could not participate in layout at all and no
+//! chart-side change could have fixed it. R1358 made commands relative to
+//! the node's own rect (the basis the R722 gradient UV already used); every
+//! path here declares `absolute_position` + size, which is why that
+//! migration was pixel-identical for this crate.
 //!
-//! * Every child is still resolved against the *absolute* `rect` handed to
-//!   [`LineChart::build`] and pinned with an `absolute_position` carrying
-//!   those absolute coordinates, and the chart's root
-//!   [`Container`](pinion_core::Scene) declares no layout of its own. So
-//!   the chart still only lands correctly under a root at the window
-//!   origin. Emitting children relative to a placed chart root is the work.
-//! * `build` also needs its *size* while the view fn runs, which is the
-//!   measured-rect reactive seam's job, not the path primitive's.
+//! ## What "authored in the chart's frame" does and does not promise
 //!
-//! `build`'s signature is expected to change with that follow-up — do not
-//! design against it yet.
+//! It means the origin: a child's position is `chart_origin + local`. It
+//! does **not** promise containment — nothing clips a `Container`'s
+//! children, and two children reach outside a tight slot:
+//!
+//! * an x tick label is a fixed 60px slot centred on its tick. The
+//!   rightmost tick sits at `plot.right` = `w - margin.right`, so the slot
+//!   ends at `w + slot/2 - margin.right` — with the defaults, **14px past
+//!   the chart's own right edge, at every size**.
+//! * the legend lays out at a fixed 104px per series starting at
+//!   `margin.left`, so it needs `margin.left + 104 * series` px of width
+//!   (260px for two series with the defaults) and silently overruns below
+//!   that.
+//!
+//! Neither is new (both predate R1360 and are what the margins exist to
+//! absorb), but a docked chart narrower than its legend will paint over its
+//! neighbour. Clamping them is a follow-up.
 //!
 //! # Introspection
 //!

@@ -94,6 +94,76 @@ pub fn assert_widget_view_carries_tag<V: WidgetCore>(state: V::State, frame: &Fr
     );
 }
 
+/// R1360.2 — assert `V`'s view paints an **opaque window background**.
+///
+/// A `WidgetView`'s root [`Scene::Container`] fill is not decoration: it
+/// becomes `RenderParams.base_color`, the surface clear for the whole
+/// window (`pinion_runtime::paint_adapter::root_background`). Two defaults
+/// compose into an invisible app:
+///
+/// * [`BoxStyle::default()`](crate::style::BoxStyle)'s fill is
+///   `Color::default()` = `rgba(0, 0, 0, 0)` — so a root Container that
+///   never calls `with_style` clears the window to **transparent black**,
+///   which a compositor shows as black.
+/// * [`TextStyle::new()`](crate::style::TextStyle)'s `fg_color` is
+///   `rgb(0, 0, 0)` — so a `TextNode::new` row is **pure black**.
+///
+/// Black on black: the window renders nothing a human can see. R1360.1
+/// shipped that bug in one binding, and the audit found two more already on
+/// main (`hello-audio-rt`, `hello-audio-device`) — every pixel of their
+/// live windows is `(0, 0, 0, α)`.
+///
+/// It survived because **the usual observations are blind to it**: a PNG
+/// keeps alpha=0 (`encode_rgba8_png` writes `ColorType::Rgba`), so any
+/// image *viewer* composites the window onto white and the black text reads
+/// perfectly. Only sampling the pixel — or this assertion — sees it.
+///
+/// ## Usage
+///
+/// ```rust,no_run
+/// # use pinion_core::test_fixtures::{assert_widget_view_paints_opaque_root, ButtonFixture};
+/// # use pinion_core::widgets::button::ButtonState;
+/// # use pinion_core::Frame;
+/// assert_widget_view_paints_opaque_root::<ButtonFixture>(
+///     ButtonState::Idle,
+///     &Frame::default(),
+/// );
+/// ```
+///
+/// One line per binding, like
+/// [`assert_widget_view_carries_tag`] — a per-binding regression test for a
+/// defect whose cause is a shared default does not scale, and the 87 call
+/// sites of that sibling are the evidence this shape does.
+///
+/// # Panics
+///
+/// Panics if the view's root is not a [`Scene::Container`] (any other root
+/// clears the window to opaque black — legible only by luck, and never what
+/// a binding means), or if that Container's fill is not fully opaque.
+pub fn assert_widget_view_paints_opaque_root<V: WidgetCore>(state: V::State, frame: &Frame) {
+    let owner = Owner::new();
+    let scene = owner.run(|| V::view(state, frame));
+    let Scene::Container(root) = &scene else {
+        panic!(
+            "{}'s view must return a Scene::Container root — its fill is the \
+             window's clear colour, and any other root variant clears to \
+             opaque black (R1360.2)",
+            core::any::type_name::<V>(),
+        );
+    };
+    assert_eq!(
+        root.style.fill.a,
+        0xFF,
+        "{}'s view must fill its root with an OPAQUE colour: the root fill is \
+         the window's clear colour, and the default (alpha 0) leaves the \
+         window transparent — black on a compositor, under text whose own \
+         default is black. Got {:?}. Fix: `.with_style(BoxStyle::filled(\
+         theme.resolve(ColorRole::Surface)))` on the root. (R1360.2)",
+        core::any::type_name::<V>(),
+        root.style.fill,
+    );
+}
+
 /// R57.X.theme-fade §5.50 — advance `owner`'s registered animations by
 /// one second of simulated wall-clock time (60 ticks of 1 / 60 s each)
 /// so any in-flight spring settles to rest.

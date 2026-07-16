@@ -134,7 +134,8 @@ use pinion_core::external::{
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{Display, FlexDirection};
+use pinion_core::style::{BoxStyle, Display, FlexDirection, TextStyle};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 
@@ -149,6 +150,9 @@ const RING_CAP: usize = 64;
 const MAX_VOICES: usize = 8;
 /// The primary External / paint-focus tag.
 const TAG: &str = "audio_device";
+
+/// Shared `ThemeProvider` cache key (the `"app"` gallery convention).
+const THEME_TAG: &str = "app";
 /// Names the output device to open. Unset → the host default (**audible**).
 const DEVICE_ENV: &str = "PINION_AUDIO_DEVICE";
 /// `Owner::cache` key for the shared rig (device + world), resolved from both
@@ -667,6 +671,7 @@ impl WidgetCore for HelloAudioDevice {
         // never lands (measured). See `pinion_audio::world`, point 1.
         let camera = rig.world.listener().position;
 
+        let theme = use_theme(THEME_TAG).theme_animated();
         let mut children: Vec<Scene> = Vec::new();
 
         for line in [
@@ -683,12 +688,28 @@ impl WidgetCore for HelloAudioDevice {
             // R1345 §5.21 — no authored `rect`: the column below places each
             // row and the text measure sizes it, so a long line wraps rather
             // than truncating.
-            children.push(Scene::Text(TextNode::new(line, Rect::default())));
+            //
+            // R1360.2 — the fg comes from the theme. `TextStyle::new()`'s
+            // default is `rgb(0, 0, 0)`, which this binding paired with a
+            // transparent root: every pixel of the live window was
+            // `(0, 0, 0, α)` — black on black, invisible.
+            children.push(Scene::Text(TextNode::styled(
+                line,
+                Rect::default(),
+                TextStyle::new().with_fg(theme.resolve(ColorRole::OnSurface)),
+            )));
         }
 
         // R55.G.17 — the paint scene carries a node tagged `tag()` so AI-side
         // path routing / `rect_for_tag` resolve.
-        let mut root = ContainerNode::new(children).with_tag(TAG);
+        //
+        // R1360.2 — the root fill IS the window's clear colour (see
+        // `paint_adapter::root_background`), so the default (alpha 0) means a
+        // transparent — i.e. black — window, not "no background". Pinned by
+        // `assert_widget_view_paints_opaque_root`.
+        let mut root = ContainerNode::new(children)
+            .with_tag(TAG)
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)));
         // R1345 §5.21 — a padded column with a uniform row gap. The pre-R1345
         // view authored `rect` from a running `y` cursor, none of which reached
         // a pixel: `compute_layout` overwrites `rect` (it is an OUTPUT), so the
@@ -772,6 +793,17 @@ mod tests {
         ]
         .map(str::to_owned)
         .to_vec()
+    }
+
+    /// R1360.2 — the window must be legible. Same defect as `hello-audio-rt`:
+    /// an unfilled root clears the window transparent (black on a compositor)
+    /// under `TextNode::new`'s pure-black default fg — every pixel `(0,0,0,α)`.
+    #[test]
+    fn r1360_2_view_paints_an_opaque_window() {
+        pinion_core::test_fixtures::assert_widget_view_paints_opaque_root::<super::HelloAudioDevice>(
+            0,
+            &pinion_core::Frame::default(),
+        );
     }
 
     #[test]

@@ -23614,6 +23614,104 @@
         "build_fill takes a size, not a Rect — if a 3rd shape appears, build/build_fill may want unifying (2nd-consumer rule says not yet)"
       ]
     },
+    "R1360.2": {
+      "decision_summary": "R1360.2: two shipped demos rendered an invisible black-on-black window; the fix is a gate, not a per-binding test",
+      "changes_bullets": [
+        "hello-audio-rt + hello-audio-device rendered NOTHING on a live window: every pixel was (0,0,0,alpha) — verified by launching them",
+        "Two defaults compose into an invisible app: BoxStyle::default().fill = rgba(0,0,0,0) IS the window clear colour; TextStyle::new().fg = pure black",
+        "Both now fill the root with the theme Surface and colour their rows OnSurface; hello-audio-rt 1.1% -> 100% opaque pixels",
+        "New gallery-wide gate assert_widget_view_paints_opaque_root<V> in pinion-core::test_fixtures (mirrors assert_widget_view_carries_tag, 87 consumers)"
+      ],
+      "verification_bullets": [
+        "Found by an independent reviewer checking R1360.1's claim \"every sibling binding does this\" — the claim was false and the counter-examples were shipping",
+        "Live window pixel histogram BEFORE: 89.5% RGBA(0,0,0,0) transparent + 1.1% RGBA(0,0,0,255) pure-black text; AFTER: 89.5% opaque surface + 1.1% theme text, 100% opaque",
+        "The gate is falsifiable: reverting hello-audio-rt's root to a transparent fill fails it with the exact remediation in the message",
+        "Invisible to every existing check: PNG keeps alpha (ColorType::Rgba) so a VIEWER composites onto white and the black text reads perfectly; hello-audio-rt's R1345 geometry test lays the same view out but asks about rects, not colour"
+      ],
+      "impact_refs": [
+        "5.50",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The gate is opt-in per binding (3 call sites so far), not enforced: a new binding that never calls it can still ship a black window",
+        "Root cause remains a footgun: BoxStyle::default().fill = transparent IS the window clear. A WidgetView-level default surface would remove the class rather than test for it",
+        "Text colour has no equivalent gate: TextStyle::new()'s pure-black default is legible only by luck on a light theme, and this gate cannot see contrast — only root opacity"
+      ],
+      "publishable_decision_summary": "R1360.2: two shipped demos rendered an invisible black-on-black window; the fix is a gate, not a per-binding test",
+      "publishable_changes_bullets": [
+        "hello-audio-rt + hello-audio-device rendered NOTHING on a live window: every pixel was (0,0,0,alpha) — verified by launching them",
+        "Two defaults compose into an invisible app: BoxStyle::default().fill = rgba(0,0,0,0) IS the window clear colour; TextStyle::new().fg = pure black",
+        "Both now fill the root with the theme Surface and colour their rows OnSurface; hello-audio-rt 1.1% -> 100% opaque pixels",
+        "New gallery-wide gate assert_widget_view_paints_opaque_root<V> in pinion-core::test_fixtures (mirrors assert_widget_view_carries_tag, 87 consumers)"
+      ],
+      "publishable_verification_bullets": [
+        "Found by an independent reviewer checking R1360.1's claim \"every sibling binding does this\" — the claim was false and the counter-examples were shipping",
+        "Live window pixel histogram BEFORE: 89.5% RGBA(0,0,0,0) transparent + 1.1% RGBA(0,0,0,255) pure-black text; AFTER: 89.5% opaque surface + 1.1% theme text, 100% opaque",
+        "The gate is falsifiable: reverting hello-audio-rt's root to a transparent fill fails it with the exact remediation in the message",
+        "Invisible to every existing check: PNG keeps alpha (ColorType::Rgba) so a VIEWER composites onto white and the black text reads perfectly; hello-audio-rt's R1345 geometry test lays the same view out but asks about rects, not colour"
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The gate is opt-in per binding (3 call sites so far), not enforced: a new binding that never calls it can still ship a black window",
+        "Root cause remains a footgun: BoxStyle::default().fill = transparent IS the window clear. A WidgetView-level default surface would remove the class rather than test for it",
+        "Text colour has no equivalent gate: TextStyle::new()'s pure-black default is legible only by luck on a light theme, and this gate cannot see contrast — only root opacity"
+      ]
+    },
+    "R1360.3": {
+      "decision_summary": "R1360.3: record the two §2 costs R1360 paid silently, and clear the docs that denied it existed",
+      "changes_bullets": [
+        "RECORDS the two §2 costs R1360 paid and did not declare — an undeclared invariant cost is the store's most expensive omission",
+        "§2 #6: build_fill's seam is Vello-only. pinion-tui never calls publish_pane_viewports (grep: 0), so use_pane_viewport_size stays (0,0) forever and build_fill emits NOTHING — build() degrades gracefully (bg/legend/labels survive; only Path is dropped)",
+        "§2 #2: scene/layout {viewport} runs the non-publishing producer, so it lays the chart ROOT out at the hypothetical size while the BODY was built at the last live-published size — incoherent for the one widget R1360 made size-responsive",
+        "Both now stated in pinion-chart's lib.rs \"Known limitations\" rather than left for a consumer to discover",
+        "Also cleared: lib.rs + line.rs module docs still asserted the chart was NOT layout-native, 280 lines above build_fill (both were rewritten by R1358 two commits earlier — live text, not legacy)"
+      ],
+      "verification_bullets": [
+        "Both costs verified independently, not taken from the reviewer: grep of crates/pinion-tui for pane_viewport = 0 hits; the RPC produce closure (substrate.rs:4725-4792) contains no publish call",
+        "tools/demos/r1360_chart_layout_native.py now drives REAL scene/resize (the r774 precedent) and asserts the chart tracks root + painted body at each size, plus the seam's fixed point (built size == measured root)",
+        "Falsified: a view that ignores the seam fails at the first resize with \"expected (800, 424), got (700, 344)\"",
+        "The demo's own dead end is recorded in it: scene/snapshot's viewport does NOT re-lay-out an app that has a window (verified against hello-chart, which reports 760x460 for any requested viewport)"
+      ],
+      "impact_refs": [
+        "2",
+        "5.21",
+        "5.23"
+      ],
+      "carry_forward_bullets": [
+        "§2 #6 is DECLARED, not fixed: a TUI chart consumer would still get nothing. Fixing means pinion-tui publishing measured rects, or a backend-agnostic seam — neither has a consumer yet",
+        "§2 #2 hypothetical-viewport incoherence is DECLARED, not fixed: making the RPC producer publish would mutate reactive state from an introspection path, which the R1006 contract forbids. The honest fix is likely a producer-scoped size override, not a publish",
+        "build vs build_fill: the reviewer rules build(size)+caller-places (option b) is textbook, and that my stated blocker (hello-chart's capture boxes) is a non-sequitur for it — hello-chart would keep CHART_RECT and place the root. Deferred, now with the correct reason on record",
+        "Fixed-height chrome rows (TITLE_H/STATUS_H) in a resizable window: the textbook fix is auto-height rows, which also removes the shortened-title workaround"
+      ],
+      "publishable_decision_summary": "R1360.3: record the two §2 costs R1360 paid silently, and clear the docs that denied it existed",
+      "publishable_changes_bullets": [
+        "RECORDS the two §2 costs R1360 paid and did not declare — an undeclared invariant cost is the store's most expensive omission",
+        "§2 #6: build_fill's seam is Vello-only. pinion-tui never calls publish_pane_viewports (grep: 0), so use_pane_viewport_size stays (0,0) forever and build_fill emits NOTHING — build() degrades gracefully (bg/legend/labels survive; only Path is dropped)",
+        "§2 #2: scene/layout {viewport} runs the non-publishing producer, so it lays the chart ROOT out at the hypothetical size while the BODY was built at the last live-published size — incoherent for the one widget R1360 made size-responsive",
+        "Both now stated in pinion-chart's lib.rs \"Known limitations\" rather than left for a consumer to discover",
+        "Also cleared: lib.rs + line.rs module docs still asserted the chart was NOT layout-native, 280 lines above build_fill (both were rewritten by R1358 two commits earlier — live text, not legacy)"
+      ],
+      "publishable_verification_bullets": [
+        "Both costs verified independently, not taken from the reviewer: grep of crates/pinion-tui for pane_viewport = 0 hits; the RPC produce closure (substrate.rs:4725-4792) contains no publish call",
+        "tools/demos/r1360_chart_layout_native.py now drives REAL scene/resize (the r774 precedent) and asserts the chart tracks root + painted body at each size, plus the seam's fixed point (built size == measured root)",
+        "Falsified: a view that ignores the seam fails at the first resize with \"expected (800, 424), got (700, 344)\"",
+        "The demo's own dead end is recorded in it: scene/snapshot's viewport does NOT re-lay-out an app that has a window (verified against hello-chart, which reports 760x460 for any requested viewport)"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.21",
+        "5.23"
+      ],
+      "publishable_carry_forward_bullets": [
+        "§2 #6 is DECLARED, not fixed: a TUI chart consumer would still get nothing. Fixing means pinion-tui publishing measured rects, or a backend-agnostic seam — neither has a consumer yet",
+        "§2 #2 hypothetical-viewport incoherence is DECLARED, not fixed: making the RPC producer publish would mutate reactive state from an introspection path, which the R1006 contract forbids. The honest fix is likely a producer-scoped size override, not a publish",
+        "build vs build_fill: the reviewer rules build(size)+caller-places (option b) is textbook, and that my stated blocker (hello-chart's capture boxes) is a non-sequitur for it — hello-chart would keep CHART_RECT and place the root. Deferred, now with the correct reason on record",
+        "Fixed-height chrome rows (TITLE_H/STATUS_H) in a resizable window: the textbook fix is auto-height rows, which also removes the shortened-title workaround"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

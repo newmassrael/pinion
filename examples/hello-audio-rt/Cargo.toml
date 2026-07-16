@@ -41,6 +41,11 @@ pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
 workspace = true
 
 [dev-dependencies]
+# R1360.2 — `assert_widget_view_paints_opaque_root`: this binding's root fill IS
+# the window's clear colour, and its default (alpha 0) shipped a black-on-black
+# window here. One line, gallery-wide shape (87 bindings use the sibling
+# `assert_widget_view_carries_tag`).
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
 # R1345 §5.21 — the geometry test runs the real layout pass over this view's
 # scene, pinning that its help rows stack in a padded column. Dev-only: the
 # binding itself stays layout-agnostic (it authors LayoutStyle intent and never

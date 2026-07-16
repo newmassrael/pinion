@@ -49,28 +49,50 @@
 //! Shipped: line and area charts with nice axes, gridlines, tick labels,
 //! and a legend (R1354); a scrub [`inspect`](LineChart::inspect) overlay —
 //! crosshair, per-series markers, value tooltip (R1355); x-domain clipping
-//! (R1356) and the pinned-domain re-scaling a brush zoom drives (R1357).
+//! (R1356) and the pinned-domain re-scaling a brush zoom drives (R1357);
+//! a **layout-native** entry point, [`LineChart::build_fill`] (R1360).
 //!
 //! Not yet: histogram / bar / donut / treemap / scatter, legend-toggle,
 //! cross-filtering, and a y-rescale on zoom — follow-up slices on the same
 //! `scale` / `ticks` / `palette` core.
 //!
+//! # Two entry points — pick by who places the chart
+//!
+//! * [`LineChart::build_fill(size)`](LineChart::build_fill) — **layout
+//!   places it.** The root fills its slot; every child is authored in the
+//!   chart's own `(0, 0)..(w, h)` frame. Dock it, flex it, resize it. The
+//!   consumer feeds the slot's measured size back with
+//!   [`use_pane_viewport_size`](pinion_core::use_pane_viewport_size) keyed
+//!   on the chart's tag; `examples/hello-chart-fill` is the worked example.
+//! * [`LineChart::build(rect)`](LineChart::build) — **the caller pins it**
+//!   to a window-absolute rect known before layout runs. Its children carry
+//!   window-absolute positions, so it is only correct under a root at the
+//!   window origin. Prefer `build_fill` for anything new.
+//!
+//! Two rounds got here: R1358 made `Scene::Path` commands relative to the
+//! node's own rect (the *primitive* blocker — nothing chart-side could work
+//! around it), and R1360 built `build_fill` on top.
+//!
 //! # Known limitations (do not build on these without reading)
 //!
-//! * **The chart is not layout-native — but the primitive no longer stops
-//!   it (R1358).** [`LineChart::build`] still takes the window-absolute
-//!   rect it will occupy and must be handed that geometry before the
-//!   layout pass runs, so it cannot yet flex, sit in a dock panel, or
-//!   respond to a resize, and must be embedded under a root at the window
-//!   origin. Until R1358 the *primitive* made this unfixable: `Scene::Path`
-//!   commands painted at literal device pixels, so a chart's geometry was
-//!   welded to a window position no matter what the chart did. R1358 made
-//!   path commands relative to the node's own rect, removing that blocker.
-//!   The remaining work is this crate's: emit children relative to a
-//!   placed chart root, and discover the size at view time (the
-//!   measured-rect reactive seam). See the `line` module's coordinate
-//!   contract for the specifics. `build`'s signature changes with that
-//!   follow-up.
+//! * **`build_fill`'s reactive seam is Vello-only, so on TUI the chart is
+//!   EMPTY (§2 #6).** The slot's measured size is published only by the
+//!   live Vello paint (`ShellCore::compute_paint_scene_internal`);
+//!   `pinion-tui` never publishes, so `use_pane_viewport_size` stays
+//!   `(0, 0)` forever and `build_fill` returns its empty sentinel. Note the
+//!   degradation differs *in kind* from `build`, which still emits its
+//!   background, legend and labels on TUI (only `Scene::Path` is dropped,
+//!   below) — `build_fill` emits nothing at all, including for
+//!   `scene/snapshot`. Latent today (no TUI chart consumer exists); it is
+//!   the price of the seam and it is recorded here rather than discovered.
+//! * **A hypothetical-viewport RPC query is incoherent for `build_fill`
+//!   (§2 #2).** `scene/layout {viewport}` runs the non-publishing producer,
+//!   so it lays the chart *root* out at the hypothetical size while the
+//!   *body* inside was built at the last live-published size. The common
+//!   paths are fine (`scene/snapshot from: paint` reads the live scene, and
+//!   `PINION_SCREENSHOT` goes through the publishing path), but the one
+//!   method whose purpose is "how would this lay out at another size?"
+//!   answers wrongly for the one widget R1360 made size-responsive.
 //! * **§2 #6 GUI/TUI dual does not hold for this crate.** The TUI backend
 //!   does not render `Scene::Path`, so in a terminal a chart loses its
 //!   series, axes, gridlines, crosshair and markers — only the background,

@@ -131,7 +131,8 @@ use pinion_core::external::{
 };
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{Display, FlexDirection};
+use pinion_core::style::{BoxStyle, Display, FlexDirection, TextStyle};
+use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::{Frame, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -158,6 +159,9 @@ const MAX_VOICES: usize = 4;
 const BLOCK_SAMPLES: usize = 512;
 /// The primary (RT device path) External / paint-focus tag.
 const TAG: &str = "audio_rt";
+
+/// Shared `ThemeProvider` cache key (the `"app"` gallery convention).
+const THEME_TAG: &str = "app";
 /// The extra (retained single-thread engine) External tag, addressed over the
 /// wire at `/engine/external/...`.
 const ENGINE_TAG: &str = "engine";
@@ -474,7 +478,9 @@ impl WidgetCore for HelloAudioRt {
         // R55.G.17 — the paint scene carries a node tagged `tag()` so AI-side
         // path-routing / `rect_for_tag` resolve, even though this harness drives
         // the RT surface through the `/external/` state-scene path.
-        let mut root = ContainerNode::new(children).with_tag(TAG);
+        let mut root = ContainerNode::new(children)
+            .with_tag(TAG)
+            .with_style(root_surface());
         // R1345 §5.21 — a padded column. This authored `rect` from a running
         // `y` cursor, none of which reached a pixel: `compute_layout`
         // overwrites `rect` (it is an OUTPUT), so the rows painted flush at
@@ -502,8 +508,33 @@ impl WidgetCore for HelloAudioRt {
 
 /// R1345 §5.21 — one row, authored with no `rect` (the column places it and
 /// the text measure sizes it, so a long line wraps instead of truncating).
+///
+/// R1360.2 — the fg is resolved from the theme. `TextStyle::new()`'s default
+/// is `rgb(0, 0, 0)`, which this binding paired with a root that cleared the
+/// window to transparent black: every pixel of the live window was
+/// `(0, 0, 0, α)` — black text on black, invisible. See [`root_surface`].
 fn text_row(content: String) -> Scene {
-    Scene::Text(TextNode::new(content, Rect::default()))
+    let theme = use_theme(THEME_TAG).theme_animated();
+    Scene::Text(TextNode::styled(
+        content,
+        Rect::default(),
+        TextStyle::new().with_fg(theme.resolve(ColorRole::OnSurface)),
+    ))
+}
+
+/// R1360.2 — the window's clear colour.
+///
+/// The root Container's fill IS `RenderParams.base_color` (see
+/// `pinion_runtime::paint_adapter::root_background`), so leaving it at
+/// `BoxStyle::default()` (alpha 0) does not mean "no background" — it means
+/// a transparent window, which a compositor renders black. Pinned by
+/// `assert_widget_view_paints_opaque_root`.
+fn root_surface() -> BoxStyle {
+    BoxStyle::filled(
+        use_theme(THEME_TAG)
+            .theme_animated()
+            .resolve(ColorRole::Surface),
+    )
 }
 
 /// A row that opens a new block: one blank line above it. The pre-R1345 view
@@ -555,6 +586,20 @@ mod tests {
     use pinion_core::external::{
         External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
     };
+
+    /// R1360.2 — the window must be legible. This binding shipped a root with
+    /// no fill (clearing the window to transparent = black on a compositor)
+    /// under `TextNode::new` rows whose default fg is pure black: every pixel
+    /// of the live window was `(0, 0, 0, α)`, i.e. nothing visible. The R1345
+    /// geometry test above lays this same view out and could not see it —
+    /// it asks about rects, not colour.
+    #[test]
+    fn r1360_2_view_paints_an_opaque_window() {
+        pinion_core::test_fixtures::assert_widget_view_paints_opaque_root::<super::HelloAudioRt>(
+            0,
+            &pinion_core::Frame::default(),
+        );
+    }
 
     #[test]
     fn render_step_verb_applies_queued_play_and_delegates_reads() {
