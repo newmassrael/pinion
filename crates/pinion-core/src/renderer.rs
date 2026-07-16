@@ -71,23 +71,4 @@ pub trait WidgetRenderer: Sized {
     /// Logical units are backend-specific: Vello sees pixels (DPI-aware);
     /// TUI sees cells (column / row count, post-`crossterm::Resize`).
     fn resize(&mut self, width: u32, height: u32);
-
-    /// R1361.1 §5.16 — µs the last [`Self::render`] spent **blocked**
-    /// rather than working: the Vello backend's `get_current_texture()`
-    /// wait for a swapchain image.
-    ///
-    /// The shell brackets `render` as one wall-clock span and cannot see
-    /// inside it, so a backend that blocks must report the block itself
-    /// or the shell bills idle waiting to the render phase. That is the
-    /// R1361 defect: under `PresentMode::AutoVsync` the acquire is the
-    /// vsync pace-setter, so a window doing 0.4ms of work reported 998ms
-    /// of "render" and read exactly like a GPU-bound one.
-    ///
-    /// **Defaults to `0`** — "this backend never blocks", which is the
-    /// truth for TUI (a terminal write) and for GPU-less stub renderers.
-    /// Only a backend with a real swapchain overrides it, so no
-    /// implementation is forced to care.
-    fn last_acquire_us(&self) -> u64 {
-        0
-    }
 }

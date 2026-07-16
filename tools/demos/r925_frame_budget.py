@@ -3,7 +3,7 @@
 
 R907 landed the "measure" half of the §1 northern-star's measure-first
 pro-tool-performance axis: `scene/frame_timings` reports each frame's
-build/encode/render breakdown plus the rolling window's min/mean/max and
+build/encode/acquire/render breakdown plus the rolling window's min/mean/max and
 mean fps. But "how long are frames taking?" is only half the pro-tool
 question — the other half is "are they hitting the target?". R925 wires
 the existing per-window frame *budget* (`frame_pacing::frame_budget_for_window`,

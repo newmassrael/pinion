@@ -1415,10 +1415,12 @@ impl<V: WidgetView> AppShell<V> {
         // R907 §5.16 §5.7 — frame-timing profiler: bracket the whole
         // productive frame (build → finalize) and each named phase with
         // `Instant` spans. `build_us` is the `view` + layout pass; the
-        // scope below measures `encode_us` (to_vello_cached) and
-        // `render_us` (GPU submit) into these vars; `total_us` closes
-        // after finalize. `total >= build + encode + render` holds by
-        // construction (disjoint sub-intervals).
+        // scope below measures `encode_us` (to_vello_cached), `acquire_us`
+        // (the vsync block) and `render_us` (GPU submit) into these vars;
+        // `total_us` closes
+        // after finalize. `total >= build + encode + acquire + render` holds by
+        // construction (disjoint sub-intervals); R1361.1 split `acquire_us`
+        // out of `render_us`, so the inequality now spans four phases.
         let frame_start = Instant::now();
         let paint_scene = self
             .core

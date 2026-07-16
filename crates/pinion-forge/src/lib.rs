@@ -1186,6 +1186,75 @@ mod tests {
     }
 
     #[test]
+    fn emits_renderer_vello_times_the_acquire_and_cannot_report_it_stale() {
+        // R1361.1/.4 §5.16 — the acquire block must be measured SEPARATELY
+        // from render work. `render_us` used to contain
+        // `get_current_texture()`, which blocks on vsync under AutoVsync, so
+        // a window doing 0.4ms of drawing reported 16ms of "render" and read
+        // exactly like a GPU-bound one.
+        //
+        // Two properties, and the second is the subtle one:
+        //
+        //  1. the acquire is timed and stored before the non-success arms
+        //     diverge (a timeout IS the block worth reporting);
+        //  2. the field is CLEARED at the top of `render`, because
+        //     `render_to_texture(...)?` returns early — before the acquire
+        //     is ever attempted. Without the reset, a failed frame keeps the
+        //     PREVIOUS frame's block, and the shell subtracts a wait that
+        //     never happened: that frame is then recorded as ~all acquire and
+        //     0 render. A frame that never reached the acquire blocked 0µs.
+        //
+        // A source-text test because the property lives in generated code on
+        // a GPU path no unit test can drive.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Timed" backend="vello"/>"#;
+        let rust = compile_str(xml, "timed.pinion.xml").expect("compile");
+
+        let render_body = rust
+            .split_once("pub fn render(")
+            .expect("template emits an inherent render")
+            .1;
+        let reset_at = render_body.find("self.last_acquire_us = 0;").expect(
+            "render CLEARS last_acquire_us — a stale block must never survive an early return",
+        );
+        let work_at = render_body
+            .find("render_to_texture(")
+            .expect("render calls render_to_texture");
+        assert!(
+            reset_at < work_at,
+            "the reset must precede `render_to_texture`, whose `?` returns \
+             early: reset at {reset_at}, render_to_texture at {work_at}",
+        );
+
+        // The acquire is bracketed, and stored before the match arms.
+        let start_at = render_body
+            .find("let __acquire_start = ::std::time::Instant::now();")
+            .expect("the acquire span is opened");
+        let store_at = render_body
+            .find("self.last_acquire_us = ::std::convert::TryFrom::try_from(")
+            .expect("the acquire span is stored");
+        let match_at = render_body
+            .find("match __acquired {")
+            .expect("the acquire result is matched after being timed");
+        assert!(
+            start_at < store_at && store_at < match_at,
+            "the acquire must be timed and stored BEFORE the arms diverge, \
+             so a Timeout frame still reports its block: start={start_at} \
+             store={store_at} match={match_at}",
+        );
+        // The block must be measured around the acquire ALONE — if the call
+        // moved back inside the match scrutinee the span would be lost.
+        assert!(
+            render_body.contains("let __acquired = self.surface.surface.get_current_texture();"),
+            "get_current_texture is called on its own line inside the timed span",
+        );
+        // And the accessor the shell reads it through exists.
+        assert!(
+            rust.contains("pub fn last_acquire_us(&self) -> u64 {"),
+            "the template exposes the block so the shell can subtract it",
+        );
+    }
+
+    #[test]
     fn emits_renderer_vello_recovers_invalidated_surface() {
         // R1049 §5.16 (PR-21) — a non-presentable surface status
         // (outdated / lost / validation) must RECONFIGURE the swapchain,

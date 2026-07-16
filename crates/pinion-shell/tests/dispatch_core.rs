@@ -3535,7 +3535,7 @@ mod r907_frame_timing_substrate {
         assert_eq!(snap.window_len, 1);
         assert_eq!(snap.last, FrameTiming::new(300, 100, 0, 80, 540));
         assert_eq!(snap.mean_total_us, 540);
-        // total >= build + encode + render holds on the projected last.
+        // total >= build + encode + acquire + render on the projected last.
         assert!(snap.last.total_us >= snap.last.phase_sum_us());
     }
 

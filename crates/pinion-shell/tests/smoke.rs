@@ -132,6 +132,14 @@ impl WidgetRenderer for SmokeRenderer {
 }
 
 impl VelloRenderer for SmokeRenderer {
+    /// R1361.1 — a surface-less stub never waits on a swapchain, so it
+    /// blocks for 0µs. Stated per-impl rather than inherited from a trait
+    /// default: the default made "this backend cannot block" the silent
+    /// assumption for EVERY implementor, including ones that can.
+    fn last_acquire_us(&self) -> u64 {
+        0
+    }
+
     async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, SmokeRendererError>
     where
         W: Into<vello::wgpu::SurfaceTarget<'static>>,

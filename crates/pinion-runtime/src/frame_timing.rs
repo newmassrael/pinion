@@ -50,9 +50,14 @@
 //!   | `set_fps 60` | 16273 | **696** | 214 | 83 | **15559** | 399 |
 //!
 //!   The paced frame spends 96% of itself blocked and 0.7ms working.
-//!   Both rows are healthy; only the split says so. (One machine, one
-//!   run: read the *ratio*, not the absolutes — `acquire ≈ 15.5ms` is
-//!   simply one 60Hz vsync interval, which is the point.)
+//!   Both rows are healthy; only the split says so.
+//!
+//!   What theory pins is `total ≈ one vsync interval` (`16_667µs` at
+//!   60Hz) — the acquire is then whatever is *left* of that interval
+//!   after the frame's own work: `15559 ≈ 16667 - 696 - other`. So the
+//!   acquire shrinks as work grows, and the frame that stops meeting its
+//!   target is the one whose acquire reaches 0. One machine, one run:
+//!   read the ratio, not the absolutes.
 //!
 //! - **render** — `WidgetRenderer::render` minus the acquire:
 //!   `render_to_texture` plus the blit/present command-buffer record and
@@ -246,8 +251,10 @@ impl FrameTimingStats {
     /// frame-time *history*, as opposed to [`Self::snapshot`]'s fold of
     /// it.
     ///
-    /// Both projections exist because they answer different questions
-    /// and neither derives the other. `snapshot` answers *"what is the
+    /// The two projections answer different questions, and the
+    /// derivation runs **one way only**: [`Self::snapshot`] is a pure
+    /// fold of these samples, so it cannot reconstruct them, while they
+    /// can always re-derive it. `snapshot` answers *"what is the
     /// steady-state profile?"* — min/mean/max collapse the window to
     /// `O(1)` numbers an AI client reads over `scene/frame_timings`,
     /// and that is all a text readout needs. A profiler **chart** needs
@@ -436,19 +443,28 @@ pub struct FrameTimingsSnapshot {
 ///
 /// The GUI peer of [`FrameTimingsSnapshot`], split by *consumer* rather
 /// than by content: that type is the wire projection an AI client pulls
-/// over `scene/frame_timings`; this is what a `view` fn draws. A HUD
-/// needs both halves and neither derives the other — the chart plots
-/// [`samples`](Self::samples), the readout prints
+/// over `scene/frame_timings`; this is what a `view` fn draws. The chart
+/// plots [`samples`](Self::samples), the readout prints
 /// [`snapshot`](Self::snapshot).
 ///
-/// Carrying the snapshot rather than letting the HUD re-fold the samples
-/// is the point: a HUD that computed its own mean/fps/jank would be a
-/// second source of truth for numbers `scene/frame_timings` already
-/// answers, and the two would drift. Folding once here means **the HUD
-/// and the AI client read identical values** — including `budget_us`,
-/// which both inherit from the same `jank_budget_us_for_window` source
-/// the render loop paces to, so a drawn budget line cannot disagree with
-/// the deadline the shell actually enforces.
+/// ## Why both, when the snapshot is derived
+///
+/// [`samples`](Self::samples) is the source of truth and `snapshot` is a
+/// **memoized fold of it** (plus two facts the samples do not carry:
+/// `frame_count`, which survives ring eviction, and `budget_us`, an
+/// external input). Carrying the memo rather than letting the HUD re-fold
+/// is deliberate: a HUD computing its own mean/fps/jank would be a second
+/// *implementation* of numbers `scene/frame_timings` already answers, and
+/// the two would drift. Folding once, here, means **the HUD and the AI
+/// client read identical values** — including `budget_us`, which both
+/// inherit from the same `jank_budget_us_for_window` source the render
+/// loop paces to, so a drawn budget line cannot disagree with the
+/// deadline the shell enforces.
+///
+/// The memo is only safe if the two halves always describe the same
+/// window, which is why [`Self::of`] is the way to build one: it folds
+/// both from a single [`FrameTimingStats`] in one expression, so a caller
+/// cannot pair one window's samples with another's aggregates.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FrameTimingsView {
     /// The rolling window's samples, oldest first (a copy of
@@ -463,6 +479,9 @@ pub struct FrameTimingsView {
     /// `FrameTimingsUnavailable` bootstrap — [`samples`](Self::samples)
     /// is empty in exactly that case).
     ///
+    /// Built by [`Self::of`] from the same accumulator as
+    /// [`Self::samples`], so the two cannot describe different windows.
+    ///
     /// Read `snapshot.budget_us` for the frame budget, and note that
     /// `None` there is load-bearing rather than a missing value: an idle
     /// retained window has no deadline, so "missed budget" is
@@ -473,6 +492,24 @@ pub struct FrameTimingsView {
     /// which is also what makes the window paint continuously: the
     /// budget line and the streaming cadence are one decision, not two.
     pub snapshot: Option<FrameTimingsSnapshot>,
+}
+
+impl FrameTimingsView {
+    /// The only correct way to build one: fold BOTH halves from a single
+    /// [`FrameTimingStats`], so the samples and the aggregates describing
+    /// them always come from the same window and the same instant.
+    ///
+    /// The fields stay `pub` (a `view` fn destructures them freely, and a
+    /// test wants a hand-made one), so this does not make the pairing
+    /// unforgeable — it makes the correct pairing the path of least
+    /// resistance and gives the invariant one place to live.
+    #[must_use]
+    pub fn of(stats: &FrameTimingStats, budget_us: Option<u64>) -> Self {
+        Self {
+            samples: stats.samples().copied().collect(),
+            snapshot: stats.snapshot(budget_us),
+        }
+    }
 }
 
 /// Owner-cache holder for the published [`FrameTimingsView`].

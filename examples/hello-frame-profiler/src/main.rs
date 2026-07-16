@@ -7,14 +7,15 @@
 //! The §1 northern-star's pro-tool-performance axis is "measure first": a
 //! frame-budget tuning round can only be evidence-based if the frame cost is
 //! *readable*. R907 instruments `AppShell::render_window` to bracket every
-//! painted frame into three phases — **build** (`view` fn + layout),
-//! **encode** (structured scene → `vello` fragments), **render** (GPU
-//! command-buffer submit) — plus the **total** productive frame span. Each
-//! sample feeds a per-window rolling window (`FrameTimingStats`).
+//! painted frame into phases — **build** (`view` fn + layout), **encode**
+//! (structured scene → `vello` fragments), **acquire** (the vsync block,
+//! split out by R1361.1) and **render** (GPU command-buffer submit) — plus
+//! the **total** productive frame span. Each sample feeds a per-window
+//! rolling window (`FrameTimingStats`).
 //!
 //! R907 printed those numbers as a text table. This binding plots them: the
-//! last 120 frames as four series, against the window's declared frame
-//! budget. That is `stat unit` / the Chrome frame-history strip — the shape
+//! last 120 frames as one series per phase, plus `work` beside `total`,
+//! against the window's declared frame budget. That is `stat unit` / the Chrome frame-history strip — the shape
 //! every pro tool reaches for, because the *series* carries information the
 //! aggregate destroys (a steady 8ms window and one alternating 1ms/15ms
 //! report the same mean; only the chart tells them apart).
@@ -100,7 +101,8 @@
 //! | `scene/set_fps 60` | 16273 | **696** | 214 | 83 | **15559** | 399 |
 //!
 //! The paced frame is 96% block and 0.7ms of work — the textbook
-//! vsync-bound picture (`acquire ≈ 15.5ms` is one 60Hz vsync interval).
+//! vsync-bound picture (theory pins `total` at one 60Hz interval, `16_667µs`; the acquire is
+//! what is left of it after the work, `15559 ≈ 16667 - 696 - other`).
 //! Pre-R1361.1 its `render_us` would have read **`15_958µs`**: "rendering
 //! takes 16ms", the opposite of the truth. One machine, one run — the ratio
 //! is the claim, not the absolutes.
@@ -111,7 +113,7 @@
 //!
 //! ## The observer effect, stated plainly
 //!
-//! A profiler HUD measures a window it is itself drawing into: the four
+//! A profiler HUD measures a window it is itself drawing into: its
 //! 120-point paths re-hash every frame (a readout that cached would be a
 //! readout that stopped updating), so `build_us` here includes this chart's
 //! own construction. These numbers describe *this* window and are not a
@@ -317,7 +319,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 
     let title = Scene::Text(
         TextNode::styled(
-            "Frame profiler — build / encode / render over the last 120 frames",
+            "Frame profiler — total / work / build / encode / acquire / render, last 120 frames",
             Rect::default(),
             TextStyle::new()
                 .with_size_px(TITLE_FONT_PX)
@@ -525,7 +527,7 @@ mod tests {
     fn seed(owner: &Owner, totals: &[u64], budget_us: Option<u64>) {
         let mut stats = FrameTimingStats::new();
         for &total in totals {
-            // A plausible partition: total >= build + encode + render.
+            // A plausible partition: total >= build + encode + acquire + render.
             let (b, e, r) = (total / 2, total / 4, total / 8);
             stats.record(FrameTiming::new(b, e, 0, r, total));
         }

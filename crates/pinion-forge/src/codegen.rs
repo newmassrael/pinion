@@ -340,6 +340,15 @@ impl __NAME__ {
         scene: &::vello::Scene,
         base_color: ::vello::peniko::Color,
     ) -> ::std::result::Result<(), __ERR_NAME__> {
+        // R1361.4 §5.16 — clear FIRST. `render_to_texture` below returns
+        // early via `?`, i.e. before the acquire is even attempted, and any
+        // later early return does the same. Without this reset the field
+        // would still hold the PREVIOUS frame's block, and the shell would
+        // subtract a wait that this frame never performed — attributing a
+        // failed frame's whole span to "acquire" and reporting 0 render.
+        // A frame that did not reach the acquire blocked for 0µs, and that
+        // is the honest value.
+        self.last_acquire_us = 0;
         let device_handle = &self.context.devices[self.surface.dev_id];
         self.renderer.render_to_texture(
             &device_handle.device,
@@ -372,8 +381,10 @@ impl __NAME__ {
         let __acquire_start = ::std::time::Instant::now();
         let __acquired = self.surface.surface.get_current_texture();
         // Record BEFORE the error arms below return: a timeout/outdated
-        // frame is exactly the case whose block is worth reporting, and an
-        // early return must not leave a stale value from an older frame.
+        // frame is exactly the case whose block IS worth reporting (it is
+        // the longest block there is), so the value must land before the
+        // arm diverges. The reset at the top of this fn covers the paths
+        // that never reach here at all.
         self.last_acquire_us = ::std::convert::TryFrom::try_from(
             __acquire_start.elapsed().as_micros(),
         )

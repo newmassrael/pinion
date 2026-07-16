@@ -418,7 +418,7 @@ pub struct DispatchContext<'a> {
     /// [`Self::fragment_cache_stats`] pattern:
     /// `pinion-shell::ShellCore::window_scoped_rpc_reads` reads
     /// `ShellCore::frame_timings_for_window`). Consumed by
-    /// `scene/frame_timings` to surface per-phase build/encode/render
+    /// `scene/frame_timings` to surface per-phase build/encode/acquire/render
     /// timings + rolling-window aggregates. `None` →
     /// `FrameTimingsUnavailable` (window has not painted yet, or
     /// headless embedder opt-out), distinct from an all-zero snapshot.

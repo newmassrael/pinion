@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R907 §5.16 §5.7 frame-timing profiler substrate consumer — a small text workload plus a Toggle that drives repaints; each painted frame's build/encode/render/total µs feed the per-window rolling window read back via scene/frame_timings (the measure-first pro-tool-performance axis, AI-introspectable without pixels)"
+description = "R907 §5.16 §5.7 frame-timing profiler substrate consumer, retrofitted at R1361 into pinion-chart's real forcing consumer — it PLOTS the last 120 measured frames (one series per phase, plus work beside total) against the declared budget, instead of tabulating them; each painted frame's build/encode/acquire/render/total µs feed the per-window rolling window read back via scene/frame_timings (the measure-first pro-tool-performance axis, AI-introspectable without pixels)"
 publish = false
 
 [[bin]]

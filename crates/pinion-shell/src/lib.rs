@@ -319,6 +319,29 @@ impl WindowPolicy {
 pub trait VelloRenderer:
     WidgetRenderer<Frame = VelloScene, Context = VelloContext> + Sized
 {
+    /// R1361.1 §5.16 — µs the last [`WidgetRenderer::render`] spent
+    /// **blocked** rather than working: `get_current_texture()`'s wait for
+    /// the compositor to release a swapchain image.
+    ///
+    /// The shell brackets `render` as one wall-clock span and cannot see
+    /// inside it, so a backend that blocks must report the block or the
+    /// shell bills idle waiting to the render phase. That was the R1361
+    /// defect: under `PresentMode::AutoVsync` the acquire is the vsync
+    /// pace-setter, so a window doing 0.7ms of work reported ~16ms of
+    /// "render" and read exactly like a GPU-bound one.
+    ///
+    /// **On this trait, not [`WidgetRenderer`], and with no default** —
+    /// the same rule [`Self::capture_rgba8`] states below: a swapchain is
+    /// GPU-specific and a TUI cell backend has none to wait on. The first
+    /// cut put it on `WidgetRenderer` with a `0` default; that default was
+    /// not a kindness to implementors, it was the artifact of the method
+    /// sitting one layer too low, and it *documented a falsehood* — "TUI
+    /// never blocks" is an assertion about a `terminal.draw` write, not a
+    /// truth. Requiring it here costs the three real impls one line each
+    /// and lets a backend that blocks never silently report `0`.
+    #[must_use]
+    fn last_acquire_us(&self) -> u64;
+
     /// Initialize the Vello renderer against a wgpu surface target.
     /// Async because wgpu adapter + device acquisition is async; the
     /// shell wraps the future in `pollster::block_on` at the §6.3
@@ -395,16 +418,15 @@ macro_rules! vello_renderer_impl {
             fn resize(&mut self, width: u32, height: u32) {
                 <$name>::resize(self, width, height);
             }
-
-            // R1361.1 §5.16 — forward the template's recorded swapchain-acquire
-            // block so the shell can subtract it from the render span. Without
-            // this the trait default (`0`) would silently re-merge the phases.
-            fn last_acquire_us(&self) -> u64 {
-                <$name>::last_acquire_us(self)
-            }
         }
 
         impl $crate::VelloRenderer for $name {
+            // R1361.1 §5.16 — forward the template's recorded swapchain-acquire
+            // block so the shell can subtract it from the render span.
+            fn last_acquire_us(&self) -> u64 {
+                <$name>::last_acquire_us(self)
+            }
+
             async fn new<W>(
                 target: W,
                 width: u32,
@@ -436,13 +458,26 @@ macro_rules! vello_renderer_impl {
                 $crate::vello_capture::CapturedFrame,
                 $crate::vello_capture::SurfaceCaptureError,
             > {
-                $crate::vello_capture::capture_surface_rgba8(
+                // R1361.5 §5.16 — this path performs its OWN swapchain
+                // acquire and never calls the template's `render`, so it must
+                // publish its block into the same field the shell reads.
+                // Without this the capture frame inherits the previous
+                // render's block and is recorded as ~all acquire / 0 render.
+                // Set on the error path too (to 0): a capture that never
+                // acquired blocked for 0µs, and a stale value must not
+                // outlive the frame that produced it.
+                let __captured = $crate::vello_capture::capture_surface_rgba8(
                     &self.context,
                     &mut self.surface,
                     &mut self.renderer,
                     scene,
                     base_color,
-                )
+                );
+                self.last_acquire_us = match &__captured {
+                    ::core::result::Result::Ok(f) => f.acquire_us,
+                    ::core::result::Result::Err(_) => 0,
+                };
+                __captured
             }
         }
     };

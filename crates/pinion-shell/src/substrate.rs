@@ -1321,8 +1321,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// R907 §5.16 §5.7 — record one painted frame's phase breakdown
     /// into the window's rolling [`FrameTimingStats`] window. The
     /// surface-side `AppShell::render_window` calls this after each
-    /// paint cycle with the measured build / encode / render / total
-    /// microseconds. Lazily inserts a fresh accumulator on the
+    /// paint cycle with the measured build / encode / acquire / render /
+    /// total microseconds (R1361.1 split the vsync block out of render). Lazily inserts a fresh accumulator on the
     /// window's first paint (the `sim_accumulator` pattern).
     pub fn record_frame_timing(&mut self, window_id: &str, timing: FrameTiming) {
         self.window_state_mut(window_id)

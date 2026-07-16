@@ -23962,6 +23962,64 @@
         "A HUD on a secondary window needs a per-window-keyed holder; deferred until a consumer needs it (the test above pins the current contract instead of guessing at the general one)"
       ]
     },
+    "R1361.5": {
+      "decision_summary": "R1361.5: the 3-reviewer audit's 2 CRITICALs — I put a GPU-specific method on the backend-agnostic trait against a rule in the file I was editing, and the screenshot path recorded a fabricated split",
+      "changes_bullets": [
+        "CRITICAL — last_acquire_us MOVED from WidgetRenderer to VelloRenderer, and the 0 default DELETED. pinion-shell/src/lib.rs:344 already stated the rule on capture_rgba8: GPU-specific things live on the Vello trait, not the backend-agnostic one, because a TUI cell backend has no surface. A swapchain acquire is definitionally GPU-specific. The shell already requires VelloRenderer statically (WindowSlot<R: VelloRenderer>, submit_frame<R: VelloRenderer>), so doing it right cost 3 impls one line each",
+        "The 0 default was not a kindness to implementors — it was the artifact of the method sitting a layer too low, AND it documented a falsehood (the doc asserted 0 is the truth for TUI; a terminal write to a slow tty blocks, which is the same defect class). Now the compiler forces every GPU backend to answer",
+        "HIGH — the SCREENSHOT path recorded a fabricated split, and R1361.4's reset did not cover it: capture_rgba8 does its OWN get_current_texture in vello_capture.rs and never calls the template's render, so a capture frame inherited the previous render's block and was recorded as ~100% acquire / 0 render. Every demo script in this repo drives screenshots, so it poisoned the window it measured. CapturedFrame now carries acquire_us and the macro publishes it",
+        "The RPC doc's worked example was internally inconsistent: last.total_us=8740 sat OUTSIDE the window [480,980] it belongs to, and mean_acquire_us=8100 exceeded mean_total_us=533. A client building a fixture from the doc failed the partition the same doc told it to assert. Re-derived and machine-verified against every stated invariant",
+        "Deleted the false 'neither derives the other' (x2): snapshot IS a pure fold of samples; only frame_count and budget_us are independent. Restated as a memoized projection and added FrameTimingsView::of() so the pairing has one home instead of a convention",
+        "Swept 11 sites still asserting the 3-phase contract — including the on-screen TITLE, which named 3 of 6 series and omitted acquire, the phase this round exists for"
+      ],
+      "verification_bullets": [
+        "3 independent read-only reviewers (correctness / SSOT / architecture) on my own just-written code: 29th consecutive round where they beat my gates-green self-assessment. 2 CRITICAL + 3 HIGH + the SSOT sweep, all real",
+        "3 gates green (clippy -D pedantic / cargo test --workspace 0 failures / cargo doc / fmt) + r907 PASS",
+        "The JSON example is now verified by script against every invariant the same module documents and r907/r925 assert (partition, work, last-within-window, means partition, mean_fps inversion, worst_overrun <=> max_total, jank_ratio)",
+        "The moved trait method is compiler-enforced: making it required surfaced both stub impls immediately — the exact honesty the 0 default was suppressing"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.7",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "ACCEPTED, not fixed — the seam is an unnamed THIRD category (non-reactive AND non-deterministic) wearing the use_* name and the Rc<T> shape of the reactive-holder family. measured_monospace_cell is the non-reactive precedent and is deliberately NOT named use_*; I half-used it (took its gracefulness, ignored its naming). 20 lines of prose are doing a type's job. Phase C brings GPU timestamps / asset stalls / netcode RTT, all this same shape — naming the category is a real round, not a rename",
+        "ACCEPTED — my §2#3 animation analogy is a rationalisation. dry_run holds (dry_run.rs never re-runs the view; only the live paint publishes), but animation earns its pass on two axes I do NOT have: it is externally driveable (scene/animate_settle) and it participates in Owner::snapshot/restore. FrameTimingsHolder is a bare RefCell invisible to rollback with no injection point. Today's safety rests on a call-site accident",
+        "ACCEPTED — a HUD on a SECONDARY window silently reads the PRIMARY's history (root-owner-scoped holder). My test pinned only the clobber direction; the read direction is wrong DATA, not absence",
+        "ACCEPTED — work_us() hardcodes the work-vs-block classification the phase type should carry; 4 duplicated folds break at Phase C's first new blocking phase",
+        "ACCEPTED — a binding with no window named main gets a permanently dead HUD (inherited from the R1006 gate, new consequence)",
+        "ACCEPTED — the publish is outside every frame's measured span, so the profiler cannot see the cost it added; and the TUI seam hole is undocumented where pinion-chart's neighbouring discipline documents its own"
+      ],
+      "publishable_decision_summary": "R1361.5: the 3-reviewer audit's 2 CRITICALs — I put a GPU-specific method on the backend-agnostic trait against a rule in the file I was editing, and the screenshot path recorded a fabricated split",
+      "publishable_changes_bullets": [
+        "CRITICAL — last_acquire_us MOVED from WidgetRenderer to VelloRenderer, and the 0 default DELETED. pinion-shell/src/lib.rs:344 already stated the rule on capture_rgba8: GPU-specific things live on the Vello trait, not the backend-agnostic one, because a TUI cell backend has no surface. A swapchain acquire is definitionally GPU-specific. The shell already requires VelloRenderer statically (WindowSlot<R: VelloRenderer>, submit_frame<R: VelloRenderer>), so doing it right cost 3 impls one line each",
+        "The 0 default was not a kindness to implementors — it was the artifact of the method sitting a layer too low, AND it documented a falsehood (the doc asserted 0 is the truth for TUI; a terminal write to a slow tty blocks, which is the same defect class). Now the compiler forces every GPU backend to answer",
+        "HIGH — the SCREENSHOT path recorded a fabricated split, and R1361.4's reset did not cover it: capture_rgba8 does its OWN get_current_texture in vello_capture.rs and never calls the template's render, so a capture frame inherited the previous render's block and was recorded as ~100% acquire / 0 render. Every demo script in this repo drives screenshots, so it poisoned the window it measured. CapturedFrame now carries acquire_us and the macro publishes it",
+        "The RPC doc's worked example was internally inconsistent: last.total_us=8740 sat OUTSIDE the window [480,980] it belongs to, and mean_acquire_us=8100 exceeded mean_total_us=533. A client building a fixture from the doc failed the partition the same doc told it to assert. Re-derived and machine-verified against every stated invariant",
+        "Deleted the false 'neither derives the other' (x2): snapshot IS a pure fold of samples; only frame_count and budget_us are independent. Restated as a memoized projection and added FrameTimingsView::of() so the pairing has one home instead of a convention",
+        "Swept 11 sites still asserting the 3-phase contract — including the on-screen TITLE, which named 3 of 6 series and omitted acquire, the phase this round exists for"
+      ],
+      "publishable_verification_bullets": [
+        "3 independent read-only reviewers (correctness / SSOT / architecture) on my own just-written code: 29th consecutive round where they beat my gates-green self-assessment. 2 CRITICAL + 3 HIGH + the SSOT sweep, all real",
+        "3 gates green (clippy -D pedantic / cargo test --workspace 0 failures / cargo doc / fmt) + r907 PASS",
+        "The JSON example is now verified by script against every invariant the same module documents and r907/r925 assert (partition, work, last-within-window, means partition, mean_fps inversion, worst_overrun <=> max_total, jank_ratio)",
+        "The moved trait method is compiler-enforced: making it required surfaced both stub impls immediately — the exact honesty the 0 default was suppressing"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.7",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "ACCEPTED, not fixed — the seam is an unnamed THIRD category (non-reactive AND non-deterministic) wearing the use_* name and the Rc<T> shape of the reactive-holder family. measured_monospace_cell is the non-reactive precedent and is deliberately NOT named use_*; I half-used it (took its gracefulness, ignored its naming). 20 lines of prose are doing a type's job. Phase C brings GPU timestamps / asset stalls / netcode RTT, all this same shape — naming the category is a real round, not a rename",
+        "ACCEPTED — my §2#3 animation analogy is a rationalisation. dry_run holds (dry_run.rs never re-runs the view; only the live paint publishes), but animation earns its pass on two axes I do NOT have: it is externally driveable (scene/animate_settle) and it participates in Owner::snapshot/restore. FrameTimingsHolder is a bare RefCell invisible to rollback with no injection point. Today's safety rests on a call-site accident",
+        "ACCEPTED — a HUD on a SECONDARY window silently reads the PRIMARY's history (root-owner-scoped holder). My test pinned only the clobber direction; the read direction is wrong DATA, not absence",
+        "ACCEPTED — work_us() hardcodes the work-vs-block classification the phase type should carry; 4 duplicated folds break at Phase C's first new blocking phase",
+        "ACCEPTED — a binding with no window named main gets a permanently dead HUD (inherited from the R1006 gate, new consequence)",
+        "ACCEPTED — the publish is outside every frame's measured span, so the profiler cannot see the cost it added; and the TUI seam hole is undocumented where pinion-chart's neighbouring discipline documents its own"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

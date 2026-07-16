@@ -13,7 +13,7 @@
 //!
 //! Sibling of [`scene/cache_stats`](fn@crate::cache_stats): that method
 //! reports paint-fragment cache hit-rate; this one reports the
-//! wall-clock cost of the build / encode / render phases the cache
+//! wall-clock cost of the build / encode / acquire / render phases the cache
 //! lives inside. They share the per-window-telemetry topology
 //! (embedder pre-resolves a `Copy` snapshot onto the dispatch context;
 //! the handler just projects it to the wire shape) but stay separate
@@ -44,14 +44,14 @@
 //!       "work_us": 510
 //!     },
 //!     "window": {
-//!       "min_total_us": 480, "mean_total_us": 533, "max_total_us": 980,
+//!       "min_total_us": 8100, "mean_total_us": 8600, "max_total_us": 9800,
 //!       "mean_build_us": 310, "mean_encode_us": 105,
 //!       "mean_acquire_us": 8100, "mean_render_us": 78
 //!     },
-//!     "mean_fps": 1876.0,
-//!     "budget_us": 16666,
+//!     "mean_fps": 116.3,
+//!     "budget_us": 8333,
 //!     "over_budget_frames": 3,
-//!     "worst_overrun_us": 540,
+//!     "worst_overrun_us": 1467,
 //!     "jank_ratio": 0.025
 //!   }
 //! }
@@ -295,7 +295,8 @@ mod tests {
     fn r907_phase_partition_holds_on_wire() {
         let snap = snapshot_of(&[FrameTiming::new(200, 90, 0, 60, 400)]);
         let out = frame_timings(Some(snap)).unwrap();
-        // total == build + encode + render + other, by construction.
+        // total == build + encode + acquire + render + other, by
+        // construction (this fixture pins acquire = 0).
         assert_eq!(
             out.last.total_us,
             out.last.build_us + out.last.encode_us + out.last.render_us + out.last.other_us,

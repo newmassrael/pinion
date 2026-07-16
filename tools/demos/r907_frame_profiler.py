@@ -4,9 +4,10 @@ verification demo.
 
 R907 lands the "measure" half of the §1 northern-star's measure-first
 pro-tool-performance axis. `AppShell::render_window` now brackets every
-painted frame into three phases — **build** (`view` fn + layout),
-**encode** (structured scene → vello fragments), **render** (GPU
-command-buffer submit) — plus the **total** productive frame span, and
+painted frame into phases — **build** (`view` fn + layout), **encode**
+(structured scene → vello fragments), **acquire** (the vsync block, split
+out of render by R1361.1) and **render** (GPU command-buffer submit) —
+plus the **total** productive frame span, and
 feeds the sample into a per-window rolling window
 (`pinion_runtime::FrameTimingStats`, capped at FRAME_TIMING_WINDOW =
 120). `scene/frame_timings` projects it: the last frame's breakdown,
@@ -23,9 +24,9 @@ Frame timings are wall-clock — a demo can never assert "build took
 320µs". But the *structure* is deterministic regardless of the
 machine:
 
-  - **phase partition**: total_us >= build + encode + render, and
-    total == build + encode + render + other, EXACTLY — the three
-    phases are disjoint sub-intervals of the total interval, and µs
+  - **phase partition**: total_us >= build + encode + acquire + render, and
+    total == build + encode + acquire + render + other, EXACTLY — the
+    four phases are disjoint sub-intervals of the total interval, and µs
     truncation preserves `Σ⌊subᵢ⌋ <= ⌊total⌋`.
   - **window ordering**: min_total <= mean_total <= max_total, and the
     last frame's total sits within [min, max].

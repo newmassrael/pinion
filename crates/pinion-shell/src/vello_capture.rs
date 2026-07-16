@@ -199,6 +199,22 @@ pub struct CapturedFrame {
     pub height: u32,
     /// `width * height * 4` premultiplied RGBA8, row-major, top-left.
     pub rgba8: Vec<u8>,
+    /// R1361.5 §5.16 — µs this capture spent BLOCKED in its own
+    /// `get_current_texture()`.
+    ///
+    /// The capture path does not go through the forge template's `render`,
+    /// so it neither resets nor records that template's
+    /// `last_acquire_us`. Before R1361.5 a screenshot frame therefore
+    /// inherited the *previous* render's block, and the shell — which
+    /// subtracts the block from every recorded frame, capture included —
+    /// clamped it to the capture span and recorded the frame as ~100%
+    /// acquire, 0 render. Every demo script in this repo drives
+    /// screenshots, so that poisoned the very window it measured.
+    ///
+    /// Reported here rather than through the renderer's field because this
+    /// is a free function over borrowed wgpu handles: the value rides out
+    /// with the frame it belongs to.
+    pub acquire_us: u64,
 }
 
 /// Render `scene` to the live Vello surface and read back the **exact
@@ -233,6 +249,7 @@ pub fn capture_surface_rgba8(
     if width == 0 || height == 0 {
         return Err(SurfaceCaptureError::ZeroDimension);
     }
+
     let device_handle = &context.devices[surface.dev_id];
     let device = &device_handle.device;
     let queue = &device_handle.queue;
@@ -257,7 +274,15 @@ pub fn capture_surface_rgba8(
     // Acquire the swapchain texture, mirroring the template `render()`
     // recovery (R1049): outdated / lost / validation reconfigure the
     // surface and fail this capture rather than reading a stale frame.
-    let surface_texture = match surface.surface.get_current_texture() {
+    // R1361.5 §5.16 — this path performs its own swapchain acquire; time it
+    // so the shell can attribute the block instead of billing it to render
+    // work (or, worse, inheriting a stale block from the last `render` call,
+    // which this path never makes). Bound at the acquire itself, so every
+    // path that reaches the `Ok` below carries THIS frame's block.
+    let __acquire_start = std::time::Instant::now();
+    let __acquired = surface.surface.get_current_texture();
+    let acquire_us = u64::try_from(__acquire_start.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let surface_texture = match __acquired {
         wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
         wgpu::CurrentSurfaceTexture::Timeout => {
             return Err(SurfaceCaptureError::SurfaceUnavailable("timeout"));
@@ -309,6 +334,7 @@ pub fn capture_surface_rgba8(
         width,
         height,
         rgba8,
+        acquire_us,
     })
 }
 
