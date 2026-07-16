@@ -3451,6 +3451,78 @@ mod r907_frame_timing_substrate {
         assert!(core.frame_timings_for_window("inspector").is_none());
     }
 
+    /// R1361 — the publish is DEMAND-GATED. Its doc claims "a binding
+    /// that does not chart itself pays nothing"; this is that claim's
+    /// test, and without it the claim was only an intention.
+    ///
+    /// Observable as the holder's absence: `use_frame_timings` is what
+    /// inserts it, so a binding that never reads the seam must find the
+    /// slot still empty after any number of publishes — no copy of the
+    /// sample ring, no allocation, on every window of every binding in
+    /// the gallery.
+    #[test]
+    fn r1361_publish_is_a_no_op_until_a_view_reads_the_seam() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.record_frame_timing("main", FrameTiming::new(300, 100, 0, 80, 540));
+        core.publish_frame_timings("main");
+        assert!(
+            core.root_owner()
+                .cache_get_by_str::<pinion_runtime::FrameTimingsHolder>(
+                    pinion_runtime::FRAME_TIMINGS_KEY,
+                )
+                .is_none(),
+            "a binding whose view never calls use_frame_timings must not \
+             even have the holder — the publish has to cost it nothing",
+        );
+
+        // Once a view HAS read the seam, the same publish delivers.
+        let holder = core.root_owner().run(|| {
+            core.root_owner().cache(
+                pinion_runtime::FRAME_TIMINGS_KEY,
+                pinion_runtime::FrameTimingsHolder::default,
+            )
+        });
+        assert!(holder.sample().samples.is_empty(), "nothing published yet");
+        core.publish_frame_timings("main");
+        let got = holder.sample();
+        assert_eq!(got.samples, vec![FrameTiming::new(300, 100, 0, 80, 540)]);
+        assert_eq!(
+            got.snapshot.expect("published").frame_count,
+            1,
+            "the published snapshot is the same fold scene/frame_timings returns",
+        );
+    }
+
+    /// R1361 — PRIMARY WINDOW ONLY, the other untested doc claim. The
+    /// holder is a single per-owner slot, so a secondary window's paint
+    /// publishing into it would make the HUD chart an interleaving of two
+    /// windows' frames. (The pane seam may publish per-window precisely
+    /// because it is tag-keyed; this is not.)
+    #[test]
+    fn r1361_a_secondary_window_never_clobbers_the_primary_history() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let holder = core.root_owner().run(|| {
+            core.root_owner().cache(
+                pinion_runtime::FRAME_TIMINGS_KEY,
+                pinion_runtime::FrameTimingsHolder::default,
+            )
+        });
+        core.record_frame_timing("main", FrameTiming::new(300, 100, 0, 80, 540));
+        core.record_frame_timing("inspector", FrameTiming::new(1, 1, 0, 1, 9_999));
+        core.publish_frame_timings("main");
+        core.publish_frame_timings("inspector");
+
+        let got = holder.sample();
+        assert_eq!(
+            got.samples,
+            vec![FrameTiming::new(300, 100, 0, 80, 540)],
+            "the secondary window's publish must be a no-op — the HUD reads \
+             the PRIMARY window's history, not whichever window painted last",
+        );
+    }
+
     #[test]
     fn r907_record_round_trips_projected_snapshot() {
         let _g = super::TEST_LOCK.lock().unwrap();

@@ -23922,6 +23922,46 @@
         "A HUD on a secondary window needs a per-window-keyed holder (the slot is per-owner today); deferred until a consumer needs it"
       ]
     },
+    "R1361.3": {
+      "decision_summary": "R1361.3: the publish's two documented contracts had no tests — pin them, and falsify to prove the pins bite",
+      "changes_bullets": [
+        "publish_frame_timings had ZERO tests — its only reference outside its own definition was the app.rs call site — while its doc asserted two contracts: demand-gated and primary-window-only. Both are now pinned",
+        "r1361_publish_is_a_no_op_until_a_view_reads_the_seam: a binding whose view never calls use_frame_timings must not even have the holder, so the publish costs the whole gallery nothing",
+        "r1361_a_secondary_window_never_clobbers_the_primary_history: the holder is ONE per-owner slot, so a secondary paint publishing into it would make the HUD chart an interleaving of two windows"
+      ],
+      "verification_bullets": [
+        "FALSIFIED, not just green: deleting the primary-window gate fails BOTH tests; defeating the demand gate (publish creates the holder) fails the demand test. Restored -> both green",
+        "3 gates green (clippy -D pedantic / cargo test --workspace 0 failures / fmt)"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "present() / render_to_texture can still block inside render_us (observed render_us~998863 with acquire~7 once). Same defect CLASS as the acquire, one call on; unexplained and unforced by any consumer — honest open debt",
+        "paint_cycle test harness duplicated in hello-chart-fill + hello-frame-profiler (2 copies; lift triggers at 3)",
+        "r925 local flakiness = ENVIRONMENT carry (this box's present path is erratic; CI globs every demo under Xvfb, main green there)",
+        "A HUD on a secondary window needs a per-window-keyed holder; deferred until a consumer needs it (the test above pins the current contract instead of guessing at the general one)"
+      ],
+      "publishable_decision_summary": "R1361.3: the publish's two documented contracts had no tests — pin them, and falsify to prove the pins bite",
+      "publishable_changes_bullets": [
+        "publish_frame_timings had ZERO tests — its only reference outside its own definition was the app.rs call site — while its doc asserted two contracts: demand-gated and primary-window-only. Both are now pinned",
+        "r1361_publish_is_a_no_op_until_a_view_reads_the_seam: a binding whose view never calls use_frame_timings must not even have the holder, so the publish costs the whole gallery nothing",
+        "r1361_a_secondary_window_never_clobbers_the_primary_history: the holder is ONE per-owner slot, so a secondary paint publishing into it would make the HUD chart an interleaving of two windows"
+      ],
+      "publishable_verification_bullets": [
+        "FALSIFIED, not just green: deleting the primary-window gate fails BOTH tests; defeating the demand gate (publish creates the holder) fails the demand test. Restored -> both green",
+        "3 gates green (clippy -D pedantic / cargo test --workspace 0 failures / fmt)"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "present() / render_to_texture can still block inside render_us (observed render_us~998863 with acquire~7 once). Same defect CLASS as the acquire, one call on; unexplained and unforced by any consumer — honest open debt",
+        "paint_cycle test harness duplicated in hello-chart-fill + hello-frame-profiler (2 copies; lift triggers at 3)",
+        "r925 local flakiness = ENVIRONMENT carry (this box's present path is erratic; CI globs every demo under Xvfb, main green there)",
+        "A HUD on a secondary window needs a per-window-keyed holder; deferred until a consumer needs it (the test above pins the current contract instead of guessing at the general one)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
