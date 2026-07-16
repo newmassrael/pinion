@@ -13,6 +13,11 @@ name = "hello-frame-profiler"
 path = "src/main.rs"
 
 [dependencies]
+# R1361 — the chart this binding forces real measured data through.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+# R1361 §5.16 §5.22 — `use_frame_timings`: the read seam that lets the
+# pure view fn reach the rolling profiler window the shell records into.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
 # §5.38 Toggle reused purely as the RPC-drivable repaint trigger (each
 # flip re-runs the view → a measured frame); the substrate under test
 # is the frame-timing profiler, not the Toggle.
@@ -31,8 +36,11 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]
-# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+# R55.G.22 §5.49 — composite-paint-root-tag + R1360.2 opaque-root gates.
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# R1361 — the tests drive the real `compute_layout` + measured-rect seam
+# (the `hello-chart-fill` harness shape), so they need the text cache.
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
 
 [build-dependencies]
 # R46.5 §5.16: build-time codegen for the Vello renderer wrapper.

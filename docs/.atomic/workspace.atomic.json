@@ -23758,6 +23758,70 @@
         "Legend/tick-label overflow below a tight slot is DOCUMENTED, not clamped — it predates R1360 and the margins normally absorb it, but a docked narrow chart would paint over its neighbour"
       ]
     },
+    "R1361": {
+      "decision_summary": "R1361: hello-frame-profiler becomes pinion-chart's real forcing consumer — the use_frame_timings seam + a live frame-time chart, which immediately exposed that render_us measures vsync back-pressure",
+      "changes_bullets": [
+        "use_frame_timings: the view-fn read seam for the profiler. The stats live on ShellCore and a pure sync view fn had NO way to reach them, so a frame-time chart was structurally impossible, not merely absent",
+        "FrameTimingStats::samples(): the per-frame history. snapshot() folds to min/mean/max and DESTROYS shape — a steady 8ms window and an alternating 1ms/15ms one report identical aggregates; only the series tells them apart",
+        "The seam is deliberately NOT a Signal — the one non-reactive member of the use_* family. Signal::set dirties the subscribed owner and the shell bridges dirty->request_redraw; timings differ every frame by construction so the equality-skip can never fire, and publish->dirty->redraw->paint->publish would spin an idle window at 100% CPU. A measurement of painting must not drive painting",
+        "FrameTimingsView carries samples + the SAME snapshot scene/frame_timings returns, so HUD and AI client cannot drift on mean/fps/jank; one jank_budget_us_for_window source feeds both",
+        "publish_frame_timings is demand-gated (no holder => no work) and DEFAULT_WINDOW-only, inheriting the R1006 rule: the holder is one per-owner slot, so a secondary window would clobber the primary's history",
+        "The budget line is conditional on budget_us being Some, drawn as a 2-point Series::with_color — no new chart API, no magic 16.7ms. An unpaced window HAS no deadline, so a hardcoded rule would assert one that does not exist",
+        "Window was SizeStrategy::Fixed (the derive default; the binding declared only initial_size) — the SEED's dockable+resizable claim was FALSE. Now OpenResizable, with the chart in a flex_grow slot sized by its siblings"
+      ],
+      "verification_bullets": [
+        "3 gates green: cargo test --workspace (222 suites ok, 0 failed) + clippy -D pedantic + cargo doc",
+        "r907_frame_profiler.py PASS unchanged — the Toggle stays the manual driver, so nothing declares a startup fps target and r925's section-A unpaced contract is untouched",
+        "The load-bearing seam test asserts a publish does NOT dirty the owner; confirmed it genuinely catches the regression by reading signal.rs:308 set_marks_subscribed_owner_dirty (identical shape => a Signal-backed seam fails it)",
+        "r1361_view_charts_the_seam_not_a_synthetic_series: two different published histories must yield different painted geometry — a canned series paints identically for both",
+        "Chart tracks a FLEX slot, not just a window, closing R1360's declared dock/flex-placement gap: the root is strictly shorter than the window because the chrome takes its share first",
+        "r925 baseline re-run under git stash on clean f13e5f6c: also FAILS => the failure is pre-existing, not this round's regression"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.22",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "The chart IMMEDIATELY exposed a 450-round-old false doc: render_us claimed CPU-side cost only, but the forge-generated render calls get_current_texture() INSIDE the timed span under PresentMode::AutoVsync, so it blocks on vsync. Measured render_us~998000 vs build_us~400 on a live window. Doc corrected in 2 places; splitting the acquire into its own phase needs the forge template and is the follow-up",
+        "r925_frame_budget.py fails LOCALLY — pre-existing (verified by stashing to clean main). Same ~1s acquire root cause. Its section B compares a 1_000_000us budget against wgpu's ~1s acquire timeout — the same number — so it is a coin flip (baseline failed E, this run failed B). CI globs every demo under Xvfb and main is green there, so it is environment-shaped; the flaky-at-the-boundary assertion is real regardless",
+        "Could not verify an observed 60fps stream locally: this box's acquire dominates every frame. The pacing claim rests on reading about_to_wait + the frame_budget_for_window(false, Some(30)) unit test, and the demo doc says exactly that instead of claiming a measurement it does not have",
+        "paint_cycle test harness now duplicated in hello-chart-fill + hello-frame-profiler (2 copies, not the 3 that triggers a lift). A 3rd consumer lifts it to pinion-core test-fixtures",
+        "The view now reads a wall-clock-derived value. Purity holds in the same sense animation's does — non-determinism enters at the publish, not in view — but the HUD's subtree never fragment-caches, inherent to a live readout",
+        "A HUD on a secondary window needs a per-window-keyed holder; deferred until a consumer needs it rather than guessed at"
+      ],
+      "publishable_decision_summary": "R1361: hello-frame-profiler becomes pinion-chart's real forcing consumer — the use_frame_timings seam + a live frame-time chart, which immediately exposed that render_us measures vsync back-pressure",
+      "publishable_changes_bullets": [
+        "use_frame_timings: the view-fn read seam for the profiler. The stats live on ShellCore and a pure sync view fn had NO way to reach them, so a frame-time chart was structurally impossible, not merely absent",
+        "FrameTimingStats::samples(): the per-frame history. snapshot() folds to min/mean/max and DESTROYS shape — a steady 8ms window and an alternating 1ms/15ms one report identical aggregates; only the series tells them apart",
+        "The seam is deliberately NOT a Signal — the one non-reactive member of the use_* family. Signal::set dirties the subscribed owner and the shell bridges dirty->request_redraw; timings differ every frame by construction so the equality-skip can never fire, and publish->dirty->redraw->paint->publish would spin an idle window at 100% CPU. A measurement of painting must not drive painting",
+        "FrameTimingsView carries samples + the SAME snapshot scene/frame_timings returns, so HUD and AI client cannot drift on mean/fps/jank; one jank_budget_us_for_window source feeds both",
+        "publish_frame_timings is demand-gated (no holder => no work) and DEFAULT_WINDOW-only, inheriting the R1006 rule: the holder is one per-owner slot, so a secondary window would clobber the primary's history",
+        "The budget line is conditional on budget_us being Some, drawn as a 2-point Series::with_color — no new chart API, no magic 16.7ms. An unpaced window HAS no deadline, so a hardcoded rule would assert one that does not exist",
+        "Window was SizeStrategy::Fixed (the derive default; the binding declared only initial_size) — the SEED's dockable+resizable claim was FALSE. Now OpenResizable, with the chart in a flex_grow slot sized by its siblings"
+      ],
+      "publishable_verification_bullets": [
+        "3 gates green: cargo test --workspace (222 suites ok, 0 failed) + clippy -D pedantic + cargo doc",
+        "r907_frame_profiler.py PASS unchanged — the Toggle stays the manual driver, so nothing declares a startup fps target and r925's section-A unpaced contract is untouched",
+        "The load-bearing seam test asserts a publish does NOT dirty the owner; confirmed it genuinely catches the regression by reading signal.rs:308 set_marks_subscribed_owner_dirty (identical shape => a Signal-backed seam fails it)",
+        "r1361_view_charts_the_seam_not_a_synthetic_series: two different published histories must yield different painted geometry — a canned series paints identically for both",
+        "Chart tracks a FLEX slot, not just a window, closing R1360's declared dock/flex-placement gap: the root is strictly shorter than the window because the chrome takes its share first",
+        "r925 baseline re-run under git stash on clean f13e5f6c: also FAILS => the failure is pre-existing, not this round's regression"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.22",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The chart IMMEDIATELY exposed a 450-round-old false doc: render_us claimed CPU-side cost only, but the forge-generated render calls get_current_texture() INSIDE the timed span under PresentMode::AutoVsync, so it blocks on vsync. Measured render_us~998000 vs build_us~400 on a live window. Doc corrected in 2 places; splitting the acquire into its own phase needs the forge template and is the follow-up",
+        "r925_frame_budget.py fails LOCALLY — pre-existing (verified by stashing to clean main). Same ~1s acquire root cause. Its section B compares a 1_000_000us budget against wgpu's ~1s acquire timeout — the same number — so it is a coin flip (baseline failed E, this run failed B). CI globs every demo under Xvfb and main is green there, so it is environment-shaped; the flaky-at-the-boundary assertion is real regardless",
+        "Could not verify an observed 60fps stream locally: this box's acquire dominates every frame. The pacing claim rests on reading about_to_wait + the frame_budget_for_window(false, Some(30)) unit test, and the demo doc says exactly that instead of claiming a measurement it does not have",
+        "paint_cycle test harness now duplicated in hello-chart-fill + hello-frame-profiler (2 copies, not the 3 that triggers a lift). A 3rd consumer lifts it to pinion-core test-fixtures",
+        "The view now reads a wall-clock-derived value. Purity holds in the same sense animation's does — non-determinism enters at the publish, not in view — but the HUD's subtree never fragment-caches, inherent to a live readout",
+        "A HUD on a secondary window needs a per-window-keyed holder; deferred until a consumer needs it rather than guessed at"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

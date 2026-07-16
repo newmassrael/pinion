@@ -34,12 +34,30 @@
 //!   fragments (the §5.16 fragment cache short-circuits unchanged
 //!   subtrees here, so this phase and the cache hit-rate move
 //!   together).
-//! - **render** — `WidgetRenderer::render`: recording and submitting
-//!   the GPU command buffer. **CPU-side cost only** — `wgpu` queue
-//!   submission returns before the GPU finishes the work, so this is
-//!   *not* GPU execution wall-clock. True GPU timing needs timestamp
-//!   queries (a deferred axis); honest naming keeps a future round
-//!   from mistaking this for GPU time.
+//! - **render** — `WidgetRenderer::render`: acquiring the swapchain
+//!   image, then recording and submitting the GPU command buffer.
+//!   **Not GPU execution wall-clock** — `wgpu` queue submission returns
+//!   before the GPU finishes the work; true GPU timing needs timestamp
+//!   queries (a deferred axis).
+//!
+//!   **It is also not pure work.** The forge-generated `render` calls
+//!   `surface.get_current_texture()` inside this span, and the surface
+//!   is configured `PresentMode::AutoVsync` (= Fifo), so the acquire
+//!   *blocks until the compositor releases an image*. This phase
+//!   therefore carries presentation back-pressure — up to a vsync
+//!   interval in the healthy case, and up to `wgpu`'s ~1s acquire
+//!   timeout when nothing is presenting at all. R1361 measured
+//!   `render_us ≈ 998_000` against `build_us ≈ 400` on a live window,
+//!   which is the block, not the drawing.
+//!
+//!   Read it as "render + wait-for-image", and do not read a large
+//!   `render_us` as "drawing is slow" — an idle window blocked on vsync
+//!   reports exactly the same shape as a GPU-bound one. Splitting the
+//!   acquire into its own phase is the honest fix and needs the forge
+//!   template to report it separately (a deferred axis). This paragraph
+//!   exists because the pre-R1361 doc claimed the opposite
+//!   ("CPU-side cost only"), and a text readout hid the contradiction
+//!   for 450 rounds — the R1361 chart made it unmissable in one frame.
 //!
 //! [`FrameTiming::total_us`] spans the whole productive frame (build
 //! start through the post-paint accessibility-emit / IME-publish /
@@ -52,7 +70,9 @@
 //! wall-clock, which is exactly what lets a demo assert correctness
 //! without asserting timing.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 /// Number of most-recent frames the rolling window retains. ~2s at
 /// 60fps — long enough to smooth single-frame jitter into a stable
@@ -81,8 +101,13 @@ pub struct FrameTiming {
     /// (`to_vello_cached`); the §5.16 fragment cache short-circuits
     /// here.
     pub encode_us: u64,
-    /// GPU command-buffer record + submit (`WidgetRenderer::render`).
-    /// CPU-side cost only — not GPU execution wall-clock.
+    /// Swapchain acquire + GPU command-buffer record + submit
+    /// (`WidgetRenderer::render`).
+    ///
+    /// Neither GPU execution wall-clock nor pure CPU work: the acquire
+    /// blocks on vsync (`PresentMode::AutoVsync`), so this span carries
+    /// presentation back-pressure and can dominate a frame that drew
+    /// almost nothing. See the module doc's "three phases".
     pub render_us: u64,
     /// Whole productive frame: build start through the post-paint
     /// accessibility / IME / finalize work. `>= build + encode +
@@ -174,6 +199,30 @@ impl FrameTimingStats {
     #[must_use]
     pub fn window_len(&self) -> usize {
         self.samples.len()
+    }
+
+    /// The rolling window's per-frame samples, **oldest first** — the
+    /// frame-time *history*, as opposed to [`Self::snapshot`]'s fold of
+    /// it.
+    ///
+    /// Both projections exist because they answer different questions
+    /// and neither derives the other. `snapshot` answers *"what is the
+    /// steady-state profile?"* — min/mean/max collapse the window to
+    /// `O(1)` numbers an AI client reads over `scene/frame_timings`,
+    /// and that is all a text readout needs. A profiler **chart** needs
+    /// the series itself: the shape of the last 120 frames (a periodic
+    /// hitch, a rising ramp, one catastrophic spike) is exactly the
+    /// information the fold destroys — `mean = 8ms` reads identically
+    /// for a steady 8ms window and for one alternating 1ms/15ms.
+    ///
+    /// Borrowed + oldest-first so the caller decides the cost: a chart
+    /// maps it to `(x, y)` vertices in one pass without an intermediate
+    /// `Vec`, and oldest-first means the sample index *is* the x-axis
+    /// position (left = oldest), which is the reading order every
+    /// frame-time HUD uses (Unreal `stat unit`, Chrome frame history).
+    #[must_use]
+    pub fn samples(&self) -> impl ExactSizeIterator<Item = &FrameTiming> + '_ {
+        self.samples.iter()
     }
 
     /// `true` until the first [`Self::record`].
@@ -333,6 +382,277 @@ pub struct FrameTimingsSnapshot {
     /// that missed budget, in `[0.0, 1.0]`. `0.0` when no budget is
     /// set. Echoed so a client need not re-derive the ratio.
     pub jank_ratio: f32,
+}
+
+// ── R1361 §5.16 §5.22 — the in-app read seam ─────────────────────────
+
+/// R1361 — what an **in-app** profiler HUD reads: the rolling per-frame
+/// history *and* the aggregate fold of it, as one coherent value.
+///
+/// The GUI peer of [`FrameTimingsSnapshot`], split by *consumer* rather
+/// than by content: that type is the wire projection an AI client pulls
+/// over `scene/frame_timings`; this is what a `view` fn draws. A HUD
+/// needs both halves and neither derives the other — the chart plots
+/// [`samples`](Self::samples), the readout prints
+/// [`snapshot`](Self::snapshot).
+///
+/// Carrying the snapshot rather than letting the HUD re-fold the samples
+/// is the point: a HUD that computed its own mean/fps/jank would be a
+/// second source of truth for numbers `scene/frame_timings` already
+/// answers, and the two would drift. Folding once here means **the HUD
+/// and the AI client read identical values** — including `budget_us`,
+/// which both inherit from the same `jank_budget_us_for_window` source
+/// the render loop paces to, so a drawn budget line cannot disagree with
+/// the deadline the shell actually enforces.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FrameTimingsView {
+    /// The rolling window's samples, oldest first (a copy of
+    /// [`FrameTimingStats::samples`] at the last publish). **Empty**
+    /// before the first measured frame, and off the live shell (headless
+    /// / RPC / unit tests) where nothing publishes — one sentinel for
+    /// "nothing to chart", mirroring the pane seam's `(0, 0)` =
+    /// unmeasured rather than adding an `Option` layer.
+    pub samples: Vec<FrameTiming>,
+    /// The same aggregate projection `scene/frame_timings` returns, or
+    /// `None` before the first measured frame (the
+    /// `FrameTimingsUnavailable` bootstrap — [`samples`](Self::samples)
+    /// is empty in exactly that case).
+    ///
+    /// Read `snapshot.budget_us` for the frame budget, and note that
+    /// `None` there is load-bearing rather than a missing value: an idle
+    /// retained window has no deadline, so "missed budget" is
+    /// meaningless (see [`FrameTimingsSnapshot::budget_us`]). A HUD MUST
+    /// therefore draw a budget line only when it is `Some` — a hardcoded
+    /// 16.7ms rule would assert a deadline the window does not have.
+    /// `Some` appears once a target is declared via `scene/set_fps`,
+    /// which is also what makes the window paint continuously: the
+    /// budget line and the streaming cadence are one decision, not two.
+    pub snapshot: Option<FrameTimingsSnapshot>,
+}
+
+/// Owner-cache holder for the published [`FrameTimingsView`].
+///
+/// **Deliberately not a [`Signal`](pinion_core::Signal)** — this is the
+/// one seam in the reactive family that must not be reactive, and the
+/// reason is a cycle rather than a preference.
+///
+/// A `Signal::set` marks every subscribed owner dirty, and the shell
+/// bridges owner-dirty into `request_redraw`. Frame timings change every
+/// frame *by construction* (they are wall-clock µs), so the equality-skip
+/// that floors every other publish at "not dirty" can never fire here:
+/// publish → dirty → redraw → paint → publish would spin an idle window
+/// at 100% CPU forever, on a window that is supposed to sleep at
+/// `ControlFlow::Wait`. **A measurement of painting must not drive
+/// painting** — it is data *about* the loop, so letting it close the loop
+/// is circular.
+///
+/// So the value is *sampled*, not subscribed: the shell overwrites the
+/// holder after each recorded frame and a `view` reads whatever is there
+/// at paint time. Cadence stays an independent decision — a HUD paints
+/// continuously because a frame target is declared (`scene/set_fps` →
+/// `frame_budget_for_window` → the `WaitUntil` re-arm), and an unpaced
+/// window simply shows the last measured frames at its next natural
+/// repaint. That separation of "what to draw" from "when to draw" is what
+/// keeps the seam from manufacturing a cadence no one asked for.
+pub struct FrameTimingsHolder {
+    inner: RefCell<Rc<FrameTimingsView>>,
+}
+
+impl Default for FrameTimingsHolder {
+    fn default() -> Self {
+        Self {
+            inner: RefCell::new(Rc::new(FrameTimingsView::default())),
+        }
+    }
+}
+
+impl FrameTimingsHolder {
+    /// Overwrite the published view (the shell's post-record publish).
+    pub fn publish(&self, view: FrameTimingsView) {
+        *self.inner.borrow_mut() = Rc::new(view);
+    }
+
+    /// The currently-published view. Cheap: clones an `Rc`, never the
+    /// sample vector, so a `view` fn may read it per paint.
+    #[must_use]
+    pub fn sample(&self) -> Rc<FrameTimingsView> {
+        Rc::clone(&self.inner.borrow())
+    }
+}
+
+/// Private owner-cache key for the single per-owner frame-timings slot
+/// (the `__pinion.reactive.*` private-key convention).
+pub const FRAME_TIMINGS_KEY: &str = "__pinion.reactive.frame_timings";
+
+/// R1361 §5.16 §5.22 — read the live frame-timing history + declared
+/// budget from a `view` fn, for an **in-app** profiler HUD.
+///
+/// Registers demand on first call: the shell publishes only when this
+/// holder exists, so a binding that never reads it pays nothing (the
+/// `publish_pane_viewports` "no registered panes ⇒ return early" gate,
+/// applied to a per-owner slot instead of a tag map). The O(window) copy
+/// is therefore charged to the one window that asked to chart itself.
+///
+/// Returns an **empty** [`FrameTimingsView`] before the first measured
+/// frame and wherever nothing publishes (headless / RPC / unit tests) —
+/// graceful, no panic, mirroring
+/// [`measured_monospace_cell`](pinion_core::measured_monospace_cell)
+/// rather than the strict `use_viewport_size` shape, for the same reason:
+/// this is read from a pure `view` fn, so a bare view-fn unit test must
+/// not panic for want of a shell.
+///
+/// # Purity (§6.3 / §2 #3)
+///
+/// Reading a wall-clock value from `view` looks like it breaks the
+/// view-fn purity the `dry_run` guarantee rests on. It does not, and the
+/// distinction is the same one animation already relies on: the view
+/// stays a pure function *of published state*, and the non-determinism
+/// enters at the **publish**, exactly as an animation's wall-clock `dt`
+/// enters at `tick_animations_for_window` rather than inside `view`.
+/// Under `dry_run` / `simulate` nothing publishes, so the value is frozen
+/// and the simulation is reproducible.
+///
+/// The honest cost is the fragment cache: a HUD's subtree re-hashes every
+/// frame, so it never caches. That is inherent — a readout that cached
+/// would be a readout that stopped updating — and it is confined to the
+/// subtree that reads this.
+#[must_use]
+pub fn use_frame_timings() -> Rc<FrameTimingsView> {
+    pinion_core::Owner::current().map_or_else(
+        || Rc::new(FrameTimingsView::default()),
+        |owner| {
+            owner
+                .cache(FRAME_TIMINGS_KEY, FrameTimingsHolder::default)
+                .sample()
+        },
+    )
+}
+
+#[cfg(test)]
+mod seam_tests {
+    use super::{
+        FrameTiming, FrameTimingStats, FrameTimingsHolder, FrameTimingsView, use_frame_timings,
+    };
+    use pinion_core::Owner;
+
+    #[test]
+    fn r1361_samples_are_oldest_first_and_survive_the_fold() {
+        // The property the chart's x-axis depends on: sample index ==
+        // reading order, left = oldest. `snapshot` cannot supply this —
+        // that is the whole reason `samples` exists.
+        let mut stats = FrameTimingStats::new();
+        for total in [100_u64, 300, 200] {
+            stats.record(FrameTiming::new(10, 10, 10, total));
+        }
+        let got: Vec<u64> = stats.samples().map(|s| s.total_us).collect();
+        assert_eq!(got, vec![100, 300, 200], "oldest first, insertion order");
+
+        // …and the fold genuinely destroys it: these two windows share
+        // every aggregate `snapshot` reports but have opposite shapes.
+        // If a chart could be drawn from `snapshot` alone, `samples`
+        // would be redundant — it cannot, and this pins why.
+        let mut jagged = FrameTimingStats::new();
+        for total in [1_000_u64, 15_000, 1_000, 15_000] {
+            jagged.record(FrameTiming::new(10, 10, 10, total));
+        }
+        let mut steady = FrameTimingStats::new();
+        for total in [1_000_u64, 15_000, 15_000, 1_000] {
+            steady.record(FrameTiming::new(10, 10, 10, total));
+        }
+        let (a, b) = (
+            jagged.snapshot(None).unwrap(),
+            steady.snapshot(None).unwrap(),
+        );
+        assert_eq!(
+            (a.min_total_us, a.mean_total_us, a.max_total_us),
+            (b.min_total_us, b.mean_total_us, b.max_total_us),
+            "the two windows are indistinguishable through the fold",
+        );
+        assert_ne!(
+            jagged.samples().map(|s| s.total_us).collect::<Vec<_>>(),
+            steady.samples().map(|s| s.total_us).collect::<Vec<_>>(),
+            "…but distinguishable through the series, which is what a chart plots",
+        );
+    }
+
+    #[test]
+    fn r1361_use_frame_timings_is_graceful_with_no_owner_and_no_shell() {
+        // Read from a bare view-fn unit test: no Owner scope at all.
+        // Must not panic (the `measured_monospace_cell` shape) — a
+        // binding's view fn is exercised directly all over this repo.
+        let bare = use_frame_timings();
+        assert!(bare.samples.is_empty(), "nothing measured off the shell");
+        assert!(bare.snapshot.is_none(), "no window ⇒ no aggregates");
+
+        // Inside an Owner but with no shell publishing: same sentinel.
+        // This is the RPC / headless / TUI case.
+        let owner = Owner::new();
+        let unpublished = owner.run(use_frame_timings);
+        assert_eq!(*unpublished, FrameTimingsView::default());
+    }
+
+    #[test]
+    fn r1361_reading_the_seam_never_marks_the_owner_dirty() {
+        // THE load-bearing property of this seam. If reading subscribed
+        // the owner the way every sibling `use_*` hook does, the shell's
+        // dirty→redraw bridge would turn each publish into a repaint,
+        // and since frame timings differ every frame by construction the
+        // equality-skip could never break the cycle: an idle window
+        // would spin at 100% CPU forever. A measurement of painting must
+        // not drive painting.
+        let owner = Owner::new();
+        owner.run(|| {
+            let _ = use_frame_timings();
+        });
+        owner.clear_dirty();
+
+        // A publish carrying genuinely new data — the every-frame case.
+        let holder =
+            owner.run(|| owner.cache(super::FRAME_TIMINGS_KEY, FrameTimingsHolder::default));
+        holder.publish(view_of(&[9_999], Some(16_666)));
+        assert!(
+            !owner.is_dirty(),
+            "publishing frame timings must NOT dirty the owner — a Signal here \
+             would spin the window at 100% CPU (see FrameTimingsHolder)",
+        );
+
+        // The value is still observed: sampled, not subscribed.
+        let seen = owner.run(use_frame_timings);
+        assert_eq!(seen.samples.len(), 1);
+        assert_eq!(seen.snapshot.expect("published").budget_us, Some(16_666));
+    }
+
+    #[test]
+    fn r1361_holder_sample_reflects_the_latest_publish() {
+        let holder = FrameTimingsHolder::default();
+        assert!(
+            holder.sample().samples.is_empty(),
+            "empty before any publish"
+        );
+        holder.publish(view_of(&[10], None));
+        holder.publish(view_of(&[20, 30], Some(8_333)));
+        let got = holder.sample();
+        assert_eq!(
+            got.samples.iter().map(|s| s.total_us).collect::<Vec<_>>(),
+            vec![20, 30],
+            "last publish wins",
+        );
+        assert_eq!(got.snapshot.expect("published").budget_us, Some(8_333));
+    }
+
+    /// A published view built the way the shell builds one: the samples
+    /// and the snapshot both come from ONE `FrameTimingStats`, so the
+    /// aggregates always describe the series beside them.
+    fn view_of(totals: &[u64], budget_us: Option<u64>) -> FrameTimingsView {
+        let mut stats = FrameTimingStats::new();
+        for &total in totals {
+            stats.record(FrameTiming::new(1, 1, 1, total));
+        }
+        FrameTimingsView {
+            samples: stats.samples().copied().collect(),
+            snapshot: stats.snapshot(budget_us),
+        }
+    }
 }
 
 #[cfg(test)]

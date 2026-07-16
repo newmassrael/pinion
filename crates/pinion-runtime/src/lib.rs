@@ -50,7 +50,10 @@ pub use command::{
 pub use core_shell::{CoreShell, DEFAULT_WINDOW, DispatchTail, StateChange};
 pub use focus::FocusManager;
 pub use frame_pacing::{FixedTimestep, MAX_FRAME_DT_SECS, PacingState, clamp_frame_dt, substep};
-pub use frame_timing::{FRAME_TIMING_WINDOW, FrameTiming, FrameTimingStats, FrameTimingsSnapshot};
+pub use frame_timing::{
+    FRAME_TIMING_WINDOW, FRAME_TIMINGS_KEY, FrameTiming, FrameTimingStats, FrameTimingsHolder,
+    FrameTimingsSnapshot, FrameTimingsView, use_frame_timings,
+};
 pub use input::{
     CrossWindowDrop, InputRouter, Modifiers, PanRelease, PointerId, Touch, TouchPhase,
     rect_for_tag, resolve_cross_window_drop,

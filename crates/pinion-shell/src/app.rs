@@ -1622,6 +1622,16 @@ impl<V: WidgetView> AppShell<V> {
             target_window,
             pinion_runtime::FrameTiming::new(build_us, encode_us, render_us, total_us),
         );
+        // R1361 §5.16 §5.22 — hand the freshly-recorded history to any
+        // in-app profiler HUD (`use_frame_timings`). Immediately after
+        // the record, so the next paint charts a window that includes
+        // this frame; demand-gated, so a binding that does not chart
+        // itself pays nothing here.
+        //
+        // The one-frame lag is inherent, not a defect: a frame's cost is
+        // only known once it is painted, so no HUD can plot the frame it
+        // is drawing. It plots the frames behind it.
+        self.core.publish_frame_timings(target_window);
         // R681 §2 #4 atomic 2 — publish the sticky immediate-mode flag
         // into the substrate (one home with `target_fps`). The next
         // `about_to_wait` reads it to choose `ControlFlow::Wait` vs

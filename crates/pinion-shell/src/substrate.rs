@@ -1501,6 +1501,66 @@ impl<V: WidgetView> ShellCore<V> {
             .and_then(|stats| stats.snapshot(budget_us))
     }
 
+    /// R1361 §5.16 §5.22 — publish the window's rolling frame-timing
+    /// history + declared budget into the root owner, where a `view` fn
+    /// reads it via [`pinion_runtime::use_frame_timings`] to draw an
+    /// in-app profiler HUD.
+    ///
+    /// The GUI peer of [`Self::frame_timings_for_window`]: same two
+    /// sources (the window's [`FrameTimingStats`] and the private
+    /// `jank_budget_us_for_window`), different consumer — that one folds
+    /// to aggregates for the AI-paced RPC read, this one hands over the
+    /// *series* a chart plots. One budget source for both, so the line a
+    /// HUD draws is the deadline the loop paces to.
+    ///
+    /// **Demand-gated**: a no-op unless a `view` already called
+    /// `use_frame_timings` (which inserts the holder). A binding that
+    /// does not chart itself pays nothing — no copy, no allocation — so
+    /// the O(window) clone lands only on the window that asked for it.
+    /// This is `publish_pane_viewports`' "no registered panes ⇒ return
+    /// early" gate against a per-owner slot rather than a tag map.
+    ///
+    /// **Primary window only**, inheriting the R1006 rule: the holder is
+    /// a single per-owner slot, so a secondary window's paint would
+    /// clobber the primary's history and the HUD would chart a
+    /// interleaving of two windows' frames. (The pane seam can publish
+    /// per-window precisely because it is tag-keyed; this is not.) A HUD
+    /// on a secondary window is a per-window-keyed holder — an additive
+    /// axis, deferred until a consumer needs it rather than guessed at.
+    ///
+    /// Unlike the reactive publishes, this one **cannot mark the owner
+    /// dirty** — see [`pinion_runtime::FrameTimingsHolder`] for why that
+    /// would spin an idle window at 100% CPU. It is a plain overwrite;
+    /// the next paint, whenever the window's cadence produces one,
+    /// samples it.
+    pub fn publish_frame_timings(&self, window_id: &str) {
+        if window_id != pinion_runtime::DEFAULT_WINDOW {
+            return;
+        }
+        let Some(holder) = self
+            .root_owner()
+            .cache_get_by_str::<pinion_runtime::FrameTimingsHolder>(
+                pinion_runtime::FRAME_TIMINGS_KEY,
+            )
+        else {
+            return;
+        };
+        let budget_us = self.jank_budget_us_for_window(window_id);
+        let stats = self
+            .window_state(window_id)
+            .and_then(|s| s.frame_timings.as_ref());
+        let (samples, snapshot) = stats.map_or_else(
+            || (Vec::new(), None),
+            |stats| {
+                (
+                    stats.samples().copied().collect(),
+                    stats.snapshot(budget_us),
+                )
+            },
+        );
+        holder.publish(pinion_runtime::FrameTimingsView { samples, snapshot });
+    }
+
     /// R1036 §5.16 §5.7 §2 #7 — the window's last presented-frame
     /// [`pinion_runtime::RenderFidelity`] record (PR-17), or `None` before its
     /// first paint (`scene/render_fidelity` surfaces `RenderFidelityUnavailable`).
