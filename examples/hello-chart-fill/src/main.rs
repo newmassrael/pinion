@@ -59,7 +59,7 @@
 use pinion_a11y::WidgetA11y;
 use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{LayoutStyle, Size, SizeValue, TextStyle};
+use pinion_core::style::{BoxStyle, LayoutStyle, Size, SizeValue, TextStyle};
 use pinion_core::widget_core::{ExtraExternal, PrimarySurface};
 use pinion_core::{
     ColorRole, External, Frame, Scene, WidgetCore, use_pane_viewport_size, use_theme,
@@ -197,17 +197,25 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         ),
     );
 
+    // The root MUST paint the theme surface. Nothing else fills the window,
+    // so without this the title/status rows and the padding sit on whatever
+    // the render surface was cleared to (black on a live window) while the
+    // theme hands the text an on-surface colour chosen for that surface —
+    // dark text on black, i.e. unreadable. Every sibling binding does this;
+    // the fill is the reason their chrome is legible.
     Scene::Container(
-        ContainerNode::new(vec![title, slot, status]).with_layout(
-            LayoutStyle::new()
-                .flex(pinion_core::style::FlexDirection::Column)
-                .with_padding(Rect::new(10, 10, 10, 10))
-                .with_size(
-                    Size::auto()
-                        .with_width(SizeValue::Percent(100))
-                        .with_height(SizeValue::Percent(100)),
-                ),
-        ),
+        ContainerNode::new(vec![title, slot, status])
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(pinion_core::style::FlexDirection::Column)
+                    .with_padding(Rect::new(10, 10, 10, 10))
+                    .with_size(
+                        Size::auto()
+                            .with_width(SizeValue::Percent(100))
+                            .with_height(SizeValue::Percent(100)),
+                    ),
+            ),
     )
 }
 
@@ -392,6 +400,42 @@ mod tests {
             "after the publish the chart paints at its measured size — on the \
              SAME frame, not one frame late"
         );
+    }
+
+    /// Regression: the root must paint an OPAQUE theme surface.
+    ///
+    /// Found by a human looking at the live window, not by this suite — the
+    /// first cut of this binding filled nothing, so every pixel outside the
+    /// chart body was `RGBA(0,0,0,0)`. A compositing desktop renders that
+    /// black while the theme, assuming its own surface, picks a dark
+    /// on-surface text colour: dark-on-black, unreadable. It slipped through
+    /// because the scene-level tests below only ever asked about geometry,
+    /// and because a screenshot could not see it either (the capture path
+    /// flattens alpha=0 onto white, so the bug was invisible in PNGs while
+    /// being glaring on screen).
+    #[test]
+    fn the_root_paints_an_opaque_surface_behind_the_chrome() {
+        let core: CoreShell<ChartFillView> = CoreShell::new();
+        let (scene, _) = paint_cycle(&core, 720, 420);
+        let Scene::Container(root) = &scene else {
+            panic!("root Container")
+        };
+        let fill = root.style.fill;
+        assert_eq!(
+            fill.a, 0xFF,
+            "the root must fill the window with an OPAQUE theme surface — a \
+             transparent root (alpha 0, the default) leaves the title and \
+             status rows on the compositor's black, under text coloured for a \
+             light surface. Got {fill:?}"
+        );
+        // …and it is the THEME's surface (resolved in the same owner scope the
+        // view ran in), so the chrome tracks light/dark instead of hardcoding.
+        let want = core.root_owner().run(|| {
+            use_theme(THEME_TAG)
+                .theme_animated()
+                .resolve(ColorRole::Surface)
+        });
+        assert_eq!(fill, want, "the root fill is the theme's surface role");
     }
 
     #[test]
