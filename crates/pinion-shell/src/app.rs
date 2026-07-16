@@ -83,7 +83,11 @@ use crate::{
 /// [`Control`](Self::Control) (`pinion_overlay::WindowControl`), the vocabulary
 /// the headless RPC click drain shares: both input paths detect through the one
 /// `window_control_for_tag` mapping and execute through the one
-/// [`AppShell::apply_window_control`] arm. `Move` / `Resize` stay winit-local —
+/// [`AppShell::apply_window_control`] arm — which R1362 grew two further
+/// producers that do NOT detect from a tag (the OS `WindowEvent::CloseRequested`
+/// and the binding's own [`crate::WindowControlSink`]), so the shared detection
+/// vocabulary stays these two while the shared execution arm serves four.
+/// `Move` / `Resize` stay winit-local —
 /// pointer-session gestures with no RPC-click semantic.
 #[derive(Clone, Copy)]
 enum ChromeAction {
@@ -548,14 +552,24 @@ impl<V: WidgetView> AppShell<V> {
     /// `accesskit_winit::Adapter` on `resumed` (R51.62 §5.40).
     #[must_use]
     pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
-        // R999 §5.23 — seed the binding's root Owner with the live
-        // `EventLoopProxy`-backed RepaintSink before `ShellCore::new_with_repaint_sink`
-        // runs the binding factories, so a binding's `create_extra_externals`
-        // can capture it via `use_repaint_sink()` for an off-thread producer.
-        let repaint_sink: std::sync::Arc<dyn pinion_core::RepaintSink> =
-            std::sync::Arc::new(crate::ProxyRepaintSink::new(proxy.clone()));
+        // R999 §5.23 / R1362 PR-65 — seed the binding's root Owner with the live
+        // `EventLoopProxy`-backed boundary handles before `ShellCore::new_with_seed`
+        // runs the binding factories, so a binding's `create_extra_externals` can
+        // capture them (`use_repaint_sink()` / `use_window_control_sink()`) for an
+        // off-thread producer. Both ride the ONE seeding window: `Owner::cache` is
+        // first-write-wins with a silent Null default, so a seed after this point
+        // would be dropped without a panic and hand the binding a dead handle.
+        let seed_proxy = proxy.clone();
         Self {
-            core: ShellCore::new_with_repaint_sink(repaint_sink),
+            core: ShellCore::new_with_seed(move |root_owner| {
+                root_owner.provide_repaint_sink(std::sync::Arc::new(crate::ProxyRepaintSink::new(
+                    seed_proxy.clone(),
+                )));
+                crate::window_control::provide_window_control_sink(
+                    root_owner,
+                    std::sync::Arc::new(crate::ProxyWindowControlSink::new(seed_proxy)),
+                );
+            }),
             windows: HashMap::new(),
             spec_id_to_window_id: HashMap::new(),
             primary_window_id: None,
@@ -2044,25 +2058,113 @@ impl<V: WidgetView> AppShell<V> {
     }
 
     /// (R1188 §5.16 §5.49 §2 #2) Execute one discrete window control against
-    /// `spec_id`'s window — the ONE execution arm both input paths share: the
-    /// winit pointer path ([`Self::try_chrome_press`], a physical left-press on
-    /// the control tag) and the RPC path (a `scene/click` the `ShellCore` drain
-    /// detected and queued, drained in [`AppShell::user_event`] right after
-    /// `dispatch_rpc`). Extracted from `try_chrome_press` so the two paths
-    /// cannot drift.
+    /// `spec_id`'s window — the ONE execution arm EVERY producer shares, so no
+    /// two ways of asking for the same thing can drift:
+    ///
+    /// 1. the winit pointer path ([`Self::try_chrome_press`] — a physical
+    ///    left-press on a client-side chrome control tag),
+    /// 2. the OS window manager (`WindowEvent::CloseRequested` — the X on a
+    ///    decorated window; unified into this arm by R1362, having hand-copied
+    ///    the `Close` body since R1170),
+    /// 3. the RPC path (R1188 — a `scene/click` on a control tag, which the
+    ///    headless `ShellCore` drain detects and queues for
+    ///    [`ShellCore::take_pending_window_controls`], drained in
+    ///    [`AppShell::user_event`] right after `dispatch_rpc`),
+    /// 4. the BINDING itself (R1362 PR-65 — [`crate::WindowControlSink`],
+    ///    delivered as [`AppEvent::WindowControlRequested`]).
     ///
     /// * `Close` — R1170 §5.16 §5.39 per-window close: offered to the binding
     ///   first (a torn-off panel docks back via
     ///   [`WidgetView::window_close_requested`]); only an unhandled close exits
-    ///   the app (the `CloseRequested` convention).
+    ///   the app (the `CloseRequested` convention). Because producer 4 lands
+    ///   HERE, a binding that closes itself still passes its own veto — the
+    ///   seam grants no privileged exit.
     /// * `Minimize` / `Maximize` — straight to the winit `Window` (pinion owns
     ///   the handle); a missing render slot (window already closing) is a no-op.
+    ///
+    /// # Every way this app can terminate (R1362 PR-65 R-65.2)
+    ///
+    /// Enumerated here because it was previously discoverable only by reading
+    /// every call site — which is what let "a binding cannot request its own
+    /// exit" go unnoticed until sprag hit it.
+    ///
+    /// Two families, and BOTH live in this file. `event_loop.exit()` needs an
+    /// `&ActiveEventLoop`, which in this crate reaches only `ApplicationHandler`
+    /// callbacks on [`AppShell`] (winit also passes one to the deprecated
+    /// `EventLoop::run` closure, which pinion does not use — it runs `run_app`),
+    /// so `ShellCore` — winit-free for the §2 #6 GUI/TUI dual — can never reach
+    /// one. `std::process::exit` needs nothing, so it is enumerated on its own
+    /// evidence, by grep, not by an argument from types.
+    ///
+    /// | Termination | Trigger | Binding-drivable? |
+    /// |---|---|---|
+    /// | this arm's `Close` → `event_loop.exit()` | producers 1-4 above, when [`WidgetView::window_close_requested`] declines | **yes** — producer 4 |
+    /// | [`AppShell::resumed`] → `event_loop.exit()` | the spec list is empty on ANY resume | **yes** — see below |
+    /// | `Self::handle_key_press` → `event_loop.exit()` | `Escape`, unconsumed + no modal trap | no — see below |
+    /// | `Self::resume_spec` ×2 → `event_loop.exit()` | `create_window` / renderer init failed | no — error paths |
+    /// | `try_headless_screenshot` ×3 → `std::process::exit(1)` | `PINION_SCREENSHOT` set + screenshot init / file create / render failed | no — error paths, and only under that env var |
+    /// | `try_headless_screenshot` returns `true` → `run_with_config` returns | `PINION_SCREENSHOT` set + the PNG was written | no — a one-shot mode that never builds an event loop |
+    ///
+    /// Two rows earn their footnotes:
+    ///
+    /// * **`resumed` is NOT boot-only.** winit re-issues `resumed` across the
+    ///   mobile suspend/resume lifecycle (which is why [`AppShell::suspended`]
+    ///   exists and why slots cache their `Window`), and each one re-reads the
+    ///   binding's [`WidgetView::windows_signal`]. A binding that empties that
+    ///   signal and is later resumed therefore DOES drive an exit. So "empty
+    ///   window list" already means "quit" — but only on a resume, which is a
+    ///   platform event the binding does not choose. That accidental,
+    ///   unschedulable exit is precisely why R1362 gave the binding an explicit
+    ///   request instead of widening it: an exit must be a statement of intent,
+    ///   not a side effect of a list length observed at a moment the binding
+    ///   cannot predict.
+    /// * **`Escape` is not blocked by an allowlist.** `scene/key` will happily
+    ///   inject `"Escape"` and it does reach the substrate's `apply_key` — the
+    ///   "shell-reserved / not injectable" wording elsewhere in the tree
+    ///   overstates it. What makes this row `no` is structural: the exit lives in
+    ///   `Self::handle_key_press`, a winit-only callback the RPC drain never
+    ///   enters. Note also that Escape does NOT consult
+    ///   [`WidgetView::window_close_requested`] — it bypasses the binding's close
+    ///   veto entirely, which is why it is a separate row and not a producer of
+    ///   this arm.
+    ///
+    /// Note what is NOT here: `Self::reconcile_windows` never exits. Dropping
+    /// every spec from `windows_signal` at runtime closes the OS windows and
+    /// leaves the loop parked in `about_to_wait` — a UI-less process (until the
+    /// next `resumed`, per above), not an exit.
     fn apply_window_control(
         &mut self,
         spec_id: &str,
         control: pinion_overlay::WindowControl,
         event_loop: &ActiveEventLoop,
     ) {
+        // R1362 PR-65 — an unregistered `spec_id` names no window, so there is
+        // nothing to control: drop the request, the contract
+        // [`WindowControlSink::request_window_control`] documents.
+        //
+        // `Minimize` / `Maximize` have always had this for free (they resolve
+        // through `Self::window_arc_for_spec`, which returns `None` on a miss);
+        // `Close` did not, and would instead offer an unknown id to
+        // `V::window_close_requested`, get the default `false` back, and EXIT THE
+        // APP — a catastrophic answer to a stale id. Unreachable before R1362:
+        // producers 1-3 all derive `spec_id` from a live window (a hit-test, the
+        // winit `WindowId` map, a resolved click target). Producer 4 is the first
+        // that can name an arbitrary window — a binding's `String`, built off the
+        // UI thread, possibly a typo or an id whose window `reconcile_windows`
+        // already dropped.
+        //
+        // Gated on REGISTRATION (`spec_id_to_window_id`), not on a live `Window`
+        // handle: `window_arc_for_spec` also misses a `RenderState::Suspended(None)`
+        // slot, and a suspended (mobile) window must stay closable.
+        if !self.spec_id_to_window_id.contains_key(spec_id) {
+            tracing::warn!(
+                target: "pinion::shell",
+                window = %spec_id,
+                ?control,
+                "window control requested for an unregistered window; dropped",
+            );
+            return;
+        }
         match control {
             pinion_overlay::WindowControl::Close => {
                 if !self
@@ -2923,17 +3025,22 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // WindowSpec — the `windows_signal` → `reconcile_windows` pass then
                 // removes this OS window). Only an UNHANDLED close (a single-window
                 // app, or a multi-window binding's PRIMARY window) exits the app.
-                if !self
-                    .core
-                    .root_owner()
-                    .run(|| V::window_close_requested(spec_id))
-                {
-                    eprintln!(
-                        "shell: final state = {}",
-                        V::fmt_state_log(self.core.cached_state()),
-                    );
-                    event_loop.exit();
-                }
+                //
+                // R1362 PR-65 — through the ONE arm every other producer reaches
+                // (`Self::apply_window_control`). Pre-R1362 this arm hand-copied
+                // that Close body, leaving the OS X as the single producer that
+                // could silently drift from the chrome press / RPC click drain /
+                // the binding's own `WindowControlSink` — the exact split R1190
+                // removed from the tag vocabulary, still present in the
+                // execution. `spec_id` is copied out because the arm needs
+                // `&mut self` while `spec_id` borrows `self.windows`: one
+                // allocation, once, on a close.
+                let spec_id = spec_id.to_owned();
+                self.apply_window_control(
+                    &spec_id,
+                    pinion_overlay::WindowControl::Close,
+                    event_loop,
+                );
             }
             // R48 / R51.80 §5.35: all pointer routing flows through
             // the framework `InputRouter` via [`ShellCore`] wrapper
@@ -3151,6 +3258,23 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // any other wakes this iteration) into one `Window::request_redraw`,
             // and the next frame re-runs `view` which re-reads the handle.
             AppEvent::ExternalRepaint => self.core.request_redraw(),
+            // R1362 PR-65 §5.16 §5.49 §2 #2 — the BINDING requested a window
+            // control on its own behalf (`hello-tray`'s Quit; sprag's poll
+            // thread on a dead daemon socket), delivered through
+            // `ProxyWindowControlSink`. Execute it through the same arm the
+            // winit pointer path (`try_chrome_press`) and the RPC click drain
+            // reach, so a `Close` is still offered to
+            // `WidgetView::window_close_requested` first and only an unhandled
+            // close exits: one execution arm, now three producers.
+            //
+            // Executing HERE (a later UI-thread turn) rather than inside the
+            // binding's own call is what lets a tray `invoke` return its RPC
+            // result before the window goes away — the same ordering
+            // `dispatch_rpc` buys by draining its queue after the response
+            // write.
+            AppEvent::WindowControlRequested { window_id, control } => {
+                self.apply_window_control(&window_id, control, event_loop);
+            }
         }
         self.drain_redraw_to_winit();
     }

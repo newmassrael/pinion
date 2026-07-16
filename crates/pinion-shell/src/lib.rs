@@ -68,6 +68,7 @@ mod substrate;
 pub mod typeahead;
 pub mod vello_capture;
 pub mod waiter;
+pub mod window_control;
 
 // R51.175 §5.41 — shared Vello-side test fixture surface. Exposes a
 // minimal `VelloRenderer`-conforming `TestRenderer` plus
@@ -83,11 +84,20 @@ pub mod test_fixtures;
 pub use app::{AppShell, ShellConfig, run, run_with_config, run_with_handlers};
 // R-PR47 §5.7 — re-export the winit-free transport seam so a consumer can
 // name the `on_rpc_ingress` hook argument without a direct pinion-rpc dep.
-pub use executor::{ProxyIntentSink, ProxyRepaintSink, TokioExecutor, build_executor_and_sink};
+pub use executor::{
+    ProxyIntentSink, ProxyRepaintSink, ProxyWindowControlSink, TokioExecutor,
+    build_executor_and_sink,
+};
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
 pub use pinion_rpc::{RpcFrame, RpcIngress, RpcReply, WaiterRegistry};
 pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 pub use waiter::use_scene_revision;
+// R1362 PR-65 §5.16 §5.49 §2 #2 — the binding-facing "request a window control
+// from my own code" seam: a binding names the sink + the Null default without a
+// direct `window_control` module path, the `use_scene_revision` convention.
+pub use window_control::{
+    NullWindowControlSink, WindowControlSink, provide_window_control_sink, use_window_control_sink,
+};
 
 /// Winit user-event variants that reach the UI thread out-of-band.
 ///
@@ -156,6 +166,32 @@ pub enum AppEvent {
     /// content-free repaint poke, not state. Carries no payload: the data
     /// lives in the producer-authoritative shared handle, not the event.
     ExternalRepaint,
+    /// R1362 PR-65 §5.16 §5.49 §2 #2 — a [`WindowControl`] the BINDING itself
+    /// requested through [`WindowControlSink`] (`hello-tray`'s Quit item on the
+    /// UI thread; sprag's socket poll thread discovering its daemon is gone),
+    /// delivered by [`ProxyWindowControlSink`]. The
+    /// [`AppShell::user_event`](winit::application::ApplicationHandler::user_event)
+    /// arm executes it through the same `AppShell::apply_window_control` a
+    /// chrome press and an RPC `scene/click` reach — so the
+    /// [`WidgetView::window_close_requested`] veto still gates a `Close`, and
+    /// the binding is a third producer into ONE arm rather than a second exit
+    /// path.
+    ///
+    /// Distinct from [`AppEvent::ExternalRepaint`] by interface segregation (the
+    /// rule [`RepaintSink`](pinion_core::RepaintSink)'s doc states for
+    /// `IntentSink`): a producer that only closes must not depend on
+    /// `request_repaint`, nor a repainting producer on this.
+    ///
+    /// Carries the payload (unlike `WindowsDirty` / `ExternalRepaint`, which
+    /// re-read an authoritative handle) because the request IS the whole state:
+    /// there is no window-control signal to re-read, and a coalescing drop would
+    /// lose a `Minimize` that raced a `Close`.
+    WindowControlRequested {
+        /// Canonical [`WindowSpec::id`] of the target window.
+        window_id: String,
+        /// The control to apply.
+        control: pinion_overlay::WindowControl,
+    },
 }
 
 impl From<accesskit_winit::Event> for AppEvent {
@@ -235,6 +271,12 @@ pub use pinion_overlay::{
 // so a binding (or test harness) that reads [`ShellCore::take_pending_window_controls`]
 // names the actions without a direct overlay dep.
 pub use pinion_overlay::{WindowControl, window_control_for_tag};
+// R1362 PR-65 §5.16 — the canonical primary-window id, so a binding can NAME the
+// window it targets through [`WindowControlSink::request_window_control`] (or
+// any other per-window shell API) without a direct `pinion-runtime` dep — the
+// same rationale as the `WindowControl` re-export directly above, which would
+// otherwise leave the vocabulary reachable but its addressee not.
+pub use pinion_runtime::DEFAULT_WINDOW;
 
 /// (R1190 §5.16 §5.39) The declarative per-window chrome / frame policy a binding
 /// returns from [`WidgetView::window_policy`] — the cohesive value-type that
@@ -1061,9 +1103,24 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     }
 
     /// (R1170 §5.16 §5.39) Per-window CLOSE seam. The shell calls this when a
-    /// window close is requested — the OS close button on a decorated window
-    /// (`WindowEvent::CloseRequested`, also Alt+F4) OR a client-side chrome close
-    /// control ([`pinion_overlay::WINDOW_CHROME_CLOSE_TAG`]). Return `true` if the
+    /// window close is requested. Four producers reach it, all through the one
+    /// `AppShell::apply_window_control` arm (see its rustdoc for the full
+    /// termination map):
+    ///
+    /// 1. the OS close button on a decorated window (`WindowEvent::CloseRequested`,
+    ///    also Alt+F4),
+    /// 2. a client-side chrome close control
+    ///    ([`pinion_overlay::WINDOW_CHROME_CLOSE_TAG`]),
+    /// 3. R1188 — an RPC `scene/click` on that control tag (the §2 #2 AI path),
+    /// 4. R1362 — the BINDING itself, via [`WindowControlSink`].
+    ///
+    /// Producer 4 means this hook can now fire because of the binding's OWN
+    /// request. That is deliberate: a self-requested close is still offered here
+    /// first, so a binding cannot grant itself a privileged exit that bypasses
+    /// its own veto. (Escape also exits, but does NOT call this hook — it
+    /// bypasses the veto; see the termination map.)
+    ///
+    /// Return `true` if the
     /// BINDING handled the close (e.g. a torn-off dock panel docks BACK by dropping
     /// its [`WindowSpec`] from [`Self::windows_signal`]); the shell then does NOT
     /// exit — the reactive `windows_signal` → `reconcile_windows` pass removes that

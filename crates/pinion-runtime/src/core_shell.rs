@@ -509,28 +509,52 @@ impl<V: WidgetCore> CoreShell<V> {
     /// no retained paint scene — backends must call
     /// [`Self::update_paint_scene`] after the initial paint to seed
     /// the hit-test snapshot before the first pointer event arrives.
+    ///
+    /// Seeds no BACKEND boundary handles, so each of those resolves its
+    /// documented Null default (a [`NullRepaintSink`](pinion_core::NullRepaintSink)
+    /// for [`use_repaint_sink`](pinion_core::use_repaint_sink)) — correct for
+    /// headless / test construction with no event loop to wake. A backend with
+    /// live handles calls [`Self::new_with_seed`].
+    ///
+    /// This is NOT "every `use_*` hook defaults": [`Self::new_with_seed`] still
+    /// unconditionally seeds the providers that need no backend — the monospace
+    /// metrics and the viewport-size signal — so those resolve real values here
+    /// too.
     #[must_use]
     pub fn new() -> Self {
-        Self::new_with_repaint_sink(std::sync::Arc::new(pinion_core::NullRepaintSink))
+        Self::new_with_seed(|_| {})
     }
 
-    /// R999 §5.23 — [`Self::new`] with the shell's
-    /// [`RepaintSink`](pinion_core::RepaintSink) seeded into the root
-    /// [`Owner`] **before** the binding factories
-    /// ([`WidgetCore::create_external`] / `create_extra_externals`) run, so a
-    /// binding's `create_extra_externals` can capture the live sink via
-    /// [`use_repaint_sink`](pinion_core::use_repaint_sink) for its off-thread
-    /// producer. The plain [`Self::new`] seeds a
-    /// [`NullRepaintSink`](pinion_core::NullRepaintSink) — correct for headless
-    /// / test construction with no event loop to wake.
+    /// R1362 PR-65 §5.23 §6.3 — [`Self::new`] with a backend-supplied `seed` closure
+    /// run against the root [`Owner`] **after** it exists but **before** the
+    /// binding factories ([`WidgetCore::create_external`] /
+    /// `create_extra_externals`) resolve any `use_*` hook.
+    ///
+    /// # Why a closure rather than one parameter per handle
+    ///
+    /// A backend boundary handle (the winit `EventLoopProxy`-backed
+    /// [`RepaintSink`](pinion_core::RepaintSink), `pinion-shell`'s
+    /// `WindowControlSink`) must reach the root `Owner` inside **this window**:
+    /// the `Owner` is created here (so a backend cannot seed it earlier), and
+    /// the factories below resolve hooks against it (so a backend cannot seed it
+    /// later). [`Owner::cache`] is first-write-wins with a lazy Null default and
+    /// **no failure path** — a seed that loses to a prior read is silently
+    /// dropped, leaving the binding holding a Null handle whose every call is a
+    /// no-op. That failure is invisible, so the window is enforced structurally
+    /// here instead of documented as a caller obligation.
+    ///
+    /// Taking a closure (rather than growing a `new_with_*` variant per handle)
+    /// keeps this crate ignorant of *what* a backend seeds: `pinion-shell` seeds
+    /// its own `WindowControlSink` slot — whose vocabulary
+    /// (`pinion_overlay::WindowControl`) lives ABOVE this crate and can never be
+    /// named here — through the same door as the core-homed repaint sink.
     #[must_use]
-    pub fn new_with_repaint_sink(
-        repaint_sink: std::sync::Arc<dyn pinion_core::RepaintSink>,
-    ) -> Self {
+    pub fn new_with_seed(seed: impl FnOnce(&Owner)) -> Self {
         let root_owner = Owner::new();
-        // R999 §5.23 — seed the repaint sink first, before `create_external` /
-        // `create_extra_externals` resolve `use_repaint_sink()`.
-        root_owner.provide_repaint_sink(repaint_sink);
+        // R1362 PR-65 — the backend's boundary handles first, before
+        // `create_external` / `create_extra_externals` resolve `use_*` hooks
+        // (R999: `use_repaint_sink()`).
+        seed(&root_owner);
         // R1003 §5.36 — seed the monospace measurement provider before the
         // factories / first `view`, so `measured_monospace_cell()` in a view fn
         // resolves a real font-correct `CellMetric` (a `Scene::TextGrid`

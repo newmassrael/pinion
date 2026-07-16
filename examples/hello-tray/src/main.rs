@@ -15,6 +15,25 @@
 //! and *Quit*. Every activation flips the app's own state and **re-publishes**
 //! the model — the menu state is app-owned, never backend-guessed.
 //!
+//! ## R1362 PR-65 — and *Quit* quits
+//!
+//! Until R1362 this example shipped a **Quit item that could not quit**: it set
+//! a `quit_requested` signal that nothing consumed, because a binding had no way
+//! to request its own window's close — every producer that could reach the
+//! shell's close arm was external input (a chrome click, the OS X, an RPC
+//! `scene/click`). That made `hello-tray` the in-repo forcing consumer for
+//! [`WindowControlSink`]: *Quit* now calls
+//! [`WindowControlSink::request_window_control`] with
+//! [`WindowControl::Close`], which lands on the same `apply_window_control` arm
+//! the window's X button reaches — so `window_close_requested` still gets its
+//! veto and this example claims no privileged exit. The signal remains as the
+//! AI-observable record of the request (`query quit_requested`); the sink is the
+//! action.
+//!
+//! The seam's other consumer is off-thread (sprag's socket poll thread closing
+//! the client when its daemon dies, PR-65); the handle is `Send + Sync` for
+//! exactly that. This example exercises the UI-thread caller.
+//!
 //! The real `pinion_platform_tray::SniTrayBackend` (a `StatusNotifierItem` over
 //! pure D-Bus, no gtk) is the follow-up *platform* round — exactly as
 //! `FileStorage` (R665 → later) and `CupsPrintBackend` (R833) followed their
@@ -38,6 +57,7 @@
 //! re-publishes; a disabled / unknown id is rejected. Deterministic.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
@@ -55,7 +75,11 @@ use pinion_core::tray::{
 };
 use pinion_core::{Frame, Owner, Scene, Signal};
 use pinion_derive::widget;
-use pinion_shell::vello_renderer_impl;
+#[cfg(test)]
+use pinion_shell::provide_window_control_sink;
+use pinion_shell::{
+    DEFAULT_WINDOW, WindowControl, WindowControlSink, use_window_control_sink, vello_renderer_impl,
+};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTrayRenderer, HelloTrayRendererError);
@@ -221,6 +245,15 @@ struct TrayExternal {
     building: Rc<Signal<bool>>,
     quit: Rc<Signal<bool>>,
     backend: Rc<InMemoryTrayBackend>,
+    /// R1362 PR-65 §5.16 §5.49 — the seam that makes `Quit` quit.
+    ///
+    /// Pre-R1362 `Quit` set [`Self::quit`] and nothing consumed it: pinion
+    /// shipped a tray Quit item that could not quit, because a binding had no
+    /// way to request its own window's close. The signal stays as the
+    /// AI-observable record of the request (`quit_requested`); this sink is the
+    /// action, and it lands on the same `apply_window_control` arm the window's
+    /// X button takes — so `window_close_requested` still gets its veto.
+    window_control: Arc<dyn WindowControlSink>,
 }
 
 impl TrayExternal {
@@ -246,7 +279,18 @@ impl TrayExternal {
                 "toggle_window" => self.visible.set(!self.visible.get()),
                 "dark" => self.dark.set(!self.dark.get()),
                 "bake" => self.building.set(!self.building.get()),
-                "quit" => self.quit.set(true),
+                "quit" => {
+                    // The observable record of the request...
+                    self.quit.set(true);
+                    // ...and the request itself. Queued, not immediate: the
+                    // shell applies it on a later UI-thread turn, so this
+                    // `invoke` still returns its RPC result before the window
+                    // goes away. An unhandled close then exits the app —
+                    // `hello-tray` casts no veto (`window_close_requested`
+                    // defaults to `false`), which is what a Quit item means.
+                    self.window_control
+                        .request_window_control(DEFAULT_WINDOW, WindowControl::Close);
+                }
                 _ => {}
             },
         }
@@ -428,6 +472,14 @@ fn make_tray_external() -> TrayExternal {
         building: use_build_running(),
         quit: use_quit_requested(),
         backend: use_tray_backend(),
+        // R1362 PR-65 — resolved at wiring time inside `create_external` (which
+        // the shell runs in the root `Owner`, after it seeded the live sink and
+        // before any frame). Off the live event loop — an `Owner::new().run(..)`
+        // unit test — this resolves the `NullWindowControlSink`, so a reducer
+        // test can activate `quit` without exiting the test process; a test that
+        // wants to OBSERVE the request seeds the owner first
+        // (`provide_window_control_sink`) and reaches this same line.
+        window_control: use_window_control_sink(),
     }
 }
 
@@ -574,9 +626,32 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     fn ext() -> TrayExternal {
         Owner::new().run(make_tray_external)
+    }
+
+    /// R1362 PR-65 — records what the binding asked the shell to do, standing in
+    /// for the live `ProxyWindowControlSink`.
+    #[derive(Debug, Default)]
+    struct RecordingSink(Mutex<Vec<(String, WindowControl)>>);
+
+    impl RecordingSink {
+        /// Drain the recorded requests (so a test can assert "nothing since
+        /// last time" without index arithmetic).
+        fn taken(&self) -> Vec<(String, WindowControl)> {
+            std::mem::take(&mut *self.0.lock().expect("recording sink poisoned"))
+        }
+    }
+
+    impl WindowControlSink for RecordingSink {
+        fn request_window_control(&self, window_id: &str, control: WindowControl) {
+            self.0
+                .lock()
+                .expect("recording sink poisoned")
+                .push((window_id.to_owned(), control));
+        }
     }
 
     #[test]
@@ -739,6 +814,46 @@ mod tests {
         e.invoke("menu_item", IntrospectValue::Text("quit".to_owned()))
             .unwrap();
         assert_eq!(e.query("quit_requested"), Some(IntrospectValue::Bool(true)));
+    }
+
+    /// R1362 PR-65 — `Quit` asks the shell to CLOSE the window, it does not just
+    /// record a wish.
+    ///
+    /// Pre-R1362 `quit_requested` was the whole story: the signal flipped and
+    /// nothing consumed it, so pinion shipped a tray Quit item that could not
+    /// quit. `r949_quit_sets_quit_requested` above still passes in that world —
+    /// which is exactly why it never caught the bug, and why this test asserts
+    /// the REQUEST rather than the record.
+    #[test]
+    fn r1362_quit_requests_a_close_through_the_window_control_sink() {
+        // Seed the owner and then run the REAL factory inside it, so
+        // `make_tray_external`'s own `use_window_control_sink()` resolves this
+        // sink. Hand-building `TrayExternal` with an injected handle would
+        // route around the very resolution the seam exists to perform — the
+        // test would then pass even if `use_window_control_sink()` were wired
+        // to nothing.
+        let sink = Arc::new(RecordingSink::default());
+        let owner = Owner::new();
+        provide_window_control_sink(&owner, sink.clone());
+        let mut e = owner.run(make_tray_external);
+
+        // A non-quit activation must NOT touch the window (the discriminator:
+        // without it, a sink that fired on every menu item would pass).
+        e.invoke("menu_item", IntrospectValue::Text("dark".to_owned()))
+            .unwrap();
+        assert!(
+            sink.taken().is_empty(),
+            "an ordinary menu item must not request a window control",
+        );
+
+        e.invoke("menu_item", IntrospectValue::Text("quit".to_owned()))
+            .unwrap();
+        assert_eq!(
+            sink.taken(),
+            vec![(DEFAULT_WINDOW.to_owned(), WindowControl::Close)],
+            "Quit requests a Close on the primary window — the same control the \
+             window's X button raises, so `window_close_requested` still vetoes",
+        );
     }
 
     #[test]

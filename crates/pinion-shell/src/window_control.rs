@@ -1,0 +1,318 @@
+//! R1362 PR-65 §5.16 §5.23 §5.49 §2 #2 — the binding-facing "request a window
+//! control from my own code" boundary.
+//!
+//! # Why this exists
+//!
+//! pinion owns the exit decision, and it is already correct: `Close` is offered
+//! to the binding first ([`WidgetView::window_close_requested`](crate::WidgetView::window_close_requested))
+//! and only an UNHANDLED close exits the app. But every producer that could
+//! reach that arm was **external input** — a physical press on a chrome control
+//! (`AppShell::try_chrome_press`), an OS `WindowEvent::CloseRequested`, or an RPC
+//! `scene/click` on a control tag (R1188). When the binding is the one that
+//! *knows* a window must close, it had no way to say so.
+//!
+//! (The Escape convention exits too, but it is NOT a producer of that arm — it
+//! never consults `window_close_requested`, so it bypasses the binding's veto.
+//! See `AppShell::apply_window_control`'s termination table.)
+//!
+//! The forcing cases are two, and they disagree about threads:
+//!
+//! * **`hello-tray`** — the tray menu's `Quit` item ran on the UI thread, set a
+//!   `Signal<bool>` nothing consumed, and the app stayed up. pinion shipped a
+//!   Quit button that could not quit.
+//! * **sprag** (PR-65) — a socket poll thread discovers its daemon is gone (a
+//!   parked `scene/waitFor` returns `UnexpectedEof`) and must close the client,
+//!   the tmux convention. It is the same off-thread producer
+//!   [`RepaintSink`](pinion_core::RepaintSink) was built for (R999): the sibling
+//!   that says *"my host is gone, close me"* to the one that says *"my data
+//!   changed, repaint"*.
+//!
+//! # Why a sink, and not a `ShellCore` method
+//!
+//! A binding never reaches the LIVE [`ShellCore`](crate::ShellCore): every
+//! `WidgetView` / `WidgetCore` / `WidgetA11y` method is an associated fn with no
+//! `self`, and `AppShell`'s `core` field is private. `ShellCore` is `pub` and
+//! `ShellCore::new()` is `pub`, so a `ShellCore::request_window_control` WOULD
+//! compile for a binding — against a throwaway instance driving nothing. A
+//! public API that silently does nothing for its apparent audience is worse than
+//! one that does not exist, so the request rides a handle the binding actually
+//! holds. `ShellCore::request_redraw` is no counter-example: it has zero binding
+//! callers and is the shell-internal *terminus* of the
+//! [`RepaintSink`](pinion_core::RepaintSink) path, not its entry point.
+//!
+//! # Why this is not one more `AppEvent::ExternalRepaint` rider
+//!
+//! Interface segregation, in this repo's own words
+//! ([`RepaintSink`](pinion_core::RepaintSink)'s module doc): *"a producer that
+//! only repaints must not depend on `send(Intent)`"*. The mirror holds — a
+//! producer that only closes must not depend on `request_repaint`. Hence a
+//! distinct trait and a distinct [`AppEvent`](crate::AppEvent) variant.
+//!
+//! # Why this trait lives HERE, above `pinion-core`
+//!
+//! Its vocabulary is [`pinion_overlay::WindowControl`], the payload of R1190's
+//! [`ChromeTag`](pinion_overlay::ChromeTag) consolidation — deliberately owned
+//! by pinion-overlay so "what does this tag mean" cannot drift across a crate
+//! boundary. Relocating it down to `pinion-core` / `pinion-runtime` to host the
+//! trait beside [`RepaintSink`](pinion_core::RepaintSink) would re-split exactly
+//! what R1190 fused, and buy nothing: no crate below pinion-shell has windows to
+//! control (`pinion-tui` deps neither overlay nor shell). `pinion-shell` is the
+//! one crate that already deps both the vocabulary (overlay) and the DI
+//! substrate ([`pinion_core::Owner`]) — so the wiring lives here and no type
+//! moves (the R1077 lesson: prefer the crate that deps both over a type
+//! relocation).
+//!
+//! The seeding window is the only thing that made this awkward, and
+//! [`CoreShell::new_with_seed`](pinion_runtime::CoreShell::new_with_seed) closes
+//! it: `AppShell::new` seeds this slot through the same door as the core-homed
+//! repaint sink, before any binding factory can resolve a hook.
+
+use std::sync::Arc;
+
+use pinion_core::Owner;
+use pinion_overlay::WindowControl;
+
+/// The `Owner::cache` slot the shell's [`WindowControlSink`] lives in.
+///
+/// Private to this module: the key and BOTH of its writers
+/// ([`provide_window_control_sink`]'s seed, [`resolve_window_control_sink`]'s
+/// lazy Null default) live in exactly one file, so a future divergence cannot be
+/// silently swallowed by `Owner::cache`'s first-write-wins (the `waiter.rs`
+/// discipline).
+const WINDOW_CONTROL_SINK_KEY: &str = "__pinion.shell.window_control_sink";
+
+/// Owner-cache newtype: [`Owner::cache`] stores `Rc<dyn Any>`, so the `Send`
+/// trait object rides inside this holder. The outer `Rc<WindowControlSinkHolder>`
+/// stays on the UI thread; the inner `Arc<dyn WindowControlSink>` is the handle
+/// that crosses to the producer thread. (Mirrors core's `RepaintSinkHolder`.)
+struct WindowControlSinkHolder(Arc<dyn WindowControlSink>);
+
+/// R1362 PR-65 §5.16 §5.49 §2 #2 — the shell-supplied "request a window control
+/// from any thread" edge.
+///
+/// `Send + Sync + 'static` so the concrete handle clones into a background
+/// producer thread (the shell's impl wraps a winit `EventLoopProxy`, which is
+/// `Send + Sync`). A binding obtains the active scope's sink through
+/// [`use_window_control_sink`] and either calls it inline (a tray menu item on
+/// the UI thread) or hands a clone to its producer thread (sprag's socket poll
+/// thread).
+///
+/// The request is a **request**, not an order: it lands on the one execution arm
+/// (`AppShell::apply_window_control`) that a chrome press and an RPC
+/// `scene/click` already share, so a `Close` is still offered to
+/// [`WidgetView::window_close_requested`](crate::WidgetView::window_close_requested)
+/// first and only an unhandled close exits the app. A binding therefore cannot
+/// bypass its own veto by calling this — it is a third producer into one arm,
+/// which is precisely why it needs no new exit semantics, no new state, and no
+/// second close vocabulary.
+///
+/// Delivery is asynchronous by construction: the control executes on a later UI
+/// -thread turn, never inside this call. That is what lets a tray `invoke` return
+/// its RPC result, and an in-flight `scene/click {close}` client see its
+/// `result`, before the window goes away.
+pub trait WindowControlSink: Send + Sync + 'static {
+    /// Ask the shell to apply `control` to the window `window_id` names (the
+    /// [`WindowSpec::id`](crate::WindowSpec::id) canonical id;
+    /// [`pinion_runtime::DEFAULT_WINDOW`] for a single-window binding).
+    ///
+    /// Non-blocking and infallible: an unknown `window_id` or an
+    /// already-shut-down event loop drops the request, matching the
+    /// [`RepaintSink`](pinion_core::RepaintSink) / `RpcIngress` error-absorption
+    /// convention (at that point there is no window left to control).
+    fn request_window_control(&self, window_id: &str, control: WindowControl);
+}
+
+/// R1362 PR-65 — Null Object [`WindowControlSink`]: the default when no shell
+/// has provided a real one (headless screenshot, RPC-driven tests, unit tests).
+///
+/// Dropping requests on the floor is the correct behaviour off the live event
+/// loop: there is no winit `Window` to minimize and no `ActiveEventLoop` to
+/// exit. Bindings therefore call [`use_window_control_sink`] unconditionally,
+/// without an `Option` or a panic guard — exactly as they call
+/// [`use_repaint_sink`](pinion_core::use_repaint_sink).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NullWindowControlSink;
+
+impl WindowControlSink for NullWindowControlSink {
+    fn request_window_control(&self, _window_id: &str, _control: WindowControl) {}
+}
+
+/// Seed a scope's [`WindowControlSink`] — the shell-side peer of
+/// [`Owner::provide_repaint_sink`](pinion_core::Owner::provide_repaint_sink),
+/// public for the same reasons and with the same caveat.
+///
+/// `AppShell::new` calls this from its
+/// [`CoreShell::new_with_seed`](pinion_runtime::CoreShell::new_with_seed)
+/// closure — i.e. after the root [`Owner`] exists but **before** the binding
+/// factories (`create_external` / `create_extra_externals`) resolve any hook, so
+/// the first [`use_window_control_sink`] read inside those factories gets the
+/// live sink rather than the Null default.
+///
+/// Idempotent-by-first-write: like every [`Owner::cache`] slot the first call
+/// wins and a later one is a no-op (the supplied sink is dropped, no panic
+/// path). The shell seeds exactly once, before any read, so that is never
+/// observed — and `new_with_seed` is what makes "before any read" structural
+/// rather than a caller obligation. A BINDING calling this would therefore lose
+/// to the shell's earlier seed and silently no-op: seeding is the backend's job.
+///
+/// It is public anyway, because the useful caller is a **test**: seed a bare
+/// `Owner`, then run the binding's own factory inside it, and the factory's real
+/// [`use_window_control_sink`] call resolves the recording sink. That exercises
+/// the production resolution path — as `examples/hello-tray`'s
+/// `r1362_quit_requests_a_close_through_the_window_control_sink` does — instead
+/// of routing around it by hand-constructing the widget with an injected handle.
+pub fn provide_window_control_sink(owner: &Owner, sink: Arc<dyn WindowControlSink>) {
+    // `cache`'s factory is `FnOnce` and only runs when the slot is empty, so a
+    // plain move closure seeds on the first call.
+    owner.cache::<WindowControlSinkHolder, _>(WINDOW_CONTROL_SINK_KEY, move || {
+        WindowControlSinkHolder(sink)
+    });
+}
+
+/// Resolve the scope's [`WindowControlSink`] — whatever the shell seeded via
+/// [`provide_window_control_sink`], or a [`NullWindowControlSink`] when none was
+/// provided. The **one** home for this slot's key + lazy default.
+fn resolve_window_control_sink(owner: &Owner) -> Arc<dyn WindowControlSink> {
+    Arc::clone(
+        &owner
+            .cache::<WindowControlSinkHolder, _>(WINDOW_CONTROL_SINK_KEY, || {
+                WindowControlSinkHolder(Arc::new(NullWindowControlSink))
+            })
+            .0,
+    )
+}
+
+/// R1362 PR-65 §5.16 §5.23 — binding-facing hook: the active owner scope's
+/// [`WindowControlSink`].
+///
+/// Resolve it once at wiring time — inside `create_extra_externals`, before
+/// spawning the thread, the [`use_repaint_sink`](pinion_core::use_repaint_sink)
+/// / [`use_scene_revision`](crate::use_scene_revision) discipline — and hand the
+/// returned `Arc` to the producer. A UI-thread caller (a tray menu handler) may
+/// hold it and call it inline just as well; the request is queued either way.
+///
+/// # ROOT scope only
+///
+/// The live sink resolves only in the ROOT owner: [`Owner::cache`] has no
+/// parent walk (`Owner::new_child` mirrors the focus handle and nothing else),
+/// and the shell seeds this slot on `root_owner`. That is not a live hazard
+/// today — `create_extra_externals` runs inside `root_owner.run(..)`, and the
+/// view-fn wrap does too (`window_owner(DEFAULT_WINDOW)` IS `root_owner`,
+/// and `CoreShell` records that switching the wrap to
+/// `window_owner(window_id).run(..)` is deferred to an R680 atomic). But when
+/// that deferred atomic lands, a SECONDARY window's `view` would run in a child
+/// scope whose cache is empty, and this hook would quietly return
+/// [`NullWindowControlSink`] — the close request then no-ops with no panic and
+/// no log. This is the same first-write-wins silence the seeding window has, on
+/// the scope axis instead of the time axis, and it is shared verbatim with
+/// [`use_repaint_sink`](pinion_core::use_repaint_sink) (identical shape, same
+/// root-only seed). Whoever lands that atomic must resolve both — a parent walk
+/// for provider slots, or per-window re-seeding.
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope — call it from a `view`
+/// / `create_extra_externals` hook, both of which run inside the root
+/// `Owner::run` (the same shape as every other `use_*` hook).
+#[must_use]
+pub fn use_window_control_sink() -> Arc<dyn WindowControlSink> {
+    let owner = Owner::current().expect("use_window_control_sink requires an active Owner scope");
+    resolve_window_control_sink(&owner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Recording sink: captures every request so a test can assert the wire
+    /// reached the handle (and crossed a thread boundary).
+    #[derive(Debug, Default)]
+    struct RecordingSink(Mutex<Vec<(String, WindowControl)>>);
+
+    impl WindowControlSink for RecordingSink {
+        fn request_window_control(&self, window_id: &str, control: WindowControl) {
+            self.0
+                .lock()
+                .expect("recording sink poisoned")
+                .push((window_id.to_owned(), control));
+        }
+    }
+
+    #[test]
+    fn null_default_is_a_silent_no_op() {
+        // No shell provided a sink: the lazy default is NullWindowControlSink,
+        // and a request must not panic (bindings call it unconditionally).
+        let owner = Owner::new();
+        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Close);
+        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Minimize);
+    }
+
+    #[test]
+    fn provided_sink_receives_requests() {
+        let owner = Owner::new();
+        let sink = Arc::new(RecordingSink::default());
+        provide_window_control_sink(&owner, sink.clone());
+        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Close);
+        assert_eq!(
+            *sink.0.lock().expect("recording sink poisoned"),
+            vec![("main".to_owned(), WindowControl::Close)],
+        );
+    }
+
+    #[test]
+    fn provide_is_first_write_wins() {
+        // The shell seeds once before any read; a stray second provide is a
+        // no-op (the supplied sink is dropped, the first stays installed).
+        let owner = Owner::new();
+        let first = Arc::new(RecordingSink::default());
+        let second = Arc::new(RecordingSink::default());
+        provide_window_control_sink(&owner, first.clone());
+        provide_window_control_sink(&owner, second.clone());
+        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Close);
+        assert_eq!(first.0.lock().expect("poisoned").len(), 1);
+        assert!(second.0.lock().expect("poisoned").is_empty());
+    }
+
+    /// The seeding landmine this slot is shaped to avoid: a read BEFORE the
+    /// seed caches the Null default permanently, and the late seed is silently
+    /// dropped (`Owner::cache` is first-write-wins with no failure path). This
+    /// pins WHY `CoreShell::new_with_seed` exists — a shell that seeded after
+    /// `ShellCore::new` returned would hand every binding a dead handle, with no
+    /// panic and no log to reveal it.
+    #[test]
+    fn a_read_before_the_seed_permanently_wins_and_the_seed_is_dropped() {
+        let owner = Owner::new();
+        // A binding factory resolves the hook first (the too-late-seed order).
+        let resolved = resolve_window_control_sink(&owner);
+        let real = Arc::new(RecordingSink::default());
+        provide_window_control_sink(&owner, real.clone());
+        // The late seed lost: both the pre-seed handle and a fresh resolve are
+        // the Null default, and the real sink never sees a request.
+        resolved.request_window_control("main", WindowControl::Close);
+        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Close);
+        assert!(
+            real.0.lock().expect("poisoned").is_empty(),
+            "a seed after the first read must be silently dropped — the landmine \
+             `CoreShell::new_with_seed` closes structurally",
+        );
+    }
+
+    #[test]
+    fn sink_handle_crosses_a_thread_boundary() {
+        // The `Send + Sync` bound is the point: sprag's poll thread owns this.
+        let owner = Owner::new();
+        let sink = Arc::new(RecordingSink::default());
+        provide_window_control_sink(&owner, sink.clone());
+        let handle = resolve_window_control_sink(&owner);
+        std::thread::spawn(move || {
+            handle.request_window_control("main", WindowControl::Close);
+        })
+        .join()
+        .expect("producer thread panicked");
+        assert_eq!(
+            *sink.0.lock().expect("poisoned"),
+            vec![("main".to_owned(), WindowControl::Close)],
+        );
+    }
+}

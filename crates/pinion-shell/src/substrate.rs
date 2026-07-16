@@ -472,7 +472,11 @@ pub struct ShellCore<V: WidgetView> {
     /// through the same `apply_window_control` the winit pointer path
     /// (`try_chrome_press`) uses — one detection vocabulary
     /// ([`pinion_overlay::window_control_for_tag`]) and one execution arm for
-    /// both input paths. Pre-R1188 the RPC click hit the control tag and then
+    /// both input paths. (R1362 — that arm now has FOUR producers: those two,
+    /// the OS `WindowEvent::CloseRequested`, and the binding's own
+    /// [`WindowControlSink`](crate::WindowControlSink). The detection vocabulary
+    /// is still shared by exactly the two TAG-driven paths this queue serves.)
+    /// Pre-R1188 the RPC click hit the control tag and then
     /// fell into ordinary widget routing (a no-op — no widget carries the
     /// overlay tag), so the R1121 "an AI observes AND DRIVES the controls"
     /// contract held only for observation. Headless tests observe this queue
@@ -559,24 +563,30 @@ impl<V: WidgetView> ShellCore<V> {
         Self::with_core(CoreShell::<V>::new())
     }
 
-    /// R999 §5.23 — [`Self::new`] with the shell's
-    /// [`RepaintSink`](pinion_core::RepaintSink) seeded into the binding's root
-    /// [`Owner`](pinion_core::Owner) before its factories run, so a binding can
-    /// capture the live sink via
-    /// [`use_repaint_sink`](pinion_core::use_repaint_sink) for an off-thread
-    /// producer. Delegates the seed to
-    /// [`CoreShell::new_with_repaint_sink`](pinion_runtime::CoreShell::new_with_repaint_sink).
+    /// R999 §5.23 / R1362 PR-65 §6.3 — [`Self::new`] with the backend's boundary
+    /// handles seeded into the binding's root [`Owner`](pinion_core::Owner)
+    /// before its factories run, so a binding can capture the live handles for an
+    /// off-thread producer: the [`RepaintSink`](pinion_core::RepaintSink) via
+    /// [`use_repaint_sink`](pinion_core::use_repaint_sink) (R999) and the
+    /// [`WindowControlSink`](crate::WindowControlSink) via
+    /// [`use_window_control_sink`](crate::use_window_control_sink) (R1362).
+    /// Delegates the window to
+    /// [`CoreShell::new_with_seed`](pinion_runtime::CoreShell::new_with_seed),
+    /// which is what makes "before any read" structural — see its rustdoc for
+    /// the silent-Null landmine a late seed would hit.
+    ///
+    /// Superseded `new_with_repaint_sink` (R999-R1361): a per-handle constructor
+    /// could not seed a sink whose vocabulary lives ABOVE `pinion-runtime`, and
+    /// grew one variant per boundary handle.
     #[must_use]
-    pub fn new_with_repaint_sink(
-        repaint_sink: std::sync::Arc<dyn pinion_core::RepaintSink>,
-    ) -> Self {
-        Self::with_core(CoreShell::<V>::new_with_repaint_sink(repaint_sink))
+    pub fn new_with_seed(seed: impl FnOnce(&pinion_core::Owner)) -> Self {
+        Self::with_core(CoreShell::<V>::new_with_seed(seed))
     }
 
     /// Shared constructor body — focus seeding + Vello-side substrate fields —
-    /// over an already-built [`CoreShell`], so
-    /// [`Self::new`] (Null sink) and [`Self::new_with_repaint_sink`] (live
-    /// sink) differ only in how `core` was constructed.
+    /// over an already-built [`CoreShell`], so [`Self::new`] (seeds no backend
+    /// handles) and [`Self::new_with_seed`] (the backend seeds its live sinks)
+    /// differ only in how `core` was constructed.
     fn with_core(core: CoreShell<V>) -> Self {
         // Log the initial state read through the §5.15 introspect
         // channel — same trace line shape AppShell relied on
@@ -8839,5 +8849,190 @@ mod r1121_window_chrome_tests {
             Scene::Scroll(s) => path_command_count_at(&s.content, rect),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod r1362_window_control_sink_seeding_tests {
+    //! R1362 PR-65 §5.23 §6.3 — the SEEDING WINDOW, pinned end-to-end through
+    //! the real constructor.
+    //!
+    //! `ShellCore::new_with_seed` promises the backend's boundary handles reach
+    //! the root `Owner` BEFORE the binding factories resolve any `use_*` hook.
+    //! That promise is load-bearing and its failure is SILENT: `Owner::cache` is
+    //! first-write-wins with a lazy Null default and no failure path, so a seed
+    //! that lands one line too late is dropped without a panic or a log, and the
+    //! binding holds a handle whose every call is a no-op. Nothing observable
+    //! distinguishes that from a working app until the tray Quit does nothing.
+    //!
+    //! The `window_control` unit tests cover the slot mechanics on a bare
+    //! `Owner`; these cover the ORDER inside `ShellCore::new_with_seed`, which is
+    //! the half that can actually regress — and which R999 left untested for the
+    //! repaint sink (covered here too, since both ride the one window).
+    use super::ShellCore;
+    use crate::test_fixtures::TestRenderer;
+    use crate::window_control::provide_window_control_sink;
+    use crate::{SizeStrategy, WidgetView, WindowControlSink};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::External;
+    use pinion_core::scene::ContainerNode;
+    use pinion_core::test_fixtures::ButtonFixture;
+    use pinion_core::widget_core::ExtraExternal;
+    use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+    use pinion_core::{Frame, RepaintSink, Scene, WidgetCore};
+    use pinion_overlay::WindowControl;
+    use std::cell::RefCell;
+    use std::sync::{Arc, Mutex};
+
+    const MAIN_TAG: &str = "main_btn";
+    const EXTRA_TAG: &str = "extra";
+
+    /// The pair of boundary handles the fixture resolved at wiring time.
+    type ResolvedHandles = (Arc<dyn WindowControlSink>, Arc<dyn RepaintSink>);
+
+    // What the fixture's `create_extra_externals` resolved, handed back to the
+    // test. A `thread_local` because the factory is an associated fn with no
+    // argument to thread a channel through — the same constraint a real binding
+    // works under (it stashes the handle in an `Owner::cache` slot).
+    thread_local! {
+        static RESOLVED: RefCell<Option<ResolvedHandles>> = const { RefCell::new(None) };
+    }
+
+    /// Recording sink standing in for `ProxyWindowControlSink`.
+    #[derive(Debug, Default)]
+    struct RecordingSink(Mutex<Vec<(String, WindowControl)>>);
+
+    impl WindowControlSink for RecordingSink {
+        fn request_window_control(&self, window_id: &str, control: WindowControl) {
+            self.0
+                .lock()
+                .expect("poisoned")
+                .push((window_id.to_owned(), control));
+        }
+    }
+
+    /// Recording sink standing in for `ProxyRepaintSink`.
+    #[derive(Debug, Default)]
+    struct RecordingRepaint(Mutex<usize>);
+
+    impl RepaintSink for RecordingRepaint {
+        fn request_repaint(&self) {
+            *self.0.lock().expect("poisoned") += 1;
+        }
+    }
+
+    /// A binding that resolves BOTH boundary handles in `create_extra_externals`
+    /// — the `hello-live-data` / sprag wiring shape (resolve at boot, hand to the
+    /// producer thread).
+    struct SinkCapturingFixture;
+
+    impl WidgetCore for SinkCapturingFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(ButtonExternal::new())
+        }
+        fn tag() -> &'static str {
+            MAIN_TAG
+        }
+        fn read_state(scene: &Scene) -> Self::State {
+            <ButtonFixture as WidgetCore>::read_state(scene)
+        }
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            Scene::Container(ContainerNode::new(Vec::new()).with_tag(MAIN_TAG))
+        }
+        fn event_name(event: Self::Event) -> &'static str {
+            <ButtonFixture as WidgetCore>::event_name(event)
+        }
+        fn title() -> &'static str {
+            "SinkCapturing"
+        }
+
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            // Exactly what a binding does at wiring time.
+            let wc = crate::use_window_control_sink();
+            let rp = pinion_core::use_repaint_sink();
+            RESOLVED.with(|slot| *slot.borrow_mut() = Some((wc, rp)));
+            vec![ExtraExternal {
+                tag: EXTRA_TAG.into(),
+                handle: Box::new(ButtonExternal::new()),
+            }]
+        }
+    }
+
+    impl WidgetA11y for SinkCapturingFixture {}
+
+    impl WidgetView for SinkCapturingFixture {
+        type Renderer = TestRenderer;
+
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 8,
+                height: 8,
+            }
+        }
+    }
+
+    /// The production order: `AppShell::new`'s seed closure runs before the
+    /// binding factories, so the handle the binding captures is the LIVE one.
+    ///
+    /// This is the test that would have caught a seed placed after
+    /// `ShellCore::new` returned — the arrangement that compiles, runs, and
+    /// silently no-ops.
+    #[test]
+    fn a_binding_factory_resolves_the_seeded_sinks_not_the_null_defaults() {
+        RESOLVED.with(|slot| *slot.borrow_mut() = None);
+        let sink = Arc::new(RecordingSink::default());
+        let repaint = Arc::new(RecordingRepaint::default());
+        let (seed_sink, seed_repaint) = (sink.clone(), repaint.clone());
+        let _sc = ShellCore::<SinkCapturingFixture>::new_with_seed(move |owner| {
+            owner.provide_repaint_sink(seed_repaint);
+            provide_window_control_sink(owner, seed_sink);
+        });
+
+        let (wc, rp) = RESOLVED
+            .with(|slot| slot.borrow_mut().take())
+            .expect("create_extra_externals must have run during construction");
+
+        // Drive both handles the binding captured. If the seed had lost the
+        // race, these would be the Null defaults and both assertions below would
+        // see nothing — the exact silent failure.
+        wc.request_window_control("main", WindowControl::Close);
+        rp.request_repaint();
+
+        assert_eq!(
+            *sink.0.lock().expect("poisoned"),
+            vec![("main".to_owned(), WindowControl::Close)],
+            "the sink resolved inside `create_extra_externals` must be the seeded \
+             one, not the Null default",
+        );
+        assert_eq!(
+            *repaint.0.lock().expect("poisoned"),
+            1,
+            "R999's repaint sink rides the same seeding window",
+        );
+    }
+
+    /// An unseeded `ShellCore::new` (headless / RPC-driven tests) still BOOTS,
+    /// and the hooks a binding calls unconditionally in its factory resolve to
+    /// something inert rather than panicking.
+    ///
+    /// Deliberately named for what it asserts, not for what it implies: it
+    /// cannot prove the resolved handles ARE the Null objects (the sink traits
+    /// carry no `Debug`/`Any` bound to identify them through, matching
+    /// `RepaintSink`), so it is a smoke test for the `new()` →
+    /// `new_with_seed(|_| {})` path, not a regression net for it. The identity
+    /// half is covered on a bare `Owner` by `window_control::tests`.
+    #[test]
+    fn an_unseeded_shell_boots_and_its_factory_hooks_resolve_without_panicking() {
+        RESOLVED.with(|slot| *slot.borrow_mut() = None);
+        let _sc = ShellCore::<SinkCapturingFixture>::new();
+        let (wc, rp) = RESOLVED
+            .with(|slot| slot.borrow_mut().take())
+            .expect("create_extra_externals must have run during construction");
+        // Must not panic — the Null objects absorb both.
+        wc.request_window_control("main", WindowControl::Close);
+        rp.request_repaint();
     }
 }

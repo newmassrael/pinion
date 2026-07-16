@@ -228,6 +228,63 @@ impl core::fmt::Debug for ProxyRepaintSink {
     }
 }
 
+/// R1362 PR-65 §5.16 §5.49 §2 #2 — winit-[`EventLoopProxy`]-backed
+/// [`WindowControlSink`](crate::WindowControlSink) impl.
+///
+/// The single winit-aware part of the binding → window-control seam: a binding
+/// obtains this through [`use_window_control_sink`](crate::use_window_control_sink)
+/// and calls [`request_window_control`](crate::WindowControlSink::request_window_control)
+/// when IT knows a window must close (`hello-tray`'s Quit; sprag's poll thread
+/// on a dead daemon socket). It forwards through
+/// [`AppEvent::WindowControlRequested`], whose `user_event` arm runs the control
+/// through `AppShell::apply_window_control` — the same arm a physical chrome
+/// press and an RPC `scene/click` take, veto included.
+///
+/// Sibling of [`ProxyRepaintSink`] / [`ProxyIntentSink`] — the §6.3
+/// boundary-trait pattern: the winit-free trait lives beside the shell's window
+/// vocabulary, this concrete `EventLoopProxy` impl lives at the window-system
+/// boundary, and the raw proxy is never handed to a consumer.
+///
+/// ## `Send + Sync`
+///
+/// `EventLoopProxy<AppEvent>` is `Send + Sync` per winit's contract, so the
+/// [`WindowControlSink`](crate::WindowControlSink) supertrait bound holds and the
+/// handle clones into the producer thread.
+///
+/// ## Error absorption
+///
+/// A closed event loop is the only `send_event` failure mode and means the app
+/// is already shutting down — dropping the request is correct (the window it
+/// names is gone). Matches [`ProxyRepaintSink`] and `spawn_stdin_rpc_reader`.
+pub struct ProxyWindowControlSink {
+    proxy: EventLoopProxy<AppEvent>,
+}
+
+impl ProxyWindowControlSink {
+    /// Wrap the supplied [`EventLoopProxy`].
+    #[must_use]
+    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+        Self { proxy }
+    }
+}
+
+impl crate::WindowControlSink for ProxyWindowControlSink {
+    fn request_window_control(&self, window_id: &str, control: pinion_overlay::WindowControl) {
+        // Closed event loop = app already shutting down; drop the request.
+        let _ = self.proxy.send_event(AppEvent::WindowControlRequested {
+            window_id: window_id.to_owned(),
+            control,
+        });
+    }
+}
+
+impl core::fmt::Debug for ProxyWindowControlSink {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProxyWindowControlSink")
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

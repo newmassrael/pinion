@@ -950,6 +950,29 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     def stderr_tail(self, n: int = 20) -> list[str]:
         return list(self._stderr_lines[-n:])
 
+    def wait_self_exit(self, *, timeout: float = 8.0) -> int:
+        """Block until the app exits ON ITS OWN and return its exit code (R1362).
+
+        For a binding that closes ITSELF (`WindowControlSink` — hello-tray's
+        Quit, sprag's dead-daemon poll thread). Every other demo ends by the
+        harness signalling the app in `shutdown()`; here the app's own exit IS
+        the assertion, so the harness must not race it with a SIGTERM.
+
+        Returns the real exit code rather than asserting `== 0` so a caller can
+        say which code it expects. `shutdown()` is a no-op afterwards (it
+        already gates on `poll() is None`), so the `with` block still exits
+        cleanly.
+        """
+        if self._proc is None:
+            raise RpcError(-32099, "subprocess not running")
+        try:
+            return self._proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise AssertionError(
+                f"app did not exit within {timeout}s of its own accord; "
+                f"stderr tail:\n" + "\n".join(self.stderr_tail(20))
+            ) from None
+
 
 def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
     if actual != expected:

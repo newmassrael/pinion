@@ -23,7 +23,14 @@ over the §5.12 RPC plane (§2 #2) as pure scene-as-data (§2 #7).
       the same toggle.
   (E) Bake assets sets NeedsAttention status + the syncing icon + relabels.
   (F) a disabled (`ship`) / unknown id is rejected — no dispatch, no publish.
-  (G) Quit sets quit_requested.
+  (G) Quit QUITS — the app closes ITSELF (R1362 PR-65).
+
+R1362 PR-65: (G) used to assert only that Quit set a `quit_requested` bool,
+because that was all it could do — nothing consumed the signal, so pinion
+shipped a tray Quit item that could not quit. A binding had no way to request
+its own window's close; `WindowControlSink` is that seam, and (G) now asserts
+the app actually exits, through the same `apply_window_control` arm a click on
+the window's X reaches.
 
 Run from the workspace root:
     cargo build -p hello-tray --release
@@ -42,6 +49,7 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     run_demo,
     wait_query,
+    wait_stderr,
 )
 
 VIEWPORT = (460, 360)
@@ -118,10 +126,27 @@ def body() -> None:
         assert_eq(menu_item(tf, "nope"), False, "an unknown id is rejected")
         assert_eq(q(tf, "publish_count"), published_before, "a rejected activation publishes nothing")
 
-        # ── (G) Quit sets quit_requested ─────────────────────────────
+        # ── (G) Quit QUITS (R1362 PR-65) ─────────────────────────────
+        # Runs LAST: it ends the process, so nothing can follow it.
         assert_eq(q(tf, "quit_requested"), False, "not quit yet")
         assert_eq(menu_item(tf, "quit"), True, "quit activates")
-        wait_query(tf, f"{E}/quit_requested", True, desc="quit was requested")
+        # `apply_window_control`'s Close arm prints the final state immediately
+        # before `event_loop.exit()`. Observing that line proves the quit routed
+        # through the REAL close arm — the one a click on the window's X takes,
+        # binding veto included — rather than a `process::exit` shortcut that
+        # would skip every `Drop`.
+        wait_stderr(
+            tf,
+            "shell: final state =",
+            desc="quit reached the shell's Close arm",
+        )
+        # ...and the process really is gone, of its own accord, cleanly.
+        assert_eq(tf.wait_self_exit(), 0, "the app closed itself with a clean exit")
+        # NOTE: `quit_requested` is deliberately NOT re-read here. The signal
+        # still flips (the binding records the request), but querying it after
+        # the quit would race the exit — the Rust test
+        # `r1362_quit_requests_a_close_through_the_window_control_sink` pins both
+        # halves deterministically instead. [[zero-flake-policy]]
 
 
 if __name__ == "__main__":
