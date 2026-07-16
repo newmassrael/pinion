@@ -144,16 +144,42 @@ def body() -> None:
         assert crosshair_moved > crosshair_boot + 20, (
             f"crosshair moved right with the scrub: {crosshair_boot} -> {crosshair_moved}"
         )
-        # At the far right the inspector snaps to the last bucket (x = 11).
+        # Near the right edge the inspector snaps to the nearest bucket.
+        # The x domain is the data extent 0..11 (R1357 pins it from the
+        # brush), so scrub 0.9 -> data x ~10.05 -> bucket 10 (ingress 2600).
         header = _node(snap2, "chart.inspect.header").get("content")
         if header is not None:
-            assert_eq(header, "x = 11", "tooltip header at right edge")
+            assert_eq(header, "x = 10", "tooltip header near the right edge")
         ingress_val = _node(snap2, "chart.inspect.value.0").get("content")
         if ingress_val is not None:
-            assert "3.1k" in ingress_val, f"ingress value at x=11 (~3100): {ingress_val!r}"
+            assert "2.6k" in ingress_val, f"ingress value at x=10 (~2600): {ingress_val!r}"
 
         # Series 0's boot polyline bbox for the pixel phase.
         series0_points = _points(_path(snap, "chart.series.0"))
+
+        # ── Brush zoom (R1357): the sibling RangeSlider external ──────
+        assert find_by_tag(snap, "chart_brush") is not None, "brush strip present"
+        x_label_full = _node(snap, "chart.label.x.0").get("content")
+        d.intervene("/chart_brush/external/low", 0.30)
+        d.intervene("/chart_brush/external/high", 0.62)
+        snap_zoom = d.snapshot(source="paint", viewport=VIEWPORT)
+
+        # The x axis re-domains: its first tick label must change.
+        x_label_zoom = _node(snap_zoom, "chart.label.x.0").get("content")
+        if x_label_full is not None and x_label_zoom is not None:
+            assert x_label_full != x_label_zoom, (
+                f"x axis re-domained on brush: {x_label_full!r} -> {x_label_zoom!r}"
+            )
+
+        # R1356 clipping: every zoomed vertex stays inside the plot. The
+        # plot spans CHART_RECT (14, w=732) minus the default 52/16
+        # margins -> x in [66, 730]. Without clipping the pinned domain
+        # extrapolates far outside it.
+        for i in range(3):
+            for x, _y in _points(_path(snap_zoom, f"chart.series.{i}")):
+                assert 65.0 <= x <= 731.0, (
+                    f"series {i} vertex x={x} escaped the clipped plot [66,730]"
+                )
 
     # ── Phase 2 — live-pixel witness of the boot frame ───────────────
     png = capture_screenshot()

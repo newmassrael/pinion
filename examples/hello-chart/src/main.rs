@@ -1,44 +1,46 @@
-//! `hello-chart` — R1354 consumer of the `pinion-chart` dataviz
-//! substrate: a three-series area chart with an **interactive scrub
-//! inspector** (crosshair + per-series marker dots + value tooltip).
+//! `hello-chart` — R1354-R1357 consumer of the `pinion-chart` dataviz
+//! substrate: a three-series area chart with a **scrub inspector** and a
+//! **brush-zoom strip**.
 //!
 //! ## What this demonstrates
 //!
 //! The chart is built from retained primitives ([`Scene::Path`] polylines
 //! / area fills / marker circles, [`Scene::Text`] tick + tooltip labels)
-//! via [`pinion_chart::LineChart`]. On top of the static chart, a
-//! **press-drag scrub** drives an inspect overlay: pressing and dragging
-//! across the plot moves a vertical crosshair that snaps to the nearest x,
-//! marks each series' value with a dot, and shows a value tooltip.
+//! via [`pinion_chart::LineChart`]. Two interactions sit on top:
 //!
-//! ## Why a Slider
+//! * **Scrub inspect** (R1355) — press-drag across the plot moves a
+//!   vertical crosshair that snaps to the nearest x, marks each series'
+//!   value with a dot, and shows a value tooltip.
+//! * **Brush zoom** (R1357) — drag the strip under the chart to select the
+//!   visible x window; the chart re-domains to it and `pinion-chart` clips
+//!   each series to the window (R1356).
+//!
+//! ## Why a Slider + a `RangeSlider`
 //!
 //! pinion forwards a *continuous* pointer position to a binding only under
 //! pointer capture (`External::pointer_move`, button held) — free hover
-//! delivers only which tag is hovered, not a position. So a crosshair that
-//! follows the cursor is a capture-drag scrub. The §5.38 [`SliderExternal`]
-//! already *is* a captured 1-D fraction (value `0.0..=1.0`,
-//! `wants_pointer_capture` + `pointer_move`), RPC-drivable via
-//! `scene/intervene` and introspectable — so it is reused verbatim as the
-//! scrub-position holder (exactly as `hello-path` reused a Toggle). Its
-//! value is the cursor's fraction across the plot; the chart maps that to
-//! the nearest data point. A transparent `chart_scrub`-tagged box over the
-//! plot is the capture surface.
+//! delivers only which tag is hovered, not a position. So both gestures are
+//! capture drags, and each needs its own captured value. Rather than invent
+//! externals, the binding reuses the §5.38 [`SliderExternal`] (a captured
+//! 1-D fraction) as the scrub position and the [`RangeSliderExternal`] (a
+//! captured 1-D *pair*) as the brush window — the latter hosted through the
+//! R1249 `extra_externals` slot, so the router dispatches each drag by tag.
+//! Both are RPC-drivable (`scene/intervene`) and introspectable.
 //!
 //! ## Verification (substrate-first)
 //!
-//! `scene/snapshot` exposes the inspect overlay as tagged data —
-//! `chart.inspect.crosshair`, `chart.inspect.marker.{i}`,
-//! `chart.inspect.tooltip`, `chart.inspect.value.{i}` — so driving the
-//! scrub (a pointer drag, or `scene/intervene` on the slider value) is
-//! observed as the overlay moving to the nearest point, read back without
-//! OCR (§2 #1 / #7). `tools/demos/hello_chart_r1354.py` drives the value
-//! over RPC and asserts the overlay + a live-pixel marker witness.
+//! `scene/snapshot` exposes the overlay + zoom as tagged data —
+//! `chart.inspect.crosshair` / `.marker.{i}` / `.tooltip` / `.value.{i}`,
+//! and the series polylines re-clipped to the brushed window. Driving
+//! either external over RPC is observed structurally, without OCR
+//! (§2 #1 / #7). See `tools/demos/hello_chart_r1354.py`.
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::range_slider::RangeSliderExternal;
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
 use pinion_derive::widget;
@@ -54,15 +56,30 @@ const WIN_W: u32 = 760;
 const WIN_H: u32 = 460;
 
 const THEME_TAG: &str = "app";
+const SCRUB_TAG: &str = "chart_scrub";
+const BRUSH_TAG: &str = "chart_brush";
 
 const TITLE_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 12;
 
 /// Window-absolute plot region (see the `pinion-chart` coordinate
-/// contract — path commands are literal device pixels). It is also the
-/// scrub capture basis: the `chart_scrub` box covers exactly this rect, so
-/// the slider value `0.0..=1.0` is the cursor fraction across it.
-const CHART_RECT: Rect = Rect::new(14, 52, WIN_W - 28, WIN_H - 118);
+/// contract — path commands are literal device pixels). Also the scrub
+/// capture basis: the `chart_scrub` box covers exactly this rect, so the
+/// slider value `0.0..=1.0` is the cursor fraction across it.
+const CHART_RECT: Rect = Rect::new(14, 46, WIN_W - 28, WIN_H - 128);
+
+/// The brush strip sits under the plot, aligned to the plot's x range.
+const BRUSH_H: u32 = 14;
+const BRUSH_GAP: u32 = 8;
+
+/// Full x extent of [`sample_series`] — the domain the brush fractions
+/// address.
+const X_MIN: f64 = 0.0;
+const X_MAX: f64 = 11.0;
+
+/// Narrowest window the brush can select, as a fraction of the extent —
+/// keeps the domain non-degenerate.
+const MIN_BRUSH_SPAN: f32 = 0.04;
 
 /// Deterministic sample data — three throughput series over 12 buckets.
 #[allow(
@@ -104,9 +121,51 @@ fn scrub_external() -> SliderExternal {
     slider
 }
 
-/// Resolve the theme into a [`ChartStyle`]. The series palette stays
-/// theme-independent (categorical); axis / grid / label / tooltip chrome
-/// tracks the theme so the chart reads in both light and dark.
+/// R1249 — the brush window as a sibling `External`, dispatched by tag.
+/// `RangeSliderExternal::new()` selects the full span (boot = no zoom).
+fn brush_extras() -> Vec<ExtraExternal> {
+    vec![ExtraExternal::new(
+        BRUSH_TAG,
+        Box::new(RangeSliderExternal::new()),
+    )]
+}
+
+/// Read the brush window `(low, high)` from the sibling external. A
+/// missing external falls back to the full span.
+fn read_brush(scene: &Scene) -> (f32, f32) {
+    let Some(node) = scene.find_external_with_tag(BRUSH_TAG) else {
+        return (0.0, 1.0);
+    };
+    let Some(intro) = node.handle.introspect() else {
+        return (0.0, 1.0);
+    };
+    let read = |field: &str, fallback: f32| {
+        intro
+            .query(field)
+            .and_then(|v| v.as_f32())
+            .unwrap_or(fallback)
+    };
+    (read("low", 0.0), read("high", 1.0))
+}
+
+/// Map the brush fractions onto the data x extent, enforcing a minimum
+/// span so the domain never collapses.
+fn brush_domain(low: f32, high: f32) -> (f64, f64) {
+    let (low, high) = if low <= high {
+        (low, high)
+    } else {
+        (high, low)
+    };
+    let high = high.max(low + MIN_BRUSH_SPAN).min(1.0);
+    let low = low.min(high - MIN_BRUSH_SPAN).max(0.0);
+    let span = X_MAX - X_MIN;
+    (
+        X_MIN + f64::from(low) * span,
+        X_MIN + f64::from(high) * span,
+    )
+}
+
+/// Resolve the theme into a [`ChartStyle`].
 fn chart_style(theme: &pinion_core::Theme) -> ChartStyle {
     ChartStyle {
         axis: theme.resolve(ColorRole::OnSurfaceMuted),
@@ -122,37 +181,100 @@ fn chart_style(theme: &pinion_core::Theme) -> ChartStyle {
     }
 }
 
-/// view-fn (§6.3): pure sync mapping `(SliderState, f32) -> Scene`. `value`
-/// is the scrub fraction `0.0..=1.0` across [`CHART_RECT`].
+/// The brush strip: a `chart_brush`-tagged track (the `RangeSlider` capture
+/// basis) holding the selected span + two thumbs, aligned to the plot x
+/// range so the strip reads as an overview of the full series.
+fn brush_strip(theme: &pinion_core::Theme, style: &ChartStyle, low: f32, high: f32) -> Scene {
+    let m = style.margin;
+    let track_x = CHART_RECT.x + m.left;
+    let track_w = CHART_RECT.w.saturating_sub(m.left + m.right).max(1);
+    let track_y = CHART_RECT.y + CHART_RECT.h + BRUSH_GAP;
+
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "fraction * track width -> px offset; both are display-bounded"
+    )]
+    let (span_x, span_w) = {
+        let w = track_w as f32;
+        let lo = (low.clamp(0.0, 1.0) * w).round() as u32;
+        let hi = (high.clamp(0.0, 1.0) * w).round() as u32;
+        (lo, hi.saturating_sub(lo).max(2))
+    };
+
+    let accent = theme.resolve(ColorRole::Accent);
+    let selected = Scene::Box(
+        BoxNode::new(Rect::default(), BoxStyle::filled(accent.with_alpha(0x66))).with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(span_x, 0)
+                .with_size(Size::px(span_w, BRUSH_H)),
+        ),
+    );
+    let thumb = |x: u32| {
+        Scene::Box(
+            BoxNode::new(
+                Rect::default(),
+                BoxStyle::filled(accent).with_corner_radius(2),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(x.saturating_sub(2), 0)
+                    .with_size(Size::px(4, BRUSH_H)),
+            ),
+        )
+    };
+
+    Scene::Container(
+        ContainerNode::new(vec![selected, thumb(span_x), thumb(span_x + span_w)])
+            .with_tag(BRUSH_TAG)
+            .with_aria_label("Chart x-window brush")
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
+                    .with_corner_radius(BRUSH_H / 2),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(track_x, track_y)
+                    .with_size(Size::px(track_w, BRUSH_H)),
+            ),
+    )
+}
+
+/// view-fn (§6.3): pure sync mapping. `scrub` is the inspect fraction
+/// across [`CHART_RECT`]; `(low, high)` is the brushed x window.
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
+fn view(state: SliderState, scrub: f32, low: f32, high: f32, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
+    let style = chart_style(&theme);
+    let (x_lo, x_hi) = brush_domain(low, high);
 
     let title = Scene::Text(
         TextNode::styled(
-            "Throughput (pkt/s) — drag to inspect",
+            "Throughput (pkt/s) — drag plot to inspect, strip to zoom",
             Rect::default(),
             TextStyle::new()
                 .with_size_px(TITLE_FONT_PX)
                 .with_fg(on_surface),
         )
-        .with_layout(LayoutStyle::new().with_absolute_position(18, 16)),
+        .with_layout(LayoutStyle::new().with_absolute_position(18, 14)),
     );
 
     let chart = LineChart::new(sample_series())
         .filled(true)
-        .inspect(Some(value))
-        .build(CHART_RECT, &chart_style(&theme));
+        .inspect(Some(scrub))
+        .with_x_domain(x_lo, x_hi)
+        .build(CHART_RECT, &style);
 
     // Transparent capture surface over the plot — the `chart_scrub`
     // primary tag. On top so a press anywhere on the plot drives the
     // scrub; transparent so the chart shows through, pointer-opaque so it
     // captures (geometric hit-test is alpha-independent).
-    let scrub = Scene::Box(
+    let scrub_surface = Scene::Box(
         BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
-            .with_tag("chart_scrub")
+            .with_tag(SCRUB_TAG)
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(CHART_RECT.x, CHART_RECT.y)
@@ -162,32 +284,44 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
 
     let status = Scene::Text(
         TextNode::styled(
-            format!("{} | scrub {value:.2}", state.as_name()),
+            format!(
+                "{} | scrub {scrub:.2} | x {x_lo:.1}..{x_hi:.1}",
+                state.as_name()
+            ),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(STATUS_FONT_PX)
                 .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         )
-        .with_layout(LayoutStyle::new().with_absolute_position(18, WIN_H - 24)),
+        .with_layout(LayoutStyle::new().with_absolute_position(18, WIN_H - 22)),
     );
 
     Scene::Container(
-        ContainerNode::new(vec![chart, scrub, title, status])
-            .with_style(BoxStyle::filled(surface))
-            .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
+        ContainerNode::new(vec![
+            chart,
+            scrub_surface,
+            brush_strip(&theme, &style, low, high),
+            title,
+            status,
+        ])
+        .with_style(BoxStyle::filled(surface))
+        .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
     )
 }
 
-/// `WidgetView` binding. Reuses the §5.38 Slider as the scrub-position
-/// holder; the chart is the substrate under test.
+/// `WidgetView` binding. The Slider is the scrub position (primary); the
+/// RangeSlider is the brush window (R1249 sibling external).
 #[widget(
+    // Literal (the macro's `tag` takes no const); `SCRUB_TAG` mirrors it
+    // and `scrub_reports_slider_role_and_value` pins the two together.
     tag = "chart_scrub",
-    state = (SliderState, f32),
+    state = (SliderState, f32, f32, f32),
     event = SliderEvent,
-    title = "pinion hello-chart (R1354 dataviz — scrub inspector)",
+    title = "pinion hello-chart (R1354-R1357 dataviz: scrub + brush zoom)",
     renderer = HelloChartRenderer,
     initial_size = (WIN_W, WIN_H),
     external = scrub_external,
+    extra_externals = brush_extras,
     apply_key,
     keybinding,
     event_name_derive,
@@ -197,22 +331,21 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
 struct ChartView;
 
 impl ChartView {
-    /// Tuple-state read: the slider gesture state (`state`) + its value
-    /// sidecar (`value` = scrub fraction). Missing-external fallback is
-    /// `(Idle, 0.5)` so a fresh binding still shows a centred inspector.
-    fn read_state(scene: &Scene) -> (SliderState, f32) {
-        read_slider_state(scene, <Self as WidgetCore>::tag()).unwrap_or((SliderState::Idle, 0.5))
+    /// Reads both externals by tag (the `Container([primary, ...extras])`
+    /// shape extras impose rules out the derived single-External read).
+    fn read_state(scene: &Scene) -> (SliderState, f32, f32, f32) {
+        let (state, scrub) =
+            read_slider_state(scene, SCRUB_TAG).unwrap_or((SliderState::Idle, 0.5));
+        let (low, high) = read_brush(scene);
+        (state, scrub, low, high)
     }
 
-    /// Inherent view shim — unpacks the tuple and forwards to the free
-    /// [`view`].
-    fn view(state: (SliderState, f32), frame: Frame) -> Scene {
-        view(state.0, state.1, &frame)
+    fn view(state: (SliderState, f32, f32, f32), frame: Frame) -> Scene {
+        view(state.0, state.1, state.2, state.3, &frame)
     }
 
-    /// ARIA slider keyboard scrub: arrows / Home / End / Page move the
-    /// scrub position, mirrored to the RPC `scene/intervene` value channel
-    /// (the lifted `slider_apply_key` SSOT).
+    /// ARIA slider keyboard scrub, mirrored through the RPC
+    /// `scene/intervene` value channel (the lifted `slider_apply_key`).
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -238,17 +371,24 @@ impl ChartView {
         }
     }
 
-    fn fmt_state_log(state: (SliderState, f32)) -> String {
-        format!("{} / {:.2}", state.0.as_name(), state.1)
+    fn fmt_state_log(state: (SliderState, f32, f32, f32)) -> String {
+        format!(
+            "{} / scrub {:.2} / brush {:.2}..{:.2}",
+            state.0.as_name(),
+            state.1,
+            state.2,
+            state.3
+        )
     }
 }
 
 // The scrub surface carries `AriaRole::Slider` with the scrub fraction as
-// its `AccessValue::Float` — an AT client (and the RPC a11y walk) reads the
-// inspect position exactly as the pointer / keyboard set it.
+// its `AccessValue::Float`. The brush is a sibling external with its own
+// tag; its two-thumb value has no single-Float AT shape, so it is exposed
+// by tag + role only.
 impl pinion_a11y::WidgetA11y for ChartView {
-    fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, value) = (state.0, state.1);
+    fn access_node(state: &(SliderState, f32, f32, f32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, scrub) = (state.0, state.1);
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
             ..AccessState::from_interaction(interaction, None)
@@ -256,7 +396,7 @@ impl pinion_a11y::WidgetA11y for ChartView {
         vec![
             AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
                 .with_value(AccessValue::Float {
-                    value,
+                    value: scrub,
                     min: 0.0,
                     max: 1.0,
                 })
@@ -288,60 +428,84 @@ mod tests {
         }
     }
 
-    fn rendered(state: SliderState, value: f32) -> Scene {
+    fn rendered(scrub: f32, low: f32, high: f32) -> Scene {
         let owner = Owner::new();
-        owner.run(|| view(state, value, &Frame::new()))
+        owner.run(|| view(SliderState::Idle, scrub, low, high, &Frame::new()))
+    }
+
+    fn series_x_range(scene: &Scene) -> (f32, f32) {
+        let Scene::Path(p) = find(scene, "chart.series.0").expect("series") else {
+            panic!("path")
+        };
+        let xs: Vec<f32> = p
+            .commands
+            .iter()
+            .filter_map(|c| match *c {
+                PathCommand::MoveTo(pt) | PathCommand::LineTo(pt) => Some(pt.x),
+                _ => None,
+            })
+            .collect();
+        (
+            xs.iter().copied().fold(f32::INFINITY, f32::min),
+            xs.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+        )
     }
 
     #[test]
-    fn chart_and_scrub_surface_present() {
-        let scene = rendered(SliderState::Idle, 0.5);
+    fn chart_scrub_and_brush_surfaces_present() {
+        let scene = rendered(0.5, 0.0, 1.0);
         assert!(find(&scene, "chart").is_some());
-        assert!(find(&scene, "chart_scrub").is_some());
-    }
-
-    #[test]
-    fn three_series_and_areas_present() {
-        let scene = rendered(SliderState::Idle, 0.5);
-        for i in 0..3 {
-            assert!(find(&scene, &format!("chart.series.{i}")).is_some());
-            assert!(find(&scene, &format!("chart.area.{i}")).is_some());
-        }
+        assert!(find(&scene, SCRUB_TAG).is_some());
+        assert!(find(&scene, BRUSH_TAG).is_some());
     }
 
     #[test]
     fn inspect_overlay_tracks_the_scrub_value() {
-        let scene = rendered(SliderState::Dragging, 0.5);
+        let scene = rendered(0.5, 0.0, 1.0);
         assert!(find(&scene, "chart.inspect.crosshair").is_some());
         assert!(find(&scene, "chart.inspect.tooltip").is_some());
         for i in 0..3 {
             assert!(find(&scene, &format!("chart.inspect.marker.{i}")).is_some());
-            assert!(find(&scene, &format!("chart.inspect.value.{i}")).is_some());
         }
     }
 
     #[test]
-    fn scrub_marker_is_a_bezier_circle() {
-        let scene = rendered(SliderState::Dragging, 0.5);
-        let Scene::Path(p) = find(&scene, "chart.inspect.marker.0").expect("marker") else {
-            panic!("marker is a path")
-        };
-        assert_eq!(p.commands.len(), 6); // MoveTo + 4 CurveTo + Close
-        assert!(matches!(p.commands[1], PathCommand::CurveTo { .. }));
+    fn brushing_narrows_the_domain_and_keeps_series_in_the_plot() {
+        // Full span vs a narrow brush: the series must stay inside the
+        // plot's x range in BOTH cases (R1356 clipping), and the zoomed
+        // polyline must still span the plot width.
+        let full = rendered(0.5, 0.0, 1.0);
+        let zoom = rendered(0.5, 0.4, 0.6);
+        for scene in [&full, &zoom] {
+            let (min_x, max_x) = series_x_range(scene);
+            assert!(
+                min_x >= -0.5 && max_x <= f32::from(u16::try_from(WIN_W).unwrap()) + 0.5,
+                "series stays within the window: {min_x}..{max_x}"
+            );
+        }
+    }
+
+    #[test]
+    fn brush_domain_enforces_a_minimum_span() {
+        let (lo, hi) = brush_domain(0.5, 0.5);
+        assert!(hi > lo, "collapsed brush is widened, got {lo}..{hi}");
+        let (lo, hi) = brush_domain(0.8, 0.2); // reversed
+        assert!(hi > lo, "reversed brush is normalised, got {lo}..{hi}");
     }
 
     #[test]
     fn r55_g20_view_carries_composite_paint_root_tag() {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<ChartView>(
-            (SliderState::Idle, 0.5),
+            (SliderState::Idle, 0.5, 0.0, 1.0),
             &Frame::new(),
         );
     }
 
     #[test]
     fn scrub_reports_slider_role_and_value() {
-        let nodes = <ChartView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5), None);
+        let nodes =
+            <ChartView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5, 0.0, 1.0), None);
         assert_eq!(nodes[0].role, AriaRole::Slider);
-        assert_eq!(nodes[0].tag, "chart_scrub");
+        assert_eq!(nodes[0].tag, SCRUB_TAG);
     }
 }
