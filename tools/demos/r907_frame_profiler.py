@@ -46,11 +46,14 @@ machine:
   (F) window_len == min(frame_count, 120).
   (G) Invariants hold across a stress run of driven frames.
   (H) Unknown-window rejection (-32602).
+  (I) Idle window paints NOTHING (the seam must not drive paint);
+      a declared fps target streams without any input.
 """
 
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +73,17 @@ _WIN_H = 460
 # cap the substrate enforces; the demo asserts window_len never exceeds
 # it and equals min(frame_count, cap).
 _WINDOW_CAP = 120
+
+# (I) R1361 — idle/stream observation window. 1s is long enough that a
+# 60fps target lands ~60 frames and a spin lands hundreds, and short
+# enough to keep the demo brisk.
+_IDLE_OBSERVE_S = 1.0
+_STREAM_FPS = 60
+# Generous band: a loaded CI box paces slower, but "paints on its own"
+# is unmistakable at >= 15, and a free-running (unpaced) loop would
+# blow well past the ceiling.
+_STREAM_FLOOR = 15
+_STREAM_CEIL = 200
 
 # Top-level + nested wire keys the typed FrameTimingsOutcome carries.
 _LAST_KEYS = (
@@ -212,6 +226,58 @@ def _assert_work_excludes_the_acquire_block(ft: dict[str, Any]) -> None:
         f"total={last['total_us']} work={last['work_us']} "
         f"acquire={last['acquire_us']} other={last['other_us']}"
     )
+
+
+def _assert_idle_window_paints_nothing(tf: RpcSubprocess) -> None:
+    """(I) R1361 — the load-bearing property of the `use_frame_timings`
+    seam, proven end-to-end: a HUD that READS the frame timings every
+    paint must not CAUSE a paint.
+
+    The binding's view fn calls `use_frame_timings()` on every frame. If
+    that seam were a `Signal` (the obvious design), each publish would
+    dirty the owner, the shell's dirty->redraw bridge would arm a repaint,
+    and — because frame timings differ every frame by construction, so the
+    equality-skip can never fire — an idle window would spin at 100% CPU
+    forever. A measurement of painting must not drive painting.
+
+    ZERO-FLAKE by margin, not by luck: the correct answer is exactly 0 and
+    the failure mode is hundreds. There is no boundary to sit on.
+    """
+    before = int(tf.frame_timings()["frame_count"])
+    time.sleep(_IDLE_OBSERVE_S)
+    after = int(tf.frame_timings()["frame_count"])
+    assert after == before, (
+        f"an UNPACED window with no input must paint NOTHING in "
+        f"{_IDLE_OBSERVE_S}s; frame_count went {before} -> {after} "
+        f"(+{after - before}). A non-zero delta means something is driving "
+        f"repaints on its own — the `use_frame_timings` seam becoming "
+        f"reactive is the way this regresses"
+    )
+
+
+def _assert_declared_target_streams_without_input(tf: RpcSubprocess) -> None:
+    """(I) R1361 — the peer of the above: declaring a frame target IS what
+    makes frames stream. No clicks, just `scene/set_fps 60`; the window
+    must then paint on its own at roughly the target.
+
+    Asserts a generous band, never a pinned rate: the point is "it paces at
+    all, near the target", and a loaded CI box will land low.
+    """
+    tf.request("scene/set_fps", {"fps": _STREAM_FPS})
+    before = int(tf.frame_timings()["frame_count"])
+    time.sleep(_IDLE_OBSERVE_S)
+    painted = int(tf.frame_timings()["frame_count"]) - before
+    assert painted >= _STREAM_FLOOR, (
+        f"a {_STREAM_FPS}fps target must make the window paint on its own: "
+        f"expected >= {_STREAM_FLOOR} frames in {_IDLE_OBSERVE_S}s, got "
+        f"{painted}. Zero means the declared target is not driving the loop"
+    )
+    assert painted <= _STREAM_CEIL, (
+        f"a {_STREAM_FPS}fps target must PACE, not free-run: got {painted} "
+        f"frames in {_IDLE_OBSERVE_S}s (ceiling {_STREAM_CEIL})"
+    )
+    # …and the pacing is the same signal the profiler judges jank against.
+    tf.request("scene/set_fps", {"fps": 0})
 
 
 def _assert_window_ordering(ft: dict[str, Any]) -> None:
@@ -362,6 +428,13 @@ def body() -> None:
             "explicit window='main' must address the same primary window "
             "as the default scope (count only advances)"
         )
+
+        # ── (I) The seam must not drive paint; a target must ─────
+        # R1361 — run BEFORE (H) so the window is left unpaced-and-idle
+        # exactly as it started. `set_fps 0` inside the stream check
+        # restores the no-target state (section A's contract).
+        _assert_idle_window_paints_nothing(tf)
+        _assert_declared_target_streams_without_input(tf)
 
         # ── (H) Unknown-window rejection ─────────────────────────
         # A non-existent window id is rejected at dispatch entry

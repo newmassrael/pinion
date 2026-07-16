@@ -61,10 +61,15 @@
 //! `Some(16_666)`, which (a) makes `about_to_wait` re-arm a redraw and pace
 //! to a `WaitUntil` deadline, and (b) is the very same value the profiler
 //! judges jank against and this HUD draws. Set `scene/set_fps 0` and both go
-//! away together. (The pacing half is established by reading
-//! `about_to_wait` + the `frame_budget_for_window(false, Some(30))` unit
-//! test, not by a frame-rate measurement — see the caveat below for why this
-//! binding cannot honestly claim an observed 60fps.)
+//! away together, and both halves are **measured**, not argued: with zero
+//! input for one second, an unpaced window paints `+0` frames (it sleeps) and
+//! a `set_fps 60` window paints `+64` at a reported `mean_fps` of 61.9.
+//! `r907_frame_profiler.py` asserts both.
+//!
+//! That `+0` is also the end-to-end proof of this binding's load-bearing
+//! design decision: a HUD reading `use_frame_timings` every paint does **not**
+//! make the window paint. Had the seam been a `Signal`, the idle row would
+//! read `+hundreds` instead of `+0`.
 //!
 //! Nothing here declares a target at startup, deliberately: an unpaced
 //! window is the correct default for a retained tree, and `r925_frame_budget`
