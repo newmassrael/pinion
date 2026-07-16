@@ -44,13 +44,33 @@
 //! // `scene` is a tagged pinion_core::Scene ready to embed under a widget root.
 //! ```
 //!
-//! # Scope (R1354 first slice)
+//! # Scope
 //!
-//! Line and area charts with nice axes, gridlines, tick labels, and a
-//! legend. Histogram / bar / donut / treemap / scatter, hover tooltips,
-//! brush-zoom, legend-toggle interaction, and cross-filtering are
-//! follow-up slices that build on the same `scale` / `ticks` /
-//! `palette` core.
+//! Shipped: line and area charts with nice axes, gridlines, tick labels,
+//! and a legend (R1354); a scrub [`inspect`](LineChart::inspect) overlay —
+//! crosshair, per-series markers, value tooltip (R1355); x-domain clipping
+//! (R1356) and the pinned-domain re-scaling a brush zoom drives (R1357).
+//!
+//! Not yet: histogram / bar / donut / treemap / scatter, legend-toggle,
+//! cross-filtering, and a y-rescale on zoom — follow-up slices on the same
+//! `scale` / `ticks` / `palette` core.
+//!
+//! # Known limitations (do not build on these without reading)
+//!
+//! * **The chart is not layout-native.** [`LineChart::build`] takes a
+//!   *window-absolute* rect and must be handed its final geometry before
+//!   the layout pass runs, so it cannot flex, sit in a dock panel, or
+//!   respond to a resize. This is a consequence of `Scene::Path` commands
+//!   being painted at literal device pixels rather than relative to the
+//!   node's laid-out rect; [`LineChart::build`] documents the precise
+//!   consequence. Fixing the primitive is the prerequisite, and the
+//!   chart's `build` signature is expected to change with it.
+//! * **§2 #6 GUI/TUI dual does not hold for this crate.** The TUI backend
+//!   does not render `Scene::Path`, so in a terminal a chart loses its
+//!   series, axes, gridlines, crosshair and markers — only the background,
+//!   legend swatches, and text labels survive. The chart satisfies §2 #1
+//!   (structured scene) and §2 #7 (scene-as-data); it does **not** satisfy
+//!   §2 #6 today, and that gap is stated here rather than left silent.
 
 mod line;
 mod palette;
@@ -62,4 +82,4 @@ pub use line::{ChartStyle, LineChart, Margin};
 pub use palette::CategoricalPalette;
 pub use scale::LinearScale;
 pub use series::{Bounds, DataPoint, Series, data_bounds};
-pub use ticks::{format_si, format_tick, nice_ticks, tick_decimals};
+pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};

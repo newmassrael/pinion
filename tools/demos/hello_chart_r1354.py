@@ -120,9 +120,7 @@ def body() -> None:
             assert_eq(swatch["type"], "Box", f"legend {i} swatch is a box")
             assert_color(swatch["style"]["fill"], color, f"legend {i} swatch hue")
             label = _node(snap, f"chart.legend.{i}.label")
-            content = label.get("content")
-            if content is not None:
-                assert_eq(content, name, f"legend {i} label text")
+            assert_eq(label.get("content"), name, f"legend {i} label text")
 
         # Inspect overlay (boot scrub value 0.5): crosshair + tooltip +
         # header + one marker & value line per series.
@@ -148,11 +146,11 @@ def body() -> None:
         # The x domain is the data extent 0..11 (R1357 pins it from the
         # brush), so scrub 0.9 -> data x ~10.05 -> bucket 10 (ingress 2600).
         header = _node(snap2, "chart.inspect.header").get("content")
-        if header is not None:
-            assert_eq(header, "x = 10", "tooltip header near the right edge")
+        assert_eq(header, "x = 10", "tooltip header near the right edge")
         ingress_val = _node(snap2, "chart.inspect.value.0").get("content")
-        if ingress_val is not None:
-            assert "2.6k" in ingress_val, f"ingress value at x=10 (~2600): {ingress_val!r}"
+        assert ingress_val is not None and "2.6k" in ingress_val, (
+            f"ingress value at x=10 (~2600): {ingress_val!r}"
+        )
 
         # Series 0's boot polyline bbox for the pixel phase.
         series0_points = _points(_path(snap, "chart.series.0"))
@@ -162,14 +160,18 @@ def body() -> None:
         x_label_full = _node(snap, "chart.label.x.0").get("content")
         d.intervene("/chart_brush/external/low", 0.30)
         d.intervene("/chart_brush/external/high", 0.62)
+        # `intervene` only asserts a response arrived; round-trip the value so
+        # a no-op write cannot leave the assertions below vacuously green.
+        assert abs(d.query("/chart_brush/external/low") - 0.30) < 0.02, "brush low landed"
+        assert abs(d.query("/chart_brush/external/high") - 0.62) < 0.02, "brush high landed"
         snap_zoom = d.snapshot(source="paint", viewport=VIEWPORT)
 
         # The x axis re-domains: its first tick label must change.
         x_label_zoom = _node(snap_zoom, "chart.label.x.0").get("content")
-        if x_label_full is not None and x_label_zoom is not None:
-            assert x_label_full != x_label_zoom, (
-                f"x axis re-domained on brush: {x_label_full!r} -> {x_label_zoom!r}"
-            )
+        assert x_label_full is not None and x_label_zoom is not None, "x tick labels carry text"
+        assert x_label_full != x_label_zoom, (
+            f"x axis re-domained on brush: {x_label_full!r} -> {x_label_zoom!r}"
+        )
 
         # R1356 clipping: every zoomed vertex stays inside the plot. The
         # plot spans CHART_RECT (14, w=732) minus the default 52/16

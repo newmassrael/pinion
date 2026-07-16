@@ -1,17 +1,21 @@
 //! Nice-number axis tick generation and label formatting.
 //!
-//! [`nice_ticks`] implements Heckbert's "nice numbers for graph labels"
-//! algorithm (Graphics Gems, 1990): given a raw `[lo, hi]` data range and
-//! a target tick count, it snaps the spacing to a human-friendly
-//! `1 / 2 / 5 x 10^n` step and returns tick values covering the range.
-//! This is what separates a professional axis (`0, 1k, 2k, 3k`) from a
-//! naive one (`0, 923, 1846, ...`).
+//! [`nice_ticks`] snaps the tick spacing to a human-friendly
+//! `1 / 2 / 5 x 10^n` step — the "nice numbers" quantiser Heckbert
+//! popularised (Graphics Gems, 1990) — but derives that step from the
+//! **raw** data extent, the way Qt's `QValueAxis::applyNiceNumbers` and
+//! d3's `ticks` do, rather than from Heckbert's *pre-rounded* range.
+//! Pre-rounding inflates the step (extent 11 rounds to 20, giving a step
+//! of 5 and stretching the axis to `0..15`); the raw extent keeps it
+//! tight (`0..12`). This is what separates a professional axis
+//! (`0, 1k, 2k, 3k`) from a naive one (`0, 923, 1846, ...`).
 //!
-//! [`tick_decimals`], [`format_tick`], and [`format_si`] turn a tick
-//! value into a label: the first picks the decimal count implied by the
-//! step, the second renders with that precision, and the third applies an
-//! SI suffix (`1.2k`, `3M`) for the dense readouts a monitoring dashboard
-//! favours.
+//! [`format_axis_tick`] is the **axis label entry point**: it picks the
+//! decimals the step implies ([`tick_decimals`] + [`format_tick`]) and
+//! falls back to a compact SI suffix ([`format_si`] — `1.2k`, `3M`) for
+//! the large magnitudes a monitoring dashboard favours. Use it rather
+//! than `format_si` alone: SI carries at most one decimal, so a 0.05 step
+//! would render `0.05 / 0.10 / 0.15` as three identical `0.1` labels.
 
 /// Nice-number tick values covering `[lo, hi]`, aiming for `target`
 /// ticks (clamped to a minimum of 2). The returned values use a
@@ -39,7 +43,7 @@ pub fn nice_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
     // Step from the RAW extent (Qt `applyNiceNumbers` / d3), not from a
     // pre-rounded range: pre-rounding 11 -> 20 would inflate the step and
     // stretch the axis to 0..15; the raw extent keeps it tight at 0..12.
-    let spacing = nice_num((hi - lo) / denom, true);
+    let spacing = nice_step((hi - lo) / denom);
     if !spacing.is_finite() || spacing <= 0.0 {
         return vec![lo, hi];
     }
@@ -57,31 +61,25 @@ pub fn nice_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
     ticks
 }
 
-/// Snap a positive magnitude to a nice `1 / 2 / 5 / 10 x 10^n` number.
-/// `round` selects nearest-nice (for the spacing); otherwise it rounds
-/// up (for the overall range). Non-positive / non-finite input yields 0.
-fn nice_num(x: f64, round: bool) -> f64 {
+/// Snap a positive magnitude to the NEAREST nice `1 / 2 / 5 / 10 x 10^n`
+/// number — the step quantiser. Non-positive / non-finite input yields 0.
+///
+/// Heckbert's original carries a second, round-*up* mode used only to
+/// pre-round the overall range; this implementation derives the step from
+/// the raw extent (see the module doc), so that mode had no caller and was
+/// removed rather than left as an unreachable branch.
+fn nice_step(x: f64) -> f64 {
     if x <= 0.0 || !x.is_finite() {
         return 0.0;
     }
     let exp = x.log10().floor();
     let base = 10f64.powf(exp);
     let fraction = x / base;
-    let nice_fraction = if round {
-        if fraction < 1.5 {
-            1.0
-        } else if fraction < 3.0 {
-            2.0
-        } else if fraction < 7.0 {
-            5.0
-        } else {
-            10.0
-        }
-    } else if fraction <= 1.0 {
+    let nice_fraction = if fraction < 1.5 {
         1.0
-    } else if fraction <= 2.0 {
+    } else if fraction < 3.0 {
         2.0
-    } else if fraction <= 5.0 {
+    } else if fraction < 7.0 {
         5.0
     } else {
         10.0
@@ -135,9 +133,33 @@ pub fn format_tick(value: f64, decimals: usize) -> String {
     format!("{value:.decimals$}")
 }
 
+/// Render `value` as an axis label for an axis whose tick step is `step`.
+///
+/// This is the formatter a chart axis (and any value readout tied to one)
+/// should use. Below 1000 the label carries exactly the decimals `step`
+/// implies, so a `0.05` step renders `0.00 / 0.05 / 0.10` — distinct, and
+/// consistent in width. At or above 1000 it switches to the compact SI
+/// form (`1.2k`, `3M`) dense dashboards favour, where the step is by
+/// construction >= 1 and the dropped decimals carry no information.
+///
+/// Prefer this over bare [`format_si`], whose one-decimal cap collapses
+/// every sub-0.1 step into the same rounded digit.
+#[must_use]
+pub fn format_axis_tick(value: f64, step: f64) -> String {
+    if value.abs() >= 1000.0 {
+        format_si(value)
+    } else {
+        format_tick(value, tick_decimals(step))
+    }
+}
+
 /// Render `value` with an SI magnitude suffix (`k` / `M` / `G`) and at
 /// most one decimal — the compact readout dense dashboards use for
 /// throughput / counts. Values below 1000 render as-is.
+///
+/// Lossy by design: `format_si(0.05) == "0.1"`. For an axis label use
+/// [`format_axis_tick`], which only reaches for SI where the step makes
+/// the rounding lossless.
 #[must_use]
 pub fn format_si(value: f64) -> String {
     let abs = value.abs();
@@ -224,6 +246,37 @@ mod tests {
         assert_eq!(format_tick(-0.0, 0), "0");
         assert_eq!(format_tick(1234.0, 0), "1234");
         assert_eq!(format_tick(0.25, 2), "0.25");
+    }
+
+    #[test]
+    fn axis_labels_stay_distinct_below_a_tenth() {
+        // The R1354 defect: `format_si` was wired to both axes, so every
+        // sub-0.1 step collapsed to one rounded digit. y in [0, 0.2] with
+        // 5 target ticks -> step 0.05 -> five gridlines that rendered as
+        // `0, 0.1, 0.1, 0.1, 0.2`. Labels must be distinct and truthful.
+        let ticks = nice_ticks(0.0, 0.2, 5);
+        let step = ticks[1] - ticks[0];
+        let labels: Vec<String> = ticks.iter().map(|t| format_axis_tick(*t, step)).collect();
+        assert_eq!(labels, ["0.00", "0.05", "0.10", "0.15", "0.20"]);
+        let distinct: std::collections::BTreeSet<&String> = labels.iter().collect();
+        assert_eq!(distinct.len(), labels.len(), "one label per gridline");
+    }
+
+    #[test]
+    fn axis_labels_keep_si_for_large_magnitudes() {
+        // The compact form must survive: 0..3600 step 1000 stays 0/1k/../4k.
+        let ticks = nice_ticks(0.0, 3600.0, 5);
+        let step = ticks[1] - ticks[0];
+        let labels: Vec<String> = ticks.iter().map(|t| format_axis_tick(*t, step)).collect();
+        assert_eq!(labels, ["0", "1k", "2k", "3k", "4k"]);
+    }
+
+    #[test]
+    fn axis_label_never_rounds_a_value_away() {
+        // format_si is lossy by contract; format_axis_tick must not be.
+        assert_eq!(format_si(0.05), "0.1", "SI is lossy (documented)");
+        assert_eq!(format_axis_tick(0.05, 0.05), "0.05", "axis label is not");
+        assert_eq!(format_axis_tick(5.3, 0.5), "5.3");
     }
 
     #[test]

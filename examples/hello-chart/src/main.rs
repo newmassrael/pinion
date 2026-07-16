@@ -35,8 +35,9 @@
 //! either external over RPC is observed structurally, without OCR
 //! (§2 #1 / #7). See `tools/demos/hello_chart_r1354.py`.
 
+use pinion_a11y::described::describedby_region;
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
-use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
+use pinion_chart::{ChartStyle, DataPoint, LineChart, Series, data_bounds};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
 use pinion_core::widget_core::ExtraExternal;
@@ -73,9 +74,13 @@ const BRUSH_H: u32 = 14;
 const BRUSH_GAP: u32 = 8;
 
 /// Full x extent of [`sample_series`] — the domain the brush fractions
-/// address.
-const X_MIN: f64 = 0.0;
-const X_MAX: f64 = 11.0;
+/// address. Derived from the data, never hand-written: a hand-kept
+/// constant that fell behind the data would pin the domain short, and
+/// R1356 clipping would then silently drop the newest points with no
+/// error. `data_bounds` is the crate's SSOT for this.
+fn x_extent() -> (f64, f64) {
+    data_bounds(&sample_series()).map_or((0.0, 1.0), |b| b.x)
+}
 
 /// Narrowest window the brush can select, as a fraction of the extent —
 /// keeps the domain non-degenerate.
@@ -158,10 +163,11 @@ fn brush_domain(low: f32, high: f32) -> (f64, f64) {
     };
     let high = high.max(low + MIN_BRUSH_SPAN).min(1.0);
     let low = low.min(high - MIN_BRUSH_SPAN).max(0.0);
-    let span = X_MAX - X_MIN;
+    let (x_min, x_max) = x_extent();
+    let span = x_max - x_min;
     (
-        X_MIN + f64::from(low) * span,
-        X_MIN + f64::from(high) * span,
+        x_min + f64::from(low) * span,
+        x_min + f64::from(high) * span,
     )
 }
 
@@ -388,20 +394,40 @@ impl ChartView {
 // by tag + role only.
 impl pinion_a11y::WidgetA11y for ChartView {
     fn access_node(state: &(SliderState, f32, f32, f32), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, scrub) = (state.0, state.1);
+        let (interaction, scrub, low, high) = (state.0, state.1, state.2, state.3);
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
             ..AccessState::from_interaction(interaction, None)
         };
-        vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
-                .with_value(AccessValue::Float {
-                    value: scrub,
-                    min: 0.0,
-                    max: 1.0,
-                })
-                .with_state(access_state),
-        ]
+        let (x_lo, x_hi) = brush_domain(low, high);
+        let readout = LineChart::new(sample_series())
+            .inspect(Some(scrub))
+            .with_x_domain(x_lo, x_hi)
+            .inspect_readout(CHART_RECT, &ChartStyle::default());
+
+        let control = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
+            .with_value(AccessValue::Float {
+                value: scrub,
+                min: 0.0,
+                max: 1.0,
+            })
+            .with_state(access_state);
+        let mut nodes = describedby_region(
+            control,
+            "chart.inspect.tooltip",
+            AriaRole::Tooltip,
+            readout,
+            true,
+        );
+        // The brush window is a sibling external. A two-thumb range has no
+        // single-Float shape — but `AccessValue::Text` states it plainly
+        // rather than leaving the zoom inaudible.
+        nodes.push(
+            AccessNode::new(BRUSH_TAG, AriaRole::Slider)
+                .with_name("Chart x-window brush".to_string())
+                .with_value(AccessValue::Text(format!("x from {x_lo:.1} to {x_hi:.1}"))),
+        );
+        nodes
     }
 }
 
@@ -486,6 +512,26 @@ mod tests {
     }
 
     #[test]
+    fn full_brush_domain_covers_every_data_point() {
+        // The R1354 SSOT defect this guards: the x extent used to be a
+        // hand-written `X_MAX = 11.0` beside `sample_series()`. Adding a
+        // 13th bucket would have left the domain pinned at 0..11 and R1356
+        // clipping would then drop the newest point SILENTLY — no error, and
+        // the demo's `len == 12` assertion would have concealed it. The
+        // extent is derived now; this pins the invariant either way.
+        let (lo, hi) = brush_domain(0.0, 1.0);
+        for s in sample_series() {
+            for p in &s.points {
+                assert!(
+                    p.x >= lo && p.x <= hi,
+                    "point x={} falls outside the full-brush domain {lo}..{hi}",
+                    p.x
+                );
+            }
+        }
+    }
+
+    #[test]
     fn brush_domain_enforces_a_minimum_span() {
         let (lo, hi) = brush_domain(0.5, 0.5);
         assert!(hi > lo, "collapsed brush is widened, got {lo}..{hi}");
@@ -507,5 +553,50 @@ mod tests {
             <ChartView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5, 0.0, 1.0), None);
         assert_eq!(nodes[0].role, AriaRole::Slider);
         assert_eq!(nodes[0].tag, SCRUB_TAG);
+    }
+
+    #[test]
+    fn at_hears_the_readout_not_just_the_fraction() {
+        // The R1355 defect this guards: the inspector's values were computed
+        // and painted, then dropped at the a11y boundary — a screen reader
+        // heard "slider, 0.5" and never the numbers the chart exists to show.
+        let nodes =
+            <ChartView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5, 0.0, 1.0), None);
+        assert_eq!(
+            nodes[0].described_by.as_deref(),
+            Some("chart.inspect.tooltip"),
+            "scrub is describedby the inspect region"
+        );
+        let region = nodes
+            .iter()
+            .find(|n| n.tag == "chart.inspect.tooltip")
+            .expect("the described region is IN the tree (no dangling reference)");
+        let name = region.name.as_deref().expect("region carries the readout");
+        assert!(
+            name.starts_with("x = "),
+            "readout names the focus: {name:?}"
+        );
+        for series in ["ingress", "egress", "errors"] {
+            assert!(name.contains(series), "readout names {series}: {name:?}");
+        }
+    }
+
+    #[test]
+    fn brush_window_is_audible() {
+        // Was: role + label only, so the zoom was inaudible. A two-thumb range
+        // has no Float shape, but `AccessValue::Text` states it plainly.
+        let nodes =
+            <ChartView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5, 0.3, 0.6), None);
+        let brush = nodes
+            .iter()
+            .find(|n| n.tag == BRUSH_TAG)
+            .expect("brush is in the a11y tree");
+        let Some(AccessValue::Text(text)) = brush.value.as_ref() else {
+            panic!("brush value is Text, got {:?}", brush.value)
+        };
+        assert!(
+            text.starts_with("x from "),
+            "brush states its window: {text:?}"
+        );
     }
 }

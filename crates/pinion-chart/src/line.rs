@@ -2,28 +2,49 @@
 //! retained [`Scene`] of axes, gridlines, tick labels, series polylines,
 //! optional area fills, and a legend.
 //!
-//! # Coordinate contract
+//! # Coordinate contract — a known limitation, not a design
 //!
-//! [`LineChart::build`] takes a **window-absolute** [`Rect`]: every
-//! coordinate it emits (path commands *and* the `absolute_position` of
-//! label / legend boxes) is in window space, matching the `hello-path`
-//! precedent that path commands are painted at literal device
-//! coordinates untouched by the flex pass. The returned container is
-//! therefore intended to sit under a root positioned at the window origin
-//! (the ordinary widget-root case). Nesting it under a *positioned*
-//! ancestor would shift the layout-positioned text but not the
-//! window-absolute paths — so keep the chart a direct child of the scene
-//! root, exactly as an app embeds `hello-path`'s gallery.
+//! [`LineChart::build`] takes a **window-absolute** [`Rect`] and must be
+//! given it *before* the layout pass runs. That is forced by the current
+//! `Scene::Path` primitive: the paint adapter lowers `commands` at literal
+//! device coordinates and never offsets them by the rect taffy assigned,
+//! so a path's geometry cannot participate in layout.
+//!
+//! The precise consequence — the distinction matters:
+//!
+//! * An ancestor that positions by **layout** (an ordinary flex
+//!   `Container`, a dock panel, a splitter) moves this chart's text and
+//!   boxes but **not** its paths, desyncing them. So the chart must be a
+//!   direct child of a root at the window origin, and **cannot be docked,
+//!   flexed, tabbed, or resized**.
+//! * An ancestor that positions by **transform** (`Scene::Scroll`) applies
+//!   that transform to paths *and* boxes alike, so they stay consistent —
+//!   the whole chart merely shifts by the scroll offset.
+//!
+//! Do not read this section as a contract to design against: it records a
+//! defect. The fix is to make path commands relative to the node's rect
+//! (aligning them with the gradient UV basis, which is already
+//! rect-relative), after which `build` takes a size and the chart becomes
+//! an ordinary layout citizen. This signature is expected to change.
 //!
 //! # Introspection
 //!
 //! Every emitted node carries a tag under the chart's `tag_prefix`
-//! (default `"chart"`): `chart.series.{i}`, `chart.area.{i}`,
+//! (default `"chart"`): `chart.bg`, `chart.series.{i}`, `chart.area.{i}`,
 //! `chart.grid.y.{k}` / `chart.grid.x.{k}`, `chart.axis.x` /
 //! `chart.axis.y`, `chart.label.y.{k}` / `chart.label.x.{k}`,
-//! `chart.legend.{i}.swatch` / `chart.legend.{i}.label`, and `chart.bg`.
+//! `chart.legend.{i}.swatch` / `chart.legend.{i}.label`, and — when
+//! [`inspect`](LineChart::inspect) is set — `chart.inspect.crosshair`,
+//! `chart.inspect.marker.{i}`, `chart.inspect.tooltip`,
+//! `chart.inspect.header`, `chart.inspect.value.{i}`.
 //! This makes the whole chart queryable as data (§2 #1 / #7) — an AI
 //! client reads the series geometry without sampling pixels.
+//!
+//! A series with no point inside the x-domain emits no `chart.series.{i}`
+//! node at all (its legend entry remains), so a consumer must treat these
+//! tags as present-if-visible rather than one-per-series.
+
+use core::fmt::Write as _;
 
 use pinion_core::Scene;
 use pinion_core::scene::{
@@ -35,7 +56,7 @@ use pinion_core::style::{
 
 use crate::palette::CategoricalPalette;
 use crate::series::{DataPoint, Series, data_bounds};
-use crate::ticks::{format_si, nice_ticks};
+use crate::ticks::{format_axis_tick, nice_ticks};
 
 /// Pixel insets between the chart `rect` and its plotting area, leaving
 /// room for the axis tick labels and (top) the legend row.
@@ -239,20 +260,22 @@ impl LineChart {
         let plot = Plot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
         let (y_lo, y_hi) = plot.y.domain();
         let (x_lo, x_hi) = plot.x.domain();
-        let x_ticks: Vec<f64> = nice_ticks(x_lo, x_hi, style.x_ticks)
-            .into_iter()
-            .filter(|t| in_domain(*t, x_lo, x_hi))
-            .collect();
-        let y_ticks: Vec<f64> = nice_ticks(y_lo, y_hi, style.y_ticks)
-            .into_iter()
-            .filter(|t| in_domain(*t, y_lo, y_hi))
-            .collect();
+        // One tick-set resolver, shared with `inspect_readout` so the
+        // painted axis and the AT readout format at the same precision.
+        let x_ticks = Self::axis_ticks((x_lo, x_hi), style.x_ticks);
+        let y_ticks = Self::axis_ticks((y_lo, y_hi), style.y_ticks);
         let baseline = clamp(0.0, y_lo, y_hi);
+        // The label precision each axis formats at (R1359: `format_si` alone
+        // collapsed every sub-0.1 step onto one rounded digit).
+        let steps = Steps {
+            x: step_of(&x_ticks),
+            y: step_of(&y_ticks),
+        };
 
         // Inspect overlay, split so the crosshair paints behind the
         // series, the markers on top of the lines, and the tooltip above
         // everything.
-        let (crosshair, markers, tooltip) = match self.resolve_inspect(&plot, rect, style) {
+        let (crosshair, markers, tooltip) = match self.resolve_inspect(&plot, rect, style, steps) {
             Some(i) => (Some(i.crosshair), i.markers, i.tooltip),
             None => (None, Vec::new(), Vec::new()),
         };
@@ -268,7 +291,7 @@ impl LineChart {
         children.extend(self.axes(&plot, style));
         children.extend(self.series_layer(&plot, baseline, style));
         children.extend(markers);
-        children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style));
+        children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style, steps));
         if style.legend {
             children.extend(self.legend(rect, style));
         }
@@ -374,6 +397,7 @@ impl LineChart {
         x_ticks: &[f64],
         y_ticks: &[f64],
         style: &ChartStyle,
+        steps: Steps,
     ) -> Vec<Scene> {
         let size = style.label_size_px.max(1);
         let mut out = Vec::new();
@@ -381,7 +405,7 @@ impl LineChart {
         for (k, &t) in y_ticks.iter().enumerate() {
             let y = to_u32(plot.y.map(t)).saturating_sub(size / 2 + 1);
             out.push(label_node(
-                format_si(t),
+                format_axis_tick(t, steps.y),
                 rect.x + 2,
                 y,
                 gutter,
@@ -396,7 +420,7 @@ impl LineChart {
             let cx = to_u32(plot.x.map(t));
             let x = cx.saturating_sub(slot / 2);
             out.push(label_node(
-                format_si(t),
+                format_axis_tick(t, steps.x),
                 x,
                 to_u32(plot.bottom) + 4,
                 slot,
@@ -443,10 +467,15 @@ impl LineChart {
         out
     }
 
-    /// Resolve the inspect overlay for the current `inspect` fraction, or
-    /// `None` when inspection is off, the plot is degenerate, or there is
-    /// no data under the cursor.
-    fn resolve_inspect(&self, plot: &Plot, rect: Rect, style: &ChartStyle) -> Option<Inspect> {
+    /// Resolve which data point the inspect cursor is focused on: the
+    /// focus x, plus the nearest visible point of each series.
+    ///
+    /// The single source for "what is the inspector pointing at" — the
+    /// painted overlay ([`Self::resolve_inspect`]) and the AT-facing
+    /// readout ([`Self::inspect_readout`]) both derive from it, so the
+    /// tooltip a sighted user sees and the description a screen reader
+    /// hears can never disagree.
+    fn resolve_focus(&self, plot: &Plot, rect: Rect) -> Option<(f64, Vec<(usize, DataPoint)>)> {
         let fraction = self.inspect?;
         let span = plot.right - plot.left;
         if span <= 0.0 {
@@ -471,7 +500,62 @@ impl LineChart {
                 hits.push((i, p));
             }
         }
-        let focus_x = focus_x?;
+        Some((focus_x?, hits))
+    }
+
+    /// The inspect readout as one line of text — the same focus and values
+    /// the tooltip paints (`x = 10, ingress 2.6k, egress 1.6k`), or `None`
+    /// when nothing is being inspected.
+    ///
+    /// The painted tooltip is unreachable to assistive tech: it is a `Box`
+    /// plus `Text` leaves, not a described region. A consumer wires this
+    /// string into its `WidgetA11y` node (e.g. via
+    /// `pinion_a11y::described::describedby_region`) so the readout the
+    /// chart exists to deliver actually reaches a screen reader.
+    #[must_use]
+    pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
+        let plot = Plot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
+        let x_ticks: Vec<f64> = Self::axis_ticks(plot.x.domain(), style.x_ticks);
+        let y_ticks: Vec<f64> = Self::axis_ticks(plot.y.domain(), style.y_ticks);
+        let steps = Steps {
+            x: step_of(&x_ticks),
+            y: step_of(&y_ticks),
+        };
+        let (focus_x, hits) = self.resolve_focus(&plot, rect)?;
+        let mut out = format!("x = {}", format_axis_tick(focus_x, steps.x));
+        for (i, p) in &hits {
+            // `write!` to a String is infallible; the Result is discarded
+            // exactly as `push_str` would have.
+            let _ = write!(
+                out,
+                ", {} {}",
+                self.series[*i].name,
+                format_axis_tick(p.y, steps.y)
+            );
+        }
+        Some(out)
+    }
+
+    /// Nice ticks for `domain`, clipped to it — the axis's own tick set.
+    fn axis_ticks(domain: (f64, f64), target: usize) -> Vec<f64> {
+        let (lo, hi) = domain;
+        nice_ticks(lo, hi, target)
+            .into_iter()
+            .filter(|t| in_domain(*t, lo, hi))
+            .collect()
+    }
+
+    /// Resolve the inspect overlay for the current `inspect` fraction, or
+    /// `None` when inspection is off, the plot is degenerate, or there is
+    /// no data under the cursor.
+    fn resolve_inspect(
+        &self,
+        plot: &Plot,
+        rect: Rect,
+        style: &ChartStyle,
+        steps: Steps,
+    ) -> Option<Inspect> {
+        let (focus_x, hits) = self.resolve_focus(plot, rect)?;
         let focus_pixel = plot.x.map(focus_x);
 
         let crosshair = stroke_path(
@@ -497,7 +581,7 @@ impl LineChart {
             })
             .collect();
 
-        let tooltip = self.inspect_tooltip(plot, focus_pixel, focus_x, &hits, style);
+        let tooltip = self.inspect_tooltip(plot, focus_pixel, focus_x, &hits, style, steps);
         Some(Inspect {
             crosshair,
             markers,
@@ -514,6 +598,7 @@ impl LineChart {
         focus_x: f64,
         hits: &[(usize, DataPoint)],
         style: &ChartStyle,
+        steps: Steps,
     ) -> Vec<Scene> {
         let size = style.label_size_px.max(1);
         let line_h = size + 6;
@@ -537,7 +622,7 @@ impl LineChart {
         )];
         let mut ty = box_y + pad / 2;
         out.push(label_node(
-            format!("x = {}", format_si(focus_x)),
+            format!("x = {}", format_axis_tick(focus_x, steps.x)),
             text_x,
             ty,
             width - pad * 2,
@@ -552,7 +637,11 @@ impl LineChart {
                 .color
                 .unwrap_or_else(|| self.palette.color(*i));
             out.push(label_node(
-                format!("{}  {}", self.series[*i].name, format_si(p.y)),
+                format!(
+                    "{}  {}",
+                    self.series[*i].name,
+                    format_axis_tick(p.y, steps.y)
+                ),
                 text_x,
                 ty,
                 width - pad * 2,
@@ -564,6 +653,22 @@ impl LineChart {
             ty += line_h;
         }
         out
+    }
+}
+
+/// Per-axis tick step — the precision axis and tooltip labels format at.
+#[derive(Debug, Clone, Copy)]
+struct Steps {
+    x: f64,
+    y: f64,
+}
+
+/// The gap between consecutive ticks, or 0 for a degenerate axis (one or
+/// no tick) — `tick_decimals(0.0)` is 0, i.e. whole-number labels.
+fn step_of(ticks: &[f64]) -> f64 {
+    match ticks {
+        [a, b, ..] => (b - a).abs(),
+        _ => 0.0,
     }
 }
 
@@ -1219,7 +1324,11 @@ mod tests {
         let Scene::Text(header) = find(&scene, "chart.inspect.header").expect("header") else {
             panic!("header is text")
         };
-        assert_eq!(header.content, "x = 3");
+        // The header formats at the x-axis's own precision: this domain
+        // (0..3, 6 target ticks) resolves to a 0.5 step, so the axis reads
+        // `0.0 / 0.5 / … / 3.0` and the header must agree — `x = 3` would
+        // contradict the gridline it points at.
+        assert_eq!(header.content, "x = 3.0");
         let Scene::Text(value) = find(&scene, "chart.inspect.value.0").expect("value") else {
             panic!("value is text")
         };
