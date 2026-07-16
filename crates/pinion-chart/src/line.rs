@@ -327,13 +327,22 @@ impl LineChart {
     /// polylines. Areas paint before lines so the stroke sits on top.
     fn series_layer(&self, plot: &Plot, baseline: f64, style: &ChartStyle) -> Vec<Scene> {
         let baseline_y = plot.y.map(baseline);
+        let (x_lo, x_hi) = plot.x.domain();
         let mut out = Vec::new();
         for (i, s) in self.series.iter().enumerate() {
             let color = s.color.unwrap_or_else(|| self.palette.color(i));
-            let pts: Vec<(f32, f32)> = s
+            // Clip to the x-domain BEFORE mapping: path commands are
+            // absolute device pixels the paint adapter does not clip to
+            // the node rect, so an out-of-domain point would paint
+            // straight through the axes (a pinned / zoomed domain).
+            let finite: Vec<DataPoint> = s
                 .points
                 .iter()
                 .filter(|p| p.x.is_finite() && p.y.is_finite())
+                .copied()
+                .collect();
+            let pts: Vec<(f32, f32)> = clip_to_x_domain(&finite, x_lo, x_hi)
+                .iter()
                 .map(|p| (plot.x.map(p.x), plot.y.map(p.y)))
                 .collect();
             if pts.is_empty() {
@@ -454,7 +463,7 @@ impl LineChart {
         let mut focus_x: Option<f64> = None;
         let mut hits: Vec<(usize, DataPoint)> = Vec::new();
         for (i, s) in self.series.iter().enumerate() {
-            if let Some(p) = nearest_point(s, data_x) {
+            if let Some(p) = nearest_point_in(s, data_x, x_lo, x_hi) {
                 let better = focus_x.is_none_or(|fx| (p.x - data_x).abs() < (fx - data_x).abs());
                 if better {
                     focus_x = Some(p.x);
@@ -567,13 +576,80 @@ struct Inspect {
     tooltip: Vec<Scene>,
 }
 
-/// The series point whose x is nearest `data_x`, or `None` for an empty
-/// series. Non-finite points are skipped.
-fn nearest_point(series: &Series, data_x: f64) -> Option<DataPoint> {
+/// Append `p` unless it duplicates the last pushed point (a vertex that
+/// sits exactly on a boundary is both an in-range point and a crossing).
+fn push_unique(out: &mut Vec<DataPoint>, p: DataPoint) {
+    let dup = out
+        .last()
+        .is_some_and(|l| (l.x - p.x).abs() < f64::EPSILON && (l.y - p.y).abs() < f64::EPSILON);
+    if !dup {
+        out.push(p);
+    }
+}
+
+/// Clip a point sequence to the x range `[lo, hi]`, interpolating y at
+/// each boundary crossing so the polyline meets the plot edge exactly
+/// instead of extrapolating outside it. Points must already be finite.
+///
+/// Without this a pinned / zoomed x-domain paints its lines straight
+/// through the axes — `Scene::Path` commands are absolute device pixels
+/// and the paint adapter does not clip them to the node rect.
+fn clip_to_x_domain(points: &[DataPoint], lo: f64, hi: f64) -> Vec<DataPoint> {
+    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+    let inside = |x: f64| x >= lo && x <= hi;
+    let mut out: Vec<DataPoint> = Vec::new();
+    match points.len() {
+        0 => return out,
+        1 => {
+            if inside(points[0].x) {
+                out.push(points[0]);
+            }
+            return out;
+        }
+        _ => {}
+    }
+    for w in points.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if inside(a.x) {
+            push_unique(&mut out, a);
+        }
+        // Boundary crossings on this segment, in travel order.
+        let mut crossings: Vec<DataPoint> = Vec::new();
+        for bound in [lo, hi] {
+            let crosses = (a.x < bound && b.x > bound) || (a.x > bound && b.x < bound);
+            let span = b.x - a.x;
+            if crosses && span.abs() > f64::EPSILON {
+                let t = (bound - a.x) / span;
+                crossings.push(DataPoint::new(bound, a.y + t * (b.y - a.y)));
+            }
+        }
+        crossings.sort_by(|p, q| {
+            (p.x - a.x)
+                .abs()
+                .partial_cmp(&(q.x - a.x).abs())
+                .unwrap_or(core::cmp::Ordering::Equal)
+        });
+        for c in crossings {
+            push_unique(&mut out, c);
+        }
+    }
+    if let Some(&last) = points.last()
+        && inside(last.x)
+    {
+        push_unique(&mut out, last);
+    }
+    out
+}
+
+/// The series point whose x is nearest `data_x`, restricted to the
+/// visible x range `[lo, hi]` so a zoomed chart never inspects a point
+/// outside the plot. Non-finite points are skipped.
+fn nearest_point_in(series: &Series, data_x: f64, lo: f64, hi: f64) -> Option<DataPoint> {
+    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
     series
         .points
         .iter()
-        .filter(|p| p.x.is_finite() && p.y.is_finite())
+        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x >= lo && p.x <= hi)
         .copied()
         .min_by(|a, b| {
             (a.x - data_x)
@@ -1037,6 +1113,51 @@ mod tests {
         let scene =
             LineChart::new(two_series()).build(Rect::new(10, 10, 4, 4), &ChartStyle::default());
         assert!(find(&scene, "chart").is_some());
+    }
+
+    #[test]
+    fn pinned_domain_clips_series_to_the_plot() {
+        // Data spans x 0..10 but the domain is pinned to 4..6 (a zoom).
+        // Every emitted vertex must sit inside the plot's x range —
+        // without clipping the polyline extrapolates far outside it.
+        let series = vec![Series::new(
+            "s",
+            (0..=10)
+                .map(|i| DataPoint::new(f64::from(i), 5.0))
+                .collect(),
+        )];
+        let scene = LineChart::new(series)
+            .with_x_domain(4.0, 6.0)
+            .with_y_domain(0.0, 10.0)
+            .build(Rect::new(0, 0, 200, 100), &no_legend_zero_margin());
+        let Scene::Path(p) = find(&scene, "chart.series.0").expect("series") else {
+            panic!("path")
+        };
+        for cmd in &p.commands {
+            let (PathCommand::MoveTo(pt) | PathCommand::LineTo(pt)) = *cmd else {
+                continue;
+            };
+            assert!(
+                (-0.01..=200.01).contains(&pt.x),
+                "vertex x={} escaped the 0..200 plot",
+                pt.x
+            );
+        }
+    }
+
+    #[test]
+    fn clipping_interpolates_the_boundary_crossing() {
+        // A single segment 0..10 rising 0..10, domain pinned to 2..8:
+        // the clipped polyline must start at (2, 2) and end at (8, 8) —
+        // interpolated crossings, not the original endpoints.
+        let clipped = clip_to_x_domain(
+            &[DataPoint::new(0.0, 0.0), DataPoint::new(10.0, 10.0)],
+            2.0,
+            8.0,
+        );
+        assert_eq!(clipped.len(), 2, "two boundary crossings");
+        assert!((clipped[0].x - 2.0).abs() < 1e-9 && (clipped[0].y - 2.0).abs() < 1e-9);
+        assert!((clipped[1].x - 8.0).abs() < 1e-9 && (clipped[1].y - 8.0).abs() < 1e-9);
     }
 
     #[test]
