@@ -1913,6 +1913,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-chart"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-checkbox"
 version = "0.0.1"
 dependencies = [
@@ -4817,6 +4831,13 @@ dependencies = [
  "serde",
  "serde_json",
  "symphonia",
+]
+
+[[package]]
+name = "pinion-chart"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
 ]
 
 [[package]]

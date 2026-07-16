@@ -1,0 +1,43 @@
+[package]
+name = "hello-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1354 Phase-B dataviz substrate consumer — the first pinion-chart paint: a three-series line/area chart with nice axes, gridlines, tick labels, and a legend, built from Scene::Path + Scene::Text. A Toggle switches line vs area (fill). Substrate-first: every chart element is tagged and introspectable via scene/snapshot (chart.series.N / chart.axis.* / chart.grid.* / chart.legend.*), so the chart geometry reads back as data without OCR."
+publish = false
+
+[[bin]]
+name = "hello-chart"
+path = "src/main.rs"
+
+[dependencies]
+# R1354 — the charting substrate under test (LineChart -> Scene).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore + WidgetA11y
+# + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.38 — shared slider introspect reader + ARIA keyboard scaffold
+# (`read_slider_state` / `slider_apply_key`); the SliderExternal is reused
+# as the scrub-position holder (value 0..1 = cursor fraction across the plot).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloChartRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper (identical
+# shape to hello-path / hello-gradient).
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

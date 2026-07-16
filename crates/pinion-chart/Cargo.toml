@@ -1,0 +1,19 @@
+[package]
+name = "pinion-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1354 Phase-B dataviz substrate — retained-mode charting: a value->pixel LinearScale, nice-number axis ticks, a colourblind-aware categorical series palette, and a LineChart/AreaChart builder that emits a pinion_core::Scene (axes, gridlines, tick labels, series polylines, legend) from Scene::Path + Scene::Text. Pure scene-as-data (inv #1/#7): every element is tagged and introspectable, no rasterizer / GPU. The missing-library half of the charting gap — the drawing primitive (Scene::Path, R721) already existed."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The structured scene + style the chart projects into. Pure: no GPU /
+# vello / winit. A leaf peer of pinion-pdf and pinion-widget-paint — each
+# walks / builds the same tree in pinion-core's coordinate system
+# (Rect u32, Color sRGB u8, PathCommand f32 sub-pixel).
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
