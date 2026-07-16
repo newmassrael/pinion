@@ -23560,6 +23560,60 @@
         "A wire discriminator naming the coordinate basis is still absent — §7 API stabilisation"
       ]
     },
+    "R1360": {
+      "decision_summary": "R1360: the chart is layout-native — build_fill's slot-relative children + the measured-rect seam",
+      "changes_bullets": [
+        "pinion-chart build_fill(size): body authored in the chart's own (0,0)..(w,h) frame + a fill-parent tagged root that layout sizes/places",
+        "(0,0) = unmeasured sentinel: an empty fill-parent root that STILL measures, so the seam can bootstrap on the next paint",
+        "New consumer hello-chart-fill: the view reads use_pane_viewport_size(CHART_TAG) and rebuilds at the measured slot; no const rect anywhere",
+        "Reuses the R1012 per-pane measured-rect seam rather than inventing one; the chart's tag is both the introspect prefix and the seam key",
+        "build(rect) is UNCHANGED — absolute consumers (hello-chart) stay pixel-identical; build_fill is the 2nd entry point, not a rewrite"
+      ],
+      "verification_bullets": [
+        "Linchpin under a REAL compute_layout: a build_fill chart in a slot at (120,60) is measured to it and a series vertex lands at slot+local (x=0 -> window 120, y=5of0..10 -> window 110); falsified by removing fill_parent",
+        "4 consumer tests drive the ACTUAL loop (view -> layout -> publish_pane_viewports -> dirty -> re-view), nothing hand-seeded; equality-skip pinned so steady frames burn no re-pass",
+        "Falsify caught MY OWN weak tests: hardcoding the const failed only 1 of 4 (a fill-parent root tracks the slot even with a stale body) -> added body_extent(); the same falsification now fails 3 of 4",
+        "Live GPU window, one process resized 430x300 -> 900x520: status reads slot measured 410x224 -> 880x444 and the chart rebuilt to each",
+        "ws + clippy -D pedantic + fmt + cargo doc + validate T1=0 green"
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.23",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "A resize RE-SCALES; it does not re-domain — the domain is data-derived, so ticks are unchanged. My first docs claimed re-domain and the screenshots refuted it; corrected in 3 places",
+        "hello-chart still uses build(CHART_RECT) — deliberately not retrofitted (its scrub/brush capture boxes are absolute against that const; that is a separate round)",
+        "Dock/tab placement is unproven: the forcing consumer is a resizable WINDOW. A dock panel is the same fill-parent contract but has no in-repo chart consumer yet",
+        "build_fill takes a size, not a Rect — if a 3rd shape appears, build/build_fill may want unifying (2nd-consumer rule says not yet)"
+      ],
+      "publishable_decision_summary": "R1360: the chart is layout-native — build_fill's slot-relative children + the measured-rect seam",
+      "publishable_changes_bullets": [
+        "pinion-chart build_fill(size): body authored in the chart's own (0,0)..(w,h) frame + a fill-parent tagged root that layout sizes/places",
+        "(0,0) = unmeasured sentinel: an empty fill-parent root that STILL measures, so the seam can bootstrap on the next paint",
+        "New consumer hello-chart-fill: the view reads use_pane_viewport_size(CHART_TAG) and rebuilds at the measured slot; no const rect anywhere",
+        "Reuses the R1012 per-pane measured-rect seam rather than inventing one; the chart's tag is both the introspect prefix and the seam key",
+        "build(rect) is UNCHANGED — absolute consumers (hello-chart) stay pixel-identical; build_fill is the 2nd entry point, not a rewrite"
+      ],
+      "publishable_verification_bullets": [
+        "Linchpin under a REAL compute_layout: a build_fill chart in a slot at (120,60) is measured to it and a series vertex lands at slot+local (x=0 -> window 120, y=5of0..10 -> window 110); falsified by removing fill_parent",
+        "4 consumer tests drive the ACTUAL loop (view -> layout -> publish_pane_viewports -> dirty -> re-view), nothing hand-seeded; equality-skip pinned so steady frames burn no re-pass",
+        "Falsify caught MY OWN weak tests: hardcoding the const failed only 1 of 4 (a fill-parent root tracks the slot even with a stale body) -> added body_extent(); the same falsification now fails 3 of 4",
+        "Live GPU window, one process resized 430x300 -> 900x520: status reads slot measured 410x224 -> 880x444 and the chart rebuilt to each",
+        "ws + clippy -D pedantic + fmt + cargo doc + validate T1=0 green"
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.23",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "A resize RE-SCALES; it does not re-domain — the domain is data-derived, so ticks are unchanged. My first docs claimed re-domain and the screenshots refuted it; corrected in 3 places",
+        "hello-chart still uses build(CHART_RECT) — deliberately not retrofitted (its scrub/brush capture boxes are absolute against that const; that is a separate round)",
+        "Dock/tab placement is unproven: the forcing consumer is a resizable WINDOW. A dock panel is the same fill-parent contract but has no in-repo chart consumer yet",
+        "build_fill takes a size, not a Rect — if a 3rd shape appears, build/build_fill may want unifying (2nd-consumer rule says not yet)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

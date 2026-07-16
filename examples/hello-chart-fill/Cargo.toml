@@ -1,0 +1,34 @@
+[package]
+name = "hello-chart-fill"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1360 layout-native chart consumer — the forcing consumer for pinion-chart's build_fill + the measured-rect reactive seam. The chart FILLS its layout slot instead of being pinned to a const window rect: the view reads the slot's measured size via use_pane_viewport_size and rebuilds at it, so dragging the window edge re-scales the whole plot to the new slot (the data-derived domain is unaffected; the pixel mapping is what changes). This is what hello-chart structurally cannot do (its CHART_RECT is a compile-time const)."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The layout-native chart entry point under test (`LineChart::build_fill`).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+# Scene primitives + `use_pane_viewport_size` (the measured-rect seam).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# The forge renderer template emits `::vello::*` paths, so the codegen'd
+# `HelloChartFillRenderer` needs vello in scope (same as every sibling).
+vello = { workspace = true }
+
+[dev-dependencies]
+# The taffy pass — the tests place this view's scene and assert the chart
+# root is measured to its slot at two different window sizes.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+
+[build-dependencies]
+# Build-time codegen for the `HelloChartFillRenderer` Vello wrapper —
+# identical manifest shape to hello-chart / hello-no-primary.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

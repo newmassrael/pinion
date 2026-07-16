@@ -56,7 +56,8 @@ use pinion_core::scene::{
     BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode,
 };
 use pinion_core::style::{
-    BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, StrokeCap, TextAlign, TextStyle,
+    BoxStyle, Color, LayoutStyle, PathStyle, Size, SizeValue, Stroke, StrokeCap, TextAlign,
+    TextStyle,
 };
 
 use crate::palette::CategoricalPalette;
@@ -304,6 +305,49 @@ impl LineChart {
         children.extend(tooltip);
 
         Scene::Container(ContainerNode::new(children).with_tag(self.tag_prefix.clone()))
+    }
+
+    /// Build the chart as a **layout-native** subtree (R1360): the returned
+    /// root fills its layout slot and every child is authored in the chart's
+    /// own `(0, 0)..(w, h)` frame, so the chart is *placed by layout* — dock
+    /// it, flex it, resize its container — instead of being pinned to a
+    /// window coordinate the way [`Self::build`] requires.
+    ///
+    /// How it works, and why R1358 is the prerequisite:
+    /// * The body is `self.build(Rect::new(0, 0, w, h), style)` — that call
+    ///   already uses `rect` only as an additive origin, so a zero origin
+    ///   yields commands, bboxes, and `absolute_position`s all local to
+    ///   `(0, 0)`. R1358 made a `Scene::Path`'s commands relative to its own
+    ///   rect, so those local paths paint correctly wherever the root lands;
+    ///   before R1358 they were welded to a window coordinate and this was
+    ///   impossible.
+    /// * The root carries `tag_prefix` and is switched to a fill-parent
+    ///   [`LayoutStyle`]. taffy measures + places it, and each child's
+    ///   `absolute_position` (parent-relative per R55.D.6) resolves against
+    ///   the placed origin.
+    ///
+    /// `size` is the slot the chart should fill. The consumer gets it from
+    /// [`use_pane_viewport_size`](pinion_core::use_pane_viewport_size)
+    /// keyed on `tag_prefix`: the shell publishes the root's measured rect
+    /// after layout, and the same-frame re-pass rebuilds at that size. The
+    /// `(0, 0)` = unmeasured sentinel returns an empty tagged root that still
+    /// gets measured (its size is its slot's, not its content's), so the
+    /// measured size feeds back on the very next paint.
+    #[must_use]
+    pub fn build_fill(&self, size: (u32, u32), style: &ChartStyle) -> Scene {
+        let (w, h) = size;
+        if w == 0 || h == 0 {
+            return Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_tag(self.tag_prefix.clone())
+                    .with_layout(fill_parent()),
+            );
+        }
+        let mut scene = self.build(Rect::new(0, 0, w, h), style);
+        if let Scene::Container(root) = &mut scene {
+            root.layout = fill_parent();
+        }
+        scene
     }
 
     /// Horizontal (per y-tick) and vertical (per x-tick) gridlines.
@@ -1009,6 +1053,18 @@ fn absolute(rect: Rect) -> LayoutStyle {
         .with_size(Size::px(rect.w.max(1), rect.h.max(1)))
 }
 
+/// R1360 — a chart root that FILLS its layout slot (both axes 100%), so
+/// taffy sizes it from its parent and the [`LineChart::build_fill`]
+/// children's parent-relative `absolute_position`s resolve against the
+/// placed origin.
+fn fill_parent() -> LayoutStyle {
+    LayoutStyle::new().with_size(
+        Size::auto()
+            .with_width(SizeValue::Percent(100))
+            .with_height(SizeValue::Percent(100)),
+    )
+}
+
 fn bbox_of(points: &[(f32, f32)], pad: u32) -> Rect {
     let mut min_x = f32::INFINITY;
     let mut min_y = f32::INFINITY;
@@ -1361,6 +1417,158 @@ mod tests {
             (first_window_y - 250.0).abs() < 1.5,
             "y=5 of 0..10 maps to the plot's vertical middle (window 250), \
              got {first_window_y}"
+        );
+    }
+
+    #[test]
+    fn build_fill_root_fills_its_slot_and_children_are_local() {
+        // R1360 — the layout-native entry: the root declares a fill-parent
+        // size (so taffy sizes it from its slot, not from a window rect) and
+        // carries the prefix tag (so `use_pane_viewport_size` can measure it).
+        let chart = LineChart::new(two_series()).filled(true);
+        let scene = chart.build_fill((300, 200), &no_legend_zero_margin());
+        let Scene::Container(root) = &scene else {
+            panic!("build_fill returns a Container root")
+        };
+        assert_eq!(root.tag.as_deref(), Some("chart"), "root carries the tag");
+        assert_eq!(
+            root.layout.size.width,
+            SizeValue::Percent(100),
+            "root fills its slot width (not a fixed px / window rect)"
+        );
+        assert_eq!(root.layout.size.height, SizeValue::Percent(100));
+        assert!(
+            root.layout.absolute_position.is_none(),
+            "the root is PLACED by layout, so it declares no absolute position \
+             of its own — that is the whole point vs build()"
+        );
+
+        // Every series vertex is authored in the chart's own (0,0)..(300,200)
+        // frame: rect-local commands, and the placing `absolute_position` is
+        // parent-relative and inside the slot — never a window coordinate.
+        for i in 0..2 {
+            let Some(Scene::Path(p)) = find(&scene, &format!("chart.series.{i}")) else {
+                panic!("series {i} path")
+            };
+            assert!(
+                p.rect.x < 300 && p.rect.y < 200,
+                "series {i} rect origin ({}, {}) is inside the slot, not a \
+                 window coordinate",
+                p.rect.x,
+                p.rect.y
+            );
+            let (ax, ay) = p.layout.absolute_position.expect("series is placed");
+            assert!(
+                ax < 300 && ay < 200,
+                "series {i} is pinned parent-relative within the slot, got ({ax}, {ay})"
+            );
+            for cmd in &p.commands {
+                let (PathCommand::MoveTo(pt) | PathCommand::LineTo(pt)) = *cmd else {
+                    continue;
+                };
+                assert!(
+                    pt.x >= -1.0 && pt.x <= to_f32(p.rect.w) + 1.0,
+                    "series {i} command x={} is local to its own rect (w={})",
+                    pt.x,
+                    p.rect.w
+                );
+            }
+        }
+    }
+
+    /// R1360 — the linchpin, under a REAL layout pass. A `build_fill` chart is
+    /// dropped into a parent slot placed away from the window origin; after
+    /// `compute_layout` the chart root must be MEASURED to the slot (proving it
+    /// is placed by layout, not a fixed rect), and a series vertex must resolve
+    /// to `slot_origin + local` in window px (proving the parent-relative
+    /// children + R1358 rect-local commands compose correctly). This is what
+    /// `build()` structurally cannot do — its children carry window-absolute
+    /// `absolute_position`s.
+    #[test]
+    fn build_fill_lays_out_relative_to_its_placed_slot() {
+        use pinion_core::scene::ContainerNode;
+        use pinion_core::style::LayoutStyle;
+
+        // Slot: 200x100, placed at (120, 60) inside a 400x300 window via
+        // absolute_position (the "dock panel at an offset" case).
+        const SLOT_W: u32 = 200;
+        const SLOT_H: u32 = 100;
+        const SLOT_X: u32 = 120;
+        const SLOT_Y: u32 = 60;
+
+        // A flat y=5 series over domain 0..10: with zero margins it maps to the
+        // plot's vertical middle, an easy oracle after placement.
+        let series = vec![Series::new(
+            "s",
+            (0..=4).map(|i| DataPoint::new(f64::from(i), 5.0)).collect(),
+        )];
+        let chart = LineChart::new(series)
+            .with_x_domain(0.0, 4.0)
+            .with_y_domain(0.0, 10.0);
+        let chart_scene = chart.build_fill((SLOT_W, SLOT_H), &no_legend_zero_margin());
+        let slot = Scene::Container(
+            ContainerNode::new(vec![chart_scene]).with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(SLOT_X, SLOT_Y)
+                    .with_size(Size::px(SLOT_W, SLOT_H)),
+            ),
+        );
+        let mut scene = Scene::Container(ContainerNode::new(vec![slot]));
+
+        let mut text_cache = pinion_text::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut text_cache, 400, 300);
+
+        // The chart root was placed + sized by layout to fill its slot.
+        let Some(Scene::Container(root)) = find(&scene, "chart") else {
+            panic!("chart root present after layout")
+        };
+        assert_eq!(
+            (root.rect.x, root.rect.y),
+            (SLOT_X, SLOT_Y),
+            "the fill-parent chart root is PLACED by layout at the slot origin"
+        );
+        assert_eq!(
+            (root.rect.w, root.rect.h),
+            (SLOT_W, SLOT_H),
+            "the fill-parent chart root is SIZED by layout to the slot"
+        );
+
+        // A series vertex now sits at slot_origin + local. Flat y=5 of 0..10
+        // over a 100px slot placed at y=60 lands at the vertical middle: 110.
+        let Some(Scene::Path(p)) = find(&scene, "chart.series.0") else {
+            panic!("series after layout")
+        };
+        let PathCommand::MoveTo(first) = p.commands[0] else {
+            panic!("series starts with MoveTo")
+        };
+        let win_x = to_f32(p.rect.x) + first.x;
+        let win_y = to_f32(p.rect.y) + first.y;
+        assert!(
+            (win_x - to_f32(SLOT_X)).abs() < 1.5,
+            "x=0 lands at the slot's left edge (window {SLOT_X}), got {win_x}"
+        );
+        assert!(
+            (win_y - 110.0).abs() < 1.5,
+            "y=5 of 0..10 lands at the slot's vertical middle (window 110), got {win_y}"
+        );
+    }
+
+    #[test]
+    fn build_fill_unmeasured_is_an_empty_tagged_fill_root() {
+        // The (0,0) sentinel: still measurable (fill-parent), paints nothing,
+        // so the shell's post-layout publish feeds the real size back on the
+        // next paint. A degenerate build must not panic or emit series.
+        let chart = LineChart::new(two_series());
+        let scene = chart.build_fill((0, 0), &ChartStyle::default());
+        let Scene::Container(root) = &scene else {
+            panic!("root Container")
+        };
+        assert_eq!(root.tag.as_deref(), Some("chart"));
+        assert_eq!(root.layout.size.width, SizeValue::Percent(100));
+        assert!(root.children.is_empty(), "unmeasured chart paints nothing");
+        assert!(
+            find(&scene, "chart.series.0").is_none(),
+            "no series until the slot is measured"
         );
     }
 

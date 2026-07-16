@@ -17,3 +17,12 @@ workspace = true
 # walks / builds the same tree in pinion-core's coordinate system
 # (Rect u32, Color sRGB u8, PathCommand f32 sub-pixel).
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
+
+[dev-dependencies]
+# R1360 — TEST-ONLY. `build_fill` is layout-native: its root fills its slot
+# and its children are parent-relative. Proving that end-to-end needs the
+# taffy pass (`compute_layout`), which lives in pinion-runtime. The crate's
+# public API stays runtime-free (no cycle: runtime never deps chart); this
+# edge exists only so the layout mechanic is pinned next to the code it proves.
+pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../pinion-text", version = "0.0.1" }

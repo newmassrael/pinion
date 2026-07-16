@@ -1927,6 +1927,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-chart-fill"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-runtime",
+ "pinion-shell",
+ "pinion-text",
+ "vello",
+]
+
+[[package]]
 name = "hello-checkbox"
 version = "0.0.1"
 dependencies = [
@@ -4838,6 +4852,8 @@ name = "pinion-chart"
 version = "0.0.1"
 dependencies = [
  "pinion-core",
+ "pinion-runtime",
+ "pinion-text",
 ]
 
 [[package]]
