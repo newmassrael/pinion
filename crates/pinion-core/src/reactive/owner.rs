@@ -1169,7 +1169,7 @@ impl Owner {
     /// "framework integrator provides the spawner" contract.
     #[must_use]
     pub fn local_task_pump(&self) -> Rc<super::resource::LocalTaskPump> {
-        self.cache(
+        self.cache_inherited(
             "__pinion.reactive.local_task_pump",
             super::resource::LocalTaskPump::new,
         )
@@ -1218,23 +1218,53 @@ impl Owner {
     /// which is, precisely, the bug R1362 existed to fix, resurrected by a
     /// change that never mentions quitting.
     ///
-    /// The split is not "which slots are important", it is **what kind of thing
-    /// the slot holds**, and this file already draws it (see the `focused_tag`
-    /// field's note on `OwnerInner`):
+    /// # Which slots inherit
     ///
-    /// * A **capability** is binding-wide — one `QuitSink` per process, one way
-    ///   to wake the UI, one font-metrics provider. It must inherit, or a child
-    ///   scope gets a Null that lies.
-    /// * A **value** is per-owner — a secondary window genuinely has its own
-    ///   viewport size. It must NOT inherit, or a child reads its parent's size
-    ///   and reflows to the wrong one.
+    /// The predicate is mechanical, and deliberately not a judgement about what
+    /// the slot "is": **does the shell DRIVE this slot at the root owner?** Seed
+    /// it, poll it, publish into it, write it — any of those. If it does, the
+    /// slot must inherit, or a child scope silently desyncs from its driver.
     ///
-    /// So [`viewport_size_signal`](Self::viewport_size_signal) deliberately
-    /// keeps plain [`cache`](Self::cache) and reports its documented `(0, 0)`
-    /// = "viewport unknown" (which R1006's contract already requires consumers
-    /// to skip on), rather than confidently inheriting a wrong number. Scroll
-    /// state, animations and every other per-scope slot keep `cache` for the
-    /// same reason: inheriting them would be the mirror-image bug.
+    /// | slot | how the shell drives root | inherits |
+    /// |---|---|---|
+    /// | `repaint_sink` | seeds at boot | yes |
+    /// | `quit_sink` | seeds at boot | yes |
+    /// | `monospace_metrics` | seeds at boot | yes |
+    /// | `window_control_sink` | seeds at boot (in `pinion-shell`) | yes |
+    /// | `local_task_pump` | POLLS it every frame | yes |
+    /// | `pane_viewport_registry` | PUBLISHES pane rects into it | yes |
+    /// | `viewport_size_signal` | writes it, but the READ is primary-gated | **no** — see below |
+    ///
+    /// R1364.2 first published a different rule — "capabilities are binding-wide
+    /// and inherit; values are per-owner and do not" — which is recorded here
+    /// because it was WRONG and a wrong rationale in this file outlives the bug
+    /// it explains. It got the four sinks right by luck of category and then
+    /// missed `local_task_pump` (a *capability* by any reading, left on plain
+    /// `cache`) and actively misclassified `pane_viewport_registry` as a "value"
+    /// that should not inherit — when R1021 requires it be ONE shared root
+    /// instance that every window publishes into, and its forcing consumer is
+    /// sprag's R37 undock, an R680-adjacent feature. A taxonomy invites you to
+    /// argue about which bucket a slot falls in; "who drives it" is a fact you
+    /// can grep.
+    ///
+    /// [`viewport_size_signal`](Self::viewport_size_signal) is the one exception,
+    /// and it is an exception to the CONSEQUENCE, not the predicate: the shell
+    /// does drive it at root, but the R1006 seam is deliberately primary-gated
+    /// (`pinion-shell`'s pane-publish notes and `pane_viewport`'s module doc both
+    /// say so). Inheriting would hand a secondary window the PRIMARY's size —
+    /// confidently wrong — whereas the per-scope `(0, 0)` is R1006's documented
+    /// "viewport unknown", which its contract already requires consumers to skip
+    /// on. An honest unknown beats a plausible lie.
+    ///
+    /// Scroll state, animations and every other slot the shell never touches keep
+    /// plain `cache`: inheriting them would be the mirror-image bug.
+    ///
+    /// A slot the shell drives at root must ALSO be seeded there at boot. The
+    /// walk cannot help a slot that does not exist yet: on a total miss this
+    /// creates at the CALLING scope, so a child that resolves before the shell
+    /// first touches root would mint its own and desync anyway. The four sinks
+    /// get that from `provide_*`; `local_task_pump` and `pane_viewport_registry`
+    /// are seeded explicitly in `CoreShell::new_with_seed`.
     ///
     /// # Panics
     ///
@@ -1441,9 +1471,31 @@ impl Owner {
     /// handle so the returned clone is cheap. Internal: consumers read via
     /// [`use_pane_viewport_size`](super::pane_viewport::use_pane_viewport_size)
     /// and the shell publishes via [`Self::pane_viewport_entries`].
+    /// R1364.5 §5.22 §5.28 — create this scope's pane-viewport registry now, so
+    /// descendants inherit it rather than minting their own.
+    ///
+    /// The shell calls this once on `root_owner` at boot. R1021 requires ONE
+    /// shared registry that every window publishes its pane rects into, and
+    /// `publish_pane_viewports` reads the ROOT's; but the registry is built
+    /// lazily on first touch, and [`Self::cache_inherited`] creates at the
+    /// CALLING scope when no ancestor has one yet. So without an explicit boot
+    /// seed, the deferred R680 atomic would let a secondary window's view mint
+    /// its own registry, register its pane tags there, and never reflow — the
+    /// torn-off pane's PTY silently keeping the wrong size. sprag's R37 undock
+    /// is the forcing consumer.
+    ///
+    /// Exists (rather than the shell touching the resolver) because
+    /// `Self::pane_viewport_registry` is `pub(crate)`: `pinion-runtime` cannot
+    /// name it, and seeding via the unrelated
+    /// [`Self::pane_viewport_entries`] would work only as a side effect nobody
+    /// reading the call site could see.
+    pub fn seed_pane_viewport_registry(&self) {
+        drop(self.pane_viewport_registry());
+    }
+
     #[must_use]
     pub(crate) fn pane_viewport_registry(&self) -> super::pane_viewport::PaneViewportRegistry {
-        self.cache::<super::pane_viewport::PaneViewportRegistryHolder, _>(
+        self.cache_inherited::<super::pane_viewport::PaneViewportRegistryHolder, _>(
             super::pane_viewport::PANE_VIEWPORT_REGISTRY_KEY,
             || {
                 super::pane_viewport::PaneViewportRegistryHolder(

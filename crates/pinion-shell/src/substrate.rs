@@ -1997,26 +1997,37 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`Self::apply_key`]; widgets match on the W3C string in their
     /// `apply_key` impls.
     ///
-    /// R1364 — this doc used to open "`Tab` never reaches this method", which
-    /// was false about THIS method specifically: `Self::drain_key_for_window`,
-    /// the RPC `scene/key` arm, calls it directly, and `handle_scene_key` has no
-    /// allowlist. A physical `Tab` reaches this method only when the focused
-    /// widget declines it — `AppShell::handle_key_press` offers it first and
-    /// falls through to [`Self::handle_focus_traverse`] — whereas an injected one
-    /// always arrives and never falls through. §2 #2 is intact regardless: the
-    /// `focus/next` / `focus/prev` methods drive the same `FocusManager`, so an
-    /// AI asks for traversal by name. Pinned by `dispatch_core.rs`'s
+    /// # `Escape` / `Tab` reach this method from RPC only (R1364.5)
+    ///
+    /// A PHYSICAL `Escape` / `Tab` never arrives here. `AppShell::handle_key_press`
+    /// gives each its own arm — `try_apply_key_inner("Escape" | "Tab", ..)`
+    /// directly, then `request_quit` / [`Self::handle_focus_traverse`] on decline
+    /// — and only the remaining named keys fall through to this method. Both
+    /// still reach `V::apply_key`, just not by this door.
+    ///
+    /// An INJECTED one always arrives here: `Self::drain_key_for_window`, the RPC
+    /// `scene/key` arm, calls this method, and `handle_scene_key` imposes no
+    /// allowlist. Pinned by `dispatch_core.rs`'s
     /// `r1364_shell_reserved_keys_are_injectable`.
     ///
-    /// `Escape` reaches this method two ways: R693 §5.39 routes a physical one
-    /// here while a modal focus trap is active ([`Self::focus_is_modal`]) so the
-    /// dialog binding's `apply_key` can map Escape → cancel; and the RPC drain
-    /// delivers an injected one unconditionally. R1363 §5.55 — an unconsumed
-    /// physical Escape is an app QUIT (`AppShell::request_quit`, through the
-    /// `app_quit_requested` veto), NOT the window close this doc used to call
-    /// `event_loop.exit`. An injected Escape cannot reach that exit at all: it
-    /// needs an `&ActiveEventLoop`, and this substrate is winit-free for the
-    /// §2 #6 dual.
+    /// This sentence has now been wrong twice, which is why it is spelled out.
+    /// Pre-R1364 it read "`Tab` never reaches this method" — right about the
+    /// winit path, wrong about RPC. R1364.3 "corrected" it to say a physical Tab
+    /// arrives when the widget declines — which is FALSE, since declining is
+    /// exactly what routes it to `handle_focus_traverse` instead. A half-truth
+    /// was replaced by a falsehood, in the round about falsehoods; an independent
+    /// reviewer caught it.
+    ///
+    /// Consequences per key:
+    ///
+    /// * `Tab` injected here reaches the focused widget and does not go on to
+    ///   traverse focus. §2 #2 holds anyway: `focus/next` / `focus/prev` drive
+    ///   the same `FocusManager`, so an AI asks for traversal by name.
+    /// * `Escape` injected here cannot END the app: that needs an
+    ///   `&ActiveEventLoop`, and this substrate is winit-free for the §2 #6 dual.
+    ///   R1363 §5.55 — an unconsumed PHYSICAL Escape is an app QUIT via
+    ///   `AppShell::request_quit` (through the `app_quit_requested` veto), not a
+    ///   window close. The AI's peer is `app/quit`, which passes that same veto.
     pub fn handle_named_key(&mut self, key_str: &str) {
         self.handle_named_key_inner(key_str, false);
     }

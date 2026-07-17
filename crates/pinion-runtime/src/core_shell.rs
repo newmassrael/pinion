@@ -571,6 +571,29 @@ impl<V: WidgetCore> CoreShell<V> {
         // the first paint.
         let viewport_signal = Signal::new((0_u32, 0_u32));
         root_owner.provide_viewport_size_signal(viewport_signal.clone());
+        // R1364.5 §5.22 — seed the two root-DRIVEN slots that have no
+        // `provide_*` of their own, before the factories / first `view`.
+        //
+        // `Owner::cache_inherited` lets a child scope resolve the root's
+        // instance, but it cannot find one that does not exist yet: on a total
+        // miss it creates at the CALLING scope. So without this, the deferred
+        // R680 atomic (`window_owner(id).run(..)`) would let a secondary
+        // window's view mint its own before the shell first touched root, and
+        // the two would desync in exactly the way the walk exists to prevent.
+        //
+        // Touching the resolver IS the seed — unlike the sinks, both are built
+        // from nothing, so there is no value to hand in.
+        //
+        // The pump: the shell POLLS `root_owner().local_task_pump()` every
+        // frame and gates staying awake on its `has_pending()`. A child's own
+        // pump would look live and never run — a `Resource` stuck on `Loading`
+        // forever, with no panic and no log.
+        //
+        // The pane registry: R1021 requires ONE shared instance that every
+        // window publishes its pane rects into (`publish_pane_viewports` reads
+        // root's). sprag's R37 undock is the forcing consumer.
+        let _ = root_owner.local_task_pump();
+        root_owner.seed_pane_viewport_registry();
         // (R55.D.5 §5.45) Compose the state-scene root.
         //
         // Default (single-External binding, the entire example

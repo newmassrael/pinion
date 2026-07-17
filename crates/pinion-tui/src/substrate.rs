@@ -816,11 +816,36 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                         }
                     }
                 }
-                // `DeferredInput` is `non_exhaustive`; future variants
-                // (focus_request, IME composition, gesture …) land
-                // silent no-ops here until a follow-up sub-round
-                // extends the match. Mirrors the Vello sibling's
-                // wildcard arm.
+                // R1364.5 §5.55 §2 #6 — `app/quit` on the terminal backend.
+                //
+                // R1364.4 added the method to the SHARED dispatcher and taught
+                // only the Vello backend to drain it, so a TUI client got the
+                // documented success value (`null` = "the quit was requested")
+                // while nothing was requested and the process ran forever —
+                // with `rpc/methods` advertising the method to that very client.
+                // A §2 #6 break shipped by the round whose subject is unchecked
+                // claims, and the wildcard below is why it compiled clean.
+                //
+                // Routed through the sink R1363 already built rather than a
+                // second flag: `TuiQuitSink` sets `quit_flag`, and the loop's
+                // own check runs `app_quit_requested` on the UI thread before
+                // breaking. So an AI's quit is the same request a binding's own
+                // `QuitSink` makes, passes the same veto, and needs no new state.
+                //
+                // The MECHANISM differs from the Vello sibling (which defers to
+                // `AppShell::request_quit` because ending that loop needs an
+                // `&ActiveEventLoop` this backend has no concept of); the
+                // VOCABULARY and the veto are shared, which is what §2 #6 asks.
+                pinion_rpc::DeferredInput::Quit => {
+                    self.root_owner().quit_sink().request_quit();
+                }
+                // `DeferredInput` is `non_exhaustive`, so an out-of-crate match
+                // is FORCED to carry this wildcard and the compiler cannot flag
+                // a variant neither backend handles. That is exactly how the
+                // R1364.4 bug above compiled silently, so the parity is asserted
+                // by `r1364_5_deferred_input_parity` instead — the enum is a
+                // shared wire surface, and a variant no drain implements is a
+                // method that lies to half its clients.
                 _ => {}
             }
         }
@@ -2644,5 +2669,186 @@ mod tests {
                 w(&small),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod r1364_5_app_quit_on_the_terminal_backend {
+    //! R1364.5 §5.55 §2 #6 — `app/quit` must END a terminal app, not answer and
+    //! evaporate.
+    //!
+    //! R1364.4 added `app/quit` to the SHARED dispatcher and taught only the
+    //! Vello backend to drain it. A TUI client received `{"result":null}` — the
+    //! documented "the quit was requested" — while nothing was requested and the
+    //! process ran forever, with `rpc/methods` (one backend-agnostic const)
+    //! advertising the method to that same client. Worse than an absent method:
+    //! every other TUI-unavailable axis answers with an error or an explicit
+    //! `null`-means-unavailable, so an AI could not tell "quit requested" from
+    //! "quit discarded".
+    //!
+    //! Two independent reviewers found this within minutes of each other, on a
+    //! commit whose own audit trail said "the arm is the whole feature, and its
+    //! absence would have been invisible" — written about the Vello drain, and
+    //! not applied one crate over.
+
+    use super::*;
+    use pinion_core::test_fixtures::ButtonFixture;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct CountingQuitSink(Arc<AtomicUsize>);
+    impl pinion_core::QuitSink for CountingQuitSink {
+        fn request_quit(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn r1364_5_app_quit_reaches_the_terminal_backends_quit_sink() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let seed_count = Arc::clone(&count);
+        let mut core: ShellCoreTui<ButtonFixture> = ShellCoreTui::new_with_seed(move |owner| {
+            owner.provide_quit_sink(Arc::new(CountingQuitSink(seed_count)));
+        });
+
+        let req = r#"{"jsonrpc":"2.0","method":"app/quit","params":{},"id":1}"#;
+        let reply = core.dispatch_rpc(req).expect("a reply");
+        assert!(
+            !reply.contains("\"error\""),
+            "app/quit is routed by the shared dispatcher, so it answers here too: {reply}",
+        );
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "the quit must reach the terminal backend's QuitSink — the seam \
+             R1363 built (TuiQuitSink -> quit_flag -> the loop's \
+             app_quit_requested veto -> break). 0 here is R1364.4's bug: a \
+             success reply for a request that went nowhere",
+        );
+    }
+}
+
+#[cfg(test)]
+mod r1364_5_deferred_input_parity {
+    //! R1364.5 §2 #6 — every `DeferredInput` variant is answered by BOTH drains,
+    //! or is listed here as deliberately terminal-inapplicable with a reason.
+    //!
+    //! `DeferredInput` is the shared RPC wire surface: one `RPC_METHODS` const
+    //! advertises the methods to both backends, so a variant only one drain
+    //! implements is a method that lies to half its clients.
+    //!
+    //! The compiler CANNOT enforce this, and that is the whole reason this
+    //! exists. `DeferredInput` is `#[non_exhaustive]`, so an out-of-crate match
+    //! is *forced* to carry a wildcard arm; adding a variant compiles clean in
+    //! both drains with zero warnings. R1364.4 added `Quit`, wired the Vello
+    //! drain, and the terminal drain swallowed it silently at `_ => {}`. A
+    //! source-text check is the only mechanism left — the same argument
+    //! `commit.rs`'s (R1349.1) and the termination map's make.
+
+    /// Variants the terminal drain does not name, recorded because this test
+    /// found them and this round does not get to guess.
+    ///
+    /// **This list may only ever SHRINK.** It is not an allowlist of things that
+    /// are fine — it is the honest state of a §2 #6 gap that predates R1364.5,
+    /// which the `Quit` fix exposed rather than caused. Every entry is a method
+    /// the shared dispatcher accepts and `rpc/methods` advertises to terminal
+    /// clients, which therefore answers `null` and may do nothing.
+    ///
+    /// They are NOT classified here, deliberately. Some look obviously
+    /// inapplicable (a terminal has no OS file drag-and-drop) and some look like
+    /// real bugs (`Tick` drives animation; crossterm does report mouse motion,
+    /// so `Hover` / `PointerLeave` have no obvious excuse) — but "looks like" is
+    /// exactly the reasoning this round exists to stop. Writing a confident
+    /// reason next to each without verifying it would be the same sin one
+    /// paragraph after naming it. Each needs its own investigation, and the
+    /// answer per variant is either an arm or a method that reports unavailable
+    /// instead of success.
+    ///
+    /// The test still bites for anything NEW: a variant added tomorrow and wired
+    /// on one backend fails here, which is the regression R1364.4 shipped.
+    const UNCLASSIFIED_TERMINAL_GAPS: &[&str] = &[
+        "Hover",
+        "PointerLeave",
+        "Tick",
+        "SetTargetFps",
+        "SetModifiers",
+        "FileHover",
+        "FileHoverCancel",
+        "FileDrop",
+    ];
+
+    fn variants_of_deferred_input() -> Vec<String> {
+        let src = include_str!("../../pinion-rpc/src/dispatch.rs");
+        let mut out = Vec::new();
+        let mut inside = false;
+        for line in src.lines() {
+            if line.starts_with("pub enum DeferredInput {") {
+                inside = true;
+                continue;
+            }
+            if !inside {
+                continue;
+            }
+            if line == "}" {
+                break;
+            }
+            let t = line.trim_start();
+            if t.starts_with("//") || t.starts_with("#[") {
+                continue;
+            }
+            // `Name,` or `Name {` — a variant head at one indent level.
+            let head = t.trim_end_matches(&[',', ' '][..]);
+            let name = head.split_whitespace().next().unwrap_or_default();
+            let name = name.trim_end_matches('{').trim_end_matches(',');
+            if !name.is_empty()
+                && name.starts_with(|c: char| c.is_ascii_uppercase())
+                && name.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                out.push(name.to_owned());
+            }
+        }
+        assert!(
+            out.len() > 5,
+            "parsed too few DeferredInput variants ({out:?}) — the parser broke, \
+             which would make this test vacuously green",
+        );
+        out
+    }
+
+    #[test]
+    fn r1364_5_every_deferred_input_variant_is_answered_by_the_terminal_drain() {
+        let terminal = include_str!("substrate.rs");
+        let mut missing: Vec<String> = Vec::new();
+        for v in variants_of_deferred_input() {
+            if UNCLASSIFIED_TERMINAL_GAPS.contains(&v.as_str()) {
+                continue;
+            }
+            if !terminal.contains(&format!("DeferredInput::{v}")) {
+                missing.push(v);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "`DeferredInput` variants the terminal drain never names: {missing:?}.\n\
+             The shared dispatcher accepts these and `rpc/methods` advertises \
+             them to terminal clients, so each answers `null` and does nothing — \
+             R1364.4's `app/quit` bug exactly. Add the arm (the fix), or make \
+             the method report unavailable rather than success. Do NOT add it to \
+             UNCLASSIFIED_TERMINAL_GAPS: that list records what R1364.5 found and \
+             may only shrink.",
+        );
+        // The recorded gaps must be REAL gaps. If one is fixed, it has to leave
+        // the list — a stale entry would quietly re-open the hole it documents,
+        // which is the same failure mode as a stale doc row.
+        let stale: Vec<&&str> = UNCLASSIFIED_TERMINAL_GAPS
+            .iter()
+            .filter(|v| terminal.contains(&format!("DeferredInput::{v}")))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "these are listed as unimplemented but the terminal drain now names \
+             them: {stale:?}. Remove them from UNCLASSIFIED_TERMINAL_GAPS.",
+        );
     }
 }
