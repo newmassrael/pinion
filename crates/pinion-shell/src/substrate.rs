@@ -8924,11 +8924,14 @@ mod r1362_window_control_sink_seeding_tests {
     //!
     //! `ShellCore::new_with_seed` promises the backend's boundary handles reach
     //! the root `Owner` BEFORE the binding factories resolve any `use_*` hook.
-    //! That promise is load-bearing and its failure is SILENT: `Owner::cache` is
-    //! first-write-wins with a lazy Null default and no failure path, so a seed
-    //! that lands one line too late is dropped without a panic or a log, and the
-    //! binding holds a handle whose every call is a no-op. Nothing observable
-    //! distinguishes that from a working app until the tray Quit does nothing.
+    //! That promise is load-bearing, and for a slot still on a hand-rolled
+    //! `provide_*` its failure is SILENT: `Owner::cache` is first-write-wins with
+    //! a lazy Null default and no failure path, so a seed that lands one line too
+    //! late is dropped without a panic or a log, and the binding holds a handle
+    //! whose every call is a no-op. Nothing observable distinguishes that from a
+    //! working app until the tray Quit does nothing. That is `window_control_sink`
+    //! here; R1366.1 made the repaint sink's late seed a PANIC by moving it to a
+    //! `ProviderSlot`, so this module now pins BOTH failure shapes at once.
     //!
     //! The `window_control` unit tests cover the slot mechanics on a bare
     //! `Owner`; these cover the ORDER inside `ShellCore::new_with_seed`, which is
@@ -9052,7 +9055,7 @@ mod r1362_window_control_sink_seeding_tests {
         let repaint = Arc::new(RecordingRepaint::default());
         let (seed_sink, seed_repaint) = (sink.clone(), repaint.clone());
         let _sc = ShellCore::<SinkCapturingFixture>::new_with_seed(move |owner| {
-            owner.provide_repaint_sink(seed_repaint);
+            pinion_core::REPAINT_SINK.provide(owner, seed_repaint);
             provide_window_control_sink(owner, seed_sink);
         });
 

@@ -1184,30 +1184,6 @@ impl Owner {
         )
     }
 
-    /// R999 §5.23 — the owner-scoped [`RepaintSink`](super::repaint::RepaintSink),
-    /// the off-thread "request a repaint" edge.
-    ///
-    /// Returns whatever the shell seeded via [`Self::provide_repaint_sink`] at
-    /// boot, or a [`NullRepaintSink`](super::repaint::NullRepaintSink) when none
-    /// was provided (headless screenshot / RPC tests / unit tests off the live
-    /// event loop). The inner `Arc` is the `Send` handle a binding clones into
-    /// its producer thread; the `Rc<RepaintSinkHolder>` cache wrapper stays on
-    /// the UI thread. Same private-key + lazy-default shape as
-    /// [`Self::local_task_pump`].
-    #[must_use]
-    pub fn repaint_sink(&self) -> std::sync::Arc<dyn super::repaint::RepaintSink> {
-        self.cache_inherited::<super::repaint::RepaintSinkHolder, _>(
-            super::repaint::REPAINT_SINK_KEY,
-            || {
-                super::repaint::RepaintSinkHolder(std::sync::Arc::new(
-                    super::repaint::NullRepaintSink,
-                ))
-            },
-        )
-        .0
-        .clone()
-    }
-
     /// R1364 §5.22 §5.55 — resolve a slot from the nearest ancestor that has
     /// one, creating it HERE only if no ancestor does. The provider-slot
     /// sibling of [`Self::cache`], which is per-scope and stays that way.
@@ -1234,20 +1210,21 @@ impl Owner {
     /// it, poll it, publish into it, write it — any of those. If it does, the
     /// slot must inherit, or a child scope silently desyncs from its driver.
     ///
-    /// Rows are named by the slot key's suffix — `__pinion.<area>.<slot>` — so
-    /// `provider_slot_census` can check this table against the workspace's key
-    /// literals mechanically. It is an enumeration, and R1365 found it had
-    /// already drifted: rows naming slots no key spells, slots with no row, and
-    /// one omission (`scene_revision`) latently broken for R680. The census
-    /// names the drift when it recurs; the count is deliberately not repeated
-    /// here, because R1365's attempt to state it ("seven of the ten … the three
-    /// it omitted") was itself wrong — contradicted by the very test output the
-    /// same commit pasted into its ledger, which said four were missing and one
-    /// row was a phantom. If you want the number, run the test.
+    /// **This table is prose, and it is being deleted a row at a time.** It is
+    /// the SSOT for exactly the slots not yet migrated to
+    /// [`ProviderSlot`](super::provider_slot::ProviderSlot), which carries the
+    /// same verdict in its declaration where the compiler can see it. R1365
+    /// found this enumeration had already drifted — rows naming slots no key
+    /// spells, slots with no row, and one omission (`scene_revision`) latently
+    /// broken for R680 — and its census could not survive the type (see
+    /// `provider_slot::declaration_scan`). The count is deliberately not stated
+    /// here: `LEGACY_SLOT_KEYS` is the machine-checked list of what remains, and
+    /// R1365's attempt to state a count in prose ("seven of the ten … the three
+    /// it omitted") was contradicted by the very test output the same commit
+    /// pasted into its ledger.
     ///
     /// | slot | how the shell drives root | inherits |
     /// |---|---|---|
-    /// | `repaint_sink` | seeds at boot | yes |
     /// | `quit_sink` | seeds at boot | yes |
     /// | `monospace_metrics` | seeds at boot | yes |
     /// | `window_control_sink` | seeds at boot (in `pinion-shell`) | yes |
@@ -1312,11 +1289,14 @@ impl Owner {
     /// A slot the shell drives at root must ALSO be seeded there at boot. The
     /// walk cannot help a slot that does not exist yet: on a total miss this
     /// creates at the CALLING scope, so a child that resolves before the shell
-    /// first touches root would mint its own and desync anyway. The four sinks
-    /// get that from `provide_*`; `local_task_pump` and `pane_viewport_registry`
-    /// are seeded explicitly in `CoreShell::new_with_seed`; `scene_revision` and
-    /// `waiter_registry` in `pinion-shell`'s `ShellCore::with_core`, which
-    /// resolves both against `core.root_owner()` before the first paint.
+    /// first touches root would mint its own and desync anyway. The sinks get
+    /// that from their seed call
+    /// ([`ProviderSlot::provide`](super::provider_slot::ProviderSlot::provide),
+    /// or a legacy `provide_*` for a slot not yet migrated); `local_task_pump`
+    /// and `pane_viewport_registry` are seeded explicitly in
+    /// `CoreShell::new_with_seed`; `scene_revision` and `waiter_registry` in
+    /// `pinion-shell`'s `ShellCore::with_core`, which resolves both against
+    /// `core.root_owner()` before the first paint.
     ///
     /// # Panics
     ///
@@ -1362,36 +1342,18 @@ impl Owner {
         self.cache(key, factory)
     }
 
-    /// R999 §5.23 — seed the owner-scoped
-    /// [`RepaintSink`](super::repaint::RepaintSink). The shell calls this once
-    /// at boot **before** the binding factories
-    /// ([`WidgetCore::create_external`](crate::WidgetCore::create_external) /
-    /// `create_extra_externals`) run, so the first
-    /// [`Self::repaint_sink`] / [`use_repaint_sink`](super::repaint::use_repaint_sink)
-    /// read inside those factories resolves to the real sink rather than the
-    /// Null default.
-    ///
-    /// Idempotent-by-first-write: like every [`Self::cache`] slot the first
-    /// call wins; a later call is a no-op (the supplied sink is dropped). The
-    /// shell seeds exactly once, before any read, so this is never observed.
-    pub fn provide_repaint_sink(&self, sink: std::sync::Arc<dyn super::repaint::RepaintSink>) {
-        // `cache`'s factory is `FnOnce` and only runs when the slot is empty, so
-        // a plain move closure seeds on the first call; a later call drops its
-        // `sink` unused (first-write-wins), no panic path.
-        self.cache::<super::repaint::RepaintSinkHolder, _>(
-            super::repaint::REPAINT_SINK_KEY,
-            move || super::repaint::RepaintSinkHolder(sink),
-        );
-    }
-
     /// R1363 §5.55 — the owner-scoped [`QuitSink`](super::quit::QuitSink), the
     /// "end this application" edge.
     ///
     /// Returns whatever the shell seeded via [`Self::provide_quit_sink`] at
     /// boot, or a [`NullQuitSink`](super::quit::NullQuitSink) when none was
-    /// provided (headless / RPC tests / unit tests off a live shell). Same
-    /// private-key + lazy-default shape as [`Self::repaint_sink`]; the inner
+    /// provided (headless / RPC tests / unit tests off a live shell). The inner
     /// `Arc` is the `Send` handle a binding clones into its producer thread.
+    ///
+    /// One of the hand-rolled slot pairs still awaiting its R1366.x migration to
+    /// [`ProviderSlot`](super::provider_slot::ProviderSlot) — the key, the Null
+    /// default and the inherit verdict live in three places here, which is the
+    /// drift the type exists to end.
     #[must_use]
     pub fn quit_sink(&self) -> std::sync::Arc<dyn super::quit::QuitSink> {
         self.cache_inherited::<super::quit::QuitSinkHolder, _>(super::quit::QUIT_SINK_KEY, || {
@@ -1406,7 +1368,11 @@ impl Owner {
     /// so the first [`use_quit_sink`](super::quit::use_quit_sink) read inside
     /// those factories resolves the real sink rather than the Null default.
     ///
-    /// Idempotent-by-first-write, exactly as [`Self::provide_repaint_sink`].
+    /// Idempotent-by-first-write: the first call wins and a later one silently
+    /// drops its sink. R1366 made that a panic for a migrated slot
+    /// ([`ProviderSlot::provide`](super::provider_slot::ProviderSlot::provide))
+    /// because a seed that loses a race is a wiring bug, not an idempotent
+    /// no-op; this pair keeps the old behaviour until its migration.
     pub fn provide_quit_sink(&self, sink: std::sync::Arc<dyn super::quit::QuitSink>) {
         self.cache::<super::quit::QuitSinkHolder, _>(super::quit::QUIT_SINK_KEY, move || {
             super::quit::QuitSinkHolder(sink)
@@ -1420,8 +1386,9 @@ impl Owner {
     /// Returns whatever the shell seeded via [`Self::provide_monospace_metrics`]
     /// at boot, or a [`NullMonospaceMetrics`](super::font_metrics::NullMonospaceMetrics)
     /// (measures `None`) when none was provided (headless / RPC / unit tests).
-    /// Same private-key + lazy-default shape as [`Self::repaint_sink`]; the
-    /// metrics provider stays on the UI thread, so it rides an `Rc` (no
+    /// Another hand-rolled pair awaiting its R1366.x migration to
+    /// [`ProviderSlot`](super::provider_slot::ProviderSlot); the metrics
+    /// provider stays on the UI thread, so it rides an `Rc` (no
     /// `Send + Sync`). Read in `view` via
     /// [`measured_monospace_cell`](super::font_metrics::measured_monospace_cell).
     #[must_use]
@@ -1463,9 +1430,11 @@ impl Owner {
     /// none was provided (headless / RPC / unit tests). Read in `view` / an
     /// [`Effect`](super::effect::Effect) via
     /// [`use_viewport_size`](super::viewport::use_viewport_size); the tracked
-    /// `get` re-fires a reflow Effect on size change. Same private-key +
-    /// lazy-default shape as [`Self::repaint_sink`]; unlike the repaint /
-    /// metrics capability slots this carries a *changing value*, so it is a
+    /// `get` re-fires a reflow Effect on size change. Another hand-rolled pair
+    /// awaiting its R1366.x migration to
+    /// [`ProviderSlot`](super::provider_slot::ProviderSlot) — and one of the two
+    /// whose verdict will be `per_scope`; unlike the repaint / metrics
+    /// capability slots this carries a *changing value*, so it is a
     /// [`Signal`](super::signal::Signal) rather than a trait object.
     #[must_use]
     pub fn viewport_size_signal(&self) -> super::signal::Signal<(u32, u32)> {

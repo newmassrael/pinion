@@ -537,11 +537,18 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `WindowControlSink`) must reach the root `Owner` inside **this window**:
     /// the `Owner` is created here (so a backend cannot seed it earlier), and
     /// the factories below resolve hooks against it (so a backend cannot seed it
-    /// later). [`Owner::cache`] is first-write-wins with a lazy Null default and
-    /// **no failure path** — a seed that loses to a prior read is silently
-    /// dropped, leaving the binding holding a Null handle whose every call is a
-    /// no-op. That failure is invisible, so the window is enforced structurally
-    /// here instead of documented as a caller obligation.
+    /// later). [`Owner::cache`] is first-write-wins with a lazy Null default, so
+    /// a seed that loses to a prior read leaves the binding holding a Null handle
+    /// whose every call is a no-op. The window is enforced structurally here
+    /// rather than documented as a caller obligation, because missing it is not
+    /// something a backend author would notice.
+    ///
+    /// R1366.1 — a slot migrated to
+    /// [`ProviderSlot`](pinion_core::ProviderSlot) now PANICS on that late seed
+    /// (`REPAINT_SINK` is the first), so for those the failure is loud rather
+    /// than invisible. The slots still on a hand-rolled `provide_*` keep the
+    /// silent drop until their own R1366.x migration, which is why this closure
+    /// stays the enforced window rather than a convention.
     ///
     /// Taking a closure (rather than growing a `new_with_*` variant per handle)
     /// keeps this crate ignorant of *what* a backend seeds: `pinion-shell` seeds

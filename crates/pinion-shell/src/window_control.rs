@@ -96,7 +96,13 @@ const WINDOW_CONTROL_SINK_KEY: &str = "__pinion.shell.window_control_sink";
 /// Owner-cache newtype: [`Owner::cache`] stores `Rc<dyn Any>`, so the `Send`
 /// trait object rides inside this holder. The outer `Rc<WindowControlSinkHolder>`
 /// stays on the UI thread; the inner `Arc<dyn WindowControlSink>` is the handle
-/// that crosses to the producer thread. (Mirrors core's `RepaintSinkHolder`.)
+/// that crosses to the producer thread.
+///
+/// The wrapper is not actually needed — the cache keys on
+/// `(TypeId::of::<V>(), key)`, so `Arc<dyn WindowControlSink>` is already its own
+/// type. It dies with this slot's R1366.x migration to
+/// [`ProviderSlot`](pinion_core::reactive::ProviderSlot), as core's
+/// `RepaintSinkHolder` did in R1366.1.
 struct WindowControlSinkHolder(Arc<dyn WindowControlSink>);
 
 /// R1362 PR-65 §5.16 §5.49 §2 #2 — the shell-supplied "request a window control
@@ -154,9 +160,9 @@ impl WindowControlSink for NullWindowControlSink {
     fn request_window_control(&self, _window_id: &str, _control: WindowControl) {}
 }
 
-/// Seed a scope's [`WindowControlSink`] — the shell-side peer of
-/// [`Owner::provide_repaint_sink`](pinion_core::Owner::provide_repaint_sink),
-/// public for the same reasons and with the same caveat.
+/// Seed a scope's [`WindowControlSink`] — the shell-side peer of core's
+/// [`REPAINT_SINK`](pinion_core::REPAINT_SINK) seed, public for the same reasons
+/// and with the same caveat.
 ///
 /// `AppShell::new` calls this from its
 /// [`CoreShell::new_with_seed`](pinion_runtime::CoreShell::new_with_seed)

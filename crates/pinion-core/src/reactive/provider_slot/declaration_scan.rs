@@ -22,6 +22,20 @@
 //! module's rule verbatim: **stop at `#[cfg(test)]`**. A test SHOULD spell a key
 //! by hand; that is the wire pin. Only production code must go through the type.
 //!
+//! # R1366.1: the scan did not implement the rule it documented
+//!
+//! R1366 wrote the sentence above and shipped a scan whose only filter was the
+//! legacy list — nothing looked for a constructor. It was green because nothing
+//! had been migrated yet, and the first migration made the migrated declaration
+//! itself an "escape": a check that forbids the state it exists to reach. Its
+//! counterfactual (rename a key to a prefixed one, watch the scan fail) passes
+//! with or without the constructor check, so it never discriminated between the
+//! rule and the code.
+//!
+//! That is the same failure R1365 shipped and this module was written to end —
+//! a claim about the check, kept where the check cannot see it — so
+//! `r1366_1_a_declared_slot_is_not_an_offender` now pins the missing half.
+//!
 //! # The legacy list may only SHRINK
 //!
 //! Migration is per-slot and each one is a behaviour change (a `provide_*` that
@@ -36,7 +50,6 @@
 /// **This list may only shrink.** Each entry is one R1366.x migration. Do not add
 /// to it: a NEW slot has no excuse, because the type exists now.
 const LEGACY_SLOT_KEYS: &[&str] = &[
-    "__pinion.reactive.repaint_sink",
     "__pinion.reactive.quit_sink",
     "__pinion.reactive.monospace_metrics",
     "__pinion.reactive.viewport_size",
@@ -48,18 +61,109 @@ const LEGACY_SLOT_KEYS: &[&str] = &[
     "__pinion.shell.window_control_sink",
 ];
 
-/// Every `"__pinion.…"` literal in workspace PRODUCTION source, with the file it
-/// came from. Walks source text rather than reflecting linked crates: the census
-/// is open-world, and a collector only ever sees the crates that got linked, so a
-/// new crate's slot would be silently absent instead of loudly missing.
-fn production_slot_literals() -> Vec<(String, String)> {
-    // Assembled at run time so this needle is not itself a hit.
+/// This file, workspace-relative — the one file the walk must NOT read.
+///
+/// This module is test-only (`#[cfg(test)] mod declaration_scan;` in the
+/// parent), but the walk reads FILES and the `cfg` sits on the parent's `mod`
+/// line, so nothing in here trips the `#[cfg(test)]` rule. [`LEGACY_SLOT_KEYS`]
+/// would then read as nine production spellings of the very keys it lists —
+/// which is what made R1366's staleness assert **vacuous**: every legacy key
+/// "still existed" because this list spells it, so a ghost was undetectable and
+/// the test could never fail. Skipping the file is the `#[cfg(test)]` rule
+/// applied where the walk cannot see the attribute.
+const THIS_FILE: &str = file!();
+
+/// `src` with every top-level `#[cfg(test)]` item, and every comment line,
+/// removed.
+///
+/// A test SHOULD spell a key by hand — that is the wire pin, `commit.rs:168`'s
+/// rule — so only production must go through the type. R1366 implemented that as
+/// "stop reading at the first line whose TRIMMED text starts with
+/// `#[cfg(test)]`", which is wrong twice over, and both ways are FALSE
+/// NEGATIVES — the one failure mode a scan must not have:
+///
+/// * it stops at an **indented** attribute, and `owner.rs` carries
+///   `#[cfg(test)]` on a test-only accessor at line 817 of 3305 — so three
+///   quarters of that file, `local_task_pump`'s key included, was invisible; and
+/// * it **stops** rather than resumes, so any production item written after a
+///   test module would be invisible too.
+///
+/// Neither was noticed because the staleness assert that would have caught the
+/// first was simultaneously vacuous (see [`THIS_FILE`]) — two defects, each
+/// hiding the other.
+///
+/// A top-level item's closing brace sits at column 0 in `rustfmt`ed source, and
+/// `cargo fmt --all --check` is a CI gate, so a test block can be skipped by
+/// finding that brace rather than by counting braces — which a `{` inside a
+/// string literal would defeat.
+fn production_only(src: &str) -> String {
+    const ATTR: &str = "#[cfg(test)]";
+    let mut out = String::new();
+    let mut lines = src.lines();
+    while let Some(line) = lines.next() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        if !line.starts_with(ATTR) {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        // The attribute may carry its item (`#[cfg(test)] mod tests {`) or sit
+        // on its own line above it. A `mod x;` / `use x;` item ends there; a
+        // block item ends at the next column-0 `}`.
+        let rest = line[ATTR.len()..].trim();
+        let item = if rest.is_empty() {
+            lines.next()
+        } else {
+            Some(rest)
+        };
+        if item.is_none_or(|i| i.trim_end().ends_with(';')) {
+            continue;
+        }
+        for skipped in lines.by_ref() {
+            if skipped.trim_end() == "}" {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// One `"__pinion.…"` literal found in workspace production source.
+#[derive(Debug)]
+struct SlotLiteral {
+    key: String,
+    file: String,
+    /// The literal sits inside a [`ProviderSlot`](super::ProviderSlot)
+    /// constructor call — it IS a declaration, rather than a key hand-rolled
+    /// next to a `cache_inherited` call that could say anything.
+    declared: bool,
+}
+
+/// Every `"__pinion.…"` literal in workspace PRODUCTION source, each classified
+/// as declared-through-the-type or not. Walks source text rather than reflecting
+/// linked crates: the census is open-world, and a collector only ever sees the
+/// crates that got linked, so a new crate's slot would be silently absent
+/// instead of loudly missing.
+///
+/// Classification is per **statement**, not per line: `rustfmt` splits a
+/// constructor call across lines the moment the type name grows, so a line-local
+/// check would flip with the width of an unrelated identifier. A `static`
+/// declaration is exactly one `;`-terminated statement, so that is the unit.
+fn production_slot_literals() -> Vec<SlotLiteral> {
+    // Assembled at run time so these needles are not themselves hits.
     let needle = format!("\"{}.", "__pinion");
+    let ctors = [
+        format!("{}::inherited(", "ProviderSlot"),
+        format!("{}::per_scope(", "ProviderSlot"),
+    ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(std::path::Path::parent)
         .expect("workspace root is two levels above this crate");
-    let mut found: Vec<(String, String)> = Vec::new();
+    let mut found: Vec<SlotLiteral> = Vec::new();
+    let mut skipped_self = false;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -89,34 +193,46 @@ fn production_slot_literals() -> Vec<(String, String)> {
                 .unwrap_or(&p)
                 .to_string_lossy()
                 .to_string();
-            for line in src.lines() {
-                let t = line.trim_start();
-                // `commit.rs:168`'s rule: a test may spell the key by hand — that
-                // is the pin. Production may not.
-                if t.starts_with("#[cfg(test)]") {
-                    break;
+            if where_ == THIS_FILE {
+                skipped_self = true;
+                continue;
+            }
+            for stmt in production_only(&src).split(';') {
+                let mut at = 0;
+                while let Some(i) = stmt[at..].find(&needle) {
+                    let start = at + i;
+                    let tail = &stmt[start + 1..];
+                    let Some(end) = tail.find('"') else { break };
+                    let key = &tail[..end];
+                    at = start + 1 + end;
+                    // The type's own predicate, not a hand-rolled one: what
+                    // counts as a slot key is `ProviderSlot`'s business, and
+                    // reusing it means the scan cannot drift from the
+                    // constructors' assert. It also excludes `SLOT_KEY_PREFIX`'s
+                    // own definition — the bare prefix is not a key, which is
+                    // exactly what `is_slot_key` says.
+                    if !super::is_slot_key(key) {
+                        continue;
+                    }
+                    let head = &stmt[..start];
+                    found.push(SlotLiteral {
+                        key: key.to_string(),
+                        file: where_.clone(),
+                        declared: ctors.iter().any(|c| head.contains(c.as_str())),
+                    });
                 }
-                if t.starts_with("//") {
-                    continue;
-                }
-                let Some(i) = line.find(&needle) else {
-                    continue;
-                };
-                let tail = &line[i + 1..];
-                let Some(end) = tail.find('"') else { continue };
-                let key = &tail[..end];
-                // The type's own predicate, not a hand-rolled one: what counts
-                // as a slot key is `ProviderSlot`'s business, and reusing it
-                // means the scan cannot drift from the constructors' assert.
-                // It also excludes `SLOT_KEY_PREFIX`'s own definition — the bare
-                // prefix is not a key, which is exactly what `is_slot_key` says.
-                if !super::is_slot_key(key) {
-                    continue;
-                }
-                found.push((key.to_string(), where_.clone()));
             }
         }
     }
+    // Without this the exclusion above could stop matching — a moved file, a
+    // changed `file!()` form — and every assert below would go quietly vacuous
+    // again, green and meaningless. The walk must have SEEN this file to skip it.
+    assert!(
+        skipped_self,
+        "the walk never reached {THIS_FILE}, so it never skipped it: either the \
+         walk is not reading the workspace, or `file!()` no longer matches the \
+         path form it builds. Both make every assert in this module vacuous.",
+    );
     found
 }
 
@@ -127,16 +243,48 @@ fn r1366_no_production_slot_key_escapes_the_declaration_type() {
         !literals.is_empty(),
         "the walk found no slot keys at all — it is not reading the workspace",
     );
-    let offenders: Vec<&(String, String)> = literals
+    let offenders: Vec<String> = literals
         .iter()
-        .filter(|(k, _)| !LEGACY_SLOT_KEYS.contains(&k.as_str()))
+        .filter(|l| !l.declared && !LEGACY_SLOT_KEYS.contains(&l.key.as_str()))
+        .map(|l| format!("  {} spelled in {}", l.key, l.file))
         .collect();
     assert!(
         offenders.is_empty(),
         "a provider slot key is spelled in production outside a `ProviderSlot` \
          declaration, and outside the shrinking legacy list. Declare it with \
          `ProviderSlot::inherited` / `::per_scope` — the scope argument is how \
-         the verdict stops being a comment:\n{offenders:#?}",
+         the verdict stops being a comment:\n{}",
+        offenders.join("\n"),
+    );
+}
+
+#[test]
+fn r1366_1_a_declared_slot_is_not_an_offender() {
+    // R1366 shipped this scan with `declared` missing entirely: its only filter
+    // was the legacy list, so the FIRST migration — the thing the list exists to
+    // track — made the migrated declaration itself an "escape". The scan was
+    // green because nothing had been migrated yet, and R1366's counterfactual
+    // (rename a key to a prefixed one, watch it fail) passes with or without the
+    // constructor check, so it never discriminated. This is the discriminating
+    // one: the type's own declaration must READ as a declaration.
+    let literals = production_slot_literals();
+    let repaint: Vec<&SlotLiteral> = literals
+        .iter()
+        .filter(|l| l.key == super::super::repaint::REPAINT_SINK.key())
+        .collect();
+    let where_: Vec<&str> = repaint.iter().map(|l| l.file.as_str()).collect();
+    assert_eq!(
+        repaint.len(),
+        1,
+        "the migrated repaint slot's key should be spelled exactly once in \
+         production — at its declaration; found: {where_:?}",
+    );
+    assert!(
+        repaint[0].declared,
+        "the key in {} sits inside `ProviderSlot::inherited(..)` and read as \
+         UNDECLARED, so the scan bills the type's own declarations and no slot \
+         can ever migrate",
+        repaint[0].file,
     );
 }
 
@@ -148,7 +296,7 @@ fn r1366_the_legacy_list_may_only_shrink() {
     // compiler-checked verdict.
     assert_eq!(
         LEGACY_SLOT_KEYS.len(),
-        10,
+        9,
         "the legacy list changed. It may only SHRINK — if you migrated a slot, \
          lower this number; if you are adding a key here, do not: declare it as \
          a `ProviderSlot` instead. Remaining: {LEGACY_SLOT_KEYS:?}",
@@ -160,20 +308,30 @@ fn r1366_the_legacy_list_may_only_shrink() {
 }
 
 #[test]
-fn r1366_every_legacy_key_still_exists() {
+fn r1366_every_legacy_key_still_names_a_hand_rolled_slot() {
     // The other half of the staleness assert: a legacy entry whose slot was
-    // deleted or renamed would sit here forever, quietly making the list look
-    // longer than the real debt.
+    // deleted, renamed — or MIGRATED — would sit here forever, quietly making
+    // the list look longer than the real debt.
+    //
+    // The migrated case is the one that bites, and R1366's version could not see
+    // it: after a migration the key is still spelled (in the declaration), so
+    // "the key still exists" stayed true, the length stayed 10, and a forgotten
+    // entry passed every assert. Requiring an UNDECLARED spelling is what makes
+    // the list shrink with the debt rather than with someone's memory.
     let literals = production_slot_literals();
-    let live: Vec<&str> = literals.iter().map(|(k, _)| k.as_str()).collect();
+    let hand_rolled: Vec<&str> = literals
+        .iter()
+        .filter(|l| !l.declared)
+        .map(|l| l.key.as_str())
+        .collect();
     let ghosts: Vec<&&str> = LEGACY_SLOT_KEYS
         .iter()
-        .filter(|k| !live.contains(*k))
+        .filter(|k| !hand_rolled.contains(*k))
         .collect();
     assert!(
         ghosts.is_empty(),
-        "the legacy list names keys that no production source spells — they were \
-         migrated or removed, so delete these entries and lower the count: \
-         {ghosts:?}",
+        "the legacy list names keys that no production source spells by hand — \
+         they were migrated to `ProviderSlot` (or removed), so delete these \
+         entries and lower the count: {ghosts:?}",
     );
 }

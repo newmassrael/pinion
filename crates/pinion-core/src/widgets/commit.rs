@@ -191,11 +191,22 @@ mod tests {
                 // as a literal — that is the wire-ABI pin (see
                 // `r1349_commit_vocabulary_pins_the_wire_words`): an assertion
                 // that fed the constant in at both ends would pin nothing. Only
-                // production emitters must go through the constant. Every
-                // widget module in this crate puts `#[cfg(test)]` after its
-                // production code, so a prefix scan is exact rather than
-                // heuristic; a file that ever inverts that order fails loudly
-                // here rather than silently skipping a real emitter.
+                // production emitters must go through the constant.
+                //
+                // R1366.1 — this said a file inverting that order "fails loudly
+                // here rather than silently skipping a real emitter", and there
+                // is no such mechanism: the break is what skips, so an inverted
+                // file goes SILENTLY blind from that line on. `owner.rs` proves
+                // the shape is reachable — it carries `#[cfg(test)]` on a
+                // test-only accessor at line 817 of 3305, and the identical rule
+                // in `provider_slot::declaration_scan` was blind to two thirds
+                // of it. What holds HERE is narrower and was re-verified when
+                // that was found: every `src/widgets` file puts its
+                // `#[cfg(test)]` at column 0 after its production code, so no
+                // emitter is currently skipped. That is a convention this scan
+                // relies on, not one it enforces; `declaration_scan`'s
+                // `production_only` is the enforcing version if a widget ever
+                // needs it.
                 if line.trim_start().starts_with("#[cfg(test)]") {
                     break;
                 }

@@ -27,7 +27,7 @@ pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, 
 pub use pane_viewport::use_pane_viewport_size;
 pub use provider_slot::{ProviderSlot, SLOT_KEY_PREFIX, SlotScope, is_slot_key};
 pub use quit::{NullQuitSink, QuitSink, use_quit_sink};
-pub use repaint::{NullRepaintSink, RepaintSink, use_repaint_sink};
+pub use repaint::{NullRepaintSink, REPAINT_SINK, RepaintSink, use_repaint_sink};
 pub use resource::{
     DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource, ResourceState,
     use_local_task_pump,

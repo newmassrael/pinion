@@ -63,12 +63,17 @@ impl MonospaceMetrics for NullMonospaceMetrics {
 }
 
 /// Owner-cache newtype: [`Owner::cache`](super::owner::Owner::cache) stores
-/// `Rc<dyn Any>`, so the trait object rides inside this holder (mirrors
-/// `RepaintSinkHolder`).
+/// `Rc<dyn Any>`, so the trait object rides inside this holder.
+///
+/// The wrapper is not actually needed — the cache keys on
+/// `(TypeId::of::<V>(), key)`, so `Rc<dyn MonospaceMetrics>` is already its own
+/// type. It dies with this slot's R1366.x migration to
+/// [`ProviderSlot`](super::provider_slot::ProviderSlot), as `RepaintSinkHolder`
+/// did in R1366.1.
 pub(crate) struct MonospaceMetricsHolder(pub(crate) Rc<dyn MonospaceMetrics>);
 
 /// Private owner-cache key for the single per-owner monospace-metrics slot
-/// (mirrors the `RepaintSink` / `LocalTaskPump` private-key convention).
+/// (mirrors the `LocalTaskPump` private-key convention).
 pub(crate) const MONOSPACE_METRICS_KEY: &str = "__pinion.reactive.monospace_metrics";
 
 /// R1003 §5.36 — measure the monospace cell at `font_size_px` via the active

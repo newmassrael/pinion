@@ -33,6 +33,8 @@
 
 use std::sync::Arc;
 
+use super::provider_slot::ProviderSlot;
+
 /// R999 §5.23 — the shell-supplied "request a repaint from any thread" edge.
 ///
 /// `Send + Sync + 'static` so the concrete handle can be cloned into a
@@ -64,23 +66,36 @@ impl RepaintSink for NullRepaintSink {
     fn request_repaint(&self) {}
 }
 
-/// Owner-cache newtype: [`Owner::cache`](super::owner::Owner::cache) stores
-/// `Rc<dyn Any>`, so the `Send` trait object rides inside this holder. The
-/// outer `Rc<RepaintSinkHolder>` stays on the UI thread; the inner
-/// `Arc<dyn RepaintSink>` is the handle that crosses to the producer thread.
-pub(crate) struct RepaintSinkHolder(pub(crate) Arc<dyn RepaintSink>);
-
-/// Private owner-cache key for the single per-owner repaint sink slot
-/// (mirrors `LocalTaskPump`'s private key convention).
-pub(crate) const REPAINT_SINK_KEY: &str = "__pinion.reactive.repaint_sink";
+/// R1366.1 §5.22 §5.23 — the repaint slot: its key, its Null default and its
+/// inherit verdict as one expression, in the module that owns the capability.
+///
+/// **`Inherited`** by the mechanical predicate — the shell DRIVES this at the
+/// root owner, seeding it in `AppShell::new`'s `new_with_seed` closure before
+/// any binding factory reads it. A per-scope repaint sink would leave the
+/// deferred R680 atomic (each window's `view` under `window_owner(id).run(..)`)
+/// handing every secondary window a fresh `NullRepaintSink`: its producer
+/// thread would call [`RepaintSink::request_repaint`] forever and wake nothing.
+/// [`provider_slot_tests!`](crate::provider_slot_tests) asserts that verdict
+/// below rather than leaving it to a doc table, which is what R1365.1 found had
+/// been asserting it.
+///
+/// The payload is the `Arc<dyn RepaintSink>` itself, with no newtype wrapper:
+/// [`Owner::cache`](super::owner::Owner::cache) keys on
+/// `(TypeId::of::<V>(), key)`, so the trait object is already its own type.
+/// R999's `RepaintSinkHolder` was the `Rc<dyn Any>` storage showing through the
+/// abstraction — `pinion-shell`'s `waiter.rs` has stored a bare `Arc` since
+/// R1269 (`aaa92198`), proving the holder optional.
+pub static REPAINT_SINK: ProviderSlot<Arc<dyn RepaintSink>> =
+    ProviderSlot::inherited("__pinion.reactive.repaint_sink", || {
+        Arc::new(NullRepaintSink)
+    });
 
 /// R999 §5.23 — hook returning the active owner scope's [`RepaintSink`].
 ///
-/// Returns the sink the shell seeded via
-/// [`Owner::provide_repaint_sink`](super::owner::Owner::provide_repaint_sink)
-/// at boot, or a [`NullRepaintSink`] off the live event loop. Bindings call
-/// this inside `create_extra_externals` (alongside the producer-thread spawn)
-/// and hand the returned `Arc` to the thread.
+/// Returns the sink the shell seeded into [`REPAINT_SINK`] at boot, or a
+/// [`NullRepaintSink`] off the live event loop. Bindings call this inside
+/// `create_extra_externals` (alongside the producer-thread spawn) and hand the
+/// returned `Arc` to the thread.
 ///
 /// # Panics
 ///
@@ -88,9 +103,7 @@ pub(crate) const REPAINT_SINK_KEY: &str = "__pinion.reactive.repaint_sink";
 /// other `use_*` hooks).
 #[must_use]
 pub fn use_repaint_sink() -> Arc<dyn RepaintSink> {
-    super::owner::Owner::current()
-        .expect("use_repaint_sink requires an active Owner scope")
-        .repaint_sink()
+    Arc::clone(&REPAINT_SINK.resolve_current())
 }
 
 #[cfg(test)]
@@ -109,47 +122,55 @@ mod tests {
         }
     }
 
+    /// A sink and the counter it increments.
+    fn counting() -> (Arc<dyn RepaintSink>, Arc<AtomicUsize>) {
+        let count = Arc::new(AtomicUsize::new(0));
+        (Arc::new(CountingSink(Arc::clone(&count))), count)
+    }
+
+    // The verdict, EMITTED from the declaration rather than remembered: a child
+    // scope resolves the root's sink. R1365 wrote this slot's verdict test by
+    // hand and forgot five of its siblings'; a generated one cannot be forgotten.
+    crate::provider_slot_tests!(r1366_1_repaint_sink_inherits, super::REPAINT_SINK, || {
+        counting().0
+    });
+
     #[test]
     fn null_default_is_a_silent_no_op() {
         // No shell provided a sink: the lazy default is NullRepaintSink, and
         // request_repaint must not panic (bindings call it unconditionally).
         let owner = Owner::new();
-        owner.repaint_sink().request_repaint();
-        owner.repaint_sink().request_repaint();
+        REPAINT_SINK.resolve(&owner).request_repaint();
+        REPAINT_SINK.resolve(&owner).request_repaint();
     }
 
     #[test]
     fn provided_sink_is_returned() {
         let owner = Owner::new();
-        let count = Arc::new(AtomicUsize::new(0));
-        owner.provide_repaint_sink(Arc::new(CountingSink(Arc::clone(&count))));
-        owner.repaint_sink().request_repaint();
+        let (sink, count) = counting();
+        REPAINT_SINK.provide(&owner, sink);
+        REPAINT_SINK.resolve(&owner).request_repaint();
         assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
     #[test]
-    fn provide_is_first_write_wins() {
-        // The shell seeds once before any read; a stray second provide is a
-        // no-op (the supplied sink is dropped, the first stays installed).
+    #[should_panic(expected = "already seeded")]
+    fn r1366_1_a_late_seed_panics_where_it_used_to_be_dropped() {
+        // The counterfactual of R999's `provide_is_first_write_wins`, which
+        // asserted that a second seed was a SILENT no-op leaving every reader on
+        // the first sink. `Owner::provide_repaint_sink`'s own doc called that
+        // "never observed" without checking — the M5 shape, five sites deep. A
+        // seed that loses a race is a wiring bug, and now says so.
         let owner = Owner::new();
-        let first = Arc::new(AtomicUsize::new(0));
-        let second = Arc::new(AtomicUsize::new(0));
-        owner.provide_repaint_sink(Arc::new(CountingSink(Arc::clone(&first))));
-        owner.provide_repaint_sink(Arc::new(CountingSink(Arc::clone(&second))));
-        owner.repaint_sink().request_repaint();
-        assert_eq!(first.load(Ordering::SeqCst), 1, "first provide wins");
-        assert_eq!(
-            second.load(Ordering::SeqCst),
-            0,
-            "second provide is a no-op"
-        );
+        REPAINT_SINK.provide(&owner, counting().0);
+        REPAINT_SINK.provide(&owner, counting().0);
     }
 
     #[test]
     fn use_repaint_sink_resolves_inside_owner_run() {
         let owner = Owner::new();
-        let count = Arc::new(AtomicUsize::new(0));
-        owner.provide_repaint_sink(Arc::new(CountingSink(Arc::clone(&count))));
+        let (sink, count) = counting();
+        REPAINT_SINK.provide(&owner, sink);
         owner.run(|| {
             use_repaint_sink().request_repaint();
         });
@@ -162,12 +183,12 @@ mod tests {
         // sink and wakes the (would-be) shell. `join` makes it deterministic —
         // no wall-clock poll.
         let owner = Owner::new();
-        let count = Arc::new(AtomicUsize::new(0));
-        owner.provide_repaint_sink(Arc::new(CountingSink(Arc::clone(&count))));
-        let sink = owner.repaint_sink();
+        let (sink, count) = counting();
+        REPAINT_SINK.provide(&owner, sink);
+        let handle_sink = Arc::clone(&REPAINT_SINK.resolve(&owner));
         let handle = std::thread::spawn(move || {
-            sink.request_repaint();
-            sink.request_repaint();
+            handle_sink.request_repaint();
+            handle_sink.request_repaint();
         });
         handle.join().expect("producer thread joins");
         assert_eq!(count.load(Ordering::SeqCst), 2);
@@ -175,15 +196,14 @@ mod tests {
 
     #[test]
     fn r1365_1_a_child_scope_resolves_the_shells_real_repaint_sink() {
-        // R1365.1 §5.22 — the verdict, not the row. `cache_inherited`'s census
-        // table says this slot inherits; an audit found the table's row was the
-        // ONLY thing saying so for 5 of the 8 `yes` slots, this one included, so
-        // a silent revert to plain `cache` passed every gate. The mirror of
-        // `quit.rs`'s r1364 test, on the scope R680 will run a secondary
-        // window's view in.
+        // The generated verdict test above asserts `Rc::ptr_eq` through
+        // `resolve`. This one asserts the same inheritance end-to-end through
+        // the BINDING's path — `use_repaint_sink()` inside a child `Owner::run`,
+        // which is the scope R680 will run a secondary window's view in — so a
+        // hook that stopped delegating to the slot could not pass both.
         let root = Owner::new();
-        let count = Arc::new(AtomicUsize::new(0));
-        root.provide_repaint_sink(Arc::new(CountingSink(Arc::clone(&count))));
+        let (sink, count) = counting();
+        REPAINT_SINK.provide(&root, sink);
 
         let window_scope = Owner::new_child(&root);
         window_scope.run(|| use_repaint_sink().request_repaint());
