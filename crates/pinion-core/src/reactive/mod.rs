@@ -10,6 +10,7 @@ pub mod font_metrics;
 pub mod introspect;
 pub mod owner;
 pub mod pane_viewport;
+pub mod quit;
 pub mod repaint;
 pub mod resource;
 pub mod resource_cache;
@@ -23,6 +24,7 @@ pub use font_metrics::{MonospaceMetrics, NullMonospaceMetrics, measured_monospac
 pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
 pub use pane_viewport::use_pane_viewport_size;
+pub use quit::{NullQuitSink, QuitSink, use_quit_sink};
 pub use repaint::{NullRepaintSink, RepaintSink, use_repaint_sink};
 pub use resource::{
     DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource, ResourceState,

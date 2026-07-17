@@ -567,8 +567,12 @@ impl<V: WidgetView> AppShell<V> {
                 )));
                 crate::window_control::provide_window_control_sink(
                     root_owner,
-                    std::sync::Arc::new(crate::ProxyWindowControlSink::new(seed_proxy)),
+                    std::sync::Arc::new(crate::ProxyWindowControlSink::new(seed_proxy.clone())),
                 );
+                // R1363 §5.55 — the app-lifecycle sink rides the same seeding
+                // window as its window-lifecycle peer.
+                root_owner
+                    .provide_quit_sink(std::sync::Arc::new(crate::ProxyQuitSink::new(seed_proxy)));
             }),
             windows: HashMap::new(),
             spec_id_to_window_id: HashMap::new(),
@@ -1811,7 +1815,12 @@ impl<V: WidgetView> AppShell<V> {
                 // but the binding owns the policy uniformly across keys).
                 let handled = self.core.try_apply_key_inner("Escape", repeat);
                 if !handled && !self.core.focus_is_modal() {
-                    event_loop.exit();
+                    // R1363 §5.55 — Escape means QUIT, not "close this window",
+                    // so it now routes through the app veto. Pre-R1363 it called
+                    // `event_loop.exit()` right here and consulted NO binding
+                    // hook — a veto bypass this shell and the TUI shell had each
+                    // hard-coded independently, for want of a Quit verb.
+                    self.request_quit(event_loop);
                 }
             }
             Key::Named(NamedKey::Tab) => {
@@ -2167,16 +2176,36 @@ impl<V: WidgetView> AppShell<V> {
         }
         match control {
             pinion_overlay::WindowControl::Close => {
-                if !self
+                if self
                     .core
                     .root_owner()
                     .run(|| V::window_close_requested(spec_id))
                 {
-                    eprintln!(
-                        "shell: final state = {}",
-                        V::fmt_state_log(self.core.cached_state()),
+                    // The binding handled it (a torn-off panel docked back by
+                    // dropping its WindowSpec); the reconcile pass closes the OS
+                    // window and the empty-set policy is checked there.
+                    return;
+                }
+                if spec_id == pinion_runtime::DEFAULT_WINDOW {
+                    // R1363 §5.55 — the standalone-app convention, now routed
+                    // through the APP veto instead of a bare exit. The primary
+                    // window IS the app: its scope is the binding-wide reactive
+                    // anchor, which is why `remove_window` refuses to tear it
+                    // down. So an unhandled close of it is a QUIT request, not a
+                    // window op — and `app_quit_requested` gets to refuse.
+                    self.request_quit(event_loop);
+                } else {
+                    // R1363 §5.55 — pre-R1363 THIS EXITED THE APP: an unhandled
+                    // close of any window fell through to `event_loop.exit()`.
+                    // A secondary window is not the app, and pinion's window set
+                    // is declarative (the binding owns `windows_signal`), so the
+                    // shell cannot remove it unilaterally — the next reconcile
+                    // would re-create it. Declining to remove it IS the answer.
+                    tracing::warn!(
+                        target: "pinion::shell",
+                        window = %spec_id,
+                        "close requested for a secondary window, but the binding                          did not remove it from `windows_signal`; ignoring                          (pre-R1363 this exited the app)",
                     );
-                    event_loop.exit();
                 }
             }
             pinion_overlay::WindowControl::Minimize => {
@@ -2184,12 +2213,57 @@ impl<V: WidgetView> AppShell<V> {
                     window.set_minimized(true);
                 }
             }
+            pinion_overlay::WindowControl::Restore => {
+                if let Some(window) = self.window_arc_for_spec(spec_id) {
+                    window.set_minimized(false);
+                }
+            }
             pinion_overlay::WindowControl::Maximize => {
                 if let Some(window) = self.window_arc_for_spec(spec_id) {
                     window.set_maximized(!window.is_maximized());
                 }
             }
+            pinion_overlay::WindowControl::Show => {
+                if let Some(window) = self.window_arc_for_spec(spec_id) {
+                    window.set_visible(true);
+                }
+            }
+            pinion_overlay::WindowControl::Hide => {
+                if let Some(window) = self.window_arc_for_spec(spec_id) {
+                    window.set_visible(false);
+                }
+            }
         }
+    }
+
+    /// (R1363 §5.55 §2 #6) End the app — the ONE arm every quit producer
+    /// reaches, and the only place in this crate that `event_loop.exit()` for a
+    /// reason other than a boot error.
+    ///
+    /// Producers: `Escape` (the standalone convention), an unhandled `Close` of
+    /// the PRIMARY window, the last window closing under
+    /// [`WidgetView::quit_on_last_window_closed`], a binding's own
+    /// [`QuitSink`](pinion_core::QuitSink) (via [`AppEvent::QuitRequested`]),
+    /// and the `app/quit` RPC. Every one is offered to
+    /// [`pinion_core::WidgetCore::app_quit_requested`]
+    /// first, so none of them — not the binding's own request, not an AI's —
+    /// grants a privileged exit past the binding's unsaved-changes gate.
+    ///
+    /// Pre-R1363 there was no such arm: `Escape` called `event_loop.exit()`
+    /// inline (bypassing every binding veto, in BOTH shells independently) and
+    /// an unhandled `WindowControl::Close` fell through to an exit. That is the
+    /// conflation §5.55 splits.
+    fn request_quit(&mut self, event_loop: &ActiveEventLoop) {
+        if self.core.root_owner().run(V::app_quit_requested) {
+            // The binding handled it (raised a "Save changes?" modal, started an
+            // async flush). It stays alive and owns the follow-up.
+            return;
+        }
+        eprintln!(
+            "shell: final state = {}",
+            V::fmt_state_log(self.core.cached_state()),
+        );
+        event_loop.exit();
     }
 
     /// R51.62 §5.40 — dispatch one AT-side event reported by
@@ -2369,6 +2443,12 @@ impl<V: WidgetView> AppShell<V> {
             .difference(&new_ids)
             .map(|s| (*s).to_owned())
             .collect();
+        // R1363 §5.55 — did this pass actually CLOSE a window? The
+        // `quit_on_last_window_closed` policy keys off a real removal, never off
+        // a merely-empty snapshot: an exit must be a statement of intent, not a
+        // side effect of a list length (sprag PR-65's correct objection to
+        // "reconcile exits on empty").
+        let mut removed_any = false;
         for spec_id in to_drop {
             // Look up + remove the spec_id → WindowId reverse-map
             // entry. The Cow<str> key resolves through `&str` via
@@ -2394,6 +2474,7 @@ impl<V: WidgetView> AppShell<V> {
                 // orphan every `Owner::cache` slot on root_owner).
                 let _ = self.core.remove_window(&spec_id);
                 tracing::debug!(target: "pinion::shell", window = %spec_id, "closed window");
+                removed_any = true;
             }
         }
         // Add pass: in new, not in old. `resume_spec` creates one
@@ -2501,7 +2582,27 @@ impl<V: WidgetView> AppShell<V> {
         }
         // Update the cache so the next `reconcile_windows` call
         // diffs against the snapshot the shell just acted on.
+        let now_empty = new_specs.is_empty();
         *self.last_known_specs.borrow_mut() = new_specs;
+        // R1363 §5.55 — the ONE bridge from the window lifecycle to the app
+        // lifecycle: this pass CLOSED a window and none is left. Gated on a real
+        // removal (`removed_any`), never on a merely-empty snapshot, so a
+        // binding rebuilding its window list cannot be mistaken for a user
+        // quitting. Even then this only REQUESTS a quit —
+        // `app_quit_requested` may refuse.
+        //
+        // This is what retires the R1362 zombie: pre-R1363 dropping every spec
+        // closed every OS window and parked the loop forever with no window, no
+        // `CloseRequested` source and no Escape target, because "the window set
+        // is empty" meant nothing to anyone.
+        if removed_any && now_empty && self.core.root_owner().run(V::quit_on_last_window_closed) {
+            tracing::debug!(
+                target: "pinion::shell",
+                "last window closed; quit_on_last_window_closed policy raises a quit",
+            );
+            self.request_quit(event_loop);
+            return;
+        }
         // Re-request paint on every active window so the next event
         // loop iteration renders the new topology. drain dispatches
         // a Window::request_redraw per active slot.
@@ -3272,6 +3373,11 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // result before the window goes away — the same ordering
             // `dispatch_rpc` buys by draining its queue after the response
             // write.
+            // R1363 §5.55 — a binding asked the APP to end through its
+            // `QuitSink` (hello-tray's Quit; sprag's poll thread on a dead
+            // daemon). Same arm as Escape / the last-window policy / app-quit
+            // RPC, so `app_quit_requested` still gets to refuse.
+            AppEvent::QuitRequested => self.request_quit(event_loop),
             AppEvent::WindowControlRequested { window_id, control } => {
                 self.apply_window_control(&window_id, control, event_loop);
             }

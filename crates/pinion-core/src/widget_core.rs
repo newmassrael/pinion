@@ -821,6 +821,33 @@ pub trait WidgetCore: 'static {
     // node, via the node's `with_layout` builder — exactly as it declares
     // `pointer_transparent`.
 
+    /// (R1363 §5.55 §2 #6) App-level QUIT veto — the app-lifecycle peer of
+    /// `WidgetView::window_close_requested`.
+    ///
+    /// The shell calls this when something asks the APP to end: `Escape` (the
+    /// standalone convention), the last window closing under
+    /// `WidgetView::quit_on_last_window_closed`, a binding's own
+    /// [`QuitSink::request_quit`](crate::QuitSink::request_quit), or the
+    /// `app/quit` RPC. Return `true` if the BINDING handled it — pop a "Save
+    /// changes?" dialog, start an async flush — and the app stays alive. Return
+    /// `false` (the default) to end it.
+    ///
+    /// # Why this is on `WidgetCore`, not `WidgetView`
+    ///
+    /// Quitting is not a window operation, so it is not the GUI's private
+    /// business: `pinion-tui` deps this crate and no further, and its `Esc`
+    /// routes through this same veto. Putting it here is what makes the §2 #6
+    /// dual true for app lifecycle — pre-R1363 BOTH shells hard-coded a bare
+    /// exit on `Escape`, bypassing every binding veto, because neither had a
+    /// verb for "quit" distinct from "close this window".
+    ///
+    /// Called inside the shell's reactive owner, so it may read / write
+    /// `Signal`s (raise a modal, set a flag).
+    #[must_use]
+    fn app_quit_requested() -> bool {
+        false
+    }
+
     /// Format the cached state for stderr logging on the transition
     /// path (`from -> to`) and the final-state line. Default falls
     /// back to `Debug`; widgets with composite state can format a

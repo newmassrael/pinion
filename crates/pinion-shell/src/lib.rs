@@ -85,7 +85,7 @@ pub use app::{AppShell, ShellConfig, run, run_with_config, run_with_handlers};
 // R-PR47 §5.7 — re-export the winit-free transport seam so a consumer can
 // name the `on_rpc_ingress` hook argument without a direct pinion-rpc dep.
 pub use executor::{
-    ProxyIntentSink, ProxyRepaintSink, ProxyWindowControlSink, TokioExecutor,
+    ProxyIntentSink, ProxyQuitSink, ProxyRepaintSink, ProxyWindowControlSink, TokioExecutor,
     build_executor_and_sink,
 };
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
@@ -186,6 +186,17 @@ pub enum AppEvent {
     /// re-read an authoritative handle) because the request IS the whole state:
     /// there is no window-control signal to re-read, and a coalescing drop would
     /// lose a `Minimize` that raced a `Close`.
+    /// R1363 §5.55 §2 #6 — something asked the APP to end: a binding's
+    /// [`QuitSink`](pinion_core::QuitSink) (delivered by [`ProxyQuitSink`]), the
+    /// `Escape` convention, the last window closing under
+    /// `WidgetView::quit_on_last_window_closed`, or the `app/quit` RPC. The
+    /// `user_event` arm offers it to
+    /// [`pinion_core::WidgetCore::app_quit_requested`]
+    /// and only an unhandled quit exits.
+    ///
+    /// Payload-free: quitting addresses nothing (that is the whole point of the
+    /// §5.55 split — a window id here would re-weld the two lifecycles).
+    QuitRequested,
     WindowControlRequested {
         /// Canonical [`WindowSpec::id`] of the target window.
         window_id: String,
@@ -1100,6 +1111,35 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     #[must_use]
     fn window_policy(_window_id: &str) -> WindowPolicy {
         WindowPolicy::default()
+    }
+
+    /// (R1363 §5.55) Does the app end when its LAST window closes?
+    ///
+    /// `true` (the default) is the Windows / Linux convention: an app with no
+    /// windows left has nothing to show, so it quits. A macOS-shaped binding —
+    /// or any app that outlives its windows (a tray-resident daemon, a
+    /// background indexer) — returns `false` and quits explicitly through
+    /// [`QuitSink`](pinion_core::QuitSink).
+    ///
+    /// # The ONE legal bridge between the two lifecycles (§5.55)
+    ///
+    /// `WindowControl::Close` closes a window and never exits (that split is
+    /// what this round is). This policy is the only thing that turns a WINDOW
+    /// fact ("the set is now empty") into an APP act — and even then it does not
+    /// exit: it raises a `Quit`, which
+    /// [`pinion_core::WidgetCore::app_quit_requested`]
+    /// may still refuse.
+    ///
+    /// It fires only when a reconcile actually REMOVED the last window, never on
+    /// a transient empty snapshot — which is what makes an exit a statement of
+    /// intent rather than a side effect of a list length, the objection sprag's
+    /// PR-65 correctly raised against "reconcile exits on empty". It is also
+    /// what retires the R1362 zombie: dropping every spec used to close every OS
+    /// window and park the loop forever, because an empty window set meant
+    /// nothing to anyone.
+    #[must_use]
+    fn quit_on_last_window_closed() -> bool {
+        true
     }
 
     /// (R1170 §5.16 §5.39) Per-window CLOSE seam. The shell calls this when a

@@ -1180,6 +1180,35 @@ impl Owner {
         );
     }
 
+    /// R1363 §5.55 — the owner-scoped [`QuitSink`](super::quit::QuitSink), the
+    /// "end this application" edge.
+    ///
+    /// Returns whatever the shell seeded via [`Self::provide_quit_sink`] at
+    /// boot, or a [`NullQuitSink`](super::quit::NullQuitSink) when none was
+    /// provided (headless / RPC tests / unit tests off a live shell). Same
+    /// private-key + lazy-default shape as [`Self::repaint_sink`]; the inner
+    /// `Arc` is the `Send` handle a binding clones into its producer thread.
+    #[must_use]
+    pub fn quit_sink(&self) -> std::sync::Arc<dyn super::quit::QuitSink> {
+        self.cache::<super::quit::QuitSinkHolder, _>(super::quit::QUIT_SINK_KEY, || {
+            super::quit::QuitSinkHolder(std::sync::Arc::new(super::quit::NullQuitSink))
+        })
+        .0
+        .clone()
+    }
+
+    /// R1363 §5.55 — seed the owner-scoped [`QuitSink`](super::quit::QuitSink).
+    /// The shell calls this once at boot **before** the binding factories run,
+    /// so the first [`use_quit_sink`](super::quit::use_quit_sink) read inside
+    /// those factories resolves the real sink rather than the Null default.
+    ///
+    /// Idempotent-by-first-write, exactly as [`Self::provide_repaint_sink`].
+    pub fn provide_quit_sink(&self, sink: std::sync::Arc<dyn super::quit::QuitSink>) {
+        self.cache::<super::quit::QuitSinkHolder, _>(super::quit::QUIT_SINK_KEY, move || {
+            super::quit::QuitSinkHolder(sink)
+        });
+    }
+
     /// R1003 §5.36 — the owner-scoped
     /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics): the
     /// view-time "measure the resolved monospace cell" capability.

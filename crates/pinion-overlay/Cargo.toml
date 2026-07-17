@@ -15,3 +15,7 @@ workspace = true
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
 # Path string parsing for highlight targeting reuses scene/locate helpers.
 pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
+# R1363 §5.55 — `WindowControl` lives beside `DEFAULT_WINDOW` in the crate that
+# owns window identity; `chrome_tag_semantic` names it to keep R1190's
+# tag-to-semantic map whole. Acyclic: overlay already reaches runtime via pinion-rpc.
+pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }

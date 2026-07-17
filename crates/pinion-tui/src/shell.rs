@@ -89,6 +89,7 @@
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, Stdout, Write, stderr, stdout};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -246,7 +247,13 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
     // lines there. An unset / empty value, or an open error, leaves
     // the substrate silent — the live UI must not panic on a
     // missing log dir.
-    let mut core = ShellCoreTui::<V>::new();
+    // R1363 §5.55 — the app-lifecycle seam, seeded before the binding factories
+    // resolve `use_quit_sink()` (the first-write-wins window).
+    let quit_flag = Arc::new(AtomicBool::new(false));
+    let seed_flag = Arc::clone(&quit_flag);
+    let mut core = ShellCoreTui::<V>::new_with_seed(move |owner| {
+        owner.provide_quit_sink(Arc::new(TuiQuitSink(seed_flag)));
+    });
     if let Some(path) = env::var_os("PINION_TUI_LOG")
         && !path.is_empty()
         && let Ok(file) = OpenOptions::new().create(true).append(true).open(&path)
@@ -297,6 +304,18 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
     // Event loop. See module-level [`IDLE_POLL_MS`] / [`ACTIVE_POLL_MS`]
     // / [`REST_EPSILON`] for the R51.148 §5.28 adaptive-poll rationale.
     loop {
+        // R1363 §5.55 §2 #6 — did anything ask the APP to end since the last
+        // turn? A binding's `QuitSink` (its own logic, or a producer thread —
+        // sprag's poll thread on a dead daemon socket) set the flag; the veto is
+        // run HERE, on the UI thread, never on the producer's.
+        //
+        // Same arm as this shell's `Escape`, and the same `WidgetCore` veto the
+        // Vello shell's `request_quit` uses — one vocabulary, two dispatch
+        // paths. A binding that handles the quit clears the flag and lives on.
+        if quit_flag.swap(false, Ordering::SeqCst) && !core.root_owner().run(V::app_quit_requested)
+        {
+            break;
+        }
         // R51.160 §5.23 — drain any Intents that arrived from
         // completed Command futures since the previous loop turn.
         // `try_recv` is non-blocking; if the channel is empty we
@@ -362,6 +381,19 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
                     // Shell-reserved exit key per §5.39 R51.53
                     // convention (Vello shell's `Escape → quit`
                     // mirrors here).
+                    //
+                    // R1363 §5.55 — through the APP veto now. Pre-R1363 this was
+                    // a bare `break` consulting no binding hook — the same veto
+                    // bypass the Vello shell had hard-coded in its own Escape
+                    // arm, arrived at independently by both backends for want of
+                    // a Quit verb. `app_quit_requested` is on `WidgetCore`, so
+                    // this terminal path and the GUI path share ONE veto.
+                    if core.root_owner().run(V::app_quit_requested) {
+                        // The binding handled it (raised a confirm modal);
+                        // repaint so its answer is on screen.
+                        commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
+                        continue;
+                    }
                     break;
                 }
                 // R51.111 §5.41 — bridge crossterm KeyEvent into
@@ -640,6 +672,30 @@ fn drain_rpc_into_substrate<V: WidgetViewTui>(
 /// crossterm does not read stdin itself; mouse / keyboard events
 /// arrive through the kernel's terminal driver routed by
 /// `crossterm::event::poll`/`read`).
+/// R1363 §5.55 §2 #6 — the TUI backend's [`QuitSink`](pinion_core::QuitSink):
+/// the terminal peer of `pinion_shell::ProxyQuitSink`.
+///
+/// A terminal has no windows, so it can never hold `WindowControlSink` — which
+/// is precisely why quitting had to leave that vocabulary (§5.55). The trait
+/// lives in `pinion-core`, the deepest layer BOTH backends dep, so this impl
+/// exists at all: one vocabulary, two dispatch paths (§2 #6).
+///
+/// Sets a flag the event loop reads on its next turn rather than ending the
+/// process, so the quit is offered to
+/// [`pinion_core::WidgetCore::app_quit_requested`]
+/// on the UI thread — a background producer (sprag's poll thread) must not run a
+/// binding's veto on its own thread.
+///
+/// `Send + Sync` via `Arc<AtomicBool>`; the handle clones into a producer thread.
+#[derive(Debug, Default)]
+struct TuiQuitSink(Arc<AtomicBool>);
+
+impl pinion_core::QuitSink for TuiQuitSink {
+    fn request_quit(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<RpcFrame>) {
     thread::spawn(move || {
         let stdin = std::io::stdin();

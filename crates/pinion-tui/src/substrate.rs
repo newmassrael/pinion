@@ -187,6 +187,23 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// to a separate writer.
     #[must_use]
     pub fn new() -> Self {
+        Self::new_with_seed(|_| {})
+    }
+
+    /// R1363 §5.55 §2 #6 — [`Self::new`] with a backend-supplied `seed` closure
+    /// run against the root [`Owner`] after it exists but BEFORE the binding
+    /// factories resolve any `use_*` hook.
+    ///
+    /// The TUI peer of the Vello shell's seeding window, for the same reason:
+    /// `Owner::cache` is first-write-wins with a silent Null default, so a seed
+    /// that loses to a prior read is dropped without a panic and the binding
+    /// holds a dead handle. This backend seeds one handle — its
+    /// [`QuitSink`](pinion_core::QuitSink) — which is what gives a TERMINAL
+    /// binding the app-lifecycle seam the GUI has (§5.55: quitting is not a
+    /// window operation, so it must not live in a window vocabulary the TUI
+    /// cannot name).
+    #[must_use]
+    pub fn new_with_seed(seed: impl FnOnce(&Owner)) -> Self {
         // (R1020 §5.41 §5.39) Seed the focus enumeration from the binding's
         // first view — scene-derived, the same source the per-paint refresh
         // (`update_paint_scene`) uses — so RPC-driven `focus/set` resolves a
@@ -194,7 +211,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // `pinion_shell::ShellCore::new`. (Replaces the pre-R1020
         // `V::focusable_tags()` boot seed; the method is retired.)
         let mut shell = Self {
-            core: CoreShell::new(),
+            core: CoreShell::new_with_seed(seed),
             previews: PreviewLedger::default(),
             revision: SceneRevision::default(),
             focus: FocusManager::new(),

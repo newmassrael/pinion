@@ -285,6 +285,45 @@ impl core::fmt::Debug for ProxyWindowControlSink {
     }
 }
 
+/// R1363 §5.55 — winit-[`EventLoopProxy`]-backed [`QuitSink`](pinion_core::QuitSink) impl.
+///
+/// The winit-aware half of the app-lifecycle seam: a binding obtains this via
+/// [`use_quit_sink`](pinion_core::use_quit_sink) and calls
+/// [`request_quit`](pinion_core::QuitSink::request_quit) when IT decides the app
+/// should end (a tray Quit item; sprag's poll thread on a dead daemon socket).
+/// It forwards through [`AppEvent::QuitRequested`], whose `user_event` arm
+/// offers the quit to
+/// [`pinion_core::WidgetCore::app_quit_requested`]
+/// — the same arm `Escape`, the last-window policy, and the `app/quit` RPC take,
+/// so this grants no privileged exit.
+///
+/// The `pinion-tui` peer implements the same `pinion-core` trait over its own
+/// loop-control channel: one vocabulary, two dispatch paths (§2 #6).
+pub struct ProxyQuitSink {
+    proxy: EventLoopProxy<AppEvent>,
+}
+
+impl ProxyQuitSink {
+    /// Wrap the supplied [`EventLoopProxy`].
+    #[must_use]
+    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+        Self { proxy }
+    }
+}
+
+impl pinion_core::QuitSink for ProxyQuitSink {
+    fn request_quit(&self) {
+        // Closed event loop = already ending; drop the request.
+        let _ = self.proxy.send_event(AppEvent::QuitRequested);
+    }
+}
+
+impl core::fmt::Debug for ProxyQuitSink {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProxyQuitSink").finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

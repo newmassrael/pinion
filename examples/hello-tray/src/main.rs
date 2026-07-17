@@ -15,23 +15,32 @@
 //! and *Quit*. Every activation flips the app's own state and **re-publishes**
 //! the model — the menu state is app-owned, never backend-guessed.
 //!
-//! ## R1362 PR-65 — and *Quit* quits
+//! ## R1362 / R1363 §5.55 — the two dead menu items
 //!
-//! Until R1362 this example shipped a **Quit item that could not quit**: it set
-//! a `quit_requested` signal that nothing consumed, because a binding had no way
-//! to request its own window's close — every producer that could reach the
-//! shell's close arm was external input (a chrome click, the OS X, an RPC
-//! `scene/click`). That made `hello-tray` the in-repo forcing consumer for
-//! [`WindowControlSink`]: *Quit* now calls
-//! [`WindowControlSink::request_window_control`] with
-//! [`WindowControl::Close`], which lands on the same `apply_window_control` arm
-//! the window's X button reaches — so `window_close_requested` still gets its
-//! veto and this example claims no privileged exit. The signal remains as the
-//! AI-observable record of the request (`query quit_requested`); the sink is the
-//! action.
+//! This example shipped **two menu items that did nothing**, both for the same
+//! structural reason: a binding had no verb for what they meant.
 //!
-//! The seam's other consumer is off-thread (sprag's socket poll thread closing
-//! the client when its daemon dies, PR-65); the handle is `Send + Sync` for
+//! * ***Quit*** set a `quit_requested` signal nothing consumed. R1362 gave
+//!   bindings a window-control seam; R1363 (§5.55) split **app lifecycle** out
+//!   of it, because `Close`-on-primary secretly meant "kill the process". *Quit*
+//!   now calls [`QuitSink::request_quit`], which is offered to
+//!   [`pinion_core::WidgetCore::app_quit_requested`]
+//!   — the same veto `Escape`, the last-window policy, and the `app/quit` RPC
+//!   pass. This example casts no veto, which is what a Quit item means.
+//! * ***Hide window*** flipped a signal that relabelled the menu and printed a
+//!   word. It did not hide the window: `WindowControl` had no `Hide`, and
+//!   `Minimize` was a one-way door with no `Restore`. Both now exist, and
+//!   *Show / Hide* rides [`WindowControlSink`] — a WINDOW op, addressed to a
+//!   window id, unlike *Quit*.
+//!
+//! The two seams side by side is the point: `quit_sink` takes no window id
+//! because quitting addresses nothing, while `window_control` takes
+//! [`DEFAULT_WINDOW`] because a window op must say which window. Their signals
+//! stay as the AI-observable record of each request (`query quit_requested` /
+//! `window_visible`); the sinks are the action.
+//!
+//! The seams' other consumer is off-thread (sprag's socket poll thread closing
+//! the client when its daemon dies, PR-65); both handles are `Send + Sync` for
 //! exactly that. This example exercises the UI-thread caller.
 //!
 //! The real `pinion_platform_tray::SniTrayBackend` (a `StatusNotifierItem` over
@@ -73,7 +82,7 @@ use pinion_core::style::{
 use pinion_core::tray::{
     InMemoryTrayBackend, TrayBackend, TrayEvent, TrayMenuItem, TrayModel, TrayStatus,
 };
-use pinion_core::{Frame, Owner, Scene, Signal};
+use pinion_core::{Frame, Owner, QuitSink, Scene, Signal, use_quit_sink};
 use pinion_derive::widget;
 #[cfg(test)]
 use pinion_shell::provide_window_control_sink;
@@ -245,7 +254,7 @@ struct TrayExternal {
     building: Rc<Signal<bool>>,
     quit: Rc<Signal<bool>>,
     backend: Rc<InMemoryTrayBackend>,
-    /// R1362 PR-65 §5.16 §5.49 — the seam that makes `Quit` quit.
+    /// R1363 §5.55 — the APP-lifecycle seam that makes `Quit` quit.
     ///
     /// Pre-R1362 `Quit` set [`Self::quit`] and nothing consumed it: pinion
     /// shipped a tray Quit item that could not quit, because a binding had no
@@ -254,6 +263,10 @@ struct TrayExternal {
     /// action, and it lands on the same `apply_window_control` arm the window's
     /// X button takes — so `window_close_requested` still gets its veto.
     window_control: Arc<dyn WindowControlSink>,
+    /// R1363 §5.55 — the app-lifecycle seam. `Quit` is not a window op, so it
+    /// does not ride `window_control`: it is offered to `app_quit_requested`,
+    /// the veto a terminal binding shares (§2 #6).
+    quit_sink: Arc<dyn QuitSink>,
 }
 
 impl TrayExternal {
@@ -276,20 +289,39 @@ impl TrayExternal {
         match event {
             TrayEvent::Activated => self.visible.set(!self.visible.get()),
             TrayEvent::MenuItem(id) => match id.as_str() {
-                "toggle_window" => self.visible.set(!self.visible.get()),
+                "toggle_window" => {
+                    // R1363 §5.55 — the OTHER dead menu item. Pre-R1363 this
+                    // flipped a Signal that relabelled the menu and printed a
+                    // word: "Hide window" did not hide the window, for want of a
+                    // verb. `Show`/`Hide` are window ops, so they ride
+                    // `WindowControlSink`; `Quit` is app lifecycle and rides
+                    // `QuitSink`. The signal stays as the observable record.
+                    let now_visible = !self.visible.get();
+                    self.visible.set(now_visible);
+                    self.window_control.request_window_control(
+                        DEFAULT_WINDOW,
+                        if now_visible {
+                            WindowControl::Show
+                        } else {
+                            WindowControl::Hide
+                        },
+                    );
+                }
                 "dark" => self.dark.set(!self.dark.get()),
                 "bake" => self.building.set(!self.building.get()),
                 "quit" => {
                     // The observable record of the request...
                     self.quit.set(true);
-                    // ...and the request itself. Queued, not immediate: the
-                    // shell applies it on a later UI-thread turn, so this
-                    // `invoke` still returns its RPC result before the window
-                    // goes away. An unhandled close then exits the app —
-                    // `hello-tray` casts no veto (`window_close_requested`
-                    // defaults to `false`), which is what a Quit item means.
-                    self.window_control
-                        .request_window_control(DEFAULT_WINDOW, WindowControl::Close);
+                    // ...and the request itself. R1363 §5.55 — Quit is an APP
+                    // act, not a window op: it rides `QuitSink` and is offered
+                    // to `app_quit_requested`, NOT to `window_close_requested`.
+                    // Pre-R1363 this had to ask for `WindowControl::Close` and
+                    // rely on the close falling through to an app exit — the
+                    // conflation this round split. Queued, not immediate, so
+                    // this `invoke` still returns its RPC result before the
+                    // process ends. `hello-tray` casts no veto, which is what a
+                    // Quit item means.
+                    self.quit_sink.request_quit();
                 }
                 _ => {}
             },
@@ -472,6 +504,7 @@ fn make_tray_external() -> TrayExternal {
         building: use_build_running(),
         quit: use_quit_requested(),
         backend: use_tray_backend(),
+        quit_sink: use_quit_sink(),
         // R1362 PR-65 — resolved at wiring time inside `create_external` (which
         // the shell runs in the root `Owner`, after it seeded the live sink and
         // before any frame). Off the live event loop — an `Owner::new().run(..)`
@@ -642,6 +675,22 @@ mod tests {
         /// last time" without index arithmetic).
         fn taken(&self) -> Vec<(String, WindowControl)> {
             std::mem::take(&mut *self.0.lock().expect("recording sink poisoned"))
+        }
+    }
+
+    /// R1363 §5.55 — records app-quit requests, the peer of [`RecordingSink`].
+    #[derive(Debug, Default)]
+    struct RecordingQuitSink(Mutex<usize>);
+
+    impl RecordingQuitSink {
+        fn count(&self) -> usize {
+            *self.0.lock().expect("recording quit sink poisoned")
+        }
+    }
+
+    impl QuitSink for RecordingQuitSink {
+        fn request_quit(&self) {
+            *self.0.lock().expect("recording quit sink poisoned") += 1;
         }
     }
 
@@ -816,44 +865,80 @@ mod tests {
         assert_eq!(e.query("quit_requested"), Some(IntrospectValue::Bool(true)));
     }
 
-    /// R1362 PR-65 — `Quit` asks the shell to CLOSE the window, it does not just
-    /// record a wish.
+    /// R1363 §5.55 — `Quit` asks the APP to end; it is not a window op.
     ///
-    /// Pre-R1362 `quit_requested` was the whole story: the signal flipped and
-    /// nothing consumed it, so pinion shipped a tray Quit item that could not
-    /// quit. `r949_quit_sets_quit_requested` above still passes in that world —
-    /// which is exactly why it never caught the bug, and why this test asserts
-    /// the REQUEST rather than the record.
+    /// The discriminator is the whole round: a `Quit` must NOT reach the
+    /// window-control sink. Pre-R1363 it had to — `WindowControl::Close` was the
+    /// only verb that could end the app, which is exactly the conflation §5.55
+    /// splits. If someone re-welds them, this test fails on the second assert.
     #[test]
-    fn r1362_quit_requests_a_close_through_the_window_control_sink() {
-        // Seed the owner and then run the REAL factory inside it, so
-        // `make_tray_external`'s own `use_window_control_sink()` resolves this
-        // sink. Hand-building `TrayExternal` with an injected handle would
-        // route around the very resolution the seam exists to perform — the
-        // test would then pass even if `use_window_control_sink()` were wired
-        // to nothing.
-        let sink = Arc::new(RecordingSink::default());
+    fn r1363_quit_requests_an_app_quit_not_a_window_close() {
+        let quit = Arc::new(RecordingQuitSink::default());
+        let wc = Arc::new(RecordingSink::default());
         let owner = Owner::new();
-        provide_window_control_sink(&owner, sink.clone());
+        owner.provide_quit_sink(quit.clone());
+        provide_window_control_sink(&owner, wc.clone());
         let mut e = owner.run(make_tray_external);
-
-        // A non-quit activation must NOT touch the window (the discriminator:
-        // without it, a sink that fired on every menu item would pass).
-        e.invoke("menu_item", IntrospectValue::Text("dark".to_owned()))
-            .unwrap();
-        assert!(
-            sink.taken().is_empty(),
-            "an ordinary menu item must not request a window control",
-        );
 
         e.invoke("menu_item", IntrospectValue::Text("quit".to_owned()))
             .unwrap();
-        assert_eq!(
-            sink.taken(),
-            vec![(DEFAULT_WINDOW.to_owned(), WindowControl::Close)],
-            "Quit requests a Close on the primary window — the same control the \
-             window's X button raises, so `window_close_requested` still vetoes",
+        assert_eq!(quit.count(), 1, "Quit asks the APP to end");
+        assert!(
+            wc.taken().is_empty(),
+            "Quit must NOT ride the window-control sink — app lifecycle is not a \
+             window operation (§5.55)",
         );
+    }
+
+    /// R1363 §5.55 — the OTHER dead menu item: `Hide window` now hides the
+    /// window, and it IS a window op (addressed to a window id, unlike Quit).
+    #[test]
+    fn r1363_toggle_window_requests_hide_then_show_through_the_window_sink() {
+        let quit = Arc::new(RecordingQuitSink::default());
+        let wc = Arc::new(RecordingSink::default());
+        let owner = Owner::new();
+        owner.provide_quit_sink(quit.clone());
+        provide_window_control_sink(&owner, wc.clone());
+        let mut e = owner.run(make_tray_external);
+
+        // Boot state is visible → the item reads "Hide window" → Hide.
+        e.invoke(
+            "menu_item",
+            IntrospectValue::Text("toggle_window".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            wc.taken(),
+            vec![(DEFAULT_WINDOW.to_owned(), WindowControl::Hide)],
+            "Hide window must actually hide the window, not just relabel a menu",
+        );
+        // ...and back.
+        e.invoke(
+            "menu_item",
+            IntrospectValue::Text("toggle_window".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            wc.taken(),
+            vec![(DEFAULT_WINDOW.to_owned(), WindowControl::Show)],
+        );
+        assert_eq!(quit.count(), 0, "a window op must never ask the app to end");
+    }
+
+    /// A non-lifecycle menu item touches neither seam — the negative control
+    /// that keeps both tests above honest.
+    #[test]
+    fn r1363_an_ordinary_menu_item_touches_neither_lifecycle_seam() {
+        let quit = Arc::new(RecordingQuitSink::default());
+        let wc = Arc::new(RecordingSink::default());
+        let owner = Owner::new();
+        owner.provide_quit_sink(quit.clone());
+        provide_window_control_sink(&owner, wc.clone());
+        let mut e = owner.run(make_tray_external);
+        e.invoke("menu_item", IntrospectValue::Text("dark".to_owned()))
+            .unwrap();
+        assert!(wc.taken().is_empty());
+        assert_eq!(quit.count(), 0);
     }
 
     #[test]

@@ -76,28 +76,15 @@ pub const WINDOW_CHROME_MAXIMIZE_TAG: &str = "ai-overlay/window-chrome#maximize"
 /// window move (the R1116 borderless-floater title-bar move).
 pub const WINDOW_CHROME_GRIP_TAG: &str = "ai-overlay/window-chrome#grip";
 
-/// (R1188 §5.16 §5.49 §2 #2) The three DISCRETE window-control actions a click
-/// on a control tag requests — minimize / maximize-toggle / close.
-///
-/// Shell-neutral vocabulary (no winit types), so BOTH press paths speak it:
-/// the winit pointer path (`AppShell::try_chrome_press`) and the headless RPC
-/// click drain (`ShellCore`), which detects a control hit and queues it for the
-/// windowed shell to execute — the §2 #2 drive-parity leg of the R1121 chrome
-/// contract ("an AI agent observes AND DRIVES via a click on the control tag").
-/// Deliberately excludes the grip / resize regions: those are pointer-session
-/// gestures (an OS-interactive `drag_window` / `drag_resize_window` needs a live
-/// pointer), whose RPC peers are the dedicated `scene/window_move` /
-/// `scene/resize` methods, not a click.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowControl {
-    /// `Window::set_minimized(true)`.
-    Minimize,
-    /// `Window::set_maximized(toggle)`.
-    Maximize,
-    /// The per-window close seam (`WidgetView::window_close_requested`,
-    /// app-exit fallback when unhandled).
-    Close,
-}
+// (R1363 §5.55 §5.49) `WindowControl` moved to `pinion-runtime` (beside
+// `DEFAULT_WINDOW`, the addressee every consumer needs alongside the verb), so a
+// seam BELOW this crate can request one. R1190's fusion is untouched: only the
+// TYPE moved. `chrome_tag_semantic` below is still the sole tag-to-semantic
+// authority and still yields `ChromeTag::Control(WindowControl)` — the mapping
+// never crossed a crate boundary and still does not. The re-export keeps every
+// `pinion_overlay::WindowControl` path compiling (the R682.B `FragmentCacheStats`
+// convention).
+pub use pinion_runtime::window::WindowControl;
 
 /// (R1190 §5.16 §5.39 §5.49) A window's eight resize edges / corners as a
 /// SHELL-NEUTRAL enum — the winit-free peer of `winit::window::ResizeDirection`,

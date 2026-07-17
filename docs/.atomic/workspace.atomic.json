@@ -65,7 +65,9 @@
         "R663.5: immediate-mode game loop (60-144fps) ↔ retained widget tree (idle 30fps) dual",
         "R663.5: same binary — settings panel retained, 3D viewport immediate per-Container opt-in",
         "R663.5: ImmediateModeNode primitive lifts at Phase C entry (R1000+ axis)",
-        "R663.5: northern-star = AAA game shippable + Unreal-class editor self-hosted in pinion"
+        "R663.5: northern-star = AAA game shippable + Unreal-class editor self-hosted in pinion",
+        "R1363: #6 dual extends to APP LIFECYCLE — QuitSink in pinion-core, both backends (§5.55)",
+        "R1363: #2 AI-primary — app/quit is the AI peer of Escape/OS-X, not a privileged exit (§5.55)"
       ]
     },
     "3": {
@@ -7980,6 +7982,60 @@
       "impact_scope": [
         "3",
         "2"
+      ]
+    },
+    "5.55": {
+      "title": "App lifecycle is not a window operation — Quit splits from WindowControl",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "decision_status": "active",
+      "intent": "Quit (app lifecycle, 1 per process) splits from WindowControl (window ops, N per app): own vocabulary, seam and veto each. Close closes a window and never exits; one policy bridges them.",
+      "rationale_bullets": [
+        "Close-on-primary secretly means \"kill the process\": two lifecycles welded into one verb",
+        "Escape bypasses the binding's veto in BOTH shells, independently — the conflation's fingerprint",
+        "Neither shell has a Quit verb to route Escape through, so both hard-code a bare exit",
+        "pinion-tui cannot hold the seam: its app-lifecycle half is welded to a window vocabulary",
+        "sprag, the consumer that forced the seam, is itself a terminal multiplexer — the gap is live",
+        "A multi-window editor closing its last document dies unless every window vetoes: default=kill",
+        "An RPC close reads as a privileged exit only because Close hides an app exit inside it",
+        "An empty window set means nothing today, so dropping every spec parks the loop forever",
+        "Two lifecycles, two vocabularies, two vetoes; a policy is the ONLY legal bridge between them"
+      ],
+      "inputs_bullets": [
+        "§2 #6 GUI/TUI dual: QuitSink lands in pinion-core so BOTH backends implement it — parity restored",
+        "§2 #2 RPC AI-primary: app/quit becomes the peer of Escape and the OS X, not a privileged exit",
+        "§5.16 shell: apply_window_control stops meaning \"exit when unhandled\"; Close closes a window",
+        "§5.23 boundary traits: QuitSink is the RepaintSink / IntentSink sibling, winit-free by construction",
+        "§5.39 focus/keys: Escape raises Quit through the veto instead of calling event_loop.exit() direct",
+        "§5.49 window: WindowControl is the window-op vocabulary only; app exit leaves it entirely"
+      ],
+      "outputs_bullets": [
+        "pinion-core: QuitSink + NullQuitSink + use_quit_sink; WidgetCore::app_quit_requested veto",
+        "pinion-runtime: WindowControl lifted from overlay beside DEFAULT_WINDOW; WindowControlSink",
+        "pinion-overlay: chrome_tag_semantic keeps the WHOLE tag-to-semantic map — R1190 untouched",
+        "pinion-shell: Close closes the window; Quit exits; Escape raises Quit; quit_on_last_window_closed",
+        "pinion-tui: QuitSink impl — Esc raises Quit through the SAME app_quit_requested veto",
+        "pinion-rpc: app/quit routed through the one Quit arm; the AI peer of Escape and the OS X",
+        "CoreShellConfig replaces new_with_seed: typed handles, no &Owner escapes, hijack impossible",
+        "WindowControl gains Restore/Show/Hide: hello-tray's \"Hide window\" is dead for want of a verb",
+        "quit_on_last_window_closed default true (Win/Linux); a macOS binding returns false"
+      ],
+      "caveats_bullets": [
+        "R1362: Escape bypasses window_close_requested in BOTH shells independently — the fingerprint",
+        "R1362: hello-tray shipped TWO dead menu items (Quit, Hide window); R1362 fixed only Quit",
+        "quit_on_last_window_closed fires ONLY after a processed Close, never on a transient reconcile",
+        "That timing is what answers PR-65: an exit is intent, not a side effect of a list length",
+        "R1190 preserved: only the WindowControl TYPE moves; the tag-to-semantic MAPPING stays in overlay",
+        "R1362 conflated type-home with decision-home to argue against the lift; that argument was wrong",
+        "Dissolves structurally: zombie, unregistered-Close app-kill, drag-chip app-kill, seed hijack",
+        "overlay gains a direct pinion-runtime dep; acyclic — overlay already reaches it via pinion-rpc"
+      ],
+      "impact_scope": [
+        "2",
+        "5.16",
+        "5.23",
+        "5.39",
+        "5.49"
       ]
     },
     "5.6": {
@@ -24086,6 +24142,84 @@
         "PRE-EXISTING FALSE DOC, not fixed here: pinion-rpc dispatch.rs and pinion-shell substrate.rs both claim Escape/Tab 'stay shell-reserved and are not injectable'. scene/key has no allowlist — 'Escape' IS injectable and reaches apply_key. The exit is unreachable for a different reason (it lives in the winit-only handle_key_press), so the behaviour is safe and only the stated reason is wrong",
         "An AI has no generic close route for an OS-DECORATED window: R1188's scene/click needs a client-side chrome tag, and Escape is not injectable to the shell arm. Predates R1362. A window/control RPC method would also hand an AI a privileged exit no user input path grants for such a window — deliberately not added",
         "AppEvent is not #[non_exhaustive] and has now grown variants across R683/R999/R1362. In-tree there is exactly one match (user_event); cheap insurance whenever §7 API stabilisation starts"
+      ]
+    },
+    "R1363": {
+      "decision_summary": "R1363 (§5.55 spec + impl): app lifecycle is not a window operation — Quit splits from WindowControl, giving both backends one veto and retiring the Escape bypass both had hard-coded",
+      "changes_bullets": [
+        "§5.55 ratified + implemented: Quit (app lifecycle, 1/process) splits from WindowControl (window ops, N/app). Close closes a window and NEVER exits; app exit is QuitSink + WidgetCore::app_quit_requested",
+        "pinion-core: QuitSink + NullQuitSink + use_quit_sink + Owner::provide_quit_sink/quit_sink; WidgetCore::app_quit_requested. In CORE because it is the deepest layer BOTH backends dep — that is what makes §2 #6 true for app lifecycle instead of a GUI-only axis with a terminal-shaped hole",
+        "WindowControl lifted pinion-overlay -> pinion-runtime, beside DEFAULT_WINDOW (the addressee every consumer needs alongside the verb). R1190 UNTOUCHED: only the TYPE moved; chrome_tag_semantic is still the sole tag-to-semantic authority in overlay. R1362 argued this would \"re-split R1190\" by conflating type-home with decision-home; that argument was wrong",
+        "WindowControl gains Restore/Show/Hide. Minimize was a one-way door (set_minimized(true), no way back) and there was no Show/Hide at all — hello-tray's \"Hide window\" was DEAD for want of a verb, the same disease as its Quit",
+        "Escape now raises Quit through app_quit_requested in BOTH shells. Pre-R1363 the winit shell called event_loop.exit() inline and the TUI shell bare-`break`ed — two backends hard-coded the SAME veto bypass independently, for want of a Quit verb. That bypass was the conflation's fingerprint",
+        "pinion-tui: TuiQuitSink + ShellCoreTui::new_with_seed. A terminal binding can now end its app through the same WidgetCore veto the GUI uses — one vocabulary, two dispatch paths. sprag, the consumer that forced the seam, is itself a terminal multiplexer",
+        "AppShell::request_quit is the ONE app-exit arm: Escape, an unhandled Close of the PRIMARY window, the last-window policy, and a binding's QuitSink all pass app_quit_requested first — no producer, binding or AI, gets a privileged exit past the unsaved-changes gate",
+        "An unhandled Close of a SECONDARY window no longer exits the app; it warns. pinion's window set is declarative (the binding owns windows_signal), so declining to remove a window IS the answer — the shell cannot remove it unilaterally or the next reconcile re-creates it",
+        "WidgetView::quit_on_last_window_closed (default true = Win/Linux; macOS returns false) is the ONE legal bridge, gated on a real removal (removed_any) not on an empty snapshot — which is what answers PR-65's correct objection that an exit must be intent, not a side effect of a list length",
+        "hello-tray: Quit -> QuitSink, Show/Hide -> WindowControlSink. The two seams side by side is the point: quit takes no window id because it addresses nothing; a window op must say which window"
+      ],
+      "verification_bullets": [
+        "4 gates green on the REAL commands: cargo test --workspace exit 0 + clippy --all-targets exit 0 + cargo doc --workspace --document-private-items exit 0 (the gate R1362 MISSED by running -p X --no-deps) + validate-workspace T1=0",
+        "r949_tray.py PASS unchanged: Quit still quits, now via QuitSink -> app_quit_requested -> exit. wait_stderr('shell: final state =') still fires because request_quit prints it — the demo proves the NEW arm without an edit",
+        "hello-tray r1363_quit_requests_an_app_quit_not_a_window_close: the discriminator IS the round — a Quit must NOT reach the window-control sink. Re-welding the lifecycles fails it",
+        "hello-tray r1363_toggle_window_requests_hide_then_show_through_the_window_sink: the second dead menu item now hides the window, and never asks the app to end",
+        "pinion-core 4 quit tests: null no-op default, provide/read, first-write-wins, cross-thread request_quit via std::thread + join",
+        "The compiler enforced the split: adding Restore/Show/Hide broke every non-exhaustive match, and AppEvent::QuitRequested broke user_event — no arm could be silently missed"
+      ],
+      "impact_refs": [
+        "2",
+        "5.16",
+        "5.23",
+        "5.39",
+        "5.49",
+        "5.55"
+      ],
+      "carry_forward_bullets": [
+        "Dissolved structurally by §5.55, not patched: the R1362 zombie (dropping every spec now raises Quit via the policy), the unregistered-Close app-kill, and the drag-preview-chip app-kill (a WM close on the untracked chip renamed itself to \"main\" and exited) — Close cannot exit the app any more",
+        "app/quit RPC method NOT yet added: §2 #2 wants the AI to have the peer of Escape/the OS X. R1362's atomic caveat claimed such a method grants \"a privileged exit no user input path grants\" — FALSE for a decorated window, whose peer path is the X, and refuted by request_quit's producer-agnostic veto. That caveat is frozen; this bullet is its correction",
+        "enum ControlProducer NOT yet added: the producer count still lives as ~9 disagreeing prose copies (3 wrong at HEAD, authored by R1362 under 3 reviewers). Make the count a TYPE, per R1190's actual lesson",
+        "Termination map still unenforced prose. commit.rs:155-166 (R1349.1) is the author's own written diagnosis of this exact failure ('the enumerating grep was truncated ... so the claim gets a test') plus 2 more in-repo source-text precedents",
+        "Provider slots are root-Owner only and the family is FOUR (repaint, monospace metrics, viewport signal, quit + window-control), not the two R1362's carry named. The deferred R680 atomic makes every one silently resolve a Null in a secondary window",
+        "FALSE PRE-EXISTING DOCS, 5 sites not the 2 R1362 carried: pinion-rpc dispatch.rs, pinion-shell substrate.rs, pinion-core widget_core.rs x2 (keybinding/apply_key — the hooks binding authors read), text_field.rs. All claim Escape/Tab 'are not injectable'; scene/key has no allowlist",
+        "Off-thread forcing consumer still absent (hello-live-data); executor.rs claims 'integration tests with a real EventLoop cover it' and there are none; AppEvent still not #[non_exhaustive]; provide_window_control_sink is pub for tests when test-fixtures exists; RecordingSink hand-rolled x3"
+      ],
+      "publishable_decision_summary": "R1363 (§5.55 spec + impl): app lifecycle is not a window operation — Quit splits from WindowControl, giving both backends one veto and retiring the Escape bypass both had hard-coded",
+      "publishable_changes_bullets": [
+        "§5.55 ratified + implemented: Quit (app lifecycle, 1/process) splits from WindowControl (window ops, N/app). Close closes a window and NEVER exits; app exit is QuitSink + WidgetCore::app_quit_requested",
+        "pinion-core: QuitSink + NullQuitSink + use_quit_sink + Owner::provide_quit_sink/quit_sink; WidgetCore::app_quit_requested. In CORE because it is the deepest layer BOTH backends dep — that is what makes §2 #6 true for app lifecycle instead of a GUI-only axis with a terminal-shaped hole",
+        "WindowControl lifted pinion-overlay -> pinion-runtime, beside DEFAULT_WINDOW (the addressee every consumer needs alongside the verb). R1190 UNTOUCHED: only the TYPE moved; chrome_tag_semantic is still the sole tag-to-semantic authority in overlay. R1362 argued this would \"re-split R1190\" by conflating type-home with decision-home; that argument was wrong",
+        "WindowControl gains Restore/Show/Hide. Minimize was a one-way door (set_minimized(true), no way back) and there was no Show/Hide at all — hello-tray's \"Hide window\" was DEAD for want of a verb, the same disease as its Quit",
+        "Escape now raises Quit through app_quit_requested in BOTH shells. Pre-R1363 the winit shell called event_loop.exit() inline and the TUI shell bare-`break`ed — two backends hard-coded the SAME veto bypass independently, for want of a Quit verb. That bypass was the conflation's fingerprint",
+        "pinion-tui: TuiQuitSink + ShellCoreTui::new_with_seed. A terminal binding can now end its app through the same WidgetCore veto the GUI uses — one vocabulary, two dispatch paths. sprag, the consumer that forced the seam, is itself a terminal multiplexer",
+        "AppShell::request_quit is the ONE app-exit arm: Escape, an unhandled Close of the PRIMARY window, the last-window policy, and a binding's QuitSink all pass app_quit_requested first — no producer, binding or AI, gets a privileged exit past the unsaved-changes gate",
+        "An unhandled Close of a SECONDARY window no longer exits the app; it warns. pinion's window set is declarative (the binding owns windows_signal), so declining to remove a window IS the answer — the shell cannot remove it unilaterally or the next reconcile re-creates it",
+        "WidgetView::quit_on_last_window_closed (default true = Win/Linux; macOS returns false) is the ONE legal bridge, gated on a real removal (removed_any) not on an empty snapshot — which is what answers PR-65's correct objection that an exit must be intent, not a side effect of a list length",
+        "hello-tray: Quit -> QuitSink, Show/Hide -> WindowControlSink. The two seams side by side is the point: quit takes no window id because it addresses nothing; a window op must say which window"
+      ],
+      "publishable_verification_bullets": [
+        "4 gates green on the REAL commands: cargo test --workspace exit 0 + clippy --all-targets exit 0 + cargo doc --workspace --document-private-items exit 0 (the gate R1362 MISSED by running -p X --no-deps) + validate-workspace T1=0",
+        "r949_tray.py PASS unchanged: Quit still quits, now via QuitSink -> app_quit_requested -> exit. wait_stderr('shell: final state =') still fires because request_quit prints it — the demo proves the NEW arm without an edit",
+        "hello-tray r1363_quit_requests_an_app_quit_not_a_window_close: the discriminator IS the round — a Quit must NOT reach the window-control sink. Re-welding the lifecycles fails it",
+        "hello-tray r1363_toggle_window_requests_hide_then_show_through_the_window_sink: the second dead menu item now hides the window, and never asks the app to end",
+        "pinion-core 4 quit tests: null no-op default, provide/read, first-write-wins, cross-thread request_quit via std::thread + join",
+        "The compiler enforced the split: adding Restore/Show/Hide broke every non-exhaustive match, and AppEvent::QuitRequested broke user_event — no arm could be silently missed"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.16",
+        "5.23",
+        "5.39",
+        "5.49",
+        "5.55"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Dissolved structurally by §5.55, not patched: the R1362 zombie (dropping every spec now raises Quit via the policy), the unregistered-Close app-kill, and the drag-preview-chip app-kill (a WM close on the untracked chip renamed itself to \"main\" and exited) — Close cannot exit the app any more",
+        "app/quit RPC method NOT yet added: §2 #2 wants the AI to have the peer of Escape/the OS X. R1362's atomic caveat claimed such a method grants \"a privileged exit no user input path grants\" — FALSE for a decorated window, whose peer path is the X, and refuted by request_quit's producer-agnostic veto. That caveat is frozen; this bullet is its correction",
+        "enum ControlProducer NOT yet added: the producer count still lives as ~9 disagreeing prose copies (3 wrong at HEAD, authored by R1362 under 3 reviewers). Make the count a TYPE, per R1190's actual lesson",
+        "Termination map still unenforced prose. commit.rs:155-166 (R1349.1) is the author's own written diagnosis of this exact failure ('the enumerating grep was truncated ... so the claim gets a test') plus 2 more in-repo source-text precedents",
+        "Provider slots are root-Owner only and the family is FOUR (repaint, monospace metrics, viewport signal, quit + window-control), not the two R1362's carry named. The deferred R680 atomic makes every one silently resolve a Null in a secondary window",
+        "FALSE PRE-EXISTING DOCS, 5 sites not the 2 R1362 carried: pinion-rpc dispatch.rs, pinion-shell substrate.rs, pinion-core widget_core.rs x2 (keybinding/apply_key — the hooks binding authors read), text_field.rs. All claim Escape/Tab 'are not injectable'; scene/key has no allowlist",
+        "Off-thread forcing consumer still absent (hello-live-data); executor.rs claims 'integration tests with a real EventLoop cover it' and there are none; AppEvent still not #[non_exhaustive]; provide_window_control_sink is pub for tests when test-fixtures exists; RecordingSink hand-rolled x3"
       ]
     },
     "R232": {
