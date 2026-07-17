@@ -79,16 +79,15 @@ use crate::{
 /// resolved to (a borderless window's title-bar buttons / drag grip). Mapped
 /// from the [`pinion_overlay`] chrome control tag in [`AppShell::try_chrome_press`].
 ///
-/// R1188 §5.16 §5.49 §2 #2 — the three discrete button actions collapsed into
+/// R1188 §5.16 §5.49 §2 #2 — the discrete button actions collapsed into
 /// [`Control`](Self::Control) (`pinion_overlay::WindowControl`), the vocabulary
 /// the headless RPC click drain shares: both input paths detect through the one
 /// `window_control_for_tag` mapping and execute through the one
-/// [`AppShell::apply_window_control`] arm — which R1362 grew two further
-/// producers that do NOT detect from a tag (the OS `WindowEvent::CloseRequested`
-/// and the binding's own [`crate::WindowControlSink`]), so the shared detection
-/// vocabulary stays these two while the shared execution arm serves four.
-/// `Move` / `Resize` stay winit-local —
-/// pointer-session gestures with no RPC-click semantic.
+/// [`AppShell::apply_window_control`] arm. The shared DETECTION vocabulary is
+/// these two tag-driven paths; the shared EXECUTION arm serves every
+/// [`ControlProducer`], including the two that detect from no tag at all. `Move`
+/// / `Resize` stay winit-local — pointer-session gestures with no RPC-click
+/// semantic.
 #[derive(Clone, Copy)]
 enum ChromeAction {
     /// A discrete control button — minimize / maximize-toggle / close.
@@ -99,6 +98,45 @@ enum ChromeAction {
     /// client-side resize edge / corner (R1122). A borderless window has no OS
     /// frame, so the chrome supplies the resize border.
     Resize(ResizeDirection),
+}
+
+/// (R1364 §5.16 §5.55) Which producer asked for a window control — the roster of
+/// [`AppShell::apply_window_control`], as a type.
+///
+/// It exists because the count did not. The arm has always been ONE, but "how
+/// many reach it" lived only as prose — nine sentences across five files, of
+/// which THREE still said "third" / "three" at R1363's HEAD. R1362 authored them
+/// under three reviewers, in the very round that added the fourth producer:
+/// prose does not recount itself, and nothing failed when it was wrong.
+///
+/// As a parameter the roster has exactly one home. The variants ARE the count,
+/// every call site names itself at the call, and the `tracing` warn on an
+/// unregistered window can say WHO asked — which for [`Self::Binding`] (a
+/// `String` built off the UI thread, possibly a typo or an id whose window
+/// `reconcile_windows` already dropped) is the difference between a diagnosable
+/// drop and a silent one.
+///
+/// This is R1190's lesson applied one layer over. R1190 fused a split tag
+/// vocabulary by giving the tags ONE authority; the producers already shared one
+/// arm, but had no name, so their number was only ever countable by grep — and
+/// the grep was wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ControlProducer {
+    /// The winit pointer path — a physical left-press on a client-side chrome
+    /// control tag ([`AppShell::try_chrome_press`]).
+    ChromePress,
+    /// The OS window manager — the X on a decorated window, or Alt+F4
+    /// (`WindowEvent::CloseRequested`). Unified into the arm by R1362, having
+    /// hand-copied the `Close` body since R1170.
+    OsCloseRequested,
+    /// R1188 §2 #2 — an RPC `scene/click` on a control tag, which the headless
+    /// `ShellCore` drain detects and queues for
+    /// [`ShellCore::take_pending_window_controls`], drained in
+    /// [`AppShell::user_event`] right after `dispatch_rpc`.
+    RpcClick,
+    /// R1362 PR-65 — the BINDING itself, via [`crate::WindowControlSink`],
+    /// delivered as [`AppEvent::WindowControlRequested`].
+    Binding,
 }
 
 /// (R1121 §5.16 §5.39) Map a hit-test tag to the window-chrome action it names,
@@ -1215,7 +1253,7 @@ impl<V: WidgetView> AppShell<V> {
         // `result` before the window closes. Same execution arm as a physical
         // press on the same tag (`try_chrome_press` → `apply_window_control`).
         for (spec_id, control) in self.core.take_pending_window_controls() {
-            self.apply_window_control(&spec_id, control, event_loop);
+            self.apply_window_control(&spec_id, control, ControlProducer::RpcClick, event_loop);
         }
     }
 
@@ -2029,11 +2067,14 @@ impl<V: WidgetView> AppShell<V> {
     /// already recorded, so the SAME hit-test the router uses drives it — an AI
     /// `scene/click` on the introspectable control tag reaches this identical
     /// path (§2 #2). `minimize` / `maximize` / move map straight to the winit
-    /// `Window` (pinion owns the handle); `close` routes to `event_loop.exit()`,
-    /// the same path `WindowEvent::CloseRequested` (the OS X on a decorated
-    /// window) takes. R1170 §5.16 — the close now routes through the
-    /// [`WidgetView::window_close_requested`] binding seam: a handled close (e.g. a
-    /// torn-off panel docks back) keeps the app alive; an unhandled close exits.
+    /// `Window` (pinion owns the handle); `close` routes through
+    /// [`Self::apply_window_control`] as [`ControlProducer::ChromePress`], the
+    /// same arm `WindowEvent::CloseRequested` (the OS X on a decorated window)
+    /// takes. R1170 §5.16 — a close is offered to the
+    /// [`WidgetView::window_close_requested`] binding seam first (a torn-off panel
+    /// docks back). R1363 §5.55 — and it can no longer exit: this sentence used
+    /// to end "an unhandled close exits", which stopped being true one round
+    /// after it was written.
     fn try_chrome_press(&mut self, spec_id: &str, event_loop: &ActiveEventLoop) -> bool {
         let Some(action) = self
             .core
@@ -2046,7 +2087,12 @@ impl<V: WidgetView> AppShell<V> {
             // R1188 — the discrete buttons execute through the arm the RPC
             // click drain also reaches (one execution path for both inputs).
             ChromeAction::Control(control) => {
-                self.apply_window_control(spec_id, control, event_loop);
+                self.apply_window_control(
+                    spec_id,
+                    control,
+                    ControlProducer::ChromePress,
+                    event_loop,
+                );
             }
             ChromeAction::Move => {
                 // OS-driven interactive move; a borderless window has no OS
@@ -2068,26 +2114,19 @@ impl<V: WidgetView> AppShell<V> {
 
     /// (R1188 §5.16 §5.49 §2 #2) Execute one discrete window control against
     /// `spec_id`'s window — the ONE execution arm EVERY producer shares, so no
-    /// two ways of asking for the same thing can drift:
+    /// two ways of asking for the same thing can drift.
     ///
-    /// 1. the winit pointer path ([`Self::try_chrome_press`] — a physical
-    ///    left-press on a client-side chrome control tag),
-    /// 2. the OS window manager (`WindowEvent::CloseRequested` — the X on a
-    ///    decorated window; unified into this arm by R1362, having hand-copied
-    ///    the `Close` body since R1170),
-    /// 3. the RPC path (R1188 — a `scene/click` on a control tag, which the
-    ///    headless `ShellCore` drain detects and queues for
-    ///    [`ShellCore::take_pending_window_controls`], drained in
-    ///    [`AppShell::user_event`] right after `dispatch_rpc`),
-    /// 4. the BINDING itself (R1362 PR-65 — [`crate::WindowControlSink`],
-    ///    delivered as [`AppEvent::WindowControlRequested`]).
+    /// The roster is [`ControlProducer`] (R1364), and deliberately not a list
+    /// here: this sentence used to carry the count, and so did eight others, and
+    /// three of them were wrong.
     ///
     /// * `Close` — R1170 §5.16 §5.39 per-window close: offered to the binding
     ///   first (a torn-off panel docks back via
-    ///   [`WidgetView::window_close_requested`]); only an unhandled close exits
-    ///   the app (the `CloseRequested` convention). Because producer 4 lands
-    ///   HERE, a binding that closes itself still passes its own veto — the
-    ///   seam grants no privileged exit.
+    ///   [`WidgetView::window_close_requested`]); an unhandled close of the
+    ///   PRIMARY window becomes a quit REQUEST, and of a secondary window is
+    ///   declined. Because [`ControlProducer::Binding`] lands HERE, a binding
+    ///   that closes itself still passes its own veto — the seam grants no
+    ///   privileged exit.
     /// * `Minimize` / `Maximize` — straight to the winit `Window` (pinion owns
     ///   the handle); a missing render slot (window already closing) is a no-op.
     ///
@@ -2101,6 +2140,7 @@ impl<V: WidgetView> AppShell<V> {
         &mut self,
         spec_id: &str,
         control: pinion_overlay::WindowControl,
+        producer: ControlProducer,
         event_loop: &ActiveEventLoop,
     ) {
         // R1362 PR-65 — an unregistered `spec_id` names no window, so there is
@@ -2112,11 +2152,13 @@ impl<V: WidgetView> AppShell<V> {
         // `Close` did not, and would instead offer an unknown id to
         // `V::window_close_requested`, get the default `false` back, and EXIT THE
         // APP — a catastrophic answer to a stale id. Unreachable before R1362:
-        // producers 1-3 all derive `spec_id` from a live window (a hit-test, the
-        // winit `WindowId` map, a resolved click target). Producer 4 is the first
-        // that can name an arbitrary window — a binding's `String`, built off the
-        // UI thread, possibly a typo or an id whose window `reconcile_windows`
-        // already dropped.
+        // every other `ControlProducer` derives `spec_id` from a live window (a
+        // hit-test, the winit `WindowId` map, a resolved click target).
+        // `ControlProducer::Binding` is the first that can name an arbitrary
+        // window — a `String` built off the UI thread, possibly a typo or an id
+        // whose window `reconcile_windows` already dropped. R1364 — which is why
+        // the warn carries the `producer`: the one path that can reach here is
+        // also the one whose author is not looking at the window.
         //
         // Gated on REGISTRATION (`spec_id_to_window_id`), not on a live `Window`
         // handle: `window_arc_for_spec` also misses a `RenderState::Suspended(None)`
@@ -2126,6 +2168,7 @@ impl<V: WidgetView> AppShell<V> {
                 target: "pinion::shell",
                 window = %spec_id,
                 ?control,
+                ?producer,
                 "window control requested for an unregistered window; dropped",
             );
             return;
@@ -3149,6 +3192,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 self.apply_window_control(
                     &spec_id,
                     pinion_overlay::WindowControl::Close,
+                    ControlProducer::OsCloseRequested,
                     event_loop,
                 );
             }
@@ -3368,27 +3412,29 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // any other wakes this iteration) into one `Window::request_redraw`,
             // and the next frame re-runs `view` which re-reads the handle.
             AppEvent::ExternalRepaint => self.core.request_redraw(),
-            // R1362 PR-65 §5.16 §5.49 §2 #2 — the BINDING requested a window
-            // control on its own behalf (`hello-tray`'s Quit; sprag's poll
-            // thread on a dead daemon socket), delivered through
-            // `ProxyWindowControlSink`. Execute it through the same arm the
-            // winit pointer path (`try_chrome_press`) and the RPC click drain
-            // reach, so a `Close` is still offered to
-            // `WidgetView::window_close_requested` first and only an unhandled
-            // close exits: one execution arm, now three producers.
+            // R1363 §5.55 — a binding asked the APP to end through its
+            // `QuitSink` (`hello-tray`'s Quit; sprag's poll thread on a dead
+            // daemon socket). Same arm as Escape and the last-window policy, so
+            // `app_quit_requested` still gets to refuse.
+            AppEvent::QuitRequested => self.request_quit(event_loop),
+            // R1362 PR-65 §5.16 §5.49 §2 #2 — the BINDING requested a WINDOW
+            // control on its own behalf (`hello-tray`'s Show/Hide), delivered
+            // through `ProxyWindowControlSink`. Execute it through the arm every
+            // other `ControlProducer` reaches, so a `Close` is still offered to
+            // `WidgetView::window_close_requested` first.
             //
             // Executing HERE (a later UI-thread turn) rather than inside the
             // binding's own call is what lets a tray `invoke` return its RPC
             // result before the window goes away — the same ordering
             // `dispatch_rpc` buys by draining its queue after the response
             // write.
-            // R1363 §5.55 — a binding asked the APP to end through its
-            // `QuitSink` (hello-tray's Quit; sprag's poll thread on a dead
-            // daemon). Same arm as Escape / the last-window policy / app-quit
-            // RPC, so `app_quit_requested` still gets to refuse.
-            AppEvent::QuitRequested => self.request_quit(event_loop),
             AppEvent::WindowControlRequested { window_id, control } => {
-                self.apply_window_control(&window_id, control, event_loop);
+                self.apply_window_control(
+                    &window_id,
+                    control,
+                    ControlProducer::Binding,
+                    event_loop,
+                );
             }
         }
         self.drain_redraw_to_winit();
@@ -5501,6 +5547,166 @@ mod r1121_chrome_action_tests {
 }
 
 #[cfg(test)]
+mod r1364_source_scan {
+    //! R1364 — the production-source walk this file's source-text tests share.
+    //!
+    //! Extracted rather than copied: the subtle part is not the property each
+    //! test checks, it is knowing that `app.rs` interleaves EIGHT top-level
+    //! `#[cfg(test)]` modules with production code. `pinion_core::widgets::commit`'s
+    //! precedent stops at the FIRST `#[cfg(test)]`, which is exact for a file
+    //! whose tests all sit at the end and silently wrong here —
+    //! `try_headless_screenshot`, which owns three termination sites, follows
+    //! six of them. A second hand-rolled copy of this walk is where that
+    //! mistake would come back, quietly, as a green test over a short file.
+
+    /// Every line of `app.rs` OUTSIDE a top-level `#[cfg(test)] mod`, as
+    /// `(1-based line number, line)`.
+    ///
+    /// Comments are KEPT: one caller must read rustdoc (the termination map is
+    /// made of `///` lines), the others skip comments themselves. Every test
+    /// module here is top-level, so its closing `}` is the next one at column 0;
+    /// anything that breaks that shape fails loudly rather than mis-scoping.
+    pub(super) fn production_lines() -> Vec<(usize, &'static str)> {
+        let src = include_str!("app.rs");
+        let mut out = Vec::new();
+        let mut in_test_mod = false;
+        let mut expect_test_mod = false;
+        for (n, line) in src.lines().enumerate() {
+            let lineno = n + 1;
+            if in_test_mod {
+                if line == "}" {
+                    in_test_mod = false;
+                }
+                continue;
+            }
+            if expect_test_mod {
+                assert!(
+                    line.starts_with("mod ") && line.ends_with('{'),
+                    "app.rs:{lineno}: a column-0 `#[cfg(test)]` introduces \
+                     {line:?}, not a top-level `mod ... {{`. This scan separates \
+                     production from test code by skipping whole top-level test \
+                     modules; teach it the new shape rather than let it mis-scope."
+                );
+                in_test_mod = true;
+                expect_test_mod = false;
+                continue;
+            }
+            if line == "#[cfg(test)]" {
+                expect_test_mod = true;
+                continue;
+            }
+            assert!(
+                !line.trim_start().starts_with("#[cfg(test)]"),
+                "app.rs:{lineno}: an INDENTED `#[cfg(test)]`. This scan cannot \
+                 see an inner one and would count its body as production."
+            );
+            out.push((lineno, line));
+        }
+        assert!(!in_test_mod, "app.rs: unterminated top-level test module");
+        assert!(!out.is_empty(), "app.rs: the production walk found nothing");
+        out
+    }
+}
+
+#[cfg(test)]
+mod r1364_control_producer_tests {
+    //! R1364 §5.16 §5.55 — [`ControlProducer`]'s roster IS the arm's call sites.
+    //!
+    //! The enum's rustdoc claims "the variants ARE the count, every call site
+    //! names itself at the call". That is a claim, and this round exists because
+    //! nine unchecked claims about this exact count drifted until three were
+    //! wrong. So the claim gets a test.
+    //!
+    //! Source-text, for the reason the termination map's is: `apply_window_control`
+    //! takes an `&ActiveEventLoop`, which `tests/dispatch_core.rs` records a
+    //! `#[test]` cannot synthesise — not one of these call sites is reachable
+    //! from the suite, so only the text can be asked.
+    //!
+    //! What this adds over the compiler, precisely: `dead_code` (denied here)
+    //! already fails a variant no call site names, so the `unused` arm below is
+    //! defence in depth, not the point — it earns its keep only if a TEST
+    //! constructs the variant and silences that lint. The arms the compiler
+    //! cannot make are the other two: two call sites SHARING a producer, and a
+    //! call-site count that has drifted from the variant count. Verified by
+    //! attempting both: swapping a variant fails to COMPILE (so the test never
+    //! runs), while a fifth call site reusing `ChromePress` fails HERE.
+
+    /// Parse the variant names out of `enum ControlProducer { .. }`.
+    fn variants() -> Vec<String> {
+        let mut out = Vec::new();
+        let mut inside = false;
+        for (_, line) in super::r1364_source_scan::production_lines() {
+            if line.starts_with("enum ControlProducer {") {
+                inside = true;
+                continue;
+            }
+            if !inside {
+                continue;
+            }
+            if line == "}" {
+                break;
+            }
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            if let Some(name) = t.strip_suffix(',')
+                && name.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                out.push(name.to_owned());
+            }
+        }
+        assert!(
+            !out.is_empty(),
+            "`enum ControlProducer` parsed to no variants"
+        );
+        out
+    }
+
+    #[test]
+    fn r1364_every_producer_names_exactly_one_call_site() {
+        let variants = variants();
+        let mut calls = 0usize;
+        let mut used: Vec<(String, usize)> = variants.iter().map(|v| (v.clone(), 0)).collect();
+        for (_, line) in super::r1364_source_scan::production_lines() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            calls += line.matches("self.apply_window_control(").count();
+            for (v, n) in &mut used {
+                *n += line.matches(&format!("ControlProducer::{v}")).count();
+            }
+        }
+        let unused: Vec<&str> = used
+            .iter()
+            .filter(|(_, n)| *n == 0)
+            .map(|(v, _)| v.as_str())
+            .collect();
+        assert!(
+            unused.is_empty(),
+            "`ControlProducer` variants no call site names: {unused:?}. A \
+             producer that exists only in the enum is the count drifting again, \
+             in the other direction."
+        );
+        let over: Vec<&(String, usize)> = used.iter().filter(|(_, n)| *n > 1).collect();
+        assert!(
+            over.is_empty(),
+            "`ControlProducer` variants named more than once: {over:?}. Two call \
+             sites sharing a producer means the roster no longer distinguishes \
+             them, so the warn's `producer` field points at the wrong author."
+        );
+        assert_eq!(
+            calls,
+            variants.len(),
+            "`apply_window_control` has {calls} call sites but `ControlProducer` \
+             has {} variants. The arm is ONE and its producers are the enum: a \
+             new call site must add the variant that names it, not borrow one.",
+            variants.len(),
+        );
+    }
+}
+
+#[cfg(test)]
 mod r1364_termination_map_tests {
     //! R1364 §5.55 — the termination map on [`AppShell::request_quit`] is
     //! machine-checked against this file's own source text.
@@ -5565,47 +5771,9 @@ mod r1364_termination_map_tests {
     /// Every termination call site in this file's PRODUCTION source, keyed by
     /// enclosing function, with multiplicity.
     fn source_sites() -> BTreeMap<Site, usize> {
-        let src = include_str!("app.rs");
         let mut sites: BTreeMap<Site, usize> = BTreeMap::new();
         let mut current_fn: Option<String> = None;
-        let mut in_test_mod = false;
-        let mut expect_test_mod = false;
-        for (n, line) in src.lines().enumerate() {
-            let lineno = n + 1;
-            // Skip `#[cfg(test)] mod ... { ... }`. This file interleaves EIGHT
-            // of them with production code — `try_headless_screenshot`, which
-            // owns three of the sites below, follows six — so `commit.rs`'s
-            // "stop at the first `#[cfg(test)]`" prefix scan would silently drop
-            // real call sites here and pass green. Every test module is
-            // top-level, so its closing `}` is the next one at column 0.
-            if in_test_mod {
-                if line == "}" {
-                    in_test_mod = false;
-                }
-                continue;
-            }
-            if expect_test_mod {
-                assert!(
-                    line.starts_with("mod ") && line.ends_with('{'),
-                    "app.rs:{lineno}: a column-0 `#[cfg(test)]` introduces \
-                     {line:?}, not a top-level `mod ... {{`. This scan separates \
-                     production from test code by skipping whole top-level test \
-                     modules; teach it the new shape rather than let it mis-scope."
-                );
-                in_test_mod = true;
-                expect_test_mod = false;
-                continue;
-            }
-            if line == "#[cfg(test)]" {
-                expect_test_mod = true;
-                continue;
-            }
-            assert!(
-                !line.trim_start().starts_with("#[cfg(test)]"),
-                "app.rs:{lineno}: an INDENTED `#[cfg(test)]`. This scan cannot \
-                 see an inner one and would count its body as production."
-            );
-
+        for (lineno, line) in super::r1364_source_scan::production_lines() {
             let trimmed = line.trim_start();
             // Docs and comments name these sites legitimately — the map itself
             // is made of them, and so is this module.
@@ -5634,17 +5802,15 @@ mod r1364_termination_map_tests {
                 *sites.entry((f, fam)).or_insert(0) += hits;
             }
         }
-        assert!(!in_test_mod, "app.rs: unterminated top-level test module");
         sites
     }
 
     /// The map's rows, parsed out of the rustdoc.
     fn documented_sites() -> BTreeMap<Site, usize> {
-        let src = include_str!("app.rs");
         let mut out: BTreeMap<Site, usize> = BTreeMap::new();
         let mut in_table = false;
         let mut rows = 0usize;
-        for line in src.lines() {
+        for (_, line) in super::r1364_source_scan::production_lines() {
             let t = line.trim_start();
             if t == TABLE_HEADER {
                 in_table = true;

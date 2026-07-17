@@ -11,9 +11,13 @@
 //! `scene/click` on a control tag (R1188). When the binding is the one that
 //! *knows* a window must close, it had no way to say so.
 //!
-//! (The Escape convention exits too, but it is NOT a producer of that arm — it
-//! never consults `window_close_requested`, so it bypasses the binding's veto.
-//! See `AppShell::apply_window_control`'s termination table.)
+//! (The Escape convention ends the APP, and is not a producer of that arm at
+//! all. R1363 §5.55 — it never consults `window_close_requested` because a quit
+//! is not a close; it passes
+//! [`WidgetCore::app_quit_requested`](pinion_core::WidgetCore::app_quit_requested)
+//! instead. This paragraph used to say Escape "bypasses the binding's veto",
+//! which was true when written and false one round later. See
+//! `AppShell::request_quit`'s termination map.)
 //!
 //! The forcing cases are two, and they disagree about threads:
 //!
@@ -50,17 +54,25 @@
 //!
 //! # Why this trait lives HERE, above `pinion-core`
 //!
-//! Its vocabulary is [`pinion_overlay::WindowControl`], the payload of R1190's
-//! [`ChromeTag`](pinion_overlay::ChromeTag) consolidation — deliberately owned
-//! by pinion-overlay so "what does this tag mean" cannot drift across a crate
-//! boundary. Relocating it down to `pinion-core` / `pinion-runtime` to host the
-//! trait beside [`RepaintSink`](pinion_core::RepaintSink) would re-split exactly
-//! what R1190 fused, and buy nothing: no crate below pinion-shell has windows to
-//! control (`pinion-tui` deps neither overlay nor shell). `pinion-shell` is the
-//! one crate that already deps both the vocabulary (overlay) and the DI
-//! substrate ([`pinion_core::Owner`]) — so the wiring lives here and no type
-//! moves (the R1077 lesson: prefer the crate that deps both over a type
-//! relocation).
+//! No crate below pinion-shell has windows to control (`pinion-tui` deps neither
+//! overlay nor shell), and `pinion-shell` already deps both the vocabulary and
+//! the DI substrate ([`pinion_core::Owner`]) — the R1077 lesson: prefer the
+//! crate that deps both over a type relocation.
+//!
+//! R1363 §5.55 — this section used to argue further that relocating
+//! [`WindowControl`] itself "would re-split exactly what R1190 fused". That
+//! argument was WRONG and R1363 acted against it: `WindowControl` now lives in
+//! `pinion-runtime` beside `DEFAULT_WINDOW` (the addressee every consumer needs
+//! next to the verb), re-exported here for the existing path. R1190 fused the
+//! tag→semantic DECISION, which is still `chrome_tag_semantic`'s alone in
+//! pinion-overlay; that a type's home is not a decision's home is exactly the
+//! conflation the argument made. It is recorded rather than deleted because a
+//! plausible wrong argument in-tree is quoted as settled by the next round.
+//!
+//! The app-lifecycle peer of this seam is [`QuitSink`](pinion_core::QuitSink),
+//! which lives in `pinion-core` for the opposite and equally deliberate reason:
+//! BOTH backends dep it, so §2 #6 holds for app lifecycle instead of leaving a
+//! terminal-shaped hole.
 //!
 //! The seeding window is the only thing that made this awkward, and
 //! [`CoreShell::new_with_seed`](pinion_runtime::CoreShell::new_with_seed) closes
@@ -101,10 +113,15 @@ struct WindowControlSinkHolder(Arc<dyn WindowControlSink>);
 /// (`AppShell::apply_window_control`) that a chrome press and an RPC
 /// `scene/click` already share, so a `Close` is still offered to
 /// [`WidgetView::window_close_requested`](crate::WidgetView::window_close_requested)
-/// first and only an unhandled close exits the app. A binding therefore cannot
-/// bypass its own veto by calling this — it is a third producer into one arm,
-/// which is precisely why it needs no new exit semantics, no new state, and no
-/// second close vocabulary.
+/// first. A binding therefore cannot bypass its own veto by calling this — it is
+/// one more producer into one arm (`ControlProducer::Binding`; R1364 made that
+/// roster a type, because this sentence said "a third producer" and was wrong
+/// from the round that wrote it), which is precisely why it needs no new exit
+/// semantics, no new state, and no second close vocabulary.
+///
+/// R1363 §5.55 — and no exit semantics at all now: a `Close` closes a window and
+/// never ends the app. The app-lifecycle peer of this seam is
+/// [`QuitSink`](pinion_core::QuitSink).
 ///
 /// Delivery is asynchronous by construction: the control executes on a later UI
 /// -thread turn, never inside this call. That is what lets a tray `invoke` return

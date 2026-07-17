@@ -174,8 +174,9 @@ pub enum AppEvent {
     /// arm executes it through the same `AppShell::apply_window_control` a
     /// chrome press and an RPC `scene/click` reach — so the
     /// [`WidgetView::window_close_requested`] veto still gates a `Close`, and
-    /// the binding is a third producer into ONE arm rather than a second exit
-    /// path.
+    /// the binding is one more producer into ONE arm rather than a second exit
+    /// path. (R1364 — the roster is an enum in `app.rs`; this sentence used to
+    /// say "a third producer" and was wrong from the round that wrote it.)
     ///
     /// Distinct from [`AppEvent::ExternalRepaint`] by interface segregation (the
     /// rule [`RepaintSink`](pinion_core::RepaintSink)'s doc states for
@@ -1143,22 +1144,20 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     }
 
     /// (R1170 §5.16 §5.39) Per-window CLOSE seam. The shell calls this when a
-    /// window close is requested. Four producers reach it, all through the one
-    /// `AppShell::apply_window_control` arm (see its rustdoc for the full
-    /// termination map):
+    /// window close is requested. Every producer reaches it through the one
+    /// `AppShell::apply_window_control` arm, and the roster of them is that
+    /// arm's `ControlProducer` enum (R1364) — including the BINDING's own
+    /// [`WindowControlSink`] request (R1362).
     ///
-    /// 1. the OS close button on a decorated window (`WindowEvent::CloseRequested`,
-    ///    also Alt+F4),
-    /// 2. a client-side chrome close control
-    ///    ([`pinion_overlay::WINDOW_CHROME_CLOSE_TAG`]),
-    /// 3. R1188 — an RPC `scene/click` on that control tag (the §2 #2 AI path),
-    /// 4. R1362 — the BINDING itself, via [`WindowControlSink`].
+    /// That last one is deliberate: a self-requested close is still offered here
+    /// first, so a binding cannot grant itself a privileged close that bypasses
+    /// its own veto.
     ///
-    /// Producer 4 means this hook can now fire because of the binding's OWN
-    /// request. That is deliberate: a self-requested close is still offered here
-    /// first, so a binding cannot grant itself a privileged exit that bypasses
-    /// its own veto. (Escape also exits, but does NOT call this hook — it
-    /// bypasses the veto; see the termination map.)
+    /// R1363 §5.55 — this hook is about a WINDOW, never the app. Escape does not
+    /// call it (Escape is a QUIT request; its veto is
+    /// [`WidgetCore::app_quit_requested`]),
+    /// and declining here no longer keeps a doomed app alive, because a `Close`
+    /// cannot end the app at all. See `AppShell::request_quit`'s termination map.
     ///
     /// Return `true` if the
     /// BINDING handled the close (e.g. a torn-off dock panel docks BACK by dropping

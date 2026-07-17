@@ -472,10 +472,11 @@ pub struct ShellCore<V: WidgetView> {
     /// through the same `apply_window_control` the winit pointer path
     /// (`try_chrome_press`) uses — one detection vocabulary
     /// ([`pinion_overlay::window_control_for_tag`]) and one execution arm for
-    /// both input paths. (R1362 — that arm now has FOUR producers: those two,
-    /// the OS `WindowEvent::CloseRequested`, and the binding's own
-    /// [`WindowControlSink`](crate::WindowControlSink). The detection vocabulary
-    /// is still shared by exactly the two TAG-driven paths this queue serves.)
+    /// both input paths. (The arm's full roster is its `ControlProducer` enum,
+    /// R1364 — deliberately not recounted here, because five copies of that
+    /// count drifted and three were wrong. The detection VOCABULARY is still
+    /// shared by exactly the two TAG-driven paths this queue serves, which is a
+    /// different and smaller claim than the roster.)
     /// Pre-R1188 the RPC click hit the control tag and then
     /// fell into ordinary widget routing (a no-op — no widget carries the
     /// overlay tag), so the R1121 "an AI observes AND DRIVES the controls"

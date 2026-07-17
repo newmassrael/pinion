@@ -24278,6 +24278,62 @@
         "Remaining §5.55 clearance (11 of 13): enum ControlProducer; Owner::cache_inherited parent walk (family of FOUR, silently Null under the deferred R680 atomic); false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested"
       ]
     },
+    "R1364.1": {
+      "decision_summary": "R1364.1 §5.16 §5.55: the producer count becomes a type — nine prose copies of four, three of them wrong, collapse into enum ControlProducer",
+      "changes_bullets": [
+        "enum ControlProducer (ChromePress / OsCloseRequested / RpcClick / Binding) is now a required parameter of AppShell::apply_window_control. The variants ARE the roster, each of the four call sites names itself at the call, and the count has exactly one home",
+        "The count was WRONG in three places at HEAD, all authored by R1362 — the round that added the fourth producer — under three reviewers: window_control.rs and lib.rs said \"a third producer\", app.rs said \"one execution arm, now three producers\". lib.rs and substrate.rs said four. Prose does not recount itself, and nothing failed",
+        "This is R1190's lesson applied one layer over, which R1362 cited constantly and did not apply: R1190 fused a split tag VOCABULARY by giving the tags one authority; the producers already shared one arm but had no name, so their number was only ever countable by grep — and the grep was wrong",
+        "The tracing warn on an unregistered window now carries `producer`. The one producer that can reach that branch (Binding — a String built off the UI thread) is exactly the one whose author is not looking at the window, so the diagnostic names the author",
+        "r1364_every_producer_names_exactly_one_call_site pins the enum's own claim. It is honest about its division of labour with the compiler: `dead_code` (denied) already fails an unused variant, so the arms that earn their keep are the two the compiler cannot make — two call sites SHARING a producer, and a call-site count drifted from the variant count",
+        "The app.rs test-mod-skipping walk is LIFTED to r1364_source_scan and shared by both source-text test modules. The subtle part is not each property, it is knowing app.rs interleaves eight top-level test mods with production code; a second hand-rolled copy is where that returns as a green test over a short file",
+        "Adjacent stale prose corrected, not carried: try_chrome_press still said `close` routes to `event_loop.exit()`; the user_event comment still called hello-tray's Quit a WINDOW control (R1363 moved it to QuitSink) and cited an \"app-quit RPC\" that does not exist; window_close_requested's rustdoc still said Escape \"bypasses the veto\"; window_control.rs's module doc still argued relocating WindowControl \"would re-split R1190\" — the argument R1363 acted against and recorded as wrong"
+      ],
+      "verification_bullets": [
+        "The exact CI commands: cargo fmt --all --check exit 0 + cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items exit 0 + cargo test --workspace exit 0",
+        "The doc gate EARNED its place mid-round: it rejected a redundant explicit link target (rustdoc::redundant_explicit_links, denied via workspace warnings=deny) that clippy and tests both passed over. This is the gate R1362 missed by running a weaker command",
+        "The roster test was proven to bite, but only after the FIRST counterfactual was misread: swapping a variant at a call site fails to COMPILE (dead_code, denied), so cargo exit=101 was a build failure and the test never ran — the same pipe/exit-code confusion the round is about. The isolating experiment (a fifth call site reusing ChromePress, leaving no variant unused) fails in the test with [(\"ChromePress\", 2)]",
+        "Post-change enumeration re-run: no WindowControl producer count survives as a number in prose except where this round quotes the old wrong sentences as a record. The other \"producer\" families in-tree (paint-scene 1-3, hover-cursor, wheel-path) are distinct and untouched"
+      ],
+      "impact_refs": [
+        "2",
+        "5.16",
+        "5.49",
+        "5.55"
+      ],
+      "carry_forward_bullets": [
+        "apply_window_control's decision is still welded to the winit apply, so the producer parameter is not yet unit-observable — the plan_window_control pure lift (⑧) is what makes the roster testable at runtime rather than only in source text",
+        "substrate.rs still spells pinion_overlay::WindowControl at 22 sites, through a deliberate re-export shim (window_chrome.rs:87) kept by R1363 so the old path compiles. Not a defect; noted because the module doc's premise about where the type lives is now corrected",
+        "Remaining §5.55 clearance (11 of 13): Owner::cache_inherited parent walk; false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; and ⑬ the TUI's missing request_quit arm"
+      ],
+      "publishable_decision_summary": "R1364.1 §5.16 §5.55: the producer count becomes a type — nine prose copies of four, three of them wrong, collapse into enum ControlProducer",
+      "publishable_changes_bullets": [
+        "enum ControlProducer (ChromePress / OsCloseRequested / RpcClick / Binding) is now a required parameter of AppShell::apply_window_control. The variants ARE the roster, each of the four call sites names itself at the call, and the count has exactly one home",
+        "The count was WRONG in three places at HEAD, all authored by R1362 — the round that added the fourth producer — under three reviewers: window_control.rs and lib.rs said \"a third producer\", app.rs said \"one execution arm, now three producers\". lib.rs and substrate.rs said four. Prose does not recount itself, and nothing failed",
+        "This is R1190's lesson applied one layer over, which R1362 cited constantly and did not apply: R1190 fused a split tag VOCABULARY by giving the tags one authority; the producers already shared one arm but had no name, so their number was only ever countable by grep — and the grep was wrong",
+        "The tracing warn on an unregistered window now carries `producer`. The one producer that can reach that branch (Binding — a String built off the UI thread) is exactly the one whose author is not looking at the window, so the diagnostic names the author",
+        "r1364_every_producer_names_exactly_one_call_site pins the enum's own claim. It is honest about its division of labour with the compiler: `dead_code` (denied) already fails an unused variant, so the arms that earn their keep are the two the compiler cannot make — two call sites SHARING a producer, and a call-site count drifted from the variant count",
+        "The app.rs test-mod-skipping walk is LIFTED to r1364_source_scan and shared by both source-text test modules. The subtle part is not each property, it is knowing app.rs interleaves eight top-level test mods with production code; a second hand-rolled copy is where that returns as a green test over a short file",
+        "Adjacent stale prose corrected, not carried: try_chrome_press still said `close` routes to `event_loop.exit()`; the user_event comment still called hello-tray's Quit a WINDOW control (R1363 moved it to QuitSink) and cited an \"app-quit RPC\" that does not exist; window_close_requested's rustdoc still said Escape \"bypasses the veto\"; window_control.rs's module doc still argued relocating WindowControl \"would re-split R1190\" — the argument R1363 acted against and recorded as wrong"
+      ],
+      "publishable_verification_bullets": [
+        "The exact CI commands: cargo fmt --all --check exit 0 + cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items exit 0 + cargo test --workspace exit 0",
+        "The doc gate EARNED its place mid-round: it rejected a redundant explicit link target (rustdoc::redundant_explicit_links, denied via workspace warnings=deny) that clippy and tests both passed over. This is the gate R1362 missed by running a weaker command",
+        "The roster test was proven to bite, but only after the FIRST counterfactual was misread: swapping a variant at a call site fails to COMPILE (dead_code, denied), so cargo exit=101 was a build failure and the test never ran — the same pipe/exit-code confusion the round is about. The isolating experiment (a fifth call site reusing ChromePress, leaving no variant unused) fails in the test with [(\"ChromePress\", 2)]",
+        "Post-change enumeration re-run: no WindowControl producer count survives as a number in prose except where this round quotes the old wrong sentences as a record. The other \"producer\" families in-tree (paint-scene 1-3, hover-cursor, wheel-path) are distinct and untouched"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.16",
+        "5.49",
+        "5.55"
+      ],
+      "publishable_carry_forward_bullets": [
+        "apply_window_control's decision is still welded to the winit apply, so the producer parameter is not yet unit-observable — the plan_window_control pure lift (⑧) is what makes the roster testable at runtime rather than only in source text",
+        "substrate.rs still spells pinion_overlay::WindowControl at 22 sites, through a deliberate re-export shim (window_chrome.rs:87) kept by R1363 so the old path compiles. Not a defect; noted because the module doc's premise about where the type lives is now corrected",
+        "Remaining §5.55 clearance (11 of 13): Owner::cache_inherited parent walk; false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; and ⑬ the TUI's missing request_quit arm"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
