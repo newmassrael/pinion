@@ -66,8 +66,7 @@
 use super::signal::Signal;
 
 /// Owner-cache newtype: [`Owner::cache`](super::owner::Owner::cache) stores
-/// `Rc<dyn Any>`, so the [`Signal`] handle rides inside this holder (mirrors
-/// [`MonospaceMetricsHolder`](super::font_metrics::MonospaceMetricsHolder)).
+/// `Rc<dyn Any>`, so the [`Signal`] handle rides inside this holder.
 ///
 /// The wrapper is not actually needed — the cache keys on
 /// `(TypeId::of::<V>(), key)`, so `Signal<(u32, u32)>` is already its own type.
@@ -76,8 +75,8 @@ use super::signal::Signal;
 /// did in R1366.1.
 pub(crate) struct ViewportSizeHolder(pub(crate) Signal<(u32, u32)>);
 
-/// Private owner-cache key for the single per-owner viewport-size slot
-/// (mirrors the `MonospaceMetrics` private-key convention).
+/// Private owner-cache key for the single per-owner viewport-size slot — one of
+/// the hand-rolled slots still awaiting its R1366.x migration.
 pub(crate) const VIEWPORT_SIZE_KEY: &str = "__pinion.reactive.viewport_size";
 
 /// R1006 §5.23 §5.22 — read the current layout viewport `(width, height)` via

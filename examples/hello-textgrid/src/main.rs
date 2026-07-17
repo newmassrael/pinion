@@ -680,7 +680,7 @@ mod tests {
             }
         }
         let owner = Owner::new();
-        owner.provide_monospace_metrics(std::rc::Rc::new(FakeMetrics));
+        pinion_core::MONOSPACE_METRICS.provide(&owner, std::rc::Rc::new(FakeMetrics));
         let scene = owner.run(|| view((), &Frame::new()));
         assert_eq!(
             measured_grid_font_size(&scene),

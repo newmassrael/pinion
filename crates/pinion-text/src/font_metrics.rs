@@ -59,7 +59,7 @@ mod tests {
             .expect("32px monospace measures");
 
         let owner = Owner::new();
-        owner.provide_monospace_metrics(Rc::new(LayoutCacheMonospaceMetrics::new()));
+        pinion_core::MONOSPACE_METRICS.provide(&owner, Rc::new(LayoutCacheMonospaceMetrics::new()));
         let via_seam = owner.run(|| pinion_core::measured_monospace_cell(32));
 
         assert_eq!(

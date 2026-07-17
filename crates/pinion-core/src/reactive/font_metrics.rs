@@ -15,9 +15,8 @@
 //! wake edge and follows the same §6.3 boundary-trait pattern
 //! (pinion-core defines the abstract trait; pinion-text supplies the
 //! `LayoutCache`-backed impl), so this layer never sees parley. The shell
-//! seeds it on the root `Owner` at boot via
-//! [`Owner::provide_monospace_metrics`](super::owner::Owner::provide_monospace_metrics);
-//! a producer reads it with [`measured_monospace_cell`].
+//! seeds it on the root `Owner` at boot into [`MONOSPACE_METRICS`]; a producer
+//! reads it with [`measured_monospace_cell`].
 //!
 //! # Purity
 //!
@@ -33,6 +32,7 @@
 //! producer thread, hence `Send + Sync + Arc`), measurement is read only from
 //! the UI-thread `view`, so this rides an `Rc` with no thread-safety bound.
 
+use super::provider_slot::ProviderSlot;
 use crate::cell_metric::CellMetric;
 use std::rc::Rc;
 
@@ -62,19 +62,35 @@ impl MonospaceMetrics for NullMonospaceMetrics {
     }
 }
 
-/// Owner-cache newtype: [`Owner::cache`](super::owner::Owner::cache) stores
-/// `Rc<dyn Any>`, so the trait object rides inside this holder.
+/// R1366.3 §5.36 — the monospace-metrics slot: its key, its Null default and
+/// its inherit verdict as one expression, in the module that owns the capability.
 ///
-/// The wrapper is not actually needed — the cache keys on
-/// `(TypeId::of::<V>(), key)`, so `Rc<dyn MonospaceMetrics>` is already its own
-/// type. It dies with this slot's R1366.x migration to
-/// [`ProviderSlot`](super::provider_slot::ProviderSlot), as `RepaintSinkHolder`
-/// did in R1366.1.
-pub(crate) struct MonospaceMetricsHolder(pub(crate) Rc<dyn MonospaceMetrics>);
-
-/// Private owner-cache key for the single per-owner monospace-metrics slot
-/// (mirrors the `LocalTaskPump` private-key convention).
-pub(crate) const MONOSPACE_METRICS_KEY: &str = "__pinion.reactive.monospace_metrics";
+/// **`Inherited`** by the mechanical predicate — the shell DRIVES this at the
+/// root owner: `ShellCore::new_with_seed` seeds the `pinion-text`-backed provider
+/// before any binding factory or first `view` reads it, so a child scope resolves
+/// that root value through [`Owner::cache_inherited`](super::owner::Owner::cache_inherited).
+///
+/// Under the deferred R680 atomic — each window's `view` running in
+/// `window_owner(id).run(..)` — a per-scope verdict would hand a secondary window
+/// a freshly minted [`NullMonospaceMetrics`], whose measurement is `None`, so
+/// every [`Scene::TextGrid`](crate::scene::Scene) in that window would silently
+/// fall to a producer-picked cell and render loose — the same silent-desync class
+/// R1362 fixed, with no panic and no log.
+/// [`provider_slot_tests!`](crate::provider_slot_tests) EMITS the verdict from
+/// this declaration, so it cannot be forgotten the way R1365 forgot five.
+///
+/// The payload is the `Rc<dyn MonospaceMetrics>` itself, with no newtype wrapper:
+/// [`Owner::cache`](super::owner::Owner::cache) keys on `(TypeId::of::<V>(),
+/// key)`, so the trait object is already its own type. R1003's
+/// `MonospaceMetricsHolder` was the `Rc<dyn Any>` storage showing through — the
+/// wrapper R1366.1 retired for [`REPAINT_SINK`](super::repaint::REPAINT_SINK).
+/// Unlike the sinks this rides an `Rc`, not `Arc`: measurement is read only from
+/// the UI-thread `view`, so it carries no `Send + Sync` bound (only `fn() -> V`
+/// names the payload, and fn pointers are `Sync`, so the `static` is still sound).
+pub static MONOSPACE_METRICS: ProviderSlot<Rc<dyn MonospaceMetrics>> =
+    ProviderSlot::inherited("__pinion.reactive.monospace_metrics", || {
+        Rc::new(NullMonospaceMetrics)
+    });
 
 /// R1003 §5.36 — measure the monospace cell at `font_size_px` via the active
 /// owner scope's provider; `None` when called outside an `Owner` scope or when
@@ -93,8 +109,9 @@ pub(crate) const MONOSPACE_METRICS_KEY: &str = "__pinion.reactive.monospace_metr
 /// directly in tests without an installed provider.
 #[must_use]
 pub fn measured_monospace_cell(font_size_px: u32) -> Option<CellMetric> {
-    super::owner::Owner::current()?
-        .monospace_metrics()
+    let owner = super::owner::Owner::current()?;
+    MONOSPACE_METRICS
+        .resolve(&owner)
         .monospace_cell(font_size_px)
 }
 
@@ -113,39 +130,49 @@ mod tests {
         }
     }
 
+    // The verdict, EMITTED from the declaration rather than remembered — the
+    // generated `Inherited` check R1365 forgot for five of its slots.
+    crate::provider_slot_tests!(
+        r1366_3_monospace_metrics_inherits,
+        super::MONOSPACE_METRICS,
+        || -> Rc<dyn MonospaceMetrics> { Rc::new(FixedMetrics) }
+    );
+
     #[test]
     fn null_default_measures_none() {
         // No provider seeded: the lazy default is NullMonospaceMetrics.
         let owner = Owner::new();
-        assert_eq!(owner.monospace_metrics().monospace_cell(32), None);
+        assert_eq!(MONOSPACE_METRICS.resolve(&owner).monospace_cell(32), None);
     }
 
     #[test]
     fn provided_metrics_are_returned() {
         let owner = Owner::new();
-        owner.provide_monospace_metrics(Rc::new(FixedMetrics));
+        MONOSPACE_METRICS.provide(&owner, Rc::new(FixedMetrics));
         assert_eq!(
-            owner.monospace_metrics().monospace_cell(32),
+            MONOSPACE_METRICS.resolve(&owner).monospace_cell(32),
             CellMetric::new(16, 32)
         );
     }
 
     #[test]
-    fn provide_is_first_write_wins() {
+    #[should_panic(expected = "already seeded")]
+    fn r1366_3_a_late_seed_panics_where_it_used_to_be_dropped() {
+        // The counterfactual of R1003's `provide_is_first_write_wins`, which
+        // asserted a second seed was a SILENT no-op leaving every reader on the
+        // first provider. A dropped metrics seed is a grid that measures nothing
+        // and renders loose (R1002: only the measured metric is snug), and a
+        // shell that seeds twice cannot know which provider a producer's `view`
+        // resolved — a wiring bug, not an idempotent convenience.
         let owner = Owner::new();
-        owner.provide_monospace_metrics(Rc::new(FixedMetrics));
-        owner.provide_monospace_metrics(Rc::new(NullMonospaceMetrics));
-        // The first (FixedMetrics) stays installed; the second is dropped.
-        assert_eq!(
-            owner.monospace_metrics().monospace_cell(32),
-            CellMetric::new(16, 32)
-        );
+        MONOSPACE_METRICS.provide(&owner, Rc::new(FixedMetrics));
+        MONOSPACE_METRICS.provide(&owner, Rc::new(NullMonospaceMetrics));
     }
 
     #[test]
     fn measured_resolves_inside_owner_run() {
         let owner = Owner::new();
-        owner.provide_monospace_metrics(Rc::new(FixedMetrics));
+        MONOSPACE_METRICS.provide(&owner, Rc::new(FixedMetrics));
         let got = owner.run(|| measured_monospace_cell(40));
         assert_eq!(got, CellMetric::new(20, 40));
     }
@@ -159,14 +186,14 @@ mod tests {
 
     #[test]
     fn r1365_1_a_child_scope_resolves_the_shells_real_metrics() {
-        // R1365.1 §5.22 — the verdict, not the row. Until this test, the only
-        // thing asserting that this slot inherits was a markdown row in
-        // `cache_inherited`'s rustdoc; a silent revert to plain `cache` passed
-        // every gate. `Owner::new_child` is what R680 runs a secondary window's
-        // view in, and the Null default here measures nothing, so a TUI-side
-        // secondary would silently lose its cell metrics.
+        // R1365.1 §5.22 — the verdict through the BINDING's path. The generated
+        // test above asserts inheritance through `resolve`; this asserts the same
+        // through `measured_monospace_cell`, so a hook that stopped delegating to
+        // the slot could not pass both. `Owner::new_child` is what R680 runs a
+        // secondary window's view in, and the Null default here measures nothing,
+        // so a TUI-side secondary would silently lose its cell metrics.
         let root = Owner::new();
-        root.provide_monospace_metrics(Rc::new(FixedMetrics));
+        MONOSPACE_METRICS.provide(&root, Rc::new(FixedMetrics));
 
         let window_scope = Owner::new_child(&root);
         let got = window_scope.run(|| measured_monospace_cell(40));

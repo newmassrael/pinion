@@ -1190,8 +1190,7 @@ impl Owner {
     ///
     /// # Why this exists, and why it is additive
     ///
-    /// A binding's provider slots still on plain [`cache`](Self::cache) — the
-    /// shell's [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) and
+    /// A binding's provider slots still on plain [`cache`](Self::cache) —
     /// `pinion-shell`'s own window-control sink among them — are seeded ONCE, on
     /// the root owner, at boot. `cache` looks only at the scope it is called on,
     /// so every one of those resolves its lazy **Null default** from a child
@@ -1199,11 +1198,12 @@ impl Owner {
     /// deferred R680 atomic changes exactly that (`window_owner(id).run(..)`),
     /// and on the day it lands a secondary window's control sink would silently
     /// do nothing — precisely the class of bug R1362 existed to fix (there it
-    /// was a secondary window's Quit button; [`QuitSink`](super::quit::QuitSink)
-    /// and [`RepaintSink`](super::repaint::RepaintSink) have since moved to
-    /// [`ProviderSlot`](super::provider_slot::ProviderSlot), which resolves
-    /// through `cache_inherited` and is immune), resurrected by a change that
-    /// never mentions windowing.
+    /// was a secondary window's Quit button; [`QuitSink`](super::quit::QuitSink),
+    /// [`RepaintSink`](super::repaint::RepaintSink) and
+    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) have since
+    /// moved to [`ProviderSlot`](super::provider_slot::ProviderSlot), which
+    /// resolves through `cache_inherited` and is immune), resurrected by a
+    /// change that never mentions windowing.
     ///
     /// # Which slots inherit
     ///
@@ -1227,7 +1227,6 @@ impl Owner {
     ///
     /// | slot | how the shell drives root | inherits |
     /// |---|---|---|
-    /// | `monospace_metrics` | seeds at boot | yes |
     /// | `window_control_sink` | seeds at boot (in `pinion-shell`) | yes |
     /// | `local_task_pump` | POLLS it every frame | yes |
     /// | `pane_viewport_registry` | PUBLISHES pane rects into it | yes |
@@ -1341,48 +1340,6 @@ impl Owner {
         // root would let an unseeded child permanently poison the slot for the
         // whole tree via `cache`'s first-write-wins.
         self.cache(key, factory)
-    }
-
-    /// R1003 §5.36 — the owner-scoped
-    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics): the
-    /// view-time "measure the resolved monospace cell" capability.
-    ///
-    /// Returns whatever the shell seeded via [`Self::provide_monospace_metrics`]
-    /// at boot, or a [`NullMonospaceMetrics`](super::font_metrics::NullMonospaceMetrics)
-    /// (measures `None`) when none was provided (headless / RPC / unit tests).
-    /// Another hand-rolled pair awaiting its R1366.x migration to
-    /// [`ProviderSlot`](super::provider_slot::ProviderSlot); the metrics
-    /// provider stays on the UI thread, so it rides an `Rc` (no
-    /// `Send + Sync`). Read in `view` via
-    /// [`measured_monospace_cell`](super::font_metrics::measured_monospace_cell).
-    #[must_use]
-    pub fn monospace_metrics(&self) -> std::rc::Rc<dyn super::font_metrics::MonospaceMetrics> {
-        self.cache_inherited::<super::font_metrics::MonospaceMetricsHolder, _>(
-            super::font_metrics::MONOSPACE_METRICS_KEY,
-            || {
-                super::font_metrics::MonospaceMetricsHolder(std::rc::Rc::new(
-                    super::font_metrics::NullMonospaceMetrics,
-                ))
-            },
-        )
-        .0
-        .clone()
-    }
-
-    /// R1003 §5.36 — seed the owner-scoped
-    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics). The shell
-    /// calls this once at boot **before** the binding factories / first `view`
-    /// run, so the first [`measured_monospace_cell`](super::font_metrics::measured_monospace_cell)
-    /// read resolves to the real provider rather than the Null default.
-    /// Idempotent-by-first-write (like every [`Self::cache`] slot).
-    pub fn provide_monospace_metrics(
-        &self,
-        metrics: std::rc::Rc<dyn super::font_metrics::MonospaceMetrics>,
-    ) {
-        self.cache::<super::font_metrics::MonospaceMetricsHolder, _>(
-            super::font_metrics::MONOSPACE_METRICS_KEY,
-            move || super::font_metrics::MonospaceMetricsHolder(metrics),
-        );
     }
 
     /// R1006 §5.23 §5.22 — the owner-scoped viewport-size

@@ -567,9 +567,13 @@ impl<V: WidgetCore> CoreShell<V> {
         // resolves a real font-correct `CellMetric` (a `Scene::TextGrid`
         // producer pairs it with `with_font_size_px`). Pure pinion-text (no
         // winit), so the runtime owns it directly — no shell hand-in needed.
-        root_owner.provide_monospace_metrics(std::rc::Rc::new(
-            pinion_text::LayoutCacheMonospaceMetrics::new(),
-        ));
+        // R1366.3 moved it to a `ProviderSlot`, so a seed after any view has
+        // read the slot now PANICS (`already seeded`) rather than being dropped
+        // — which is why this must run before the factories, not just SHOULD.
+        pinion_core::MONOSPACE_METRICS.provide(
+            &root_owner,
+            std::rc::Rc::new(pinion_text::LayoutCacheMonospaceMetrics::new()),
+        );
         // R1006 §5.23 §5.22 — seed the viewport-size Signal before the
         // factories / first `view`, so the first `use_viewport_size()` read
         // resolves the shell's signal rather than the lazy `(0, 0)` default.

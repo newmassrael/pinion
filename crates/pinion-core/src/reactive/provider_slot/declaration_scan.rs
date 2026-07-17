@@ -50,7 +50,6 @@
 /// **This list may only shrink.** Each entry is one R1366.x migration. Do not add
 /// to it: a NEW slot has no excuse, because the type exists now.
 const LEGACY_SLOT_KEYS: &[&str] = &[
-    "__pinion.reactive.monospace_metrics",
     "__pinion.reactive.viewport_size",
     "__pinion.reactive.pane_viewport_registry",
     "__pinion.reactive.local_task_pump",
@@ -295,7 +294,7 @@ fn r1366_the_legacy_list_may_only_shrink() {
     // compiler-checked verdict.
     assert_eq!(
         LEGACY_SLOT_KEYS.len(),
-        8,
+        7,
         "the legacy list changed. It may only SHRINK — if you migrated a slot, \
          lower this number; if you are adding a key here, do not: declare it as \
          a `ProviderSlot` instead. Remaining: {LEGACY_SLOT_KEYS:?}",
