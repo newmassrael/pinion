@@ -790,6 +790,14 @@ impl KeyWireState {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeferredInput {
+    /// R1364 §5.55 §2 #2 — `app/quit`: the AI asked the APPLICATION to end.
+    ///
+    /// Carries nothing, deliberately: a quit addresses no window (§5.55 — one
+    /// per process), and it carries no cursor because it is not an input event
+    /// at all. The embedder routes it to the shell's ONE quit arm, which offers
+    /// it to `WidgetCore::app_quit_requested` before any exit — so this variant
+    /// is a *request*, exactly like the binding's own `QuitSink`.
+    Quit,
     /// `scene/wheel` injection. The embedder applies
     /// `cursor_moved(MOUSE, x, y)` and then `wheel(MOUSE, delta)` so
     /// the router has a fresh cursor before the wheel arm fires
@@ -854,8 +862,14 @@ pub enum DeferredInput {
     ///   an allowlist, is what makes the injection safe. An AI's legitimate peer
     ///   of Escape is `app/quit`, which passes the same
     ///   `WidgetCore::app_quit_requested` veto every other producer does.
-    /// * `Tab` reaches the focused widget and does NOT traverse focus — a §2 #2
-    ///   parity gap the old sentence concealed, since a user's Tab does traverse.
+    /// * `Tab` reaches the focused widget and does NOT go on to traverse focus.
+    ///   The winit Tab is a COMPOSITE — `AppShell::handle_key_press` offers Tab
+    ///   to the focused widget first and traverses only if it declines (that is
+    ///   how a code editor's Tab indents) — and this method mirrors only the
+    ///   first half. §2 #2 still holds: the `focus/next` /
+    ///   `focus/prev` methods drive the same `FocusManager` the winit Tab reaches, so an
+    ///   AI has focus traversal; it simply asks for it by name rather than by
+    ///   pressing Tab and hoping.
     ///
     /// R666 §5.37 — `scene/key` auto-discriminates by
     /// `key.chars().count()`: single-codepoint strings (`"a"`,
@@ -1694,6 +1708,14 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 HandlerKind::Mutate,
             )
         }
+        "app/quit" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (handle_app_quit(inbox), HandlerKind::Mutate)
+        }
         "scene/pointer_leave" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -2361,6 +2383,49 @@ fn handle_scene_pointer_leave(inbox: Option<&mut Vec<DeferredInput>>) -> Result<
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     inbox.push(DeferredInput::PointerLeave);
+    Ok(Value::Null)
+}
+
+/// R1364 §5.55 §2 #2 — `app/quit`: ask the APPLICATION to end.
+///
+/// Takes no params, and specifically no `window`: a quit addresses nothing.
+/// That is §5.55's whole point — `window/*` verbs need to say WHICH window
+/// because an app has N of them; a quit is one per process, so an id would be a
+/// category error. (This is the wire mirror of `QuitSink::request_quit()` taking
+/// no argument while `WindowControlSink::request_window_control` takes an id.)
+///
+/// # What `result` means
+///
+/// `null` on success means **the quit was requested**, not "the app exited" —
+/// the honest answer, and the reason this queues rather than exits.
+///
+/// It could not exit here even if it wanted to: `AppShell::request_quit` needs an
+/// `&ActiveEventLoop`, which only winit callbacks hold, and this dispatcher runs
+/// on the winit-free `ShellCore` (that is what makes the §2 #6 GUI/TUI dual
+/// possible). So the request rides the same queue-then-drain the `scene/click`
+/// window-control path uses: the shell drains it AFTER the response is written,
+/// which is exactly what lets the client see this `result` before the process
+/// goes away. A method that "returned" only by killing the process would be
+/// unobservable, and an AI could never distinguish success from a crash.
+///
+/// # Not a privileged exit
+///
+/// The drained request lands on `AppShell::request_quit` — the ONE arm — so it
+/// passes `WidgetCore::app_quit_requested` first, exactly like `Escape`, an
+/// unhandled primary-window close, the last-window policy, and a binding's own
+/// `QuitSink`. An AI gets no exit a user's Escape does not, and an unsaved-changes
+/// gate refuses it identically.
+///
+/// R1362's atomic caveat argued the opposite — that such a method "would hand an
+/// AI a privileged exit no user input path grants". That was wrong twice over:
+/// for an OS-decorated window the peer path is the X button, which R1362 itself
+/// unified into that same arm, and `request_quit`'s veto is producer-agnostic, so
+/// any new producer inherits it for free. R1364.4 is that caveat's correction.
+fn handle_app_quit(inbox: Option<&mut Vec<DeferredInput>>) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    inbox.push(DeferredInput::Quit);
     Ok(Value::Null)
 }
 

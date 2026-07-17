@@ -484,6 +484,17 @@ pub struct ShellCore<V: WidgetView> {
     /// directly via [`Self::take_pending_window_controls`] (there is no winit
     /// arm to fire in a headless harness — the queue IS the routing decision).
     pending_window_controls: Vec<(String, pinion_overlay::WindowControl)>,
+
+    /// R1364 §5.55 §2 #2 — an `app/quit` arrived and the windowed shell has not
+    /// drained it yet.
+    ///
+    /// A `bool`, not a queue, because a quit is idempotent and one per process:
+    /// two `app/quit` calls in one dispatch are one request to end, whereas two
+    /// window controls are two distinct operations on possibly-distinct windows.
+    /// The shape mirrors the verb — §5.55's whole claim is that app lifecycle is
+    /// not a window operation, and the state that carries it should not pretend
+    /// otherwise.
+    pending_quit: bool,
 }
 
 /// R763 §5.36 §5.22 — shell-owned state of an active pointer text
@@ -620,6 +631,7 @@ impl<V: WidgetView> ShellCore<V> {
             os_focused_window: None,
             key_press_owner: HashMap::new(),
             pending_window_controls: Vec::new(),
+            pending_quit: false,
         };
         // (R1020 §5.39) Seed the focus enumeration from the binding's first
         // view — the scene-derived source the per-frame paint refresh uses —
@@ -718,6 +730,22 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn take_pending_window_controls(&mut self) -> Vec<(String, pinion_overlay::WindowControl)> {
         std::mem::take(&mut self.pending_window_controls)
+    }
+
+    /// R1364 §5.55 §2 #2 — take the pending `app/quit`, if one arrived.
+    ///
+    /// The peer of [`Self::take_pending_window_controls`] for app lifecycle. The
+    /// windowed shell calls it after writing the RPC response and routes a `true`
+    /// into `AppShell::request_quit`, so the AI's quit passes
+    /// [`WidgetCore::app_quit_requested`](pinion_core::WidgetCore::app_quit_requested)
+    /// exactly as `Escape` and a binding's own `QuitSink` do.
+    ///
+    /// Headless harnesses (no winit) assert this directly: the flag IS the
+    /// routing decision, and the winit execution arm is the thin already-covered
+    /// remainder — the same argument `take_pending_window_controls` makes.
+    #[must_use]
+    pub fn take_pending_quit(&mut self) -> bool {
+        std::mem::take(&mut self.pending_quit)
     }
 
     /// R1025 §5.35 — read the pointer-capture lock on the addressed window
@@ -1972,10 +2000,12 @@ impl<V: WidgetView> ShellCore<V> {
     /// R1364 — this doc used to open "`Tab` never reaches this method", which
     /// was false about THIS method specifically: `Self::drain_key_for_window`,
     /// the RPC `scene/key` arm, calls it directly, and `handle_scene_key` has no
-    /// allowlist. A physical `Tab` never reaches it (`AppShell::handle_key_press`
-    /// reserves it for [`Self::handle_focus_traverse`]); an injected one always
-    /// does. That asymmetry is a §2 #2 parity gap, and stating it plainly is the
-    /// first step to closing it. Pinned by `dispatch_core.rs`'s
+    /// allowlist. A physical `Tab` reaches this method only when the focused
+    /// widget declines it — `AppShell::handle_key_press` offers it first and
+    /// falls through to [`Self::handle_focus_traverse`] — whereas an injected one
+    /// always arrives and never falls through. §2 #2 is intact regardless: the
+    /// `focus/next` / `focus/prev` methods drive the same `FocusManager`, so an
+    /// AI asks for traversal by name. Pinned by `dispatch_core.rs`'s
     /// `r1364_shell_reserved_keys_are_injectable`.
     ///
     /// `Escape` reaches this method two ways: R693 §5.39 routes a physical one
@@ -2833,6 +2863,18 @@ impl<V: WidgetView> ShellCore<V> {
                 }
                 DeferredInput::FileDrop { ref path } => {
                     self.file_drop_for_window(window_id, path);
+                }
+                // R1364 §5.55 §2 #2 — `app/quit`. Recorded, never executed here:
+                // ending the app needs an `&ActiveEventLoop` that only winit
+                // callbacks hold, and this substrate is winit-free for the §2 #6
+                // dual. `AppShell` drains it after the response write, so the
+                // client sees its `result` before the process goes away.
+                //
+                // NOT scoped by `window_id`: a quit addresses no window. This is
+                // the one arm in this per-window drain that ignores the scope,
+                // and that asymmetry is §5.55 showing through the wire.
+                DeferredInput::Quit => {
+                    self.pending_quit = true;
                 }
                 _ => {}
             }

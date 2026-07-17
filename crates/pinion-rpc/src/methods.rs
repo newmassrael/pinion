@@ -78,6 +78,7 @@ pub enum MethodOcc {
 /// and asserts set-equality), so adding/retagging a method without updating
 /// this catalog fails the test.
 pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
+    ("app/quit", MethodOcc::Mutate),
     ("focus/get", MethodOcc::Read),
     ("focus/next", MethodOcc::Read),
     ("focus/prev", MethodOcc::Read),

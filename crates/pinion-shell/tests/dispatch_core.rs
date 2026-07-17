@@ -5098,14 +5098,20 @@ mod r1364_shell_reserved_keys_are_injectable {
     //! so both strings ride the drain into `ShellCore::handle_named_key`, the
     //! very method whose doc says `Tab` never reaches it.
     //!
-    //! The claims were not merely wrong, they were CONCEALING a real §2 #2
-    //! parity gap, which is why this pins behaviour rather than only correcting
-    //! prose. "Shell-reserved" is a property of the WINIT path alone
+    //! "Shell-reserved" is a property of the WINIT path alone
     //! (`AppShell::handle_key_press` intercepts both before the substrate); the
-    //! RPC path has no such gate, so a user's Tab traverses focus while an AI's
-    //! Tab is delivered to the focused widget. This test says what is true; the
-    //! parity itself is a focus-axis question, registered as a carry rather than
-    //! silently re-hidden behind a comfortable sentence.
+    //! RPC path has no such gate, which is why this pins behaviour rather than
+    //! only correcting prose.
+    //!
+    //! What the asymmetry is, stated exactly — the first version of this comment
+    //! called it "a §2 #2 parity gap", which was an overstatement of my own,
+    //! written without reading the method catalog, in the round whose whole
+    //! subject is unverified claims. `focus/next` / `focus/prev` exist and drive
+    //! the same `FocusManager` the winit Tab reaches, so an AI HAS focus
+    //! traversal and §2 #2 holds. The real, narrower fact is that the winit Tab
+    //! is a COMPOSITE (offer to the focused widget, traverse only if it
+    //! declines — that is how a code editor's Tab indents) and `scene/key`
+    //! reproduces only its first half.
 
     use super::*;
 
@@ -5167,6 +5173,102 @@ mod r1364_shell_reserved_keys_are_injectable {
         assert!(
             reply.is_some_and(|r| !r.contains("\"error\"")),
             "the injection itself succeeds; it simply has no exit to reach",
+        );
+    }
+}
+
+#[cfg(test)]
+mod r1364_app_quit_rpc {
+    //! R1364 §5.55 §2 #2 — `app/quit`: the AI's peer of Escape and the OS X.
+    //!
+    //! Six in-tree docs asserted this method existed before it did — four
+    //! written by R1363, two by R1364.3, in the round about unverified claims.
+    //! It exists now, and these say what it does.
+    //!
+    //! The queue IS the routing decision (the argument
+    //! `take_pending_window_controls` already makes): ending the app needs an
+    //! `&ActiveEventLoop` only winit callbacks hold, so a headless `#[test]`
+    //! asserts the flag and the winit arm is the thin remainder.
+
+    use super::*;
+
+    #[test]
+    fn r1364_app_quit_queues_a_quit_and_answers_before_it_happens() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let req = r#"{"jsonrpc":"2.0","method":"app/quit","params":{},"id":1}"#;
+        let reply = core.dispatch_rpc(req, &mut no_resize).expect("a reply");
+
+        assert!(
+            !reply.contains("\"error\""),
+            "app/quit must answer, not die: the response is written BEFORE the \
+             shell drains the quit, which is the only way a client can tell \
+             success from a crash. Got: {reply}",
+        );
+        assert!(
+            core.take_pending_quit(),
+            "the quit must be queued for the shell's ONE arm",
+        );
+        assert!(
+            !core.take_pending_quit(),
+            "take must consume: a drained quit cannot fire twice",
+        );
+    }
+
+    #[test]
+    fn r1364_app_quit_takes_no_window_and_queues_no_window_control() {
+        // §5.55 on the wire: a quit addresses nothing, so it must NOT arrive as
+        // a window operation. Re-welding the two lifecycles fails this.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let req = r#"{"jsonrpc":"2.0","method":"app/quit","params":{},"id":1}"#;
+        let _ = core.dispatch_rpc(req, &mut no_resize);
+
+        assert!(
+            core.take_pending_window_controls().is_empty(),
+            "a quit is not a window control",
+        );
+        assert!(core.take_pending_quit());
+    }
+
+    #[test]
+    fn r1364_app_quit_is_idempotent_within_one_dispatch_batch() {
+        // A bool, not a queue: two asks to end are one end. The shape mirrors
+        // the verb — one quit per process.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        for id in 1..=3 {
+            let req = format!(r#"{{"jsonrpc":"2.0","method":"app/quit","params":{{}},"id":{id}}}"#);
+            let _ = core.dispatch_rpc(&req, &mut no_resize);
+        }
+        assert!(core.take_pending_quit());
+        assert!(!core.take_pending_quit(), "three asks, one quit");
+    }
+
+    #[test]
+    fn r1364_app_quit_is_in_the_self_describing_catalog() {
+        // §2 #2 — a method an AI cannot discover is not an AI path. `rpc/methods`
+        // is the catalog, and methods.rs's own source-text cross-check keeps it
+        // honest against the router; this asserts the wire surface directly.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let req = r#"{"jsonrpc":"2.0","method":"rpc/methods","id":1}"#;
+        let reply = core.dispatch_rpc(req, &mut no_resize).expect("a reply");
+        assert!(
+            reply.contains("app/quit"),
+            "app/quit must be discoverable in rpc/methods. Got: {reply}",
         );
     }
 }

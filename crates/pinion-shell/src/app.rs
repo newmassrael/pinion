@@ -1255,6 +1255,18 @@ impl<V: WidgetView> AppShell<V> {
         for (spec_id, control) in self.core.take_pending_window_controls() {
             self.apply_window_control(&spec_id, control, ControlProducer::RpcClick, event_loop);
         }
+        // R1364 §5.55 §2 #2 — an `app/quit` the drain recorded. AFTER the
+        // response write, for the same reason as the controls above and more
+        // sharply: this one may end the process, so a client that never saw its
+        // `result` could not tell success from a crash.
+        //
+        // Lands on `request_quit`, the ONE arm, so `app_quit_requested` refuses
+        // it exactly as it refuses Escape. An AI gets the peer of the user's
+        // Escape and the OS X — not a privileged exit past the unsaved-changes
+        // gate, which is what R1362's caveat feared and got backwards.
+        if self.core.take_pending_quit() {
+            self.request_quit(event_loop);
+        }
     }
 
     /// R1060 §5.12 §5.16 — capture the addressed window's live presented
@@ -2240,12 +2252,13 @@ impl<V: WidgetView> AppShell<V> {
     ///
     /// Producers: `Escape` (the standalone convention), an unhandled `Close` of
     /// the PRIMARY window, the last window closing under
-    /// [`WidgetView::quit_on_last_window_closed`], and a binding's own
-    /// [`QuitSink`](pinion_core::QuitSink) (via [`AppEvent::QuitRequested`]).
-    /// Every one is offered to
+    /// [`WidgetView::quit_on_last_window_closed`], a binding's own
+    /// [`QuitSink`](pinion_core::QuitSink) (via [`AppEvent::QuitRequested`]), and
+    /// R1364's `app/quit` RPC (§2 #2 — the AI's peer of Escape, drained here
+    /// after the response write). Every one is offered to
     /// [`pinion_core::WidgetCore::app_quit_requested`] first, so none of them —
-    /// not even the binding's own request — grants a privileged exit past the
-    /// binding's unsaved-changes gate.
+    /// not the binding's own request, not an AI's — grants a privileged exit past
+    /// the binding's unsaved-changes gate.
     ///
     /// Pre-R1363 there was no such arm: `Escape` called `event_loop.exit()`
     /// inline (bypassing every binding veto, in BOTH shells independently) and

@@ -24446,6 +24446,60 @@
         "Remaining §5.55 clearance (9 of 14): app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; the TUI's missing request_quit arm"
       ]
     },
+    "R1364.4": {
+      "decision_summary": "R1364.4 §5.55 §2 #2: app/quit — the AI gets the peer of Escape, and R1362's frozen caveat against it is corrected by the method itself",
+      "changes_bullets": [
+        "app/quit RPC (§2 #2): the AI now has the peer of Escape and the OS X. Takes NO params and specifically no window — a quit addresses nothing, which is §5.55 on the wire (window/* verbs must say WHICH; a quit is one per process, so an id would be a category error). The wire mirror of QuitSink::request_quit() taking no argument while request_window_control takes an id",
+        "Routes through AppShell::request_quit, the ONE arm, so it passes WidgetCore::app_quit_requested exactly as Escape, an unhandled primary close, the last-window policy, and a binding's own QuitSink do. An AI gets no exit a user does not, and an unsaved-changes gate refuses it identically",
+        "R1362.1 — THE FROZEN CAVEAT IS CORRECTED HERE, which is this entry's second purpose. R1362's carry_forward argued such a method \"would hand an AI a privileged exit no user input path grants\". Wrong twice: for an OS-decorated window the peer path IS the X button, which R1362 itself unified into that same arm as a producer; and request_quit's veto is producer-agnostic, so any new producer inherits it free. The audit half of the ledger is frozen, so a correcting entry is the only available fix (the R1361.1 / R1084.1 / R1075.1 pattern) — a plausible wrong argument in the SSOT outlives a bug, because the next round quotes it as settled",
+        "What `result` means, answered rather than sidestepped: `null` = \"the quit was REQUESTED\", not \"the app exited\". It could not exit inline even if it wanted to — request_quit needs an &ActiveEventLoop only winit callbacks hold, and the dispatcher runs on the winit-free ShellCore (what makes §2 #6 possible). So it queues, and the shell drains it AFTER the response write. A method that \"returned\" by killing the process would be unobservable: an AI could not distinguish success from a crash",
+        "pending_quit is a `bool`, not a Vec like pending_window_controls: two asks to end are one end, whereas two window controls are two operations on possibly-distinct windows. The state shape mirrors the verb's arity",
+        "DeferredInput::Quit is matched EXPLICITLY in the drain. The match ends in `_ => {}` for non_exhaustive, so a new variant compiles and silently no-ops — the arm is the whole feature, and its absence would have been invisible",
+        "The six in-tree docs that already asserted app/quit existed are now TRUE. Four were written by R1363 and TWO BY R1364.3 — I added forward references to a nonexistent method in the round about unverified claims. Either the method shipped or six docs were lies; it shipped"
+      ],
+      "verification_bullets": [
+        "4 new tests (r1364_app_quit_rpc): it answers before it happens + take consumes; it queues NO window control (re-welding the lifecycles fails it); three asks are one quit; and it is discoverable in rpc/methods — a method an AI cannot find is not an AI path",
+        "methods.rs's catalog_matches_dispatch_match_arms source-text cross-check validates the new catalog entry against the router's actual arm, so the wire surface and the dispatcher cannot disagree",
+        "Gates on the exact CI commands: fmt --all --check exit 0 + clippy --workspace --all-targets --features pinion-runtime/vello exit 0 + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items exit 0 + cargo test --workspace exit 0",
+        "The doc gate caught a broken intra-doc link for the FOURTH time this round (WidgetCore is not in scope in pinion-rpc). It has now paid for itself in every single sub-round, which is the retrospective case for R1362 having missed it"
+      ],
+      "impact_refs": [
+        "2",
+        "5.49",
+        "5.55"
+      ],
+      "carry_forward_bullets": [
+        "CORRECTION OF MY OWN R1364.3, made in-round rather than carried: R1364.3's docs called the scene/key Tab behaviour \"a §2 #2 parity gap\", which OVERSTATED it — I wrote that without reading the method catalog, in the round whose subject is exactly that habit. focus/next + focus/prev exist and drive the same FocusManager, so an AI HAS focus traversal and §2 #2 holds. The accurate, narrower fact: the winit Tab is a COMPOSITE (offer to the focused widget, traverse only if declined — that is how a code editor's Tab indents) and scene/key reproduces only the first half. Three docs + the test module comment corrected",
+        "OPEN (focus axis, not §5.55): should scene/key Tab mirror the composite (offer-then-traverse), or is the two-method surface (scene/key + focus/next) the more honest AI ergonomic? Lean toward the latter, but the docs must state which — today it silently does neither completely",
+        "Remaining §5.55 clearance (8 of 14): off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; the TUI's missing request_quit arm; and the scene/key Tab question above"
+      ],
+      "publishable_decision_summary": "R1364.4 §5.55 §2 #2: app/quit — the AI gets the peer of Escape, and R1362's frozen caveat against it is corrected by the method itself",
+      "publishable_changes_bullets": [
+        "app/quit RPC (§2 #2): the AI now has the peer of Escape and the OS X. Takes NO params and specifically no window — a quit addresses nothing, which is §5.55 on the wire (window/* verbs must say WHICH; a quit is one per process, so an id would be a category error). The wire mirror of QuitSink::request_quit() taking no argument while request_window_control takes an id",
+        "Routes through AppShell::request_quit, the ONE arm, so it passes WidgetCore::app_quit_requested exactly as Escape, an unhandled primary close, the last-window policy, and a binding's own QuitSink do. An AI gets no exit a user does not, and an unsaved-changes gate refuses it identically",
+        "R1362.1 — THE FROZEN CAVEAT IS CORRECTED HERE, which is this entry's second purpose. R1362's carry_forward argued such a method \"would hand an AI a privileged exit no user input path grants\". Wrong twice: for an OS-decorated window the peer path IS the X button, which R1362 itself unified into that same arm as a producer; and request_quit's veto is producer-agnostic, so any new producer inherits it free. The audit half of the ledger is frozen, so a correcting entry is the only available fix (the R1361.1 / R1084.1 / R1075.1 pattern) — a plausible wrong argument in the SSOT outlives a bug, because the next round quotes it as settled",
+        "What `result` means, answered rather than sidestepped: `null` = \"the quit was REQUESTED\", not \"the app exited\". It could not exit inline even if it wanted to — request_quit needs an &ActiveEventLoop only winit callbacks hold, and the dispatcher runs on the winit-free ShellCore (what makes §2 #6 possible). So it queues, and the shell drains it AFTER the response write. A method that \"returned\" by killing the process would be unobservable: an AI could not distinguish success from a crash",
+        "pending_quit is a `bool`, not a Vec like pending_window_controls: two asks to end are one end, whereas two window controls are two operations on possibly-distinct windows. The state shape mirrors the verb's arity",
+        "DeferredInput::Quit is matched EXPLICITLY in the drain. The match ends in `_ => {}` for non_exhaustive, so a new variant compiles and silently no-ops — the arm is the whole feature, and its absence would have been invisible",
+        "The six in-tree docs that already asserted app/quit existed are now TRUE. Four were written by R1363 and TWO BY R1364.3 — I added forward references to a nonexistent method in the round about unverified claims. Either the method shipped or six docs were lies; it shipped"
+      ],
+      "publishable_verification_bullets": [
+        "4 new tests (r1364_app_quit_rpc): it answers before it happens + take consumes; it queues NO window control (re-welding the lifecycles fails it); three asks are one quit; and it is discoverable in rpc/methods — a method an AI cannot find is not an AI path",
+        "methods.rs's catalog_matches_dispatch_match_arms source-text cross-check validates the new catalog entry against the router's actual arm, so the wire surface and the dispatcher cannot disagree",
+        "Gates on the exact CI commands: fmt --all --check exit 0 + clippy --workspace --all-targets --features pinion-runtime/vello exit 0 + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items exit 0 + cargo test --workspace exit 0",
+        "The doc gate caught a broken intra-doc link for the FOURTH time this round (WidgetCore is not in scope in pinion-rpc). It has now paid for itself in every single sub-round, which is the retrospective case for R1362 having missed it"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.49",
+        "5.55"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CORRECTION OF MY OWN R1364.3, made in-round rather than carried: R1364.3's docs called the scene/key Tab behaviour \"a §2 #2 parity gap\", which OVERSTATED it — I wrote that without reading the method catalog, in the round whose subject is exactly that habit. focus/next + focus/prev exist and drive the same FocusManager, so an AI HAS focus traversal and §2 #2 holds. The accurate, narrower fact: the winit Tab is a COMPOSITE (offer to the focused widget, traverse only if declined — that is how a code editor's Tab indents) and scene/key reproduces only the first half. Three docs + the test module comment corrected",
+        "OPEN (focus axis, not §5.55): should scene/key Tab mirror the composite (offer-then-traverse), or is the two-method surface (scene/key + focus/next) the more honest AI ergonomic? Lean toward the latter, but the docs must state which — today it silently does neither completely",
+        "Remaining §5.55 clearance (8 of 14): off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; the TUI's missing request_quit arm; and the scene/key Tab question above"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
