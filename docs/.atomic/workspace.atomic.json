@@ -24390,6 +24390,62 @@
         "Remaining §5.55 clearance (10 of 13): false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; TUI's missing request_quit arm"
       ]
     },
+    "R1364.3": {
+      "decision_summary": "R1364.3 §5.49 §2 #2: the keys the tree called un-injectable are injectable, and the false claim was hiding a real parity gap",
+      "changes_bullets": [
+        "Five rustdocs claimed Escape / Tab \"are not injectable\" / \"never reach this hook\". All false, and false since scene/key existed: handle_scene_key checks that `key` is non-empty and `state` is in vocabulary, and imposes NO allowlist, so both ride the drain into ShellCore::handle_named_key (substrate.rs drain_key_for_window calls it directly) and reach V::apply_key",
+        "The claims were CONCEALING a real §2 #2 parity gap, which is why this pins behaviour and not just prose. \"Shell-reserved\" is a property of the WINIT path alone (AppShell::handle_key_press intercepts both first). handle_focus_traverse is reachable ONLY from app.rs — so a user's Tab traverses focus and an AI's Tab is delivered to the focused widget. Registered as a carry (a focus-axis question), not silently re-hidden",
+        "3 tests pin the truth (r1364_shell_reserved_keys_are_injectable): an injected Tab reaches apply_key and does not traverse; an injected Escape reaches apply_key; an injected Escape cannot end the app. Zero tests injected either key before this round",
+        "Escape's asymmetry is STRUCTURAL, not an allowlist, and that is what makes injection safe: request_quit needs an &ActiveEventLoop that only winit callbacks hold, and the drain runs on the winit-free ShellCore. The AI's legitimate peer is app/quit, passing the same app_quit_requested veto — which is the next item, and why the gap is worth naming rather than papering over",
+        "Sites corrected: pinion-rpc dispatch.rs (the method an AI author reads), pinion-shell substrate.rs (the strongest falsehood — it sat on the very method the RPC drain calls), pinion-core widget_core.rs x3 (keybinding / apply_key / the modifier note — the hooks every binding author reads), text_field.rs",
+        "widget_core.rs and substrate.rs also still said Escape \"quits the window\" / \"event_loop.exit\". R1363 §5.55 made that false: Escape raises an APP quit through the veto, and nothing about it is a window operation",
+        "text_field.rs's \"unrecognized keys\" list was stale beyond the Escape claim, and the first fix I wrote for it was WRONG — caught by reading the code instead of trusting my own edit. \"Tab\" has had its own arm since set_tab_indents (returns false unless opted in, else indents) and \"Enter\" since R1268 auto-indent; only \"Escape\" still falls through, and it is rejected by the catch-all's single-codepoint test, not by any upstream reservation"
+      ],
+      "verification_bullets": [
+        "The exact CI commands: cargo fmt --all --check + clippy --workspace --all-targets --features pinion-runtime/vello + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items + cargo test --workspace, all exit 0",
+        "Ground truth established by TEST before any doc was touched, not by reading: 3 new tests in dispatch_core.rs drive real scene/key JSON through dispatch_rpc and assert against APPLY_KEY_LOG. They pass, which is what proves the five docs false",
+        "The premise was verified at the source: handle_scene_key's body has no allowlist, and drain_key_for_window (substrate.rs:2905) calls handle_named_key directly — the method whose own doc said Tab never reaches it",
+        "Two would-be false claims of MY OWN were caught mid-round by verifying instead of asserting: that TextField's defensive reject stops an injected Tab (it does not — Tab has an explicit arm), and the API name set_tab_indents / set_auto_indent (checked; both exist). The prior round's habit of publishing an unverified enumeration is the failure this round exists to end, including when I am the author"
+      ],
+      "impact_refs": [
+        "2",
+        "5.39",
+        "5.49",
+        "5.55"
+      ],
+      "carry_forward_bullets": [
+        "NEW CARRY (found in-round, was concealed by the false docs): a §2 #2 parity gap — an AI's scene/key Tab cannot traverse focus, while a user's Tab does. Truth now pinned by test. The fix is a focus-axis question (route the injected Tab through handle_focus_traverse, or add a focus/traverse method) and NOT a §5.55 item, so it is registered rather than folded into this round. Related: the PR-53 focus campaign",
+        "Escape's peer for the AI is app/quit (the next item), because the exit structurally cannot be reached from the winit-free drain",
+        "Remaining §5.55 clearance (9 of 14): app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; the TUI's missing request_quit arm"
+      ],
+      "publishable_decision_summary": "R1364.3 §5.49 §2 #2: the keys the tree called un-injectable are injectable, and the false claim was hiding a real parity gap",
+      "publishable_changes_bullets": [
+        "Five rustdocs claimed Escape / Tab \"are not injectable\" / \"never reach this hook\". All false, and false since scene/key existed: handle_scene_key checks that `key` is non-empty and `state` is in vocabulary, and imposes NO allowlist, so both ride the drain into ShellCore::handle_named_key (substrate.rs drain_key_for_window calls it directly) and reach V::apply_key",
+        "The claims were CONCEALING a real §2 #2 parity gap, which is why this pins behaviour and not just prose. \"Shell-reserved\" is a property of the WINIT path alone (AppShell::handle_key_press intercepts both first). handle_focus_traverse is reachable ONLY from app.rs — so a user's Tab traverses focus and an AI's Tab is delivered to the focused widget. Registered as a carry (a focus-axis question), not silently re-hidden",
+        "3 tests pin the truth (r1364_shell_reserved_keys_are_injectable): an injected Tab reaches apply_key and does not traverse; an injected Escape reaches apply_key; an injected Escape cannot end the app. Zero tests injected either key before this round",
+        "Escape's asymmetry is STRUCTURAL, not an allowlist, and that is what makes injection safe: request_quit needs an &ActiveEventLoop that only winit callbacks hold, and the drain runs on the winit-free ShellCore. The AI's legitimate peer is app/quit, passing the same app_quit_requested veto — which is the next item, and why the gap is worth naming rather than papering over",
+        "Sites corrected: pinion-rpc dispatch.rs (the method an AI author reads), pinion-shell substrate.rs (the strongest falsehood — it sat on the very method the RPC drain calls), pinion-core widget_core.rs x3 (keybinding / apply_key / the modifier note — the hooks every binding author reads), text_field.rs",
+        "widget_core.rs and substrate.rs also still said Escape \"quits the window\" / \"event_loop.exit\". R1363 §5.55 made that false: Escape raises an APP quit through the veto, and nothing about it is a window operation",
+        "text_field.rs's \"unrecognized keys\" list was stale beyond the Escape claim, and the first fix I wrote for it was WRONG — caught by reading the code instead of trusting my own edit. \"Tab\" has had its own arm since set_tab_indents (returns false unless opted in, else indents) and \"Enter\" since R1268 auto-indent; only \"Escape\" still falls through, and it is rejected by the catch-all's single-codepoint test, not by any upstream reservation"
+      ],
+      "publishable_verification_bullets": [
+        "The exact CI commands: cargo fmt --all --check + clippy --workspace --all-targets --features pinion-runtime/vello + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items + cargo test --workspace, all exit 0",
+        "Ground truth established by TEST before any doc was touched, not by reading: 3 new tests in dispatch_core.rs drive real scene/key JSON through dispatch_rpc and assert against APPLY_KEY_LOG. They pass, which is what proves the five docs false",
+        "The premise was verified at the source: handle_scene_key's body has no allowlist, and drain_key_for_window (substrate.rs:2905) calls handle_named_key directly — the method whose own doc said Tab never reaches it",
+        "Two would-be false claims of MY OWN were caught mid-round by verifying instead of asserting: that TextField's defensive reject stops an injected Tab (it does not — Tab has an explicit arm), and the API name set_tab_indents / set_auto_indent (checked; both exist). The prior round's habit of publishing an unverified enumeration is the failure this round exists to end, including when I am the author"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.39",
+        "5.49",
+        "5.55"
+      ],
+      "publishable_carry_forward_bullets": [
+        "NEW CARRY (found in-round, was concealed by the false docs): a §2 #2 parity gap — an AI's scene/key Tab cannot traverse focus, while a user's Tab does. Truth now pinned by test. The fix is a focus-axis question (route the injected Tab through handle_focus_traverse, or add a focus/traverse method) and NOT a §5.55 item, so it is registered rather than folded into this round. Related: the PR-53 focus campaign",
+        "Escape's peer for the AI is app/quit (the next item), because the exit structurally cannot be reached from the winit-free drain",
+        "Remaining §5.55 clearance (9 of 14): app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; the TUI's missing request_quit arm"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

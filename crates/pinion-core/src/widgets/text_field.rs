@@ -219,12 +219,21 @@ pub fn caret_rect(
 ///
 /// - Named keys not in the explicit recognized set (`"ArrowUp"`,
 ///   `"ArrowDown"`, `"PageUp"`, `"PageDown"`, `"F1"`..`"F12"`,
-///   `"Enter"`, `"Escape"`, `"Tab"`). The latter three are
-///   shell-reserved upstream (`"Tab"` advances focus, `"Escape"`
-///   quits the window, `"Enter"` will arrive on R56.1.h with the
-///   submit-class statechart event) and never reach this hook in
-///   practice; `apply_key` rejects defensively so a misrouted
-///   delivery does not silently insert a literal letter.
+///   `"Escape"`).
+///
+///   R1364 — this list used to include `"Enter"` and `"Tab"`, and to explain
+///   that they, with `"Escape"`, "are shell-reserved upstream … and never reach
+///   this hook in practice". Every part of that has since become false:
+///
+///   * `"Tab"` has had its own arm since the code-editor indent work — it
+///     returns `false` unless the field opted in via `set_tab_indents`, and
+///     otherwise indents / dedents the selection.
+///   * `"Enter"` has had its own arm since R1268 (the auto-indented newline).
+///   * `"Escape"` genuinely still lands here and is genuinely rejected — but by
+///     the catch-all's single-codepoint test, not by an upstream reservation.
+///     RPC `scene/key` carries no allowlist, so an injected `"Escape"` reaches
+///     this hook however "reserved" the winit path calls it. The defensive
+///     reject is therefore the LIVE contract, not a belt-and-braces margin.
 /// - Empty string.
 /// - Single-codepoint control chars (e.g. raw `"\t"` / `"\n"` —
 ///   the framework converts these to named keys at the input

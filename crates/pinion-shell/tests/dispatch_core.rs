@@ -5085,3 +5085,88 @@ mod multi_window_key_dispatch_gate {
         );
     }
 }
+
+#[cfg(test)]
+mod r1364_shell_reserved_keys_are_injectable {
+    //! R1364 §5.49 §5.39 §2 #2 — what `scene/key` actually does with the two
+    //! keys the tree calls "shell-reserved".
+    //!
+    //! Five rustdocs claimed `Escape` / `Tab` "are not injectable" / "never
+    //! reach this method". They are false, and had been for as long as
+    //! `scene/key` has existed: `handle_scene_key` validates that `key` is
+    //! non-empty and that `state` is in vocabulary, and imposes NO allowlist —
+    //! so both strings ride the drain into `ShellCore::handle_named_key`, the
+    //! very method whose doc says `Tab` never reaches it.
+    //!
+    //! The claims were not merely wrong, they were CONCEALING a real §2 #2
+    //! parity gap, which is why this pins behaviour rather than only correcting
+    //! prose. "Shell-reserved" is a property of the WINIT path alone
+    //! (`AppShell::handle_key_press` intercepts both before the substrate); the
+    //! RPC path has no such gate, so a user's Tab traverses focus while an AI's
+    //! Tab is delivered to the focused widget. This test says what is true; the
+    //! parity itself is a focus-axis question, registered as a carry rather than
+    //! silently re-hidden behind a comfortable sentence.
+
+    use super::*;
+
+    #[test]
+    fn r1364_injected_tab_reaches_apply_key_and_does_not_traverse_focus() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let tab = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":5.0},"key":"Tab"},"id":1}"#;
+        let _ = core.dispatch_rpc(tab, &mut no_resize);
+
+        let log = APPLY_KEY_LOG.lock().unwrap();
+        assert!(
+            log.iter().any(|(_, k)| k == "Tab"),
+            "`scene/key` has no allowlist, so an injected Tab is delivered to \
+             the focused widget's apply_key. Three rustdocs said this could not \
+             happen. Saw: {log:?}",
+        );
+    }
+
+    #[test]
+    fn r1364_injected_escape_reaches_apply_key() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let esc = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":5.0},"key":"Escape"},"id":1}"#;
+        let _ = core.dispatch_rpc(esc, &mut no_resize);
+
+        let log = APPLY_KEY_LOG.lock().unwrap();
+        assert!(
+            log.iter().any(|(_, k)| k == "Escape"),
+            "an injected Escape reaches apply_key — a modal binding's \
+             Escape-to-cancel is drivable by an AI, which is the §2 #2 point. \
+             Saw: {log:?}",
+        );
+    }
+
+    #[test]
+    fn r1364_an_injected_escape_cannot_end_the_app() {
+        // The counterpart of the two above, and the reason the termination map
+        // scores its Escape producer "not binding-drivable": `AppShell::request_quit`
+        // needs an `&ActiveEventLoop`, which only winit callbacks hold. The RPC
+        // drain runs on `ShellCore` — winit-free for the §2 #6 dual — so an
+        // injected Escape cannot reach the exit no matter what the widget does.
+        // That structural fact, not an allowlist, is what makes injection safe.
+        // The AI's legitimate peer of Escape is an `app/quit` method that passes
+        // the same `app_quit_requested` veto.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let esc = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":5.0},"key":"Escape"},"id":1}"#;
+        let reply = core.dispatch_rpc(esc, &mut no_resize);
+        assert!(
+            reply.is_some_and(|r| !r.contains("\"error\"")),
+            "the injection itself succeeds; it simply has no exit to reach",
+        );
+    }
+}

@@ -1969,13 +1969,24 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`Self::apply_key`]; widgets match on the W3C string in their
     /// `apply_key` impls.
     ///
-    /// `Tab` never reaches this method — it is shell-reserved in
-    /// `AppShell::handle_key_press` and routes through
-    /// [`Self::handle_focus_traverse`]. `Escape` normally quits the
-    /// window (`event_loop.exit`), but R693 §5.39 routes it *here* while
-    /// a modal focus trap is active ([`Self::focus_is_modal`]) so the
-    /// dialog binding's `apply_key` can map Escape → cancel instead of
-    /// terminating the app.
+    /// R1364 — this doc used to open "`Tab` never reaches this method", which
+    /// was false about THIS method specifically: `Self::drain_key_for_window`,
+    /// the RPC `scene/key` arm, calls it directly, and `handle_scene_key` has no
+    /// allowlist. A physical `Tab` never reaches it (`AppShell::handle_key_press`
+    /// reserves it for [`Self::handle_focus_traverse`]); an injected one always
+    /// does. That asymmetry is a §2 #2 parity gap, and stating it plainly is the
+    /// first step to closing it. Pinned by `dispatch_core.rs`'s
+    /// `r1364_shell_reserved_keys_are_injectable`.
+    ///
+    /// `Escape` reaches this method two ways: R693 §5.39 routes a physical one
+    /// here while a modal focus trap is active ([`Self::focus_is_modal`]) so the
+    /// dialog binding's `apply_key` can map Escape → cancel; and the RPC drain
+    /// delivers an injected one unconditionally. R1363 §5.55 — an unconsumed
+    /// physical Escape is an app QUIT (`AppShell::request_quit`, through the
+    /// `app_quit_requested` veto), NOT the window close this doc used to call
+    /// `event_loop.exit`. An injected Escape cannot reach that exit at all: it
+    /// needs an `&ActiveEventLoop`, and this substrate is winit-free for the
+    /// §2 #6 dual.
     pub fn handle_named_key(&mut self, key_str: &str) {
         self.handle_named_key_inner(key_str, false);
     }

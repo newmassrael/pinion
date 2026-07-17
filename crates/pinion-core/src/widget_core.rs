@@ -409,9 +409,14 @@ pub trait WidgetCore: 'static {
     /// Optional keyboard event mapping. The shell consults this on
     /// every key press whose W3C `KeyboardEvent.key` string the input
     /// bridge can produce; `None` means "no keybinding for this key"
-    /// and the shell falls through to [`Self::apply_key`]. `Esc` /
-    /// `Tab` / `Shift+Tab` are shell-reserved and never reach this
-    /// hook.
+    /// and the shell falls through to [`Self::apply_key`].
+    ///
+    /// R1364 — this used to say `Esc` / `Tab` / `Shift+Tab` "are shell-reserved
+    /// and never reach this hook". That is true of the WINIT path only. The RPC
+    /// `scene/key` method has no allowlist, so an injected `Escape` / `Tab` does
+    /// reach [`Self::apply_key`] (pinned by pinion-shell's
+    /// `r1364_shell_reserved_keys_are_injectable`). Write these hooks for the key
+    /// they name, not for the path you expect it to arrive by.
     ///
     /// Default returns `None` for every key — widgets without
     /// keyboard affordances need no override.
@@ -425,10 +430,18 @@ pub trait WidgetCore: 'static {
     /// consults this AFTER `keybinding` returns `None` for character
     /// keys, and as the *only* hook for non-character named keys
     /// (`ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown`, `Home`,
-    /// `End`, `PageUp`, `PageDown`, `Enter`, `Space`). `Escape` and
-    /// `Tab` / `Shift+Tab` are shell-reserved — `Escape` quits the
-    /// window, `Tab` advances the focus manager, neither reaches
-    /// this hook.
+    /// `End`, `PageUp`, `PageDown`, `Enter`, `Space`).
+    ///
+    /// R1364 §5.55 — `Escape` and `Tab` / `Shift+Tab` are shell-reserved ON THE
+    /// WINIT PATH: `AppShell::handle_key_press` raises Escape as an app QUIT
+    /// (through the `app_quit_requested` veto — R1363 §5.55; it does not "quit
+    /// the window", and nothing about it is a window operation) and routes Tab to
+    /// the focus manager. Both statements used to be written here as absolutes,
+    /// and both were false for the RPC path, which has no allowlist: an injected
+    /// `Escape` / `Tab` DOES reach this hook. Pinned by pinion-shell's
+    /// `r1364_shell_reserved_keys_are_injectable`. R693 §5.39 additionally routes
+    /// a physical `Escape` here while a modal focus trap is active, so a dialog
+    /// can map Escape → cancel rather than the app ending.
     ///
     /// `focused` carries the focus manager's currently-focused tag
     /// at dispatch time. Widgets that match against `focused` route
@@ -444,8 +457,9 @@ pub trait WidgetCore: 'static {
     /// — branch on the bits; widgets without modifier semantics
     /// ignore the parameter (`_modifiers` is the canonical no-op).
     /// Shell-reserved modifier shortcuts (`Shift+Tab` reverse focus,
-    /// `Ctrl+Q` / platform-quit) are consumed upstream and do not
-    /// reach this hook.
+    /// `Ctrl+Q` / platform-quit) are consumed upstream on the winit path — with
+    /// the same R1364 caveat as above: "upstream" is `AppShell`, so the RPC
+    /// injection path does not consume them.
     ///
     /// Implementations receive the authoritative state scene `&mut`
     /// and may walk it to the matching `Scene::External` to call

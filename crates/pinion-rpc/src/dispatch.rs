@@ -834,8 +834,28 @@ pub enum DeferredInput {
     /// `None` return the R51.187 scroll-key fallback fires for
     /// `ArrowUp/Down/Left/Right`, `PageUp/Down`, `Home`, `End`
     /// against the `ScrollNode` under the cursor. Mirrors the winit
-    /// `WindowEvent::KeyboardInput` arc with `Key::Named` — `Escape`
-    /// / `Tab` stay shell-reserved and are not injectable.
+    /// `WindowEvent::KeyboardInput` arc with `Key::Named`.
+    ///
+    /// R1364 — this used to end "`Escape` / `Tab` stay shell-reserved and are
+    /// not injectable", which was false from the day it was written.
+    /// `handle_scene_key` checks that `key` is non-empty and that `state` is in
+    /// vocabulary, and imposes NO allowlist: both strings ride the drain into
+    /// `ShellCore::handle_named_key` and reach `V::apply_key`. "Shell-reserved"
+    /// describes the WINIT path only, where `AppShell::handle_key_press`
+    /// intercepts them first. Pinned by
+    /// `dispatch_core.rs`'s `r1364_shell_reserved_keys_are_injectable`.
+    ///
+    /// What that means per key:
+    ///
+    /// * `Escape` reaches the focused widget (a modal binding's Escape-to-cancel
+    ///   IS drivable, which is the §2 #2 point) but can never END the app: the
+    ///   exit needs an `&ActiveEventLoop` that only winit callbacks hold, and
+    ///   this drain runs on the winit-free `ShellCore`. That structural fact, not
+    ///   an allowlist, is what makes the injection safe. An AI's legitimate peer
+    ///   of Escape is `app/quit`, which passes the same
+    ///   `WidgetCore::app_quit_requested` veto every other producer does.
+    /// * `Tab` reaches the focused widget and does NOT traverse focus — a §2 #2
+    ///   parity gap the old sentence concealed, since a user's Tab does traverse.
     ///
     /// R666 §5.37 — `scene/key` auto-discriminates by
     /// `key.chars().count()`: single-codepoint strings (`"a"`,
