@@ -231,18 +231,26 @@ fn resolve_window_control_sink(owner: &Owner) -> Arc<dyn WindowControlSink> {
 /// suspect quitting.
 ///
 /// R1365 — this sentence first read "is now discharged", full stop, which was an
-/// overstatement: R1364 fixed the four slots it had enumerated, and the
-/// enumeration was short. `scene_revision` was still root-only, with the same
-/// silent post-R680 failure one seam over. The prescription is discharged for
-/// the slot family as a whole only now that `Owner::cache_inherited`'s census
-/// table is machine-checked against the workspace's `__pinion.*` keys, which is
-/// what makes "all of them" a claim rather than a count.
+/// overstatement: R1364 fixed the slots it had enumerated, and the enumeration
+/// was short. `scene_revision` was still root-only, with the same silent
+/// post-R680 failure one seam over.
+///
+/// R1365.1 — and "discharged for the family" is still not a thing this doc can
+/// promise. `Owner::cache_inherited`'s census names a slot with no verdict, but
+/// it cannot see a slot that skips the `__pinion.` prefix (nothing enforces it),
+/// and it cannot tell a TRUE verdict from a false one — that is per-slot
+/// behavioural coverage, which 3 of the 8 inheriting slots have. The promise
+/// belongs to the `ProviderSlot<V>` declaration type (R1366), where the scope is
+/// a constructor argument and the prefix is a compile error. Until then this
+/// slot is fixed, tested, and the family is not certified.
 ///
 /// # Panics
 ///
 /// Panics when called outside an `Owner::run(...)` scope — call it from a `view`
-/// / `create_extra_externals` hook, both of which run inside the root
-/// `Owner::run` (the same shape as every other `use_*` hook).
+/// / `create_extra_externals` hook (the same shape as every other `use_*` hook).
+/// R1365.1 — this said both "run inside the root `Owner::run`"; the deferred
+/// R680 atomic makes that false for a secondary window's `view`, which is the
+/// hazard the paragraphs above are about.
 #[must_use]
 pub fn use_window_control_sink() -> Arc<dyn WindowControlSink> {
     let owner = Owner::current().expect("use_window_control_sink requires an active Owner scope");
@@ -342,6 +350,34 @@ mod tests {
         assert_eq!(
             *sink.0.lock().expect("poisoned"),
             vec![("main".to_owned(), WindowControl::Close)],
+        );
+    }
+
+    #[test]
+    fn r1365_1_a_child_scope_resolves_the_shells_real_window_control_sink() {
+        // R1365.1 §5.22 — the verdict, not the row. This slot is the one R1362
+        // and R1364 existed to fix, and until now the ONLY thing asserting that
+        // it inherits was a markdown row in `Owner::cache_inherited`'s rustdoc:
+        // a silent revert to plain `cache` passed all four gates. An audit of
+        // R1365 found 5 of the 8 `yes` slots in that state, this among them.
+        //
+        // `Owner::new_child` is exactly what R680 will run a secondary window's
+        // view in, and the default here is `NullWindowControlSink` — so the
+        // regression is a Close button that does nothing, with no panic and no
+        // log. That is the bug R1362 was written to kill.
+        let root = Owner::new();
+        let sink = Arc::new(RecordingSink::default());
+        provide_window_control_sink(&root, Arc::clone(&sink) as Arc<dyn WindowControlSink>);
+
+        let window_scope = Owner::new_child(&root);
+        window_scope
+            .run(|| use_window_control_sink().request_window_control("main", WindowControl::Close));
+
+        assert_eq!(
+            *sink.0.lock().expect("poisoned"),
+            vec![("main".to_owned(), WindowControl::Close)],
+            "a child scope resolved a NullWindowControlSink instead of the \
+             shell's — a secondary window's Close would silently no-op",
         );
     }
 }

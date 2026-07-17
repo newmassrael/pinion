@@ -302,18 +302,27 @@ pub(crate) struct OwnerInner {
     /// label, an active-tab highlight).
     ///
     /// An **eager direct field**, not an [`Owner::cache`] slot like
-    /// [`viewport_size_signal`](Owner::viewport_size_signal) — a *principled*
-    /// difference, because focus and the viewport are different KINDS of state:
+    /// [`viewport_size_signal`](Owner::viewport_size_signal). Focus is a
+    /// **binding-wide singular fact** (one focused tag per binding, across every
+    /// window). A binding is an owner *tree*, so the whole tree must share ONE
+    /// mirror: [`Owner::new`] mints it, and [`Owner::new_child`] threads the same
+    /// handle down (a child does not get its own). A field that is *inherited at
+    /// construction* is the natural carrier for that; a per-owner cache slot
+    /// would give each child its own empty mirror and break the binding-wide
+    /// read from a secondary window's scope.
     ///
-    /// * The viewport size is a **per-owner value** (a secondary window genuinely
-    ///   has its own size), so each owner lazily seeds its own cache slot.
-    /// * Focus is a **binding-wide singular fact** (one focused tag per binding,
-    ///   across every window). A binding is an owner *tree*, so the whole tree must
-    ///   share ONE mirror: [`Owner::new`] mints it, and [`Owner::new_child`] threads
-    ///   the same handle down (a child does not get its own). A field that is
-    ///   *inherited at construction* is the natural carrier for that; a per-owner
-    ///   cache slot would give each child its own empty mirror and break the
-    ///   binding-wide read from a secondary window's scope.
+    /// R1365.1 — this passage used to call the difference *principled*, on the
+    /// ground that "the viewport size is a per-owner value (a secondary window
+    /// genuinely has its own size)". That is the taxonomy
+    /// [`Owner::cache_inherited`] records as WRONG, and the parenthetical was
+    /// false as implemented besides: the only production
+    /// [`provide_viewport_size_signal`](Owner::provide_viewport_size_signal)
+    /// call is on `root_owner`, so a secondary window's scope seeds `(0, 0)` and
+    /// keeps it — R1006's documented "viewport unknown", not a size of its own.
+    /// The real predicate is who DRIVES the slot; see `cache_inherited`. Focus
+    /// still belongs in a field, for the reason above — the conclusion was right
+    /// and the rationale was hearsay, which is exactly how it survived a round
+    /// that was hunting this class in this file.
     ///
     /// The direct field also has no shell-injection story (the `FocusManager`
     /// publishes into whatever mirror the owner already carries, so there is
@@ -1228,8 +1237,13 @@ impl Owner {
     /// Rows are named by the slot key's suffix — `__pinion.<area>.<slot>` — so
     /// `provider_slot_census` can check this table against the workspace's key
     /// literals mechanically. It is an enumeration, and R1365 found it had
-    /// already drifted: it shipped with seven of the ten framework slots, and
-    /// one of the three it omitted (`scene_revision`) was a live R680 bug.
+    /// already drifted: rows naming slots no key spells, slots with no row, and
+    /// one omission (`scene_revision`) latently broken for R680. The census
+    /// names the drift when it recurs; the count is deliberately not repeated
+    /// here, because R1365's attempt to state it ("seven of the ten … the three
+    /// it omitted") was itself wrong — contradicted by the very test output the
+    /// same commit pasted into its ledger, which said four were missing and one
+    /// row was a phantom. If you want the number, run the test.
     ///
     /// | slot | how the shell drives root | inherits |
     /// |---|---|---|
@@ -1241,8 +1255,8 @@ impl Owner {
     /// | `pane_viewport_registry` | PUBLISHES pane rects into it | yes |
     /// | `scene_revision` | seeds at boot, then OBSERVES it to wake `scene/waitFor` | yes |
     /// | `waiter_registry` | parks and wakes `scene/waitFor` through it | yes |
-    /// | `viewport_size` | writes it, but the READ is primary-gated | **no** — see below |
-    /// | `frame_timings` | publishes into it, PRIMARY window only | **no** — see below |
+    /// | `viewport_size` | WRITES it, primary window only | **no** — see below |
+    /// | `frame_timings` | PUBLISHES into it, primary window only | **no** — see below |
     ///
     /// R1364.2 first published a different rule — "capabilities are binding-wide
     /// and inherit; values are per-owner and do not" — which is recorded here
@@ -1256,28 +1270,41 @@ impl Owner {
     /// argue about which bucket a slot falls in; "who drives it" is a fact you
     /// can grep.
     ///
-    /// The two `no` rows are exceptions to the CONSEQUENCE, not to the predicate:
-    /// the shell does drive both at root, but both reads are deliberately
-    /// **primary-gated**, so inheriting would hand a secondary window the
-    /// PRIMARY's data — confidently wrong — where a per-scope empty value is an
-    /// honest "no data". [`viewport_size_signal`](Self::viewport_size_signal) is
-    /// the R1006 seam (`pinion-shell`'s pane-publish notes and `pane_viewport`'s
-    /// module doc both say so); its per-scope `(0, 0)` is R1006's documented
-    /// "viewport unknown", which its contract already requires consumers to skip
-    /// on. `frame_timings` inherits that rule explicitly — `publish_frame_timings`
-    /// returns early for any non-primary window, because the holder is a single
-    /// per-owner slot and a second window's paint would chart an interleaving of
-    /// two windows' frames. An honest unknown beats a plausible lie. Both name
-    /// the same additive fix when a consumer needs it: a per-window-keyed holder.
+    /// The two `no` rows are exceptions to the CONSEQUENCE, not to the predicate.
+    /// The shell drives both at root, but its **WRITE** is primary-gated, so the
+    /// root's value is *the primary window's* — and inheriting it would hand a
+    /// secondary window the primary's data, confidently wrong, where a per-scope
+    /// empty value is an honest "no data".
+    ///
+    /// Be precise about which end is gated, because R1364 wrote "the READ is
+    /// primary-gated" and R1365 propagated it to three places: neither
+    /// [`use_viewport_size`](super::viewport::use_viewport_size) nor
+    /// `use_frame_timings` gates anything — they resolve from whatever scope
+    /// asks. It is the publisher that checks: `set_viewport_size` is called only
+    /// `if window_key == DEFAULT_WINDOW`, and `publish_frame_timings` returns
+    /// early for any non-primary window. The read only *ends up* primary-scoped
+    /// because the verdict is `no`, which makes "the read is gated" a restatement
+    /// of the conclusion rather than a reason for it.
+    ///
+    /// [`viewport_size_signal`](Self::viewport_size_signal) is the R1006 seam;
+    /// its per-scope `(0, 0)` is R1006's documented "viewport unknown", which its
+    /// contract already requires consumers to skip on. `frame_timings` is the
+    /// same shape: the holder is a single per-owner slot, so a second window's
+    /// paint would chart an interleaving of two windows' frames. An honest
+    /// unknown beats a plausible lie. Both name the same additive fix when a
+    /// consumer needs it: a per-window-keyed holder.
     ///
     /// `waiter_registry` has no binding-facing hook — the shell resolves it at
     /// root explicitly (`ShellCore::with_core`, `AppShell`'s park side), so no
     /// child scope can reach it and R680 cannot break it. It inherits anyway,
-    /// because "no caller resolves it off root *today*" is an argument from
-    /// current call sites, and that is verbatim the argument R1362 made for
-    /// `window_control_sink` ("not a live hazard today — every view runs under
-    /// root") that R1364 then had to pay off. The rule is applied uniformly or
-    /// it is not a rule.
+    /// and the reason is stronger than the precedent: `resolve_waiter_registry`
+    /// takes `&Owner`, so its TYPE already admits a child scope. "No caller
+    /// passes one today" is an argument about call sites for a function whose
+    /// signature says otherwise; YAGNI governs unbuilt features, not leaving an
+    /// already-accepted input partial. The precedent agrees — R1362 called this
+    /// slot family's root-only resolution "not a live hazard today" (its words),
+    /// reasoning from where the view fn happened to run, and R1364 paid for it —
+    /// but a rule applied only where it is currently load-bearing is not a rule.
     ///
     /// Scroll state, animations and every other slot the shell never touches keep
     /// plain `cache`: inheriting them would be the mirror-image bug.
@@ -3263,30 +3290,99 @@ mod r1364_cache_inherited_tests {
         };
         assert_eq!(*child.cache_inherited::<u32, _>("cap", || 99), 99);
     }
+
+    // R1365.1 — the two slots above are the MECHANISM; every test in this mod
+    // uses a synthetic `"cap"` key. R1365's ledger cited this mod as the
+    // behavioural enforcement of the census table's per-slot verdicts, which it
+    // has never been. These two are the real slots owned by this file: neither
+    // has a `provide_*`, so the shell seeds them by touching root
+    // (`CoreShell::new_with_seed`), and the walk cannot save a slot that does
+    // not exist yet — seed-at-root and resolve-inherited are both load-bearing.
+
+    #[test]
+    fn r1365_1_a_child_scope_resolves_the_roots_local_task_pump() {
+        let root = Owner::new();
+        let seeded = root.local_task_pump();
+        let window_scope = Owner::new_child(&root);
+        assert!(
+            std::rc::Rc::ptr_eq(&seeded, &window_scope.local_task_pump()),
+            "a child scope minted its own LocalTaskPump — the shell polls only \
+             the root's, so a secondary window's async work would never run",
+        );
+    }
+
+    #[test]
+    fn r1365_1_a_child_scope_reads_the_roots_pane_viewport_registry() {
+        // Behavioural rather than `ptr_eq`: the registry is returned by value
+        // (a cheap `Rc` handle inside), and what R1021 actually requires is that
+        // a publish into the ROOT's registry is what a pane's scope reads back.
+        let root = Owner::new();
+        root.seed_pane_viewport_registry();
+        root.pane_viewport_registry()
+            .signal_for(std::borrow::Cow::Borrowed("pane.left"))
+            .set((640, 480));
+
+        let window_scope = Owner::new_child(&root);
+        let seen = window_scope.run(|| crate::use_pane_viewport_size("pane.left"));
+
+        assert_eq!(
+            seen,
+            (640, 480),
+            "a child scope minted its own PaneViewportRegistry and read the \
+             (0, 0) unknown — R1021 requires ONE root instance every window \
+             publishes pane rects into (forcing consumer: sprag's R37 undock)",
+        );
+    }
 }
 
 #[cfg(test)]
 mod provider_slot_census {
-    //! R1365 §5.22 — the `cache_inherited` rustdoc table, machine-checked.
+    //! R1365 §5.22 — the `cache_inherited` rustdoc table, checked against the
+    //! prefixed key literals in the workspace.
     //!
-    //! The table is an ENUMERATION of the framework's provider slots, and R1364
-    //! spent six commits proving what happens to a hand-kept enumeration: its
-    //! own `ControlProducer` round found three of nine prose copies wrong at
-    //! HEAD, and its ledger froze a claim built from a `| head -6`-truncated
-    //! grep. The table shipped with seven of the ten `__pinion.*` slots, and one
-    //! of the three it omitted (`scene_revision`) was a live R680 bug: a
-    //! secondary window's producer would bump a private counter while every
-    //! parked `scene/waitFor` slept on the shell's.
+    //! The table is an ENUMERATION, and R1364 spent six commits proving what
+    //! happens to a hand-kept one. It had already drifted when R1365 found it:
+    //! rows naming slots that no key spells, slots with no row at all, and one
+    //! of the omissions (`scene_revision`) latently broken for R680. This test
+    //! reports the drift by name rather than leaving it to be re-discovered.
     //!
-    //! So the census is a source-text check, the shape `commit.rs:155` and
-    //! `external.rs:2052` already use here: the table cannot silently disagree
-    //! with the workspace, and slot #11 cannot land without a verdict. It is
-    //! source-text rather than a compiler check because the slots live in four
-    //! crates that `pinion-core` sits BELOW and cannot name.
+    //! # What this does NOT enforce (R1365.1, after an audit)
+    //!
+    //! R1365 shipped this module claiming "slot #11 cannot land without a
+    //! verdict". **That was false**, and it was the round's own sin: a coverage
+    //! claim asserted rather than checked, in the test written to end them.
+    //! `external.rs` states the cost in its own words — "a green test named for
+    //! a coverage it did not have, which is worse than no test". Three real
+    //! holes, none closable by a source-text scan:
+    //!
+    //! * **The `__pinion.` prefix is a convention, not a rule.** [`Owner::cache`]
+    //!   reserves nothing, and `text_scale.rs`'s `use_text_scale` — core-owned
+    //!   and binding-facing — already keys itself `"__r668_text_scale"`. A slot
+    //!   in that style is invisible here and this test stays green.
+    //! * **A key need not be a literal.** `cache` takes `impl Into<Cow<str>>`, so
+    //!   a `concat!` or `format!` key never appears to `match_indices`.
+    //! * **A row is not a key.** [`slot_of`] drops `<area>`, so
+    //!   `__pinion.reactive.viewport_size` and a future `__pinion.shell.viewport_size`
+    //!   would collapse onto one row with one verdict.
+    //!
+    //! Nor does it check that a verdict is TRUE — only that one exists. That is
+    //! a per-slot behavioural test, one per `yes` row, living in the file that
+    //! owns the slot and named `*_a_child_scope_*`. R1365 shipped 3 of the 8;
+    //! R1365.1 wrote the missing 5 after an audit found that the other five
+    //! verdicts were asserted by nothing but a markdown row, so reverting them
+    //! to plain `cache` passed all four gates. Each one is proven to bite by
+    //! reverting the slot it covers.
+    //!
+    //! All three holes close the same way, and it is a TYPE, not a scan: a
+    //! core-owned `ProviderSlot<V>` declaration carrying key + default + scope,
+    //! whose `const fn` constructor makes a non-`__pinion.` key an `E0080`
+    //! compile error and whose scope argument cannot be omitted — and which, as
+    //! a macro, could emit each slot's verdict test so it is not optional. That
+    //! is R1366. This scan is the fallback until it lands, and it should be
+    //! deleted when it does — keep it honest about its reach, not comprehensive.
 
     /// Slot keys are `__pinion.<area>.<slot>`; the table's rows are the `<slot>`
-    /// suffix. The two forms are deliberately different syntax, so the table can
-    /// never satisfy this check by quoting itself.
+    /// suffix. Lossy in `<area>` — see the module doc's third hole.
     fn slot_of(key: &str) -> Option<String> {
         let mut parts = key.split('.');
         let (Some("__pinion"), Some(_area)) = (parts.next(), parts.next()) else {
@@ -3296,9 +3392,21 @@ mod provider_slot_census {
         (!rest.is_empty()).then(|| rest.join("."))
     }
 
-    /// Every `"__pinion.…"` literal in the workspace. Built by walking source
-    /// text because a linked-crate reflection of this does not exist: the keys
-    /// are `pub(crate)` consts in crates above this one.
+    /// Every prefixed key literal in the workspace, found by walking source text.
+    /// A linked-crate reflection could not replace this: the census is
+    /// open-world, and a collector only ever sees the crates that got linked, so
+    /// a new crate's slot would be silently ABSENT rather than loudly missing —
+    /// converting a conventional hole into a silent one.
+    ///
+    /// R1365 gave a different reason: that the keys live "in four crates
+    /// `pinion-core` sits BELOW and cannot name". Both halves were false, and
+    /// the correction deliberately carries no replacement count — an
+    /// unenforceable number is what drifted in the first place, and this module
+    /// is the last place that should publish one. Two specifics, because they
+    /// killed the premise rather than dented it: most of these keys are declared
+    /// in `pinion-core` itself, which names them in code one screen from here;
+    /// and Cargo permits dev-dependency cycles, so even a key above this crate
+    /// is nameable from `#[cfg(test)]`. "Cannot name" was never the obstacle.
     fn keys_in_workspace() -> std::collections::BTreeSet<String> {
         // Assembled at runtime so this needle is not itself a slot literal the
         // walk would find in this file.
@@ -3374,11 +3482,15 @@ mod provider_slot_census {
     fn r1365_the_table_names_every_framework_slot() {
         let keys = keys_in_workspace();
         let rows = table_rows();
+        // NOT a vacuity guard: with `keys` empty the set-difference below already
+        // fails, every row landing in `phantom`. This fires when the walk cannot
+        // see the tree at all (the compile-time `CARGO_MANIFEST_DIR` no longer
+        // exists at run time), where the set-diff's message would send the reader
+        // hunting a drift that is really a missing checkout. R1365 claimed the
+        // vacuity reason; it was wrong about its own assertion.
         assert!(
-            keys.len() >= 10,
-            "the walk found only {} slot keys — it is not reading the workspace, \
-             and a census that finds nothing would pass vacuously",
-            keys.len(),
+            !keys.is_empty(),
+            "the walk found no slot keys at all — it is not reading the workspace",
         );
         let documented: std::collections::BTreeSet<String> = rows.keys().cloned().collect();
         let missing: Vec<&String> = keys.difference(&documented).collect();
@@ -3393,20 +3505,14 @@ mod provider_slot_census {
 
     #[test]
     fn r1365_every_slot_has_a_readable_verdict() {
-        // `table_rows` panics on an unreadable verdict, so this pins that the
-        // table is non-empty and both verdicts are actually in use — a table
-        // that drifted to all-`yes` would make the primary-gated exception
-        // silently unrepresentable.
+        // `table_rows` panics on an unreadable verdict, so reaching here means
+        // every row parsed. R1365.1 removed two assertions from this test that
+        // could not fail: `rows.len() == 10` (a hand-kept count, one round after
+        // R1364.1 turned "the producer count becomes a type" — and it would have
+        // false-FAILED on a legitimate slot #11 whose row the author correctly
+        // added), and an `any(yes) && any(no)` that the two `assert_eq!`s below
+        // already entail. An assertion that cannot fail is decoration.
         let rows = table_rows();
-        assert_eq!(
-            rows.len(),
-            10,
-            "expected the ten framework slots, got {rows:?}"
-        );
-        assert!(
-            rows.values().any(|v| *v) && rows.values().any(|v| !*v),
-            "the census must keep both verdicts live: {rows:?}",
-        );
         assert_eq!(
             rows.get("scene_revision"),
             Some(&true),

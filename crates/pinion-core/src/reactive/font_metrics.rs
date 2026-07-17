@@ -151,4 +151,25 @@ mod tests {
         // panic — distinct from the strict `use_*` hooks.
         assert_eq!(measured_monospace_cell(32), None);
     }
+
+    #[test]
+    fn r1365_1_a_child_scope_resolves_the_shells_real_metrics() {
+        // R1365.1 §5.22 — the verdict, not the row. Until this test, the only
+        // thing asserting that this slot inherits was a markdown row in
+        // `cache_inherited`'s rustdoc; a silent revert to plain `cache` passed
+        // every gate. `Owner::new_child` is what R680 runs a secondary window's
+        // view in, and the Null default here measures nothing, so a TUI-side
+        // secondary would silently lose its cell metrics.
+        let root = Owner::new();
+        root.provide_monospace_metrics(Rc::new(FixedMetrics));
+
+        let window_scope = Owner::new_child(&root);
+        let got = window_scope.run(|| measured_monospace_cell(40));
+
+        assert_eq!(
+            got,
+            CellMetric::new(20, 40),
+            "a child scope resolved the Null metrics instead of the shell's",
+        );
+    }
 }

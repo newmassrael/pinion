@@ -1147,10 +1147,14 @@ impl<V: WidgetView> AppShell<V> {
             }
         };
         // R1269 PR-50 §6.3 — async `scene/waitFor`: park or answer the frame
-        // before normal dispatch. The registry lives in the ONE root-Owner
-        // cache slot a binding's producer also resolves (`use_waiter_registry`),
-        // so a wait parked here and the `notify_changed` that wakes it share a
-        // single instance. `try_async_wait_for` claims only a `scene/waitFor`
+        // before normal dispatch. The registry lives in ONE slot, seeded on
+        // `root_owner` and resolved through `Owner::cache_inherited` (R1365), so
+        // a wait parked here and the `notify_changed` that wakes it share a
+        // single instance. R1365.1 — this said a binding's producer resolves it
+        // via `use_waiter_registry`. There is no such function, and R1269's
+        // ledger froze the same claim ("pinion-shell re-exports it"; it
+        // re-exports only `use_scene_revision`). A producer needs the REVISION,
+        // which is what it bumps; the registry is the shell's own park side. `try_async_wait_for` claims only a `scene/waitFor`
         // carrying a numeric `since` — every other frame (and the v0 busy-poll
         // waitFor) hands the reply back for the normal path below, byte-unchanged.
         let reply = {

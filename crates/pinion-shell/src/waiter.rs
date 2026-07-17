@@ -122,11 +122,33 @@ mod r1365_slot_inherits {
              scene/waitFor would sleep on the shell's token forever",
         );
 
-        // The property that matters is not identity for its own sake: a bump
-        // through the child must be the advance the shell's observer sees.
-        let before = seeded.current();
+        // R1365.1 — the wake, not the counter. The shell installs its observer
+        // on the token it resolved at boot (`ShellCore::with_core`); the failure
+        // this test exists for is a producer bumping something that observer is
+        // not watching. So install one HERE, on the root's token, and bump
+        // through the CHILD's handle.
+        //
+        // R1365 asserted `seeded.current() == before + 1` instead, which
+        // `ptr_eq` two lines up had already made unfailable — and then its
+        // ledger called that "the property, not just Arc identity". It was the
+        // identity, restated. An observer is the property.
+        let woken = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let sink = std::sync::Arc::clone(&woken);
+        assert!(
+            seeded.set_observer(move |rev| sink.store(rev, std::sync::atomic::Ordering::SeqCst)),
+            "the test must own the one observer slot",
+        );
         from_child.bump();
-        assert_eq!(seeded.current(), before + 1);
+        assert_eq!(
+            woken.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "a bump through the child scope did not reach the observer the \
+             shell installed on the root's token",
+        );
+        // Against `seeded.current()` rather than `1`, this assertion would be
+        // dead too: when the child mints its own token BOTH sides read 0 and it
+        // passes. A constant is what discriminates. (Verified by running it
+        // against plain `cache`.)
     }
 
     #[test]

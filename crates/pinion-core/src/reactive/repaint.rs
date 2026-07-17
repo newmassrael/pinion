@@ -172,4 +172,27 @@ mod tests {
         handle.join().expect("producer thread joins");
         assert_eq!(count.load(Ordering::SeqCst), 2);
     }
+
+    #[test]
+    fn r1365_1_a_child_scope_resolves_the_shells_real_repaint_sink() {
+        // R1365.1 §5.22 — the verdict, not the row. `cache_inherited`'s census
+        // table says this slot inherits; an audit found the table's row was the
+        // ONLY thing saying so for 5 of the 8 `yes` slots, this one included, so
+        // a silent revert to plain `cache` passed every gate. The mirror of
+        // `quit.rs`'s r1364 test, on the scope R680 will run a secondary
+        // window's view in.
+        let root = Owner::new();
+        let count = Arc::new(AtomicUsize::new(0));
+        root.provide_repaint_sink(Arc::new(CountingSink(Arc::clone(&count))));
+
+        let window_scope = Owner::new_child(&root);
+        window_scope.run(|| use_repaint_sink().request_repaint());
+
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "a child scope resolved a Null instead of the shell's sink — a \
+             secondary window's producer would wake nothing",
+        );
+    }
 }
