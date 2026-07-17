@@ -1225,6 +1225,12 @@ impl Owner {
     /// it, poll it, publish into it, write it — any of those. If it does, the
     /// slot must inherit, or a child scope silently desyncs from its driver.
     ///
+    /// Rows are named by the slot key's suffix — `__pinion.<area>.<slot>` — so
+    /// `provider_slot_census` can check this table against the workspace's key
+    /// literals mechanically. It is an enumeration, and R1365 found it had
+    /// already drifted: it shipped with seven of the ten framework slots, and
+    /// one of the three it omitted (`scene_revision`) was a live R680 bug.
+    ///
     /// | slot | how the shell drives root | inherits |
     /// |---|---|---|
     /// | `repaint_sink` | seeds at boot | yes |
@@ -1233,7 +1239,10 @@ impl Owner {
     /// | `window_control_sink` | seeds at boot (in `pinion-shell`) | yes |
     /// | `local_task_pump` | POLLS it every frame | yes |
     /// | `pane_viewport_registry` | PUBLISHES pane rects into it | yes |
-    /// | `viewport_size_signal` | writes it, but the READ is primary-gated | **no** — see below |
+    /// | `scene_revision` | seeds at boot, then OBSERVES it to wake `scene/waitFor` | yes |
+    /// | `waiter_registry` | parks and wakes `scene/waitFor` through it | yes |
+    /// | `viewport_size` | writes it, but the READ is primary-gated | **no** — see below |
+    /// | `frame_timings` | publishes into it, PRIMARY window only | **no** — see below |
     ///
     /// R1364.2 first published a different rule — "capabilities are binding-wide
     /// and inherit; values are per-owner and do not" — which is recorded here
@@ -1247,14 +1256,28 @@ impl Owner {
     /// argue about which bucket a slot falls in; "who drives it" is a fact you
     /// can grep.
     ///
-    /// [`viewport_size_signal`](Self::viewport_size_signal) is the one exception,
-    /// and it is an exception to the CONSEQUENCE, not the predicate: the shell
-    /// does drive it at root, but the R1006 seam is deliberately primary-gated
-    /// (`pinion-shell`'s pane-publish notes and `pane_viewport`'s module doc both
-    /// say so). Inheriting would hand a secondary window the PRIMARY's size —
-    /// confidently wrong — whereas the per-scope `(0, 0)` is R1006's documented
+    /// The two `no` rows are exceptions to the CONSEQUENCE, not to the predicate:
+    /// the shell does drive both at root, but both reads are deliberately
+    /// **primary-gated**, so inheriting would hand a secondary window the
+    /// PRIMARY's data — confidently wrong — where a per-scope empty value is an
+    /// honest "no data". [`viewport_size_signal`](Self::viewport_size_signal) is
+    /// the R1006 seam (`pinion-shell`'s pane-publish notes and `pane_viewport`'s
+    /// module doc both say so); its per-scope `(0, 0)` is R1006's documented
     /// "viewport unknown", which its contract already requires consumers to skip
-    /// on. An honest unknown beats a plausible lie.
+    /// on. `frame_timings` inherits that rule explicitly — `publish_frame_timings`
+    /// returns early for any non-primary window, because the holder is a single
+    /// per-owner slot and a second window's paint would chart an interleaving of
+    /// two windows' frames. An honest unknown beats a plausible lie. Both name
+    /// the same additive fix when a consumer needs it: a per-window-keyed holder.
+    ///
+    /// `waiter_registry` has no binding-facing hook — the shell resolves it at
+    /// root explicitly (`ShellCore::with_core`, `AppShell`'s park side), so no
+    /// child scope can reach it and R680 cannot break it. It inherits anyway,
+    /// because "no caller resolves it off root *today*" is an argument from
+    /// current call sites, and that is verbatim the argument R1362 made for
+    /// `window_control_sink` ("not a live hazard today — every view runs under
+    /// root") that R1364 then had to pay off. The rule is applied uniformly or
+    /// it is not a rule.
     ///
     /// Scroll state, animations and every other slot the shell never touches keep
     /// plain `cache`: inheriting them would be the mirror-image bug.
@@ -1264,14 +1287,18 @@ impl Owner {
     /// creates at the CALLING scope, so a child that resolves before the shell
     /// first touches root would mint its own and desync anyway. The four sinks
     /// get that from `provide_*`; `local_task_pump` and `pane_viewport_registry`
-    /// are seeded explicitly in `CoreShell::new_with_seed`.
+    /// are seeded explicitly in `CoreShell::new_with_seed`; `scene_revision` and
+    /// `waiter_registry` in `pinion-shell`'s `ShellCore::with_core`, which
+    /// resolves both against `core.root_owner()` before the first paint.
     ///
     /// # Panics
     ///
     /// Same nested-factory rule as [`Self::cache`] — a factory that re-enters
     /// the cache panics with an actionable message rather than `RefCell`'s
-    /// (`[[owner-cache-no-nested-factory]]`). The walk only ever takes a SHARED
-    /// borrow, so an ancestor being mid-factory is the only way to trip it.
+    /// (`[[owner-cache-no-nested-factory]]`). The walk starts at `self` and only
+    /// ever takes a SHARED borrow, so either `self` or any ancestor being
+    /// mid-factory trips it. (R1364.2 wrote "an ancestor is the only way",
+    /// having read its own loop as starting one scope up.)
     pub fn cache_inherited<V, F>(&self, key: impl Into<Cow<'static, str>>, factory: F) -> Rc<V>
     where
         V: 'static,
@@ -3206,9 +3233,12 @@ mod r1364_cache_inherited_tests {
 
     #[test]
     fn r1364_plain_cache_still_does_not_inherit() {
-        // The contrast IS the design: a value (scroll offset, viewport size) is
-        // per-owner and must NOT see its parent's, or a secondary window reflows
-        // to the primary's size. Only capabilities inherit.
+        // The contrast IS the design: a slot the shell never drives at root
+        // (scroll offset) — or drives but reads primary-gated (viewport size) —
+        // is per-owner and must NOT see its parent's, or a secondary window
+        // reflows to the primary's size. R1365: "only capabilities inherit" was
+        // this comment's original wording and is the taxonomy `cache_inherited`'s
+        // rustdoc now records as WRONG; the predicate is who drives the slot.
         let root = Owner::new();
         root.cache::<u32, _>("value", || 7);
         let child = Owner::new_child(&root);
@@ -3232,5 +3262,160 @@ mod r1364_cache_inherited_tests {
             Owner::new_child(&root)
         };
         assert_eq!(*child.cache_inherited::<u32, _>("cap", || 99), 99);
+    }
+}
+
+#[cfg(test)]
+mod provider_slot_census {
+    //! R1365 §5.22 — the `cache_inherited` rustdoc table, machine-checked.
+    //!
+    //! The table is an ENUMERATION of the framework's provider slots, and R1364
+    //! spent six commits proving what happens to a hand-kept enumeration: its
+    //! own `ControlProducer` round found three of nine prose copies wrong at
+    //! HEAD, and its ledger froze a claim built from a `| head -6`-truncated
+    //! grep. The table shipped with seven of the ten `__pinion.*` slots, and one
+    //! of the three it omitted (`scene_revision`) was a live R680 bug: a
+    //! secondary window's producer would bump a private counter while every
+    //! parked `scene/waitFor` slept on the shell's.
+    //!
+    //! So the census is a source-text check, the shape `commit.rs:155` and
+    //! `external.rs:2052` already use here: the table cannot silently disagree
+    //! with the workspace, and slot #11 cannot land without a verdict. It is
+    //! source-text rather than a compiler check because the slots live in four
+    //! crates that `pinion-core` sits BELOW and cannot name.
+
+    /// Slot keys are `__pinion.<area>.<slot>`; the table's rows are the `<slot>`
+    /// suffix. The two forms are deliberately different syntax, so the table can
+    /// never satisfy this check by quoting itself.
+    fn slot_of(key: &str) -> Option<String> {
+        let mut parts = key.split('.');
+        let (Some("__pinion"), Some(_area)) = (parts.next(), parts.next()) else {
+            return None;
+        };
+        let rest: Vec<&str> = parts.collect();
+        (!rest.is_empty()).then(|| rest.join("."))
+    }
+
+    /// Every `"__pinion.…"` literal in the workspace. Built by walking source
+    /// text because a linked-crate reflection of this does not exist: the keys
+    /// are `pub(crate)` consts in crates above this one.
+    fn keys_in_workspace() -> std::collections::BTreeSet<String> {
+        // Assembled at runtime so this needle is not itself a slot literal the
+        // walk would find in this file.
+        let needle = format!("\"{}.", "__pinion");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("workspace root is two levels above this crate");
+        let mut found = std::collections::BTreeSet::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    let name = p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    if !matches!(name.as_str(), "target" | "vendor" | ".git") {
+                        stack.push(p);
+                    }
+                    continue;
+                }
+                if p.extension().is_none_or(|x| x != "rs") {
+                    continue;
+                }
+                let Ok(src) = std::fs::read_to_string(&p) else {
+                    continue;
+                };
+                for (i, _) in src.match_indices(&needle) {
+                    let tail = &src[i + 1..];
+                    let Some(end) = tail.find('"') else { continue };
+                    if let Some(slot) = slot_of(&tail[..end]) {
+                        found.insert(slot);
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// The table's rows, parsed out of this file's own source: `(slot, inherits)`.
+    fn table_rows() -> std::collections::BTreeMap<String, bool> {
+        let src = include_str!("owner.rs");
+        let header = "| slot | how the shell drives root | inherits |";
+        let start = src
+            .find(header)
+            .expect("the cache_inherited rustdoc must still carry the census table header");
+        let mut rows = std::collections::BTreeMap::new();
+        for line in src[start..].lines().skip(2) {
+            let Some(row) = line.trim().strip_prefix("/// |") else {
+                break;
+            };
+            let cells: Vec<&str> = row.split('|').map(str::trim).collect();
+            assert!(cells.len() >= 3, "malformed census table row: {line:?}",);
+            let slot = cells[0].trim_matches('`').to_owned();
+            let verdict = cells[2].replace('*', "");
+            let inherits = match verdict.split_whitespace().next() {
+                Some("yes") => true,
+                Some("no") => false,
+                other => panic!("census row {slot:?} has an unreadable verdict: {other:?}"),
+            };
+            rows.insert(slot, inherits);
+        }
+        rows
+    }
+
+    #[test]
+    fn r1365_the_table_names_every_framework_slot() {
+        let keys = keys_in_workspace();
+        let rows = table_rows();
+        assert!(
+            keys.len() >= 10,
+            "the walk found only {} slot keys — it is not reading the workspace, \
+             and a census that finds nothing would pass vacuously",
+            keys.len(),
+        );
+        let documented: std::collections::BTreeSet<String> = rows.keys().cloned().collect();
+        let missing: Vec<&String> = keys.difference(&documented).collect();
+        let phantom: Vec<&String> = documented.difference(&keys).collect();
+        assert!(
+            missing.is_empty() && phantom.is_empty(),
+            "the `cache_inherited` census table has drifted from the workspace.\n\
+             slots with no row (add one, with a verdict): {missing:?}\n\
+             rows naming no slot (stale — delete or rename): {phantom:?}",
+        );
+    }
+
+    #[test]
+    fn r1365_every_slot_has_a_readable_verdict() {
+        // `table_rows` panics on an unreadable verdict, so this pins that the
+        // table is non-empty and both verdicts are actually in use — a table
+        // that drifted to all-`yes` would make the primary-gated exception
+        // silently unrepresentable.
+        let rows = table_rows();
+        assert_eq!(
+            rows.len(),
+            10,
+            "expected the ten framework slots, got {rows:?}"
+        );
+        assert!(
+            rows.values().any(|v| *v) && rows.values().any(|v| !*v),
+            "the census must keep both verdicts live: {rows:?}",
+        );
+        assert_eq!(
+            rows.get("scene_revision"),
+            Some(&true),
+            "R1365: scene_revision is the slot the R1364 table omitted, and it inherits",
+        );
+        assert_eq!(
+            rows.get("frame_timings"),
+            Some(&false),
+            "R1365: frame_timings is primary-gated, the viewport_size exception",
+        );
     }
 }

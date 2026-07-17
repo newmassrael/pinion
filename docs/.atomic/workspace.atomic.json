@@ -24564,6 +24564,64 @@
         "Remaining §5.55 clearance (⑦-⑪ untouched): off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; TUI request_quit arm; app/quit wire demo + r949's stale \"Close arm\" comment (the print moved to request_quit at app.rs:2328)"
       ]
     },
+    "R1365": {
+      "decision_summary": "R1365 §5.22 §6.3: the provider-slot census becomes machine-checked — the table documenting R1364's fix for unenforced enumerations was itself one, listed 7 of 10 slots, and the slot it omitted was a live R680 hang",
+      "changes_bullets": [
+        "FIXED, the audit's seventh provider slot: waiter.rs resolve_scene_revision was still on plain Owner::cache. It is binding-facing (pub use_scene_revision), root-seeded at boot (substrate.rs:614), and has a LIVE production consumer — hello-live-data resolves it at main.rs:130 and its producer thread bumps it at :157. Post-R680 a secondary window's producer would bump a private counter while every parked scene/waitFor slept on the shell's token: no panic, no log, a hang. Now cache_inherited",
+        "resolve_waiter_registry migrates too, though every caller passes root_owner() explicitly today so no child scope can reach it and R680 cannot break it. It inherits because \"no caller resolves it off root TODAY\" is an argument from current call sites, and that is verbatim the argument R1362 made for window_control_sink (\"not a live hazard today — every view runs under root\") which R1364 then had to pay off. A rule applied only where it is currently load-bearing is not a rule",
+        "THE REAL FINDING — the cache_inherited census TABLE, written by R1364.2 to document the fix for unenforced enumerations, WAS ITSELF ONE, and had already drifted. It listed 7 of the workspace's 10 __pinion.* slots. Of the 3 it omitted, scene_revision was a live bug, frame_timings needed the primary-gated exception, and waiter_registry had no row at all. It also named a row viewport_size_signal for the key viewport_size",
+        "provider_slot_census makes the table machine-checked: walk every workspace .rs for \"__pinion.*\" literals, parse the table out of include_str!(\"owner.rs\"), assert set equality. Rows are the key SUFFIX while literals carry the __pinion. prefix, so the table can never satisfy the check by quoting itself. Slot #11 cannot land without a verdict. Source-text rather than a compiler check because the slots live in crates pinion-core sits BELOW and cannot name — the commit.rs:155 / external.rs:2052 shape",
+        "frame_timings is NOT a bug and is now documented as the second primary-gated exception: publish_frame_timings returns early for any non-primary window, so inheriting would chart the PRIMARY's frames in a secondary HUD — confidently wrong, where a per-scope empty holder is an honest \"no data\". It joins viewport_size under the rule the table already states",
+        "Softened window_control.rs's \"that prescription is now discharged\", which the audit flagged as overstated: R1364 discharged the four slots it had ENUMERATED, and the enumeration was short. The claim is now scoped, and \"all of them\" is a claim rather than a count only because the census enforces it"
+      ],
+      "verification_bullets": [
+        "Gates on the exact CI commands read from .github/workflows/ci.yml, not reconstructed: cargo fmt --all --check + clippy --workspace --all-targets --features pinion-runtime/vello + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items + cargo test --workspace. All exit 0",
+        "THE COUNTERFACTUAL IS THE PROOF, NOT THE GREEN. Ran the census against R1364's exact 7-row table: it failed naming the precise drift — missing [\"frame_timings\", \"scene_revision\", \"viewport_size\", \"waiter_registry\"], stale [\"viewport_size_signal\"]. Had this test existed at R1364, that table could not have shipped incomplete",
+        "r1365_a_child_scope_bumps_the_roots_scene_revision verified in isolation against plain cache: FAILS with \"a child scope minted its own SceneRevision\". It asserts the property, not just Arc identity — a bump through the child must be the advance the shell's observer sees",
+        "r1269_async_wait_for.py PASS (1.57s) through the real wake path — the demo that proves scene/waitFor wakes off this exact token, built via tools/build_gate.py so no stale binary could fake it",
+        "Two false docs cleared inline while in the file: cache_inherited's \"an ancestor being mid-factory is the only way to trip it\" (the walk starts at self, so self trips it too) and r1364_plain_cache_still_does_not_inherit's \"Only capabilities inherit\" (the taxonomy the same rustdoc now records as WRONG)"
+      ],
+      "impact_refs": [
+        "2",
+        "5.22",
+        "5.55",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "NOT YET AUDITED. This entry is written before the independent 3-reviewer pass, which is now 32/32 against my own \"gates green\" self-assessment. R1364's lesson was to audit after commit 1-2 rather than at the end; this is commit 1",
+        "The census checks that every slot HAS a verdict, not that each verdict is TRUE. \"inherits: yes\" is enforced behaviourally per slot (r1364_cache_inherited_tests, r1365_slot_inherits) because which call site wins is not readable from source text: the provide_* seeders deliberately use plain cache on the same key the resolver inherits through. A row could still lie",
+        "The walk covers examples/ and tests, so a future test-only \"__pinion.*\" key would demand a table row. That strictness is deliberate but untested against a real case",
+        "Remaining §5.55 clearance, unchanged by this round: the quit veto still has ZERO in-tree overrides (§5.55's central claim untested with the gate closed); \"a Close cannot end the app at all\" false in 4 places; the miscounts and the 2 tests whose names outrun their bodies; and items 7-12 and 16 (off-thread forcing consumer, plan_window_control lift, executor.rs false coverage, AppEvent non_exhaustive, test-fixtures gate, vestigial quit_requested, 8 dead TUI variants)"
+      ],
+      "publishable_decision_summary": "R1365 §5.22 §6.3: the provider-slot census becomes machine-checked — the table documenting R1364's fix for unenforced enumerations was itself one, listed 7 of 10 slots, and the slot it omitted was a live R680 hang",
+      "publishable_changes_bullets": [
+        "FIXED, the audit's seventh provider slot: waiter.rs resolve_scene_revision was still on plain Owner::cache. It is binding-facing (pub use_scene_revision), root-seeded at boot (substrate.rs:614), and has a LIVE production consumer — hello-live-data resolves it at main.rs:130 and its producer thread bumps it at :157. Post-R680 a secondary window's producer would bump a private counter while every parked scene/waitFor slept on the shell's token: no panic, no log, a hang. Now cache_inherited",
+        "resolve_waiter_registry migrates too, though every caller passes root_owner() explicitly today so no child scope can reach it and R680 cannot break it. It inherits because \"no caller resolves it off root TODAY\" is an argument from current call sites, and that is verbatim the argument R1362 made for window_control_sink (\"not a live hazard today — every view runs under root\") which R1364 then had to pay off. A rule applied only where it is currently load-bearing is not a rule",
+        "THE REAL FINDING — the cache_inherited census TABLE, written by R1364.2 to document the fix for unenforced enumerations, WAS ITSELF ONE, and had already drifted. It listed 7 of the workspace's 10 __pinion.* slots. Of the 3 it omitted, scene_revision was a live bug, frame_timings needed the primary-gated exception, and waiter_registry had no row at all. It also named a row viewport_size_signal for the key viewport_size",
+        "provider_slot_census makes the table machine-checked: walk every workspace .rs for \"__pinion.*\" literals, parse the table out of include_str!(\"owner.rs\"), assert set equality. Rows are the key SUFFIX while literals carry the __pinion. prefix, so the table can never satisfy the check by quoting itself. Slot #11 cannot land without a verdict. Source-text rather than a compiler check because the slots live in crates pinion-core sits BELOW and cannot name — the commit.rs:155 / external.rs:2052 shape",
+        "frame_timings is NOT a bug and is now documented as the second primary-gated exception: publish_frame_timings returns early for any non-primary window, so inheriting would chart the PRIMARY's frames in a secondary HUD — confidently wrong, where a per-scope empty holder is an honest \"no data\". It joins viewport_size under the rule the table already states",
+        "Softened window_control.rs's \"that prescription is now discharged\", which the audit flagged as overstated: R1364 discharged the four slots it had ENUMERATED, and the enumeration was short. The claim is now scoped, and \"all of them\" is a claim rather than a count only because the census enforces it"
+      ],
+      "publishable_verification_bullets": [
+        "Gates on the exact CI commands read from .github/workflows/ci.yml, not reconstructed: cargo fmt --all --check + clippy --workspace --all-targets --features pinion-runtime/vello + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items + cargo test --workspace. All exit 0",
+        "THE COUNTERFACTUAL IS THE PROOF, NOT THE GREEN. Ran the census against R1364's exact 7-row table: it failed naming the precise drift — missing [\"frame_timings\", \"scene_revision\", \"viewport_size\", \"waiter_registry\"], stale [\"viewport_size_signal\"]. Had this test existed at R1364, that table could not have shipped incomplete",
+        "r1365_a_child_scope_bumps_the_roots_scene_revision verified in isolation against plain cache: FAILS with \"a child scope minted its own SceneRevision\". It asserts the property, not just Arc identity — a bump through the child must be the advance the shell's observer sees",
+        "r1269_async_wait_for.py PASS (1.57s) through the real wake path — the demo that proves scene/waitFor wakes off this exact token, built via tools/build_gate.py so no stale binary could fake it",
+        "Two false docs cleared inline while in the file: cache_inherited's \"an ancestor being mid-factory is the only way to trip it\" (the walk starts at self, so self trips it too) and r1364_plain_cache_still_does_not_inherit's \"Only capabilities inherit\" (the taxonomy the same rustdoc now records as WRONG)"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.22",
+        "5.55",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "NOT YET AUDITED. This entry is written before the independent 3-reviewer pass, which is now 32/32 against my own \"gates green\" self-assessment. R1364's lesson was to audit after commit 1-2 rather than at the end; this is commit 1",
+        "The census checks that every slot HAS a verdict, not that each verdict is TRUE. \"inherits: yes\" is enforced behaviourally per slot (r1364_cache_inherited_tests, r1365_slot_inherits) because which call site wins is not readable from source text: the provide_* seeders deliberately use plain cache on the same key the resolver inherits through. A row could still lie",
+        "The walk covers examples/ and tests, so a future test-only \"__pinion.*\" key would demand a table row. That strictness is deliberate but untested against a real case",
+        "Remaining §5.55 clearance, unchanged by this round: the quit veto still has ZERO in-tree overrides (§5.55's central claim untested with the gate closed); \"a Close cannot end the app at all\" false in 4 places; the miscounts and the 2 tests whose names outrun their bodies; and items 7-12 and 16 (off-thread forcing consumer, plan_window_control lift, executor.rs false coverage, AppEvent non_exhaustive, test-fixtures gate, vestigial quit_requested, 8 dead TUI variants)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

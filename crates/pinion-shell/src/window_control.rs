@@ -224,11 +224,19 @@ fn resolve_window_control_sink(owner: &Owner) -> Arc<dyn WindowControlSink> {
 /// R680 atomic (`window_owner(window_id).run(..)`) would make a secondary
 /// window's `view` resolve a [`NullWindowControlSink`] that no-ops with no panic
 /// and no log. That prescription ("a parent walk for provider slots, or
-/// per-window re-seeding") is now discharged, for this slot and for the three
+/// per-window re-seeding") is discharged for this slot and for the three
 /// core-homed ones that shared the shape verbatim. It was paid off before R680
 /// rather than as part of it, because the failure it produces is silent and
 /// names nothing: the round that finally lands R680 would have had no reason to
 /// suspect quitting.
+///
+/// R1365 — this sentence first read "is now discharged", full stop, which was an
+/// overstatement: R1364 fixed the four slots it had enumerated, and the
+/// enumeration was short. `scene_revision` was still root-only, with the same
+/// silent post-R680 failure one seam over. The prescription is discharged for
+/// the slot family as a whole only now that `Owner::cache_inherited`'s census
+/// table is machine-checked against the workspace's `__pinion.*` keys, which is
+/// what makes "all of them" a claim rather than a count.
 ///
 /// # Panics
 ///

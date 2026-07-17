@@ -2,13 +2,14 @@
 //! [`WaiterRegistry`] and the single scene
 //! [`SceneRevision`] token they wake off (R1270 §6.3).
 //!
-//! Both live in the root [`Owner`] cache so the shell's dispatch (which parks a
+//! Both are seeded on the root [`Owner`] at boot and resolved through
+//! [`Owner::cache_inherited`], so the shell's dispatch (which parks a
 //! `scene/waitFor {since}`), the boot wake-observer install, and a binding's
 //! external-data producer all resolve the *same* `Arc` — one instance by
-//! construction, not by two handles happening to agree. The key **and** the
-//! factory for each live in exactly one function here (`resolve_*`), so a
-//! future divergence cannot be silently dropped by `Owner::cache`'s
-//! first-write-wins.
+//! construction, not by two handles happening to agree, and not merely while
+//! every scope happens to BE root (R1365 §5.22). The key **and** the factory for
+//! each live in exactly one function here (`resolve_*`), so a future divergence
+//! cannot be silently dropped by `Owner::cache`'s first-write-wins.
 //!
 //! The [`WaiterRegistry`] owns no version counter:
 //! it wakes off the OCC [`SceneRevision`] the whole app already shares. The
@@ -32,23 +33,35 @@ pub(crate) const WAITER_REGISTRY_KEY: &str = "__pinion.rpc.waiter_registry";
 /// The `Owner::cache` slot the shared scene [`SceneRevision`] lives in.
 pub(crate) const SCENE_REVISION_KEY: &str = "__pinion.core.scene_revision";
 
-/// Resolve the root scope's shared async [`WaiterRegistry`],
-/// creating it on first access. The **one** home for its key + factory: the
-/// shell's dispatch (park side) and the boot observer install (wake side) both
-/// call this, so they land on a single `Arc`. The outer `Rc` from
-/// `Owner::cache` stays on the UI thread; the returned inner `Arc` is the
-/// shareable handle.
+/// Resolve the binding's shared async [`WaiterRegistry`], creating it on first
+/// access. The **one** home for its key + factory: the shell's dispatch (park
+/// side) and the boot observer install (wake side) both call this, so they land
+/// on a single `Arc`. The outer `Rc` from the cache stays on the UI thread; the
+/// returned inner `Arc` is the shareable handle.
+///
+/// R1365 §5.22 — [`Owner::cache_inherited`]. Every caller passes `root_owner()`
+/// explicitly today, so no child scope can reach it and R680 cannot break it;
+/// see the `cache_inherited` table for why it inherits regardless.
 pub(crate) fn resolve_waiter_registry(owner: &Owner) -> Arc<WaiterRegistry> {
-    Arc::clone(&owner.cache(WAITER_REGISTRY_KEY, || Arc::new(WaiterRegistry::new())))
+    Arc::clone(&owner.cache_inherited(WAITER_REGISTRY_KEY, || Arc::new(WaiterRegistry::new())))
 }
 
-/// Resolve the root scope's shared scene [`SceneRevision`] — the single scene
+/// Resolve the binding's shared scene [`SceneRevision`] — the single scene
 /// version token (§5.34 OCC + §6.3 waitFor), creating it on first access. The
 /// **one** home for its key + factory: [`ShellCore`](crate::ShellCore) holds it
 /// for dispatch, and an external-data producer resolves the SAME `Arc` (via
 /// [`use_scene_revision`]) to bump it on arrival.
+///
+/// R1365 §5.22 — [`Owner::cache_inherited`], the seventh slot to need it and the
+/// one R1364 missed. There is exactly ONE authoritative revision per process:
+/// the shell holds it for dispatch, the RPC layer hands it to every handler as
+/// `ctx.revision`, and the boot observer wakes parked waiters off it. A child
+/// scope minting its own would not be a per-window token, it would be a private
+/// counter nobody reads — every `scene/waitFor` parked against the real one
+/// would hang forever. Unlike `viewport_size` there is no honest per-window
+/// reading of "the scene changed" to preserve.
 pub(crate) fn resolve_scene_revision(owner: &Owner) -> Arc<SceneRevision> {
-    Arc::clone(&owner.cache(SCENE_REVISION_KEY, || Arc::new(SceneRevision::default())))
+    Arc::clone(&owner.cache_inherited(SCENE_REVISION_KEY, || Arc::new(SceneRevision::default())))
 }
 
 /// Binding-facing hook: the shared scene [`SceneRevision`], the single version
@@ -64,13 +77,66 @@ pub(crate) fn resolve_scene_revision(owner: &Owner) -> Arc<SceneRevision> {
 /// — the wake sibling of
 /// [`RepaintSink::request_repaint`](pinion_core::RepaintSink::request_repaint).
 ///
+/// # Any scope in the binding's tree (R1365)
+///
+/// The shell seeds this slot on `root_owner` at boot and resolution walks up to
+/// find it, so a child scope gets the REAL token. This matters for the same
+/// reason it did for the sinks R1364 fixed: the deferred R680 atomic wraps each
+/// window's `view` in `window_owner(id).run(..)`, and a secondary window's
+/// producer would otherwise bump a private counter while every parked
+/// `scene/waitFor` slept on the shell's.
+///
 /// # Panics
 ///
 /// Panics if called with no active [`Owner`] scope — call from within a `view`
-/// / `create_extra_externals` hook, both of which run inside the root
-/// `Owner::run`.
+/// / `create_extra_externals` hook, both of which run inside an `Owner::run`.
 #[must_use]
 pub fn use_scene_revision() -> Arc<SceneRevision> {
     let owner = Owner::current().expect("use_scene_revision requires an active Owner scope");
     resolve_scene_revision(&owner)
+}
+
+#[cfg(test)]
+mod r1365_slot_inherits {
+    //! R1365 §5.22 §6.3 — both slots resolve the ROOT's instance from a child
+    //! scope. These pin the R680 question before R680, the way
+    //! `r1364_cache_inherited_tests` does for the sinks: the day the view wrap
+    //! becomes `window_owner(id).run(..)`, a secondary window's
+    //! `use_scene_revision` must still be the token the shell's wake observer
+    //! watches. The failure is silent — `bump()` succeeds, nothing wakes — so
+    //! nothing about landing R680 would make its author think of `waitFor`.
+
+    use super::{resolve_scene_revision, resolve_waiter_registry};
+    use pinion_core::Owner;
+
+    #[test]
+    fn r1365_a_child_scope_bumps_the_roots_scene_revision() {
+        let root = Owner::new();
+        let seeded = resolve_scene_revision(&root);
+        let child = Owner::new_child(&root);
+
+        let from_child = resolve_scene_revision(&child);
+        assert!(
+            std::sync::Arc::ptr_eq(&seeded, &from_child),
+            "a child scope minted its own SceneRevision — every parked \
+             scene/waitFor would sleep on the shell's token forever",
+        );
+
+        // The property that matters is not identity for its own sake: a bump
+        // through the child must be the advance the shell's observer sees.
+        let before = seeded.current();
+        from_child.bump();
+        assert_eq!(seeded.current(), before + 1);
+    }
+
+    #[test]
+    fn r1365_a_child_scope_parks_on_the_roots_waiter_registry() {
+        let root = Owner::new();
+        let seeded = resolve_waiter_registry(&root);
+        let child = Owner::new_child(&root);
+        assert!(
+            std::sync::Arc::ptr_eq(&seeded, &resolve_waiter_registry(&child)),
+            "a child scope minted its own WaiterRegistry",
+        );
+    }
 }
