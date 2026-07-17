@@ -24222,6 +24222,62 @@
         "Off-thread forcing consumer still absent (hello-live-data); executor.rs claims 'integration tests with a real EventLoop cover it' and there are none; AppEvent still not #[non_exhaustive]; provide_window_control_sink is pub for tests when test-fixtures exists; RecordingSink hand-rolled x3"
       ]
     },
+    "R1364": {
+      "decision_summary": "R1364 §5.55: the termination map was prose, and prose drifted one round after it was written — the census of every way this app can end is now checked against the source that ends it",
+      "changes_bullets": [
+        "The termination map on the winit shell is now MACHINE-CHECKED against app.rs's own source text (r1364_termination_map_tests). Each row reads `fn` xN -> `family`; a prose row no longer parses, because a prose row cannot be enforced",
+        "The map was ALREADY STALE at HEAD, which is the round's evidence, not its hypothesis. R1362 published it as prose; R1363 rewired it one round later and every gate stayed green. Documented-but-gone: `Close` and `handle_key_press` exiting inline (both now route to request_quit). Present-but-undocumented: `request_quit` itself — the single arm R1363's whole round existed to create was missing from the census of exits",
+        "Counterfactual run before landing: R1362's rows, transcribed into the strict form, against R1363's code => the test FAILS and names all three drifts. Had it existed at R1362, R1363 could not have shipped",
+        "The map MOVED from AppShell::apply_window_control to AppShell::request_quit. R1362 wrote it on the window-control arm because that arm's unhandled Close WAS an exit; §5.55 severed that, so a census of app terminations no longer belongs in the rustdoc of a window operation. The doc-level completion of the split R1363 made in code",
+        "Second test pins the map's other prose claim, \"Two families, and BOTH live in this file\": the rustdoc argues event_loop.exit() from types but admits process::exit is \"enumerated on its own evidence, by grep\" — so the grep is now a test that walks every sibling in pinion-shell/src",
+        "Two false claims on request_quit deleted rather than carried: \"the only place that event_loop.exit()s for a reason other than a boot error\" (resumed's empty-list exit is neither — its own footnote says so) and \"and the `app/quit` RPC\" as a producer (that method does not exist; R1364.x adds it, and will add the line back truthfully)",
+        "The scan does NOT reuse commit.rs's prefix scan: app.rs interleaves EIGHT top-level #[cfg(test)] mods with production code, and try_headless_screenshot — which owns 3 of the 7 sites — follows six of them. \"Stop at the first #[cfg(test)]\" would silently drop them and pass green. The scanner skips whole test modules and asserts loudly if that shape ever changes"
+      ],
+      "verification_bullets": [
+        "The EXACT CI commands, not weaker stand-ins (the gate R1362 missed): cargo fmt --all --check exit 0 + cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items exit 0 + cargo test --workspace exit 0 + validate-workspace T1=0",
+        "fmt FAILED on the first run and was fixed — the round's own lesson landing on the round: my improvised `cargo doc --no-deps` had also dropped CI's --features, so I read .github/workflows/ci.yml for the literal commands rather than reconstruct them from memory",
+        "Both new tests were proven to BITE before being trusted, because an emptiness assertion passes vacuously. Map test: the counterfactual above fails with the full documented-vs-actual diff. File-scope test: a planted `std::process::exit` in waiter.rs fails it, naming waiter.rs:79 (cargo exit=101)",
+        "The first bite-check was run through a grep that matched nothing and could have been misread as \"passed\" — the pipe-masks-the-real-outcome trap; re-run capturing cargo's exit code, which was the build failing on dead_code, not the test biting"
+      ],
+      "impact_refs": [
+        "2",
+        "5.16",
+        "5.39",
+        "5.55"
+      ],
+      "carry_forward_bullets": [
+        "FOUND IN-ROUND, added to the clearance list as ⑬: §5.55 says \"the ONE arm every quit producer reaches\" — structural in the GUI (request_quit, one veto call) but merely conventional in the TUI, which spells core.root_owner().run(V::app_quit_requested) INLINE TWICE (shell.rs:315 quit-flag drain, shell.rs:391 Escape). Both are correct today, so this is not a live bug; but nothing forces a third TUI producer through the veto, which is the property §5.55 exists to guarantee and exactly how the pre-R1363 bypass arose in both backends independently",
+        "The map is scoped to pinion-shell. The TUI shell ends by breaking its loop, not by a termination call, so it has no peer census — but §2 #6 parity means the \"one arm\" question above is the real TUI equivalent, not a second map",
+        "Remaining §5.55 clearance (11 of 13): enum ControlProducer; Owner::cache_inherited parent walk (family of FOUR, silently Null under the deferred R680 atomic); false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested"
+      ],
+      "publishable_decision_summary": "R1364 §5.55: the termination map was prose, and prose drifted one round after it was written — the census of every way this app can end is now checked against the source that ends it",
+      "publishable_changes_bullets": [
+        "The termination map on the winit shell is now MACHINE-CHECKED against app.rs's own source text (r1364_termination_map_tests). Each row reads `fn` xN -> `family`; a prose row no longer parses, because a prose row cannot be enforced",
+        "The map was ALREADY STALE at HEAD, which is the round's evidence, not its hypothesis. R1362 published it as prose; R1363 rewired it one round later and every gate stayed green. Documented-but-gone: `Close` and `handle_key_press` exiting inline (both now route to request_quit). Present-but-undocumented: `request_quit` itself — the single arm R1363's whole round existed to create was missing from the census of exits",
+        "Counterfactual run before landing: R1362's rows, transcribed into the strict form, against R1363's code => the test FAILS and names all three drifts. Had it existed at R1362, R1363 could not have shipped",
+        "The map MOVED from AppShell::apply_window_control to AppShell::request_quit. R1362 wrote it on the window-control arm because that arm's unhandled Close WAS an exit; §5.55 severed that, so a census of app terminations no longer belongs in the rustdoc of a window operation. The doc-level completion of the split R1363 made in code",
+        "Second test pins the map's other prose claim, \"Two families, and BOTH live in this file\": the rustdoc argues event_loop.exit() from types but admits process::exit is \"enumerated on its own evidence, by grep\" — so the grep is now a test that walks every sibling in pinion-shell/src",
+        "Two false claims on request_quit deleted rather than carried: \"the only place that event_loop.exit()s for a reason other than a boot error\" (resumed's empty-list exit is neither — its own footnote says so) and \"and the `app/quit` RPC\" as a producer (that method does not exist; R1364.x adds it, and will add the line back truthfully)",
+        "The scan does NOT reuse commit.rs's prefix scan: app.rs interleaves EIGHT top-level #[cfg(test)] mods with production code, and try_headless_screenshot — which owns 3 of the 7 sites — follows six of them. \"Stop at the first #[cfg(test)]\" would silently drop them and pass green. The scanner skips whole test modules and asserts loudly if that shape ever changes"
+      ],
+      "publishable_verification_bullets": [
+        "The EXACT CI commands, not weaker stand-ins (the gate R1362 missed): cargo fmt --all --check exit 0 + cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items exit 0 + cargo test --workspace exit 0 + validate-workspace T1=0",
+        "fmt FAILED on the first run and was fixed — the round's own lesson landing on the round: my improvised `cargo doc --no-deps` had also dropped CI's --features, so I read .github/workflows/ci.yml for the literal commands rather than reconstruct them from memory",
+        "Both new tests were proven to BITE before being trusted, because an emptiness assertion passes vacuously. Map test: the counterfactual above fails with the full documented-vs-actual diff. File-scope test: a planted `std::process::exit` in waiter.rs fails it, naming waiter.rs:79 (cargo exit=101)",
+        "The first bite-check was run through a grep that matched nothing and could have been misread as \"passed\" — the pipe-masks-the-real-outcome trap; re-run capturing cargo's exit code, which was the build failing on dead_code, not the test biting"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.16",
+        "5.39",
+        "5.55"
+      ],
+      "publishable_carry_forward_bullets": [
+        "FOUND IN-ROUND, added to the clearance list as ⑬: §5.55 says \"the ONE arm every quit producer reaches\" — structural in the GUI (request_quit, one veto call) but merely conventional in the TUI, which spells core.root_owner().run(V::app_quit_requested) INLINE TWICE (shell.rs:315 quit-flag drain, shell.rs:391 Escape). Both are correct today, so this is not a live bug; but nothing forces a third TUI producer through the veto, which is the property §5.55 exists to guarantee and exactly how the pre-R1363 bypass arose in both backends independently",
+        "The map is scoped to pinion-shell. The TUI shell ends by breaking its loop, not by a termination call, so it has no peer census — but §2 #6 parity means the \"one arm\" question above is the real TUI equivalent, not a second map",
+        "Remaining §5.55 clearance (11 of 13): enum ControlProducer; Owner::cache_inherited parent walk (family of FOUR, silently Null under the deferred R680 atomic); false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

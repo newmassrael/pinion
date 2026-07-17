@@ -2091,56 +2091,12 @@ impl<V: WidgetView> AppShell<V> {
     /// * `Minimize` / `Maximize` — straight to the winit `Window` (pinion owns
     ///   the handle); a missing render slot (window already closing) is a no-op.
     ///
-    /// # Every way this app can terminate (R1362 PR-65 R-65.2)
-    ///
-    /// Enumerated here because it was previously discoverable only by reading
-    /// every call site — which is what let "a binding cannot request its own
-    /// exit" go unnoticed until sprag hit it.
-    ///
-    /// Two families, and BOTH live in this file. `event_loop.exit()` needs an
-    /// `&ActiveEventLoop`, which in this crate reaches only `ApplicationHandler`
-    /// callbacks on [`AppShell`] (winit also passes one to the deprecated
-    /// `EventLoop::run` closure, which pinion does not use — it runs `run_app`),
-    /// so `ShellCore` — winit-free for the §2 #6 GUI/TUI dual — can never reach
-    /// one. `std::process::exit` needs nothing, so it is enumerated on its own
-    /// evidence, by grep, not by an argument from types.
-    ///
-    /// | Termination | Trigger | Binding-drivable? |
-    /// |---|---|---|
-    /// | this arm's `Close` → `event_loop.exit()` | producers 1-4 above, when [`WidgetView::window_close_requested`] declines | **yes** — producer 4 |
-    /// | [`AppShell::resumed`] → `event_loop.exit()` | the spec list is empty on ANY resume | **yes** — see below |
-    /// | `Self::handle_key_press` → `event_loop.exit()` | `Escape`, unconsumed + no modal trap | no — see below |
-    /// | `Self::resume_spec` ×2 → `event_loop.exit()` | `create_window` / renderer init failed | no — error paths |
-    /// | `try_headless_screenshot` ×3 → `std::process::exit(1)` | `PINION_SCREENSHOT` set + screenshot init / file create / render failed | no — error paths, and only under that env var |
-    /// | `try_headless_screenshot` returns `true` → `run_with_config` returns | `PINION_SCREENSHOT` set + the PNG was written | no — a one-shot mode that never builds an event loop |
-    ///
-    /// Two rows earn their footnotes:
-    ///
-    /// * **`resumed` is NOT boot-only.** winit re-issues `resumed` across the
-    ///   mobile suspend/resume lifecycle (which is why [`AppShell::suspended`]
-    ///   exists and why slots cache their `Window`), and each one re-reads the
-    ///   binding's [`WidgetView::windows_signal`]. A binding that empties that
-    ///   signal and is later resumed therefore DOES drive an exit. So "empty
-    ///   window list" already means "quit" — but only on a resume, which is a
-    ///   platform event the binding does not choose. That accidental,
-    ///   unschedulable exit is precisely why R1362 gave the binding an explicit
-    ///   request instead of widening it: an exit must be a statement of intent,
-    ///   not a side effect of a list length observed at a moment the binding
-    ///   cannot predict.
-    /// * **`Escape` is not blocked by an allowlist.** `scene/key` will happily
-    ///   inject `"Escape"` and it does reach the substrate's `apply_key` — the
-    ///   "shell-reserved / not injectable" wording elsewhere in the tree
-    ///   overstates it. What makes this row `no` is structural: the exit lives in
-    ///   `Self::handle_key_press`, a winit-only callback the RPC drain never
-    ///   enters. Note also that Escape does NOT consult
-    ///   [`WidgetView::window_close_requested`] — it bypasses the binding's close
-    ///   veto entirely, which is why it is a separate row and not a producer of
-    ///   this arm.
-    ///
-    /// Note what is NOT here: `Self::reconcile_windows` never exits. Dropping
-    /// every spec from `windows_signal` at runtime closes the OS windows and
-    /// leaves the loop parked in `about_to_wait` — a UI-less process (until the
-    /// next `resumed`, per above), not an exit.
+    /// The app-termination map — every way this process can end — lives on
+    /// [`Self::request_quit`] (R1364). R1362 wrote it here because this arm's
+    /// unhandled `Close` WAS an exit; §5.55 severed that, so a census of app
+    /// terminations no longer belongs in the rustdoc of a window operation.
+    /// This arm can no longer end the app at all: it routes a primary-window
+    /// `Close` to `request_quit` and declines a secondary one.
     fn apply_window_control(
         &mut self,
         spec_id: &str,
@@ -2236,23 +2192,76 @@ impl<V: WidgetView> AppShell<V> {
         }
     }
 
-    /// (R1363 §5.55 §2 #6) End the app — the ONE arm every quit producer
-    /// reaches, and the only place in this crate that `event_loop.exit()` for a
-    /// reason other than a boot error.
+    /// (R1363 §5.55 §2 #6) End the app on purpose — the ONE arm every quit
+    /// producer reaches.
     ///
     /// Producers: `Escape` (the standalone convention), an unhandled `Close` of
     /// the PRIMARY window, the last window closing under
-    /// [`WidgetView::quit_on_last_window_closed`], a binding's own
-    /// [`QuitSink`](pinion_core::QuitSink) (via [`AppEvent::QuitRequested`]),
-    /// and the `app/quit` RPC. Every one is offered to
-    /// [`pinion_core::WidgetCore::app_quit_requested`]
-    /// first, so none of them — not the binding's own request, not an AI's —
-    /// grants a privileged exit past the binding's unsaved-changes gate.
+    /// [`WidgetView::quit_on_last_window_closed`], and a binding's own
+    /// [`QuitSink`](pinion_core::QuitSink) (via [`AppEvent::QuitRequested`]).
+    /// Every one is offered to
+    /// [`pinion_core::WidgetCore::app_quit_requested`] first, so none of them —
+    /// not even the binding's own request — grants a privileged exit past the
+    /// binding's unsaved-changes gate.
     ///
     /// Pre-R1363 there was no such arm: `Escape` called `event_loop.exit()`
     /// inline (bypassing every binding veto, in BOTH shells independently) and
     /// an unhandled `WindowControl::Close` fell through to an exit. That is the
     /// conflation §5.55 splits.
+    ///
+    /// # Every way this app can terminate (R1362 PR-65 R-65.2; R1364 enforced)
+    ///
+    /// Enumerated because it is otherwise discoverable only by reading every
+    /// call site — which is what let "a binding cannot request its own exit" go
+    /// unnoticed until sprag hit it. The map lives on this method, not on
+    /// [`Self::apply_window_control`] where R1362 wrote it: that arm's
+    /// unhandled `Close` used to BE an exit, and §5.55 severed it.
+    ///
+    /// Two families, and BOTH live in this file. `event_loop.exit()` needs an
+    /// `&ActiveEventLoop`, which in this crate reaches only `ApplicationHandler`
+    /// callbacks on [`AppShell`] (winit also passes one to the deprecated
+    /// `EventLoop::run` closure, which pinion does not use — it runs `run_app`),
+    /// so `ShellCore` — winit-free for the §2 #6 GUI/TUI dual — can never reach
+    /// one. `std::process::exit` needs nothing, so it is enumerated on its own
+    /// evidence, by grep, not by an argument from types.
+    ///
+    /// The table is MACHINE-CHECKED against this file's source text by
+    /// `r1364_termination_map_tests`, so each row reads `` `fn` ×N → `family` ``
+    /// rather than prose. R1362 published it as prose and R1363 rewired three of
+    /// its six rows one round later — `Close` and `handle_key_press` stopped
+    /// exiting inline, this arm became THE exit — and every gate stayed green
+    /// over a map describing a world that no longer existed.
+    ///
+    /// | Termination | Trigger | Binding-drivable? |
+    /// |---|---|---|
+    /// | `Self::request_quit` ×1 → `event_loop.exit()` | this arm: every producer above, once `app_quit_requested` declines to handle it | **yes**, and vetoable — that is the point |
+    /// | `Self::resumed` ×1 → `event_loop.exit()` | the spec list is empty on ANY resume | **yes**, and NOT vetoable — see below |
+    /// | `Self::resume_spec` ×2 → `event_loop.exit()` | `create_window` / renderer init failed | no — error paths |
+    /// | `try_headless_screenshot` ×3 → `std::process::exit(1)` | `PINION_SCREENSHOT` set + screenshot init / file create / render failed | no — error paths, and only under that env var |
+    ///
+    /// Two rows earn their footnotes:
+    ///
+    /// * **`resumed` is NOT boot-only, and does NOT pass this arm.** winit
+    ///   re-issues `resumed` across the mobile suspend/resume lifecycle (which is
+    ///   why [`AppShell::suspended`] exists and why slots cache their `Window`),
+    ///   and each one re-reads the binding's [`WidgetView::windows_signal`]. A
+    ///   binding that empties that signal and is later resumed therefore DOES
+    ///   drive an exit. So "empty window list" already means "quit" — but only on
+    ///   a resume, which is a platform event the binding does not choose. That
+    ///   accidental, unschedulable exit is precisely why R1362 gave the binding an
+    ///   explicit request instead of widening it: an exit must be a statement of
+    ///   intent, not a side effect of a list length observed at a moment the
+    ///   binding cannot predict.
+    /// * **`try_headless_screenshot` also ends the process by RETURNING.** With
+    ///   `PINION_SCREENSHOT` set and the PNG written it returns `true`, and
+    ///   `run_with_config` returns without ever building an event loop. That is
+    ///   not a call site, so it cannot be a row; it is recorded here because
+    ///   "every way this app can terminate" would otherwise be a lie by omission.
+    ///
+    /// Note what is NOT here: `Self::reconcile_windows` never exits. Dropping
+    /// every spec from `windows_signal` at runtime closes the OS windows and
+    /// leaves the loop parked in `about_to_wait` — a UI-less process (until the
+    /// next `resumed`, per above), not an exit.
     fn request_quit(&mut self, event_loop: &ActiveEventLoop) {
         if self.core.root_owner().run(V::app_quit_requested) {
             // The binding handled it (raised a "Save changes?" modal, started an
@@ -5488,5 +5497,245 @@ mod r1121_chrome_action_tests {
         // Content → content (never in a region) → suppress: a window that never
         // enters a resize region is never commanded a cursor at all.
         assert_eq!(next_cursor_command(None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod r1364_termination_map_tests {
+    //! R1364 §5.55 — the termination map on [`AppShell::request_quit`] is
+    //! machine-checked against this file's own source text.
+    //!
+    //! A SOURCE-TEXT check, unusual and deliberate, for the same reason
+    //! `pinion_core::widgets::commit`'s is (R1349.1): the property is "the
+    //! documented map is the WHOLE map", and no runtime assertion can reach it.
+    //! `tests/dispatch_core.rs` records that a `#[test]` cannot synthesise an
+    //! `EventLoop`, so every `event_loop.exit()` below is invisible to the suite
+    //! by construction — a stale row costs nothing at runtime and stays green
+    //! forever.
+    //!
+    //! It is not hypothetical. R1362 published the map as prose; R1363 rewired
+    //! it one round later — `Close` and `handle_key_press` stopped exiting
+    //! inline, `request_quit` became THE arm — and all four gates stayed green
+    //! over a map that now described a world which no longer existed. Three of
+    //! its six rows were wrong, and the arm that R1363's whole round existed to
+    //! create was missing from the census of exits.
+
+    use std::collections::BTreeMap;
+
+    /// The two termination families, spelled as the call sites spell them.
+    /// Matched as substrings: the map documents `std::process::exit(1)`, the
+    /// sites spell that same prefix.
+    const FAMILIES: [&str; 2] = ["event_loop.exit()", "std::process::exit"];
+
+    /// The row that opens the map. Scoping to it matters: this file carries a
+    /// second rustdoc table (the winit IME mapping), so an unscoped `/// |`
+    /// scan would swallow it and demand call sites for `Ime::Preedit`.
+    const TABLE_HEADER: &str = "/// | Termination | Trigger | Binding-drivable? |";
+
+    /// A termination site: which function ends the process, and by which family.
+    type Site = (String, &'static str);
+
+    /// `fn foo(` / `pub fn foo(` -> `foo`. Callers pass a trimmed, non-comment
+    /// line.
+    fn fn_name(trimmed: &str) -> Option<String> {
+        let rest = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+        let rest = rest.strip_prefix("fn ")?;
+        let end = rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')?;
+        Some(rest[..end].to_owned())
+    }
+
+    /// Split a leading `` `...` `` off `s`, returning (contents, remainder).
+    fn backticked(s: &str) -> Option<(&str, &str)> {
+        let rest = s.strip_prefix('`')?;
+        let end = rest.find('`')?;
+        Some((&rest[..end], &rest[end + 1..]))
+    }
+
+    /// Parse a map row's first cell: `` `path` xN -> `family` ``.
+    fn parse_row(cell: &str) -> Option<(String, &'static str, usize)> {
+        let (path, rest) = backticked(cell)?;
+        let (count, rest) = rest.trim_start().strip_prefix('×')?.split_once(' ')?;
+        let rest = rest.trim_start().strip_prefix('→')?;
+        let (fam_doc, _) = backticked(rest.trim_start())?;
+        let fam = FAMILIES.iter().copied().find(|f| fam_doc.starts_with(f))?;
+        let name = path.rsplit("::").next()?.to_owned();
+        Some((name, fam, count.parse().ok()?))
+    }
+
+    /// Every termination call site in this file's PRODUCTION source, keyed by
+    /// enclosing function, with multiplicity.
+    fn source_sites() -> BTreeMap<Site, usize> {
+        let src = include_str!("app.rs");
+        let mut sites: BTreeMap<Site, usize> = BTreeMap::new();
+        let mut current_fn: Option<String> = None;
+        let mut in_test_mod = false;
+        let mut expect_test_mod = false;
+        for (n, line) in src.lines().enumerate() {
+            let lineno = n + 1;
+            // Skip `#[cfg(test)] mod ... { ... }`. This file interleaves EIGHT
+            // of them with production code — `try_headless_screenshot`, which
+            // owns three of the sites below, follows six — so `commit.rs`'s
+            // "stop at the first `#[cfg(test)]`" prefix scan would silently drop
+            // real call sites here and pass green. Every test module is
+            // top-level, so its closing `}` is the next one at column 0.
+            if in_test_mod {
+                if line == "}" {
+                    in_test_mod = false;
+                }
+                continue;
+            }
+            if expect_test_mod {
+                assert!(
+                    line.starts_with("mod ") && line.ends_with('{'),
+                    "app.rs:{lineno}: a column-0 `#[cfg(test)]` introduces \
+                     {line:?}, not a top-level `mod ... {{`. This scan separates \
+                     production from test code by skipping whole top-level test \
+                     modules; teach it the new shape rather than let it mis-scope."
+                );
+                in_test_mod = true;
+                expect_test_mod = false;
+                continue;
+            }
+            if line == "#[cfg(test)]" {
+                expect_test_mod = true;
+                continue;
+            }
+            assert!(
+                !line.trim_start().starts_with("#[cfg(test)]"),
+                "app.rs:{lineno}: an INDENTED `#[cfg(test)]`. This scan cannot \
+                 see an inner one and would count its body as production."
+            );
+
+            let trimmed = line.trim_start();
+            // Docs and comments name these sites legitimately — the map itself
+            // is made of them, and so is this module.
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if let Some(name) = fn_name(trimmed) {
+                let indent = line.len() - trimmed.len();
+                assert!(
+                    indent == 0 || indent == 4,
+                    "app.rs:{lineno}: `fn {name}` at indent {indent}. Only free \
+                     functions (0) and methods (4) exist here; a nested `fn` \
+                     would make \"the last `fn` seen\" the wrong enclosing \
+                     function and misattribute a row."
+                );
+                current_fn = Some(name);
+            }
+            for fam in FAMILIES {
+                let hits = line.matches(fam).count();
+                if hits == 0 {
+                    continue;
+                }
+                let Some(f) = current_fn.clone() else {
+                    panic!("app.rs:{lineno}: `{fam}` outside any function")
+                };
+                *sites.entry((f, fam)).or_insert(0) += hits;
+            }
+        }
+        assert!(!in_test_mod, "app.rs: unterminated top-level test module");
+        sites
+    }
+
+    /// The map's rows, parsed out of the rustdoc.
+    fn documented_sites() -> BTreeMap<Site, usize> {
+        let src = include_str!("app.rs");
+        let mut out: BTreeMap<Site, usize> = BTreeMap::new();
+        let mut in_table = false;
+        let mut rows = 0usize;
+        for line in src.lines() {
+            let t = line.trim_start();
+            if t == TABLE_HEADER {
+                in_table = true;
+                continue;
+            }
+            if !in_table {
+                continue;
+            }
+            let Some(row) = t.strip_prefix("/// |") else {
+                break; // the first non-row line closes the table
+            };
+            if row.starts_with("---") {
+                continue;
+            }
+            let cell = row.split('|').next().unwrap_or_default().trim();
+            let Some((name, fam, count)) = parse_row(cell) else {
+                panic!(
+                    "termination map row {cell:?} does not parse. Every row must \
+                     read ``fn` xN -> `family`` so the map stays checkable — a \
+                     prose row cannot be enforced, which is the whole point."
+                )
+            };
+            *out.entry((name, fam)).or_insert(0) += count;
+            rows += 1;
+        }
+        assert!(
+            in_table,
+            "the termination map's header vanished from app.rs"
+        );
+        assert!(rows > 0, "the termination map has no rows");
+        out
+    }
+
+    /// The map opens with "Two families, and BOTH live in this file" — a claim
+    /// about the whole crate, made in prose, and therefore exactly the kind of
+    /// sentence this module exists to stop trusting. For `event_loop.exit()` the
+    /// rustdoc offers an argument from types; for `std::process::exit` it admits
+    /// it is "enumerated on its own evidence, by grep" — so here is the grep.
+    #[test]
+    fn r1364_both_termination_families_live_only_in_app_rs() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+        let mut offenders: Vec<String> = Vec::new();
+        let mut checked = 0usize;
+        for entry in std::fs::read_dir(dir).expect("src dir readable") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().is_none_or(|e| e != "rs")
+                || path.file_name().is_some_and(|f| f == "app.rs")
+            {
+                continue;
+            }
+            checked += 1;
+            let src = std::fs::read_to_string(&path).expect("source readable");
+            for (n, line) in src.lines().enumerate() {
+                if line.trim_start().starts_with("//") {
+                    continue; // prose may name them; only code may not
+                }
+                for fam in FAMILIES {
+                    if line.contains(fam) {
+                        offenders.push(format!(
+                            "{}:{} spells `{fam}`",
+                            path.file_name().unwrap_or_default().to_string_lossy(),
+                            n + 1,
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "no sibling sources scanned — the walk is broken"
+        );
+        assert!(
+            offenders.is_empty(),
+            "`AppShell::request_quit`'s map says both termination families live \
+             in app.rs, and it is the census every reader trusts. These sites \
+             are outside it, so they are ways this app ends that the map does \
+             not know about: {offenders:#?}"
+        );
+    }
+
+    #[test]
+    fn r1364_the_termination_map_is_the_whole_map() {
+        let documented = documented_sites();
+        let actual = source_sites();
+        assert_eq!(
+            documented, actual,
+            "\nThe termination map on `AppShell::request_quit` disagrees with \
+             this file's source.\n  documented: {documented:#?}\n  actual:     \
+             {actual:#?}\nEvery `event_loop.exit()` / `std::process::exit` in \
+             production code is a way this app ends, and the map is the only \
+             place they are collected. R1363 proved a stale one is silent."
+        );
     }
 }
