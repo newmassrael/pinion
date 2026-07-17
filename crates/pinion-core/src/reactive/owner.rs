@@ -1190,18 +1190,20 @@ impl Owner {
     ///
     /// # Why this exists, and why it is additive
     ///
-    /// A binding's provider slots — the shell's
-    /// [`RepaintSink`](super::repaint::RepaintSink),
-    /// [`QuitSink`](super::quit::QuitSink),
-    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics), and
-    /// `pinion-shell`'s own window-control sink — are seeded ONCE, on the root
-    /// owner, at boot. `cache` looks only at the scope it is called on, so every
-    /// one of those resolves its lazy **Null default** from a child scope. Today
-    /// nothing notices, because every view runs under root. The deferred R680
-    /// atomic changes exactly that (`window_owner(id).run(..)`), and on the day
-    /// it lands a secondary window's Quit button would silently do nothing —
-    /// which is, precisely, the bug R1362 existed to fix, resurrected by a
-    /// change that never mentions quitting.
+    /// A binding's provider slots still on plain [`cache`](Self::cache) — the
+    /// shell's [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) and
+    /// `pinion-shell`'s own window-control sink among them — are seeded ONCE, on
+    /// the root owner, at boot. `cache` looks only at the scope it is called on,
+    /// so every one of those resolves its lazy **Null default** from a child
+    /// scope. Today nothing notices, because every view runs under root. The
+    /// deferred R680 atomic changes exactly that (`window_owner(id).run(..)`),
+    /// and on the day it lands a secondary window's control sink would silently
+    /// do nothing — precisely the class of bug R1362 existed to fix (there it
+    /// was a secondary window's Quit button; [`QuitSink`](super::quit::QuitSink)
+    /// and [`RepaintSink`](super::repaint::RepaintSink) have since moved to
+    /// [`ProviderSlot`](super::provider_slot::ProviderSlot), which resolves
+    /// through `cache_inherited` and is immune), resurrected by a change that
+    /// never mentions windowing.
     ///
     /// # Which slots inherit
     ///

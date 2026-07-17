@@ -195,13 +195,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// factories resolve any `use_*` hook.
     ///
     /// The TUI peer of the Vello shell's seeding window, for the same reason:
-    /// `Owner::cache` is first-write-wins with a silent Null default, so a seed
-    /// that loses to a prior read is dropped without a panic and the binding
-    /// holds a dead handle. This backend seeds one handle — its
-    /// [`QuitSink`](pinion_core::QuitSink) — which is what gives a TERMINAL
-    /// binding the app-lifecycle seam the GUI has (§5.55: quitting is not a
-    /// window operation, so it must not live in a window vocabulary the TUI
-    /// cannot name).
+    /// this backend seeds one handle — its
+    /// [`QuitSink`](pinion_core::QuitSink) — before any binding's
+    /// `use_quit_sink()` reads it. Since R1366.2 that sink is a
+    /// [`ProviderSlot`](pinion_core::ProviderSlot), so a seed that loses to a
+    /// prior read PANICS (`already seeded`) rather than being silently dropped
+    /// onto a dead handle — the loud failure the winit shell's window also got.
+    /// That seam is what gives a TERMINAL binding the app-lifecycle the GUI has
+    /// (§5.55: quitting is not a window operation, so it must not live in a
+    /// window vocabulary the TUI cannot name).
     #[must_use]
     pub fn new_with_seed(seed: impl FnOnce(&Owner)) -> Self {
         // (R1020 §5.41 §5.39) Seed the focus enumeration from the binding's

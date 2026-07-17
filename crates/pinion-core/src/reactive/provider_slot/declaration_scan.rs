@@ -65,7 +65,7 @@ const LEGACY_SLOT_KEYS: &[&str] = &[
 /// This module is test-only (`#[cfg(test)] mod declaration_scan;` in the
 /// parent), but the walk reads FILES and the `cfg` sits on the parent's `mod`
 /// line, so nothing in here trips the `#[cfg(test)]` rule. [`LEGACY_SLOT_KEYS`]
-/// would then read as nine production spellings of the very keys it lists —
+/// would then read as production spellings of the very keys it lists —
 /// which is what made R1366's staleness assert **vacuous**: every legacy key
 /// "still existed" because this list spells it, so a ghost was undetectable and
 /// the test could never fail. Skipping the file is the `#[cfg(test)]` rule

@@ -24874,6 +24874,62 @@
         "When the migration completes: `Owner::cache_inherited` can go pub(crate) and its markdown table (down one more row this round) can die; the 7-th Holder newtype count keeps falling."
       ]
     },
+    "R1366.2.1": {
+      "decision_summary": "R1366.2.1 §5.22 §5.55 §5.23: three prose comments R1366.2 left drifted from the code it migrated — the SSOT file's own key count (nine->eight, deleted not corrected), the TUI seed-window rationale (now PANICS, was 'silently dropped'), and cache_inherited's motivating example (still named the two migrated slots) — are corrected; R1366.2's frozen ledger claim that the count is not repeated in prose is made true. Doc-only audit-clearance.",
+      "changes_bullets": [
+        "`declaration_scan.rs:68` said the walk \"would then read as NINE production spellings\" of `LEGACY_SLOT_KEYS`. R1366.1 wrote \"nine\" when the list held 9; R1366.2 removed `quit_sink` (→8) and updated the machine-checked `LEGACY_SLOT_KEYS.len() == 8` assert but not this prose. The count word is DELETED, not corrected to \"eight\" — a bare number re-drifts on the next migration (R1362/R1363: make a count derivable or drop it, never replicate it). This is the exact \"count duplicated into prose then drifts under maximal scrutiny\" failure the campaign exists to end, here inside the SSOT's own file.",
+        "`tui/substrate.rs:198` (`ShellCoreTui::new_with_seed` rustdoc) still described the quit seed as \"dropped without a panic ... the binding holds a dead handle\". Since R1366.2 `QUIT_SINK` is a `ProviderSlot` whose late seed PANICS (`already seeded`), and this backend seeds ONLY `quit_sink`, the stated consequence was inverted. Rewritten to say a late seed now PANICS — matching the GUI twin `core_shell.rs:547`, which received that \"now PANICS\" paragraph at R1366.1 while the TUI twin did not (the two backends' seed-window docs had gone inconsistent).",
+        "`owner.rs:1193` (`cache_inherited`'s \"Why this exists\") listed `RepaintSink` + `QuitSink` in the present tense as live examples of the plain-`cache` silent-Null failure. Both are now `ProviderSlot::inherited` (resolve through `cache_inherited`, walk to root) and immune — the failure this doc's own machinery FIXED. The example now names only un-migrated slots (`MonospaceMetrics` + window-control sink) and notes `RepaintSink`/`QuitSink` migrated away.",
+        "No code changed: three `///` doc comments only. An audit-clearance round (visible-deliverable exemption), triggered by the user's cost-no-object \"textbook?\" audit of R1366.2."
+      ],
+      "verification_bullets": [
+        "FOUND BY the user's cost-no-object \"textbook?\" audit of R1366.2: three independent read-only reviewers, one per lens. Correctness (counterfactual discrimination) and migration-completeness both returned CONFIRMED-CLEAN on code/build/counterfactual/links, as did my own trace; the SSOT/count-drift lens reviewer plus my M5 prose check found the three drifts these fixes clear. Perspective-diverse review caught what two correctness-lens reviewers — and my own first read of `declaration_scan.rs:68` — skimmed past. 35th time the independent multi-lens review beats a \"gates green\" self-audit.",
+        "All four CI gates on the literal `.github/workflows/ci.yml` commands, bracketed by the working-diff hash `3117e765add72ca337f6b48d9e5d3863` BEFORE and AFTER (nothing edited the tree mid-gate, the R1366.1 discipline):",
+        "`cargo fmt --all --check` — exit 0 (no doc-comment reflow).",
+        "`cargo doc --workspace --document-private-items --no-deps --features pinion-runtime/vello` — clean, zero warnings. This is the load-bearing gate for a doc-only change: the changed/added intra-doc links `[`ProviderSlot`](pinion_core::ProviderSlot)` (tui/substrate.rs), `[`ProviderSlot`](super::provider_slot::ProviderSlot)` + `[`cache`](Self::cache)` + `[`RepaintSink`]`/`[`QuitSink`]` (owner.rs) all resolve under `--document-private-items`.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0.",
+        "`cargo test --workspace` — every suite `ok`, 0 failed, 0 errors. Doc-only change: the 8669-test total is unchanged from R1366.2 (`///` prose, no doctest code fences added).",
+        "Correctness unaffected by construction: no `.rs` code, no `#[cfg]`, no test, no signature changed — three `///` comments only. `git diff --stat` = 3 files, doc lines."
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.55",
+        "5.23"
+      ],
+      "carry_forward_bullets": [
+        "The R1366.2 ledger (frozen, T2) asserted twice that \"the count is deliberately not repeated in prose\" while `declaration_scan.rs:68` repeated it and had drifted 9→8. A frozen entry cannot be amended; this entry is the honest correction, and the fix removes the prose count so the claim holds going forward. [[never-record-unverified-outcomes]].",
+        "The `owner.rs` markdown slot table (8 rows, prose, NOT machine-checked) is the one un-derived count-shaped prose left. Correct at HEAD (matches `LEGACY_SLOT_KEYS` exactly, `RepaintSink`/`QuitSink` correctly absent), but nothing asserts it — a latent drift risk. It dies wholesale when the migration completes (per the R1366 debt design: `cache_inherited` goes `pub(crate)`, table with it); until then it is watched.",
+        "Method note carried for the next migration: two correctness/completeness reviewers AND my own first read of `declaration_scan.rs:68` all missed the three prose drifts; only a dedicated SSOT-lens reviewer caught them. Run a prose-count/family-enumeration lens on every migration, not just a correctness lens.",
+        "Next by risk (unchanged): R1366.3 = `monospace_metrics` / `window_control_sink` (a `provide_*` + a Null default = mechanical, same shape as R1366.2), then `local_task_pump` / `pane_viewport_registry` (need `seed_root` at boot), then the two `per_scope` verdicts, then pinion-shell's bare Arcs."
+      ],
+      "publishable_decision_summary": "R1366.2.1 §5.22 §5.55 §5.23: three prose comments R1366.2 left drifted from the code it migrated — the SSOT file's own key count (nine->eight, deleted not corrected), the TUI seed-window rationale (now PANICS, was 'silently dropped'), and cache_inherited's motivating example (still named the two migrated slots) — are corrected; R1366.2's frozen ledger claim that the count is not repeated in prose is made true. Doc-only audit-clearance.",
+      "publishable_changes_bullets": [
+        "`declaration_scan.rs:68` said the walk \"would then read as NINE production spellings\" of `LEGACY_SLOT_KEYS`. R1366.1 wrote \"nine\" when the list held 9; R1366.2 removed `quit_sink` (→8) and updated the machine-checked `LEGACY_SLOT_KEYS.len() == 8` assert but not this prose. The count word is DELETED, not corrected to \"eight\" — a bare number re-drifts on the next migration (R1362/R1363: make a count derivable or drop it, never replicate it). This is the exact \"count duplicated into prose then drifts under maximal scrutiny\" failure the campaign exists to end, here inside the SSOT's own file.",
+        "`tui/substrate.rs:198` (`ShellCoreTui::new_with_seed` rustdoc) still described the quit seed as \"dropped without a panic ... the binding holds a dead handle\". Since R1366.2 `QUIT_SINK` is a `ProviderSlot` whose late seed PANICS (`already seeded`), and this backend seeds ONLY `quit_sink`, the stated consequence was inverted. Rewritten to say a late seed now PANICS — matching the GUI twin `core_shell.rs:547`, which received that \"now PANICS\" paragraph at R1366.1 while the TUI twin did not (the two backends' seed-window docs had gone inconsistent).",
+        "`owner.rs:1193` (`cache_inherited`'s \"Why this exists\") listed `RepaintSink` + `QuitSink` in the present tense as live examples of the plain-`cache` silent-Null failure. Both are now `ProviderSlot::inherited` (resolve through `cache_inherited`, walk to root) and immune — the failure this doc's own machinery FIXED. The example now names only un-migrated slots (`MonospaceMetrics` + window-control sink) and notes `RepaintSink`/`QuitSink` migrated away.",
+        "No code changed: three `///` doc comments only. An audit-clearance round (visible-deliverable exemption), triggered by the user's cost-no-object \"textbook?\" audit of R1366.2."
+      ],
+      "publishable_verification_bullets": [
+        "FOUND BY the user's cost-no-object \"textbook?\" audit of R1366.2: three independent read-only reviewers, one per lens. Correctness (counterfactual discrimination) and migration-completeness both returned CONFIRMED-CLEAN on code/build/counterfactual/links, as did my own trace; the SSOT/count-drift lens reviewer plus my M5 prose check found the three drifts these fixes clear. Perspective-diverse review caught what two correctness-lens reviewers — and my own first read of `declaration_scan.rs:68` — skimmed past. 35th time the independent multi-lens review beats a \"gates green\" self-audit.",
+        "All four CI gates on the literal `.github/workflows/ci.yml` commands, bracketed by the working-diff hash `3117e765add72ca337f6b48d9e5d3863` BEFORE and AFTER (nothing edited the tree mid-gate, the R1366.1 discipline):",
+        "`cargo fmt --all --check` — exit 0 (no doc-comment reflow).",
+        "`cargo doc --workspace --document-private-items --no-deps --features pinion-runtime/vello` — clean, zero warnings. This is the load-bearing gate for a doc-only change: the changed/added intra-doc links `[`ProviderSlot`](pinion_core::ProviderSlot)` (tui/substrate.rs), `[`ProviderSlot`](super::provider_slot::ProviderSlot)` + `[`cache`](Self::cache)` + `[`RepaintSink`]`/`[`QuitSink`]` (owner.rs) all resolve under `--document-private-items`.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — exit 0.",
+        "`cargo test --workspace` — every suite `ok`, 0 failed, 0 errors. Doc-only change: the 8669-test total is unchanged from R1366.2 (`///` prose, no doctest code fences added).",
+        "Correctness unaffected by construction: no `.rs` code, no `#[cfg]`, no test, no signature changed — three `///` comments only. `git diff --stat` = 3 files, doc lines."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.55",
+        "5.23"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The R1366.2 ledger (frozen, T2) asserted twice that \"the count is deliberately not repeated in prose\" while `declaration_scan.rs:68` repeated it and had drifted 9→8. A frozen entry cannot be amended; this entry is the honest correction, and the fix removes the prose count so the claim holds going forward. [[never-record-unverified-outcomes]].",
+        "The `owner.rs` markdown slot table (8 rows, prose, NOT machine-checked) is the one un-derived count-shaped prose left. Correct at HEAD (matches `LEGACY_SLOT_KEYS` exactly, `RepaintSink`/`QuitSink` correctly absent), but nothing asserts it — a latent drift risk. It dies wholesale when the migration completes (per the R1366 debt design: `cache_inherited` goes `pub(crate)`, table with it); until then it is watched.",
+        "Method note carried for the next migration: two correctness/completeness reviewers AND my own first read of `declaration_scan.rs:68` all missed the three prose drifts; only a dedicated SSOT-lens reviewer caught them. Run a prose-count/family-enumeration lens on every migration, not just a correctness lens.",
+        "Next by risk (unchanged): R1366.3 = `monospace_metrics` / `window_control_sink` (a `provide_*` + a Null default = mechanical, same shape as R1366.2), then `local_task_pump` / `pane_viewport_registry` (need `seed_root` at boot), then the two `per_scope` verdicts, then pinion-shell's bare Arcs."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
