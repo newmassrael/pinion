@@ -189,10 +189,16 @@ pub fn provide_window_control_sink(owner: &Owner, sink: Arc<dyn WindowControlSin
 /// Resolve the scope's [`WindowControlSink`] — whatever the shell seeded via
 /// [`provide_window_control_sink`], or a [`NullWindowControlSink`] when none was
 /// provided. The **one** home for this slot's key + lazy default.
+///
+/// R1364 §5.22 — [`Owner::cache_inherited`], so a child scope resolves the
+/// ROOT's real sink instead of minting its own Null. This slot is why the walk
+/// had to be the general answer rather than R1335's copy-the-handle-at-construction
+/// trick: it is defined in `pinion-shell`, and `Owner::new_child` cannot name a
+/// type from a crate above it.
 fn resolve_window_control_sink(owner: &Owner) -> Arc<dyn WindowControlSink> {
     Arc::clone(
         &owner
-            .cache::<WindowControlSinkHolder, _>(WINDOW_CONTROL_SINK_KEY, || {
+            .cache_inherited::<WindowControlSinkHolder, _>(WINDOW_CONTROL_SINK_KEY, || {
                 WindowControlSinkHolder(Arc::new(NullWindowControlSink))
             })
             .0,
@@ -208,23 +214,21 @@ fn resolve_window_control_sink(owner: &Owner) -> Arc<dyn WindowControlSink> {
 /// returned `Arc` to the producer. A UI-thread caller (a tray menu handler) may
 /// hold it and call it inline just as well; the request is queued either way.
 ///
-/// # ROOT scope only
+/// # Any scope in the binding's tree (R1364)
 ///
-/// The live sink resolves only in the ROOT owner: [`Owner::cache`] has no
-/// parent walk (`Owner::new_child` mirrors the focus handle and nothing else),
-/// and the shell seeds this slot on `root_owner`. That is not a live hazard
-/// today — `create_extra_externals` runs inside `root_owner.run(..)`, and the
-/// view-fn wrap does too (`window_owner(DEFAULT_WINDOW)` IS `root_owner`,
-/// and `CoreShell` records that switching the wrap to
-/// `window_owner(window_id).run(..)` is deferred to an R680 atomic). But when
-/// that deferred atomic lands, a SECONDARY window's `view` would run in a child
-/// scope whose cache is empty, and this hook would quietly return
-/// [`NullWindowControlSink`] — the close request then no-ops with no panic and
-/// no log. This is the same first-write-wins silence the seeding window has, on
-/// the scope axis instead of the time axis, and it is shared verbatim with
-/// [`use_repaint_sink`](pinion_core::use_repaint_sink) (identical shape, same
-/// root-only seed). Whoever lands that atomic must resolve both — a parent walk
-/// for provider slots, or per-window re-seeding.
+/// The shell seeds this slot on `root_owner`, and resolution walks up to find it
+/// ([`Owner::cache_inherited`]), so a child scope gets the REAL sink.
+///
+/// Until R1364 it was root-only, and R1362 documented that as "not a live hazard
+/// today" because every view runs under root — while noting that the deferred
+/// R680 atomic (`window_owner(window_id).run(..)`) would make a secondary
+/// window's `view` resolve a [`NullWindowControlSink`] that no-ops with no panic
+/// and no log. That prescription ("a parent walk for provider slots, or
+/// per-window re-seeding") is now discharged, for this slot and for the three
+/// core-homed ones that shared the shape verbatim. It was paid off before R680
+/// rather than as part of it, because the failure it produces is silent and
+/// names nothing: the round that finally lands R680 would have had no reason to
+/// suspect quitting.
 ///
 /// # Panics
 ///

@@ -329,6 +329,21 @@ pub(crate) struct OwnerInner {
     /// `FocusManager`'s own `focused` SSOT, not authoritative binding state — the
     /// same reason the pre-R1335 thread-local mirror was untracked.
     pub(crate) focused_tag: super::signal::Signal<Option<String>>,
+
+    /// R1364 §5.22 §5.55 — the scope this one was born under, or a dangling
+    /// `Weak` for a root. Walked by [`Owner::cache_inherited`], and by nothing
+    /// else.
+    ///
+    /// `Weak` is forced: [`children`](Self::children) holds descendants
+    /// STRONGLY (that is what makes cascade-drop work), so a strong parent link
+    /// would close a cycle and leak every scope in the tree.
+    ///
+    /// Set once at construction and never cleared — including by
+    /// [`Owner::detach_child_by_id`], whose whole purpose is to drop the child
+    /// immediately afterwards. A detached scope that outlived its parent gets
+    /// `upgrade() == None` and resolves as a root, which is the honest answer:
+    /// it has no provider to inherit from.
+    parent: Weak<OwnerInner>,
 }
 
 /// (R56.1.b.1 / R685.C atomic 5 §5.22) Internal cache key for
@@ -388,13 +403,19 @@ impl Owner {
         // A detached root owns a fresh focus mirror — the head of a new binding's
         // owner tree. [`Self::new_child`] threads THIS handle down so the whole
         // tree shares one mirror (R1335 §5.39: focus is binding-wide).
-        Self::with_focus_mirror(super::signal::Signal::new(None))
+        Self::with_focus_mirror(super::signal::Signal::new(None), Weak::new())
     }
 
     /// R1335 §5.39 — construct an owner carrying `focused_tag` as its focus
     /// mirror. [`Self::new`] passes a fresh signal (a new binding); [`Self::new_child`]
     /// passes the parent's handle so descendants share the binding-wide mirror.
-    fn with_focus_mirror(focused_tag: super::signal::Signal<Option<String>>) -> Self {
+    ///
+    /// R1364 — `parent` is the scope to inherit provider slots from
+    /// ([`Self::cache_inherited`]); `Weak::new()` for a root.
+    fn with_focus_mirror(
+        focused_tag: super::signal::Signal<Option<String>>,
+        parent: Weak<OwnerInner>,
+    ) -> Self {
         Self {
             inner: Rc::new(OwnerInner {
                 id: next_node_id(),
@@ -406,6 +427,7 @@ impl Owner {
                 owned_commands: RefCell::new(Vec::new()),
                 cache: RefCell::new(HashMap::new()),
                 focused_tag,
+                parent,
             }),
         }
     }
@@ -486,9 +508,23 @@ impl Owner {
     /// (R680 atomic 1) runs a secondary window's view under its child scope. It
     /// also means only root owners allocate a focus `Signal`; children clone the
     /// handle.
+    ///
+    /// R1364 §5.22 — the child also records `parent`, which is what lets
+    /// [`Self::cache_inherited`] resolve a binding-wide CAPABILITY (the shell's
+    /// [`RepaintSink`](super::repaint::RepaintSink) /
+    /// [`QuitSink`](super::quit::QuitSink) / monospace metrics, and the shell's
+    /// own window-control sink) from a child scope. Focus got the mirror
+    /// treatment because `Owner` can name a `Signal`; it cannot name every
+    /// provider slot, least of all one defined in `pinion-shell` — so the
+    /// general answer is a link the resolver walks, not a field the constructor
+    /// copies. The two mechanisms answer the same R680 question for the two
+    /// kinds of thing an owner tree carries.
     #[must_use]
     pub fn new_child(parent: &Owner) -> Self {
-        let child = Self::with_focus_mirror(parent.inner.focused_tag.clone());
+        let child = Self::with_focus_mirror(
+            parent.inner.focused_tag.clone(),
+            Rc::downgrade(&parent.inner),
+        );
         parent.inner.children.borrow_mut().push(child.clone());
         child
     }
@@ -1151,11 +1187,95 @@ impl Owner {
     /// [`Self::local_task_pump`].
     #[must_use]
     pub fn repaint_sink(&self) -> std::sync::Arc<dyn super::repaint::RepaintSink> {
-        self.cache::<super::repaint::RepaintSinkHolder, _>(super::repaint::REPAINT_SINK_KEY, || {
-            super::repaint::RepaintSinkHolder(std::sync::Arc::new(super::repaint::NullRepaintSink))
-        })
+        self.cache_inherited::<super::repaint::RepaintSinkHolder, _>(
+            super::repaint::REPAINT_SINK_KEY,
+            || {
+                super::repaint::RepaintSinkHolder(std::sync::Arc::new(
+                    super::repaint::NullRepaintSink,
+                ))
+            },
+        )
         .0
         .clone()
+    }
+
+    /// R1364 §5.22 §5.55 — resolve a slot from the nearest ancestor that has
+    /// one, creating it HERE only if no ancestor does. The provider-slot
+    /// sibling of [`Self::cache`], which is per-scope and stays that way.
+    ///
+    /// # Why this exists, and why it is additive
+    ///
+    /// A binding's provider slots — the shell's
+    /// [`RepaintSink`](super::repaint::RepaintSink),
+    /// [`QuitSink`](super::quit::QuitSink),
+    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics), and
+    /// `pinion-shell`'s own window-control sink — are seeded ONCE, on the root
+    /// owner, at boot. `cache` looks only at the scope it is called on, so every
+    /// one of those resolves its lazy **Null default** from a child scope. Today
+    /// nothing notices, because every view runs under root. The deferred R680
+    /// atomic changes exactly that (`window_owner(id).run(..)`), and on the day
+    /// it lands a secondary window's Quit button would silently do nothing —
+    /// which is, precisely, the bug R1362 existed to fix, resurrected by a
+    /// change that never mentions quitting.
+    ///
+    /// The split is not "which slots are important", it is **what kind of thing
+    /// the slot holds**, and this file already draws it (see the `focused_tag`
+    /// field's note on `OwnerInner`):
+    ///
+    /// * A **capability** is binding-wide — one `QuitSink` per process, one way
+    ///   to wake the UI, one font-metrics provider. It must inherit, or a child
+    ///   scope gets a Null that lies.
+    /// * A **value** is per-owner — a secondary window genuinely has its own
+    ///   viewport size. It must NOT inherit, or a child reads its parent's size
+    ///   and reflows to the wrong one.
+    ///
+    /// So [`viewport_size_signal`](Self::viewport_size_signal) deliberately
+    /// keeps plain [`cache`](Self::cache) and reports its documented `(0, 0)`
+    /// = "viewport unknown" (which R1006's contract already requires consumers
+    /// to skip on), rather than confidently inheriting a wrong number. Scroll
+    /// state, animations and every other per-scope slot keep `cache` for the
+    /// same reason: inheriting them would be the mirror-image bug.
+    ///
+    /// # Panics
+    ///
+    /// Same nested-factory rule as [`Self::cache`] — a factory that re-enters
+    /// the cache panics with an actionable message rather than `RefCell`'s
+    /// (`[[owner-cache-no-nested-factory]]`). The walk only ever takes a SHARED
+    /// borrow, so an ancestor being mid-factory is the only way to trip it.
+    pub fn cache_inherited<V, F>(&self, key: impl Into<Cow<'static, str>>, factory: F) -> Rc<V>
+    where
+        V: 'static,
+        F: FnOnce() -> V,
+    {
+        let key: Cow<'static, str> = key.into();
+        let typed_key = (TypeId::of::<V>(), key.clone());
+        let mut scope = Some(Rc::clone(&self.inner));
+        while let Some(inner) = scope {
+            let hit = inner
+                .cache
+                .try_borrow()
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Owner::cache_inherited must not be called from inside \
+                         an Owner::cache factory; pre-resolve dependent slots \
+                         first (see [[owner-cache-no-nested-factory]] in \
+                         memory). Re-entering on key={key:?}",
+                    )
+                })
+                .get(&typed_key)
+                .map(Rc::clone);
+            if let Some(any_rc) = hit {
+                return Rc::downcast::<V>(any_rc).unwrap_or_else(|_| {
+                    panic!("Owner::cache_inherited typed-key invariant broken for key={key:?}")
+                });
+            }
+            scope = inner.parent.upgrade();
+        }
+        // No ancestor provides it. Create at THIS scope, not at the root: a
+        // resolver's Null default is a local fallback, and writing it to the
+        // root would let an unseeded child permanently poison the slot for the
+        // whole tree via `cache`'s first-write-wins.
+        self.cache(key, factory)
     }
 
     /// R999 §5.23 — seed the owner-scoped
@@ -1190,7 +1310,7 @@ impl Owner {
     /// `Arc` is the `Send` handle a binding clones into its producer thread.
     #[must_use]
     pub fn quit_sink(&self) -> std::sync::Arc<dyn super::quit::QuitSink> {
-        self.cache::<super::quit::QuitSinkHolder, _>(super::quit::QUIT_SINK_KEY, || {
+        self.cache_inherited::<super::quit::QuitSinkHolder, _>(super::quit::QUIT_SINK_KEY, || {
             super::quit::QuitSinkHolder(std::sync::Arc::new(super::quit::NullQuitSink))
         })
         .0
@@ -1222,7 +1342,7 @@ impl Owner {
     /// [`measured_monospace_cell`](super::font_metrics::measured_monospace_cell).
     #[must_use]
     pub fn monospace_metrics(&self) -> std::rc::Rc<dyn super::font_metrics::MonospaceMetrics> {
-        self.cache::<super::font_metrics::MonospaceMetricsHolder, _>(
+        self.cache_inherited::<super::font_metrics::MonospaceMetricsHolder, _>(
             super::font_metrics::MONOSPACE_METRICS_KEY,
             || {
                 super::font_metrics::MonospaceMetricsHolder(std::rc::Rc::new(
@@ -2966,5 +3086,99 @@ mod tests {
             assert_eq!(owner.pending_commands().len(), 1);
             assert_eq!(owner.pending_commands()[0].kind_str(), "followup");
         }
+    }
+}
+
+#[cfg(test)]
+mod r1364_cache_inherited_tests {
+    //! R1364 §5.22 §5.55 — the provider-slot parent walk.
+    //!
+    //! These pin the R680 question BEFORE R680: the deferred atomic switches the
+    //! view wrap to `window_owner(id).run(..)`, and on that day every one of the
+    //! binding's provider slots resolved a Null in a secondary window. The bug it
+    //! produced (a Quit button that silently does nothing) names nothing that
+    //! would make the author of R680 think of it, so the property is fixed here
+    //! and asserted here.
+
+    use super::Owner;
+
+    #[test]
+    fn r1364_a_child_resolves_the_parents_slot() {
+        let root = Owner::new();
+        root.cache_inherited::<u32, _>("cap", || 7);
+        let child = Owner::new_child(&root);
+        assert_eq!(
+            *child.cache_inherited::<u32, _>("cap", || 99),
+            7,
+            "a child must see the capability the shell seeded on root — the \
+             factory here stands for the Null default that would silently lie",
+        );
+    }
+
+    #[test]
+    fn r1364_the_walk_crosses_more_than_one_generation() {
+        let root = Owner::new();
+        root.cache_inherited::<u32, _>("cap", || 7);
+        let child = Owner::new_child(&root);
+        let grandchild = Owner::new_child(&child);
+        assert_eq!(*grandchild.cache_inherited::<u32, _>("cap", || 99), 7);
+    }
+
+    #[test]
+    fn r1364_the_nearest_ancestor_wins_not_the_root() {
+        let root = Owner::new();
+        root.cache_inherited::<u32, _>("cap", || 7);
+        let child = Owner::new_child(&root);
+        child.cache::<u32, _>("cap", || 42); // a deliberate per-scope override
+        let grandchild = Owner::new_child(&child);
+        assert_eq!(
+            *grandchild.cache_inherited::<u32, _>("cap", || 99),
+            42,
+            "nearest-first, so a scope can shadow an inherited slot",
+        );
+    }
+
+    #[test]
+    fn r1364_a_miss_everywhere_creates_at_the_calling_scope() {
+        let root = Owner::new();
+        let child = Owner::new_child(&root);
+        assert_eq!(*child.cache_inherited::<u32, _>("cap", || 99), 99);
+        // Created on the CHILD, not hoisted to the root: an unseeded child must
+        // not poison the whole tree through `cache`'s first-write-wins.
+        assert_eq!(
+            *root.cache::<u32, _>("cap", || 7),
+            7,
+            "the child's local default must not have been written to the root",
+        );
+    }
+
+    #[test]
+    fn r1364_plain_cache_still_does_not_inherit() {
+        // The contrast IS the design: a value (scroll offset, viewport size) is
+        // per-owner and must NOT see its parent's, or a secondary window reflows
+        // to the primary's size. Only capabilities inherit.
+        let root = Owner::new();
+        root.cache::<u32, _>("value", || 7);
+        let child = Owner::new_child(&root);
+        assert_eq!(*child.cache::<u32, _>("value", || 99), 99);
+    }
+
+    #[test]
+    fn r1364_a_root_has_no_parent_to_walk() {
+        let root = Owner::new();
+        assert_eq!(*root.cache_inherited::<u32, _>("cap", || 99), 99);
+    }
+
+    #[test]
+    fn r1364_an_orphaned_child_resolves_as_a_root() {
+        // `parent` is a Weak and is never cleared, so a child that outlives its
+        // parent upgrades to None and honestly reports "no provider" rather than
+        // reaching into freed memory.
+        let child = {
+            let root = Owner::new();
+            root.cache_inherited::<u32, _>("cap", || 7);
+            Owner::new_child(&root)
+        };
+        assert_eq!(*child.cache_inherited::<u32, _>("cap", || 99), 99);
     }
 }

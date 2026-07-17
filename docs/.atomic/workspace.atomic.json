@@ -24334,6 +24334,62 @@
         "Remaining §5.55 clearance (11 of 13): Owner::cache_inherited parent walk; false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; and ⑬ the TUI's missing request_quit arm"
       ]
     },
+    "R1364.2": {
+      "decision_summary": "R1364.2 §5.22 §5.55: provider slots inherit — capabilities are binding-wide and walk to their provider, values stay per-owner, and R680's silent Null is paid off before R680",
+      "changes_bullets": [
+        "Owner::cache_inherited (R1364): resolve a slot from the nearest ancestor that has one, else create at the CALLING scope. OwnerInner gains `parent: Weak<OwnerInner>` — Weak is forced, because `children` holds descendants strongly and a strong parent link would cycle and leak every scope",
+        "Pays off the deferred R680 hazard BEFORE R680. The shell seeds every provider slot once on root_owner; `cache` looks only at the scope it is called on. The moment R680's atomic switches the view wrap to window_owner(id).run(..), a secondary window's Quit button silently does nothing — the exact defect R1362 existed to fix, resurrected by a change that never mentions quitting, and R1362's own carry prescribed this (\"a parent walk for provider slots, or per-window re-seeding\")",
+        "THE FAMILY IS FOUR CAPABILITIES, NOT THE FIVE PROVIDE_* SLOTS — the debt list was wrong to include viewport. The split is not \"which slots matter\", it is what KIND of thing the slot holds, and owner.rs already draws it in focused_tag's own note: a CAPABILITY is binding-wide (one QuitSink per process, one way to wake the UI, one metrics provider) and must inherit or a child gets a Null that lies; a VALUE is per-owner (a secondary window genuinely has its own size) and must NOT, or a child reflows to its parent's dimensions",
+        "So repaint_sink / quit_sink / monospace_metrics / window_control_sink migrate; viewport_size_signal deliberately keeps plain `cache` and reports its documented (0,0) = \"viewport unknown\", which R1006's contract already requires consumers to skip on. An honest unknown beats a confidently inherited wrong number",
+        "Additive: `cache` is untouched and stays per-scope. Scroll offsets, animations and every other slot keep it — inheriting those would be the mirror-image bug, so the contrast is pinned by its own test",
+        "Why a walk and not R1335's mirror-at-construction (which solved the same R680 question for focus): Owner can name a Signal, but it cannot name every provider slot — least of all window_control_sink, which is defined in pinion-shell, a crate pinion-core cannot see. A link the resolver walks generalises; a field the constructor copies does not",
+        "window_control.rs's \"# ROOT scope only\" section is REWRITTEN, not left standing: the hazard it warned about no longer exists, and a false warning is as bad as a false claim"
+      ],
+      "verification_bullets": [
+        "The exact CI commands: cargo fmt --all --check + clippy --workspace --all-targets --features pinion-runtime/vello + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items + cargo test --workspace, all exit 0",
+        "The R680 characterization test is PROVEN to bite, which is the whole point of a characterization test: reverting quit_sink() to plain `cache` makes r1364_a_child_scope_resolves_the_shells_real_quit_sink fail with left:0 right:1 — the silent Null, a Quit button that does not quit",
+        "8 new tests: child resolves parent's slot / walk crosses two generations / nearest ancestor wins (a scope may shadow) / miss everywhere creates at the calling scope and does NOT poison the root / plain cache still does not inherit / a root has no parent / an orphaned child upgrades to None and resolves as a root / the quit-sink scope test",
+        "The doc gate caught TWO of my own errors again, both invisible to clippy and tests: a link to `Owner::detach_child`, an API I INVENTED (the real name is detach_child_by_id), and a public doc linking to the private OwnerInner::focused_tag. Third round running that this gate has paid for itself"
+      ],
+      "impact_refs": [
+        "2",
+        "5.22",
+        "5.23",
+        "5.55"
+      ],
+      "carry_forward_bullets": [
+        "R680's atomic is still deferred; this removes its silent-Null trap but does not land it. When it does, viewport_size_signal is the slot that still needs work — per-window re-seeding by the shell, since inheritance is the wrong answer for a value",
+        "provide_viewport_size_signal has NO production caller at all (only tests); the shell sets the signal inside root_owner scope per R1006 contract 1. So under R680 a secondary window would read (0,0) = \"viewport unknown\" rather than a wrong number — degraded but honest, and consumers already must skip on it",
+        "Remaining §5.55 clearance (10 of 13): false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; TUI's missing request_quit arm"
+      ],
+      "publishable_decision_summary": "R1364.2 §5.22 §5.55: provider slots inherit — capabilities are binding-wide and walk to their provider, values stay per-owner, and R680's silent Null is paid off before R680",
+      "publishable_changes_bullets": [
+        "Owner::cache_inherited (R1364): resolve a slot from the nearest ancestor that has one, else create at the CALLING scope. OwnerInner gains `parent: Weak<OwnerInner>` — Weak is forced, because `children` holds descendants strongly and a strong parent link would cycle and leak every scope",
+        "Pays off the deferred R680 hazard BEFORE R680. The shell seeds every provider slot once on root_owner; `cache` looks only at the scope it is called on. The moment R680's atomic switches the view wrap to window_owner(id).run(..), a secondary window's Quit button silently does nothing — the exact defect R1362 existed to fix, resurrected by a change that never mentions quitting, and R1362's own carry prescribed this (\"a parent walk for provider slots, or per-window re-seeding\")",
+        "THE FAMILY IS FOUR CAPABILITIES, NOT THE FIVE PROVIDE_* SLOTS — the debt list was wrong to include viewport. The split is not \"which slots matter\", it is what KIND of thing the slot holds, and owner.rs already draws it in focused_tag's own note: a CAPABILITY is binding-wide (one QuitSink per process, one way to wake the UI, one metrics provider) and must inherit or a child gets a Null that lies; a VALUE is per-owner (a secondary window genuinely has its own size) and must NOT, or a child reflows to its parent's dimensions",
+        "So repaint_sink / quit_sink / monospace_metrics / window_control_sink migrate; viewport_size_signal deliberately keeps plain `cache` and reports its documented (0,0) = \"viewport unknown\", which R1006's contract already requires consumers to skip on. An honest unknown beats a confidently inherited wrong number",
+        "Additive: `cache` is untouched and stays per-scope. Scroll offsets, animations and every other slot keep it — inheriting those would be the mirror-image bug, so the contrast is pinned by its own test",
+        "Why a walk and not R1335's mirror-at-construction (which solved the same R680 question for focus): Owner can name a Signal, but it cannot name every provider slot — least of all window_control_sink, which is defined in pinion-shell, a crate pinion-core cannot see. A link the resolver walks generalises; a field the constructor copies does not",
+        "window_control.rs's \"# ROOT scope only\" section is REWRITTEN, not left standing: the hazard it warned about no longer exists, and a false warning is as bad as a false claim"
+      ],
+      "publishable_verification_bullets": [
+        "The exact CI commands: cargo fmt --all --check + clippy --workspace --all-targets --features pinion-runtime/vello + cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items + cargo test --workspace, all exit 0",
+        "The R680 characterization test is PROVEN to bite, which is the whole point of a characterization test: reverting quit_sink() to plain `cache` makes r1364_a_child_scope_resolves_the_shells_real_quit_sink fail with left:0 right:1 — the silent Null, a Quit button that does not quit",
+        "8 new tests: child resolves parent's slot / walk crosses two generations / nearest ancestor wins (a scope may shadow) / miss everywhere creates at the calling scope and does NOT poison the root / plain cache still does not inherit / a root has no parent / an orphaned child upgrades to None and resolves as a root / the quit-sink scope test",
+        "The doc gate caught TWO of my own errors again, both invisible to clippy and tests: a link to `Owner::detach_child`, an API I INVENTED (the real name is detach_child_by_id), and a public doc linking to the private OwnerInner::focused_tag. Third round running that this gate has paid for itself"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.22",
+        "5.23",
+        "5.55"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R680's atomic is still deferred; this removes its silent-Null trap but does not land it. When it does, viewport_size_signal is the slot that still needs work — per-window re-seeding by the shell, since inheritance is the wrong answer for a value",
+        "provide_viewport_size_signal has NO production caller at all (only tests); the shell sets the signal inside root_owner scope per R1006 contract 1. So under R680 a secondary window would read (0,0) = \"viewport unknown\" rather than a wrong number — degraded but honest, and consumers already must skip on it",
+        "Remaining §5.55 clearance (10 of 13): false Escape/Tab docs at 5 sites; app/quit RPC; R1362.1 correcting the frozen false caveat; off-thread forcing consumer; plan_window_control pure lift; executor.rs false coverage claim; AppEvent non_exhaustive; test-fixtures gate + RecordingSink x3; vestigial quit_requested; TUI's missing request_quit arm"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

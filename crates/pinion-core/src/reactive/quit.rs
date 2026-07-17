@@ -165,3 +165,46 @@ mod tests {
         assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 }
+
+#[cfg(test)]
+mod r1364_scope_tests {
+    //! R1364 §5.22 §5.55 — the quit sink resolves from a child scope.
+    //!
+    //! This is the R680 characterization, on the slot where the failure is
+    //! loudest: the shell seeds `QuitSink` once on `root_owner`, and the deferred
+    //! R680 atomic runs a secondary window's view under `window_owner(id)`. With
+    //! the pre-R1364 root-only `Owner::cache`, `use_quit_sink()` there returned a
+    //! `NullQuitSink` and the app's Quit button did nothing, with no panic and no
+    //! log — the exact defect R1362 existed to fix, resurrected by a change that
+    //! never mentions quitting.
+
+    use super::super::owner::Owner;
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct CountingSink(Arc<AtomicUsize>);
+    impl QuitSink for CountingSink {
+        fn request_quit(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn r1364_a_child_scope_resolves_the_shells_real_quit_sink() {
+        let root = Owner::new();
+        let count = Arc::new(AtomicUsize::new(0));
+        root.provide_quit_sink(Arc::new(CountingSink(Arc::clone(&count))));
+
+        // What `window_owner(secondary)` is, and what R680 will run the view in.
+        let window_scope = Owner::new_child(&root);
+        window_scope.run(|| use_quit_sink().request_quit());
+
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "a Quit raised from a secondary window's scope must reach the shell; \
+             0 here is the silent Null — a Quit button that does not quit",
+        );
+    }
+}
