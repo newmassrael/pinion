@@ -45,6 +45,8 @@
 
 use std::sync::Arc;
 
+use super::provider_slot::ProviderSlot;
+
 /// R1363 §5.55 — the shell-supplied "end this application" edge.
 ///
 /// `Send + Sync + 'static` so the handle clones into a background producer
@@ -83,20 +85,37 @@ impl QuitSink for NullQuitSink {
     fn request_quit(&self) {}
 }
 
-/// Owner-cache newtype: [`Owner::cache`](super::owner::Owner::cache) stores
-/// `Rc<dyn Any>`, so the `Send` trait object rides inside this holder. The outer
-/// `Rc<QuitSinkHolder>` stays on the UI thread; the inner `Arc<dyn QuitSink>` is
-/// the handle that crosses to the producer thread.
-pub(crate) struct QuitSinkHolder(pub(crate) Arc<dyn QuitSink>);
-
-/// Private owner-cache key for the single per-owner quit sink slot.
-pub(crate) const QUIT_SINK_KEY: &str = "__pinion.reactive.quit_sink";
+/// R1366.2 §5.22 §5.55 — the quit slot: its key, its Null default and its
+/// inherit verdict as one expression, in the module that owns the capability.
+///
+/// **`Inherited`** by the mechanical predicate — the shell DRIVES this at the
+/// root owner, and BOTH backends seed it before any binding factory reads it:
+/// `AppShell::new`'s `new_with_seed` closure on the winit side, the
+/// `ShellCoreTui::new_with_seed` seed on the terminal side. That pair is itself
+/// the §2 #6 dual this slot exists to serve.
+///
+/// This is the slot where a per-scope verdict is loudest. Under the deferred
+/// R680 atomic — each window's `view` running in `window_owner(id).run(..)` — a
+/// secondary window would resolve a freshly minted [`NullQuitSink`] and its Quit
+/// button would do nothing: no panic, no log, precisely the defect R1362 existed
+/// to fix. `r1364_scope_tests` characterized that by hand;
+/// [`provider_slot_tests!`](crate::provider_slot_tests) now EMITS the verdict
+/// from this declaration, so it cannot be forgotten the way R1365 forgot five.
+///
+/// The payload is the `Arc<dyn QuitSink>` itself, with no newtype wrapper:
+/// [`Owner::cache`](super::owner::Owner::cache) keys on `(TypeId::of::<V>(),
+/// key)`, so the trait object is already its own type. R1363's `QuitSinkHolder`
+/// was the `Rc<dyn Any>` storage showing through the abstraction — the same
+/// wrapper R1366.1 retired for [`REPAINT_SINK`](super::repaint::REPAINT_SINK).
+pub static QUIT_SINK: ProviderSlot<Arc<dyn QuitSink>> =
+    ProviderSlot::inherited("__pinion.reactive.quit_sink", || Arc::new(NullQuitSink));
 
 /// R1363 §5.55 — hook returning the active owner scope's [`QuitSink`].
 ///
-/// Returns the sink the shell seeded at boot, or a [`NullQuitSink`] off a live
-/// shell. Bindings call this inside `create_extra_externals` (alongside the
-/// producer-thread spawn) and hand the returned `Arc` to the thread — the
+/// Returns the sink the shell seeded into [`QUIT_SINK`] at boot, or a
+/// [`NullQuitSink`] off a live shell. Bindings call this inside
+/// `create_extra_externals` (alongside the producer-thread spawn) and hand the
+/// returned `Arc` to the thread — the
 /// [`use_repaint_sink`](super::repaint::use_repaint_sink) discipline.
 ///
 /// # Panics
@@ -105,9 +124,7 @@ pub(crate) const QUIT_SINK_KEY: &str = "__pinion.reactive.quit_sink";
 /// other `use_*` hooks).
 #[must_use]
 pub fn use_quit_sink() -> Arc<dyn QuitSink> {
-    super::owner::Owner::current()
-        .expect("use_quit_sink requires an active Owner scope")
-        .quit_sink()
+    Arc::clone(&QUIT_SINK.resolve_current())
 }
 
 #[cfg(test)]
@@ -124,41 +141,55 @@ mod tests {
         }
     }
 
+    /// A sink and the counter it increments.
+    fn counting() -> (Arc<dyn QuitSink>, Arc<AtomicUsize>) {
+        let count = Arc::new(AtomicUsize::new(0));
+        (Arc::new(CountingSink(Arc::clone(&count))), count)
+    }
+
+    // The verdict, EMITTED from the declaration rather than remembered.
+    crate::provider_slot_tests!(r1366_2_quit_sink_inherits, super::QUIT_SINK, || {
+        counting().0
+    });
+
     #[test]
     fn null_default_is_a_silent_no_op() {
         let owner = Owner::new();
-        owner.quit_sink().request_quit();
-        owner.quit_sink().request_quit();
+        QUIT_SINK.resolve(&owner).request_quit();
+        QUIT_SINK.resolve(&owner).request_quit();
     }
 
     #[test]
     fn provided_sink_receives_the_request() {
         let owner = Owner::new();
-        let count = Arc::new(AtomicUsize::new(0));
-        owner.provide_quit_sink(Arc::new(CountingSink(Arc::clone(&count))));
-        owner.quit_sink().request_quit();
+        let (sink, count) = counting();
+        QUIT_SINK.provide(&owner, sink);
+        QUIT_SINK.resolve(&owner).request_quit();
         assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
     #[test]
-    fn provide_is_first_write_wins() {
+    #[should_panic(expected = "already seeded")]
+    fn r1366_2_a_late_seed_panics_where_it_used_to_be_dropped() {
+        // The counterfactual of R1363's `provide_is_first_write_wins`, which
+        // asserted that a second seed was a SILENT no-op leaving every reader on
+        // the first sink — and `Owner::provide_quit_sink`'s own doc called that
+        // an idempotent-by-first-write convenience. On THIS slot that reading is
+        // the least defensible of the family: a dropped quit sink is a Quit that
+        // does nothing, which is the R1362 defect, and a shell that seeds twice
+        // has two quit paths and cannot know which one the binding holds.
         let owner = Owner::new();
-        let first = Arc::new(AtomicUsize::new(0));
-        let second = Arc::new(AtomicUsize::new(0));
-        owner.provide_quit_sink(Arc::new(CountingSink(Arc::clone(&first))));
-        owner.provide_quit_sink(Arc::new(CountingSink(Arc::clone(&second))));
-        owner.quit_sink().request_quit();
-        assert_eq!(first.load(Ordering::SeqCst), 1);
-        assert_eq!(second.load(Ordering::SeqCst), 0, "the late seed is dropped");
+        QUIT_SINK.provide(&owner, counting().0);
+        QUIT_SINK.provide(&owner, counting().0);
     }
 
     #[test]
     fn sink_handle_crosses_a_thread_boundary() {
         // The `Send + Sync` bound is the point: sprag's poll thread owns this.
         let owner = Owner::new();
-        let count = Arc::new(AtomicUsize::new(0));
-        owner.provide_quit_sink(Arc::new(CountingSink(Arc::clone(&count))));
-        let handle = owner.quit_sink();
+        let (sink, count) = counting();
+        QUIT_SINK.provide(&owner, sink);
+        let handle = Arc::clone(&QUIT_SINK.resolve(&owner));
         std::thread::spawn(move || handle.request_quit())
             .join()
             .expect("producer thread panicked");
@@ -194,9 +225,12 @@ mod r1364_scope_tests {
     fn r1364_a_child_scope_resolves_the_shells_real_quit_sink() {
         let root = Owner::new();
         let count = Arc::new(AtomicUsize::new(0));
-        root.provide_quit_sink(Arc::new(CountingSink(Arc::clone(&count))));
+        QUIT_SINK.provide(&root, Arc::new(CountingSink(Arc::clone(&count))));
 
         // What `window_owner(secondary)` is, and what R680 will run the view in.
+        // The generated verdict test above asserts inheritance through
+        // `resolve`; this asserts the same through the BINDING's path, so a hook
+        // that stopped delegating to the slot could not pass both.
         let window_scope = Owner::new_child(&root);
         window_scope.run(|| use_quit_sink().request_quit());
 

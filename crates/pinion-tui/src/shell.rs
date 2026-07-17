@@ -248,11 +248,14 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
     // the substrate silent — the live UI must not panic on a
     // missing log dir.
     // R1363 §5.55 — the app-lifecycle seam, seeded before the binding factories
-    // resolve `use_quit_sink()` (the first-write-wins window).
+    // resolve `use_quit_sink()`. R1366.2 made that ordering structural rather
+    // than a comment: `QUIT_SINK.provide` PANICS on a seed that lands after a
+    // read, where the old `provide_quit_sink` would have silently dropped this
+    // sink and left the terminal backend's Quit doing nothing.
     let quit_flag = Arc::new(AtomicBool::new(false));
     let seed_flag = Arc::clone(&quit_flag);
     let mut core = ShellCoreTui::<V>::new_with_seed(move |owner| {
-        owner.provide_quit_sink(Arc::new(TuiQuitSink(seed_flag)));
+        pinion_core::QUIT_SINK.provide(owner, Arc::new(TuiQuitSink(seed_flag)));
     });
     if let Some(path) = env::var_os("PINION_TUI_LOG")
         && !path.is_empty()

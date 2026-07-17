@@ -26,7 +26,7 @@ pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
 pub use pane_viewport::use_pane_viewport_size;
 pub use provider_slot::{ProviderSlot, SLOT_KEY_PREFIX, SlotScope, is_slot_key};
-pub use quit::{NullQuitSink, QuitSink, use_quit_sink};
+pub use quit::{NullQuitSink, QUIT_SINK, QuitSink, use_quit_sink};
 pub use repaint::{NullRepaintSink, REPAINT_SINK, RepaintSink, use_repaint_sink};
 pub use resource::{
     DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource, ResourceState,

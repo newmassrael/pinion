@@ -837,7 +837,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 // `&ActiveEventLoop` this backend has no concept of); the
                 // VOCABULARY and the veto are shared, which is what §2 #6 asks.
                 pinion_rpc::DeferredInput::Quit => {
-                    self.root_owner().quit_sink().request_quit();
+                    pinion_core::QUIT_SINK
+                        .resolve(self.root_owner())
+                        .request_quit();
                 }
                 // `DeferredInput` is `non_exhaustive`, so an out-of-crate match
                 // is FORCED to carry this wildcard and the compiler cannot flag
@@ -2709,7 +2711,7 @@ mod r1364_5_app_quit_on_the_terminal_backend {
         let count = Arc::new(AtomicUsize::new(0));
         let seed_count = Arc::clone(&count);
         let mut core: ShellCoreTui<ButtonFixture> = ShellCoreTui::new_with_seed(move |owner| {
-            owner.provide_quit_sink(Arc::new(CountingQuitSink(seed_count)));
+            pinion_core::QUIT_SINK.provide(owner, Arc::new(CountingQuitSink(seed_count)));
         });
 
         let req = r#"{"jsonrpc":"2.0","method":"app/quit","params":{},"id":1}"#;

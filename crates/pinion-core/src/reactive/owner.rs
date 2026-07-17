@@ -1225,7 +1225,6 @@ impl Owner {
     ///
     /// | slot | how the shell drives root | inherits |
     /// |---|---|---|
-    /// | `quit_sink` | seeds at boot | yes |
     /// | `monospace_metrics` | seeds at boot | yes |
     /// | `window_control_sink` | seeds at boot (in `pinion-shell`) | yes |
     /// | `local_task_pump` | POLLS it every frame | yes |
@@ -1340,43 +1339,6 @@ impl Owner {
         // root would let an unseeded child permanently poison the slot for the
         // whole tree via `cache`'s first-write-wins.
         self.cache(key, factory)
-    }
-
-    /// R1363 §5.55 — the owner-scoped [`QuitSink`](super::quit::QuitSink), the
-    /// "end this application" edge.
-    ///
-    /// Returns whatever the shell seeded via [`Self::provide_quit_sink`] at
-    /// boot, or a [`NullQuitSink`](super::quit::NullQuitSink) when none was
-    /// provided (headless / RPC tests / unit tests off a live shell). The inner
-    /// `Arc` is the `Send` handle a binding clones into its producer thread.
-    ///
-    /// One of the hand-rolled slot pairs still awaiting its R1366.x migration to
-    /// [`ProviderSlot`](super::provider_slot::ProviderSlot) — the key, the Null
-    /// default and the inherit verdict live in three places here, which is the
-    /// drift the type exists to end.
-    #[must_use]
-    pub fn quit_sink(&self) -> std::sync::Arc<dyn super::quit::QuitSink> {
-        self.cache_inherited::<super::quit::QuitSinkHolder, _>(super::quit::QUIT_SINK_KEY, || {
-            super::quit::QuitSinkHolder(std::sync::Arc::new(super::quit::NullQuitSink))
-        })
-        .0
-        .clone()
-    }
-
-    /// R1363 §5.55 — seed the owner-scoped [`QuitSink`](super::quit::QuitSink).
-    /// The shell calls this once at boot **before** the binding factories run,
-    /// so the first [`use_quit_sink`](super::quit::use_quit_sink) read inside
-    /// those factories resolves the real sink rather than the Null default.
-    ///
-    /// Idempotent-by-first-write: the first call wins and a later one silently
-    /// drops its sink. R1366 made that a panic for a migrated slot
-    /// ([`ProviderSlot::provide`](super::provider_slot::ProviderSlot::provide))
-    /// because a seed that loses a race is a wiring bug, not an idempotent
-    /// no-op; this pair keeps the old behaviour until its migration.
-    pub fn provide_quit_sink(&self, sink: std::sync::Arc<dyn super::quit::QuitSink>) {
-        self.cache::<super::quit::QuitSinkHolder, _>(super::quit::QUIT_SINK_KEY, move || {
-            super::quit::QuitSinkHolder(sink)
-        });
     }
 
     /// R1003 §5.36 — the owner-scoped

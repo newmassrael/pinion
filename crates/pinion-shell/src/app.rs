@@ -594,12 +594,14 @@ impl<V: WidgetView> AppShell<V> {
         // `EventLoopProxy`-backed boundary handles before `ShellCore::new_with_seed`
         // runs the binding factories, so a binding's `create_extra_externals` can
         // capture them (`use_repaint_sink()` / `use_window_control_sink()`) for an
-        // off-thread producer. All three ride the ONE seeding window, and R1366.1
-        // changed what a miss costs: `REPAINT_SINK` is a `ProviderSlot`, so a seed
-        // after this point PANICS. The two still on `provide_*` keep the old
-        // failure — `Owner::cache` is first-write-wins with a silent Null default,
-        // so their late seed is dropped without a panic and hands the binding a
-        // dead handle — until their own R1366.x migration.
+        // off-thread producer. All three ride the ONE seeding window, and the
+        // R1366.x migrations are changing what a miss costs, a slot at a time:
+        // `REPAINT_SINK` (R1366.1) and `QUIT_SINK` (R1366.2) are `ProviderSlot`s,
+        // so a seed after this point PANICS. `window_control_sink`, the one still
+        // on `provide_*`, keeps the old failure — `Owner::cache` is
+        // first-write-wins with a silent Null default, so its late seed is
+        // dropped without a panic and hands the binding a dead handle — until its
+        // own migration.
         let seed_proxy = proxy.clone();
         Self {
             core: ShellCore::new_with_seed(move |root_owner| {
@@ -613,8 +615,10 @@ impl<V: WidgetView> AppShell<V> {
                 );
                 // R1363 §5.55 — the app-lifecycle sink rides the same seeding
                 // window as its window-lifecycle peer.
-                root_owner
-                    .provide_quit_sink(std::sync::Arc::new(crate::ProxyQuitSink::new(seed_proxy)));
+                pinion_core::QUIT_SINK.provide(
+                    root_owner,
+                    std::sync::Arc::new(crate::ProxyQuitSink::new(seed_proxy)),
+                );
             }),
             windows: HashMap::new(),
             spec_id_to_window_id: HashMap::new(),

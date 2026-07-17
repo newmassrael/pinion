@@ -8930,13 +8930,21 @@ mod r1362_window_control_sink_seeding_tests {
     //! late is dropped without a panic or a log, and the binding holds a handle
     //! whose every call is a no-op. Nothing observable distinguishes that from a
     //! working app until the tray Quit does nothing. That is `window_control_sink`
-    //! here; R1366.1 made the repaint sink's late seed a PANIC by moving it to a
-    //! `ProviderSlot`, so this module now pins BOTH failure shapes at once.
+    //! here; R1366.1 (repaint) and R1366.2 (quit) made those slots' late seed a
+    //! PANIC by moving them to a `ProviderSlot`, so this module pins BOTH failure
+    //! shapes at once.
     //!
     //! The `window_control` unit tests cover the slot mechanics on a bare
     //! `Owner`; these cover the ORDER inside `ShellCore::new_with_seed`, which is
     //! the half that can actually regress — and which R999 left untested for the
-    //! repaint sink (covered here too, since both ride the one window).
+    //! repaint sink.
+    //!
+    //! All THREE sinks `AppShell::new` seeds are resolved here, which R1366.2
+    //! finished. Until then this module covered two of them while its own prose
+    //! reached for *the tray Quit does nothing* to illustrate the failure — the
+    //! seam it named was the one it did not drive. `QuitSink` is also the sink
+    //! where the silent failure is worst: a dead repaint handle stutters, a dead
+    //! quit handle means the app cannot be closed.
     use super::ShellCore;
     use crate::test_fixtures::TestRenderer;
     use crate::window_control::provide_window_control_sink;
@@ -8947,7 +8955,7 @@ mod r1362_window_control_sink_seeding_tests {
     use pinion_core::test_fixtures::ButtonFixture;
     use pinion_core::widget_core::ExtraExternal;
     use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-    use pinion_core::{Frame, RepaintSink, Scene, WidgetCore};
+    use pinion_core::{Frame, QuitSink, RepaintSink, Scene, WidgetCore};
     use pinion_overlay::WindowControl;
     use std::cell::RefCell;
     use std::sync::{Arc, Mutex};
@@ -8955,8 +8963,13 @@ mod r1362_window_control_sink_seeding_tests {
     const MAIN_TAG: &str = "main_btn";
     const EXTRA_TAG: &str = "extra";
 
-    /// The pair of boundary handles the fixture resolved at wiring time.
-    type ResolvedHandles = (Arc<dyn WindowControlSink>, Arc<dyn RepaintSink>);
+    /// The boundary handles the fixture resolved at wiring time — one per sink
+    /// `AppShell::new` seeds in its single closure.
+    type ResolvedHandles = (
+        Arc<dyn WindowControlSink>,
+        Arc<dyn RepaintSink>,
+        Arc<dyn QuitSink>,
+    );
 
     // What the fixture's `create_extra_externals` resolved, handed back to the
     // test. A `thread_local` because the factory is an associated fn with no
@@ -8989,9 +9002,19 @@ mod r1362_window_control_sink_seeding_tests {
         }
     }
 
-    /// A binding that resolves BOTH boundary handles in `create_extra_externals`
-    /// — the `hello-live-data` / sprag wiring shape (resolve at boot, hand to the
-    /// producer thread).
+    /// Recording sink standing in for `ProxyQuitSink`.
+    #[derive(Debug, Default)]
+    struct RecordingQuit(Mutex<usize>);
+
+    impl QuitSink for RecordingQuit {
+        fn request_quit(&self) {
+            *self.0.lock().expect("poisoned") += 1;
+        }
+    }
+
+    /// A binding that resolves EVERY boundary handle in `create_extra_externals`
+    /// — the `hello-live-data` / `hello-tray` / sprag wiring shape (resolve at
+    /// boot, hand to the producer thread).
     struct SinkCapturingFixture;
 
     impl WidgetCore for SinkCapturingFixture {
@@ -9021,7 +9044,8 @@ mod r1362_window_control_sink_seeding_tests {
             // Exactly what a binding does at wiring time.
             let wc = crate::use_window_control_sink();
             let rp = pinion_core::use_repaint_sink();
-            RESOLVED.with(|slot| *slot.borrow_mut() = Some((wc, rp)));
+            let qt = pinion_core::use_quit_sink();
+            RESOLVED.with(|slot| *slot.borrow_mut() = Some((wc, rp, qt)));
             vec![ExtraExternal {
                 tag: EXTRA_TAG.into(),
                 handle: Box::new(ButtonExternal::new()),
@@ -9053,21 +9077,24 @@ mod r1362_window_control_sink_seeding_tests {
         RESOLVED.with(|slot| *slot.borrow_mut() = None);
         let sink = Arc::new(RecordingSink::default());
         let repaint = Arc::new(RecordingRepaint::default());
-        let (seed_sink, seed_repaint) = (sink.clone(), repaint.clone());
+        let quit = Arc::new(RecordingQuit::default());
+        let (seed_sink, seed_repaint, seed_quit) = (sink.clone(), repaint.clone(), quit.clone());
         let _sc = ShellCore::<SinkCapturingFixture>::new_with_seed(move |owner| {
             pinion_core::REPAINT_SINK.provide(owner, seed_repaint);
             provide_window_control_sink(owner, seed_sink);
+            pinion_core::QUIT_SINK.provide(owner, seed_quit);
         });
 
-        let (wc, rp) = RESOLVED
+        let (wc, rp, qt) = RESOLVED
             .with(|slot| slot.borrow_mut().take())
             .expect("create_extra_externals must have run during construction");
 
-        // Drive both handles the binding captured. If the seed had lost the
-        // race, these would be the Null defaults and both assertions below would
+        // Drive every handle the binding captured. If the seed had lost the
+        // race, these would be the Null defaults and the assertions below would
         // see nothing — the exact silent failure.
         wc.request_window_control("main", WindowControl::Close);
         rp.request_repaint();
+        qt.request_quit();
 
         assert_eq!(
             *sink.0.lock().expect("poisoned"),
@@ -9079,6 +9106,14 @@ mod r1362_window_control_sink_seeding_tests {
             *repaint.0.lock().expect("poisoned"),
             1,
             "R999's repaint sink rides the same seeding window",
+        );
+        assert_eq!(
+            *quit.0.lock().expect("poisoned"),
+            1,
+            "R1363's quit sink rides it too — 0 here is a binding holding a \
+             NullQuitSink, an app whose Quit cannot end it, which is the very \
+             failure this module's prose reaches for and never drove until \
+             R1366.2",
         );
     }
 
@@ -9096,11 +9131,12 @@ mod r1362_window_control_sink_seeding_tests {
     fn an_unseeded_shell_boots_and_its_factory_hooks_resolve_without_panicking() {
         RESOLVED.with(|slot| *slot.borrow_mut() = None);
         let _sc = ShellCore::<SinkCapturingFixture>::new();
-        let (wc, rp) = RESOLVED
+        let (wc, rp, qt) = RESOLVED
             .with(|slot| slot.borrow_mut().take())
             .expect("create_extra_externals must have run during construction");
-        // Must not panic — the Null objects absorb both.
+        // Must not panic — the Null objects absorb all three.
         wc.request_window_control("main", WindowControl::Close);
         rp.request_repaint();
+        qt.request_quit();
     }
 }

@@ -70,6 +70,8 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
+#[cfg(test)]
+use pinion_core::QUIT_SINK;
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
@@ -876,7 +878,7 @@ mod tests {
         let quit = Arc::new(RecordingQuitSink::default());
         let wc = Arc::new(RecordingSink::default());
         let owner = Owner::new();
-        owner.provide_quit_sink(quit.clone());
+        QUIT_SINK.provide(&owner, quit.clone());
         provide_window_control_sink(&owner, wc.clone());
         let mut e = owner.run(make_tray_external);
 
@@ -897,7 +899,7 @@ mod tests {
         let quit = Arc::new(RecordingQuitSink::default());
         let wc = Arc::new(RecordingSink::default());
         let owner = Owner::new();
-        owner.provide_quit_sink(quit.clone());
+        QUIT_SINK.provide(&owner, quit.clone());
         provide_window_control_sink(&owner, wc.clone());
         let mut e = owner.run(make_tray_external);
 
@@ -932,7 +934,7 @@ mod tests {
         let quit = Arc::new(RecordingQuitSink::default());
         let wc = Arc::new(RecordingSink::default());
         let owner = Owner::new();
-        owner.provide_quit_sink(quit.clone());
+        QUIT_SINK.provide(&owner, quit.clone());
         provide_window_control_sink(&owner, wc.clone());
         let mut e = owner.run(make_tray_external);
         e.invoke("menu_item", IntrospectValue::Text("dark".to_owned()))
