@@ -892,3 +892,12 @@ reason = "R1068 design corrected pre-push by 3-reviewer adversarial audit: basel
 applied_in = "pinion R1068 rework"
 content_hash_before = "9366d45cdc63918da400cf5183cbf21f0c25b449543f05976e1b4c43575a5927"
 content_hash_after = "8539bc133d728dd84befa022d8b5edb9f3b62f4078842afc5a7a0480d70381ab"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "R1366.7"
+fields = ["publishable_verification_bullets"]
+reason = "R1366.7 audit half cited pre-fmt hash 4736d984 and false fmt-clean; corrected to committed b5af21b1 via publishable half"
+applied_in = "R1366.8.1"
+content_hash_before = "04513635761a269a4b9ee5e9a5fb94db76e3d5d0f08f4cf07b6aa4f78247debe"
+content_hash_after = "8cca924a1c71a444239a4fed9add8378d6d4fcd44b2a1390d316def5aaaaca07"
