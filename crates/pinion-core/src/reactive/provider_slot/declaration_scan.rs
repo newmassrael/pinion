@@ -1,5 +1,7 @@
-//! R1366 §5.22 — every framework slot key is declared through [`ProviderSlot`],
-//! and the ones that are not yet are listed, shrinking, here.
+//! R1366 §5.22 — every framework slot key is declared through [`ProviderSlot`].
+//! The ones that were not yet were listed, shrinking, here; R1366.9 migrated the
+//! last two ([`LEGACY_SLOT_KEYS`] is now empty), so this is now a pure negative
+//! scan: no `__pinion.` literal may appear in production outside a constructor.
 //!
 //! # Why this replaces R1365's census
 //!
@@ -47,12 +49,24 @@
 /// Slot keys still declared as a bare `const` + hand-written `provide`/`resolve`
 /// pair rather than a [`ProviderSlot`](super::ProviderSlot).
 ///
-/// **This list may only shrink.** Each entry is one R1366.x migration. Do not add
-/// to it: a NEW slot has no excuse, because the type exists now.
-const LEGACY_SLOT_KEYS: &[&str] = &[
-    "__pinion.core.scene_revision",
-    "__pinion.rpc.waiter_registry",
-];
+/// **Empty since R1366.9** — the campaign migrated all ten framework slots, the
+/// last two (`scene_revision`, `waiter_registry`) that round. **This list may
+/// only shrink**, and it has reached zero: do not add to it, a NEW slot has no
+/// excuse because the type exists now. The negative scan below is now
+/// exception-free.
+const LEGACY_SLOT_KEYS: &[&str] = &[];
+
+// R1366.9 emptied the legacy list, and it may only stay empty: a new framework
+// slot key belongs in a `ProviderSlot` declaration, never here. A compile-time
+// guard rather than a runtime test precisely because emptiness is a const fact —
+// re-growing the list fails the build (E0080). clippy flags the `is_empty()` as
+// "always true"; that constant truth is exactly the property being locked in.
+#[allow(clippy::const_is_empty)]
+const _LEGACY_LIST_MUST_STAY_EMPTY: () = assert!(
+    LEGACY_SLOT_KEYS.is_empty(),
+    "LEGACY_SLOT_KEYS may only shrink and R1366.9 emptied it; declare a new slot \
+     as a ProviderSlot instead of listing it here",
+);
 
 /// This file, workspace-relative — the one file the walk must NOT read.
 ///
@@ -282,49 +296,24 @@ fn r1366_1_a_declared_slot_is_not_an_offender() {
 }
 
 #[test]
-fn r1366_the_legacy_list_may_only_shrink() {
-    // The staleness assert. Without it the list is a place debt goes to be
-    // forgotten; with it, finishing the migration is the only way to keep the
-    // suite green, and every entry removed is a real slot that gained a
-    // compiler-checked verdict.
-    assert_eq!(
-        LEGACY_SLOT_KEYS.len(),
-        2,
-        "the legacy list changed. It may only SHRINK — if you migrated a slot, \
-         lower this number; if you are adding a key here, do not: declare it as \
-         a `ProviderSlot` instead. Remaining: {LEGACY_SLOT_KEYS:?}",
-    );
-    let mut sorted = LEGACY_SLOT_KEYS.to_vec();
-    sorted.sort_unstable();
-    sorted.dedup();
-    assert_eq!(sorted.len(), LEGACY_SLOT_KEYS.len(), "duplicate legacy key");
-}
-
-#[test]
-fn r1366_every_legacy_key_still_names_a_hand_rolled_slot() {
-    // The other half of the staleness assert: a legacy entry whose slot was
-    // deleted, renamed — or MIGRATED — would sit here forever, quietly making
-    // the list look longer than the real debt.
-    //
-    // The migrated case is the one that bites, and R1366's version could not see
-    // it: after a migration the key is still spelled (in the declaration), so
-    // "the key still exists" stayed true, the length stayed 10, and a forgotten
-    // entry passed every assert. Requiring an UNDECLARED spelling is what makes
-    // the list shrink with the debt rather than with someone's memory.
+fn r1366_no_production_source_hand_rolls_a_slot_key() {
+    // R1366.9 emptied `LEGACY_SLOT_KEYS`, so the campaign's end state is stronger
+    // than "every legacy key still names a hand-rolled slot": NOTHING hand-rolls
+    // one. Every `__pinion.` literal in production must sit inside a
+    // `ProviderSlot` constructor. (The escape test above proves the same from the
+    // other side — no UNDECLARED literal outside the now-empty legacy list — but
+    // this states the invariant directly, so it does not silently weaken if the
+    // legacy list is ever wrongly re-grown.)
     let literals = production_slot_literals();
     let hand_rolled: Vec<&str> = literals
         .iter()
         .filter(|l| !l.declared)
         .map(|l| l.key.as_str())
         .collect();
-    let ghosts: Vec<&&str> = LEGACY_SLOT_KEYS
-        .iter()
-        .filter(|k| !hand_rolled.contains(*k))
-        .collect();
     assert!(
-        ghosts.is_empty(),
-        "the legacy list names keys that no production source spells by hand — \
-         they were migrated to `ProviderSlot` (or removed), so delete these \
-         entries and lower the count: {ghosts:?}",
+        hand_rolled.is_empty(),
+        "a `__pinion.` slot key is spelled in production outside a `ProviderSlot` \
+         declaration: {hand_rolled:?}. The migration is complete — declare it \
+         with `ProviderSlot::inherited` / `::per_scope`.",
     );
 }

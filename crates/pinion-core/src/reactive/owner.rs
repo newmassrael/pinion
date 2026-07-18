@@ -1170,24 +1170,24 @@ impl Owner {
     /// one, creating it HERE only if no ancestor does. The provider-slot
     /// sibling of [`Self::cache`], which is per-scope and stays that way.
     ///
-    /// # Why this exists, and why it is additive
+    /// # Why inheriting matters
     ///
-    /// A binding's provider slots still on plain [`cache`](Self::cache) —
-    /// `scene_revision` among them — are seeded ONCE, on the root owner, at boot.
-    /// `cache` looks only at the scope it is called on, so every one of those
-    /// resolves its lazy **Null default** from a child scope. Today nothing
-    /// notices, because every view runs under root. The deferred R680 atomic
-    /// changes exactly that (`window_owner(id).run(..)`), and on the day it lands
-    /// a secondary window's slot would silently do nothing — precisely the class
-    /// of bug R1362 existed to fix (there it was a secondary window's Quit button;
+    /// A slot the shell drives at the root owner is seeded ONCE, there, at boot.
+    /// Plain [`cache`](Self::cache) looks only at the scope it is called on, so a
+    /// child scope resolving through it would get its lazy **Null default**
+    /// instead. Today nothing notices, because every view runs under root. The
+    /// deferred R680 atomic changes exactly that (`window_owner(id).run(..)`), and
+    /// on the day it lands a secondary window's slot would silently do nothing —
+    /// precisely the class of bug R1362 existed to fix (there, a secondary
+    /// window's Quit button). Every framework slot the shell drives now resolves
+    /// through [`ProviderSlot`](super::provider_slot::ProviderSlot) —
     /// [`QuitSink`](super::quit::QuitSink),
     /// [`RepaintSink`](super::repaint::RepaintSink),
-    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) and
-    /// [`LocalTaskPump`](super::resource::LocalTaskPump) — and `pinion-shell`'s
-    /// own window-control sink and the pane-viewport registry — have since moved
-    /// to [`ProviderSlot`](super::provider_slot::ProviderSlot), which resolves
-    /// through `cache_inherited` and is immune), resurrected by a change that
-    /// never mentions windowing.
+    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics),
+    /// [`LocalTaskPump`](super::resource::LocalTaskPump), `pinion-shell`'s
+    /// window-control sink and pane-viewport registry, and the async-waitFor
+    /// `scene_revision` / `waiter_registry` — so the walk is immune, resurrected
+    /// by a change that never mentions windowing.
     ///
     /// # Which slots inherit
     ///
@@ -1196,55 +1196,19 @@ impl Owner {
     /// it, poll it, publish into it, write it — any of those. If it does, the
     /// slot must inherit, or a child scope silently desyncs from its driver.
     ///
-    /// **This table is prose, and it is being deleted a row at a time.** It is
-    /// the SSOT for exactly the slots not yet migrated to
-    /// [`ProviderSlot`](super::provider_slot::ProviderSlot), which carries the
-    /// same verdict in its declaration where the compiler can see it. R1365
-    /// found this enumeration had already drifted — rows naming slots no key
-    /// spells, slots with no row, and one omission (`scene_revision`) latently
-    /// broken for R680 — and its census could not survive the type (see
-    /// `provider_slot::declaration_scan`). The count is deliberately not stated
-    /// here: `LEGACY_SLOT_KEYS` is the machine-checked list of what remains, and
-    /// R1365's attempt to state a count in prose ("seven of the ten … the three
-    /// it omitted") was contradicted by the very test output the same commit
-    /// pasted into its ledger.
-    ///
-    /// | slot | how the shell drives root | inherits |
-    /// |---|---|---|
-    /// | `scene_revision` | seeds at boot, then OBSERVES it to wake `scene/waitFor` | yes |
-    /// | `waiter_registry` | parks and wakes `scene/waitFor` through it | yes |
-    ///
-    /// R1364.2 first published a different rule — "capabilities are binding-wide
-    /// and inherit; values are per-owner and do not" — which is recorded here
-    /// because it was WRONG and a wrong rationale in this file outlives the bug
-    /// it explains. It got the four sinks right by luck of category and then
-    /// missed `local_task_pump` (a *capability* by any reading, left on plain
-    /// `cache`) and actively misclassified `pane_viewport_registry` as a "value"
-    /// that should not inherit — when R1021 requires it be ONE shared root
-    /// instance that every window publishes into, and its forcing consumer is
-    /// sprag's R37 undock, an R680-adjacent feature. A taxonomy invites you to
-    /// argue about which bucket a slot falls in; "who drives it" is a fact you
-    /// can grep.
-    ///
-    /// The `per_scope` exceptions — where the shell drives a slot at root but its
-    /// **WRITE** is primary-gated, so inheriting would hand a secondary window the
-    /// primary's data — have all migrated to
-    /// [`ProviderSlot::per_scope`](super::provider_slot::ProviderSlot::per_scope)
-    /// ([`VIEWPORT_SIZE`](super::viewport::VIEWPORT_SIZE) R1366.7, `frame_timings`
-    /// R1366.8), where each declaration carries that verdict and its reason. The
-    /// two rows left are both inheriting.
-    ///
-    /// `waiter_registry` has no binding-facing hook — the shell resolves it at
-    /// root explicitly (`ShellCore::with_core`, `AppShell`'s park side), so no
-    /// child scope can reach it and R680 cannot break it. It inherits anyway,
-    /// and the reason is stronger than the precedent: `resolve_waiter_registry`
-    /// takes `&Owner`, so its TYPE already admits a child scope. "No caller
-    /// passes one today" is an argument about call sites for a function whose
-    /// signature says otherwise; YAGNI governs unbuilt features, not leaving an
-    /// already-accepted input partial. The precedent agrees — R1362 called this
-    /// slot family's root-only resolution "not a live hazard today" (its words),
-    /// reasoning from where the view fn happened to run, and R1364 paid for it —
-    /// but a rule applied only where it is currently load-bearing is not a rule.
+    /// The verdict lives in each
+    /// [`ProviderSlot`](super::provider_slot::ProviderSlot) declaration now —
+    /// `inherited` vs `per_scope` is a constructor argument the compiler checks.
+    /// R1366 replaced the prose table this rustdoc used to carry (its last two
+    /// rows, `scene_revision` and `waiter_registry`, migrated R1366.9), and
+    /// `provider_slot::declaration_scan` is the machine-checked gate that no bare
+    /// slot key reappears. R1364.2's wrong first cut of the rule ("capabilities
+    /// inherit, values do not") is recorded on
+    /// [`SlotScope`](super::provider_slot::SlotScope), where the verdict now
+    /// lives, because a wrong rationale outlives the bug it explains. The
+    /// `per_scope` exceptions — the shell drives the slot at root but its WRITE is
+    /// primary-gated — are `VIEWPORT_SIZE` (R1366.7) and `frame_timings`
+    /// (R1366.8); every other framework slot inherits.
     ///
     /// Scroll state, animations and every other slot the shell never touches keep
     /// plain `cache`: inheriting them would be the mirror-image bug.
@@ -1252,14 +1216,15 @@ impl Owner {
     /// A slot the shell drives at root must ALSO be seeded there at boot. The
     /// walk cannot help a slot that does not exist yet: on a total miss this
     /// creates at the CALLING scope, so a child that resolves before the shell
-    /// first touches root would mint its own and desync anyway. The sinks get
-    /// that from their seed call
-    /// ([`ProviderSlot::provide`](super::provider_slot::ProviderSlot::provide),
-    /// or a legacy `provide_*` for a slot not yet migrated); `local_task_pump`
-    /// and `pane_viewport_registry` are seeded explicitly in
-    /// `CoreShell::new_with_seed`; `scene_revision` and `waiter_registry` in
-    /// `pinion-shell`'s `ShellCore::with_core`, which resolves both against
-    /// `core.root_owner()` before the first paint.
+    /// first touches root would mint its own and desync anyway. A slot with a
+    /// [`provide`](super::provider_slot::ProviderSlot::provide) gets that from its
+    /// seed call; the ones without —
+    /// [`LocalTaskPump`](super::resource::LocalTaskPump) and the pane-viewport
+    /// registry — seed at boot via
+    /// [`seed_root`](super::provider_slot::ProviderSlot::seed_root)
+    /// (`CoreShell::new_with_seed`), while `scene_revision` and `waiter_registry`
+    /// resolve against `core.root_owner()` in `pinion-shell`'s
+    /// `ShellCore::with_core` before the first paint.
     ///
     /// # Panics
     ///

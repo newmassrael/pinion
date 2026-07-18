@@ -212,14 +212,15 @@ pub static WINDOW_CONTROL_SINK: ProviderSlot<Arc<dyn WindowControlSink>> =
 /// was short. `scene_revision` was still root-only, with the same silent
 /// post-R680 failure one seam over.
 ///
-/// R1365.1 — and "discharged for the family" is still not a thing this doc can
-/// promise. `Owner::cache_inherited`'s census names a slot with no verdict, but
-/// it cannot see a slot that skips the `__pinion.` prefix (nothing enforces it),
-/// and it cannot tell a TRUE verdict from a false one — that is per-slot
-/// behavioural coverage, which 3 of the 8 inheriting slots have. The promise
-/// belongs to the `ProviderSlot<V>` declaration type (R1366), where the scope is
-/// a constructor argument and the prefix is a compile error. Until then this
-/// slot is fixed, tested, and the family is not certified.
+/// R1365.1 — "discharged for the family" was not a thing this doc could promise
+/// while the census was source-text: it could not see a slot that skips the
+/// `__pinion.` prefix (nothing enforced it), and it could not tell a TRUE verdict
+/// from a false one — that is per-slot behavioural coverage, which only 3 of the
+/// 8 inheriting slots then had. R1366 delivered the promise: the `ProviderSlot<V>`
+/// declaration type makes the scope a constructor argument and the prefix a
+/// compile error, every framework slot migrated (the last two, `scene_revision`
+/// and `waiter_registry`, in R1366.9), and each ships the generated wiring guard
+/// plus a value-based discriminator. The family is certified.
 ///
 /// # Panics
 ///
