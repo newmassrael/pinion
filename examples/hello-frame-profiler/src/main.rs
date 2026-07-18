@@ -508,7 +508,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::Owner;
-    use pinion_runtime::{FRAME_TIMINGS_KEY, FrameTimingStats, FrameTimingsHolder, compute_layout};
+    use pinion_runtime::{FRAME_TIMINGS, FrameTimingStats, compute_layout};
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
         if scene.tag() == Some(tag) {
@@ -535,9 +535,7 @@ mod tests {
             samples: stats.samples().copied().collect(),
             snapshot: stats.snapshot(budget_us),
         };
-        owner
-            .run(|| owner.cache(FRAME_TIMINGS_KEY, FrameTimingsHolder::default))
-            .publish(view);
+        FRAME_TIMINGS.resolve(owner).publish(view);
     }
 
     /// One paint cycle driving the REAL measured-rect seam, exactly as

@@ -1579,7 +1579,7 @@ impl<V: WidgetView> ShellCore<V> {
         let Some(holder) = self
             .root_owner()
             .cache_get_by_str::<pinion_runtime::FrameTimingsHolder>(
-                pinion_runtime::FRAME_TIMINGS_KEY,
+                pinion_runtime::FRAME_TIMINGS.key(),
             )
         else {
             return;

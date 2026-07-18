@@ -1213,7 +1213,6 @@ impl Owner {
     /// |---|---|---|
     /// | `scene_revision` | seeds at boot, then OBSERVES it to wake `scene/waitFor` | yes |
     /// | `waiter_registry` | parks and wakes `scene/waitFor` through it | yes |
-    /// | `frame_timings` | PUBLISHES into it, primary window only | **no** — see below |
     ///
     /// R1364.2 first published a different rule — "capabilities are binding-wide
     /// and inherit; values are per-owner and do not" — which is recorded here
@@ -1227,29 +1226,13 @@ impl Owner {
     /// argue about which bucket a slot falls in; "who drives it" is a fact you
     /// can grep.
     ///
-    /// The two `no` rows are exceptions to the CONSEQUENCE, not to the predicate.
-    /// The shell drives both at root, but its **WRITE** is primary-gated, so the
-    /// root's value is *the primary window's* — and inheriting it would hand a
-    /// secondary window the primary's data, confidently wrong, where a per-scope
-    /// empty value is an honest "no data".
-    ///
-    /// Be precise about which end is gated, because R1364 wrote "the READ is
-    /// primary-gated" and R1365 propagated it to three places: neither
-    /// [`use_viewport_size`](super::viewport::use_viewport_size) nor
-    /// `use_frame_timings` gates anything — they resolve from whatever scope
-    /// asks. It is the publisher that checks: `set_viewport_size` is called only
-    /// `if window_key == DEFAULT_WINDOW`, and `publish_frame_timings` returns
-    /// early for any non-primary window. The read only *ends up* primary-scoped
-    /// because the verdict is `no`, which makes "the read is gated" a restatement
-    /// of the conclusion rather than a reason for it.
-    ///
-    /// [`VIEWPORT_SIZE`](super::viewport::VIEWPORT_SIZE) is the R1006 seam;
-    /// its per-scope `(0, 0)` is R1006's documented "viewport unknown", which its
-    /// contract already requires consumers to skip on. `frame_timings` is the
-    /// same shape: the holder is a single per-owner slot, so a second window's
-    /// paint would chart an interleaving of two windows' frames. An honest
-    /// unknown beats a plausible lie. Both name the same additive fix when a
-    /// consumer needs it: a per-window-keyed holder.
+    /// The `per_scope` exceptions — where the shell drives a slot at root but its
+    /// **WRITE** is primary-gated, so inheriting would hand a secondary window the
+    /// primary's data — have all migrated to
+    /// [`ProviderSlot::per_scope`](super::provider_slot::ProviderSlot::per_scope)
+    /// ([`VIEWPORT_SIZE`](super::viewport::VIEWPORT_SIZE) R1366.7, `frame_timings`
+    /// R1366.8), where each declaration carries that verdict and its reason. The
+    /// two rows left are both inheriting.
     ///
     /// `waiter_registry` has no binding-facing hook — the shell resolves it at
     /// root explicitly (`ShellCore::with_core`, `AppShell`'s park side), so no

@@ -92,6 +92,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use pinion_core::ProviderSlot;
+
 /// Number of most-recent frames the rolling window retains. ~2s at
 /// 60fps — long enough to smooth single-frame jitter into a stable
 /// mean/min/max, short enough that the window tracks a workload change
@@ -562,9 +564,29 @@ impl FrameTimingsHolder {
     }
 }
 
-/// Private owner-cache key for the single per-owner frame-timings slot
-/// (the `__pinion.reactive.*` private-key convention).
-pub const FRAME_TIMINGS_KEY: &str = "__pinion.reactive.frame_timings";
+/// R1366.8 §5.16 §5.22 — the frame-timings slot: its key, its default and its
+/// **`per_scope`** verdict as one expression — the second `per_scope` slot (after
+/// R1366.7's `VIEWPORT_SIZE`), declared in `pinion-runtime` since the profiler
+/// lives here.
+///
+/// `per_scope`, NOT `inherited`: the shell PUBLISHES into this at root but only
+/// for the primary window (`publish_frame_timings` returns early for any other),
+/// so the root's history is *the primary window's*. Inheriting would make a
+/// secondary window's HUD chart an interleaving of two windows' frames; a
+/// per-scope empty [`FrameTimingsView`] is the honest "this window has no history
+/// yet". [`provider_slot_tests!`](pinion_core::provider_slot_tests) asserts a
+/// child scope does NOT resolve the root's.
+///
+/// No `provide`: the shell does not SEED a value, it OVERWRITES the holder via
+/// [`FrameTimingsHolder::publish`] — so there is no late-seed panic. And the
+/// publish is **demand-gated**: it reads the holder get-only (never creating it),
+/// so a window whose binding never called [`use_frame_timings`] pays nothing.
+/// That get-only access uses [`FRAME_TIMINGS.key()`](ProviderSlot::key) directly
+/// (the slot models declare / resolve / seed, not this specialized read).
+pub static FRAME_TIMINGS: ProviderSlot<FrameTimingsHolder> = ProviderSlot::per_scope(
+    "__pinion.reactive.frame_timings",
+    FrameTimingsHolder::default,
+);
 
 /// R1361 §5.16 §5.22 — read the live frame-timing history + declared
 /// budget from a `view` fn, for an **in-app** profiler HUD.
@@ -602,11 +624,7 @@ pub const FRAME_TIMINGS_KEY: &str = "__pinion.reactive.frame_timings";
 pub fn use_frame_timings() -> Rc<FrameTimingsView> {
     pinion_core::Owner::current().map_or_else(
         || Rc::new(FrameTimingsView::default()),
-        |owner| {
-            owner
-                .cache(FRAME_TIMINGS_KEY, FrameTimingsHolder::default)
-                .sample()
-        },
+        |owner| FRAME_TIMINGS.resolve(&owner).sample(),
     )
 }
 
@@ -616,6 +634,15 @@ mod seam_tests {
         FrameTiming, FrameTimingStats, FrameTimingsHolder, FrameTimingsView, use_frame_timings,
     };
     use pinion_core::Owner;
+
+    // The verdict, EMITTED from the declaration. For `per_scope` this asserts a
+    // child scope does NOT resolve the root's — the shell publishes primary-only,
+    // so inheriting would chart two windows' frames interleaved.
+    pinion_core::provider_slot_tests!(
+        r1366_8_frame_timings_is_per_scope,
+        super::FRAME_TIMINGS,
+        FrameTimingsHolder::default
+    );
 
     #[test]
     fn r1361_samples_are_oldest_first_and_survive_the_fold() {
@@ -689,8 +716,7 @@ mod seam_tests {
         owner.clear_dirty();
 
         // A publish carrying genuinely new data — the every-frame case.
-        let holder =
-            owner.run(|| owner.cache(super::FRAME_TIMINGS_KEY, FrameTimingsHolder::default));
+        let holder = super::FRAME_TIMINGS.resolve(&owner);
         holder.publish(view_of(&[9_999], Some(16_666)));
         assert!(
             !owner.is_dirty(),

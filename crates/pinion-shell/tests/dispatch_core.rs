@@ -3469,7 +3469,7 @@ mod r907_frame_timing_substrate {
         assert!(
             core.root_owner()
                 .cache_get_by_str::<pinion_runtime::FrameTimingsHolder>(
-                    pinion_runtime::FRAME_TIMINGS_KEY,
+                    pinion_runtime::FRAME_TIMINGS.key(),
                 )
                 .is_none(),
             "a binding whose view never calls use_frame_timings must not \
@@ -3477,12 +3477,7 @@ mod r907_frame_timing_substrate {
         );
 
         // Once a view HAS read the seam, the same publish delivers.
-        let holder = core.root_owner().run(|| {
-            core.root_owner().cache(
-                pinion_runtime::FRAME_TIMINGS_KEY,
-                pinion_runtime::FrameTimingsHolder::default,
-            )
-        });
+        let holder = pinion_runtime::FRAME_TIMINGS.resolve(core.root_owner());
         assert!(holder.sample().samples.is_empty(), "nothing published yet");
         core.publish_frame_timings("main");
         let got = holder.sample();
@@ -3503,12 +3498,7 @@ mod r907_frame_timing_substrate {
     fn r1361_a_secondary_window_never_clobbers_the_primary_history() {
         let _g = super::TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
-        let holder = core.root_owner().run(|| {
-            core.root_owner().cache(
-                pinion_runtime::FRAME_TIMINGS_KEY,
-                pinion_runtime::FrameTimingsHolder::default,
-            )
-        });
+        let holder = pinion_runtime::FRAME_TIMINGS.resolve(core.root_owner());
         core.record_frame_timing("main", FrameTiming::new(300, 100, 0, 80, 540));
         core.record_frame_timing("inspector", FrameTiming::new(1, 1, 0, 1, 9_999));
         core.publish_frame_timings("main");
