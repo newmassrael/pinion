@@ -78301,6 +78301,48 @@
         "Tracking SSOT = the pinion memory `sce-upstream-debts` + this entry. The RFC file (`claudedocs/...`) is gitignored/ephemeral, so this changelog entry is the durable pointer to the decision."
       ]
     },
+    "SCE-RFC-002-structural": {
+      "decision_summary": "SCE-RFC-002-structural: honest correction to SCE-RFC-002-004's SCE-002 claim. Injecting the WidgetStateName/WidgetEventName derive NAME (enabled by 591782dfb) is NOT sufficient — a Rust derive reconstructs a trait from the enum's own tokens, and two facts the pinion traits need are absent from sce's generated State/Event enums: (1) the state default (from_name_or_default fallback = SCXML initial state), (2) the event forgeability partition (from_name rejects internal-raise events = the RPC invoke(send) boundary). Both are SCXML-source facts sce already computes (initial_state at procedure.rs.jinja2:150; raise-vs-send in event_schema_check.rs), so sce should surface them, not pinion re-declare them (the SSOT duplication SCE-002 is a debt about). RFC proposes two derive-runtime-consumable markers: (1) #[default] on the initial variant + Default in RustDeriveCategory::ProcedureState; (2) a generated EXTERNALLY_DRIVABLE_EVENTS const from the existing send/raise walk. Both runtime items (not variant attributes) so non-consuming sce builds stay inert. pinion consumption round follows sce + dual-pin: #[derive(WidgetStateName/WidgetEventName)] in pinion-derive (mirror WidgetTag), build.rs injection, delete the per-widget macro_rules.",
+      "changes_bullets": [
+        "No pinion source change (0 LOC). Deliverable = the RFC handoff `claudedocs/sce-002-structural-markers-rfc.md` (gitignored); this entry is the durable/tracked record.",
+        "HONEST CORRECTION of SCE-RFC-002-004: its claim that SCE-002 clears by injecting `pinion_core::WidgetStateName` into the `compile_scxml_with_derives` vec is SUPERSEDED. Injecting the derive NAME is necessary but NOT sufficient — a Rust derive reconstructs a trait from the enum's own tokens, and two facts the pinion traits need are absent from sce's generated `State`/`Event` enums.",
+        "The two missing facts, both SCXML-source facts sce already computes: (1) the state default (`from_name_or_default`'s fallback = SCXML `<scxml initial>`; sce has it at `procedure.rs.jinja2:150` `initial_state`); (2) the event forgeability partition (`from_name` rejects internal-`<raise>` events = the RPC `invoke(\"send\")` security boundary; sce's `event_schema_check.rs` already walks `<send>`/`<raise>`).",
+        "RFC proposes two derive-RUNTIME-consumable markers (not variant attributes, so non-consuming sce builds stay inert): (1) `#[default]` on the initial variant + `Default` in `RustDeriveCategory::ProcedureState` -> pinion `from_name_or_default` uses `Self::default()`; (2) a generated `EXTERNALLY_DRIVABLE_EVENTS` const -> pinion `from_name` filters on it."
+      ],
+      "verification_bullets": [
+        "No code gate applies (0 LOC pinion change). The RFC's `vendor/sce` file:line claims were read from the checked-out submodule at rev `27051d77a` (R1367) — `procedure.rs.jinja2:150` initial_state, `event_schema_check.rs:14/454-459` send/raise walk, `rust_derive_policy.rs` RustDeriveCategory, `pinion-derive/src/lib.rs:102` WidgetTag mirror.",
+        "`mnemosyne-cli validate-workspace` clean after append (T1 orphan 0, no new orphan).",
+        "Honest scope: HANDOFF, not the fix. The sce template + `sce-build` change is out-of-repo (cross-repo discipline forbids editing `vendor/sce` from a pinion session). Per the SCE-001 precedent, re-check SCE HEAD before implementing — a marker could already exist."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "SCE-002 stays OPEN as external-dependency carry until sce lands the two structural markers (`#[default]` on initial + `EXTERNALLY_DRIVABLE_EVENTS`) and pinion dual-pins + does the proc-macro consumption round.",
+        "Consumption round (after sce): add `#[proc_macro_derive(WidgetStateName)]` + `#[proc_macro_derive(WidgetEventName)]` to `pinion-derive` (mirror `WidgetTag`), switch `build.rs` to inject them via `compile_scxml_with_derives`, delete every per-widget `widget_state_name!` / `widget_event_name!` re-enumeration + the two `macro_rules!`. Then Phase B feature return (DCC / Model-View).",
+        "Distinct from SCE-004 (cleared R1368 by a parallel session): SCE-002's two markers are a separate sce change; injecting a derive name alone (the SCE-004 mechanism) does not carry the default/forgeability facts."
+      ],
+      "publishable_decision_summary": "SCE-RFC-002-structural: honest correction to SCE-RFC-002-004's SCE-002 claim. Injecting the WidgetStateName/WidgetEventName derive NAME (enabled by 591782dfb) is NOT sufficient — a Rust derive reconstructs a trait from the enum's own tokens, and two facts the pinion traits need are absent from sce's generated State/Event enums: (1) the state default (from_name_or_default fallback = SCXML initial state), (2) the event forgeability partition (from_name rejects internal-raise events = the RPC invoke(send) boundary). Both are SCXML-source facts sce already computes (initial_state at procedure.rs.jinja2:150; raise-vs-send in event_schema_check.rs), so sce should surface them, not pinion re-declare them (the SSOT duplication SCE-002 is a debt about). RFC proposes two derive-runtime-consumable markers: (1) #[default] on the initial variant + Default in RustDeriveCategory::ProcedureState; (2) a generated EXTERNALLY_DRIVABLE_EVENTS const from the existing send/raise walk. Both runtime items (not variant attributes) so non-consuming sce builds stay inert. pinion consumption round follows sce + dual-pin: #[derive(WidgetStateName/WidgetEventName)] in pinion-derive (mirror WidgetTag), build.rs injection, delete the per-widget macro_rules.",
+      "publishable_changes_bullets": [
+        "No pinion source change (0 LOC). Deliverable = the RFC handoff `claudedocs/sce-002-structural-markers-rfc.md` (gitignored); this entry is the durable/tracked record.",
+        "HONEST CORRECTION of SCE-RFC-002-004: its claim that SCE-002 clears by injecting `pinion_core::WidgetStateName` into the `compile_scxml_with_derives` vec is SUPERSEDED. Injecting the derive NAME is necessary but NOT sufficient — a Rust derive reconstructs a trait from the enum's own tokens, and two facts the pinion traits need are absent from sce's generated `State`/`Event` enums.",
+        "The two missing facts, both SCXML-source facts sce already computes: (1) the state default (`from_name_or_default`'s fallback = SCXML `<scxml initial>`; sce has it at `procedure.rs.jinja2:150` `initial_state`); (2) the event forgeability partition (`from_name` rejects internal-`<raise>` events = the RPC `invoke(\"send\")` security boundary; sce's `event_schema_check.rs` already walks `<send>`/`<raise>`).",
+        "RFC proposes two derive-RUNTIME-consumable markers (not variant attributes, so non-consuming sce builds stay inert): (1) `#[default]` on the initial variant + `Default` in `RustDeriveCategory::ProcedureState` -> pinion `from_name_or_default` uses `Self::default()`; (2) a generated `EXTERNALLY_DRIVABLE_EVENTS` const -> pinion `from_name` filters on it."
+      ],
+      "publishable_verification_bullets": [
+        "No code gate applies (0 LOC pinion change). The RFC's `vendor/sce` file:line claims were read from the checked-out submodule at rev `27051d77a` (R1367) — `procedure.rs.jinja2:150` initial_state, `event_schema_check.rs:14/454-459` send/raise walk, `rust_derive_policy.rs` RustDeriveCategory, `pinion-derive/src/lib.rs:102` WidgetTag mirror.",
+        "`mnemosyne-cli validate-workspace` clean after append (T1 orphan 0, no new orphan).",
+        "Honest scope: HANDOFF, not the fix. The sce template + `sce-build` change is out-of-repo (cross-repo discipline forbids editing `vendor/sce` from a pinion session). Per the SCE-001 precedent, re-check SCE HEAD before implementing — a marker could already exist."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCE-002 stays OPEN as external-dependency carry until sce lands the two structural markers (`#[default]` on initial + `EXTERNALLY_DRIVABLE_EVENTS`) and pinion dual-pins + does the proc-macro consumption round.",
+        "Consumption round (after sce): add `#[proc_macro_derive(WidgetStateName)]` + `#[proc_macro_derive(WidgetEventName)]` to `pinion-derive` (mirror `WidgetTag`), switch `build.rs` to inject them via `compile_scxml_with_derives`, delete every per-widget `widget_state_name!` / `widget_event_name!` re-enumeration + the two `macro_rules!`. Then Phase B feature return (DCC / Model-View).",
+        "Distinct from SCE-004 (cleared R1368 by a parallel session): SCE-002's two markers are a separate sce change; injecting a derive name alone (the SCE-004 mechanism) does not carry the default/forgeability facts."
+      ]
+    },
     "round-14": {
       "decision_summary": "Round 14: forward-compatibility hedges for future game-engine evolution path (§5.2 §5.13 §6.3 §5.8)",
       "changes_bullets": [
