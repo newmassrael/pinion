@@ -1173,9 +1173,9 @@ impl Owner {
     /// # Why this exists, and why it is additive
     ///
     /// A binding's provider slots still on plain [`cache`](Self::cache) —
-    /// `pane_viewport_registry` among them — are seeded ONCE, on the root owner,
-    /// at boot. `cache` looks only at the scope it is called on, so every one of
-    /// those resolves its lazy **Null default** from a child scope. Today nothing
+    /// `scene_revision` among them — are seeded ONCE, on the root owner, at boot.
+    /// `cache` looks only at the scope it is called on, so every one of those
+    /// resolves its lazy **Null default** from a child scope. Today nothing
     /// notices, because every view runs under root. The deferred R680 atomic
     /// changes exactly that (`window_owner(id).run(..)`), and on the day it lands
     /// a secondary window's slot would silently do nothing — precisely the class
@@ -1184,8 +1184,8 @@ impl Owner {
     /// [`RepaintSink`](super::repaint::RepaintSink),
     /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) and
     /// [`LocalTaskPump`](super::resource::LocalTaskPump) — and `pinion-shell`'s
-    /// own window-control sink — have since moved to
-    /// [`ProviderSlot`](super::provider_slot::ProviderSlot), which resolves
+    /// own window-control sink and the pane-viewport registry — have since moved
+    /// to [`ProviderSlot`](super::provider_slot::ProviderSlot), which resolves
     /// through `cache_inherited` and is immune), resurrected by a change that
     /// never mentions windowing.
     ///
@@ -1211,7 +1211,6 @@ impl Owner {
     ///
     /// | slot | how the shell drives root | inherits |
     /// |---|---|---|
-    /// | `pane_viewport_registry` | PUBLISHES pane rects into it | yes |
     /// | `scene_revision` | seeds at boot, then OBSERVES it to wake `scene/waitFor` | yes |
     /// | `waiter_registry` | parks and wakes `scene/waitFor` through it | yes |
     /// | `viewport_size` | WRITES it, primary window only | **no** — see below |
@@ -1385,52 +1384,25 @@ impl Owner {
         self.inner.focused_tag.clone()
     }
 
-    /// R1012 §5.23 §5.22 — the owner-scoped per-pane viewport registry: the
-    /// tag-keyed map of pane → measured-size
-    /// [`Signal`](super::signal::Signal) backing
-    /// [`use_pane_viewport_size`](super::pane_viewport::use_pane_viewport_size).
+    /// R1364.5 §5.22 §5.28 — seed the owner-scoped pane-viewport registry
+    /// (`pane_viewport::PANE_VIEWPORT_REGISTRY`)
+    /// on this scope at boot, so descendants inherit it rather than minting their
+    /// own. The shell calls this once on `root_owner`.
     ///
-    /// Lazily created (empty) on first access; the consumer's `use_*` read and
-    /// the shell's post-layout publish both resolve this same root-owner slot,
-    /// so they share one signal per pane tag. Same private-key + owner-cache
-    /// shape as [`Self::viewport_size_signal`]; the registry is itself an `Rc`
-    /// handle so the returned clone is cheap. Internal: consumers read via
-    /// [`use_pane_viewport_size`](super::pane_viewport::use_pane_viewport_size)
-    /// and the shell publishes via [`Self::pane_viewport_entries`].
-    /// R1364.5 §5.22 §5.28 — create this scope's pane-viewport registry now, so
-    /// descendants inherit it rather than minting their own.
+    /// R1021 requires ONE shared registry that every window publishes its pane
+    /// rects into (`publish_pane_viewports` reads the ROOT's); but the registry is
+    /// built lazily, and
+    /// [`ProviderSlot::seed_root`](super::provider_slot::ProviderSlot::seed_root)
+    /// creates it at root NOW, before the deferred R680 atomic could let a
+    /// secondary window's view mint its own — the torn-off pane's PTY silently
+    /// keeping the wrong size. sprag's R37 undock is the forcing consumer.
     ///
-    /// The shell calls this once on `root_owner` at boot. R1021 requires ONE
-    /// shared registry that every window publishes its pane rects into, and
-    /// `publish_pane_viewports` reads the ROOT's; but the registry is built
-    /// lazily on first touch, and [`Self::cache_inherited`] creates at the
-    /// CALLING scope when no ancestor has one yet. So without an explicit boot
-    /// seed, the deferred R680 atomic would let a secondary window's view mint
-    /// its own registry, register its pane tags there, and never reflow — the
-    /// torn-off pane's PTY silently keeping the wrong size. sprag's R37 undock
-    /// is the forcing consumer.
-    ///
-    /// Exists (rather than the shell touching the resolver) because
-    /// `Self::pane_viewport_registry` is `pub(crate)`: `pinion-runtime` cannot
-    /// name it, and seeding via the unrelated
-    /// [`Self::pane_viewport_entries`] would work only as a side effect nobody
-    /// reading the call site could see.
+    /// This pub wrapper exists because `pane_viewport::PANE_VIEWPORT_REGISTRY` is
+    /// `pub(crate)` (the registry handle is deliberately crate-private):
+    /// `pinion-runtime` cannot name the slot to seed it directly, so this is the
+    /// seam.
     pub fn seed_pane_viewport_registry(&self) {
-        drop(self.pane_viewport_registry());
-    }
-
-    #[must_use]
-    pub(crate) fn pane_viewport_registry(&self) -> super::pane_viewport::PaneViewportRegistry {
-        self.cache_inherited::<super::pane_viewport::PaneViewportRegistryHolder, _>(
-            super::pane_viewport::PANE_VIEWPORT_REGISTRY_KEY,
-            || {
-                super::pane_viewport::PaneViewportRegistryHolder(
-                    super::pane_viewport::PaneViewportRegistry::new(),
-                )
-            },
-        )
-        .0
-        .clone()
+        super::pane_viewport::PANE_VIEWPORT_REGISTRY.seed_root(self);
     }
 
     /// R1012 §5.23 §5.22 — snapshot every registered pane `(tag, signal)` pair
@@ -1446,7 +1418,9 @@ impl Owner {
     /// itself crate-private.
     #[must_use]
     pub fn pane_viewport_entries(&self) -> Vec<super::pane_viewport::PaneViewportEntry> {
-        self.pane_viewport_registry().entries()
+        super::pane_viewport::PANE_VIEWPORT_REGISTRY
+            .resolve(self)
+            .entries()
     }
 
     /// R51.150 §5.22 — `true` when (`V`, `key`) has been populated by
@@ -3165,34 +3139,9 @@ mod r1364_cache_inherited_tests {
 
     // R1365.1 — the tests above are the MECHANISM; each uses a synthetic `"cap"`
     // key. R1365's ledger cited this mod as the behavioural enforcement of the
-    // census table's per-slot verdicts, which it has never been. The one real
-    // slot still owned by this file is `pane_viewport_registry`: it has no
-    // `provide_*`, so the shell seeds it by touching root
-    // (`CoreShell::new_with_seed`), and the walk cannot save a slot that does not
-    // exist yet — seed-at-root and resolve-inherited are both load-bearing.
-    // `local_task_pump` migrated to `resource::LOCAL_TASK_PUMP` (R1366.5); its
-    // verdict test is generated there.
-
-    #[test]
-    fn r1365_1_a_child_scope_reads_the_roots_pane_viewport_registry() {
-        // Behavioural rather than `ptr_eq`: the registry is returned by value
-        // (a cheap `Rc` handle inside), and what R1021 actually requires is that
-        // a publish into the ROOT's registry is what a pane's scope reads back.
-        let root = Owner::new();
-        root.seed_pane_viewport_registry();
-        root.pane_viewport_registry()
-            .signal_for(std::borrow::Cow::Borrowed("pane.left"))
-            .set((640, 480));
-
-        let window_scope = Owner::new_child(&root);
-        let seen = window_scope.run(|| crate::use_pane_viewport_size("pane.left"));
-
-        assert_eq!(
-            seen,
-            (640, 480),
-            "a child scope minted its own PaneViewportRegistry and read the \
-             (0, 0) unknown — R1021 requires ONE root instance every window \
-             publishes pane rects into (forcing consumer: sprag's R37 undock)",
-        );
-    }
+    // census table's per-slot verdicts, which it has never been. Both real slots
+    // once owned by this file have now migrated to `ProviderSlot`
+    // (`local_task_pump` -> `resource::LOCAL_TASK_PUMP` R1366.5,
+    // `pane_viewport_registry` -> `pane_viewport::PANE_VIEWPORT_REGISTRY`
+    // R1366.6); their verdict tests are generated in those modules.
 }

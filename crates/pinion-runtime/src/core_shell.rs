@@ -593,9 +593,10 @@ impl<V: WidgetCore> CoreShell<V> {
         // the two would desync in exactly the way the walk exists to prevent.
         //
         // Both are built from nothing (no value to hand in), so seeding is
-        // creating the instance at root — `ProviderSlot::seed_root` for the
-        // migrated pump, touching the resolver for the pane registry not yet on
-        // the type.
+        // creating the instance at root via `ProviderSlot::seed_root` — directly
+        // for the core-homed pump, through `Owner::seed_pane_viewport_registry`
+        // for the pane registry (whose slot is `pub(crate)`, so the runtime seeds
+        // it through that pub wrapper rather than naming the static).
         //
         // The pump: the shell POLLS `LOCAL_TASK_PUMP.resolve(root)` every frame
         // and gates staying awake on its `has_pending()`. A child's own pump

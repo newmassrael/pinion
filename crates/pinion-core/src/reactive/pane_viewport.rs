@@ -102,6 +102,7 @@
 //! synchronous reflow Effect may re-enter [`use_pane_viewport_size`] (re-reading
 //! its own pane) without a `RefCell` double-borrow.
 
+use super::provider_slot::ProviderSlot;
 use super::signal::Signal;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -165,15 +166,35 @@ impl PaneViewportRegistry {
     }
 }
 
-/// Owner-cache newtype: [`Owner::cache`](super::owner::Owner::cache) stores
-/// `Rc<dyn Any>`, so the registry handle rides inside this holder (mirrors
-/// [`ViewportSizeHolder`](super::viewport::ViewportSizeHolder)).
-pub(crate) struct PaneViewportRegistryHolder(pub(crate) PaneViewportRegistry);
-
-/// Private owner-cache key for the single per-owner pane-viewport registry slot
-/// (mirrors the [`VIEWPORT_SIZE_KEY`](super::viewport::VIEWPORT_SIZE_KEY)
-/// private-key convention).
-pub(crate) const PANE_VIEWPORT_REGISTRY_KEY: &str = "__pinion.reactive.pane_viewport_registry";
+/// R1366.6 §5.23 §5.22 — the pane-viewport-registry slot: its key, its default
+/// and its inherit verdict as one expression.
+///
+/// **`Inherited`** by the mechanical predicate — the shell DRIVES this at the
+/// root owner: `CoreShell::publish_pane_viewports` PUBLISHES every painted
+/// window's pane rects into the ROOT's registry after layout. A child scope
+/// resolves that one registry through
+/// [`Owner::cache_inherited`](super::owner::Owner::cache_inherited); a per-scope
+/// registry would take a torn-off (undock) pane's tags off into a secondary
+/// window's own map that `publish_pane_viewports` never reads, so its PTY would
+/// silently keep the wrong size — the R1021 / sprag-R37 forcing consumer. Like
+/// [`LocalTaskPump`](super::resource::LocalTaskPump) it has no `provide` (the
+/// registry is built from nothing, [`PaneViewportRegistry::new`]), so the shell
+/// seeds it with [`seed_root`](ProviderSlot::seed_root) — via the pub
+/// [`Owner::seed_pane_viewport_registry`](super::owner::Owner::seed_pane_viewport_registry)
+/// wrapper, since this static is `pub(crate)`.
+/// [`provider_slot_tests!`](crate::provider_slot_tests) EMITS the verdict.
+///
+/// `pub(crate)`, not `pub`: the registry HANDLE stays crate-private (the pub
+/// surface is `use_pane_viewport_size` / `pane_viewport_entries` /
+/// `seed_pane_viewport_registry`), so the slot cannot be a `pub static` without
+/// leaking the handle. The `Rc<dyn Any>`-storage newtype R1012 wrapped it in is
+/// gone: [`Owner::cache`](super::owner::Owner::cache) keys on `(TypeId, key)`, so
+/// `PaneViewportRegistry` is already its own type.
+pub(crate) static PANE_VIEWPORT_REGISTRY: ProviderSlot<PaneViewportRegistry> =
+    ProviderSlot::inherited(
+        "__pinion.reactive.pane_viewport_registry",
+        PaneViewportRegistry::new,
+    );
 
 /// R1012 §5.23 §5.22 — read the measured pixel size `(width, height)` of the
 /// pane tagged `tag` via the active owner scope's registry, subscribing the
@@ -195,9 +216,10 @@ pub(crate) const PANE_VIEWPORT_REGISTRY_KEY: &str = "__pinion.reactive.pane_view
 /// rather than silently reflow to `1 x 1`.
 #[must_use]
 pub fn use_pane_viewport_size(tag: impl Into<Cow<'static, str>>) -> (u32, u32) {
-    super::owner::Owner::current()
-        .expect("use_pane_viewport_size requires an active Owner scope")
-        .pane_viewport_registry()
+    let owner = super::owner::Owner::current()
+        .expect("use_pane_viewport_size requires an active Owner scope");
+    PANE_VIEWPORT_REGISTRY
+        .resolve(&owner)
         .signal_for(tag.into())
         .get()
 }
@@ -209,6 +231,43 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    // The verdict, EMITTED from the declaration — a child scope resolves the
+    // ROOT's registry. `ptr_eq` on the cache's `Rc<V>` (the shared identity),
+    // which the behavioural test below could not use when the deleted accessor
+    // returned the handle by value.
+    crate::provider_slot_tests!(
+        r1366_6_pane_viewport_registry_inherits,
+        super::PANE_VIEWPORT_REGISTRY,
+        PaneViewportRegistry::new
+    );
+
+    #[test]
+    fn r1366_6_a_child_scope_reads_the_roots_registry_through_the_hook() {
+        // R1365.1 §5.22 — the verdict through the BINDING's path (moved here from
+        // owner.rs's mod when this slot migrated). Behavioural rather than ptr_eq:
+        // what R1021 requires is that a publish into the ROOT's registry is what a
+        // pane's child scope reads back through `use_pane_viewport_size`.
+        // `Owner::new_child` is what R680 runs a secondary window's view in; a
+        // child minting its own registry would read the (0, 0) unknown, so a
+        // torn-off pane never reflows (forcing consumer: sprag's R37 undock).
+        let root = Owner::new();
+        root.seed_pane_viewport_registry();
+        PANE_VIEWPORT_REGISTRY
+            .resolve(&root)
+            .signal_for(Cow::Borrowed("pane.left"))
+            .set((640, 480));
+
+        let window_scope = Owner::new_child(&root);
+        let seen = window_scope.run(|| use_pane_viewport_size("pane.left"));
+
+        assert_eq!(
+            seen,
+            (640, 480),
+            "a child scope minted its own PaneViewportRegistry and read the (0, 0) \
+             unknown — R1021 requires ONE root instance every window publishes",
+        );
+    }
 
     #[test]
     fn unregistered_pane_is_zero_unknown() {
@@ -246,7 +305,7 @@ mod tests {
         let owner = Owner::new();
         // Seed via the registry directly (the shell's publish does this through
         // the owner-cache registry), then read through the hook.
-        let reg = owner.pane_viewport_registry();
+        let reg = PANE_VIEWPORT_REGISTRY.resolve(&owner);
         reg.signal_for(Cow::Borrowed("pane.a")).set((320, 200));
         assert_eq!(owner.run(|| use_pane_viewport_size("pane.a")), (320, 200));
     }
@@ -257,8 +316,8 @@ mod tests {
         // synchronous reflow-Effect re-run resolve Owner::current() and observe
         // the new pane size.
         let owner = Owner::new();
-        let sig = owner
-            .pane_viewport_registry()
+        let sig = PANE_VIEWPORT_REGISTRY
+            .resolve(&owner)
             .signal_for(Cow::Borrowed("pane.a"));
         let seen = Rc::new(RefCell::new(Vec::new()));
         let seen_c = Rc::clone(&seen);
@@ -278,7 +337,7 @@ mod tests {
         // that re-reads its own pane during the synchronous re-run does not
         // double-borrow the registry RefCell. Mirror that ordering here.
         let owner = Owner::new();
-        let reg = owner.pane_viewport_registry();
+        let reg = PANE_VIEWPORT_REGISTRY.resolve(&owner);
         let last = Rc::new(RefCell::new((0_u32, 0_u32)));
         let last_c = Rc::clone(&last);
         let _eff = owner.run(|| {
@@ -306,8 +365,8 @@ mod tests {
         // -> Owner::current().expect() panics. This is why
         // CoreShell::publish_pane_viewports wraps the set in root_owner.run.
         let owner = Owner::new();
-        let sig = owner
-            .pane_viewport_registry()
+        let sig = PANE_VIEWPORT_REGISTRY
+            .resolve(&owner)
             .signal_for(Cow::Borrowed("pane.a"));
         let _eff = owner.run(|| {
             Effect::new(&Owner::current().expect("inside run"), || {
@@ -322,8 +381,8 @@ mod tests {
         // Equality-skip: a same-size republish does not re-fire the reflow Effect
         // — the mechanism that floors a steady-state pane at zero extra re-passes.
         let owner = Owner::new();
-        let sig = owner
-            .pane_viewport_registry()
+        let sig = PANE_VIEWPORT_REGISTRY
+            .resolve(&owner)
             .signal_for(Cow::Borrowed("pane.a"));
         let count = Rc::new(std::cell::Cell::new(0_u32));
         let count_c = Rc::clone(&count);
