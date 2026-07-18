@@ -38,13 +38,15 @@
 //! a claim about the check, kept where the check cannot see it — so
 //! `r1366_1_a_declared_slot_is_not_an_offender` now pins the missing half.
 //!
-//! # The legacy list may only SHRINK
+//! # The legacy list, now empty (R1366.9)
 //!
-//! Migration is per-slot and each one is a behaviour change (a `provide_*` that
-//! silently no-opped now panics). Rather than one unreviewable commit, the
-//! un-migrated slots are named here and the count is asserted, the
-//! `UNCLASSIFIED_TERMINAL_GAPS` shape R1364.5 used: a list that may only shrink
-//! is a debt you cannot lose track of, where a list that may grow is a habit.
+//! Migration was per-slot and each one a behaviour change (a `provide_*` that
+//! silently no-opped now panics), so rather than one unreviewable commit the
+//! un-migrated slots were named in [`LEGACY_SLOT_KEYS`] and it was only ever
+//! allowed to shrink — the `UNCLASSIFIED_TERMINAL_GAPS` shape R1364.5 used, a
+//! debt you cannot lose track of. R1366.9 migrated the last two, so the list is
+//! empty and `_LEGACY_LIST_MUST_STAY_EMPTY` makes re-growing it a compile error
+//! rather than a runtime count assertion: the scan below now admits no exception.
 
 /// Slot keys still declared as a bare `const` + hand-written `provide`/`resolve`
 /// pair rather than a [`ProviderSlot`](super::ProviderSlot).
@@ -258,7 +260,7 @@ fn r1366_no_production_slot_key_escapes_the_declaration_type() {
     assert!(
         offenders.is_empty(),
         "a provider slot key is spelled in production outside a `ProviderSlot` \
-         declaration, and outside the shrinking legacy list. Declare it with \
+         declaration, and outside the (now empty) legacy list. Declare it with \
          `ProviderSlot::inherited` / `::per_scope` — the scope argument is how \
          the verdict stops being a comment:\n{}",
         offenders.join("\n"),
@@ -292,28 +294,5 @@ fn r1366_1_a_declared_slot_is_not_an_offender() {
          UNDECLARED, so the scan bills the type's own declarations and no slot \
          can ever migrate",
         repaint[0].file,
-    );
-}
-
-#[test]
-fn r1366_no_production_source_hand_rolls_a_slot_key() {
-    // R1366.9 emptied `LEGACY_SLOT_KEYS`, so the campaign's end state is stronger
-    // than "every legacy key still names a hand-rolled slot": NOTHING hand-rolls
-    // one. Every `__pinion.` literal in production must sit inside a
-    // `ProviderSlot` constructor. (The escape test above proves the same from the
-    // other side — no UNDECLARED literal outside the now-empty legacy list — but
-    // this states the invariant directly, so it does not silently weaken if the
-    // legacy list is ever wrongly re-grown.)
-    let literals = production_slot_literals();
-    let hand_rolled: Vec<&str> = literals
-        .iter()
-        .filter(|l| !l.declared)
-        .map(|l| l.key.as_str())
-        .collect();
-    assert!(
-        hand_rolled.is_empty(),
-        "a `__pinion.` slot key is spelled in production outside a `ProviderSlot` \
-         declaration: {hand_rolled:?}. The migration is complete — declare it \
-         with `ProviderSlot::inherited` / `::per_scope`.",
     );
 }

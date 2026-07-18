@@ -25524,6 +25524,50 @@
         "push pending owner consent: dual-pin R1367 + this R1368 are unpushed"
       ]
     },
+    "R1369": {
+      "decision_summary": "R1369 §5.22: inline clearance of the two xhigh code-review findings on R1366.9's declaration_scan (both CONFIRMED cleanup, no correctness bug). (1) Delete r1366_no_production_source_hand_rolls_a_slot_key — once LEGACY_SLOT_KEYS was const-asserted empty (re-growth = E0080) it asserts the identical !declared set as r1366_no_production_slot_key_escapes_the_declaration_type via the same source walk; its purpose (surviving a re-grown legacy list) can never fire = pure duplication. escapes stays as the single LEGACY-aware invariant test (wording shrinking -> now empty). (2) Fix the stale '# The legacy list may only SHRINK' module doc that still claimed the un-migrated slots are named and the count is asserted — both false after R1366.9 emptied the list and replaced the count test with the compile-time _LEGACY_LIST_MUST_STAY_EMPTY guard. My R1366.9 rationalization for keeping the duplicate was wrong; the reviewer caught it. (Took R1369: a parallel session had already frozen R1368 = the SCE-004 consumption round; no file overlap.)",
+      "changes_bullets": [
+        "`declaration_scan.rs`: DELETE `r1366_no_production_source_hand_rolls_a_slot_key` (review finding 1) — a test I repurposed in R1366.9 that, once `_LEGACY_LIST_MUST_STAY_EMPTY` made a re-grown `LEGACY_SLOT_KEYS` a compile error (E0080), asserts the IDENTICAL `!l.declared` set as `r1366_no_production_slot_key_escapes_the_declaration_type` via the same workspace source walk. Its stated purpose — surviving a wrongly re-grown legacy list — can never fire, so it is pure duplication.",
+        "`escapes` stays as the single invariant test, keeping its LEGACY-aware `!LEGACY_SLOT_KEYS.contains(..)` filter (correct and adaptive, not dead — it honors the list's contents); only its message wording `shrinking` -> `(now empty)` for accuracy.",
+        "Module doc (review finding 2): `# The legacy list may only SHRINK` -> `# The legacy list, now empty (R1366.9)`. The old paragraph still claimed \"the un-migrated slots are named here and the count is asserted\" — both false after R1366.9 emptied the list and replaced the count-asserting test with the compile-time `_LEGACY_LIST_MUST_STAY_EMPTY` guard (an emptiness assert, not a count).",
+        "Net -30 / +9 LOC, one file."
+      ],
+      "verification_bullets": [
+        "Source: the xhigh workflow code review (6 finder angles + a per-location verifier) of `2f280fd1..HEAD` — 0 correctness bugs, 2 CONFIRMED cleanups, both applied here. My own R1366.9 rationalization for keeping the duplicate (\"does not weaken if the list is re-grown\") was wrong: the const assert makes re-growth a compile error, exactly what the reviewer caught.",
+        "`cargo fmt --all --check` — clean. `cargo clippy -p pinion-core --all-targets` — clean (compiled against the R1367 sce rev 27051d77a). `cargo test -p pinion-core` — 0 failed.",
+        "The two surviving census tests pass: `r1366_no_production_slot_key_escapes_the_declaration_type` + `r1366_1_a_declared_slot_is_not_an_offender`. `grep` confirms no dangling reference to the deleted test name.",
+        "Test-and-doc-only change; no runtime surface (refactor/hygiene round, R1366.x discipline)."
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "The R1366 ProviderSlot campaign stays complete (10/10 slots typed, LEGACY empty + const-asserted, cache_inherited sealed). This is a post-review hygiene follow-up on R1366.9's declaration_scan, not new scope.",
+        "Concurrency note: a parallel session landed R1368 (`439b6f44 feat(widgets): consume injectable derives, clear SCE-004`) while this cleanup was in flight — the SCE-004 consumption round (build.rs -> compile_scxml_with_derives serde injection; ScrollBarInteractionSignal u8-wrapper -> Signal<ScrollBarState> alias). SCE-004 is therefore CLEARED; this entry took R1369 because R1368 was already frozen. Files do not overlap (R1368 = build.rs/scrollbar.rs; this = declaration_scan.rs).",
+        "Remaining: **SCE-002 stays open** (per R1368's note, widget_state_name!/widget_event_name! are macro_rules not derive macros, so the injectable-derive hook does not auto-clear it — needs a separate proc-macro round). Then Phase B feature return (DCC / Model-View)."
+      ],
+      "publishable_decision_summary": "R1369 §5.22: inline clearance of the two xhigh code-review findings on R1366.9's declaration_scan (both CONFIRMED cleanup, no correctness bug). (1) Delete r1366_no_production_source_hand_rolls_a_slot_key — once LEGACY_SLOT_KEYS was const-asserted empty (re-growth = E0080) it asserts the identical !declared set as r1366_no_production_slot_key_escapes_the_declaration_type via the same source walk; its purpose (surviving a re-grown legacy list) can never fire = pure duplication. escapes stays as the single LEGACY-aware invariant test (wording shrinking -> now empty). (2) Fix the stale '# The legacy list may only SHRINK' module doc that still claimed the un-migrated slots are named and the count is asserted — both false after R1366.9 emptied the list and replaced the count test with the compile-time _LEGACY_LIST_MUST_STAY_EMPTY guard. My R1366.9 rationalization for keeping the duplicate was wrong; the reviewer caught it. (Took R1369: a parallel session had already frozen R1368 = the SCE-004 consumption round; no file overlap.)",
+      "publishable_changes_bullets": [
+        "`declaration_scan.rs`: DELETE `r1366_no_production_source_hand_rolls_a_slot_key` (review finding 1) — a test I repurposed in R1366.9 that, once `_LEGACY_LIST_MUST_STAY_EMPTY` made a re-grown `LEGACY_SLOT_KEYS` a compile error (E0080), asserts the IDENTICAL `!l.declared` set as `r1366_no_production_slot_key_escapes_the_declaration_type` via the same workspace source walk. Its stated purpose — surviving a wrongly re-grown legacy list — can never fire, so it is pure duplication.",
+        "`escapes` stays as the single invariant test, keeping its LEGACY-aware `!LEGACY_SLOT_KEYS.contains(..)` filter (correct and adaptive, not dead — it honors the list's contents); only its message wording `shrinking` -> `(now empty)` for accuracy.",
+        "Module doc (review finding 2): `# The legacy list may only SHRINK` -> `# The legacy list, now empty (R1366.9)`. The old paragraph still claimed \"the un-migrated slots are named here and the count is asserted\" — both false after R1366.9 emptied the list and replaced the count-asserting test with the compile-time `_LEGACY_LIST_MUST_STAY_EMPTY` guard (an emptiness assert, not a count).",
+        "Net -30 / +9 LOC, one file."
+      ],
+      "publishable_verification_bullets": [
+        "Source: the xhigh workflow code review (6 finder angles + a per-location verifier) of `2f280fd1..HEAD` — 0 correctness bugs, 2 CONFIRMED cleanups, both applied here. My own R1366.9 rationalization for keeping the duplicate (\"does not weaken if the list is re-grown\") was wrong: the const assert makes re-growth a compile error, exactly what the reviewer caught.",
+        "`cargo fmt --all --check` — clean. `cargo clippy -p pinion-core --all-targets` — clean (compiled against the R1367 sce rev 27051d77a). `cargo test -p pinion-core` — 0 failed.",
+        "The two surviving census tests pass: `r1366_no_production_slot_key_escapes_the_declaration_type` + `r1366_1_a_declared_slot_is_not_an_offender`. `grep` confirms no dangling reference to the deleted test name.",
+        "Test-and-doc-only change; no runtime surface (refactor/hygiene round, R1366.x discipline)."
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The R1366 ProviderSlot campaign stays complete (10/10 slots typed, LEGACY empty + const-asserted, cache_inherited sealed). This is a post-review hygiene follow-up on R1366.9's declaration_scan, not new scope.",
+        "Concurrency note: a parallel session landed R1368 (`439b6f44 feat(widgets): consume injectable derives, clear SCE-004`) while this cleanup was in flight — the SCE-004 consumption round (build.rs -> compile_scxml_with_derives serde injection; ScrollBarInteractionSignal u8-wrapper -> Signal<ScrollBarState> alias). SCE-004 is therefore CLEARED; this entry took R1369 because R1368 was already frozen. Files do not overlap (R1368 = build.rs/scrollbar.rs; this = declaration_scan.rs).",
+        "Remaining: **SCE-002 stays open** (per R1368's note, widget_state_name!/widget_event_name! are macro_rules not derive macros, so the injectable-derive hook does not auto-clear it — needs a separate proc-macro round). Then Phase B feature return (DCC / Model-View)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
