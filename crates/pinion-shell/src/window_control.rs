@@ -81,29 +81,8 @@
 
 use std::sync::Arc;
 
-use pinion_core::Owner;
+use pinion_core::ProviderSlot;
 use pinion_overlay::WindowControl;
-
-/// The `Owner::cache` slot the shell's [`WindowControlSink`] lives in.
-///
-/// Private to this module: the key and BOTH of its writers
-/// ([`provide_window_control_sink`]'s seed, [`resolve_window_control_sink`]'s
-/// lazy Null default) live in exactly one file, so a future divergence cannot be
-/// silently swallowed by `Owner::cache`'s first-write-wins (the `waiter.rs`
-/// discipline).
-const WINDOW_CONTROL_SINK_KEY: &str = "__pinion.shell.window_control_sink";
-
-/// Owner-cache newtype: [`Owner::cache`] stores `Rc<dyn Any>`, so the `Send`
-/// trait object rides inside this holder. The outer `Rc<WindowControlSinkHolder>`
-/// stays on the UI thread; the inner `Arc<dyn WindowControlSink>` is the handle
-/// that crosses to the producer thread.
-///
-/// The wrapper is not actually needed — the cache keys on
-/// `(TypeId::of::<V>(), key)`, so `Arc<dyn WindowControlSink>` is already its own
-/// type. It dies with this slot's R1366.x migration to
-/// [`ProviderSlot`](pinion_core::reactive::ProviderSlot), as core's
-/// `RepaintSinkHolder` did in R1366.1.
-struct WindowControlSinkHolder(Arc<dyn WindowControlSink>);
 
 /// R1362 PR-65 §5.16 §5.49 §2 #2 — the shell-supplied "request a window control
 /// from any thread" edge.
@@ -160,56 +139,47 @@ impl WindowControlSink for NullWindowControlSink {
     fn request_window_control(&self, _window_id: &str, _control: WindowControl) {}
 }
 
-/// Seed a scope's [`WindowControlSink`] — the shell-side peer of core's
-/// [`REPAINT_SINK`](pinion_core::REPAINT_SINK) seed, public for the same reasons
-/// and with the same caveat.
+/// R1366.4 PR-65 §5.16 §5.49 — the window-control slot: its key, its Null default
+/// and its inherit verdict as one expression, in the crate that owns it. The
+/// shell-side peer of core's [`REPAINT_SINK`](pinion_core::REPAINT_SINK),
+/// declared here because `pinion-core` cannot name [`WindowControlSink`].
 ///
-/// `AppShell::new` calls this from its
-/// [`CoreShell::new_with_seed`](pinion_runtime::CoreShell::new_with_seed)
-/// closure — i.e. after the root [`Owner`] exists but **before** the binding
-/// factories (`create_external` / `create_extra_externals`) resolve any hook, so
-/// the first [`use_window_control_sink`] read inside those factories gets the
-/// live sink rather than the Null default.
+/// **`Inherited`** by the mechanical predicate — `AppShell::new` DRIVES this at
+/// the root owner from its
+/// [`CoreShell::new_with_seed`](pinion_runtime::CoreShell::new_with_seed) closure,
+/// after the root [`Owner`](pinion_core::Owner) exists but BEFORE any binding
+/// factory (`create_external` / `create_extra_externals`) resolves a hook, so the
+/// first [`use_window_control_sink`] read gets the live sink. A child scope
+/// resolves that root value through
+/// [`Owner::cache_inherited`](pinion_core::Owner::cache_inherited).
 ///
-/// Idempotent-by-first-write: like every [`Owner::cache`] slot the first call
-/// wins and a later one is a no-op (the supplied sink is dropped, no panic
-/// path). The shell seeds exactly once, before any read, so that is never
-/// observed — and `new_with_seed` is what makes "before any read" structural
-/// rather than a caller obligation. A BINDING calling this would therefore lose
-/// to the shell's earlier seed and silently no-op: seeding is the backend's job.
+/// This is the slot R1362 and R1364 existed to fix, and the one where the
+/// per-scope failure is loudest: under the deferred R680 atomic
+/// (`window_owner(id).run(..)`) a secondary window would resolve a freshly minted
+/// [`NullWindowControlSink`] and its Close button would silently no-op — no panic,
+/// no log. [`provider_slot_tests!`](pinion_core::provider_slot_tests) EMITS the
+/// verdict from this declaration, so it cannot be forgotten the way R1365 forgot
+/// five of the inheriting slots (this among them).
 ///
-/// It is public anyway, because the useful caller is a **test**: seed a bare
-/// `Owner`, then run the binding's own factory inside it, and the factory's real
-/// [`use_window_control_sink`] call resolves the recording sink. That exercises
-/// the production resolution path — as `examples/hello-tray`'s
-/// `r1362_quit_requests_a_close_through_the_window_control_sink` does — instead
-/// of routing around it by hand-constructing the widget with an injected handle.
-pub fn provide_window_control_sink(owner: &Owner, sink: Arc<dyn WindowControlSink>) {
-    // `cache`'s factory is `FnOnce` and only runs when the slot is empty, so a
-    // plain move closure seeds on the first call.
-    owner.cache::<WindowControlSinkHolder, _>(WINDOW_CONTROL_SINK_KEY, move || {
-        WindowControlSinkHolder(sink)
+/// The payload is the `Arc<dyn WindowControlSink>` itself, with no newtype
+/// wrapper: [`Owner::cache`](pinion_core::Owner::cache) keys on
+/// `(TypeId::of::<V>(), key)`, so the trait
+/// object is already its own type — R1362's `WindowControlSinkHolder` was the
+/// `Rc<dyn Any>` storage showing through, the wrapper R1366.1 retired for the
+/// repaint sink. `Send + Sync` so the handle clones into a producer thread (the
+/// shell's impl wraps a `Send + Sync` winit `EventLoopProxy`).
+///
+/// Seeding is the backend's job: a BINDING seeding this would now PANIC on the
+/// shell's earlier seed rather than silently losing to it
+/// ([`ProviderSlot::provide`](pinion_core::ProviderSlot::provide)). It stays
+/// reachable because the useful caller is a **test** — seed a bare `Owner`, run
+/// the binding's own factory inside it, and its real [`use_window_control_sink`]
+/// resolves the recording sink, exercising the production path instead of
+/// injecting a handle by hand.
+pub static WINDOW_CONTROL_SINK: ProviderSlot<Arc<dyn WindowControlSink>> =
+    ProviderSlot::inherited("__pinion.shell.window_control_sink", || {
+        Arc::new(NullWindowControlSink)
     });
-}
-
-/// Resolve the scope's [`WindowControlSink`] — whatever the shell seeded via
-/// [`provide_window_control_sink`], or a [`NullWindowControlSink`] when none was
-/// provided. The **one** home for this slot's key + lazy default.
-///
-/// R1364 §5.22 — [`Owner::cache_inherited`], so a child scope resolves the
-/// ROOT's real sink instead of minting its own Null. This slot is why the walk
-/// had to be the general answer rather than R1335's copy-the-handle-at-construction
-/// trick: it is defined in `pinion-shell`, and `Owner::new_child` cannot name a
-/// type from a crate above it.
-fn resolve_window_control_sink(owner: &Owner) -> Arc<dyn WindowControlSink> {
-    Arc::clone(
-        &owner
-            .cache_inherited::<WindowControlSinkHolder, _>(WINDOW_CONTROL_SINK_KEY, || {
-                WindowControlSinkHolder(Arc::new(NullWindowControlSink))
-            })
-            .0,
-    )
-}
 
 /// R1362 PR-65 §5.16 §5.23 — binding-facing hook: the active owner scope's
 /// [`WindowControlSink`].
@@ -223,7 +193,8 @@ fn resolve_window_control_sink(owner: &Owner) -> Arc<dyn WindowControlSink> {
 /// # Any scope in the binding's tree (R1364)
 ///
 /// The shell seeds this slot on `root_owner`, and resolution walks up to find it
-/// ([`Owner::cache_inherited`]), so a child scope gets the REAL sink.
+/// ([`Owner::cache_inherited`](pinion_core::Owner::cache_inherited)), so a child
+/// scope gets the REAL sink.
 ///
 /// Until R1364 it was root-only, and R1362 documented that as "not a live hazard
 /// today" because every view runs under root — while noting that the deferred
@@ -259,13 +230,13 @@ fn resolve_window_control_sink(owner: &Owner) -> Arc<dyn WindowControlSink> {
 /// hazard the paragraphs above are about.
 #[must_use]
 pub fn use_window_control_sink() -> Arc<dyn WindowControlSink> {
-    let owner = Owner::current().expect("use_window_control_sink requires an active Owner scope");
-    resolve_window_control_sink(&owner)
+    Arc::clone(&WINDOW_CONTROL_SINK.resolve_current())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Owner;
     use std::sync::Mutex;
 
     /// Recording sink: captures every request so a test can assert the wire
@@ -282,21 +253,35 @@ mod tests {
         }
     }
 
+    // The verdict, EMITTED from the declaration — the generated `Inherited`
+    // check R1365 forgot for five of its slots, this among them.
+    pinion_core::provider_slot_tests!(
+        r1366_4_window_control_sink_inherits,
+        super::WINDOW_CONTROL_SINK,
+        || -> Arc<dyn WindowControlSink> { Arc::new(RecordingSink::default()) }
+    );
+
     #[test]
     fn null_default_is_a_silent_no_op() {
         // No shell provided a sink: the lazy default is NullWindowControlSink,
         // and a request must not panic (bindings call it unconditionally).
         let owner = Owner::new();
-        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Close);
-        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Minimize);
+        WINDOW_CONTROL_SINK
+            .resolve(&owner)
+            .request_window_control("main", WindowControl::Close);
+        WINDOW_CONTROL_SINK
+            .resolve(&owner)
+            .request_window_control("main", WindowControl::Minimize);
     }
 
     #[test]
     fn provided_sink_receives_requests() {
         let owner = Owner::new();
         let sink = Arc::new(RecordingSink::default());
-        provide_window_control_sink(&owner, sink.clone());
-        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Close);
+        WINDOW_CONTROL_SINK.provide(&owner, sink.clone());
+        WINDOW_CONTROL_SINK
+            .resolve(&owner)
+            .request_window_control("main", WindowControl::Close);
         assert_eq!(
             *sink.0.lock().expect("recording sink poisoned"),
             vec![("main".to_owned(), WindowControl::Close)],
@@ -304,41 +289,31 @@ mod tests {
     }
 
     #[test]
-    fn provide_is_first_write_wins() {
-        // The shell seeds once before any read; a stray second provide is a
-        // no-op (the supplied sink is dropped, the first stays installed).
+    #[should_panic(expected = "already seeded")]
+    fn r1366_4_a_late_seed_panics_where_it_used_to_be_dropped() {
+        // The counterfactual of R1362's `provide_is_first_write_wins`, which
+        // asserted a second seed was a SILENT no-op leaving every reader on the
+        // first sink. On THIS slot that is the least defensible reading: a
+        // dropped window-control sink is a Close button that does nothing (the
+        // R1362 defect), and a shell that seeds twice cannot know which path a
+        // binding holds.
         let owner = Owner::new();
-        let first = Arc::new(RecordingSink::default());
-        let second = Arc::new(RecordingSink::default());
-        provide_window_control_sink(&owner, first.clone());
-        provide_window_control_sink(&owner, second.clone());
-        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Close);
-        assert_eq!(first.0.lock().expect("poisoned").len(), 1);
-        assert!(second.0.lock().expect("poisoned").is_empty());
+        WINDOW_CONTROL_SINK.provide(&owner, Arc::new(RecordingSink::default()));
+        WINDOW_CONTROL_SINK.provide(&owner, Arc::new(RecordingSink::default()));
     }
 
-    /// The seeding landmine this slot is shaped to avoid: a read BEFORE the
-    /// seed caches the Null default permanently, and the late seed is silently
-    /// dropped (`Owner::cache` is first-write-wins with no failure path). This
-    /// pins WHY `CoreShell::new_with_seed` exists — a shell that seeded after
-    /// `ShellCore::new` returned would hand every binding a dead handle, with no
-    /// panic and no log to reveal it.
     #[test]
-    fn a_read_before_the_seed_permanently_wins_and_the_seed_is_dropped() {
+    #[should_panic(expected = "already seeded")]
+    fn r1366_4_a_seed_after_a_read_panics_where_it_used_to_be_dropped() {
+        // The seeding landmine `CoreShell::new_with_seed` closes, now LOUD. A
+        // read BEFORE the seed used to cache the Null default permanently and
+        // drop the late seed in silence — a binding left holding a dead handle.
+        // `ProviderSlot::provide` turns that read-then-seed order into a panic,
+        // so a shell that seeded too late aborts instead of shipping a Close
+        // button that silently no-ops.
         let owner = Owner::new();
-        // A binding factory resolves the hook first (the too-late-seed order).
-        let resolved = resolve_window_control_sink(&owner);
-        let real = Arc::new(RecordingSink::default());
-        provide_window_control_sink(&owner, real.clone());
-        // The late seed lost: both the pre-seed handle and a fresh resolve are
-        // the Null default, and the real sink never sees a request.
-        resolved.request_window_control("main", WindowControl::Close);
-        resolve_window_control_sink(&owner).request_window_control("main", WindowControl::Close);
-        assert!(
-            real.0.lock().expect("poisoned").is_empty(),
-            "a seed after the first read must be silently dropped — the landmine \
-             `CoreShell::new_with_seed` closes structurally",
-        );
+        let _resolved = WINDOW_CONTROL_SINK.resolve(&owner);
+        WINDOW_CONTROL_SINK.provide(&owner, Arc::new(RecordingSink::default()));
     }
 
     #[test]
@@ -346,8 +321,8 @@ mod tests {
         // The `Send + Sync` bound is the point: sprag's poll thread owns this.
         let owner = Owner::new();
         let sink = Arc::new(RecordingSink::default());
-        provide_window_control_sink(&owner, sink.clone());
-        let handle = resolve_window_control_sink(&owner);
+        WINDOW_CONTROL_SINK.provide(&owner, sink.clone());
+        let handle = Arc::clone(&WINDOW_CONTROL_SINK.resolve(&owner));
         std::thread::spawn(move || {
             handle.request_window_control("main", WindowControl::Close);
         })
@@ -361,19 +336,17 @@ mod tests {
 
     #[test]
     fn r1365_1_a_child_scope_resolves_the_shells_real_window_control_sink() {
-        // R1365.1 §5.22 — the verdict, not the row. This slot is the one R1362
-        // and R1364 existed to fix, and until now the ONLY thing asserting that
-        // it inherits was a markdown row in `Owner::cache_inherited`'s rustdoc:
-        // a silent revert to plain `cache` passed all four gates. An audit of
-        // R1365 found 5 of the 8 `yes` slots in that state, this among them.
-        //
-        // `Owner::new_child` is exactly what R680 will run a secondary window's
-        // view in, and the default here is `NullWindowControlSink` — so the
-        // regression is a Close button that does nothing, with no panic and no
-        // log. That is the bug R1362 was written to kill.
+        // R1365.1 §5.22 — the verdict through the BINDING's path. The generated
+        // test above asserts inheritance through `resolve`; this asserts the
+        // same through `use_window_control_sink`, so a hook that stopped
+        // delegating to the slot could not pass both. This slot is the one R1362
+        // and R1364 existed to fix; `Owner::new_child` is what R680 will run a
+        // secondary window's view in, and the default here is
+        // `NullWindowControlSink` — so a regression is a Close button that does
+        // nothing, with no panic and no log.
         let root = Owner::new();
         let sink = Arc::new(RecordingSink::default());
-        provide_window_control_sink(&root, Arc::clone(&sink) as Arc<dyn WindowControlSink>);
+        WINDOW_CONTROL_SINK.provide(&root, Arc::clone(&sink) as Arc<dyn WindowControlSink>);
 
         let window_scope = Owner::new_child(&root);
         window_scope

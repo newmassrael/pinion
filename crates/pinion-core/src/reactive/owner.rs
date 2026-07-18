@@ -1191,19 +1191,20 @@ impl Owner {
     /// # Why this exists, and why it is additive
     ///
     /// A binding's provider slots still on plain [`cache`](Self::cache) —
-    /// `pinion-shell`'s own window-control sink among them — are seeded ONCE, on
-    /// the root owner, at boot. `cache` looks only at the scope it is called on,
-    /// so every one of those resolves its lazy **Null default** from a child
-    /// scope. Today nothing notices, because every view runs under root. The
-    /// deferred R680 atomic changes exactly that (`window_owner(id).run(..)`),
-    /// and on the day it lands a secondary window's control sink would silently
-    /// do nothing — precisely the class of bug R1362 existed to fix (there it
-    /// was a secondary window's Quit button; [`QuitSink`](super::quit::QuitSink),
+    /// `local_task_pump` and `pane_viewport_registry` among them — are seeded
+    /// ONCE, on the root owner, at boot. `cache` looks only at the scope it is
+    /// called on, so every one of those resolves its lazy **Null default** from a
+    /// child scope. Today nothing notices, because every view runs under root. The
+    /// deferred R680 atomic changes exactly that (`window_owner(id).run(..)`), and
+    /// on the day it lands a secondary window's slot would silently do nothing —
+    /// precisely the class of bug R1362 existed to fix (there it was a secondary
+    /// window's Quit button; [`QuitSink`](super::quit::QuitSink),
     /// [`RepaintSink`](super::repaint::RepaintSink) and
-    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) have since
-    /// moved to [`ProviderSlot`](super::provider_slot::ProviderSlot), which
-    /// resolves through `cache_inherited` and is immune), resurrected by a
-    /// change that never mentions windowing.
+    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) — and
+    /// `pinion-shell`'s own window-control sink (R1366.4) — have since moved to
+    /// [`ProviderSlot`](super::provider_slot::ProviderSlot), which resolves
+    /// through `cache_inherited` and is immune), resurrected by a change that
+    /// never mentions windowing.
     ///
     /// # Which slots inherit
     ///
@@ -1227,7 +1228,6 @@ impl Owner {
     ///
     /// | slot | how the shell drives root | inherits |
     /// |---|---|---|
-    /// | `window_control_sink` | seeds at boot (in `pinion-shell`) | yes |
     /// | `local_task_pump` | POLLS it every frame | yes |
     /// | `pane_viewport_registry` | PUBLISHES pane rects into it | yes |
     /// | `scene_revision` | seeds at boot, then OBSERVES it to wake `scene/waitFor` | yes |

@@ -96,7 +96,7 @@ pub use waiter::use_scene_revision;
 // from my own code" seam: a binding names the sink + the Null default without a
 // direct `window_control` module path, the `use_scene_revision` convention.
 pub use window_control::{
-    NullWindowControlSink, WindowControlSink, provide_window_control_sink, use_window_control_sink,
+    NullWindowControlSink, WINDOW_CONTROL_SINK, WindowControlSink, use_window_control_sink,
 };
 
 /// Winit user-event variants that reach the UI thread out-of-band.

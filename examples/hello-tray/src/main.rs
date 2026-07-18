@@ -87,7 +87,7 @@ use pinion_core::tray::{
 use pinion_core::{Frame, Owner, QuitSink, Scene, Signal, use_quit_sink};
 use pinion_derive::widget;
 #[cfg(test)]
-use pinion_shell::provide_window_control_sink;
+use pinion_shell::WINDOW_CONTROL_SINK;
 use pinion_shell::{
     DEFAULT_WINDOW, WindowControl, WindowControlSink, use_window_control_sink, vello_renderer_impl,
 };
@@ -513,7 +513,7 @@ fn make_tray_external() -> TrayExternal {
         // unit test — this resolves the `NullWindowControlSink`, so a reducer
         // test can activate `quit` without exiting the test process; a test that
         // wants to OBSERVE the request seeds the owner first
-        // (`provide_window_control_sink`) and reaches this same line.
+        // (`WINDOW_CONTROL_SINK.provide`) and reaches this same line.
         window_control: use_window_control_sink(),
     }
 }
@@ -879,7 +879,7 @@ mod tests {
         let wc = Arc::new(RecordingSink::default());
         let owner = Owner::new();
         QUIT_SINK.provide(&owner, quit.clone());
-        provide_window_control_sink(&owner, wc.clone());
+        WINDOW_CONTROL_SINK.provide(&owner, wc.clone());
         let mut e = owner.run(make_tray_external);
 
         e.invoke("menu_item", IntrospectValue::Text("quit".to_owned()))
@@ -900,7 +900,7 @@ mod tests {
         let wc = Arc::new(RecordingSink::default());
         let owner = Owner::new();
         QUIT_SINK.provide(&owner, quit.clone());
-        provide_window_control_sink(&owner, wc.clone());
+        WINDOW_CONTROL_SINK.provide(&owner, wc.clone());
         let mut e = owner.run(make_tray_external);
 
         // Boot state is visible → the item reads "Hide window" → Hide.
@@ -935,7 +935,7 @@ mod tests {
         let wc = Arc::new(RecordingSink::default());
         let owner = Owner::new();
         QUIT_SINK.provide(&owner, quit.clone());
-        provide_window_control_sink(&owner, wc.clone());
+        WINDOW_CONTROL_SINK.provide(&owner, wc.clone());
         let mut e = owner.run(make_tray_external);
         e.invoke("menu_item", IntrospectValue::Text("dark".to_owned()))
             .unwrap();

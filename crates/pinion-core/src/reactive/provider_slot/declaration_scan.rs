@@ -56,7 +56,6 @@ const LEGACY_SLOT_KEYS: &[&str] = &[
     "__pinion.reactive.frame_timings",
     "__pinion.core.scene_revision",
     "__pinion.rpc.waiter_registry",
-    "__pinion.shell.window_control_sink",
 ];
 
 /// This file, workspace-relative — the one file the walk must NOT read.
@@ -294,7 +293,7 @@ fn r1366_the_legacy_list_may_only_shrink() {
     // compiler-checked verdict.
     assert_eq!(
         LEGACY_SLOT_KEYS.len(),
-        7,
+        6,
         "the legacy list changed. It may only SHRINK — if you migrated a slot, \
          lower this number; if you are adding a key here, do not: declare it as \
          a `ProviderSlot` instead. Remaining: {LEGACY_SLOT_KEYS:?}",

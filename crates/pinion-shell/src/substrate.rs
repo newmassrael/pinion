@@ -8924,30 +8924,28 @@ mod r1362_window_control_sink_seeding_tests {
     //!
     //! `ShellCore::new_with_seed` promises the backend's boundary handles reach
     //! the root `Owner` BEFORE the binding factories resolve any `use_*` hook.
-    //! That promise is load-bearing, and for a slot still on a hand-rolled
-    //! `provide_*` its failure is SILENT: `Owner::cache` is first-write-wins with
-    //! a lazy Null default and no failure path, so a seed that lands one line too
-    //! late is dropped without a panic or a log, and the binding holds a handle
-    //! whose every call is a no-op. Nothing observable distinguishes that from a
-    //! working app until the tray Quit does nothing. That is `window_control_sink`
-    //! here; R1366.1 (repaint) and R1366.2 (quit) made those slots' late seed a
-    //! PANIC by moving them to a `ProviderSlot`, so this module pins BOTH failure
-    //! shapes at once.
+    //! That promise is load-bearing: a seed that lands one line too late used to
+    //! be dropped without a panic or a log — `Owner::cache` is first-write-wins
+    //! with a lazy Null default — leaving the binding a handle whose every call
+    //! is a no-op, indistinguishable from a working app until the tray Quit does
+    //! nothing. The R1366.x migrations closed that door: `REPAINT_SINK` (R1366.1),
+    //! `QUIT_SINK` (R1366.2) and `WINDOW_CONTROL_SINK` (R1366.4) are all
+    //! `ProviderSlot`s now, so a late seed PANICS instead of being dropped. What
+    //! can still regress is the ORDER — a seed that runs after a read — which is
+    //! exactly what this module pins, for all three sinks at once.
     //!
     //! The `window_control` unit tests cover the slot mechanics on a bare
-    //! `Owner`; these cover the ORDER inside `ShellCore::new_with_seed`, which is
-    //! the half that can actually regress — and which R999 left untested for the
-    //! repaint sink.
+    //! `Owner`; these cover the ORDER inside `ShellCore::new_with_seed`, the half
+    //! that can actually regress — and which R999 left untested for the repaint
+    //! sink.
     //!
-    //! All THREE sinks `AppShell::new` seeds are resolved here, which R1366.2
-    //! finished. Until then this module covered two of them while its own prose
-    //! reached for *the tray Quit does nothing* to illustrate the failure — the
-    //! seam it named was the one it did not drive. `QuitSink` is also the sink
-    //! where the silent failure is worst: a dead repaint handle stutters, a dead
-    //! quit handle means the app cannot be closed.
+    //! All THREE sinks `AppShell::new` seeds are resolved here (R1366.2 wired the
+    //! quit sink into this fixture). `QuitSink` is the sink where the silent
+    //! failure was worst: a dead repaint handle stutters, a dead quit handle
+    //! means the app cannot be closed — the reason each drop became a panic.
     use super::ShellCore;
     use crate::test_fixtures::TestRenderer;
-    use crate::window_control::provide_window_control_sink;
+    use crate::window_control::WINDOW_CONTROL_SINK;
     use crate::{SizeStrategy, WidgetView, WindowControlSink};
     use pinion_a11y::WidgetA11y;
     use pinion_core::external::External;
@@ -9081,7 +9079,7 @@ mod r1362_window_control_sink_seeding_tests {
         let (seed_sink, seed_repaint, seed_quit) = (sink.clone(), repaint.clone(), quit.clone());
         let _sc = ShellCore::<SinkCapturingFixture>::new_with_seed(move |owner| {
             pinion_core::REPAINT_SINK.provide(owner, seed_repaint);
-            provide_window_control_sink(owner, seed_sink);
+            WINDOW_CONTROL_SINK.provide(owner, seed_sink);
             pinion_core::QUIT_SINK.provide(owner, seed_quit);
         });
 

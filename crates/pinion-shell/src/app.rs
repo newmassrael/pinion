@@ -595,13 +595,11 @@ impl<V: WidgetView> AppShell<V> {
         // runs the binding factories, so a binding's `create_extra_externals` can
         // capture them (`use_repaint_sink()` / `use_window_control_sink()`) for an
         // off-thread producer. All three ride the ONE seeding window, and the
-        // R1366.x migrations are changing what a miss costs, a slot at a time:
-        // `REPAINT_SINK` (R1366.1) and `QUIT_SINK` (R1366.2) are `ProviderSlot`s,
-        // so a seed after this point PANICS. `window_control_sink`, the one still
-        // on `provide_*`, keeps the old failure — `Owner::cache` is
-        // first-write-wins with a silent Null default, so its late seed is
-        // dropped without a panic and hands the binding a dead handle — until its
-        // own migration.
+        // R1366.x migrations have now moved every one of them to a `ProviderSlot`:
+        // `REPAINT_SINK` (R1366.1), `QUIT_SINK` (R1366.2) and `WINDOW_CONTROL_SINK`
+        // (R1366.4), so a seed after this point PANICS rather than being silently
+        // dropped to hand the binding a dead handle. `new_with_seed` is what makes
+        // "before any read" structural, so that panic is never reached here.
         let seed_proxy = proxy.clone();
         Self {
             core: ShellCore::new_with_seed(move |root_owner| {
@@ -609,7 +607,7 @@ impl<V: WidgetView> AppShell<V> {
                     root_owner,
                     std::sync::Arc::new(crate::ProxyRepaintSink::new(seed_proxy.clone())),
                 );
-                crate::window_control::provide_window_control_sink(
+                crate::window_control::WINDOW_CONTROL_SINK.provide(
                     root_owner,
                     std::sync::Arc::new(crate::ProxyWindowControlSink::new(seed_proxy.clone())),
                 );
