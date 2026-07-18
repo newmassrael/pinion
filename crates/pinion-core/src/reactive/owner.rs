@@ -519,7 +519,7 @@ impl Owner {
     /// handle.
     ///
     /// R1364 §5.22 — the child also records `parent`, which is what lets
-    /// [`Self::cache_inherited`] resolve a binding-wide CAPABILITY (the shell's
+    /// `Self::cache_inherited` resolve a binding-wide CAPABILITY (the shell's
     /// [`RepaintSink`](super::repaint::RepaintSink) /
     /// [`QuitSink`](super::quit::QuitSink) / monospace metrics, and the shell's
     /// own window-control sink) from a child scope. Focus got the mirror
@@ -1170,6 +1170,12 @@ impl Owner {
     /// one, creating it HERE only if no ancestor does. The provider-slot
     /// sibling of [`Self::cache`], which is per-scope and stays that way.
     ///
+    /// R1366.10 — `pub(crate)`: the campaign that ended R1366.9 made
+    /// [`ProviderSlot`](super::provider_slot::ProviderSlot) the only door to an
+    /// inheriting slot, and `ProviderSlot::resolve` is now the sole caller. A
+    /// binding cannot reach around the declaration type to inherit-resolve a slot
+    /// key by hand — that is the footgun the type exists to close.
+    ///
     /// # Why inheriting matters
     ///
     /// A slot the shell drives at the root owner is seeded ONCE, there, at boot.
@@ -1234,7 +1240,11 @@ impl Owner {
     /// ever takes a SHARED borrow, so either `self` or any ancestor being
     /// mid-factory trips it. (R1364.2 wrote "an ancestor is the only way",
     /// having read its own loop as starting one scope up.)
-    pub fn cache_inherited<V, F>(&self, key: impl Into<Cow<'static, str>>, factory: F) -> Rc<V>
+    pub(crate) fn cache_inherited<V, F>(
+        &self,
+        key: impl Into<Cow<'static, str>>,
+        factory: F,
+    ) -> Rc<V>
     where
         V: 'static,
         F: FnOnce() -> V,

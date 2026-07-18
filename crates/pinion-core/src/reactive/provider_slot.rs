@@ -8,7 +8,7 @@
 //! agree for one to work: its key, its default, whether it inherits, and that the
 //! shell seeded it at root before anyone read it. Until R1366 those lived in four
 //! places — a `const`, a `resolve_*` fn, a `provide_*` fn, and a markdown row in
-//! [`Owner::cache_inherited`]'s rustdoc, in a different crate from most of them.
+//! `Owner::cache_inherited`'s rustdoc, in a different crate from most of them.
 //!
 //! They drifted, exactly as far as you would predict:
 //!
@@ -260,7 +260,7 @@ impl<V: 'static> ProviderSlot<V> {
     /// minting their own.
     ///
     /// The walk cannot help a slot that does not exist yet: on a total miss
-    /// [`Owner::cache_inherited`] creates at the CALLING scope, so a child that
+    /// `Owner::cache_inherited` creates at the CALLING scope, so a child that
     /// resolves before the shell first touches root would keep its own copy
     /// forever. Slots with a `provide` get seeded by that; the ones without —
     /// `local_task_pump`, `pane_viewport_registry` — need this at boot.

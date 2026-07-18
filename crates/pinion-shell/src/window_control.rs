@@ -151,7 +151,7 @@ impl WindowControlSink for NullWindowControlSink {
 /// factory (`create_external` / `create_extra_externals`) resolves a hook, so the
 /// first [`use_window_control_sink`] read gets the live sink. A child scope
 /// resolves that root value through
-/// [`Owner::cache_inherited`](pinion_core::Owner::cache_inherited).
+/// `Owner::cache_inherited` (crate-private to pinion-core since R1366.10).
 ///
 /// This is the slot R1362 and R1364 existed to fix, and the one where the
 /// per-scope failure is loudest: under the deferred R680 atomic
@@ -193,7 +193,7 @@ pub static WINDOW_CONTROL_SINK: ProviderSlot<Arc<dyn WindowControlSink>> =
 /// # Any scope in the binding's tree (R1364)
 ///
 /// The shell seeds this slot on `root_owner`, and resolution walks up to find it
-/// ([`Owner::cache_inherited`](pinion_core::Owner::cache_inherited)), so a child
+/// (`Owner::cache_inherited`), so a child
 /// scope gets the REAL sink.
 ///
 /// Until R1364 it was root-only, and R1362 documented that as "not a live hazard

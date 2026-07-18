@@ -319,7 +319,7 @@ impl LocalSpawner for LocalTaskPump {
 /// so the shell seeds it with [`seed_root`](ProviderSlot::seed_root) in
 /// `CoreShell::new_with_seed` rather than a value hand-in. A child scope resolves
 /// that one instance through
-/// [`Owner::cache_inherited`](super::owner::Owner::cache_inherited); a per-scope
+/// `Owner::cache_inherited` (crate-private since R1366.10); a per-scope
 /// pump would look live and never run — a [`Resource`] stuck on `Loading` forever,
 /// with no panic and no log. [`provider_slot_tests!`](crate::provider_slot_tests)
 /// EMITS the verdict from this declaration.

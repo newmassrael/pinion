@@ -173,7 +173,7 @@ impl PaneViewportRegistry {
 /// root owner: `CoreShell::publish_pane_viewports` PUBLISHES every painted
 /// window's pane rects into the ROOT's registry after layout. A child scope
 /// resolves that one registry through
-/// [`Owner::cache_inherited`](super::owner::Owner::cache_inherited); a per-scope
+/// `Owner::cache_inherited` (crate-private since R1366.10); a per-scope
 /// registry would take a torn-off (undock) pane's tags off into a secondary
 /// window's own map that `publish_pane_viewports` never reads, so its PTY would
 /// silently keep the wrong size — the R1021 / sprag-R37 forcing consumer. Like

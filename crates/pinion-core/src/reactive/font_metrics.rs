@@ -68,7 +68,7 @@ impl MonospaceMetrics for NullMonospaceMetrics {
 /// **`Inherited`** by the mechanical predicate — the shell DRIVES this at the
 /// root owner: `ShellCore::new_with_seed` seeds the `pinion-text`-backed provider
 /// before any binding factory or first `view` reads it, so a child scope resolves
-/// that root value through [`Owner::cache_inherited`](super::owner::Owner::cache_inherited).
+/// that root value through `Owner::cache_inherited` (crate-private since R1366.10).
 ///
 /// Under the deferred R680 atomic — each window's `view` running in
 /// `window_owner(id).run(..)` — a per-scope verdict would hand a secondary window
