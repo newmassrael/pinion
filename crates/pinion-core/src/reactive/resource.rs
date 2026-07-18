@@ -25,6 +25,7 @@ use std::task::{Context, Poll, Waker};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use super::provider_slot::ProviderSlot;
 use super::signal::Signal;
 
 /// Task-spawning hook for [`Resource::fetch_with`]. Implementors plug in
@@ -308,24 +309,38 @@ impl LocalSpawner for LocalTaskPump {
     }
 }
 
+/// R1366.5 §5.22 — the local-task-pump slot: its key, its default and its
+/// inherit verdict as one expression.
+///
+/// **`Inherited`** by the mechanical predicate — the shell DRIVES this at the
+/// root owner: it POLLS `root`'s pump every frame ([`LocalTaskPump::poll`]) and
+/// gates staying awake on [`has_pending`](LocalTaskPump::has_pending). Unlike the
+/// sinks it has no `provide` (the pump is built from nothing, [`LocalTaskPump::new`]),
+/// so the shell seeds it with [`seed_root`](ProviderSlot::seed_root) in
+/// `CoreShell::new_with_seed` rather than a value hand-in. A child scope resolves
+/// that one instance through
+/// [`Owner::cache_inherited`](super::owner::Owner::cache_inherited); a per-scope
+/// pump would look live and never run — a [`Resource`] stuck on `Loading` forever,
+/// with no panic and no log. [`provider_slot_tests!`](crate::provider_slot_tests)
+/// EMITS the verdict from this declaration.
+pub static LOCAL_TASK_PUMP: ProviderSlot<LocalTaskPump> =
+    ProviderSlot::inherited("__pinion.reactive.local_task_pump", LocalTaskPump::new);
+
 /// R761.1 §5.22 — hook returning the active owner scope's shared
-/// [`LocalTaskPump`]. Bindings drive a [`Resource`] with a deferred
-/// future via `resource.fetch_with(&*use_local_task_pump(), fut)`; the
-/// shell polls the *same* pump each frame (through
-/// [`Owner::local_task_pump`](super::owner::Owner::local_task_pump)), so
-/// the future actually advances. Both the immediately-ready scripted
-/// path and a deferred native (`rfd`) future resolve through this one
-/// spawner — no per-binding `block_on` helper.
+/// [`LocalTaskPump`], resolved from [`LOCAL_TASK_PUMP`]. Bindings drive a
+/// [`Resource`] with a deferred future via
+/// `resource.fetch_with(&*use_local_task_pump(), fut)`; the shell polls the
+/// *same* pump each frame, so the future actually advances. Both the
+/// immediately-ready scripted path and a deferred native (`rfd`) future resolve
+/// through this one spawner — no per-binding `block_on` helper.
 ///
 /// # Panics
 ///
-/// Panics when called outside an `Owner::run(...)` scope (same shape as
-/// the other `use_*` hooks).
+/// Panics when called outside an `Owner::run(...)` scope (same shape as the
+/// other `use_*` hooks).
 #[must_use]
 pub fn use_local_task_pump() -> Rc<LocalTaskPump> {
-    super::owner::Owner::current()
-        .expect("use_local_task_pump requires an active Owner scope")
-        .local_task_pump()
+    LOCAL_TASK_PUMP.resolve_current()
 }
 
 /// A deterministic deferred future: yields [`Poll::Pending`] exactly
@@ -386,6 +401,34 @@ mod tests {
     use super::super::owner::Owner;
     use super::*;
     use std::task::{Context, Poll, Waker};
+
+    // The verdict, EMITTED from the declaration — the Inherited check that was a
+    // by-hand test in owner.rs's mod until this slot migrated (R1366.5).
+    crate::provider_slot_tests!(
+        r1366_5_local_task_pump_inherits,
+        super::LOCAL_TASK_PUMP,
+        LocalTaskPump::new
+    );
+
+    #[test]
+    fn r1366_5_a_child_scope_polls_the_roots_pump_through_the_hook() {
+        // R1365.1 §5.22 — the verdict through the BINDING's path. The generated
+        // test above asserts inheritance through `resolve`; this asserts it
+        // through `use_local_task_pump`, which is what a binding actually calls,
+        // so a hook that stopped delegating to the slot could not pass both.
+        // `Owner::new_child` is what R680 runs a secondary window's view in, and
+        // the shell polls only the root's pump — a child's own would look live
+        // and never drain.
+        let root = Owner::new();
+        let seeded = LOCAL_TASK_PUMP.resolve(&root);
+        let window_scope = Owner::new_child(&root);
+        let from_child = window_scope.run(use_local_task_pump);
+        assert!(
+            Rc::ptr_eq(&seeded, &from_child),
+            "a child scope's use_local_task_pump() minted its own pump; the shell \
+             polls only the root's, so its async work would never run",
+        );
+    }
 
     /// Minimal `LocalSpawner` for tests: polls the future to completion on
     /// the current thread using `Waker::noop` (stabilized in Rust 1.85).

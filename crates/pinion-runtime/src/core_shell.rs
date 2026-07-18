@@ -592,18 +592,20 @@ impl<V: WidgetCore> CoreShell<V> {
         // window's view mint its own before the shell first touched root, and
         // the two would desync in exactly the way the walk exists to prevent.
         //
-        // Touching the resolver IS the seed — unlike the sinks, both are built
-        // from nothing, so there is no value to hand in.
+        // Both are built from nothing (no value to hand in), so seeding is
+        // creating the instance at root — `ProviderSlot::seed_root` for the
+        // migrated pump, touching the resolver for the pane registry not yet on
+        // the type.
         //
-        // The pump: the shell POLLS `root_owner().local_task_pump()` every
-        // frame and gates staying awake on its `has_pending()`. A child's own
-        // pump would look live and never run — a `Resource` stuck on `Loading`
+        // The pump: the shell POLLS `LOCAL_TASK_PUMP.resolve(root)` every frame
+        // and gates staying awake on its `has_pending()`. A child's own pump
+        // would look live and never run — a `Resource` stuck on `Loading`
         // forever, with no panic and no log.
         //
         // The pane registry: R1021 requires ONE shared instance that every
         // window publishes its pane rects into (`publish_pane_viewports` reads
         // root's). sprag's R37 undock is the forcing consumer.
-        let _ = root_owner.local_task_pump();
+        pinion_core::LOCAL_TASK_PUMP.seed_root(&root_owner);
         root_owner.seed_pane_viewport_registry();
         // (R55.D.5 §5.45) Compose the state-scene root.
         //

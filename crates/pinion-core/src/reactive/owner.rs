@@ -1166,24 +1166,6 @@ impl Owner {
         })
     }
 
-    /// R761.1 §5.22 — the owner-scoped [`LocalTaskPump`](super::resource::LocalTaskPump),
-    /// lazily created on first access. One shared instance per owner:
-    /// bindings enqueue async work through it (via `use_local_task_pump`
-    /// / [`Resource::fetch_with`](super::resource::Resource::fetch_with)),
-    /// and the shell drains it once per frame by calling
-    /// [`LocalTaskPump::poll`](super::resource::LocalTaskPump::poll) on
-    /// the *same* instance this returns — both go through [`Self::cache`]
-    /// under one private key, so the producer (binding) and the driver
-    /// (shell) never desync. This is the production side of the R26/R37
-    /// "framework integrator provides the spawner" contract.
-    #[must_use]
-    pub fn local_task_pump(&self) -> Rc<super::resource::LocalTaskPump> {
-        self.cache_inherited(
-            "__pinion.reactive.local_task_pump",
-            super::resource::LocalTaskPump::new,
-        )
-    }
-
     /// R1364 §5.22 §5.55 — resolve a slot from the nearest ancestor that has
     /// one, creating it HERE only if no ancestor does. The provider-slot
     /// sibling of [`Self::cache`], which is per-scope and stays that way.
@@ -1191,17 +1173,18 @@ impl Owner {
     /// # Why this exists, and why it is additive
     ///
     /// A binding's provider slots still on plain [`cache`](Self::cache) —
-    /// `local_task_pump` and `pane_viewport_registry` among them — are seeded
-    /// ONCE, on the root owner, at boot. `cache` looks only at the scope it is
-    /// called on, so every one of those resolves its lazy **Null default** from a
-    /// child scope. Today nothing notices, because every view runs under root. The
-    /// deferred R680 atomic changes exactly that (`window_owner(id).run(..)`), and
-    /// on the day it lands a secondary window's slot would silently do nothing —
-    /// precisely the class of bug R1362 existed to fix (there it was a secondary
-    /// window's Quit button; [`QuitSink`](super::quit::QuitSink),
-    /// [`RepaintSink`](super::repaint::RepaintSink) and
-    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) — and
-    /// `pinion-shell`'s own window-control sink (R1366.4) — have since moved to
+    /// `pane_viewport_registry` among them — are seeded ONCE, on the root owner,
+    /// at boot. `cache` looks only at the scope it is called on, so every one of
+    /// those resolves its lazy **Null default** from a child scope. Today nothing
+    /// notices, because every view runs under root. The deferred R680 atomic
+    /// changes exactly that (`window_owner(id).run(..)`), and on the day it lands
+    /// a secondary window's slot would silently do nothing — precisely the class
+    /// of bug R1362 existed to fix (there it was a secondary window's Quit button;
+    /// [`QuitSink`](super::quit::QuitSink),
+    /// [`RepaintSink`](super::repaint::RepaintSink),
+    /// [`MonospaceMetrics`](super::font_metrics::MonospaceMetrics) and
+    /// [`LocalTaskPump`](super::resource::LocalTaskPump) — and `pinion-shell`'s
+    /// own window-control sink — have since moved to
     /// [`ProviderSlot`](super::provider_slot::ProviderSlot), which resolves
     /// through `cache_inherited` and is immune), resurrected by a change that
     /// never mentions windowing.
@@ -1228,7 +1211,6 @@ impl Owner {
     ///
     /// | slot | how the shell drives root | inherits |
     /// |---|---|---|
-    /// | `local_task_pump` | POLLS it every frame | yes |
     /// | `pane_viewport_registry` | PUBLISHES pane rects into it | yes |
     /// | `scene_revision` | seeds at boot, then OBSERVES it to wake `scene/waitFor` | yes |
     /// | `waiter_registry` | parks and wakes `scene/waitFor` through it | yes |
@@ -3181,25 +3163,15 @@ mod r1364_cache_inherited_tests {
         assert_eq!(*child.cache_inherited::<u32, _>("cap", || 99), 99);
     }
 
-    // R1365.1 — the two slots above are the MECHANISM; every test in this mod
-    // uses a synthetic `"cap"` key. R1365's ledger cited this mod as the
-    // behavioural enforcement of the census table's per-slot verdicts, which it
-    // has never been. These two are the real slots owned by this file: neither
-    // has a `provide_*`, so the shell seeds them by touching root
-    // (`CoreShell::new_with_seed`), and the walk cannot save a slot that does
-    // not exist yet — seed-at-root and resolve-inherited are both load-bearing.
-
-    #[test]
-    fn r1365_1_a_child_scope_resolves_the_roots_local_task_pump() {
-        let root = Owner::new();
-        let seeded = root.local_task_pump();
-        let window_scope = Owner::new_child(&root);
-        assert!(
-            std::rc::Rc::ptr_eq(&seeded, &window_scope.local_task_pump()),
-            "a child scope minted its own LocalTaskPump — the shell polls only \
-             the root's, so a secondary window's async work would never run",
-        );
-    }
+    // R1365.1 — the tests above are the MECHANISM; each uses a synthetic `"cap"`
+    // key. R1365's ledger cited this mod as the behavioural enforcement of the
+    // census table's per-slot verdicts, which it has never been. The one real
+    // slot still owned by this file is `pane_viewport_registry`: it has no
+    // `provide_*`, so the shell seeds it by touching root
+    // (`CoreShell::new_with_seed`), and the walk cannot save a slot that does not
+    // exist yet — seed-at-root and resolve-inherited are both load-bearing.
+    // `local_task_pump` migrated to `resource::LOCAL_TASK_PUMP` (R1366.5); its
+    // verdict test is generated there.
 
     #[test]
     fn r1365_1_a_child_scope_reads_the_roots_pane_viewport_registry() {

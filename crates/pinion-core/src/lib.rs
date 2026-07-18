@@ -82,11 +82,11 @@ pub use input::{
 };
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
-    Computed, DeferredReady, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner,
-    LocalTaskPump, MONOSPACE_METRICS, MonospaceMetrics, NullMonospaceMetrics, NullQuitSink,
-    NullRepaintSink, Owner, OwnerSnapshot, ProviderSlot, QUIT_SINK, QuitSink, REPAINT_SINK,
-    RepaintSink, Resource, ResourceCache, ResourceState, Signal, SignalExternal, SimulationGuard,
-    SlotScope, SnapshotRestoreError, SnapshotableSignal, batch, is_simulating,
+    Computed, DeferredReady, Effect, FetchToken, IntoIntrospectValue, JsonValue, LOCAL_TASK_PUMP,
+    LocalSpawner, LocalTaskPump, MONOSPACE_METRICS, MonospaceMetrics, NullMonospaceMetrics,
+    NullQuitSink, NullRepaintSink, Owner, OwnerSnapshot, ProviderSlot, QUIT_SINK, QuitSink,
+    REPAINT_SINK, RepaintSink, Resource, ResourceCache, ResourceState, Signal, SignalExternal,
+    SimulationGuard, SlotScope, SnapshotRestoreError, SnapshotableSignal, batch, is_simulating,
     measured_monospace_cell, use_local_task_pump, use_pane_viewport_size, use_quit_sink,
     use_repaint_sink, use_viewport_size,
 };

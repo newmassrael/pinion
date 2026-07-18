@@ -31,8 +31,8 @@ pub use provider_slot::{ProviderSlot, SLOT_KEY_PREFIX, SlotScope, is_slot_key};
 pub use quit::{NullQuitSink, QUIT_SINK, QuitSink, use_quit_sink};
 pub use repaint::{NullRepaintSink, REPAINT_SINK, RepaintSink, use_repaint_sink};
 pub use resource::{
-    DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource, ResourceState,
-    use_local_task_pump,
+    DeferredReady, FetchToken, LOCAL_TASK_PUMP, LocalSpawner, LocalTaskPump, Resource,
+    ResourceState, use_local_task_pump,
 };
 pub use resource_cache::ResourceCache;
 pub use signal::Signal;

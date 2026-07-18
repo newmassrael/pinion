@@ -3783,7 +3783,7 @@ impl<V: WidgetView> ShellCore<V> {
         // drains (same "stay awake while active" contract as the
         // animation check above). v1 busy-polls with `Waker::noop`; a
         // wake-channel waker is a forward refinement (R761.1 carry).
-        let task_pump = self.core.root_owner().local_task_pump();
+        let task_pump = pinion_core::LOCAL_TASK_PUMP.resolve(self.core.root_owner());
         if task_pump.has_pending() {
             task_pump.poll();
             self.redraw_requested = true;

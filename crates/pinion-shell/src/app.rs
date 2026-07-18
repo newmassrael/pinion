@@ -3564,7 +3564,10 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // poll model — see `LocalTaskPump` docs); a wake-channel waker that
         // re-renders only on task progress is the documented forward
         // refinement (R761.1 carry) for genuinely long-running fetches.
-        if self.core.root_owner().local_task_pump().has_pending() {
+        if pinion_core::LOCAL_TASK_PUMP
+            .resolve(self.core.root_owner())
+            .has_pending()
+        {
             self.core.request_redraw();
             earliest_deadline = Some(earliest_deadline.map_or(now, |d| d.min(now)));
         }
