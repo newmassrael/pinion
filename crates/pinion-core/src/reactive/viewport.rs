@@ -143,6 +143,25 @@ mod tests {
     );
 
     #[test]
+    fn r1366_8_1_a_child_scope_does_not_inherit_the_primary_viewport() {
+        // Value-based discrimination the generated macro above cannot do — its
+        // `ptr_eq` derives from `scope()`, so it passes under either verdict
+        // (R1366.8.1 audit). A secondary window (child scope) must read its OWN
+        // (0, 0) "unknown", NOT the primary's seeded size, because the shell's
+        // viewport write is primary-gated. If `VIEWPORT_SIZE` were wrongly
+        // `inherited`, the child would resolve the root's signal and read
+        // (1920, 1080) — this asserts the semantic, so it FAILS on a wrong verdict.
+        let root = Owner::new();
+        VIEWPORT_SIZE.provide(&root, Signal::new((1920_u32, 1080_u32)));
+        let child = Owner::new_child(&root);
+        assert_eq!(
+            child.run(use_viewport_size),
+            (0, 0),
+            "a child scope inherited the primary's viewport — the verdict must be per_scope",
+        );
+    }
+
+    #[test]
     fn default_is_zero_unknown() {
         // No provider seeded: the lazy default signal reads (0, 0).
         let owner = Owner::new();

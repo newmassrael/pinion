@@ -579,10 +579,10 @@ impl FrameTimingsHolder {
 ///
 /// No `provide`: the shell does not SEED a value, it OVERWRITES the holder via
 /// [`FrameTimingsHolder::publish`] — so there is no late-seed panic. And the
-/// publish is **demand-gated**: it reads the holder get-only (never creating it),
-/// so a window whose binding never called [`use_frame_timings`] pays nothing.
-/// That get-only access uses [`FRAME_TIMINGS.key()`](ProviderSlot::key) directly
-/// (the slot models declare / resolve / seed, not this specialized read).
+/// publish is **demand-gated** through [`ProviderSlot::get`]: it reads the holder
+/// get-only (never creating it), so a window whose binding never called
+/// [`use_frame_timings`] pays nothing. (R1366.8 reached around the type via
+/// `.key()` for this; R1366.8.1's audit added the missing `get` leg.)
 pub static FRAME_TIMINGS: ProviderSlot<FrameTimingsHolder> = ProviderSlot::per_scope(
     "__pinion.reactive.frame_timings",
     FrameTimingsHolder::default,
@@ -643,6 +643,27 @@ mod seam_tests {
         super::FRAME_TIMINGS,
         FrameTimingsHolder::default
     );
+
+    #[test]
+    fn r1366_8_1_a_child_scope_does_not_inherit_the_roots_frame_timings() {
+        // Value-based discrimination the generated macro above cannot do — its
+        // `ptr_eq` derives from `scope()`, so it passes under either verdict
+        // (R1366.8.1 audit). Seed the ROOT's holder with a distinct sample; a
+        // child scope must read an EMPTY view, not the root's — frame_timings is
+        // per_scope (the publish is primary-only). If it were `inherited`, the
+        // child would walk to root and see the sample, so this FAILS on a wrong
+        // verdict.
+        let root = Owner::new();
+        super::FRAME_TIMINGS
+            .resolve(&root)
+            .publish(view_of(&[42_000], Some(16_666)));
+        let child = Owner::new_child(&root);
+        let seen = child.run(use_frame_timings);
+        assert!(
+            seen.samples.is_empty(),
+            "a child scope inherited the root's frame history — the verdict must be per_scope",
+        );
+    }
 
     #[test]
     fn r1361_samples_are_oldest_first_and_survive_the_fold() {

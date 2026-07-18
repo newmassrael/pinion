@@ -221,6 +221,21 @@ impl<V: 'static> ProviderSlot<V> {
         self.resolve(&owner)
     }
 
+    /// Read the slot on `owner` WITHOUT creating it — `None` when nothing has
+    /// resolved or provided it yet. This owner only (no ancestor walk).
+    ///
+    /// The demand-gate read: a writer that must not pay for a slot no reader
+    /// asked for. `frame_timings`' publish uses this — a window whose binding
+    /// never called `use_frame_timings` has no holder, so the publish returns
+    /// early and the O(window) sample copy is never charged to it.
+    /// [`resolve`](Self::resolve) always CREATES on a miss, which is wrong for
+    /// that gate; this is the missing get-only leg, so the demand-gate no longer
+    /// has to reach around the type via [`key`](Self::key) + `Owner::cache_get`.
+    #[must_use]
+    pub fn get(&'static self, owner: &Owner) -> Option<Rc<V>> {
+        owner.cache_get_by_str::<V>(self.key)
+    }
+
     /// Seed the slot on `owner` with the shell's real value.
     ///
     /// # Panics
@@ -264,7 +279,7 @@ impl<V: 'static> core::fmt::Debug for ProviderSlot<V> {
     }
 }
 
-/// Emit the behavioural test for a slot's verdict, so it cannot be forgotten.
+/// Emit the wiring-consistency test for a slot, so it cannot be forgotten.
 ///
 /// R1365 wrote three of these by hand and forgot five, which meant five slots'
 /// verdicts were asserted by nothing but a markdown row — a silent revert to
@@ -274,6 +289,20 @@ impl<V: 'static> core::fmt::Debug for ProviderSlot<V> {
 /// `Inherited` ⇒ a child scope resolves the ROOT's instance. `PerScope` ⇒ it
 /// does not. `Owner::new_child` is exactly what R680 will run a secondary
 /// window's `view` in.
+///
+/// # What this does NOT verify (R1366.8.1 audit — say it plainly)
+///
+/// This is **not** a verdict *discriminator*. Both the outcome (`ptr_eq`) and
+/// the assertion branch derive from the same `self.scope`: `resolve` picks
+/// `cache_inherited` vs `cache` from the scope, and the `match` below picks
+/// `assert!(same)` vs `assert!(!same)` from the scope — so flipping the verdict
+/// flips both together and the test STILL passes. It catches a broken
+/// `cache_inherited`/`cache` (a wiring regression) and a forgotten test, not a
+/// *wrong* verdict. Whether a slot SHOULD inherit is a semantic fact no generic
+/// test can know; the real discriminator is the slot's own value-based
+/// binding-path test (seed root with a distinct value, assert what a child
+/// reads through the `use_*` hook — e.g. `viewport_size`'s
+/// `..does_not_inherit_the_primary_viewport`). Every migrated slot ships one.
 ///
 /// ```ignore
 /// provider_slot_tests!(r1366_repaint_sink, REPAINT_SINK, || Arc::new(CountingSink::default()));

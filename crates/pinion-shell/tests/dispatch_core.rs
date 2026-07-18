@@ -3467,10 +3467,8 @@ mod r907_frame_timing_substrate {
         core.record_frame_timing("main", FrameTiming::new(300, 100, 0, 80, 540));
         core.publish_frame_timings("main");
         assert!(
-            core.root_owner()
-                .cache_get_by_str::<pinion_runtime::FrameTimingsHolder>(
-                    pinion_runtime::FRAME_TIMINGS.key(),
-                )
+            pinion_runtime::FRAME_TIMINGS
+                .get(core.root_owner())
                 .is_none(),
             "a binding whose view never calls use_frame_timings must not \
              even have the holder — the publish has to cost it nothing",

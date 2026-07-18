@@ -1576,12 +1576,7 @@ impl<V: WidgetView> ShellCore<V> {
         if window_id != pinion_runtime::DEFAULT_WINDOW {
             return;
         }
-        let Some(holder) = self
-            .root_owner()
-            .cache_get_by_str::<pinion_runtime::FrameTimingsHolder>(
-                pinion_runtime::FRAME_TIMINGS.key(),
-            )
-        else {
+        let Some(holder) = pinion_runtime::FRAME_TIMINGS.get(self.root_owner()) else {
             return;
         };
         let budget_us = self.jank_budget_us_for_window(window_id);
