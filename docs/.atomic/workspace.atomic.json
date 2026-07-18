@@ -78121,6 +78121,50 @@
         "RFC follow-ups for mnemosyne: set_section_caveats, content-hash clarity for multi-step redact"
       ]
     },
+    "SCE-RFC-002-004": {
+      "decision_summary": "SCE-002/004 RFC handoff: drafted a caller-injectable-derives RFC for the upstream scxml-core-engine Forge codegen, clearing pinion upstream debts SCE-002 (WidgetStateName/Event hook) + SCE-004 (serde on procedure State/Event enums so a widget can use Signal<T>) on one axis. Root cause: sce-build already centralizes generated-type derives in a RustDeriveCategory SSOT (rust_derive_policy.rs) injected as {{ *_derives_attr }}, but procedure.rs.jinja2's State (:36) and Event (:49) enums are the ONLY ones bypassing it with a hardcoded derive. Proposed fix = (A) bring the two enums under the policy SSOT (byte-identical refactor) + (B) opt-in ForgeCompileOptions.procedure_{state,event}_extra_derives so a consumer appends serde:: / pinion_core::WidgetStateName verbatim (zero blast radius; SCE stays serde-free by default). Doc-only handoff (0 LOC pinion change); RFC lives in gitignored claudedocs/, recorded here for durability. The template + sce-build change and its PR are an sce-native session; pinion then dual-pins submodule SHA + Cargo rev and retires the scrollbar u8-wrapper (~100 LOC).",
+      "changes_bullets": [
+        "No pinion source change (0 LOC). Deliverable = the RFC handoff doc at `claudedocs/sce-002-004-caller-injectable-enum-derives-rfc.md` (gitignored, untracked); this changelog entry is the durable/tracked record of the decision, since claudedocs is ephemeral.",
+        "Root cause located, grounded in the checked-out `vendor/sce` (rev `82022849`, HEAD `820228490`): `sce-build` already centralizes generated-type derives in a `RustDeriveCategory` SSOT (`sce-build/src/forge/rust_derive_policy.rs`) injected into templates as `{{ *_derives_attr }}` (`generator.rs:1407/1551/5221`), but `tools/codegen/templates/forge/rust/procedure.rs.jinja2:36,49` — the widget `State` / `Event` enums — are the ONLY generated enums bypassing it with a hardcoded `#[derive(Debug, Clone, Copy, PartialEq, Eq)]`.",
+        "Proposed fix in the RFC: (A) bring the two enums under the policy SSOT (byte-identical refactor) + (B) add opt-in `ForgeCompileOptions.procedure_{state,event}_extra_derives` (`sce-build/src/lib.rs:1516`) so a consumer appends `serde::Serialize`/`Deserialize` (SCE-004) and `pinion_core::WidgetStateName`/`WidgetEventName` (SCE-002) verbatim — zero blast radius, SCE default stays serde-free.",
+        "Confirmed the SCE-004 workaround is still live: `crates/pinion-core/src/widgets/scrollbar.rs` `ScrollBarInteractionSignal` u8-wrapper (~100 LOC)."
+      ],
+      "verification_bullets": [
+        "No code gate applies (0 LOC pinion change). The RFC's `vendor/sce` file:line claims were read from the checked-out submodule at HEAD `820228490` / rev `82022849` — current, not stale memory (the 54-day-old `sce-upstream-debts` memory was re-verified against live source).",
+        "`mnemosyne-cli validate-workspace` clean after this append (T1 orphan total 0, no new orphan).",
+        "Honest scope: this is a HANDOFF record, not an upstream fix. The actual `scxml-core-engine` template + `sce-build` change is out-of-repo — cross-repo discipline forbids editing `vendor/sce` from a pinion session. Per the SCE-001 precedent (an upstream fix once landed independently, discovered by fast-forward), the RFC instructs re-checking SCE HEAD before implementing."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "SCE-002 + SCE-004 remain OPEN as external-dependency carry (the SEED \"우리가 못 푸는 것\" class) until the sce-native fix lands and pinion dual-pins the submodule SHA + Cargo `rev` together ([[sce-git-rev-pin-dual-discipline]]). The RFC is ready to carry to an `scxml-core-engine` session.",
+        "On land: retire `scrollbar.rs`'s `ScrollBarInteractionSignal` u8-wrapper (~100 LOC) -> `pub type ScrollBarInteractionSignal = Signal<ScrollBarState>` + drop `r660_scrollbar_interaction_signal_roundtrip`; shrink the per-widget `widget_state_name!` / `widget_event_name!` variant re-enumeration (SCE-002).",
+        "Tracking SSOT = the pinion memory `sce-upstream-debts` + this entry. The RFC file (`claudedocs/...`) is gitignored/ephemeral, so this changelog entry is the durable pointer to the decision."
+      ],
+      "publishable_decision_summary": "SCE-002/004 RFC handoff: drafted a caller-injectable-derives RFC for the upstream scxml-core-engine Forge codegen, clearing pinion upstream debts SCE-002 (WidgetStateName/Event hook) + SCE-004 (serde on procedure State/Event enums so a widget can use Signal<T>) on one axis. Root cause: sce-build already centralizes generated-type derives in a RustDeriveCategory SSOT (rust_derive_policy.rs) injected as {{ *_derives_attr }}, but procedure.rs.jinja2's State (:36) and Event (:49) enums are the ONLY ones bypassing it with a hardcoded derive. Proposed fix = (A) bring the two enums under the policy SSOT (byte-identical refactor) + (B) opt-in ForgeCompileOptions.procedure_{state,event}_extra_derives so a consumer appends serde:: / pinion_core::WidgetStateName verbatim (zero blast radius; SCE stays serde-free by default). Doc-only handoff (0 LOC pinion change); RFC lives in gitignored claudedocs/, recorded here for durability. The template + sce-build change and its PR are an sce-native session; pinion then dual-pins submodule SHA + Cargo rev and retires the scrollbar u8-wrapper (~100 LOC).",
+      "publishable_changes_bullets": [
+        "No pinion source change (0 LOC). Deliverable = the RFC handoff doc at `claudedocs/sce-002-004-caller-injectable-enum-derives-rfc.md` (gitignored, untracked); this changelog entry is the durable/tracked record of the decision, since claudedocs is ephemeral.",
+        "Root cause located, grounded in the checked-out `vendor/sce` (rev `82022849`, HEAD `820228490`): `sce-build` already centralizes generated-type derives in a `RustDeriveCategory` SSOT (`sce-build/src/forge/rust_derive_policy.rs`) injected into templates as `{{ *_derives_attr }}` (`generator.rs:1407/1551/5221`), but `tools/codegen/templates/forge/rust/procedure.rs.jinja2:36,49` — the widget `State` / `Event` enums — are the ONLY generated enums bypassing it with a hardcoded `#[derive(Debug, Clone, Copy, PartialEq, Eq)]`.",
+        "Proposed fix in the RFC: (A) bring the two enums under the policy SSOT (byte-identical refactor) + (B) add opt-in `ForgeCompileOptions.procedure_{state,event}_extra_derives` (`sce-build/src/lib.rs:1516`) so a consumer appends `serde::Serialize`/`Deserialize` (SCE-004) and `pinion_core::WidgetStateName`/`WidgetEventName` (SCE-002) verbatim — zero blast radius, SCE default stays serde-free.",
+        "Confirmed the SCE-004 workaround is still live: `crates/pinion-core/src/widgets/scrollbar.rs` `ScrollBarInteractionSignal` u8-wrapper (~100 LOC)."
+      ],
+      "publishable_verification_bullets": [
+        "No code gate applies (0 LOC pinion change). The RFC's `vendor/sce` file:line claims were read from the checked-out submodule at HEAD `820228490` / rev `82022849` — current, not stale memory (the 54-day-old `sce-upstream-debts` memory was re-verified against live source).",
+        "`mnemosyne-cli validate-workspace` clean after this append (T1 orphan total 0, no new orphan).",
+        "Honest scope: this is a HANDOFF record, not an upstream fix. The actual `scxml-core-engine` template + `sce-build` change is out-of-repo — cross-repo discipline forbids editing `vendor/sce` from a pinion session. Per the SCE-001 precedent (an upstream fix once landed independently, discovered by fast-forward), the RFC instructs re-checking SCE HEAD before implementing."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCE-002 + SCE-004 remain OPEN as external-dependency carry (the SEED \"우리가 못 푸는 것\" class) until the sce-native fix lands and pinion dual-pins the submodule SHA + Cargo `rev` together ([[sce-git-rev-pin-dual-discipline]]). The RFC is ready to carry to an `scxml-core-engine` session.",
+        "On land: retire `scrollbar.rs`'s `ScrollBarInteractionSignal` u8-wrapper (~100 LOC) -> `pub type ScrollBarInteractionSignal = Signal<ScrollBarState>` + drop `r660_scrollbar_interaction_signal_roundtrip`; shrink the per-widget `widget_state_name!` / `widget_event_name!` variant re-enumeration (SCE-002).",
+        "Tracking SSOT = the pinion memory `sce-upstream-debts` + this entry. The RFC file (`claudedocs/...`) is gitignored/ephemeral, so this changelog entry is the durable pointer to the decision."
+      ]
+    },
     "round-14": {
       "decision_summary": "Round 14: forward-compatibility hedges for future game-engine evolution path (§5.2 §5.13 §6.3 §5.8)",
       "changes_bullets": [
