@@ -6177,7 +6177,7 @@ mod r1006_viewport_seam_tests {
         let mut sc = ShellCore::<EchoButtonFixture>::new();
         // The shell field and the owner-cache slot are one Rc cell, so reading
         // the owner's handle observes the shell's `set_viewport_size` writes.
-        let sig = sc.core.root_owner().viewport_size_signal();
+        let sig = pinion_core::VIEWPORT_SIZE.resolve(sc.core.root_owner());
         assert_eq!(sig.get(), (0, 0), "boot: viewport unknown");
 
         // Primary path (`window_id == None` -> window_key == DEFAULT_WINDOW).

@@ -63,21 +63,32 @@
 //! [`Signal`]: super::signal::Signal
 //! [`Signal::set`]: super::signal::Signal::set
 
+use super::provider_slot::ProviderSlot;
 use super::signal::Signal;
 
-/// Owner-cache newtype: [`Owner::cache`](super::owner::Owner::cache) stores
-/// `Rc<dyn Any>`, so the [`Signal`] handle rides inside this holder.
+/// R1366.7 §5.23 §5.22 — the viewport-size slot: its key, its default and its
+/// **`per_scope`** verdict as one expression — the FIRST slot whose verdict is
+/// not `Inherited`.
 ///
-/// The wrapper is not actually needed — the cache keys on
-/// `(TypeId::of::<V>(), key)`, so `Signal<(u32, u32)>` is already its own type.
-/// It dies with this slot's R1366.x migration to
-/// [`ProviderSlot`](super::provider_slot::ProviderSlot), as `RepaintSinkHolder`
-/// did in R1366.1.
-pub(crate) struct ViewportSizeHolder(pub(crate) Signal<(u32, u32)>);
-
-/// Private owner-cache key for the single per-owner viewport-size slot — one of
-/// the hand-rolled slots still awaiting its R1366.x migration.
-pub(crate) const VIEWPORT_SIZE_KEY: &str = "__pinion.reactive.viewport_size";
+/// `per_scope`, NOT `inherited`, and this is the verdict a reader doubts: the
+/// shell DRIVES this at root, but its WRITE (`set_viewport_size`) is
+/// primary-gated (`if window_key == DEFAULT_WINDOW`), so the root's value is *the
+/// primary window's* size. Inheriting it would hand a secondary window the
+/// primary's size — confidently wrong — where a per-scope `(0, 0)` is R1006's
+/// honest "viewport unknown" (its contract already requires consumers to skip on
+/// it). [`provider_slot_tests!`](crate::provider_slot_tests) EMITS the verdict,
+/// and for `per_scope` it asserts a child scope does NOT resolve the root's.
+///
+/// The payload is the `Signal<(u32, u32)>` itself, no newtype wrapper:
+/// [`Owner::cache`](super::owner::Owner::cache) keys on `(TypeId, key)`, so the
+/// signal is already its own type — R1006's `ViewportSizeHolder` was the
+/// `Rc<dyn Any>` storage showing through. A late seed now PANICS
+/// ([`ProviderSlot::provide`](super::provider_slot::ProviderSlot::provide)); the
+/// shell seeds once at boot before the first read.
+pub static VIEWPORT_SIZE: ProviderSlot<Signal<(u32, u32)>> =
+    ProviderSlot::per_scope("__pinion.reactive.viewport_size", || {
+        Signal::new((0_u32, 0_u32))
+    });
 
 /// R1006 §5.23 §5.22 — read the current layout viewport `(width, height)` via
 /// the active owner scope's seeded [`Signal`], subscribing the caller.
@@ -106,10 +117,9 @@ pub(crate) const VIEWPORT_SIZE_KEY: &str = "__pinion.reactive.viewport_size";
 /// but a standalone view-fn unit test must wrap in `Owner::run`.)
 #[must_use]
 pub fn use_viewport_size() -> (u32, u32) {
-    super::owner::Owner::current()
-        .expect("use_viewport_size requires an active Owner scope")
-        .viewport_size_signal()
-        .get()
+    let owner =
+        super::owner::Owner::current().expect("use_viewport_size requires an active Owner scope");
+    VIEWPORT_SIZE.resolve(&owner).get()
 }
 
 #[cfg(test)]
@@ -122,40 +132,51 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
+    // The verdict, EMITTED from the declaration. For `per_scope` this asserts a
+    // child scope does NOT resolve the root's — the shell's viewport write is
+    // primary-gated, so inheriting would hand a secondary window the primary's
+    // size instead of an honest (0, 0) "unknown".
+    crate::provider_slot_tests!(
+        r1366_7_viewport_size_is_per_scope,
+        super::VIEWPORT_SIZE,
+        || Signal::new((0_u32, 0_u32))
+    );
+
     #[test]
     fn default_is_zero_unknown() {
         // No provider seeded: the lazy default signal reads (0, 0).
         let owner = Owner::new();
-        assert_eq!(owner.viewport_size_signal().get(), (0, 0));
+        assert_eq!(VIEWPORT_SIZE.resolve(&owner).get(), (0, 0));
     }
 
     #[test]
     fn provided_signal_is_the_shared_handle() {
         let owner = Owner::new();
         let sig = Signal::new((640_u32, 480_u32));
-        owner.provide_viewport_size_signal(sig.clone());
-        assert_eq!(owner.viewport_size_signal().get(), (640, 480));
+        VIEWPORT_SIZE.provide(&owner, sig.clone());
+        assert_eq!(VIEWPORT_SIZE.resolve(&owner).get(), (640, 480));
         // Same underlying cell: a later shell write is observed through the seam.
         sig.set((800, 600));
-        assert_eq!(owner.viewport_size_signal().get(), (800, 600));
+        assert_eq!(VIEWPORT_SIZE.resolve(&owner).get(), (800, 600));
     }
 
     #[test]
-    fn provide_is_first_write_wins() {
+    #[should_panic(expected = "already seeded")]
+    fn r1366_7_a_late_seed_panics_where_it_used_to_be_dropped() {
+        // The counterfactual of R1006's `provide_is_first_write_wins`, which
+        // asserted a second seed was a silent no-op leaving readers on the first
+        // signal. A dropped viewport seed is a window whose reflow reads a signal
+        // the shell never writes — stuck at (0, 0); the shell seeds once, at boot.
         let owner = Owner::new();
-        let first = Signal::new((1_u32, 1_u32));
-        let second = Signal::new((2_u32, 2_u32));
-        owner.provide_viewport_size_signal(first.clone());
-        owner.provide_viewport_size_signal(second.clone());
-        // The first stays installed; the second is dropped (cache first-write-wins).
-        assert_eq!(owner.viewport_size_signal().get(), (1, 1));
+        VIEWPORT_SIZE.provide(&owner, Signal::new((1_u32, 1_u32)));
+        VIEWPORT_SIZE.provide(&owner, Signal::new((2_u32, 2_u32)));
     }
 
     #[test]
     fn use_viewport_size_resolves_inside_owner_run() {
         let owner = Owner::new();
         let sig = Signal::new((320_u32, 200_u32));
-        owner.provide_viewport_size_signal(sig);
+        VIEWPORT_SIZE.provide(&owner, sig);
         let got = owner.run(use_viewport_size);
         assert_eq!(got, (320, 200));
     }
@@ -167,7 +188,7 @@ mod tests {
         // observe the new viewport.
         let owner = Owner::new();
         let sig = Signal::new((0_u32, 0_u32));
-        owner.provide_viewport_size_signal(sig.clone());
+        VIEWPORT_SIZE.provide(&owner, sig.clone());
         let seen = Rc::new(RefCell::new(Vec::new()));
         let seen_c = Rc::clone(&seen);
         let _eff = owner.run(|| {
@@ -189,7 +210,7 @@ mod tests {
         // the shell's set_viewport_size wraps the set in root_owner.run.
         let owner = Owner::new();
         let sig = Signal::new((0_u32, 0_u32));
-        owner.provide_viewport_size_signal(sig.clone());
+        VIEWPORT_SIZE.provide(&owner, sig.clone());
         let _eff = owner.run(|| {
             Effect::new(&Owner::current().expect("inside run"), || {
                 let _ = use_viewport_size();
@@ -205,7 +226,7 @@ mod tests {
         // re-fires normally.
         let owner = Owner::new();
         let sig = Signal::new((0_u32, 0_u32));
-        owner.provide_viewport_size_signal(sig.clone());
+        VIEWPORT_SIZE.provide(&owner, sig.clone());
         let count = Rc::new(Cell::new(0_u32));
         let count_c = Rc::clone(&count);
         let _eff = owner.run(|| {
@@ -231,7 +252,7 @@ mod tests {
         // viewport.
         let owner = Owner::new();
         let sig = Signal::new((10_u32, 20_u32));
-        owner.provide_viewport_size_signal(sig.clone());
+        VIEWPORT_SIZE.provide(&owner, sig.clone());
         let count = Rc::new(Cell::new(0_u32));
         let count_c = Rc::clone(&count);
         let _eff = owner.run(|| {

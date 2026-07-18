@@ -302,7 +302,7 @@ pub(crate) struct OwnerInner {
     /// label, an active-tab highlight).
     ///
     /// An **eager direct field**, not an [`Owner::cache`] slot like
-    /// [`viewport_size_signal`](Owner::viewport_size_signal). Focus is a
+    /// [`VIEWPORT_SIZE`](super::viewport::VIEWPORT_SIZE). Focus is a
     /// **binding-wide singular fact** (one focused tag per binding, across every
     /// window). A binding is an owner *tree*, so the whole tree must share ONE
     /// mirror: [`Owner::new`] mints it, and [`Owner::new_child`] threads the same
@@ -315,10 +315,10 @@ pub(crate) struct OwnerInner {
     /// ground that "the viewport size is a per-owner value (a secondary window
     /// genuinely has its own size)". That is the taxonomy
     /// [`Owner::cache_inherited`] records as WRONG, and the parenthetical was
-    /// false as implemented besides: the only production
-    /// [`provide_viewport_size_signal`](Owner::provide_viewport_size_signal)
-    /// call is on `root_owner`, so a secondary window's scope seeds `(0, 0)` and
-    /// keeps it — R1006's documented "viewport unknown", not a size of its own.
+    /// false as implemented besides: the only production seed of
+    /// [`VIEWPORT_SIZE`](super::viewport::VIEWPORT_SIZE) is on `root_owner`, so a
+    /// secondary window's scope seeds `(0, 0)` and keeps it — R1006's documented
+    /// "viewport unknown", not a size of its own.
     /// The real predicate is who DRIVES the slot; see `cache_inherited`. Focus
     /// still belongs in a field, for the reason above — the conclusion was right
     /// and the rationale was hearsay, which is exactly how it survived a round
@@ -1213,7 +1213,6 @@ impl Owner {
     /// |---|---|---|
     /// | `scene_revision` | seeds at boot, then OBSERVES it to wake `scene/waitFor` | yes |
     /// | `waiter_registry` | parks and wakes `scene/waitFor` through it | yes |
-    /// | `viewport_size` | WRITES it, primary window only | **no** — see below |
     /// | `frame_timings` | PUBLISHES into it, primary window only | **no** — see below |
     ///
     /// R1364.2 first published a different rule — "capabilities are binding-wide
@@ -1244,7 +1243,7 @@ impl Owner {
     /// because the verdict is `no`, which makes "the read is gated" a restatement
     /// of the conclusion rather than a reason for it.
     ///
-    /// [`viewport_size_signal`](Self::viewport_size_signal) is the R1006 seam;
+    /// [`VIEWPORT_SIZE`](super::viewport::VIEWPORT_SIZE) is the R1006 seam;
     /// its per-scope `(0, 0)` is R1006's documented "viewport unknown", which its
     /// contract already requires consumers to skip on. `frame_timings` is the
     /// same shape: the holder is a single per-owner slot, so a second window's
@@ -1323,44 +1322,6 @@ impl Owner {
         self.cache(key, factory)
     }
 
-    /// R1006 §5.23 §5.22 — the owner-scoped viewport-size
-    /// [`Signal`](super::signal::Signal): the view/effect-time "current layout
-    /// viewport `(width, height)`" carrier.
-    ///
-    /// Returns whatever the shell seeded via [`Self::provide_viewport_size_signal`]
-    /// at boot, or a lazy default `Signal::new((0, 0))` ("viewport unknown") when
-    /// none was provided (headless / RPC / unit tests). Read in `view` / an
-    /// [`Effect`](super::effect::Effect) via
-    /// [`use_viewport_size`](super::viewport::use_viewport_size); the tracked
-    /// `get` re-fires a reflow Effect on size change. Another hand-rolled pair
-    /// awaiting its R1366.x migration to
-    /// [`ProviderSlot`](super::provider_slot::ProviderSlot) — and one of the two
-    /// whose verdict will be `per_scope`; unlike the repaint / metrics
-    /// capability slots this carries a *changing value*, so it is a
-    /// [`Signal`](super::signal::Signal) rather than a trait object.
-    #[must_use]
-    pub fn viewport_size_signal(&self) -> super::signal::Signal<(u32, u32)> {
-        self.cache::<super::viewport::ViewportSizeHolder, _>(
-            super::viewport::VIEWPORT_SIZE_KEY,
-            || super::viewport::ViewportSizeHolder(super::signal::Signal::new((0_u32, 0_u32))),
-        )
-        .0
-        .clone()
-    }
-
-    /// R1006 §5.23 §5.22 — seed the owner-scoped viewport-size
-    /// [`Signal`](super::signal::Signal). The shell calls this once at boot
-    /// **before** the binding factories / first `view` run, so the first
-    /// [`use_viewport_size`](super::viewport::use_viewport_size) read resolves
-    /// the shell's signal rather than the lazy `(0, 0)` default.
-    /// Idempotent-by-first-write (like every [`Self::cache`] slot).
-    pub fn provide_viewport_size_signal(&self, signal: super::signal::Signal<(u32, u32)>) {
-        self.cache::<super::viewport::ViewportSizeHolder, _>(
-            super::viewport::VIEWPORT_SIZE_KEY,
-            move || super::viewport::ViewportSizeHolder(signal),
-        );
-    }
-
     /// R1335 §5.39 (PR-53) — the owner-scoped focus mirror
     /// [`Signal`](super::signal::Signal): the paint-path "which tag has focus"
     /// carrier read via [`focus_state::focused`](crate::focus_state::focused).
@@ -1372,7 +1333,7 @@ impl Owner {
     /// `pinion_runtime::FocusManager` writes it from its single `commit_focus`
     /// funnel (self-wrapped in [`Self::run`] so a subscriber woken by that write,
     /// should it read an owner-scoped hook, re-resolves [`Owner::current`] — the
-    /// R1006 "blocker B" discipline `provide_viewport_size_signal` documents);
+    /// R1006 "blocker B" discipline the `viewport` module doc records);
     /// consumers read it with a tracked `get`, so a focus change re-runs a
     /// subscribed view fn / `Effect`.
     ///

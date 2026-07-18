@@ -37,4 +37,4 @@ pub use resource::{
 pub use resource_cache::ResourceCache;
 pub use signal::Signal;
 pub use simulation::{SimulationGuard, is_simulating};
-pub use viewport::use_viewport_size;
+pub use viewport::{VIEWPORT_SIZE, use_viewport_size};

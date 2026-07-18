@@ -581,7 +581,7 @@ impl<V: WidgetCore> CoreShell<V> {
         // so its size is unknown; `set_viewport_size` writes the real size on
         // the first paint.
         let viewport_signal = Signal::new((0_u32, 0_u32));
-        root_owner.provide_viewport_size_signal(viewport_signal.clone());
+        pinion_core::VIEWPORT_SIZE.provide(&root_owner, viewport_signal.clone());
         // R1364.5 §5.22 — seed the two root-DRIVEN slots that have no
         // `provide_*` of their own, before the factories / first `view`.
         //
@@ -2829,7 +2829,7 @@ mod tests {
 
         let core: CoreShell<TestButton> = CoreShell::new();
         assert_eq!(
-            core.root_owner().viewport_size_signal().get(),
+            pinion_core::VIEWPORT_SIZE.resolve(core.root_owner()).get(),
             (0, 0),
             "boot seed is viewport-unknown"
         );
@@ -2851,7 +2851,10 @@ mod tests {
         core.set_viewport_size(800, 600); // same size -> equality-skip, no re-fire
         core.set_viewport_size(1024, 768);
 
-        assert_eq!(core.root_owner().viewport_size_signal().get(), (1024, 768));
+        assert_eq!(
+            pinion_core::VIEWPORT_SIZE.resolve(core.root_owner()).get(),
+            (1024, 768)
+        );
         assert_eq!(
             seen.borrow().as_slice(),
             &[(0, 0), (800, 600), (1024, 768)],

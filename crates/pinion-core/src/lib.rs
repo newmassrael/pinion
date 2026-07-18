@@ -86,9 +86,9 @@ pub use reactive::{
     LocalSpawner, LocalTaskPump, MONOSPACE_METRICS, MonospaceMetrics, NullMonospaceMetrics,
     NullQuitSink, NullRepaintSink, Owner, OwnerSnapshot, ProviderSlot, QUIT_SINK, QuitSink,
     REPAINT_SINK, RepaintSink, Resource, ResourceCache, ResourceState, Signal, SignalExternal,
-    SimulationGuard, SlotScope, SnapshotRestoreError, SnapshotableSignal, batch, is_simulating,
-    measured_monospace_cell, use_local_task_pump, use_pane_viewport_size, use_quit_sink,
-    use_repaint_sink, use_viewport_size,
+    SimulationGuard, SlotScope, SnapshotRestoreError, SnapshotableSignal, VIEWPORT_SIZE, batch,
+    is_simulating, measured_monospace_cell, use_local_task_pump, use_pane_viewport_size,
+    use_quit_sink, use_repaint_sink, use_viewport_size,
 };
 pub use renderer::WidgetRenderer;
 pub use revision::SceneRevision;
