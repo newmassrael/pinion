@@ -324,114 +324,28 @@ crate::widget_event_name!(
 // mirroring the [[owner-cache-typed-key]] pattern that
 // `use_text_edit_state` / `use_caret_blink` already follow.
 //
-// Forge-generated `ScrollBarState` carries `Debug + Clone + Copy +
-// PartialEq + Eq + Hash` but lacks `Serialize / DeserializeOwned`,
-// so it cannot back a `Signal<ScrollBarState>` directly. The
-// canonical workaround (and the cheapest at the wire) is a numeric-
-// tag mirror: `Signal<u8>` internally, typed `get` / `set` boundary
-// on the outside.
+// SCE-004 cleared: sce-build now injects `serde::{Serialize,
+// Deserialize}` onto every generated `{widget}State` enum (see
+// `pinion-core/build.rs`), so `ScrollBarState` backs a `Signal<T>`
+// directly. The mirror is the canonical `Signal<ScrollBarState>` — no
+// numeric-tag scaffold, no bookkeeping rule.
 // ─────────────────────────────────────────────────────────────────
 
 /// (R660 §5.45) Reactive mirror of a paired
 /// [`ScrollBarExternal`]'s interaction state. `Owner::cache` singleton
 /// (one instance per `tag` per [`Owner`]); the application reads
-/// through [`Self::get`] in its view fn (auto-subscribing the
+/// through [`Signal::get`] in its view fn (auto-subscribing the
 /// rendering [`Effect`] so a hover repaints the thumb tint), the
-/// framework-owned [`ScrollBarExternal`] writes through [`Self::set`]
+/// framework-owned [`ScrollBarExternal`] writes through [`Signal::set`]
 /// every SCXML transition.
 ///
-/// # SCE-004 stop-gap — numeric-tag wrapper
-///
-/// Internally stores [`ScrollBarState`] as a numeric tag in a
-/// `Signal<u8>` because Forge-generated `ScrollBarState` lacks the
-/// `Serialize + DeserializeOwned` bounds [`Signal::new`] requires.
-/// Tag mapping is stable across releases: `0 = Idle`, `1 = Hover`,
-/// `2 = Dragging`, `3 = Disabled` — pinned by the unit tests at the
-/// bottom of this file so a future SCXML edit cannot silently
-/// re-number a variant.
-///
-/// This wrapper is a **stop-gap**, not the textbook canonical shape.
-/// The proper fix lives in `vendor/sce`: Forge codegen should emit
-/// `#[derive(serde::Serialize, serde::Deserialize)]` on every state /
-/// event enum (either default, or via `CompileOptions::state_enum_derives`).
-/// The vendor/sce upstream debt is tracked as **SCE-004** alongside
-/// **SCE-002** ([[sce-upstream-debts]] memory). Once Forge emits the
-/// serde derives, this wrapper collapses to
-/// `pub type ScrollBarInteractionSignal = Signal<ScrollBarState>;`
-/// and the round-trip tests retire — the cost of carrying it now is
-/// the ~100-LOC scaffold + one bookkeeping rule (extend `tag_for` /
-/// `state_for` whenever the SCXML adds a state).
+/// `ScrollBarState` carries serde derives injected by `sce-build`
+/// (see `pinion-core/build.rs`), so the mirror is the canonical
+/// `Signal<ScrollBarState>` with no numeric-tag indirection.
 ///
 /// [`Effect`]: crate::reactive::Effect
 /// [`Owner`]: crate::reactive::Owner
-pub struct ScrollBarInteractionSignal {
-    inner: Signal<u8>,
-}
-
-impl ScrollBarInteractionSignal {
-    /// Construct a fresh signal initialised to [`ScrollBarState::Idle`].
-    /// Matches the SCXML's initial state so the view-fn first paint
-    /// sees the same value the framework starts with.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            inner: Signal::new(Self::tag_for(ScrollBarState::Idle)),
-        }
-    }
-
-    /// Read the mirrored interaction state. Subscribes the current
-    /// reactive scope (the view-fn's render `Effect`) so the next
-    /// state transition fires a repaint.
-    #[must_use]
-    pub fn get(&self) -> ScrollBarState {
-        Self::state_for(self.inner.get())
-    }
-
-    /// Write the mirrored interaction state. No-op (Signal equality-
-    /// skip) when the tag is unchanged, so an idle SCXML re-entry
-    /// does not chum the reactive graph.
-    pub fn set(&self, state: ScrollBarState) {
-        self.inner.set(Self::tag_for(state));
-    }
-
-    /// Stable numeric tag for a [`ScrollBarState`]. Public only at
-    /// the test boundary; production callers reach the value
-    /// through [`Self::get`] / [`Self::set`].
-    fn tag_for(state: ScrollBarState) -> u8 {
-        match state {
-            ScrollBarState::Idle => 0,
-            ScrollBarState::Hover => 1,
-            ScrollBarState::Dragging => 2,
-            ScrollBarState::Disabled => 3,
-        }
-    }
-
-    /// Inverse of [`Self::tag_for`]. Unknown tags collapse to
-    /// `Idle` — defensive against a corrupted snapshot / restore
-    /// payload from a future schema bump.
-    fn state_for(tag: u8) -> ScrollBarState {
-        match tag {
-            1 => ScrollBarState::Hover,
-            2 => ScrollBarState::Dragging,
-            3 => ScrollBarState::Disabled,
-            _ => ScrollBarState::Idle,
-        }
-    }
-}
-
-impl Default for ScrollBarInteractionSignal {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl core::fmt::Debug for ScrollBarInteractionSignal {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ScrollBarInteractionSignal")
-            .field("state", &self.get())
-            .finish()
-    }
-}
+pub type ScrollBarInteractionSignal = Signal<ScrollBarState>;
 
 /// (R660 §5.45) [`Owner::cache`] hook returning the shared
 /// [`ScrollBarInteractionSignal`] for `tag`. Same shape as
@@ -452,7 +366,7 @@ impl core::fmt::Debug for ScrollBarInteractionSignal {
 pub fn use_scrollbar_interaction(tag: &'static str) -> Rc<ScrollBarInteractionSignal> {
     Owner::current()
         .expect("use_scrollbar_interaction requires an active Owner scope")
-        .cache(tag, ScrollBarInteractionSignal::new)
+        .cache(tag, || Signal::new(ScrollBarState::Idle))
 }
 use sm::ScrollBarPolicy;
 
@@ -508,7 +422,7 @@ pub struct ScrollBar {
     drag_start: Option<DragStart>,
     /// R660 §5.45 — optional reactive mirror of [`Self::state`] the
     /// `send` path writes after every SCXML transition. View-fn code
-    /// reads through the paired [`ScrollBarInteractionSignal::get`]
+    /// reads through the paired [`Signal::get`]
     /// to pick the Material 3 thumb state-layer overlay. `None` for
     /// bare bars (paint-only previews / unit tests that do not
     /// exercise the visual hover/drag styling).

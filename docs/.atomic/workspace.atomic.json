@@ -25476,6 +25476,54 @@
         "This bump consumes only the upstream HALF of the SCE-RFC-002-004 handoff (drafted this session); the pinion-side consumption is deliberately a separate round (behavior-neutral bump vs a real build.rs + widget refactor)."
       ]
     },
+    "R1368": {
+      "decision_summary": "R1368 §5.16 §5.45: consume the sce-build caller-injectable derive hook (landed upstream 591782dfb, pinned R1367) to clear upstream debt SCE-004. build.rs now calls compile_scxml_with_derives injecting serde::Serialize/Deserialize on every generated widget State enum (verbatim pass-through via the RustDeriveCategory SSOT; SCE stays serde-free by default), so ScrollBarState satisfies Signal<T> and the ScrollBarInteractionSignal u8-tag wrapper collapses to a Signal<ScrollBarState> type alias. Honest correction to SCE-RFC-002-004: the RFC targeted the Forge ForgeCompileOptions path but pinion consumes the statechart engine (compile_scxml), and the fix landed there; SCE-004 clears but SCE-002 does NOT auto-clear (widget_state_name / widget_event_name are macro_rules not derive macros, and the event external/internal RPC-forgeability tripwire cannot be reconstructed from variant idents alone) so SCE-002 stays a separate proc-macro round.",
+      "changes_bullets": [
+        "pinion-core/build.rs: compile_scxml(&inputs) -> compile_scxml_with_derives(&inputs, &[\"serde::Serialize\", \"serde::Deserialize\"], &[]) — injects serde on every generated widget State enum; Event enums unchanged (no Signal<Event> consumer)",
+        "pinion-core/src/widgets/scrollbar.rs: retire the ScrollBarInteractionSignal u8-tag wrapper (struct + tag_for/state_for + Default/Debug impls, ~90 LOC) -> pub type ScrollBarInteractionSignal = Signal<ScrollBarState>; use_scrollbar_interaction now caches || Signal::new(ScrollBarState::Idle)",
+        "pinion-widget-paint/src/scrollbar.rs: drop r660_scrollbar_interaction_signal_roundtrip — the u8 mapping it pinned no longer exists; Signal<T> is the canonical form with no mapping to pin",
+        "No SCE change: the upstream derive hook was already landed (591782dfb) and pinned at R1367; this is the consumer-side consumption only"
+      ],
+      "verification_bullets": [
+        "cargo build -p pinion-core -p pinion-widget-paint clean against sce rev 27051d77a (serde derives resolve; pinion-core serde carries features=[\"derive\"])",
+        "cargo test -p pinion-core -p pinion-widget-paint = 3323 passed / 0 failed (incl r660_view_threads_interaction_into_thumb_fill + r660_use_scrollbar_interaction_returns_shared_handle_for_same_tag — reactive mirror + cache singleton still green through Signal<ScrollBarState>)",
+        "cargo clippy -p pinion-core -p pinion-widget-paint --all-targets = 0 warnings",
+        "ScrollBarState now derives Debug+Clone+Copy+PartialEq+Eq+Hash+Serialize+Deserialize, satisfying Signal<T>'s Clone+PartialEq+Serialize+DeserializeOwned+'static bound"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "SCE-004 CLEARED: the u8-wrapper is retired; future Signal<WidgetState> (RadioState / TextFieldState / ToggleState / ...) reuse the injected serde with zero new scaffold — the per-widget stop-gap the debt warned would repeat no longer applies",
+        "SCE-002 STILL OPEN: the injectable SCE mechanism exists, but pinion clearance needs widget_state_name / widget_event_name converted from macro_rules to pinion-derive proc-macro derives, AND widget_event_name's external/internal partition (RPC-forgeability tripwire — from_name rejects internal raises) must be PRESERVED, not derived away from variant idents; a separate proc-macro round ([[sce-upstream-debts]])",
+        "Correction to SCE-RFC-002-004: it framed the fix via Forge ForgeCompileOptions and expected SCE-002+004 to clear on one axis; pinion actually consumes the statechart engine (compile_scxml), where the fix landed (compile_scxml_with_derives + StatechartState/Event) — so SCE-004 clears alone here",
+        "push pending owner consent: dual-pin R1367 + this R1368 are unpushed"
+      ],
+      "publishable_decision_summary": "R1368 §5.16 §5.45: consume the sce-build caller-injectable derive hook (landed upstream 591782dfb, pinned R1367) to clear upstream debt SCE-004. build.rs now calls compile_scxml_with_derives injecting serde::Serialize/Deserialize on every generated widget State enum (verbatim pass-through via the RustDeriveCategory SSOT; SCE stays serde-free by default), so ScrollBarState satisfies Signal<T> and the ScrollBarInteractionSignal u8-tag wrapper collapses to a Signal<ScrollBarState> type alias. Honest correction to SCE-RFC-002-004: the RFC targeted the Forge ForgeCompileOptions path but pinion consumes the statechart engine (compile_scxml), and the fix landed there; SCE-004 clears but SCE-002 does NOT auto-clear (widget_state_name / widget_event_name are macro_rules not derive macros, and the event external/internal RPC-forgeability tripwire cannot be reconstructed from variant idents alone) so SCE-002 stays a separate proc-macro round.",
+      "publishable_changes_bullets": [
+        "pinion-core/build.rs: compile_scxml(&inputs) -> compile_scxml_with_derives(&inputs, &[\"serde::Serialize\", \"serde::Deserialize\"], &[]) — injects serde on every generated widget State enum; Event enums unchanged (no Signal<Event> consumer)",
+        "pinion-core/src/widgets/scrollbar.rs: retire the ScrollBarInteractionSignal u8-tag wrapper (struct + tag_for/state_for + Default/Debug impls, ~90 LOC) -> pub type ScrollBarInteractionSignal = Signal<ScrollBarState>; use_scrollbar_interaction now caches || Signal::new(ScrollBarState::Idle)",
+        "pinion-widget-paint/src/scrollbar.rs: drop r660_scrollbar_interaction_signal_roundtrip — the u8 mapping it pinned no longer exists; Signal<T> is the canonical form with no mapping to pin",
+        "No SCE change: the upstream derive hook was already landed (591782dfb) and pinned at R1367; this is the consumer-side consumption only"
+      ],
+      "publishable_verification_bullets": [
+        "cargo build -p pinion-core -p pinion-widget-paint clean against sce rev 27051d77a (serde derives resolve; pinion-core serde carries features=[\"derive\"])",
+        "cargo test -p pinion-core -p pinion-widget-paint = 3323 passed / 0 failed (incl r660_view_threads_interaction_into_thumb_fill + r660_use_scrollbar_interaction_returns_shared_handle_for_same_tag — reactive mirror + cache singleton still green through Signal<ScrollBarState>)",
+        "cargo clippy -p pinion-core -p pinion-widget-paint --all-targets = 0 warnings",
+        "ScrollBarState now derives Debug+Clone+Copy+PartialEq+Eq+Hash+Serialize+Deserialize, satisfying Signal<T>'s Clone+PartialEq+Serialize+DeserializeOwned+'static bound"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCE-004 CLEARED: the u8-wrapper is retired; future Signal<WidgetState> (RadioState / TextFieldState / ToggleState / ...) reuse the injected serde with zero new scaffold — the per-widget stop-gap the debt warned would repeat no longer applies",
+        "SCE-002 STILL OPEN: the injectable SCE mechanism exists, but pinion clearance needs widget_state_name / widget_event_name converted from macro_rules to pinion-derive proc-macro derives, AND widget_event_name's external/internal partition (RPC-forgeability tripwire — from_name rejects internal raises) must be PRESERVED, not derived away from variant idents; a separate proc-macro round ([[sce-upstream-debts]])",
+        "Correction to SCE-RFC-002-004: it framed the fix via Forge ForgeCompileOptions and expected SCE-002+004 to clear on one axis; pinion actually consumes the statechart engine (compile_scxml), where the fix landed (compile_scxml_with_derives + StatechartState/Event) — so SCE-004 clears alone here",
+        "push pending owner consent: dual-pin R1367 + this R1368 are unpushed"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

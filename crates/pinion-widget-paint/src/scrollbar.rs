@@ -932,19 +932,4 @@ mod tests {
             );
         });
     }
-
-    #[test]
-    fn r660_scrollbar_interaction_signal_roundtrip() {
-        use pinion_core::widgets::scrollbar::ScrollBarInteractionSignal;
-        let sig = ScrollBarInteractionSignal::new();
-        assert_eq!(sig.get(), ScrollBarState::Idle, "fresh = Idle");
-        sig.set(ScrollBarState::Hover);
-        assert_eq!(sig.get(), ScrollBarState::Hover);
-        sig.set(ScrollBarState::Dragging);
-        assert_eq!(sig.get(), ScrollBarState::Dragging);
-        sig.set(ScrollBarState::Disabled);
-        assert_eq!(sig.get(), ScrollBarState::Disabled);
-        sig.set(ScrollBarState::Idle);
-        assert_eq!(sig.get(), ScrollBarState::Idle);
-    }
 }

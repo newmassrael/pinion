@@ -19,7 +19,20 @@ fn main() {
         "app.scxml",
         "fixtures/multi_window.scxml",
     ];
-    sce_build::compile_scxml(&scxml_inputs);
+    // SCE-004: inject `serde::{Serialize, Deserialize}` onto every generated
+    // `{widget}State` enum via the sce-build caller-injectable derive hook
+    // (rust_derive_policy SSOT). This lets the state back a `Signal<T>`
+    // directly (`Signal<T>` bounds `T: Clone + PartialEq + Serialize +
+    // DeserializeOwned`), retiring the per-widget u8-tag mirror. Event enums
+    // need no extra derives (no consumer mirrors an event into a `Signal`).
+    sce_build::compile_scxml_with_derives(
+        &scxml_inputs,
+        &[
+            "serde::Serialize".to_string(),
+            "serde::Deserialize".to_string(),
+        ],
+        &[],
+    );
 
     // Post-process: strip inner attributes (#![...]) and inner doc comments (//!).
     // include!() in Rust does not allow inner attributes in its expanded content,
