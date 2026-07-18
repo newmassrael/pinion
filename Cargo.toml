@@ -198,9 +198,9 @@ authors = ["pinion contributors"]
 # DUAL-PIN DISCIPLINE: `rev` here MUST equal the `vendor/sce` submodule gitlink
 # SHA. Bumping SCE = move the submodule AND this rev in the SAME commit, or the
 # built SCE drifts from the vendored checkout (C++ side / canon sync still track
-# the submodule). Current pin = submodule HEAD 3078f8bf.
-sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "82022849062bd9275d967fe746c4069ded1131c4", default-features = false }
-sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "82022849062bd9275d967fe746c4069ded1131c4" }
+# the submodule). Current pin = submodule HEAD 27051d77a.
+sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "27051d77a95b884a683f2eb5b4d6ae6098931502", default-features = false }
+sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "27051d77a95b884a683f2eb5b4d6ae6098931502" }
 
 # §5.7 JSON-RPC 2.0 transport realized at the pinion-rpc envelope.
 serde = { version = "1", features = ["derive"] }

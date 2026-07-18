@@ -25432,6 +25432,50 @@
         "Residue (accepted): `cache` / `cache_get_by_str` / `cache_contains` stay `pub` (widget state uses `cache`; `ProviderSlot::get`/`provide` use the others). The `provider_slot_tests!` macro stays a wiring guard, tautological by design and documented so (R1366.8.1); every migrated slot now ALSO ships a value-based discriminator, so verdict coverage is real end-to-end. Audit finding ④ (R1366.7 frozen false hash + the frozen macro-overclaim prose) is amend-blocked and already override-corrected (R1366.8.1 `2f280fd1`); this round did NOT re-introduce that class — fmt ran before the hash and the counterfactual reverted byte-identically."
       ]
     },
+    "R1367": {
+      "decision_summary": "R1367 §5.4 §5.16: bump the sce pin 82022849 -> 27051d77a (dual-pin: vendor/sce submodule + both Cargo git revs), picking up sce 591782dfb 'Unify and complete the Rust derive-policy SSOT' — the upstream implementation of the SCE-RFC-002-004 handoff drafted this session. sce moved the Forge procedure State/Event enums off their hardcoded derive onto the RustDeriveCategory SSOT via {{ procedure_*_derives_attr }} (RFC step A) AND added compile_scxml_with_derives(files, state_extras, event_extras) for caller-injected verbatim extra derives (RFC step B; compile_scxml = the no-extras default). BEHAVIOR-NEUTRAL for pinion: build.rs still calls the no-extras compile_scxml, so the generated widget State/Event enums keep the same default derives. Verified: cargo build + clippy --all-targets + test --workspace all green against the new rev. Consuming the injectable API (inject serde -> retire scrollbar u8-wrapper = SCE-004; inject WidgetStateName -> retire widget_state_name! boilerplate = SCE-002) is the follow-up round, now unblocked upstream.",
+      "changes_bullets": [
+        "`Cargo.toml` (root `[workspace.dependencies]`): both `sce-rust-runtime` and `sce-build` `rev` moved `82022849` -> `27051d77a95b884a683f2eb5b4d6ae6098931502`. `Cargo.lock` resolved rev updated by `cargo build`.",
+        "`vendor/sce` submodule gitlink checked out to `27051d77a` — moved in the SAME commit as the Cargo rev (dual-pin discipline, [[sce-git-rev-pin-dual-discipline]]; mismatch would drift the built SCE from the vendored checkout).",
+        "No pinion source change: `pinion-core/build.rs:22` still calls `sce_build::compile_scxml(&inputs)` (the no-extras path), so the regenerated widget `State`/`Event` enums keep the same default derives — byte-equivalent output.",
+        "Upstream picked up (4 commits): `591782dfb feat: Unify and complete the Rust derive-policy SSOT` (moves the Forge procedure `State`/`Event` enums off hardcoded `#[derive(..)]` onto the `RustDeriveCategory` SSOT via `{{ procedure_*_derives_attr }}` = RFC step A, AND adds `compile_scxml_with_derives(files, state_extras, event_extras)` for caller-injected verbatim extra derives = RFC step B), plus `664990cc6` + `705ae08a1` (committed-tree regen for the template-hash bump) and `27051d77a` (spec-citation reconcile)."
+      ],
+      "verification_bullets": [
+        "`cargo build --workspace` — green. Re-fetched sce at `27051d77a`, regenerated the widget state machines via `build.rs`, compiled clean: the new policy-injected default derives match the previously-hardcoded set.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean.",
+        "`cargo test --workspace -j2 --features pinion-runtime/vello` — 0 failed (222 `test result: ok` groups). The regenerated codegen behaves identically; the bump is behavior-neutral.",
+        "Upstream reached over the network: `ls-remote origin main` = `27051d77a`. The FIRST check this session saw `82022849`; a fresh `fetch --all` then showed `820228490..27051d77a main` — upstream had been pushed to between checks (why the user asked to re-check). Dual-pin consistency confirmed: submodule HEAD == both Cargo revs == `origin/main` == `27051d77a`."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "**SCE-002 + SCE-004 are now UNBLOCKED upstream** — the mechanism (`compile_scxml_with_derives`) landed. Follow-up round (consume it): switch `pinion-core/build.rs` to `compile_scxml_with_derives(&inputs, &[\"serde::Serialize\".into(), \"serde::Deserialize\".into()], &[..])` -> retire `ScrollBarInteractionSignal`'s u8-wrapper (~100 LOC) + drop `r660_scrollbar_interaction_signal_roundtrip` (SCE-004); inject `pinion_core::WidgetStateName`/`WidgetEventName` -> shrink the per-widget `widget_state_name!` / `widget_event_name!` re-enumeration (SCE-002). Update memory `sce-upstream-debts` SCE-002/004 status open -> mechanism-landed.",
+        "This bump consumes only the upstream HALF of the SCE-RFC-002-004 handoff (drafted this session); the pinion-side consumption is deliberately a separate round (behavior-neutral bump vs a real build.rs + widget refactor)."
+      ],
+      "publishable_decision_summary": "R1367 §5.4 §5.16: bump the sce pin 82022849 -> 27051d77a (dual-pin: vendor/sce submodule + both Cargo git revs), picking up sce 591782dfb 'Unify and complete the Rust derive-policy SSOT' — the upstream implementation of the SCE-RFC-002-004 handoff drafted this session. sce moved the Forge procedure State/Event enums off their hardcoded derive onto the RustDeriveCategory SSOT via {{ procedure_*_derives_attr }} (RFC step A) AND added compile_scxml_with_derives(files, state_extras, event_extras) for caller-injected verbatim extra derives (RFC step B; compile_scxml = the no-extras default). BEHAVIOR-NEUTRAL for pinion: build.rs still calls the no-extras compile_scxml, so the generated widget State/Event enums keep the same default derives. Verified: cargo build + clippy --all-targets + test --workspace all green against the new rev. Consuming the injectable API (inject serde -> retire scrollbar u8-wrapper = SCE-004; inject WidgetStateName -> retire widget_state_name! boilerplate = SCE-002) is the follow-up round, now unblocked upstream.",
+      "publishable_changes_bullets": [
+        "`Cargo.toml` (root `[workspace.dependencies]`): both `sce-rust-runtime` and `sce-build` `rev` moved `82022849` -> `27051d77a95b884a683f2eb5b4d6ae6098931502`. `Cargo.lock` resolved rev updated by `cargo build`.",
+        "`vendor/sce` submodule gitlink checked out to `27051d77a` — moved in the SAME commit as the Cargo rev (dual-pin discipline, [[sce-git-rev-pin-dual-discipline]]; mismatch would drift the built SCE from the vendored checkout).",
+        "No pinion source change: `pinion-core/build.rs:22` still calls `sce_build::compile_scxml(&inputs)` (the no-extras path), so the regenerated widget `State`/`Event` enums keep the same default derives — byte-equivalent output.",
+        "Upstream picked up (4 commits): `591782dfb feat: Unify and complete the Rust derive-policy SSOT` (moves the Forge procedure `State`/`Event` enums off hardcoded `#[derive(..)]` onto the `RustDeriveCategory` SSOT via `{{ procedure_*_derives_attr }}` = RFC step A, AND adds `compile_scxml_with_derives(files, state_extras, event_extras)` for caller-injected verbatim extra derives = RFC step B), plus `664990cc6` + `705ae08a1` (committed-tree regen for the template-hash bump) and `27051d77a` (spec-citation reconcile)."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo build --workspace` — green. Re-fetched sce at `27051d77a`, regenerated the widget state machines via `build.rs`, compiled clean: the new policy-injected default derives match the previously-hardcoded set.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean.",
+        "`cargo test --workspace -j2 --features pinion-runtime/vello` — 0 failed (222 `test result: ok` groups). The regenerated codegen behaves identically; the bump is behavior-neutral.",
+        "Upstream reached over the network: `ls-remote origin main` = `27051d77a`. The FIRST check this session saw `82022849`; a fresh `fetch --all` then showed `820228490..27051d77a main` — upstream had been pushed to between checks (why the user asked to re-check). Dual-pin consistency confirmed: submodule HEAD == both Cargo revs == `origin/main` == `27051d77a`."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "**SCE-002 + SCE-004 are now UNBLOCKED upstream** — the mechanism (`compile_scxml_with_derives`) landed. Follow-up round (consume it): switch `pinion-core/build.rs` to `compile_scxml_with_derives(&inputs, &[\"serde::Serialize\".into(), \"serde::Deserialize\".into()], &[..])` -> retire `ScrollBarInteractionSignal`'s u8-wrapper (~100 LOC) + drop `r660_scrollbar_interaction_signal_roundtrip` (SCE-004); inject `pinion_core::WidgetStateName`/`WidgetEventName` -> shrink the per-widget `widget_state_name!` / `widget_event_name!` re-enumeration (SCE-002). Update memory `sce-upstream-debts` SCE-002/004 status open -> mechanism-landed.",
+        "This bump consumes only the upstream HALF of the SCE-RFC-002-004 handoff (drafted this session); the pinion-side consumption is deliberately a separate round (behavior-neutral bump vs a real build.rs + widget refactor)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
