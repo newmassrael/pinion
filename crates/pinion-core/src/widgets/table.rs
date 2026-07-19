@@ -158,6 +158,31 @@ fn tsv_sanitize(cell: &str) -> String {
     cell.replace(['\t', '\n'], " ")
 }
 
+/// R1372 §5.38 — serialize an already-extracted rectangle of cell display
+/// strings to TSV (tab-separated columns, newline-separated rows), each cell
+/// `tsv_sanitize`d so an embedded delimiter can never make the block's
+/// row/column shape disagree with the rectangle. The shared clipboard-copy
+/// serialization core of every grid's "copy the selection": the [`Table`]'s own
+/// [`Table::selected_tsv`] (a data-ordered rectangle) and the `hello-data-grid`
+/// editable grid's visible-ordered copy both funnel here — a divergence between
+/// two grids' TSV shape would be a bug, not a style choice (the
+/// `abstraction-needs-second-consumer` lift of the pure codec at the 2nd
+/// consumer). `rows` is the caller's already-read rectangle, so each consumer
+/// keeps its own data-order vs visible-order reading and this stays a pure
+/// string function.
+#[must_use]
+pub fn rows_to_tsv(rows: &[Vec<String>]) -> String {
+    rows.iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| tsv_sanitize(cell))
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 impl Table {
     /// Construct a table over `headers` columns and `rows` of cell text.
     /// All rows start idle and unselected, with no active descendant.
@@ -460,17 +485,12 @@ impl Table {
     #[must_use]
     pub fn selected_tsv(&self) -> Option<String> {
         let (r0, c0, r1, c1) = self.cell_selection_bounds()?;
-        Some(
-            (r0..=r1)
-                .map(|r| {
-                    (c0..=c1)
-                        .map(|c| tsv_sanitize(self.cell(r, c)))
-                        .collect::<Vec<_>>()
-                        .join("\t")
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
+        // R1372 — the rectangle is read here in DATA order (each caller owns its
+        // reading), then the shared [`rows_to_tsv`] codec sanitizes + joins it.
+        let rows: Vec<Vec<String>> = (r0..=r1)
+            .map(|r| (c0..=c1).map(|c| self.cell(r, c).to_string()).collect())
+            .collect();
+        Some(rows_to_tsv(&rows))
     }
 
     /// R952 §5.38 §5.40 — drop the cell range selection (clear the anchor).
@@ -556,8 +576,12 @@ impl Table {
 /// `select-cell` / `extend-cell` invoke shape) into `(row, col)`. `None`
 /// when the arg is not exactly two comma-separated unsigned integers — the
 /// caller maps that to `TypeMismatch` (the index-range check is the caller's,
-/// against the live row / column count).
-fn parse_row_col(s: &str) -> Option<(usize, usize)> {
+/// against the live row / column count). R1372 — `pub`, so the `hello-data-grid`
+/// editable grid (a 2nd consumer of the same cell-selection wire, driving its
+/// own bespoke coordinator) parses the identical arg through this one SSOT
+/// rather than a divergent copy.
+#[must_use]
+pub fn parse_row_col(s: &str) -> Option<(usize, usize)> {
     let (r, c) = s.split_once(',')?;
     Some((r.trim().parse().ok()?, c.trim().parse().ok()?))
 }
@@ -2060,6 +2084,36 @@ mod tests {
         for row in tsv.split('\n') {
             assert_eq!(row.matches('\t').count(), 1, "exactly 2 columns per row");
         }
+    }
+
+    #[test]
+    fn r1372_rows_to_tsv_is_the_shared_codec() {
+        // The pure codec the Table's `selected_tsv` and the editable data grid's
+        // copy both funnel through: row-major join, tab columns, newline rows,
+        // embedded delimiters sanitized so the block shape matches the rectangle.
+        assert_eq!(
+            rows_to_tsv(&[]),
+            "",
+            "an empty rectangle is the empty string"
+        );
+        assert_eq!(
+            rows_to_tsv(&[vec!["one".to_string()]]),
+            "one",
+            "a single cell has no separators",
+        );
+        assert_eq!(
+            rows_to_tsv(&[
+                vec!["a".to_string(), "b".to_string()],
+                vec!["c".to_string(), "d".to_string()],
+            ]),
+            "a\tb\nc\td",
+            "2x2: tab columns, newline rows",
+        );
+        assert_eq!(
+            rows_to_tsv(&[vec!["a\tb".to_string(), "l1\nl2".to_string()]]),
+            "a b\tl1 l2",
+            "embedded tab/newline -> space (structure-preserving)",
+        );
     }
 
     #[test]

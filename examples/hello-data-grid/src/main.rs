@@ -200,11 +200,12 @@ use pinion_core::widgets::group_order::{GroupRow, group_rows};
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::use_scroll_state;
-use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
+use pinion_core::widgets::table::{cycle_col_sort, grid_order_by, parse_row_col, rows_to_tsv};
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_extra};
 use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, content_height};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
+use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox_box};
@@ -804,6 +805,23 @@ fn use_focused_col() -> Rc<Signal<usize>> {
     owner.cache("data_grid.focused_col", || Signal::new(0_usize))
 }
 
+/// R1372 §5.38 — the cell-range selection anchor `Some((source_row, col))`, the
+/// pinned corner the roving cursor extends a rectangle from (the spreadsheet /
+/// Qt `SelectItems` model R952 gave the Table widget; here the bespoke grid gets
+/// its own anchor Signal, the SOURCE-keyed peer of the [`use_focused_row`] /
+/// [`use_focused_col`] cursor). `None` = no range (a plain arrow collapses to a
+/// single cell). The selected RECTANGLE is derived at paint / copy time as the
+/// bbox of the anchor's and cursor's CURRENT visible positions (the source-keyed
+/// discipline every axis here follows — only paint / nav consult the visible
+/// order), so the highlight is always one contiguous, paintable screen rectangle
+/// even under an active sort / filter / group; an anchor hidden by a filter /
+/// collapse collapses the selection to the cursor.
+#[must_use]
+fn use_cell_anchor() -> Rc<Signal<Option<(usize, usize)>>> {
+    let owner = Owner::current().expect("use_cell_anchor requires an active Owner scope");
+    owner.cache("data_grid.cell_anchor", || Signal::new(None))
+}
+
 /// Edit-mode latch — `Some((row, col))` while that cell is being edited (the
 /// todomvc `editing_id`, keyed by a 2-D cell). `None` = navigating. R940 — a
 /// text / int / float cell editing here renders the shared inline field; a
@@ -1058,6 +1076,37 @@ fn reanchor_cursor(visible: &[usize], cursor: &Signal<usize>, prior_vis: usize) 
     if let Some(&row) = visible.get(prior_vis.min(visible.len().saturating_sub(1))) {
         cursor.set(row);
     }
+}
+
+// ─── R1372 cell-range selection + copy (the copy/paste symmetry) ───
+
+/// R1372 §5.38 — the selected cell rectangle in VISIBLE-position coordinates
+/// `(pos0, col0, pos1, col1)` (inclusive, normalized), derived from the
+/// SOURCE-keyed `anchor` + cursor (`cursor_row` is a SOURCE index) mapped through
+/// the CURRENT `visible` data order. Because the two endpoints are re-projected
+/// each read, the rectangle is ALWAYS one contiguous, paintable screen region
+/// under any sort / filter / group — unlike the Table widget's data-indexed
+/// rectangle (R952), which scatters under a sort and there suppresses its
+/// overlay. `None` — the selection collapses to the single focused cell — when
+/// there is no anchor, or the anchor OR the cursor row is not currently visible
+/// (a filter excluded it, a collapse hid it): the same "endpoint off-view -> no
+/// block" guard [`DataGridExternal::paste_block`] applies to its paste anchor,
+/// so copy and paste agree on when the visible rectangle is well-defined.
+fn cell_selection_bounds(
+    visible: &[usize],
+    anchor: Option<(usize, usize)>,
+    cursor_row: usize,
+    cursor_col: usize,
+) -> Option<(usize, usize, usize, usize)> {
+    let (anchor_row, anchor_col) = anchor?;
+    let apos = visible.iter().position(|&s| s == anchor_row)?;
+    let cpos = visible.iter().position(|&s| s == cursor_row)?;
+    Some((
+        apos.min(cpos),
+        anchor_col.min(cursor_col),
+        apos.max(cpos),
+        anchor_col.max(cursor_col),
+    ))
 }
 
 // ─── undo commands (R932 §5.52) ───────────────────────────────────
@@ -1376,6 +1425,11 @@ struct DataGridExternal {
     /// pointer / RPC path and the keyboard free-fn path drive one popup.
     popup_cursor: Rc<Signal<Option<usize>>>,
     popup_hover: Rc<Signal<Option<usize>>>,
+    /// R1372 — the cell-range selection anchor ([`use_cell_anchor`]). An `Rc`
+    /// clone of the view-shared Signal (the cursor's SOURCE-keyed peer), so the
+    /// coordinator's RPC path and the keyboard free-fn path pin / extend / clear
+    /// one selection rectangle.
+    cell_anchor: Rc<Signal<Option<(usize, usize)>>>,
 }
 
 /// R914 — the per-drag payload the cell scrub's [`DragCalibration`] snapshots on
@@ -1425,6 +1479,7 @@ impl DataGridExternal {
             drag_preview: use_drag_preview(),
             popup_cursor: use_popup_cursor(),
             popup_hover: use_popup_hover(),
+            cell_anchor: use_cell_anchor(),
         }
     }
 
@@ -1441,6 +1496,135 @@ impl DataGridExternal {
             self.filter.get().as_ref(),
             self.group_col.get(),
         )
+    }
+
+    /// R1372 §5.38 — start a cell range at SOURCE `(row, col)`: move the cursor
+    /// there and pin the anchor to it, so the selection is that single cell (the
+    /// spreadsheet click / plain-arrow model — a fresh selection a later
+    /// [`extend_cell`](Self::extend_cell) grows into a rectangle). Out-of-range is
+    /// a silent no-op returning `false` (the model-path guard the RPC surfaces).
+    fn select_cell(&self, row: usize, col: usize) -> bool {
+        if row >= self.nrows() || col >= NCOLS {
+            return false;
+        }
+        self.focused_row.set(row);
+        self.focused_col.set(col);
+        self.cell_anchor.set(Some((row, col)));
+        true
+    }
+
+    /// R1372 §5.38 — extend the cell range to SOURCE `(row, col)`: move the cursor
+    /// but keep the pinned anchor (the `Shift`-arrow model), so the selection is
+    /// the bounding rectangle of the anchor and the new cursor over the visible
+    /// order. With no anchor yet, the current cursor becomes the anchor first, so
+    /// the first extension is a single cell subsequent ones grow (the R952
+    /// `Table::extend_cell` contract). Out-of-range is a silent no-op.
+    fn extend_cell(&self, row: usize, col: usize) -> bool {
+        if row >= self.nrows() || col >= NCOLS {
+            return false;
+        }
+        if self.cell_anchor.get().is_none() {
+            self.cell_anchor
+                .set(Some((self.focused_row.get(), self.focused_col.get())));
+        }
+        self.focused_row.set(row);
+        self.focused_col.set(col);
+        true
+    }
+
+    /// R1372 §5.38 — drop the cell range (clear the anchor). The roving cursor is
+    /// untouched — clearing a selection leaves the active cell navigable /
+    /// editable (the R952 `Table::clear_cell_selection` contract).
+    fn clear_cell_selection(&self) {
+        self.cell_anchor.set(None);
+    }
+
+    /// R1372 §5.38 — the selected cell rectangle in VISIBLE-position coords over
+    /// the current view ([`cell_selection_bounds`]), or `None` when no multi-cell
+    /// range is well-defined. The AI-first read of "which cells are selected".
+    fn cell_selection(&self) -> Option<(usize, usize, usize, usize)> {
+        cell_selection_bounds(
+            &self.cur_visible(),
+            self.cell_anchor.get(),
+            self.focused_row.get(),
+            self.focused_col.get(),
+        )
+    }
+
+    /// R1372 §5.38 — the number of cells in the selected rectangle (`0` when no
+    /// range is active). The `(rows x cols)` area of [`cell_selection`](Self::cell_selection).
+    fn cell_selection_count(&self) -> usize {
+        self.cell_selection()
+            .map_or(0, |(p0, c0, p1, c1)| (p1 - p0 + 1) * (c1 - c0 + 1))
+    }
+
+    /// R1372 §5.38 — the selected cell rectangle serialized as TSV, VISIBLE-order
+    /// (top row first, following the active sort / filter / group exactly as the
+    /// grid reads AND as [`paste_block`](Self::paste_block) writes — so a copy
+    /// round-trips through a paste). Reads each cell's display in visible order,
+    /// then the shared [`rows_to_tsv`] codec (the R1222 `Table::selected_tsv`
+    /// SSOT, lifted at this 2nd consumer) sanitizes + joins. `None` when no
+    /// multi-cell range is active; a bare `Ctrl`+`C` copies the single focused
+    /// cell instead (see [`copy_tsv`](Self::copy_tsv)).
+    fn selected_tsv(&self) -> Option<String> {
+        let model = self.model.get();
+        let visible = self.cur_visible();
+        let (p0, c0, p1, c1) = cell_selection_bounds(
+            &visible,
+            self.cell_anchor.get(),
+            self.focused_row.get(),
+            self.focused_col.get(),
+        )?;
+        let rows: Vec<Vec<String>> = (p0..=p1)
+            .map(|pos| {
+                let source = visible[pos];
+                (c0..=c1).map(|c| model[idx(source, c)].display()).collect()
+            })
+            .collect();
+        Some(rows_to_tsv(&rows))
+    }
+
+    /// R1372 §5.38 — the payload a `Ctrl`+`C` copies: the selected rectangle as
+    /// TSV, or — when no range is active — the single FOCUSED cell's display (a
+    /// bare copy of one cell, the universal spreadsheet default). Always yields
+    /// something copyable when the grid has focus, so the clipboard is never
+    /// written an empty string on a lone cursor.
+    fn copy_tsv(&self) -> String {
+        self.selected_tsv().unwrap_or_else(|| {
+            let model = self.model.get();
+            let (r, c) = (self.focused_row.get(), self.focused_col.get());
+            model
+                .get(idx(r, c))
+                .map(CellValue::display)
+                .unwrap_or_default()
+        })
+    }
+
+    /// R1372 §5.38 — the cell-range selection reads, the cross-grid wire the
+    /// Table widget (R952) / `hello-cell-select` (R1222) speak, so an AI client
+    /// drives copy identically on every grid: `cell_selection` = the rectangle
+    /// "pos0,col0,pos1,col1" (Null when no range), `cell_selection_count` = its
+    /// area, `cell_selection_tsv` = the spreadsheet TSV block. The coords are
+    /// VISIBLE positions (like `source_at.<pos>`) — the rectangle is defined over
+    /// the view, not the source order `value.<row>.<col>` addresses. `None` for
+    /// any other path (the [`query`](ExternalIntrospect::query) falls through).
+    fn query_cell_selection(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "cell_selection" => Some(
+                self.cell_selection()
+                    .map_or(IntrospectValue::Null, |(p0, c0, p1, c1)| {
+                        IntrospectValue::Text(format!("{p0},{c0},{p1},{c1}"))
+                    }),
+            ),
+            "cell_selection_count" => {
+                Some(IntrospectValue::Int(int_of(self.cell_selection_count())))
+            }
+            "cell_selection_tsv" => Some(
+                self.selected_tsv()
+                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
+            ),
+            _ => None,
+        }
     }
 
     /// R891 — rows passing the active filter (`NROWS` when unfiltered), the
@@ -2681,6 +2865,10 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("group", "string"),
     SchemaField::new("group_count", "int"),
     SchemaField::new("visible_len", "int"),
+    // R1372 §5.38 — the cell-range selection reads (the cross-grid wire).
+    SchemaField::new("cell_selection", "string"),
+    SchemaField::new("cell_selection_count", "int"),
+    SchemaField::new("cell_selection_tsv", "string"),
     SchemaField::parametric(
         "source_at.<pos>",
         "int",
@@ -2766,6 +2954,11 @@ impl ExternalIntrospect for DataGridExternal {
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
+        // R1372 §5.38 — the cell-range selection reads, split out to keep this
+        // dispatch under the line ceiling (the R952 `invoke_cell_select` shape).
+        if let Some(v) = self.query_cell_selection(path) {
+            return Some(v);
+        }
         match path {
             "row_count" => Some(IntrospectValue::Int(int_of(self.nrows()))),
             "col_count" => Some(IntrospectValue::Int(int_of(NCOLS))),
@@ -3216,6 +3409,38 @@ impl ExternalIntrospect for DataGridExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1372 §5.38 — the cell-range selection actions, the cross-grid wire
+            // the Table widget (R952) / `hello-cell-select` (R1222) speak:
+            // `select-cell` / `extend-cell` take a `"row,col"` SOURCE-coord pair
+            // (matching `focused_row`'s source semantics) and start / grow the
+            // rectangle; `clear-cell-selection` drops it. `Bool(true)` on success,
+            // `Bool(false)` on an out-of-range no-op; `Rejected` on a malformed
+            // pair. The AI-first peers of the keyboard `Shift`+arrow / `Escape`.
+            "select-cell" => match args {
+                IntrospectValue::Text(ref s) => {
+                    let (row, col) = parse_row_col(s).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.select_cell(row, col)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "extend-cell" => match args {
+                IntrospectValue::Text(ref s) => {
+                    let (row, col) = parse_row_col(s).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.extend_cell(row, col)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "clear-cell-selection" => {
+                self.clear_cell_selection();
+                Ok(IntrospectValue::Bool(true))
+            }
+            // R1372 §5.38 — copy the current selection (or, with no range, the
+            // single focused cell) as a spreadsheet TSV block, RETURNING it. The
+            // action peer of the range-only `query cell_selection_tsv`: `copy`
+            // ALWAYS yields something copyable when the grid has focus (a lone
+            // cursor copies its one cell), so the keyboard Ctrl+C and an AI client
+            // share ONE serialization funnel. The inverse of `paste`.
+            "copy" => Ok(IntrospectValue::Text(self.copy_tsv())),
             // R960 — reset cell `"<row>_<col>"` (the `GridSendKey::Cell` wire,
             // the same grammar the reset-dot click sends) to its column default;
             // returns whether it was modified. The AI-first peer of a click on
@@ -3538,6 +3763,63 @@ fn apply_key_color(scene: &mut Scene, key: &str) -> bool {
 
 /// Grid-focused keymap: undo / redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), then 2-D
 /// roving navigation + activate.
+/// R1372 §5.38 — the `Ctrl`/`Cmd`+C body: copy the current selection (or, with
+/// no range, the lone focused cell) as a spreadsheet TSV block through the
+/// coordinator's `copy` funnel (the same the AI-first `invoke "copy"` uses, so
+/// there is ONE serialization path), then write it to the platform clipboard.
+/// Split out of [`apply_key_grid`] for the line ceiling. `false` when the grid
+/// external is absent (defensive), so the key can fall through.
+fn copy_selection_to_clipboard(scene: &mut Scene) -> bool {
+    let tsv = external_mut(scene, GRID_TAG).and_then(|intro| {
+        match intro.invoke("copy", IntrospectValue::Null) {
+            Ok(IntrospectValue::Text(t)) => Some(t),
+            _ => None,
+        }
+    });
+    if let Some(tsv) = tsv {
+        use_app_clipboard(GRID_TAG).copy(tsv);
+        return true;
+    }
+    false
+}
+
+/// R1372 §5.38 — the cell-range selection's response to a nav-mode keystroke,
+/// BEFORE the plain 2-D nav moves the cursor (the keyboard twin of the
+/// `select-cell` / `extend-cell` / `clear-cell-selection` wire): `Escape` clears
+/// an active range (`Some(true)` = handled; `Some(false)` = nothing to clear,
+/// fall through); a `Shift`+arrow / Home / End pins the anchor at the pre-move
+/// `cursor` (if not already) so the following nav EXTENDS the rectangle; a plain
+/// nav key drops the anchor so the move COLLAPSES to one cell. `None` = not a
+/// selection-terminal key, let the caller's nav arm run.
+fn maintain_cell_selection(
+    key: &str,
+    modifiers: Modifiers,
+    cursor: (usize, usize),
+) -> Option<bool> {
+    let anchor = use_cell_anchor();
+    if key == "Escape" {
+        return Some(if anchor.get().is_some() {
+            anchor.set(None);
+            true
+        } else {
+            false
+        });
+    }
+    if matches!(
+        key,
+        "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight" | "Home" | "End"
+    ) {
+        if modifiers.shift_key() {
+            if anchor.get().is_none() {
+                anchor.set(Some(cursor));
+            }
+        } else {
+            anchor.set(None);
+        }
+    }
+    None
+}
+
 fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     // R940 / R943 — an open + visible choice / colour popup owns the keymap (the
     // grid keeps focus; the popup is its roving active descendant). Intercepted
@@ -3556,6 +3838,13 @@ fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     // navigation keys (so Ctrl+Z is not read as a bare key).
     if let Some(verb) = undo_redo_verb(key, modifiers) {
         return invoke_undo(scene, verb);
+    }
+    // R1372 §5.38 — Ctrl/Cmd+C copies the selected rectangle (or lone cell) to
+    // the platform clipboard, the copy half of the R1237 paste symmetry. Before
+    // the plain nav so a held Ctrl+C is not read as a bare `c`; `!alt_key()`
+    // mirrors the text_field chord decode (AltGr = Ctrl+Alt would else misfire).
+    if modifiers.command_key() && !modifiers.alt_key() && key.eq_ignore_ascii_case("c") {
+        return copy_selection_to_clipboard(scene);
     }
     let row_sig = use_focused_row();
     let col_sig = use_focused_col();
@@ -3577,6 +3866,12 @@ fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
             return invoke_move_row(scene, from, to);
         }
         return true; // at an end — consumed, no move (no wrap)
+    }
+    // R1372 §5.38 — the cell-range selection's response to this keystroke BEFORE
+    // the plain nav moves the cursor (Escape clears; Shift+arrow pins the anchor
+    // to extend; a plain arrow drops it to collapse). `Some(b)` = fully handled.
+    if let Some(handled) = maintain_cell_selection(key, modifiers, (row_sig.get(), col)) {
+        return handled;
     }
     match key {
         // R886 / R891 — vertical navigation walks the filtered+sorted VISUAL
@@ -3715,11 +4010,36 @@ fn color_cell_inner(c: Color, theme: &Theme) -> Scene {
     )
 }
 
+/// R1372 §5.38 — the fraction a selected (non-focused) cell's background washes
+/// from `Surface` toward the theme's `Accent` (its "selection" role). Subtle
+/// enough to read as a block, distinct from the greyer `OnSurface`-tinted focus
+/// highlight the active cell keeps.
+const SELECTION_TINT: f32 = 0.18;
+
+/// R1372 §5.38 — a cell's background fill: the [`focus_fill`] highlight when it
+/// is the active cell (the SSOT the property grid shares), else a subtle Accent
+/// wash when it is inside the selected range, else transparent. Focus takes
+/// precedence, so the active descendant reads distinctly within a washed block.
+fn cell_fill(theme: &Theme, focused: bool, selected: bool) -> Color {
+    if focused {
+        focus_fill(theme, true)
+    } else if selected {
+        theme
+            .resolve(ColorRole::Surface)
+            .lerp(theme.resolve(ColorRole::Accent), SELECTION_TINT)
+    } else {
+        Color::TRANSPARENT
+    }
+}
+
 fn view_cell(
     row: usize,
     col: usize,
     value: &CellValue,
-    focused: bool,
+    // R1372 — the precomputed background ([`cell_fill`]: focus highlight /
+    // selection wash / transparent), so the cell need not know the focus /
+    // selection semantics and the arg count stays under the ceiling.
+    fill: Color,
     edit_active: bool,
     theme: &Theme,
     edit_field: (TextFieldState, u32),
@@ -3759,7 +4079,7 @@ fn view_cell(
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(cell_tag(row, col))
-            .with_style(BoxStyle::filled(focus_fill(theme, focused)))
+            .with_style(BoxStyle::filled(fill))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -4004,6 +4324,10 @@ fn view_data_row(
     edit_field: (TextFieldState, u32),
     reorder_enabled: bool,
     drop_edge: Option<DropEdge>,
+    // R1372 — the selected COLUMN range `(c0, c1)` when THIS row is inside the
+    // cell-selection rectangle, else `None` (the caller resolves row membership
+    // from the visible-position bounds; a cell washes when its col is in range).
+    selection: Option<(usize, usize)>,
 ) -> Scene {
     let (focused_row, focused_col) = focus;
     // R937 — the leading drag-handle cell, then the data cells.
@@ -4016,8 +4340,10 @@ fn view_data_row(
     cells.extend((0..NCOLS).map(|col| {
         let value = &model[idx(row, col)];
         let focused = row == focused_row && col == focused_col;
+        let selected = selection.is_some_and(|(c0, c1)| (c0..=c1).contains(&col));
         let edit_active = editing == Some((row, col)) && COL_KINDS[col].is_text_editable();
-        view_cell(row, col, value, focused, edit_active, theme, edit_field)
+        let fill = cell_fill(theme, focused, selected);
+        view_cell(row, col, value, fill, edit_active, theme, edit_field)
     }));
     // R937 — the live drop line overlays the row's edge (absolutely positioned,
     // last in paint order) when this row is the in-flight drag's drop target.
@@ -4450,6 +4776,14 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let last_row = nrows(&model).saturating_sub(1);
     let vis_rows = visible_rows(&model, sort, filter.as_ref(), group_col, &collapsed);
     let group_labels = group_col.map(|col| group_table(&model, col));
+    // R1372 §5.38 — the cell-selection rectangle in VISIBLE-position coords, from
+    // the SOURCE anchor + cursor over the current data order. Derived from the
+    // SAME `vis_rows` snapshot the body windows over, so paint + selection agree.
+    // The Data arm below washes the cells inside it; `None` = no range (the lone
+    // cursor shows only its focus highlight).
+    let sel_anchor = use_cell_anchor().get();
+    let sel_visible: Vec<usize> = vis_rows.iter().filter_map(GroupRow::source).collect();
+    let sel_bounds = cell_selection_bounds(&sel_visible, sel_anchor, focused_row, focused_col);
     // The status "showing" count stays the FILTER readout (data rows passing,
     // independent of collapse) — the R891 semantics, so its demo is unaffected.
     let view_len = current_order(&model, sort, filter.as_ref()).len();
@@ -4508,19 +4842,27 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                     .map_or("", String::as_str);
                 view_group_header(group, label, member_count, is_collapsed, &theme)
             }
-            GroupRow::Data { source } => view_data_row(
-                source,
-                &model,
-                (focused_row, focused_col),
-                editing,
-                &theme,
-                (edit_state, edit_caret),
-                reorder_enabled,
-                // Plain-view only, so the source index IS the visual position.
-                reorder_enabled
-                    .then(|| drop_edge_at(drag_gap, source, last_row))
-                    .flatten(),
-            ),
+            GroupRow::Data { source } => {
+                // R1372 — this row is in the selection when its source falls in
+                // the visible-position band; pass the col range so its cells wash.
+                let selection = sel_bounds
+                    .filter(|&(p0, _, p1, _)| sel_visible[p0..=p1].contains(&source))
+                    .map(|(_, c0, _, c1)| (c0, c1));
+                view_data_row(
+                    source,
+                    &model,
+                    (focused_row, focused_col),
+                    editing,
+                    &theme,
+                    (edit_state, edit_caret),
+                    reorder_enabled,
+                    // Plain-view only, so the source index IS the visual position.
+                    reorder_enabled
+                        .then(|| drop_edge_at(drag_gap, source, last_row))
+                        .flatten(),
+                    selection,
+                )
+            }
         },
     );
     // R940 — the choice dropdown overlay (barrier + panel) rides as a GRID-LOCAL
@@ -4771,6 +5113,13 @@ impl WidgetA11y for DataGridView {
             // R886/R891 — ungrouped flat grid; the rows are the filtered+sorted
             // order, so AT linear navigation matches what sighted users see.
             let order = current_order(&model, sort, filter.as_ref());
+            // R1372 §5.38 — per-cell aria-selected from the cell-range rectangle
+            // (the R952 `GridCell.selected` axis, now unblocked): `order` IS the
+            // visible data sequence, so the visible-position selection bounds map
+            // 1:1 to these rows. `Some(bool)` per cell while a range is active,
+            // `None` (omit) otherwise — the R953 SelectItems a11y shape.
+            let sel_bounds =
+                cell_selection_bounds(&order, use_cell_anchor().get(), focused_row, focused_col);
             let rows: Vec<GridRow> = order
                 .iter()
                 .map(|&row| GridRow {
@@ -4782,7 +5131,9 @@ impl WidgetA11y for DataGridView {
                             tag: cell_tag(row, col),
                             name: format!("{}: {}", COL_NAMES[col], model[idx(row, col)].display()),
                             focused: row == focused_row && col == focused_col,
-                            selected: None, // R952 — editable grid: no cell range selection
+                            selected: sel_bounds.map(|(p0, c0, p1, c1)| {
+                                order[p0..=p1].contains(&row) && (c0..=c1).contains(&col)
+                            }),
                         })
                         .collect(),
                 })
@@ -9920,6 +10271,307 @@ mod tests {
                 intro.query("value.0.1"),
                 grid_intro(&boot_scene()).query("value.0.1"),
                 "the Choice cell is unchanged (not text-pasteable)",
+            );
+        });
+    }
+
+    // ─── R1372 cell-range selection + copy (the copy/paste symmetry) ───
+
+    #[test]
+    fn r1372_cell_selection_bounds_projects_source_endpoints_to_visible_rect() {
+        // Pure: the SOURCE anchor + cursor project through the visible order to a
+        // normalized visible-POSITION rectangle; an off-view endpoint => None.
+        let visible = [3usize, 0, 1, 2]; // a sort permutation: source -> position
+        // anchor source 3 (pos 0), cursor source 1 (pos 2), cols 0..=2.
+        assert_eq!(
+            cell_selection_bounds(&visible, Some((3, 0)), 1, 2),
+            Some((0, 0, 2, 2)),
+            "endpoints project to the visible-position bbox",
+        );
+        // Normalizes regardless of endpoint order (anchor after the cursor).
+        assert_eq!(
+            cell_selection_bounds(&visible, Some((1, 2)), 3, 0),
+            Some((0, 0, 2, 2)),
+        );
+        assert_eq!(
+            cell_selection_bounds(&visible, None, 1, 0),
+            None,
+            "no anchor"
+        );
+        assert_eq!(
+            cell_selection_bounds(&visible, Some((9, 0)), 1, 0),
+            None,
+            "anchor source not visible (filtered) collapses the range",
+        );
+        assert_eq!(
+            cell_selection_bounds(&visible, Some((3, 0)), 9, 0),
+            None,
+            "cursor source not visible collapses the range",
+        );
+    }
+
+    #[test]
+    fn r1372_parse_row_col_rejects_malformed() {
+        assert_eq!(parse_row_col("2,1"), Some((2, 1)));
+        assert_eq!(parse_row_col(" 2 , 1 "), Some((2, 1)), "trims whitespace");
+        assert_eq!(parse_row_col("2"), None, "no comma");
+        assert_eq!(parse_row_col("x,1"), None, "non-numeric row");
+        assert_eq!(parse_row_col("2,y"), None, "non-numeric col");
+    }
+
+    #[test]
+    fn r1372_cell_fill_precedence_focus_over_selection() {
+        let theme = Theme::light();
+        // Focus wins over selection (the active descendant reads distinctly).
+        assert_eq!(cell_fill(&theme, true, true), focus_fill(&theme, true));
+        assert_eq!(cell_fill(&theme, true, false), focus_fill(&theme, true));
+        // A selected (non-focused) cell washes — distinct from focus + transparent.
+        let wash = cell_fill(&theme, false, true);
+        assert_ne!(wash, Color::TRANSPARENT, "a selected cell washes");
+        assert_ne!(
+            wash,
+            focus_fill(&theme, true),
+            "the selection tone != focus"
+        );
+        // Neither => transparent (the surface shows through).
+        assert_eq!(cell_fill(&theme, false, false), Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn r1372_rpc_select_extend_clear_and_reads() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // No range at boot.
+            assert_eq!(intro.query("cell_selection"), Some(IntrospectValue::Null));
+            assert_eq!(
+                intro.query("cell_selection_count"),
+                Some(IntrospectValue::Int(0))
+            );
+            assert_eq!(
+                intro.query("cell_selection_tsv"),
+                Some(IntrospectValue::Null)
+            );
+            // Select (0,0) then extend to (2,1): a 3x2 rectangle over the plain
+            // (unsorted) view, so visible positions == source rows.
+            assert_eq!(
+                intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned())),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(
+                intro.invoke("extend-cell", IntrospectValue::Text("2,1".to_owned())),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(
+                intro.query("cell_selection"),
+                Some(IntrospectValue::Text("0,0,2,1".to_owned())),
+            );
+            assert_eq!(
+                intro.query("cell_selection_count"),
+                Some(IntrospectValue::Int(6)),
+                "3 rows x 2 cols",
+            );
+            // The Asset column (col 0) is Hero / Tree / Coin down rows 0..=2.
+            let IntrospectValue::Text(tsv) = intro.query("cell_selection_tsv").unwrap() else {
+                panic!("cell_selection_tsv is Text when a range is active");
+            };
+            assert_eq!(tsv.matches('\n').count(), 2, "3 rows -> 2 newlines");
+            for line in tsv.split('\n') {
+                assert_eq!(line.matches('\t').count(), 1, "2 cols -> 1 tab per row");
+            }
+            assert!(tsv.starts_with("Hero\t"), "row 0 asset is Hero");
+            assert!(tsv.contains("\nTree\t"), "row 1 asset is Tree");
+            assert!(tsv.contains("\nCoin\t"), "row 2 asset is Coin");
+            // Out-of-range select is a no-op (false); a malformed pair is Rejected.
+            assert_eq!(
+                intro.invoke("select-cell", IntrospectValue::Text("99,0".to_owned())),
+                Ok(IntrospectValue::Bool(false)),
+            );
+            assert!(
+                intro
+                    .invoke("extend-cell", IntrospectValue::Text("bad".to_owned()))
+                    .is_err(),
+            );
+            // Clear drops the range (the cursor stays put).
+            assert_eq!(
+                intro.invoke("clear-cell-selection", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(intro.query("cell_selection"), Some(IntrospectValue::Null));
+        });
+    }
+
+    #[test]
+    fn r1372_copy_yields_range_then_the_lone_focused_cell() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // With no range, `copy` yields the lone FOCUSED cell (boot cursor
+            // (0,0) = Hero) — a bare Ctrl+C copies one cell.
+            assert_eq!(
+                intro.invoke("copy", IntrospectValue::Null),
+                Ok(IntrospectValue::Text("Hero".to_owned())),
+            );
+            // With a range, `copy` == `cell_selection_tsv` (the one funnel).
+            let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+            let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,0".to_owned()));
+            let copied = intro.invoke("copy", IntrospectValue::Null).unwrap();
+            assert_eq!(copied, intro.query("cell_selection_tsv").unwrap());
+            assert_eq!(copied, IntrospectValue::Text("Hero\nTree".to_owned()));
+        });
+    }
+
+    #[test]
+    fn r1372_keyboard_shift_arrow_extends_plain_collapses_escape_clears() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let shift = Modifiers {
+                shift: true,
+                ..Modifiers::empty()
+            };
+            let plain = Modifiers::empty();
+            // From (0,0): Shift+ArrowDown then Shift+ArrowRight grow a 2x2 rect
+            // from the pinned (0,0) anchor.
+            assert!(DataGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowDown",
+                shift
+            ));
+            assert!(DataGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowRight",
+                shift
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("cell_selection"),
+                Some(IntrospectValue::Text("0,0,1,1".to_owned())),
+                "Shift+arrows grow the rectangle from the pinned anchor",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("cell_selection_count"),
+                Some(IntrospectValue::Int(4)),
+            );
+            // A plain arrow collapses the range (anchor dropped) and moves.
+            assert!(DataGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowDown",
+                plain
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("cell_selection"),
+                Some(IntrospectValue::Null),
+                "a plain arrow collapses the selection",
+            );
+            // Escape after a fresh Shift-extend clears the range + is consumed.
+            assert!(DataGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "ArrowUp",
+                shift
+            ));
+            assert_ne!(
+                grid_intro(&scene).query("cell_selection"),
+                Some(IntrospectValue::Null),
+                "Shift+ArrowUp re-armed a range",
+            );
+            assert!(DataGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Escape",
+                plain
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("cell_selection"),
+                Some(IntrospectValue::Null),
+                "Escape cleared the range",
+            );
+        });
+    }
+
+    #[test]
+    fn r1372_a11y_cell_aria_selected_tracks_the_range() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // No range: cells omit aria-selected (None).
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            assert_eq!(
+                nodes
+                    .iter()
+                    .find(|n| n.tag == cell_tag(0, 0))
+                    .unwrap()
+                    .selected,
+                None,
+                "no range -> aria-selected omitted",
+            );
+            // Select the 2x2 rectangle (0,0)-(1,1).
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+                let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,1".to_owned()));
+            }
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            let sel = |t: String| nodes.iter().find(|n| n.tag == t).unwrap().selected;
+            assert_eq!(
+                sel(cell_tag(0, 0)),
+                Some(true),
+                "in-range cell aria-selected"
+            );
+            assert_eq!(sel(cell_tag(1, 1)), Some(true));
+            assert_eq!(sel(cell_tag(0, 2)), Some(false), "col outside the range");
+            assert_eq!(sel(cell_tag(2, 0)), Some(false), "row outside the range");
+        });
+    }
+
+    /// R1372 — the selection wash is guarded at the scene-data level (§2 #7),
+    /// not a GPU screenshot: a flat cell background is fully determined by the
+    /// `view` threading selection -> [`cell_fill`], so assert the painted cell
+    /// container's fill directly (deterministic + CI-safe, no pixels).
+    fn fill_of_cell(scene: &Scene, tag: &str) -> Option<Color> {
+        if scene.tag() == Some(tag) {
+            if let Scene::Container(c) = scene {
+                return Some(c.style.fill);
+            }
+        }
+        match scene {
+            Scene::Container(n) => n.children.iter().find_map(|c| fill_of_cell(c, tag)),
+            Scene::Scroll(n) => fill_of_cell(&n.content, tag),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r1372_selected_cells_wash_distinctly_in_the_paint() {
+        Owner::new().run(|| {
+            let mut scene0 = boot_scene();
+            {
+                let node = scene0.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+                let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,1".to_owned()));
+            }
+            // R897 — seed a viewport so the body windows the seeded rows (the
+            // read-only grids' unit-test convention; no shell layout pass).
+            use_scroll_state(V_SCROLL_KEY).set_measured_viewport(GRID_VIEWPORT_W, GRID_VIEWPORT_H);
+            let scene = view((TextFieldState::Idle, 0), &Frame::new());
+            // Cursor ended at (1,1), so (0,0) is selected-but-not-focused (a pure
+            // selection wash); (3,3) is neither (transparent).
+            let sel = fill_of_cell(&scene, &cell_tag(0, 0)).expect("selected cell painted");
+            let unsel = fill_of_cell(&scene, &cell_tag(3, 3)).expect("unselected cell painted");
+            assert_eq!(
+                unsel,
+                Color::TRANSPARENT,
+                "an unselected, unfocused cell is transparent (the surface shows through)",
+            );
+            assert_ne!(sel, Color::TRANSPARENT, "the selected cell is washed");
+            assert_ne!(
+                sel, unsel,
+                "a selected cell paints distinctly from an unselected one"
             );
         });
     }
