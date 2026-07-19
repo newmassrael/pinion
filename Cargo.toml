@@ -82,6 +82,7 @@ members = [
     "examples/hello-chart",
     "examples/hello-chart-fill",
     "examples/hello-donut",
+    "examples/hello-treemap",
     "examples/hello-scatter",
     "examples/hello-series-toggle",
     "examples/hello-legend-toggle",

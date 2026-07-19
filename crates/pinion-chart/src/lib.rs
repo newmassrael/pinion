@@ -66,13 +66,23 @@
 //! `y_tick_labels`, in [`draw`](crate)) rather than re-derive it; line and
 //! scatter share one plot resolver (`crate::plot`); the legend row is one
 //! definition across line, donut, and scatter; and the circle geometry one
-//! across the line and scatter markers.
+//! across the line and scatter markers. On the line chart, R1379-R1381 then
+//! added per-series visibility (`Series::visible` — a hidden series drops its
+//! geometry but keeps its index / legend slot / domain), an interactive legend
+//! ([`LineChart::interactive_legend`] — legend entries emit as focusable,
+//! tagged containers a caller binds to a toggle, so the chart stays a pure scene
+//! producer), and an opt-in [`LineChart::rescale_to_visible`] that re-domains
+//! the axes to only the visible series. And (R1382) the [`Treemap`] — the
+//! crate's SECOND part-of-whole form, area-encoded rather than angular: a
+//! squarified (Bruls-Huizing-van Wijk) tile layout with contrast-aware in-tile
+//! labels and the same scrub inspect (ring + `value (percent%)` tooltip).
 //!
-//! Not yet: treemap, legend-toggle, cross-filtering, and a y-rescale
-//! on zoom — follow-up slices on that same core. (A frequency *histogram* is a
-//! consumer pattern over [`BarChart`], not a distinct type —
-//! `hello-frame-profiler` bins its frame times into one, and R1375 lets a
-//! reader scrub it for each bin's frame count.)
+//! Not yet: cross-filtering across charts, and a y-rescale to a brush-zoomed
+//! x-window (distinct from R1381's rescale-to-VISIBLE-series) — follow-up
+//! slices on that same core. (A frequency *histogram* is a consumer pattern
+//! over [`BarChart`], not a distinct type — `hello-frame-profiler` bins its
+//! frame times into one, and R1375 lets a reader scrub it for each bin's frame
+//! count.)
 //!
 //! # Two entry points — pick by who places the chart
 //!
@@ -129,6 +139,7 @@ mod scatter;
 mod series;
 mod style;
 mod ticks;
+mod treemap;
 
 pub use bar::{Bar, BarChart};
 pub use donut::{DonutChart, Slice};
@@ -139,3 +150,4 @@ pub use scatter::ScatterChart;
 pub use series::{Bounds, DataPoint, Series, data_bounds, visible_data_bounds};
 pub use style::{ChartStyle, Margin};
 pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};
+pub use treemap::{Tile, Treemap};

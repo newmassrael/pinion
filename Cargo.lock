@@ -3427,6 +3427,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-treemap"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-undo"
 version = "0.0.1"
 dependencies = [

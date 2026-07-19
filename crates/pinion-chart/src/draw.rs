@@ -15,7 +15,8 @@
 use pinion_core::Scene;
 use pinion_core::scene::{BoxNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::style::{
-    BoxStyle, Color, LayoutStyle, PathStyle, Size, SizeValue, Stroke, TextAlign, TextStyle,
+    Border, BorderPlacement, BoxStyle, Color, LayoutStyle, PathStyle, Size, SizeValue, Stroke,
+    TextAlign, TextStyle,
 };
 
 use crate::style::{ChartStyle, Margin};
@@ -157,6 +158,27 @@ pub(crate) fn rounded_box_node(rect: Rect, fill: Color, radius: u32, tag: String
         BoxNode::new(rect, BoxStyle::filled(fill).with_corner_radius(radius))
             .with_tag(tag)
             .with_layout(absolute(rect)),
+    )
+}
+
+/// A hollow, tagged ring framing `rect` — the inspect highlight every
+/// rect-based chart draws over its focused mark. A transparent fill with a
+/// 2px, radius-2 border in `color`, placed `Outside` the rect so the ring
+/// frames the mark without tinting or covering it. Lifted from `bar.rs`
+/// (R1382): the bar chart rings its focused bar with it and the treemap rings
+/// its focused tile, so a rect-highlight ring is now one leaf here beside the
+/// crate's other shared draw leaves ([`box_node`] / [`rounded_box_node`] /
+/// [`marker_node`]) rather than a bar-private helper the treemap re-derives.
+pub(crate) fn outline_box(rect: Rect, color: Color, tag: String) -> Scene {
+    Scene::Box(
+        BoxNode::new(
+            rect,
+            BoxStyle::filled(Color::TRANSPARENT)
+                .with_border(Border::new(color, 2).with_placement(BorderPlacement::Outside))
+                .with_corner_radius(2),
+        )
+        .with_tag(tag)
+        .with_layout(absolute(rect)),
     )
 }
 

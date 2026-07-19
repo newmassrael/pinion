@@ -45,11 +45,12 @@
 //! Vello-only, and `Scene::Path` (the axes / gridlines) does not render on TUI.
 
 use pinion_core::Scene;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect};
-use pinion_core::style::{Border, BorderPlacement, BoxStyle, Color, TextAlign};
+use pinion_core::scene::{ContainerNode, Rect};
+use pinion_core::style::{Color, TextAlign};
 
 use crate::draw::{
-    CalloutRow, absolute, box_node, callout, fill_parent, label_node, plot_rect, to_f32, to_u32,
+    CalloutRow, absolute, box_node, callout, fill_parent, label_node, outline_box, plot_rect,
+    to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::scale::LinearScale;
@@ -485,22 +486,6 @@ struct BarGeom {
 struct BarInspect {
     highlight: Option<Scene>,
     tooltip: Vec<Scene>,
-}
-
-/// A hollow, tagged ring framing `rect` — the inspect highlight. A transparent
-/// fill with an `Outside`-placed border in the crosshair colour, so the ring
-/// frames the focused bar without tinting or covering it.
-fn outline_box(rect: Rect, color: Color, tag: String) -> Scene {
-    Scene::Box(
-        BoxNode::new(
-            rect,
-            BoxStyle::filled(Color::TRANSPARENT)
-                .with_border(Border::new(color, 2).with_placement(BorderPlacement::Outside))
-                .with_corner_radius(2),
-        )
-        .with_tag(tag)
-        .with_layout(absolute(rect)),
-    )
 }
 
 /// A bar's value formatted at the y-axis precision, or `"—"` for a non-finite
