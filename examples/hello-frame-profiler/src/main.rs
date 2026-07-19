@@ -132,7 +132,7 @@
 
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
-use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
+use pinion_chart::{Bar, BarChart, ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -169,6 +169,22 @@ const REPAINT_TAG: &str = "repaint";
 /// and the measured-rect seam's key, so the thing measured is by
 /// construction the thing painted.
 const CHART_TAG: &str = "chart";
+
+/// The distribution histogram's tag — its own introspection prefix
+/// (`histogram.bar.0` …) and measured-rect seam key, the bar-chart twin of
+/// [`CHART_TAG`]. The timeline (line) answers "how did each frame do over
+/// time"; the histogram answers "how OFTEN do I land in each duration band",
+/// the distribution the time-series cannot show.
+const HIST_TAG: &str = "histogram";
+
+/// The distribution histogram's bucket count. 12 keeps each bar wide enough to
+/// read + label across the panel while still resolving a bimodal frame-time
+/// distribution (a calm cluster + a jank tail) — the Chrome-DevTools
+/// frame-histogram granularity, not a tuned value.
+const HIST_BINS: usize = 12;
+
+/// Fixed height (px) of the histogram panel below the flex-grow timeline.
+const HIST_H: u32 = 150;
 
 const TITLE_FONT_PX: u32 = 16;
 const ROW_FONT_PX: u32 = 14;
@@ -259,6 +275,55 @@ fn timing_series(view: &FrameTimingsView, budget: Color) -> Vec<Series> {
     series
 }
 
+/// Bin the rolling window's total frame times into a distribution: `HIST_BINS`
+/// equal-width ms buckets from 0 to the window max, each bar's height the count
+/// of frames in that band (the labels are the buckets' lower ms edges). A
+/// bucket whose LOWER edge is at or past the frame budget is painted in the
+/// `over` (jank) colour — the R925 over-budget classification made visual, so a
+/// cluster of bars past the budget reads as how OFTEN (and how far) this window
+/// janks, the distribution the timeline cannot show. No samples yet ⇒ no bars
+/// (the chart still draws its empty axes).
+///
+/// The budget line the timeline draws is a horizontal threshold; here the same
+/// deadline is a colour boundary along the x-axis — the two encodings of the
+/// one `budget_us` the shell publishes, never diverging.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a bin index is 0..HIST_BINS and a frame count is a small window \
+              length; both are far below f64/usize precision limits and the \
+              index is clamped into range"
+)]
+fn histogram_bars(view: &FrameTimingsView, under: Color, over: Color) -> Vec<Bar> {
+    if view.samples.is_empty() {
+        return Vec::new();
+    }
+    let max_ms = view
+        .samples
+        .iter()
+        .map(|s| ms(s.total_us))
+        .fold(0.0_f64, f64::max)
+        .max(1.0);
+    let width = max_ms / HIST_BINS as f64;
+    let budget_ms = view.snapshot.and_then(|s| s.budget_us).map(ms);
+    let mut counts = [0u32; HIST_BINS];
+    for s in &view.samples {
+        let idx = ((ms(s.total_us) / width).floor() as usize).min(HIST_BINS - 1);
+        counts[idx] += 1;
+    }
+    (0..HIST_BINS)
+        .map(|k| {
+            let lo = k as f64 * width;
+            let color = match budget_ms {
+                Some(b) if lo >= b => over,
+                _ => under,
+            };
+            Bar::new(format!("{lo:.0}"), f64::from(counts[k])).with_color(color)
+        })
+        .collect()
+}
+
 /// The status readout. Every number here comes from the published snapshot —
 /// the same fold `scene/frame_timings` returns — so the HUD cannot disagree
 /// with what an AI client reads over RPC.
@@ -300,6 +365,31 @@ fn chart_style(theme: &pinion_core::Theme) -> ChartStyle {
     }
 }
 
+/// R1374 — the distribution histogram panel below the timeline: the SAME
+/// window's total frame times, binned. Under-budget bars in the accent,
+/// over-budget (jank) bars in the error colour — the timeline's horizontal
+/// budget line re-encoded as a colour boundary along the x-axis. A fixed-height
+/// slot (the timeline flex-grows above it), on its own `HIST_TAG` measured-rect
+/// seam (`size` = the slot's measured px).
+fn histogram_panel(view: &FrameTimingsView, theme: &pinion_core::Theme, size: (u32, u32)) -> Scene {
+    let histogram = BarChart::new(histogram_bars(
+        view,
+        theme.resolve(ColorRole::Accent),
+        theme.resolve(ColorRole::Error),
+    ))
+    .with_tag_prefix(HIST_TAG)
+    .build_fill(size, &chart_style(theme));
+    Scene::Container(
+        ContainerNode::new(vec![histogram]).with_layout(
+            LayoutStyle::new().with_size(
+                Size::auto()
+                    .with_width(SizeValue::Percent(100))
+                    .with_height(SizeValue::Px(HIST_H)),
+            ),
+        ),
+    )
+}
+
 /// view-fn (§6.3): pure sync `(ToggleState, bool) -> Scene`.
 ///
 /// Pure *of published state*, which is what the `dry_run` guarantee needs:
@@ -313,9 +403,11 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     let surface = theme.resolve(ColorRole::Surface);
     let chip_fill = theme.resolve(ColorRole::SurfaceContainerHighest);
 
-    // The two seams: what to draw, and how big to draw it.
+    // The two seams: what to draw, and how big to draw it. One measured-rect
+    // seam per chart, keyed on its own tag.
     let timings = use_frame_timings();
     let (cw, ch) = use_pane_viewport_size(CHART_TAG);
+    let (hw, hh) = use_pane_viewport_size(HIST_TAG);
 
     let title = Scene::Text(
         TextNode::styled(
@@ -343,6 +435,9 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
                 .with_size(Size::auto().with_width(SizeValue::Percent(100))),
         ),
     );
+
+    // R1374 — the distribution histogram below the timeline (its own seam).
+    let hist_slot = histogram_panel(&timings, &theme, (hw, hh));
 
     let status = Scene::Text(
         TextNode::styled(
@@ -397,7 +492,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     // text coloured for a light surface (the R1360.2 class — two gallery
     // demos shipped that way).
     Scene::Container(
-        ContainerNode::new(vec![title, slot, status, repaint])
+        ContainerNode::new(vec![title, slot, hist_slot, status, repaint])
             .with_style(BoxStyle::filled(surface))
             .with_layout(
                 LayoutStyle::new()
@@ -448,10 +543,16 @@ impl ProfilerView {
     /// resize is part of what this binding demonstrates. The pre-R1361 cut
     /// declared only `initial_size`, which the derive lowers to
     /// `SizeStrategy::Fixed` — the window could not be resized at all.
+    ///
+    /// R1374 — the min HEIGHT (`400`, up from `240`) reserves room for BOTH
+    /// panels: the chrome (~112px) + the fixed `HIST_H` histogram would, at a
+    /// 240px min, squeeze the flex-grow timeline to zero (`build_fill((w, 0))`
+    /// paints nothing) and the primary panel would vanish. `400` keeps the
+    /// timeline above its empty sentinel at the smallest window.
     fn initial_size_strategy() -> SizeStrategy {
         SizeStrategy::OpenResizable {
             size: (WIN_W, WIN_H),
-            min: Some((320, 240)),
+            min: Some((360, 400)),
         }
     }
 
@@ -758,5 +859,91 @@ mod tests {
         let nodes = <ProfilerView as WidgetA11y>::access_node(&(ToggleState::Idle, true), None);
         assert_eq!(nodes[0].role, AriaRole::Switch);
         assert_eq!(nodes[0].tag, REPAINT_TAG);
+    }
+
+    /// R1374 — the histogram bins EVERY frame exactly once, and paints a bucket
+    /// whose lower edge is at/past the budget in the over-budget (jank) colour.
+    #[test]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "HIST_BINS / a bin index are small display counts, exact in f64"
+    )]
+    fn r1374_histogram_bins_the_window_and_colours_over_budget() {
+        let mut stats = FrameTimingStats::new();
+        // Three ~8ms frames (under the 16.7ms budget), one 24ms jank frame.
+        for &t in &[8_000u64, 8_000, 8_000, 24_000] {
+            stats.record(FrameTiming::new(t / 2, t / 4, 0, t / 8, t));
+        }
+        let view = FrameTimingsView {
+            samples: stats.samples().copied().collect(),
+            snapshot: stats.snapshot(Some(16_666)),
+        };
+        let under = Color::rgb(0x40, 0x80, 0xF0);
+        let over = Color::rgb(0xE0, 0x40, 0x40);
+        let bars = histogram_bars(&view, under, over);
+        assert_eq!(bars.len(), HIST_BINS, "one bar per bin");
+        let binned: f64 = bars.iter().map(|b| b.value).sum();
+        assert!(
+            (binned - 4.0).abs() < 1e-9,
+            "every frame is binned exactly once"
+        );
+        // max = 24ms ⇒ bin width 2ms; a bin's colour is the budget test on its
+        // lower edge (k·2ms vs 16.666ms).
+        let width = 24.0 / HIST_BINS as f64;
+        for (k, b) in bars.iter().enumerate() {
+            let expected = if (k as f64) * width >= 16.666 {
+                over
+            } else {
+                under
+            };
+            assert_eq!(b.color, Some(expected), "bin {k} over/under-budget colour");
+        }
+        // The 24ms jank frame lands in the top bin (24/2 = 12, clamped to 11).
+        assert!(
+            bars[HIST_BINS - 1].value >= 1.0,
+            "the jank frame is in the top bin"
+        );
+        // The three 8ms frames share bin 4 (8/2 = 4).
+        assert!(
+            (bars[4].value - 3.0).abs() < 1e-9,
+            "the calm frames cluster in bin 4"
+        );
+    }
+
+    /// R1374 — an empty window bins to no bars (the chart still draws its axes).
+    #[test]
+    fn r1374_no_samples_yet_is_an_empty_distribution() {
+        let bars = histogram_bars(
+            &FrameTimingsView::default(),
+            Color::rgb(0, 0, 0),
+            Color::rgb(0, 0, 0),
+        );
+        assert!(bars.is_empty(), "no frames ⇒ no bars");
+    }
+
+    /// R1374 — after real frames flow through the seam, the histogram panel
+    /// paints its own tagged bars + axes beside the timeline (§2 #7).
+    #[test]
+    fn r1374_histogram_panel_paints_after_frames() {
+        let core: pinion_runtime::CoreShell<ProfilerView> = pinion_runtime::CoreShell::new();
+        seed(
+            core.root_owner(),
+            &[2_000, 3_000, 20_000, 2_500],
+            Some(16_666),
+        );
+        let scene = paint_cycle(&core, 760, 520);
+        assert!(
+            find(&scene, "histogram.bar.0").is_some(),
+            "the histogram painted bars"
+        );
+        assert!(
+            find(&scene, "histogram.axis.x").is_some(),
+            "with its own axes"
+        );
+        // The two charts are distinct panels, not one tag reused.
+        assert!(
+            find(&scene, "chart.series.0").is_some(),
+            "the timeline still paints too"
+        );
     }
 }

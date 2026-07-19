@@ -50,11 +50,14 @@
 //! and a legend (R1354); a scrub [`inspect`](LineChart::inspect) overlay —
 //! crosshair, per-series markers, value tooltip (R1355); x-domain clipping
 //! (R1356) and the pinned-domain re-scaling a brush zoom drives (R1357);
-//! a **layout-native** entry point, [`LineChart::build_fill`] (R1360).
+//! a **layout-native** entry point, [`LineChart::build_fill`] (R1360); and a
+//! categorical [`BarChart`] with per-bar colours (R1374), sharing the same
+//! `scale` / `ticks` / `palette` / [`draw`](crate) core.
 //!
-//! Not yet: histogram / bar / donut / treemap / scatter, legend-toggle,
-//! cross-filtering, and a y-rescale on zoom — follow-up slices on the same
-//! `scale` / `ticks` / `palette` core.
+//! Not yet: donut / treemap / scatter, legend-toggle, cross-filtering, and a
+//! y-rescale on zoom — follow-up slices on that same core. (A frequency
+//! *histogram* is a consumer pattern over [`BarChart`], not a distinct type —
+//! `hello-frame-profiler` bins its frame times into one.)
 //!
 //! # Two entry points — pick by who places the chart
 //!
@@ -100,14 +103,19 @@
 //!   (structured scene) and §2 #7 (scene-as-data); it does **not** satisfy
 //!   §2 #6 today, and that gap is stated here rather than left silent.
 
+mod bar;
+mod draw;
 mod line;
 mod palette;
 mod scale;
 mod series;
+mod style;
 mod ticks;
 
-pub use line::{ChartStyle, LineChart, Margin};
+pub use bar::{Bar, BarChart};
+pub use line::LineChart;
 pub use palette::CategoricalPalette;
 pub use scale::LinearScale;
 pub use series::{Bounds, DataPoint, Series, data_bounds};
+pub use style::{ChartStyle, Margin};
 pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};

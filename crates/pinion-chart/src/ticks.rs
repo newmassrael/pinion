@@ -100,6 +100,17 @@ fn round_dust(value: f64, spacing: f64) -> f64 {
     (value * factor).round() / factor
 }
 
+/// The gap between consecutive ticks, or `0` for a degenerate axis (one or
+/// no tick) — `tick_decimals(0.0)` is `0`, i.e. whole-number labels. The step
+/// each axis formats at, shared by the line and bar builders so their labels
+/// carry the same precision.
+pub(crate) fn tick_step(ticks: &[f64]) -> f64 {
+    match ticks {
+        [a, b, ..] => (b - a).abs(),
+        _ => 0.0,
+    }
+}
+
 /// Decimal places a label needs to render a tick at the given `step`
 /// without a spurious trailing digit — `0` for `step >= 1`, else the
 /// magnitude of the fractional step. Bounded to `0..=10`.

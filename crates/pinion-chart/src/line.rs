@@ -67,127 +67,16 @@
 use core::fmt::Write as _;
 
 use pinion_core::Scene;
-use pinion_core::scene::{
-    BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode,
-};
-use pinion_core::style::{
-    BoxStyle, Color, LayoutStyle, PathStyle, Size, SizeValue, Stroke, StrokeCap, TextAlign,
-    TextStyle,
-};
+use pinion_core::scene::{BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect};
+use pinion_core::style::{BoxStyle, Color, PathStyle, Stroke, StrokeCap, TextAlign};
 
+use crate::draw::{
+    absolute, area_path, box_node, fill_parent, label_node, plot_rect, stroke_path, to_f32, to_u32,
+};
 use crate::palette::CategoricalPalette;
 use crate::series::{DataPoint, Series, data_bounds};
-use crate::ticks::{format_axis_tick, nice_ticks};
-
-/// Pixel insets between the chart `rect` and its plotting area, leaving
-/// room for the axis tick labels and (top) the legend row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Margin {
-    /// Left inset — the y-axis label gutter.
-    pub left: u32,
-    /// Top inset — the legend row.
-    pub top: u32,
-    /// Right inset.
-    pub right: u32,
-    /// Bottom inset — the x-axis label row.
-    pub bottom: u32,
-}
-
-impl Margin {
-    /// Explicit per-side margins.
-    #[must_use]
-    pub const fn new(left: u32, top: u32, right: u32, bottom: u32) -> Self {
-        Self {
-            left,
-            top,
-            right,
-            bottom,
-        }
-    }
-
-    /// The same inset on every side.
-    #[must_use]
-    pub const fn uniform(value: u32) -> Self {
-        Self::new(value, value, value, value)
-    }
-}
-
-impl Default for Margin {
-    fn default() -> Self {
-        Self::new(52, 28, 16, 28)
-    }
-}
-
-/// Resolved colours, sizes, and layout knobs for a chart render. The
-/// colour fields are plain [`Color`]s so this crate stays decoupled from
-/// the theme system — the consumer resolves its theme roles (e.g.
-/// `ColorRole::Outline` for the grid) into these fields.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ChartStyle {
-    /// Axis line colour.
-    pub axis: Color,
-    /// Gridline colour (usually a low-alpha outline).
-    pub grid: Color,
-    /// Tick-label and legend-label text colour.
-    pub label: Color,
-    /// Optional plot background fill.
-    pub background: Option<Color>,
-    /// Tick-label / legend font size in px.
-    pub label_size_px: u32,
-    /// Series polyline stroke width in px.
-    pub series_width: u32,
-    /// Alpha (0-255) of the translucent area fill under a filled series.
-    pub area_alpha: u8,
-    /// Plot insets.
-    pub margin: Margin,
-    /// Target x-axis tick count (nice-number snapped).
-    pub x_ticks: usize,
-    /// Target y-axis tick count (nice-number snapped).
-    pub y_ticks: usize,
-    /// Whether to render the legend row.
-    pub legend: bool,
-    /// Inspect crosshair line colour (the vertical scrub guide).
-    pub crosshair: Color,
-    /// Radius (px) of the per-series inspect marker dots.
-    pub marker_radius: u32,
-    /// Inspect tooltip background fill.
-    pub tooltip_bg: Color,
-    /// Inspect tooltip header / text colour (series values use the
-    /// series colour; this is the `x = …` header).
-    pub tooltip_fg: Color,
-}
-
-impl ChartStyle {
-    /// The default chart style (neutral greys that read on a mid
-    /// surface). Alias for [`Default::default`].
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl Default for ChartStyle {
-    fn default() -> Self {
-        let neutral = Color::rgb(0x8A, 0x92, 0x9E);
-        Self {
-            axis: neutral,
-            grid: neutral.with_alpha(0x30),
-            label: neutral,
-            background: None,
-            label_size_px: 11,
-            series_width: 2,
-            area_alpha: 40,
-            margin: Margin::default(),
-            x_ticks: 6,
-            y_ticks: 5,
-            legend: true,
-            crosshair: neutral.with_alpha(0xB0),
-            marker_radius: 4,
-            tooltip_bg: Color::rgb(0x25, 0x2A, 0x33),
-            tooltip_fg: Color::rgb(0xE8, 0xEB, 0xEF),
-        }
-    }
-}
+use crate::style::ChartStyle;
+use crate::ticks::{format_axis_tick, nice_ticks, tick_step};
 
 /// A line chart: one or more [`Series`] drawn as polylines with nice
 /// axes, gridlines, labels, and a legend. Set [`filled`](Self::filled) to
@@ -351,8 +240,8 @@ impl LineChart {
         // The label precision each axis formats at (R1359: `format_si` alone
         // collapsed every sub-0.1 step onto one rounded digit).
         let steps = Steps {
-            x: step_of(&x_ticks),
-            y: step_of(&y_ticks),
+            x: tick_step(&x_ticks),
+            y: tick_step(&y_ticks),
         };
 
         // Inspect overlay, split so the crosshair paints behind the
@@ -601,8 +490,8 @@ impl LineChart {
         let x_ticks: Vec<f64> = Self::axis_ticks(plot.x.domain(), style.x_ticks);
         let y_ticks: Vec<f64> = Self::axis_ticks(plot.y.domain(), style.y_ticks);
         let steps = Steps {
-            x: step_of(&x_ticks),
-            y: step_of(&y_ticks),
+            x: tick_step(&x_ticks),
+            y: tick_step(&y_ticks),
         };
         let (focus_x, hits) = self.resolve_focus(&plot, rect)?;
         let mut out = format!("x = {}", format_axis_tick(focus_x, steps.x));
@@ -744,15 +633,6 @@ impl LineChart {
 struct Steps {
     x: f64,
     y: f64,
-}
-
-/// The gap between consecutive ticks, or 0 for a degenerate axis (one or
-/// no tick) — `tick_decimals(0.0)` is 0, i.e. whole-number labels.
-fn step_of(ticks: &[f64]) -> f64 {
-    match ticks {
-        [a, b, ..] => (b - a).abs(),
-        _ => 0.0,
-    }
 }
 
 /// The three inspect layers, kept separate so `build` can interleave
@@ -923,12 +803,7 @@ impl Plot {
         y_domain: Option<(f64, f64)>,
         style: &ChartStyle,
     ) -> Self {
-        let m = style.margin;
-        let x0 = rect.x + m.left;
-        let y0 = rect.y + m.top;
-        let x1 = (rect.x + rect.w).saturating_sub(m.right).max(x0 + 1);
-        let y1 = (rect.y + rect.h).saturating_sub(m.bottom).max(y0 + 1);
-        let (left, right, top, bottom) = (to_f32(x0), to_f32(x1), to_f32(y0), to_f32(y1));
+        let (left, right, top, bottom) = plot_rect(rect, style.margin);
 
         let bounds = data_bounds(series);
         let raw_x = x_domain.or(bounds.map(|b| b.x)).unwrap_or((0.0, 1.0));
@@ -975,172 +850,12 @@ fn clamp(value: f64, lo: f64, hi: f64) -> f64 {
     value.max(lo).min(hi)
 }
 
-/// A stroked polyline path from plot-space points.
-fn stroke_path(points: &[(f32, f32)], stroke: Stroke, tag: String) -> Scene {
-    let bbox = bbox_of(points, stroke.width);
-    let commands = polyline_commands(&rebased(points, bbox), false);
-    Scene::Path(
-        PathNode::new(bbox, commands, PathStyle::stroked(stroke))
-            .with_tag(tag)
-            .with_layout(absolute(bbox)),
-    )
-}
-
-/// A filled area path: the polyline dropped to `baseline_y` and closed.
-fn area_path(points: &[(f32, f32)], baseline_y: f32, fill: Color, tag: String) -> Scene {
-    // The bbox must be resolved BEFORE the commands: the baseline union can
-    // move the box's origin (a baseline above every point lifts `bbox.y`), and
-    // R1358 rebases the commands onto that final origin.
-    let mut bbox = bbox_of(points, 0);
-    bbox = bbox.union(Rect::new(bbox.x, to_u32(baseline_y), 1, 1));
-    let (ox, oy) = (to_f32(bbox.x), to_f32(bbox.y));
-    let mut commands = polyline_commands(&rebased(points, bbox), false);
-    if let (Some(&(last_x, _)), Some(&(first_x, _))) = (points.last(), points.first()) {
-        commands.push(PathCommand::LineTo(PathPoint::new(
-            last_x - ox,
-            baseline_y - oy,
-        )));
-        commands.push(PathCommand::LineTo(PathPoint::new(
-            first_x - ox,
-            baseline_y - oy,
-        )));
-        commands.push(PathCommand::Close);
-    }
-    Scene::Path(
-        PathNode::new(bbox, commands, PathStyle::filled(fill))
-            .with_tag(tag)
-            .with_layout(absolute(bbox)),
-    )
-}
-
-/// R1358 — rebase plot-space points onto `bbox`'s origin so the emitted
-/// [`PathCommand`]s are relative to the path node's own rect, which is what
-/// positions it. Subtracting exactly the origin the node carries makes the
-/// rebase pixel-exact: the paint adapter translates by the same value, and a
-/// `bbox_of` origin clamped at 0 stays consistent with the commands built
-/// from it.
-fn rebased(points: &[(f32, f32)], bbox: Rect) -> Vec<(f32, f32)> {
-    let (ox, oy) = (to_f32(bbox.x), to_f32(bbox.y));
-    points.iter().map(|&(x, y)| (x - ox, y - oy)).collect()
-}
-
-fn polyline_commands(points: &[(f32, f32)], close: bool) -> Vec<PathCommand> {
-    let mut commands = Vec::with_capacity(points.len() + usize::from(close));
-    for (i, &(x, y)) in points.iter().enumerate() {
-        let p = PathPoint::new(x, y);
-        if i == 0 {
-            commands.push(PathCommand::MoveTo(p));
-        } else {
-            commands.push(PathCommand::LineTo(p));
-        }
-    }
-    if close && !points.is_empty() {
-        commands.push(PathCommand::Close);
-    }
-    commands
-}
-
-fn box_node(rect: Rect, fill: Color, tag: String) -> Scene {
-    Scene::Box(
-        BoxNode::new(rect, BoxStyle::filled(fill))
-            .with_tag(tag)
-            .with_layout(absolute(rect)),
-    )
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "a label is intrinsically a box + text + alignment tuple; grouping them into a struct would not reduce the real parameter count"
-)]
-fn label_node(
-    text: impl Into<String>,
-    x: u32,
-    y: u32,
-    width: u32,
-    align: TextAlign,
-    color: Color,
-    size: u32,
-    tag: String,
-) -> Scene {
-    Scene::Text(
-        TextNode::styled(
-            text,
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(size)
-                .with_fg(color)
-                .with_align(align),
-        )
-        .with_tag(tag)
-        .with_layout(
-            LayoutStyle::new()
-                .with_absolute_position(x, y)
-                .with_size(Size::px(width.max(1), size + 4)),
-        ),
-    )
-}
-
-fn absolute(rect: Rect) -> LayoutStyle {
-    LayoutStyle::new()
-        .with_absolute_position(rect.x, rect.y)
-        .with_size(Size::px(rect.w.max(1), rect.h.max(1)))
-}
-
-/// R1360 — a chart root that FILLS its layout slot (both axes 100%), so
-/// taffy sizes it from its parent and the [`LineChart::build_fill`]
-/// children's parent-relative `absolute_position`s resolve against the
-/// placed origin.
-fn fill_parent() -> LayoutStyle {
-    LayoutStyle::new().with_size(
-        Size::auto()
-            .with_width(SizeValue::Percent(100))
-            .with_height(SizeValue::Percent(100)),
-    )
-}
-
-fn bbox_of(points: &[(f32, f32)], pad: u32) -> Rect {
-    let mut min_x = f32::INFINITY;
-    let mut min_y = f32::INFINITY;
-    let mut max_x = f32::NEG_INFINITY;
-    let mut max_y = f32::NEG_INFINITY;
-    for &(x, y) in points {
-        min_x = min_x.min(x);
-        min_y = min_y.min(y);
-        max_x = max_x.max(x);
-        max_y = max_y.max(y);
-    }
-    if !min_x.is_finite() {
-        return Rect::default();
-    }
-    let pad_f = to_f32(pad);
-    let x = to_u32(min_x - pad_f);
-    let y = to_u32(min_y - pad_f);
-    let w = to_u32(max_x - min_x) + pad * 2 + 1;
-    let h = to_u32(max_y - min_y) + pad * 2 + 1;
-    Rect::new(x, y, w, h)
-}
-
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "pixel coordinate u32 -> f32; display-bounded magnitudes"
-)]
-fn to_f32(v: u32) -> f32 {
-    v as f32
-}
-
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "pixel f32 -> u32; rounded and clamped non-negative"
-)]
-fn to_u32(v: f32) -> u32 {
-    v.round().max(0.0) as u32
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::series::DataPoint;
+    use crate::style::Margin;
+    use pinion_core::style::{Size, SizeValue};
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
         match scene {
