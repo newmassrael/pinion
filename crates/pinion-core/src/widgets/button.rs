@@ -24,33 +24,14 @@ mod sm {
 use sm::ButtonPolicy;
 pub use sm::{ButtonEvent, ButtonState};
 
-// R643 §5.16 — bidirectional `&'static str` mapping for the
-// sce-build-emitted enums. vendor/sce templates emit no pinion
-// derives ([[sce-priority-over-pinion]]); the pinion-side
-// declarative macros below provide the impls without touching
-// vendor/sce. Each binding then opts into the derived
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `ButtonState` / `ButtonEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed
+// from the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS`
+// const (see `pinion-derive`); the per-widget `widget_{state,event}_name!`
+// macros are retired. Bindings still opt into the derived
 // `WidgetCore::read_state` + `WidgetCore::event_name` via the
-// `state_name_derive` flag on `#[pinion_derive::widget]` instead of
-// hand-writing 30+ LOC of `match` arms per binding.
-crate::widget_state_name!(
-    ButtonState,
-    default = Idle,
-    [Idle, Hover, Pressed, Disabled,]
-);
-crate::widget_event_name!(
-    ButtonEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        KeyboardActivate,
-        Disable,
-        Enable,
-    ],
-    internal = [ButtonActivate, Null],
-);
+// `state_name_derive` flag on `#[pinion_derive::widget]`.
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -490,8 +471,8 @@ mod tests {
     fn r773_pointer_wire_vocab_pins_to_scxml_canonical_names() {
         // The hand-maintained `PointerWireEvent` vocabulary (the router
         // emit / command-widget decode SSOT) and the SCE-emitted
-        // `ButtonEvent` vocabulary (`stringify!(Variant)` via
-        // `widget_event_name!`) carry the same five pointer names but
+        // `ButtonEvent` vocabulary (the variant ident string via the
+        // SCE-002 `WidgetEventName` derive) carry the same five pointer names but
         // own them in different layers. This pins the two so a rename on
         // either side fails at test time instead of silently desyncing
         // the router from the statechart (`as_name` is the SCXML canon).

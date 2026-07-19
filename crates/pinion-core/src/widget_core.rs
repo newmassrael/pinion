@@ -981,15 +981,17 @@ pub trait WidgetCore: 'static {
 /// fallback (defensive default for unknown names — matches the every-
 /// binding "first variant on failure" convention).
 ///
-/// vendor/sce templates emit the [`WidgetCore::State`] enum without
-/// any pinion-side derives ([[sce-priority-over-pinion]] keeps
-/// `vendor/sce` untouched), so the impl is wired pinion-side in
-/// `pinion-core/src/widgets/<widget>.rs` via the
-/// [`widget_state_name!`](crate::widget_state_name) declarative macro
-/// next to the `pub use sm::*;` re-export. Authors of new SCE-emitted
-/// state enums add one macro invocation; the bindings then opt into
-/// the derived [`WidgetCore::read_state`] body via the
-/// `state_name_derive` flag on `#[widget]`.
+/// SCE-002 §5.16 — the sce codegen emits the [`WidgetCore::State`] enum
+/// carrying a `#[default]` marker on its SCXML-initial variant, and
+/// `pinion-core`'s `build.rs` injects `#[derive(WidgetStateName)]` (from
+/// `pinion-derive`) onto it via `compile_scxml_with_derives`. The derive
+/// maps each variant to its ident string for [`as_name`](Self::as_name)
+/// and falls through to that `#[default]` state for an unknown name in
+/// [`from_name_or_default`](Self::from_name_or_default), replacing the per-widget
+/// `widget_state_name!` declarative macro that used to be hand-written
+/// next to each `pub use sm::*;` re-export. Bindings then opt into the
+/// derived [`WidgetCore::read_state`] body via the `state_name_derive`
+/// flag on `#[widget]`.
 pub trait WidgetStateName: Sized {
     /// Map `self` to its `PascalCase` SCXML state id (1:1 with the
     /// `<state id="...">` attribute in the source `.scxml`).
@@ -1026,11 +1028,16 @@ pub trait WidgetStateName: Sized {
 /// The split is why the event side cannot reuse the state side's
 /// total [`WidgetStateName::from_name_or_default`] — there is no
 /// "default event", and silently coercing an unknown event name to
-/// some fallback would let RPC callers desync the statechart. The
-/// [`widget_event_name!`](crate::widget_event_name) macro therefore
-/// takes two variant groups (`external` / `internal`) and emits the
-/// total `as_name` over both while restricting `from_name` to the
-/// `external` group.
+/// some fallback would let RPC callers desync the statechart. SCE-002
+/// §5.16 — the sce codegen emits an `EXTERNALLY_DRIVABLE_EVENTS`
+/// associated const on the [`WidgetCore::Event`] enum (exactly the
+/// externally-drivable variants, excluding internal `<raise>` events
+/// and the `Null` sentinel), and `build.rs` injects
+/// `#[derive(WidgetEventName)]` (from `pinion-derive`) onto it. The
+/// derive emits the total `as_name` over every variant while
+/// restricting `from_name` to the members of that const, replacing the
+/// hand-written `widget_event_name!` declarative macro and its
+/// `external` / `internal` variant groups.
 pub trait WidgetEventName: Sized {
     /// Map `self` to its `PascalCase` SCXML event name (1:1 with the
     /// `<transition event="...">` attribute in the source `.scxml`).
@@ -1043,92 +1050,6 @@ pub trait WidgetEventName: Sized {
     /// path surfaces that `None` as `InvokeError::Rejected`, exactly
     /// as the pre-R699 hand-written `parse_*_event` did.
     fn from_name(name: &str) -> Option<Self>;
-}
-
-/// R643 §5.16 — declarative impl emitter for [`WidgetStateName`].
-///
-/// Invoke once next to each vendor/sce-generated `pub use sm::<State>;`
-/// re-export inside `pinion-core/src/widgets/<widget>.rs`. Variant
-/// list must enumerate every variant emitted by the SCE template (a
-/// missing variant produces a non-exhaustive match compile error at
-/// macro expansion time).
-///
-/// ```rust,ignore
-/// widget_state_name!(ButtonState, default = Idle, [
-///     Idle, Hover, Pressed, Disabled,
-/// ]);
-/// ```
-#[macro_export]
-macro_rules! widget_state_name {
-    ($ty:ident, default = $default:ident, [$($variant:ident),+ $(,)?]) => {
-        impl $crate::WidgetStateName for $ty {
-            fn as_name(&self) -> &'static str {
-                match self {
-                    $($ty::$variant => stringify!($variant),)+
-                }
-            }
-            fn from_name_or_default(name: &str) -> Self {
-                match name {
-                    $(stringify!($variant) => $ty::$variant,)+
-                    _ => $ty::$default,
-                }
-            }
-        }
-    };
-}
-
-/// R643 §5.16 / R699 §5.16 — declarative impl emitter for
-/// [`WidgetEventName`].
-///
-/// Invoke once next to each vendor/sce-generated `pub use sm::<Event>;`
-/// re-export inside `pinion-core/src/widgets/<widget>.rs`. The two
-/// variant groups partition every variant the SCE template emits:
-///
-/// * `external` — the names the RPC `invoke("send", name)` path may
-///   inject (pointer / keyboard / enable-disable events the real
-///   winit handler also produces). These appear in **both**
-///   [`WidgetEventName::as_name`] and [`WidgetEventName::from_name`].
-/// * `internal` — the `*Activate` raise events the statechart fires
-///   internally + the SCXML 3.13 `Null` sentinel. These appear in
-///   `as_name` only (so AI-side introspection sees their canonical
-///   names), and `from_name` rejects them — an RPC caller cannot
-///   forge an internal raise.
-///
-/// Together the groups must enumerate **every** variant: the
-/// `as_name` match is exhaustive, so a missing variant is a
-/// compile error at macro-expansion time (the safety net that
-/// catches a stale list after an SCE template change).
-///
-/// ```rust,ignore
-/// widget_event_name!(ButtonEvent,
-///     external = [
-///         PointerEnter, PointerLeave, PointerDown, PointerUp,
-///         PointerCancel, KeyboardActivate, Disable, Enable,
-///     ],
-///     internal = [ButtonActivate, Null],
-/// );
-/// ```
-#[macro_export]
-macro_rules! widget_event_name {
-    ($ty:ident,
-     external = [$($ext:ident),+ $(,)?],
-     internal = [$($int:ident),* $(,)?] $(,)?) => {
-        impl $crate::WidgetEventName for $ty {
-            fn as_name(&self) -> &'static str {
-                match self {
-                    $($ty::$ext => stringify!($ext),)+
-                    $($ty::$int => stringify!($int),)*
-                }
-            }
-            fn from_name(name: &str) -> ::core::option::Option<Self> {
-                match name {
-                    $(stringify!($ext)
-                        => ::core::option::Option::Some($ty::$ext),)+
-                    _ => ::core::option::Option::None,
-                }
-            }
-        }
-    };
 }
 
 /// R644 §5.16 — type-safe single-source-of-truth tag identifier.

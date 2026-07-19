@@ -24,6 +24,11 @@ test-fixtures = []
 # `default-features = false` lives on the workspace declaration: a member-side
 # override is silently ignored by Cargo when `workspace = true`.
 sce-rust-runtime = { workspace = true }
+# SCE-002 — `#[derive(WidgetStateName)]` / `#[derive(WidgetEventName)]` are
+# injected onto the sce-generated widget enums (compiled into this lib) via
+# `build.rs`'s `compile_scxml_with_derives`. `pinion-derive` dev-deps
+# `pinion-core`, not the reverse, so this normal dep introduces no cycle.
+pinion-derive = { path = "../pinion-derive" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # R934 §5.22 — `ResourceCache::with_capacity` backs an LRU-bounded async

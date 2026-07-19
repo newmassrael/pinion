@@ -285,30 +285,13 @@ mod sm {
 
 pub use sm::{ScrollBarEvent, ScrollBarState};
 
-// R698 §5.16 — route ScrollBarState <-> SCXML-id mapping through the
-// R643 `WidgetStateName` SSOT primitive, replacing the hand-written
-// `scroll_bar_state_name` fn (mirrors the R696.A Disclosure adoption).
-crate::widget_state_name!(
-    ScrollBarState,
-    default = Idle,
-    [Idle, Hover, Dragging, Disabled,]
-);
-// R699 §5.16 — ScrollBarEvent <-> SCXML-name mapping through the
-// `WidgetEventName` SSOT primitive, replacing `parse_scroll_bar_event`.
-// No KeyboardActivate (the scrollbar has no ARIA Space/Enter activate).
-crate::widget_event_name!(
-    ScrollBarEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        Disable,
-        Enable,
-    ],
-    internal = [ScrollbarActivate, Null],
-);
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `ScrollBarState` / `ScrollBarEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed
+// from the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS`
+// const (see `pinion-derive`); the per-widget `widget_{state,event}_name!`
+// macros are retired. The scrollbar has no `KeyboardActivate` (no ARIA
+// Space/Enter activate), so it is absent from `EXTERNALLY_DRIVABLE_EVENTS`.
 
 // ─────────────────────────────────────────────────────────────────
 // R660 §5.45 — reactive interaction-state mirror

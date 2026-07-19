@@ -34,6 +34,20 @@
 //! `access_node`) as inherent methods the macro forwards into. See
 //! the `widget` module docs for the full attribute table.
 //!
+//! ## `#[derive(WidgetStateName)]` / `#[derive(WidgetEventName)]` (SCE-002)
+//!
+//! Injected onto every sce-generated widget `State` / `Event` enum via
+//! `pinion-core`'s `compile_scxml_with_derives` build hook, replacing
+//! the per-widget `widget_state_name!` / `widget_event_name!`
+//! declarative macros that hand-wrote the `Self ↔ &'static str`
+//! statechart-name mapping. The derives reconstruct it from the markers
+//! the sce codegen now emits: the `State` enum's `#[default]`
+//! SCXML-initial variant (the `from_name_or_default` fallback) and the
+//! `Event` enum's `EXTERNALLY_DRIVABLE_EVENTS` associated const (the
+//! externally-forgeable subset `from_name` admits, rejecting internal
+//! `<raise>` events). Both reject non-unit variants — a statechart
+//! state / event carries no payload.
+//!
 //! The macro emits no `use` statements that would shadow caller
 //! symbols — every reference goes through the absolute
 //! `::pinion_core::…` / `::pinion_a11y::…` / `::pinion_shell::…` path.
@@ -368,4 +382,126 @@ fn payload_kind_from_type(ty: &syn::Type) -> Option<PayloadKind> {
         "bool" => Some(PayloadKind::Bool),
         _ => None,
     }
+}
+
+/// Derive `WidgetStateName` on an sce-generated widget `State` enum: `as_name`
+/// maps each variant to its ident string (the SCXML state id); `from_name_or_default`
+/// parses it back, falling through to `Self::default()` for an unknown name — the
+/// `#[default]`-marked SCXML initial state the sce statechart codegen emits (SCE-002).
+/// Injected onto the generated enum via `compile_scxml_with_derives`.
+#[proc_macro_derive(WidgetStateName)]
+pub fn derive_widget_state_name(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as DeriveInput);
+    match expand_widget_state_name(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn expand_widget_state_name(input: &DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let Data::Enum(data) = &input.data else {
+        return Err(syn::Error::new(
+            input.span(),
+            "WidgetStateName can only be derived on enums",
+        ));
+    };
+    if data.variants.is_empty() {
+        return Err(syn::Error::new(
+            input.span(),
+            "WidgetStateName derive requires at least one variant",
+        ));
+    }
+    let mut as_name_arms: Vec<TokenStream2> = Vec::new();
+    let mut from_name_arms: Vec<TokenStream2> = Vec::new();
+    for variant in &data.variants {
+        if !matches!(variant.fields, Fields::Unit) {
+            return Err(syn::Error::new(
+                variant.span(),
+                "WidgetStateName variants must be unit (a statechart state carries no payload)",
+            ));
+        }
+        let ident = &variant.ident;
+        let ident_str = ident.to_string();
+        as_name_arms.push(quote! { Self::#ident => #ident_str });
+        from_name_arms.push(quote! { #ident_str => Self::#ident });
+    }
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics ::pinion_core::WidgetStateName for #name #ty_generics #where_clause {
+            fn as_name(&self) -> &'static str {
+                match self { #(#as_name_arms,)* }
+            }
+            fn from_name_or_default(name: &str) -> Self {
+                match name {
+                    #(#from_name_arms,)*
+                    _ => <Self as ::core::default::Default>::default(),
+                }
+            }
+        }
+    })
+}
+
+/// Derive `WidgetEventName` on an sce-generated widget `Event` enum: `as_name`
+/// maps every variant (external + internal + `Null`) to its ident string; `from_name`
+/// parses it back but admits ONLY the externally-drivable variants — those in the
+/// `EXTERNALLY_DRIVABLE_EVENTS` associated const the sce statechart codegen emits
+/// (SCE-002), rejecting internal `<raise>` events an RPC caller must not forge.
+/// Injected via `compile_scxml_with_derives`.
+#[proc_macro_derive(WidgetEventName)]
+pub fn derive_widget_event_name(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as DeriveInput);
+    match expand_widget_event_name(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn expand_widget_event_name(input: &DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let Data::Enum(data) = &input.data else {
+        return Err(syn::Error::new(
+            input.span(),
+            "WidgetEventName can only be derived on enums",
+        ));
+    };
+    if data.variants.is_empty() {
+        return Err(syn::Error::new(
+            input.span(),
+            "WidgetEventName derive requires at least one variant",
+        ));
+    }
+    let mut as_name_arms: Vec<TokenStream2> = Vec::new();
+    let mut from_name_arms: Vec<TokenStream2> = Vec::new();
+    for variant in &data.variants {
+        if !matches!(variant.fields, Fields::Unit) {
+            return Err(syn::Error::new(
+                variant.span(),
+                "WidgetEventName variants must be unit (a statechart event carries no payload)",
+            ));
+        }
+        let ident = &variant.ident;
+        let ident_str = ident.to_string();
+        as_name_arms.push(quote! { Self::#ident => #ident_str });
+        from_name_arms.push(quote! { #ident_str => Self::#ident });
+    }
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics ::pinion_core::WidgetEventName for #name #ty_generics #where_clause {
+            fn as_name(&self) -> &'static str {
+                match self { #(#as_name_arms,)* }
+            }
+            fn from_name(name: &str) -> ::core::option::Option<Self> {
+                let candidate = match name {
+                    #(#from_name_arms,)*
+                    _ => return ::core::option::Option::None,
+                };
+                if Self::EXTERNALLY_DRIVABLE_EVENTS.contains(&candidate) {
+                    ::core::option::Option::Some(candidate)
+                } else {
+                    ::core::option::Option::None
+                }
+            }
+        }
+    })
 }

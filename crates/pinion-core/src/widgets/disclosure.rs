@@ -41,33 +41,14 @@ mod sm {
 use sm::DisclosurePolicy;
 pub use sm::{DisclosureEvent, DisclosureState};
 
-// R696.A §5.16 — route the DisclosureState <-> SCXML-id mapping through
-// the R643 `WidgetStateName` SSOT primitive (single variant list emits
-// both `as_name` and `from_name_or_default`), instead of a hand-written
-// `*_state_name` fn + a per-example `parse_*_state` fallback. The
-// External introspect below calls `self.state().as_name()`; the
-// hello-disclosure binding's `read_state` calls `from_name_or_default`.
-crate::widget_state_name!(
-    DisclosureState,
-    default = Idle,
-    [Idle, Hover, Pressed, Disabled,]
-);
-// R699 §5.16 — DisclosureEvent <-> SCXML-name mapping through the
-// `WidgetEventName` SSOT primitive, replacing `parse_disclosure_event`.
-crate::widget_event_name!(
-    DisclosureEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        KeyboardActivate,
-        Disable,
-        Enable,
-    ],
-    internal = [DisclosureActivate, Null],
-);
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `DisclosureState` / `DisclosureEvent` enums are injected
+// as `#[derive]`s by `build.rs` (`compile_scxml_with_derives`),
+// reconstructed from the codegen's `#[default]` state +
+// `EXTERNALLY_DRIVABLE_EVENTS` const (see `pinion-derive`); the per-widget
+// `widget_{state,event}_name!` macros are retired. The External introspect
+// below calls `self.state().as_name()`; the hello-disclosure binding's
+// `read_state` calls `from_name_or_default`.
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,

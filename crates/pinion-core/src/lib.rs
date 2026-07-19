@@ -16,6 +16,15 @@
 // in-crate unit tests for core logic rather than exiling them to examples.
 #![cfg_attr(test, allow(clippy::large_stack_arrays))]
 
+// SCE-002 — the `#[derive(pinion_derive::WidgetStateName)]` /
+// `#[derive(pinion_derive::WidgetEventName)]` macros injected onto the
+// sce-generated widget enums (via `build.rs`) emit `impl
+// ::pinion_core::WidgetStateName for …` with an absolute crate path (the
+// same convention the `#[widget]` / `WidgetTag` derives use). Those enums
+// are compiled *inside* pinion-core, so `::pinion_core` must resolve to
+// this crate itself — `extern crate self as` supplies that alias.
+extern crate self as pinion_core;
+
 pub mod animation;
 pub mod app;
 pub mod cell_metric;

@@ -554,8 +554,8 @@ pub enum CompositionEvent {
 ///
 /// Scope boundary: the per-widget SCE-emitted event enums
 /// (`ButtonEvent`, `CheckboxEvent`, …) carry the *same* five pointer
-/// names but derive them from `stringify!(VariantIdent)` via
-/// [`widget_event_name!`](crate::widget_event_name) — a self-consistent,
+/// names but derive them from the variant ident string via the SCE-002
+/// [`WidgetEventName`](crate::WidgetEventName) derive — a self-consistent,
 /// SCXML-canonical vocabulary owned by each statechart, a *different*
 /// decision (wire name → SCXML transition) that this enum does not fold.
 /// The two vocabularies are pinned together by a cross-vocab test in
@@ -626,8 +626,8 @@ pub const KEYBOARD_ACTIVATE_EVENT: &str = "KeyboardActivate";
 /// [`GridSortExternal`](crate::widgets::grid_sort) — lifted on the third
 /// consumer (R778) so the set of events that count as "activate" cannot drift
 /// between them (a divergence would be a routing bug, not a style choice). The
-/// per-widget statecharts decode their own activation through
-/// [`widget_event_name!`](crate::widget_event_name) + `detect`, a different
+/// per-widget statecharts decode their own activation through the SCE-002
+/// [`WidgetEventName`](crate::WidgetEventName) derive + `detect`, a different
 /// vocabulary this predicate does not fold.
 #[must_use]
 pub fn is_activation_event(event_name: &str) -> bool {

@@ -52,32 +52,14 @@ mod sm {
 
 pub use sm::{ListboxItemEvent, ListboxItemState};
 
-// R698 §5.16 — route ListboxItemState <-> SCXML-id mapping through the
-// R643 `WidgetStateName` SSOT primitive, replacing the hand-written
-// `listbox_item_state_name` fn (mirrors the R696.A Disclosure adoption).
-// listbox.rs calls `self.state(idx).as_name()` via the trait too.
-crate::widget_state_name!(
-    ListboxItemState,
-    default = Idle,
-    [Idle, Hover, Pressed, Disabled,]
-);
-// R699 §5.16 — ListboxItemEvent <-> SCXML-name mapping through the
-// `WidgetEventName` SSOT primitive, replacing `parse_listbox_item_event`.
-// listbox.rs drives selection through `ListboxItemEvent::from_name` too.
-crate::widget_event_name!(
-    ListboxItemEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        KeyboardActivate,
-        Disable,
-        Enable,
-    ],
-    internal = [ListboxItemActivate, Null],
-);
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `ListboxItemState` / `ListboxItemEvent` enums are injected
+// as `#[derive]`s by `build.rs` (`compile_scxml_with_derives`),
+// reconstructed from the codegen's `#[default]` state +
+// `EXTERNALLY_DRIVABLE_EVENTS` const (see `pinion-derive`); the per-widget
+// `widget_{state,event}_name!` macros are retired. listbox.rs also calls
+// `self.state(idx).as_name()` and drives selection through
+// `ListboxItemEvent::from_name` via the traits.
 use sm::ListboxItemPolicy;
 
 use crate::external::{

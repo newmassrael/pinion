@@ -32,32 +32,13 @@ mod sm {
 
 pub use sm::{RadioEvent, RadioState};
 
-// R698 §5.16 — route RadioState <-> SCXML-id mapping through the R643
-// `WidgetStateName` SSOT primitive, replacing the hand-written
-// `radio_state_name` fn (mirrors the R696.A Disclosure adoption).
-// radio_group.rs calls `self.state(idx).as_name()` via the trait too.
-crate::widget_state_name!(
-    RadioState,
-    default = Idle,
-    [Idle, Hover, Pressed, Disabled,]
-);
-// R699 §5.16 — RadioEvent <-> SCXML-name mapping through the
-// `WidgetEventName` SSOT primitive, replacing `parse_radio_event`.
-// radio_group.rs drives selection through `RadioEvent::from_name` too.
-crate::widget_event_name!(
-    RadioEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        KeyboardActivate,
-        Disable,
-        Enable,
-    ],
-    internal = [RadioActivate, Null],
-);
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `RadioState` / `RadioEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed
+// from the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS`
+// const (see `pinion-derive`); the per-widget `widget_{state,event}_name!`
+// macros are retired. radio_group.rs also calls `self.state(idx).as_name()`
+// and drives selection through `RadioEvent::from_name` via the traits.
 use sm::RadioPolicy;
 
 use crate::external::{

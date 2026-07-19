@@ -47,29 +47,13 @@ mod sm {
 use sm::ColorAreaPolicy;
 pub use sm::{ColorAreaEvent, ColorAreaState};
 
-// R709 §5.16 — pinion-side WidgetStateName + WidgetEventName impls for
-// the sce-build-emitted enums (vendor/sce templates emit no
-// pinion-side derives, [[sce-priority-over-pinion]]). The grammar
-// mirrors the Slider's; only the `*Activate` raise variant is
-// renamed.
-crate::widget_state_name!(
-    ColorAreaState,
-    default = Idle,
-    [Idle, Hover, Dragging, Disabled,]
-);
-crate::widget_event_name!(
-    ColorAreaEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        Disable,
-        Enable,
-    ],
-    internal = [ColorAreaActivate, Null],
-);
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `ColorAreaState` / `ColorAreaEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed
+// from the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS`
+// const (see `pinion-derive`); the per-widget `widget_{state,event}_name!`
+// macros are retired. The statechart grammar mirrors the Slider's; only
+// the `*Activate` raise variant is renamed.
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,

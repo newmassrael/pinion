@@ -53,30 +53,14 @@ pub use sm::{SliderEvent, SliderState};
 // ≠ shared statechart" caution (there the *transitions* diverged).
 pub use sm::SliderPolicy;
 
-// R645 §5.16 — pinion-side WidgetStateName + WidgetEventName impls
-// for the sce-build-emitted enums. vendor/sce templates emit no
-// pinion-side derives ([[sce-priority-over-pinion]]); the declarative
-// macros below carry the impls. `state_name_derive` + `event_name_derive`
-// on `#[widget(...)]` use these to drop the binding's per-binding
-// `parse_slider_state` + `match` arms.
-crate::widget_state_name!(
-    SliderState,
-    default = Idle,
-    [Idle, Hover, Dragging, Disabled,]
-);
-crate::widget_event_name!(
-    SliderEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        Disable,
-        Enable,
-    ],
-    internal = [SliderActivate, Null],
-);
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `SliderState` / `SliderEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed
+// from the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS`
+// const (see `pinion-derive`); the per-widget `widget_{state,event}_name!`
+// macros are retired. Bindings still opt into the derived
+// `WidgetCore::read_state` + `WidgetCore::event_name` via
+// `state_name_derive` + `event_name_derive` on `#[widget(...)]`.
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,

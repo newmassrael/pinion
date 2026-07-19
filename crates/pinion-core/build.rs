@@ -19,19 +19,32 @@ fn main() {
         "app.scxml",
         "fixtures/multi_window.scxml",
     ];
-    // SCE-004: inject `serde::{Serialize, Deserialize}` onto every generated
-    // `{widget}State` enum via the sce-build caller-injectable derive hook
-    // (rust_derive_policy SSOT). This lets the state back a `Signal<T>`
-    // directly (`Signal<T>` bounds `T: Clone + PartialEq + Serialize +
-    // DeserializeOwned`), retiring the per-widget u8-tag mirror. Event enums
-    // need no extra derives (no consumer mirrors an event into a `Signal`).
+    // Inject caller-supplied derives onto every generated `{widget}State` /
+    // `{widget}Event` enum via the sce-build derive hook (rust_derive_policy
+    // SSOT):
+    //
+    // * SCE-004 — `serde::{Serialize, Deserialize}` on the State enum lets the
+    //   state back a `Signal<T>` directly (`Signal<T>` bounds `T: Clone +
+    //   PartialEq + Serialize + DeserializeOwned`), retiring the per-widget
+    //   u8-tag mirror.
+    // * SCE-002 — `pinion_derive::WidgetStateName` on the State enum and
+    //   `pinion_derive::WidgetEventName` on the Event enum reconstruct the
+    //   `Self ↔ &'static str` statechart-name mapping from the markers the sce
+    //   codegen emits (the State's `#[default]` SCXML-initial variant + the
+    //   Event's `EXTERNALLY_DRIVABLE_EVENTS` associated const), retiring the
+    //   per-widget `widget_state_name!` / `widget_event_name!` hand-written
+    //   macros. `pinion-core` normal-deps `pinion-derive` (no cycle — the
+    //   derive crate only dev-deps back) and aliases itself as `pinion_core`
+    //   via `extern crate self as` so the derive-emitted `::pinion_core::…`
+    //   trait paths resolve inside this crate.
     sce_build::compile_scxml_with_derives(
         &scxml_inputs,
         &[
             "serde::Serialize".to_string(),
             "serde::Deserialize".to_string(),
+            "pinion_derive::WidgetStateName".to_string(),
         ],
-        &[],
+        &["pinion_derive::WidgetEventName".to_string()],
     );
 
     // Post-process: strip inner attributes (#![...]) and inner doc comments (//!).

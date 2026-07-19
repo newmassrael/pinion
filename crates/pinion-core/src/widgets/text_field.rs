@@ -81,26 +81,15 @@ mod sm {
 
 pub use sm::{TextFieldEvent, TextFieldState};
 
-// R698 §5.16 — route TextFieldState <-> SCXML-id mapping through the
-// R643 `WidgetStateName` SSOT primitive, replacing the hand-written
-// `text_field_state_name` fn (mirrors the R696.A Disclosure adoption).
-// The pinion-widget-paint read path uses `from_name_or_default` too.
-crate::widget_state_name!(
-    TextFieldState,
-    default = Idle,
-    [Idle, Focused, Editing, Disabled,]
-);
-// R699 §5.16 — TextFieldEvent <-> SCXML-name mapping through the
-// `WidgetEventName` SSOT primitive, replacing `parse_text_field_event`.
-// The external set is focus/edit-lifecycle (not pointer); `TextfieldCommit`
-// (internal raise) + `Null` stay out of `from_name`.
-crate::widget_event_name!(
-    TextFieldEvent,
-    external = [
-        Focus, Blur, BeginEdit, CommitEdit, CancelEdit, Disable, Enable,
-    ],
-    internal = [TextfieldCommit, Null],
-);
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `TextFieldState` / `TextFieldEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed
+// from the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS`
+// const (see `pinion-derive`); the per-widget `widget_{state,event}_name!`
+// macros are retired. The external set is focus/edit-lifecycle (not
+// pointer); `TextfieldCommit` (internal raise) + `Null` are excluded from
+// `EXTERNALLY_DRIVABLE_EVENTS`, so `from_name` rejects them. The
+// pinion-widget-paint read path uses `from_name_or_default`.
 use sm::TextFieldPolicy;
 
 use std::rc::Rc;

@@ -42,27 +42,20 @@ mod sm {
 pub use sm::DockPanelPolicy;
 pub use sm::{DockPanelEvent, DockPanelState};
 
-// §5.16 — DockPanelState ⇄ SCXML-id mapping through the R643 `WidgetStateName`
-// SSOT primitive (the External `state().as_name()` introspect + a binding's
-// `from_name_or_default` read share one variant list).
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `DockPanelState` / `DockPanelEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed from
+// the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS` const (see
+// `pinion-derive`); the per-widget `widget_{state,event}_name!` macros are
+// retired. The External `state().as_name()` introspect + a binding's
+// `from_name_or_default` read share the derived mapping.
 // R1137 — `RedockArmed` is a floating SUB-mode (the floater is over a dock zone,
 // the binding paints the preview); `is_floating()` is true for both Floating and
-// RedockArmed (the panel is floating in both).
-crate::widget_state_name!(
-    DockPanelState,
-    default = Docked,
-    [Docked, Floating, RedockArmed,]
-);
-
-// §5.16 — DockPanelEvent ⇄ SCXML-name mapping through the `WidgetEventName` SSOT
-// primitive. `external` = events the binding SENDS (drag-substrate outcomes;
-// R1137 adds `OverZone`/`LeaveZone`, the floater's live enter/leave of a dock
-// zone); `internal` = the `<raise>`d semantic outputs + the W3C eventless `Null`.
-crate::widget_event_name!(
-    DockPanelEvent,
-    external = [Escaped, OverZone, LeaveZone, Dropped, DockBack,],
-    internal = [DockPanelFloat, DockPanelRedock, DockPanelRestore, Null,],
-);
+// RedockArmed (the panel is floating in both). The externally-drivable events are
+// the ones the binding SENDS (drag-substrate outcomes; R1137 added
+// `OverZone`/`LeaveZone`, the floater's live enter/leave of a dock zone), while
+// the `<raise>`d semantic outputs + the W3C eventless `Null` stay out of
+// `EXTERNALLY_DRIVABLE_EVENTS` and so are rejected by `from_name`.
 
 #[cfg(test)]
 mod tests {

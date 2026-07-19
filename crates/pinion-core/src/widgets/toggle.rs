@@ -53,30 +53,12 @@ mod sm {
 
 pub use sm::{ToggleEvent, ToggleState};
 
-// R698 §5.16 — route ToggleState <-> SCXML-id mapping through the R643
-// `WidgetStateName` SSOT primitive, replacing the hand-written
-// `toggle_state_name` fn (mirrors the R696.A Disclosure adoption).
-crate::widget_state_name!(
-    ToggleState,
-    default = Idle,
-    [Idle, Hover, Pressed, Disabled,]
-);
-// R699 §5.16 — ToggleEvent <-> SCXML-name mapping through the
-// `WidgetEventName` SSOT primitive, replacing `parse_toggle_event`.
-crate::widget_event_name!(
-    ToggleEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        KeyboardActivate,
-        Disable,
-        Enable,
-    ],
-    internal = [ToggleActivate, Null],
-);
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `ToggleState` / `ToggleEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed
+// from the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS`
+// const (see `pinion-derive`); the per-widget `widget_{state,event}_name!`
+// macros are retired.
 use sm::TogglePolicy;
 
 use crate::external::{

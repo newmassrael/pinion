@@ -531,10 +531,10 @@ mod tests {
     fn r643_state_name_derive_known_variants() {
         // R643 §5.16 — the parse arc moved from a hand-written
         // `parse_button_state` helper to the derived
-        // `WidgetStateName::from_name_or_default` impl (wired in
-        // `pinion-core/src/widgets/button.rs` via the
-        // `widget_state_name!` declarative macro). Same defensive-
-        // default semantics; the test pins the four documented
+        // `WidgetStateName::from_name_or_default` impl (SCE-002: the
+        // `#[derive(WidgetStateName)]` is injected onto the sce-generated
+        // `ButtonState` enum by `pinion-core`'s `build.rs`). Same
+        // defensive-default semantics; the test pins the four documented
         // SCXML state ids against the derived parse.
         use pinion_core::WidgetStateName;
         assert_eq!(ButtonState::from_name_or_default("Idle"), ButtonState::Idle);

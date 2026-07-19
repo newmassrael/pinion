@@ -32,36 +32,15 @@ mod sm {
 use sm::CheckboxPolicy;
 pub use sm::{CheckboxEvent, CheckboxState};
 
-// R698 §5.16 — route the CheckboxState <-> SCXML-id mapping through the
-// R643 `WidgetStateName` SSOT primitive (one variant list emits both
-// `as_name` and `from_name_or_default`), replacing the hand-written
-// `checkbox_state_name` fn. Mirrors the R696.A Disclosure adoption; the
+// SCE-002 §5.16 — the `WidgetStateName` / `WidgetEventName` impls for the
+// sce-generated `CheckboxState` / `CheckboxEvent` enums are injected as
+// `#[derive]`s by `build.rs` (`compile_scxml_with_derives`), reconstructed
+// from the codegen's `#[default]` state + `EXTERNALLY_DRIVABLE_EVENTS`
+// const (see `pinion-derive`); the per-widget `widget_{state,event}_name!`
+// macros are retired. `CheckboxActivate` (internal raise) + `Null` (SCXML
+// 3.13) are excluded from `EXTERNALLY_DRIVABLE_EVENTS`, so `from_name`
+// rejects them and an RPC `invoke("send", …)` cannot forge them. The
 // introspect path below calls `self.state().as_name()`.
-crate::widget_state_name!(
-    CheckboxState,
-    default = Idle,
-    [Idle, Hover, Pressed, Disabled,]
-);
-// R699 §5.16 — route the CheckboxEvent <-> SCXML-name mapping through
-// the `WidgetEventName` SSOT primitive (two-group macro emits the total
-// `as_name` + the external-only fallible `from_name`), replacing the
-// hand-written `parse_checkbox_event`. `CheckboxActivate` (internal
-// raise) + `Null` (SCXML 3.13) stay out of `from_name` so an RPC
-// `invoke("send", …)` cannot forge them.
-crate::widget_event_name!(
-    CheckboxEvent,
-    external = [
-        PointerEnter,
-        PointerLeave,
-        PointerDown,
-        PointerUp,
-        PointerCancel,
-        KeyboardActivate,
-        Disable,
-        Enable,
-    ],
-    internal = [CheckboxActivate, Null],
-);
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,

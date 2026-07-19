@@ -4880,6 +4880,7 @@ version = "0.0.1"
 dependencies = [
  "criterion",
  "lru 0.18.0",
+ "pinion-derive",
  "sce-build",
  "sce-rust-runtime",
  "serde",
