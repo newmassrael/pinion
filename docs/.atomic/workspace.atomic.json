@@ -25706,6 +25706,50 @@
         "Next: Phase B feature return — more DCC depth (the inspector's RPC-only edit gap = inline delegates; node-eval GUI), or Model-View slice ⑥ (text-reflow virtualization) if a real consumer appears. Standing debts unchanged: (R1364) quit-veto forcing consumer; demo-sweep-push gating."
       ]
     },
+    "R1372.1": {
+      "decision_summary": "R1372.1 §5.40: clear the R1372 grouped-mode a11y carry — the flat editable grid announced per-cell aria-selected but the grouped treegrid did not, because pinion_a11y::grouped_grid_access_nodes has only a ROW-level selection axis (GroupedGridSelection = Display | Single, no cell-range variant). Rather than generalize the shared a11y substrate for this one consumer (premature — there is no 2nd grouped cell-select consumer), the CONSUMER stamps the cell-range aria-selected onto the emitted gridcells after the fact, exactly the emit_reset_affordances augmentation pattern used two lines above it. Both grid modes now announce the cell selection to AT identically. In-repo debt cleared inline the round it surfaced, not carried (only external / vendor deps justify a carry).",
+      "changes_bullets": [
+        "`examples/hello-data-grid/src/main.rs`: new `stamp_cell_selection(&mut [AccessNode], visible_sources, focus)` — post-stamps per-cell `aria-selected` onto the grouped treegrid's emitted gridcells from the `cell_selection_bounds` membership over the grouped visible DATA order (`Some(in_range)` when a range is active, `None` = omit otherwise, matching the flat grid's `GridCell.selected` semantics). Called in the grouped a11y branch right after `emit_reset_affordances` — the consumer augments the substrate's output rather than change it. +1 test: a grouped treegrid's gridcells carry `aria-selected` for a range that spans a group boundary."
+      ],
+      "verification_bullets": [
+        "`cargo test --workspace -j2`: green; `hello-data-grid` = 136 (135 from R1372 + 1 grouped-a11y test).",
+        "`cargo clippy -p hello-data-grid --all-targets`: clean (`-D pedantic`).",
+        "`cargo doc --workspace --no-deps --document-private-items`: clean (the `[`emit_reset_affordances`]` / `[`cell_selection_bounds`]` doc links resolve — both in-scope module items). `cargo fmt`: clean.",
+        "The a11y substrate `pinion_a11y::grouped_grid_access_nodes` is UNCHANGED — no signature ripple to its other callers; the cell-range axis stays in the consumer (`abstraction-needs-second-consumer`), so no premature generalization for one grid.",
+        "`mnemosyne-cli validate-workspace`: T1 orphan total=0 (new +0), style reject=0 (baseline unchanged)."
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "The R1372 grouped-mode a11y carry is CLEARED: both grid modes (flat `grid_table_nodes` + grouped `grouped_grid_access_nodes`) now announce per-cell `aria-selected` identically. In-repo debt cleared inline the round it surfaced, not carried (only external / vendor deps justify a carry).",
+        "If a 2nd grouped-grid consumer ever needs cell-range `aria-selected`, THAT is when a `GroupedGridSelection` cell-range variant earns its place on the a11y substrate — until then the consumer-stamp keeps the substrate lean.",
+        "R1372's other deferrals stand (external / tradeoff, not in-repo debt): OS-clipboard READ (Ctrl+V from another app) is the R1237 HW-gated deferral; copy is structure-preserving (embedded delimiter -> space, the R1223 tradeoff).",
+        "Next: Phase B feature continuation (DCC depth — hello-inspector inline delegates / node-eval GUI; or Model-View slice 6 if a consumer appears)."
+      ],
+      "publishable_decision_summary": "R1372.1 §5.40: clear the R1372 grouped-mode a11y carry — the flat editable grid announced per-cell aria-selected but the grouped treegrid did not, because pinion_a11y::grouped_grid_access_nodes has only a ROW-level selection axis (GroupedGridSelection = Display | Single, no cell-range variant). Rather than generalize the shared a11y substrate for this one consumer (premature — there is no 2nd grouped cell-select consumer), the CONSUMER stamps the cell-range aria-selected onto the emitted gridcells after the fact, exactly the emit_reset_affordances augmentation pattern used two lines above it. Both grid modes now announce the cell selection to AT identically. In-repo debt cleared inline the round it surfaced, not carried (only external / vendor deps justify a carry).",
+      "publishable_changes_bullets": [
+        "`examples/hello-data-grid/src/main.rs`: new `stamp_cell_selection(&mut [AccessNode], visible_sources, focus)` — post-stamps per-cell `aria-selected` onto the grouped treegrid's emitted gridcells from the `cell_selection_bounds` membership over the grouped visible DATA order (`Some(in_range)` when a range is active, `None` = omit otherwise, matching the flat grid's `GridCell.selected` semantics). Called in the grouped a11y branch right after `emit_reset_affordances` — the consumer augments the substrate's output rather than change it. +1 test: a grouped treegrid's gridcells carry `aria-selected` for a range that spans a group boundary."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test --workspace -j2`: green; `hello-data-grid` = 136 (135 from R1372 + 1 grouped-a11y test).",
+        "`cargo clippy -p hello-data-grid --all-targets`: clean (`-D pedantic`).",
+        "`cargo doc --workspace --no-deps --document-private-items`: clean (the `[`emit_reset_affordances`]` / `[`cell_selection_bounds`]` doc links resolve — both in-scope module items). `cargo fmt`: clean.",
+        "The a11y substrate `pinion_a11y::grouped_grid_access_nodes` is UNCHANGED — no signature ripple to its other callers; the cell-range axis stays in the consumer (`abstraction-needs-second-consumer`), so no premature generalization for one grid.",
+        "`mnemosyne-cli validate-workspace`: T1 orphan total=0 (new +0), style reject=0 (baseline unchanged)."
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The R1372 grouped-mode a11y carry is CLEARED: both grid modes (flat `grid_table_nodes` + grouped `grouped_grid_access_nodes`) now announce per-cell `aria-selected` identically. In-repo debt cleared inline the round it surfaced, not carried (only external / vendor deps justify a carry).",
+        "If a 2nd grouped-grid consumer ever needs cell-range `aria-selected`, THAT is when a `GroupedGridSelection` cell-range variant earns its place on the a11y substrate — until then the consumer-stamp keeps the substrate lean.",
+        "R1372's other deferrals stand (external / tradeoff, not in-repo debt): OS-clipboard READ (Ctrl+V from another app) is the R1237 HW-gated deferral; copy is structure-preserving (embedded delimiter -> space, the R1223 tradeoff).",
+        "Next: Phase B feature continuation (DCC depth — hello-inspector inline delegates / node-eval GUI; or Model-View slice 6 if a consumer appears)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

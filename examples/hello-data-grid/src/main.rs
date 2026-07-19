@@ -1109,6 +1109,37 @@ fn cell_selection_bounds(
     ))
 }
 
+/// R1372.1 — stamp per-cell `aria-selected` onto the GROUPED treegrid's emitted
+/// gridcells. The flat grid sets `GridCell.selected` at build time, but the
+/// grouped path goes through `pinion_a11y::grouped_grid_access_nodes`, whose
+/// selection axis is ROW-level only (`GroupedGridSelection`) — so, exactly like
+/// [`emit_reset_affordances`] above it, the CONSUMER augments the substrate's
+/// output rather than generalize the shared a11y for this one grid (no premature
+/// abstraction; a 2nd grouped cell-select consumer would justify a substrate
+/// variant). `visible_sources` is the grouped visible DATA order (the
+/// [`cell_selection_bounds`] coordinate space); when a range is active every
+/// gridcell gets `Some(in_range)`, else it is left `None` (omit) — the flat
+/// grid's `GridCell.selected` semantics.
+fn stamp_cell_selection(
+    nodes: &mut [AccessNode],
+    visible_sources: &[usize],
+    focus: (usize, usize),
+) {
+    let Some((p0, c0, p1, c1)) =
+        cell_selection_bounds(visible_sources, use_cell_anchor().get(), focus.0, focus.1)
+    else {
+        return;
+    };
+    for (pos, &source) in visible_sources.iter().enumerate() {
+        for col in 0..NCOLS {
+            let selected = pos >= p0 && pos <= p1 && col >= c0 && col <= c1;
+            if let Some(node) = nodes.iter_mut().find(|n| n.tag == cell_tag(source, col)) {
+                node.selected = Some(selected);
+            }
+        }
+    }
+}
+
 // ─── undo commands (R932 §5.52) ───────────────────────────────────
 
 /// R932.1 — the reactive holders an undo command needs to uphold the SAME
@@ -5209,6 +5240,11 @@ impl WidgetA11y for DataGridView {
         // window here (the a11y projection passes `count: rows.len()`).
         let visible_sources: Vec<usize> = rows.iter().filter_map(GroupRow::source).collect();
         emit_reset_affordances(&mut nodes, &model, &visible_sources);
+        // R1372.1 — the flat grid announces per-cell aria-selected; the grouped
+        // treegrid must too. The substrate's grouped selection axis is row-level
+        // only, so the consumer stamps the cell range onto the gridcells (the
+        // emit_reset_affordances augmentation pattern).
+        stamp_cell_selection(&mut nodes, &visible_sources, (focused_row, focused_col));
         // R940 — the open dropdown's `listbox` nodes (gated on the editing row
         // being present in this same grouped flatten — a collapsed group hides it).
         nodes.extend(popup_listbox_nodes(&model, &rows, editing));
@@ -10572,6 +10608,42 @@ mod tests {
             assert_ne!(
                 sel, unsel,
                 "a selected cell paints distinctly from an unselected one"
+            );
+        });
+    }
+
+    #[test]
+    fn r1372_1_grouped_treegrid_cells_carry_aria_selected() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            group_by_type(&mut scene);
+            // Group by Type: group0 = {Hero(0), Coin(2)}, group1 = {Tree(1),
+            // Boss(3)}; the visible data order is [0, 2, 1, 3]. Select col 0 of
+            // the first two VISIBLE rows (sources 0 and 2) — a range that spans a
+            // group boundary is still one contiguous visible band.
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+                let _ = intro.invoke("extend-cell", IntrospectValue::Text("2,0".to_owned()));
+            }
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            let sel = |t: String| nodes.iter().find(|n| n.tag == t).unwrap().selected;
+            assert_eq!(
+                sel(cell_tag(0, 0)),
+                Some(true),
+                "Hero col0 in the grouped range"
+            );
+            assert_eq!(
+                sel(cell_tag(2, 0)),
+                Some(true),
+                "Coin col0 in the grouped range"
+            );
+            assert_eq!(sel(cell_tag(0, 1)), Some(false), "col 1 outside the range");
+            assert_eq!(
+                sel(cell_tag(1, 0)),
+                Some(false),
+                "Tree (visible pos 2) outside"
             );
         });
     }
