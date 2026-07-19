@@ -21,9 +21,10 @@ impl DataPoint {
     }
 }
 
-/// A named ordered sequence of samples rendered as one line (and,
-/// optionally, one filled area). `color == None` defers to the chart
-/// palette by series index; `Some` pins an explicit colour.
+/// A named sequence of samples — rendered as one line (and, optionally, a
+/// filled area) by [`crate::LineChart`], or as discrete point marks by
+/// [`crate::ScatterChart`]. `color == None` defers to the chart palette by
+/// series index; `Some` pins an explicit colour.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Series {
     /// Legend label.
@@ -92,6 +93,41 @@ pub fn data_bounds(series: &[Series]) -> Option<Bounds> {
     } else {
         None
     }
+}
+
+/// The series point whose x is nearest `data_x`, restricted to the visible x
+/// range `[lo, hi]` so a zoomed chart never inspects a point outside the plot.
+/// Non-finite points are skipped. Shared by the two numeric-x charts that scrub
+/// a per-series nearest point — the line chart and the scatter chart (R1377);
+/// it lives here, on the data model, rather than in either chart.
+#[must_use]
+pub(crate) fn nearest_point_in(
+    series: &Series,
+    data_x: f64,
+    lo: f64,
+    hi: f64,
+) -> Option<DataPoint> {
+    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+    series
+        .points
+        .iter()
+        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x >= lo && p.x <= hi)
+        .copied()
+        .min_by(|a, b| {
+            (a.x - data_x)
+                .abs()
+                .partial_cmp(&(b.x - data_x).abs())
+                .unwrap_or(core::cmp::Ordering::Equal)
+        })
+}
+
+/// Whether `value` lies within the domain `[lo, hi]` (order-agnostic, with an
+/// epsilon slack so a tick exactly on the domain edge counts). The line and
+/// scatter charts both filter their nice-ticks to the domain with it (R1377).
+#[must_use]
+pub(crate) fn in_domain(value: f64, lo: f64, hi: f64) -> bool {
+    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+    value >= lo - f64::EPSILON && value <= hi + f64::EPSILON
 }
 
 #[cfg(test)]

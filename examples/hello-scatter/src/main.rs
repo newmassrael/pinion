@@ -1,0 +1,390 @@
+//! `hello-scatter` — R1377 consumer of the `pinion-chart` correlation form:
+//! a [`pinion_chart::ScatterChart`] of two labelled sample series with a
+//! **scrub inspector**.
+//!
+//! ## What this demonstrates
+//!
+//! A scatter chart plots each sample as an isolated point rather than joining a
+//! series into a line — the correlation view (does y track x?). It is the
+//! crate's THIRD cartesian chart, and being the third is what forced the shared
+//! axis furniture (gridlines / axes / y-tick labels) to factor out of the line
+//! and bar charts — and, as the third legend and circle-marker consumer,
+//! collapsed the legend row and the circle geometry to one definition too. This
+//! binding is the consumer that pays for that lift. The chart is built from
+//! retained primitives the paint adapter already rasterizes: filled
+//! [`Scene::Path`] circles (one per point), [`Scene::Box`] legend swatches, and
+//! [`Scene::Text`] labels. One interaction sits on top:
+//!
+//! * **Scrub inspect** (R1355's overlay, now for scatter) — press-drag across
+//!   the chart SCRUBS the x-axis; a vertical crosshair marks the scrubbed x, a
+//!   ring frames each series' nearest point, and a tooltip shows their values.
+//!   pinion forwards a continuous pointer position only under capture, so the
+//!   gesture is a capture drag whose 1-D fraction the chart maps through its
+//!   margins + domain to a data x (a 2-D nearest-point hover would need a 2-D
+//!   pointer external — deferred).
+//!
+//! ## Why a Slider
+//!
+//! The §5.38 [`SliderExternal`] (a captured 1-D fraction) is reused as the scrub
+//! position, exactly as `hello-donut` — RPC-drivable (`scene/intervene`) and
+//! introspectable, no new external invented.
+//!
+//! ## Verification (substrate-first)
+//!
+//! `scene/snapshot` exposes the scatter + overlay as tagged data —
+//! `chart.point.{i}.{j}`, `chart.inspect.crosshair` / `.ring.{i}` / `.tooltip` /
+//! `.header` / `.value.{i}`, `chart.legend.{i}.*`. Driving the scrub over RPC
+//! re-rings a different point, observed structurally without OCR (§2 #1 / #7).
+//! See `tools/demos/r1377_scatter_scrub.py`.
+
+use pinion_a11y::described::describedby_region;
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
+use pinion_chart::{ChartStyle, DataPoint, ScatterChart, Series};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
+use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
+use pinion_derive::widget;
+use pinion_shell::vello_renderer_impl;
+use pinion_widget_paint::slider::{read_slider_state, slider_apply_key};
+
+// pinion-forge codegen output: `pub struct HelloScatterRenderer` + …
+include!(concat!(env!("OUT_DIR"), "/app.rs"));
+
+vello_renderer_impl!(HelloScatterRenderer, HelloScatterRendererError);
+
+const WIN_W: u32 = 560;
+const WIN_H: u32 = 460;
+
+const THEME_TAG: &str = "app";
+const SCRUB_TAG: &str = "scatter_scrub";
+
+const TITLE_FONT_PX: u32 = 18;
+const STATUS_FONT_PX: u32 = 12;
+
+/// Window-absolute scatter region. The chart is pinned (`ScatterChart::build`) —
+/// the point geometry is what this demo exercises, not the layout-native seam
+/// (the profiler already proves `build_fill`), so a const rect keeps it simple.
+/// It is also the scrub capture basis: the `scatter_scrub` box covers exactly
+/// this rect, so the slider value `0.0..=1.0` is the cursor fraction across it.
+const CHART_RECT: Rect = Rect::new(10, 40, WIN_W - 20, WIN_H - 74);
+
+/// Two illustrative sample series — the canonical correlation a scatter shows.
+/// Fixed sample data (like `hello-chart`'s `sample_series`): the demo exists to
+/// prove the point-mark geometry + the scrub inspector, not to measure anything.
+/// Series A rises with x, B falls, so the two clouds separate legibly.
+fn samples() -> Vec<Series> {
+    vec![
+        Series::new(
+            "rising",
+            vec![
+                DataPoint::new(1.0, 2.0),
+                DataPoint::new(2.0, 3.5),
+                DataPoint::new(3.0, 3.0),
+                DataPoint::new(4.0, 5.0),
+                DataPoint::new(5.0, 6.5),
+                DataPoint::new(6.0, 6.0),
+                DataPoint::new(7.0, 8.0),
+                DataPoint::new(8.0, 9.0),
+            ],
+        ),
+        Series::new(
+            "falling",
+            vec![
+                DataPoint::new(1.5, 9.0),
+                DataPoint::new(2.5, 7.5),
+                DataPoint::new(3.5, 8.0),
+                DataPoint::new(4.5, 6.0),
+                DataPoint::new(5.5, 5.0),
+                DataPoint::new(6.5, 4.5),
+                DataPoint::new(7.5, 3.0),
+                DataPoint::new(8.5, 2.0),
+            ],
+        ),
+    ]
+}
+
+/// Reused as the scrub-position holder, seeded to the centre so the boot frame
+/// shows an inspected point.
+fn scrub_external() -> SliderExternal {
+    let mut slider = SliderExternal::new();
+    slider.set_value(0.5);
+    slider
+}
+
+/// Resolve the theme into a [`ChartStyle`]. Only colours are overridden — the
+/// margins / tick targets stay the defaults, which is what lets the a11y readout
+/// (computed with the default style) resolve the identical focus point.
+fn chart_style(theme: &pinion_core::Theme) -> ChartStyle {
+    ChartStyle {
+        label: theme.resolve(ColorRole::OnSurfaceMuted),
+        background: Some(theme.resolve(ColorRole::SurfaceContainerLow)),
+        crosshair: theme.resolve(ColorRole::OnSurface),
+        tooltip_bg: theme.resolve(ColorRole::SurfaceContainerHighest),
+        tooltip_fg: theme.resolve(ColorRole::OnSurface),
+        ..ChartStyle::default()
+    }
+}
+
+/// view-fn (§6.3): pure sync `(SliderState, f32) -> Scene`. `scrub` is the
+/// inspect fraction across [`CHART_RECT`] that scrubs the x-axis.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn view(state: SliderState, scrub: f32, _frame: &Frame) -> Scene {
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let on_surface = theme.resolve(ColorRole::OnSurface);
+    let surface = theme.resolve(ColorRole::Surface);
+
+    let title = Scene::Text(
+        TextNode::styled(
+            "Two samples (illustrative) — drag across the plot to inspect a point",
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(TITLE_FONT_PX)
+                .with_fg(on_surface),
+        )
+        .with_layout(LayoutStyle::new().with_absolute_position(14, 12)),
+    );
+
+    let scatter = ScatterChart::new(samples())
+        .inspect(Some(scrub))
+        .build(CHART_RECT, &chart_style(&theme));
+
+    // Transparent capture surface over the plot — the `scatter_scrub` primary
+    // tag. On top so a press anywhere on the chart drives the scrub; transparent
+    // so the points show through, pointer-opaque so it captures.
+    let scrub_surface = Scene::Box(
+        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
+            .with_tag(SCRUB_TAG)
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(CHART_RECT.x, CHART_RECT.y)
+                    .with_size(Size::px(CHART_RECT.w, CHART_RECT.h)),
+            ),
+    );
+
+    let status = Scene::Text(
+        TextNode::styled(
+            format!("{} | scrub {scrub:.2}", state.as_name()),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(STATUS_FONT_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        )
+        .with_layout(LayoutStyle::new().with_absolute_position(14, WIN_H - 22)),
+    );
+
+    Scene::Container(
+        ContainerNode::new(vec![scatter, scrub_surface, title, status])
+            .with_style(BoxStyle::filled(surface))
+            .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
+    )
+}
+
+/// `WidgetView` binding. The Slider is the scrub position (primary); `#[widget]`
+/// derives WidgetCore + WidgetView, and `a11y_manual` provides the hand-written
+/// [`WidgetA11y`] below (the scrub Slider describedby the inspect region).
+#[widget(
+    tag = "scatter_scrub",
+    state = (SliderState, f32),
+    event = SliderEvent,
+    title = "pinion hello-scatter (R1377 correlation scatter + scrub inspect)",
+    renderer = HelloScatterRenderer,
+    initial_size = (WIN_W, WIN_H),
+    external = scrub_external,
+    apply_key,
+    keybinding,
+    event_name_derive,
+    a11y_manual,
+)]
+struct ScatterView;
+
+impl ScatterView {
+    /// Reads the scrub fraction from the primary Slider external.
+    fn read_state(scene: &Scene) -> (SliderState, f32) {
+        read_slider_state(scene, SCRUB_TAG).unwrap_or((SliderState::Idle, 0.5))
+    }
+
+    fn view(state: (SliderState, f32), frame: Frame) -> Scene {
+        view(state.0, state.1, &frame)
+    }
+
+    /// ARIA slider keyboard scrub, mirrored through the RPC `scene/intervene`
+    /// value channel (the lifted `slider_apply_key`).
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        slider_apply_key(scene, focused, Self::tag(), |current| match key {
+            "ArrowLeft" | "ArrowDown" => Some((current - 0.1).clamp(0.0, 1.0)),
+            "ArrowRight" | "ArrowUp" => Some((current + 0.1).clamp(0.0, 1.0)),
+            "Home" => Some(0.0),
+            "End" => Some(1.0),
+            _ => None,
+        })
+    }
+
+    fn keybinding(key: &str) -> Option<SliderEvent> {
+        match key {
+            "d" => Some(SliderEvent::Disable),
+            "e" => Some(SliderEvent::Enable),
+            _ => None,
+        }
+    }
+}
+
+/// The scrub surface carries `AriaRole::Slider` with the scrub fraction as its
+/// `AccessValue::Float`, and is `describedby` the scatter's inspect region so the
+/// x + per-series values a sighted user reads in the tooltip reach a screen
+/// reader too (the R1355 parity, now for scatter).
+impl WidgetA11y for ScatterView {
+    fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, scrub) = (state.0, state.1);
+        let access_state = AccessState {
+            focused: focused == Some(<Self as WidgetCore>::tag()),
+            ..AccessState::from_interaction(interaction, None)
+        };
+        // The readout must name the SAME point the painted tooltip does. Unlike
+        // the donut's slice scrub (which is rect- and style-invariant), a
+        // scatter focus DOES depend on the plot geometry — but the geometry is
+        // set by the rect + margins + tick targets + data, NOT the colours, and
+        // `chart_style` overrides only colours. So this `CHART_RECT` /
+        // default-style call resolves the identical point the themed
+        // `build(CHART_RECT)` overlay rings. (If a future `chart_style` ever
+        // overrode `margin` / `x_ticks`, this call would have to take the themed
+        // style too — the R1355 same-frame parity.)
+        let readout = ScatterChart::new(samples())
+            .inspect(Some(scrub))
+            .inspect_readout(CHART_RECT, &ChartStyle::default());
+        let control = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
+            .with_value(AccessValue::Float {
+                value: scrub,
+                min: 0.0,
+                max: 1.0,
+            })
+            .with_state(access_state);
+        describedby_region(
+            control,
+            "chart.inspect.tooltip",
+            AriaRole::Tooltip,
+            readout,
+            true,
+        )
+    }
+}
+
+fn main() {
+    pinion_shell::run::<ScatterView>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pinion_core::Owner;
+
+    fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
+        match scene {
+            Scene::Container(c) => {
+                if c.tag.as_deref() == Some(tag) {
+                    return Some(scene);
+                }
+                c.children.iter().find_map(|ch| find(ch, tag))
+            }
+            other => (other.tag() == Some(tag)).then_some(scene),
+        }
+    }
+
+    fn count_prefix(scene: &Scene, prefix: &str) -> usize {
+        let mut n = 0;
+        if scene.tag().is_some_and(|t| t.starts_with(prefix)) {
+            n += 1;
+        }
+        if let Scene::Container(c) = scene {
+            for ch in &c.children {
+                n += count_prefix(ch, prefix);
+            }
+        }
+        n
+    }
+
+    fn rendered(scrub: f32) -> Scene {
+        let owner = Owner::new();
+        owner.run(|| view(SliderState::Idle, scrub, &Frame::new()))
+    }
+
+    #[test]
+    fn scatter_and_scrub_surface_present() {
+        let scene = rendered(0.5);
+        assert!(find(&scene, "chart").is_some(), "the scatter root");
+        assert!(
+            find(&scene, SCRUB_TAG).is_some(),
+            "the scrub capture surface"
+        );
+        // 8 + 8 = 16 points across the two series.
+        assert_eq!(count_prefix(&scene, "chart.point."), 16);
+    }
+
+    #[test]
+    fn inspect_overlay_tracks_the_scrub_value() {
+        // A left-edge scrub and a right-edge scrub focus different x's, so the
+        // crosshair (a vertical line at the focus x) moves.
+        use pinion_core::scene::PathCommand;
+        let crosshair_x = |scrub: f32| {
+            let scene = rendered(scrub);
+            let Scene::Path(p) = find(&scene, "chart.inspect.crosshair").expect("crosshair") else {
+                panic!("crosshair is a path")
+            };
+            let PathCommand::MoveTo(m) = p.commands[0] else {
+                panic!("crosshair starts with MoveTo")
+            };
+            m.x.to_bits()
+        };
+        assert_ne!(
+            crosshair_x(0.0),
+            crosshair_x(1.0),
+            "the crosshair sits at a different x at each end of the scrub"
+        );
+    }
+
+    #[test]
+    fn r55_g20_view_carries_composite_paint_root_tag() {
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<ScatterView>(
+            (SliderState::Idle, 0.5),
+            &Frame::new(),
+        );
+    }
+
+    #[test]
+    fn r1360_2_view_paints_an_opaque_root() {
+        pinion_core::test_fixtures::assert_widget_view_paints_opaque_root::<ScatterView>(
+            (SliderState::Idle, 0.5),
+            &Frame::new(),
+        );
+    }
+
+    #[test]
+    fn scrub_reports_slider_role_and_is_describedby_the_readout() {
+        let nodes = <ScatterView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5), None);
+        assert_eq!(nodes[0].role, AriaRole::Slider);
+        assert_eq!(nodes[0].tag, SCRUB_TAG);
+        assert_eq!(
+            nodes[0].described_by.as_deref(),
+            Some("chart.inspect.tooltip"),
+            "scrub is describedby the inspect region"
+        );
+        let region = nodes
+            .iter()
+            .find(|n| n.tag == "chart.inspect.tooltip")
+            .expect("the described region is in the tree");
+        let name = region.name.as_deref().expect("region carries the readout");
+        assert!(
+            name.starts_with("x = "),
+            "the readout leads with the focus x: {name:?}"
+        );
+        assert!(
+            name.contains("rising") && name.contains("falling"),
+            "the readout names both series: {name:?}"
+        );
+    }
+}

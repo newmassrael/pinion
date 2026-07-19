@@ -1,0 +1,142 @@
+//! `CartesianPlot` — the resolved plotting geometry (the margin-inset plot rect
+//! plus a value scale on each axis) a numeric-x / numeric-y chart maps its data
+//! through.
+//!
+//! Lived as `line.rs`'s private `Plot` until R1377 gave the crate a THIRD
+//! cartesian chart (`scatter`, after `line` and the categorical `bar`). At the
+//! second numeric-x consumer a `crate::line::Plot` import would read as "the
+//! scatter chart borrows the line chart's plot"; the neutral module makes it
+//! shared substrate — the same reasoning that moved [`crate::style::ChartStyle`]
+//! out of `line.rs` at the second chart. The categorical [`crate::bar`] keeps
+//! its own `BarGeom` (a slot metric, not a numeric x-scale), so this is the
+//! two-numeric-axis resolver, not a universal one.
+
+use pinion_core::scene::Rect;
+
+use crate::draw::{plot_rect, to_f32};
+use crate::scale::LinearScale;
+use crate::series::{DataPoint, Series, data_bounds, in_domain, nearest_point_in};
+use crate::style::ChartStyle;
+use crate::ticks::nice_ticks;
+
+/// The resolved plot rectangle (in float pixels) plus the two value scales.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CartesianPlot {
+    /// Plot-area left edge (px).
+    pub left: f32,
+    /// Plot-area right edge (px).
+    pub right: f32,
+    /// Plot-area top edge (px).
+    pub top: f32,
+    /// Plot-area bottom edge (px).
+    pub bottom: f32,
+    /// Value -> pixel on the x-axis (ascending: domain-lo -> left).
+    pub x: LinearScale,
+    /// Value -> pixel on the y-axis (INVERTED: domain-hi -> top / small pixel).
+    pub y: LinearScale,
+}
+
+impl CartesianPlot {
+    /// Resolve the plot geometry for `rect` under `style`: the margin-inset plot
+    /// area, and an x / y [`LinearScale`] over each axis's domain (a pinned
+    /// domain verbatim, else the data extent snapped to its nice-tick range so
+    /// the outer gridlines land on the plot edges — Qt `applyNiceNumbers`).
+    pub(crate) fn resolve(
+        rect: Rect,
+        series: &[Series],
+        x_domain: Option<(f64, f64)>,
+        y_domain: Option<(f64, f64)>,
+        style: &ChartStyle,
+    ) -> Self {
+        let (left, right, top, bottom) = plot_rect(rect, style.margin);
+
+        let bounds = data_bounds(series);
+        let raw_x = x_domain.or(bounds.map(|b| b.x)).unwrap_or((0.0, 1.0));
+        let raw_y = y_domain.or(bounds.map(|b| b.y)).unwrap_or((0.0, 1.0));
+        // Auto domains snap to the nice-tick extent so the outer gridlines land
+        // on the plot edges; a pinned domain is honoured verbatim.
+        let dom_x = domain_from_ticks(x_domain, raw_x, style.x_ticks);
+        let dom_y = domain_from_ticks(y_domain, raw_y, style.y_ticks);
+
+        Self {
+            left,
+            right,
+            top,
+            bottom,
+            x: LinearScale::new(dom_x, (left, right)),
+            // y is inverted: domain-hi maps to the top (small pixel).
+            y: LinearScale::new(dom_y, (bottom, top)),
+        }
+    }
+}
+
+/// Resolve a final domain: a pinned domain verbatim, else the nice-tick extent
+/// of the raw data domain (falling back to the raw domain when ticks are
+/// unavailable, e.g. a collapsed range).
+pub(crate) fn domain_from_ticks(
+    pinned: Option<(f64, f64)>,
+    raw: (f64, f64),
+    target: usize,
+) -> (f64, f64) {
+    if let Some(d) = pinned {
+        return d;
+    }
+    let ticks = nice_ticks(raw.0, raw.1, target);
+    match (ticks.first(), ticks.last()) {
+        (Some(&lo), Some(&hi)) if (hi - lo).abs() > f64::EPSILON => (lo, hi),
+        _ => raw,
+    }
+}
+
+/// Nice ticks for `domain`, clipped to it — the axis's own tick set (the ticks
+/// that fall inside the visible range). Both the line and scatter charts derive
+/// their tick labels and their gridline positions from it (R1377).
+pub(crate) fn axis_ticks(domain: (f64, f64), target: usize) -> Vec<f64> {
+    let (lo, hi) = domain;
+    nice_ticks(lo, hi, target)
+        .into_iter()
+        .filter(|t| in_domain(*t, lo, hi))
+        .collect()
+}
+
+/// Resolve which data point an x-`fraction` scrub is focused on: the focus x
+/// (the series point x nearest the cursor across every series) plus the nearest
+/// visible point of each series. `fraction` is `0.0..=1.0` across `rect`'s
+/// width; it maps through the plot margins + domain to a data x, then each
+/// series contributes its [`nearest_point_in`] that x.
+///
+/// The single source both the line and scatter charts' scrub inspectors read
+/// (R1377), so the painted overlay and the a11y readout can never point at
+/// different data. Returns `None` when the plot is degenerate or no series has
+/// a point in the visible x range.
+pub(crate) fn resolve_focus(
+    series: &[Series],
+    fraction: f32,
+    plot: &CartesianPlot,
+    rect: Rect,
+) -> Option<(f64, Vec<(usize, DataPoint)>)> {
+    let span = plot.right - plot.left;
+    if span <= 0.0 {
+        return None;
+    }
+    // chart-rect fraction -> plot fraction -> data x.
+    let cursor_px = to_f32(rect.x) + fraction.clamp(0.0, 1.0) * to_f32(rect.w);
+    let plot_frac = ((cursor_px - plot.left) / span).clamp(0.0, 1.0);
+    let (x_lo, x_hi) = plot.x.domain();
+    let data_x = x_lo + f64::from(plot_frac) * (x_hi - x_lo);
+
+    // Nearest point per series + the overall focus x (the series point nearest
+    // the cursor across every series).
+    let mut focus_x: Option<f64> = None;
+    let mut hits: Vec<(usize, DataPoint)> = Vec::new();
+    for (i, s) in series.iter().enumerate() {
+        if let Some(p) = nearest_point_in(s, data_x, x_lo, x_hi) {
+            let better = focus_x.is_none_or(|fx| (p.x - data_x).abs() < (fx - data_x).abs());
+            if better {
+                focus_x = Some(p.x);
+            }
+            hits.push((i, p));
+        }
+    }
+    Some((focus_x?, hits))
+}

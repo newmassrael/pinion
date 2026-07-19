@@ -4,7 +4,7 @@
 //!
 //! # Coordinate contract — one body, two placements
 //!
-//! Every child is authored by resolving [`Plot`] against the `rect` this
+//! Every child is authored by resolving [`CartesianPlot`] against the `rect` this
 //! module is handed, and `rect` enters only as an **additive origin**. So
 //! the same builder yields either placement:
 //!
@@ -67,17 +67,18 @@
 use core::fmt::Write as _;
 
 use pinion_core::Scene;
-use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect};
-use pinion_core::style::{Color, PathStyle, Stroke, StrokeCap, TextAlign};
+use pinion_core::scene::{ContainerNode, Rect};
+use pinion_core::style::{Color, Stroke, StrokeCap, TextAlign};
 
 use crate::draw::{
-    CalloutRow, absolute, area_path, box_node, callout, fill_parent, label_node, plot_rect,
-    stroke_path, to_f32, to_u32,
+    CalloutRow, absolute, area_path, box_node, callout, fill_parent, label_node, marker_node,
+    stroke_path, to_u32,
 };
 use crate::palette::CategoricalPalette;
-use crate::series::{DataPoint, Series, data_bounds};
+use crate::plot::{CartesianPlot, axis_ticks};
+use crate::series::{DataPoint, Series};
 use crate::style::ChartStyle;
-use crate::ticks::{format_axis_tick, nice_ticks, tick_step};
+use crate::ticks::{format_axis_tick, tick_step};
 
 /// A line chart: one or more [`Series`] drawn as polylines with nice
 /// axes, gridlines, labels, and a legend. Set [`filled`](Self::filled) to
@@ -230,13 +231,13 @@ impl LineChart {
     /// `rect` enters only as an additive origin, so callers pass a
     /// zero-origin rect to get a local-frame body.
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
-        let plot = Plot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
+        let plot = CartesianPlot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
         let (y_lo, y_hi) = plot.y.domain();
         let (x_lo, x_hi) = plot.x.domain();
         // One tick-set resolver, shared with `inspect_readout` so the
         // painted axis and the AT readout format at the same precision.
-        let x_ticks = Self::axis_ticks((x_lo, x_hi), style.x_ticks);
-        let y_ticks = Self::axis_ticks((y_lo, y_hi), style.y_ticks);
+        let x_ticks = axis_ticks((x_lo, x_hi), style.x_ticks);
+        let y_ticks = axis_ticks((y_lo, y_hi), style.y_ticks);
         let baseline = clamp(0.0, y_lo, y_hi);
         // The label precision each axis formats at (R1359: `format_si` alone
         // collapsed every sub-0.1 step onto one rounded digit).
@@ -273,55 +274,41 @@ impl LineChart {
         ContainerNode::new(children).with_tag(self.tag_prefix.clone())
     }
 
-    /// Horizontal (per y-tick) and vertical (per x-tick) gridlines.
+    /// Horizontal (per y-tick) and vertical (per x-tick) gridlines. Maps the
+    /// ticks to pixels and hands them to the shared [`crate::draw::gridlines`]
+    /// (R1377) — the pure "draw lines at these positions" primitive the bar and
+    /// scatter charts also emit.
     fn gridlines(
         &self,
-        plot: &Plot,
+        plot: &CartesianPlot,
         x_ticks: &[f64],
         y_ticks: &[f64],
         style: &ChartStyle,
     ) -> Vec<Scene> {
-        let stroke = Stroke::new(style.grid, 1);
-        let mut out = Vec::new();
-        for (k, &t) in y_ticks.iter().enumerate() {
-            let y = plot.y.map(t);
-            out.push(stroke_path(
-                &[(plot.left, y), (plot.right, y)],
-                stroke,
-                format!("{}.grid.y.{k}", self.tag_prefix),
-            ));
-        }
-        for (k, &t) in x_ticks.iter().enumerate() {
-            let x = plot.x.map(t);
-            out.push(stroke_path(
-                &[(x, plot.top), (x, plot.bottom)],
-                stroke,
-                format!("{}.grid.x.{k}", self.tag_prefix),
-            ));
-        }
-        out
+        let x_pos: Vec<f32> = x_ticks.iter().map(|&t| plot.x.map(t)).collect();
+        let y_pos: Vec<f32> = y_ticks.iter().map(|&t| plot.y.map(t)).collect();
+        crate::draw::gridlines(
+            (plot.left, plot.right, plot.top, plot.bottom),
+            &x_pos,
+            &y_pos,
+            style,
+            &self.tag_prefix,
+        )
     }
 
-    /// The left (y) and bottom (x) axis lines.
-    fn axes(&self, plot: &Plot, style: &ChartStyle) -> Vec<Scene> {
-        let stroke = Stroke::new(style.axis, 1);
-        vec![
-            stroke_path(
-                &[(plot.left, plot.top), (plot.left, plot.bottom)],
-                stroke,
-                format!("{}.axis.y", self.tag_prefix),
-            ),
-            stroke_path(
-                &[(plot.left, plot.bottom), (plot.right, plot.bottom)],
-                stroke,
-                format!("{}.axis.x", self.tag_prefix),
-            ),
-        ]
+    /// The left (y) and bottom (x) axis lines — the shared L-frame
+    /// ([`crate::draw::axes`], R1377).
+    fn axes(&self, plot: &CartesianPlot, style: &ChartStyle) -> Vec<Scene> {
+        crate::draw::axes(
+            (plot.left, plot.right, plot.top, plot.bottom),
+            style,
+            &self.tag_prefix,
+        )
     }
 
     /// The per-series area fills (when [`filled`](Self::filled)) and
     /// polylines. Areas paint before lines so the stroke sits on top.
-    fn series_layer(&self, plot: &Plot, baseline: f64, style: &ChartStyle) -> Vec<Scene> {
+    fn series_layer(&self, plot: &CartesianPlot, baseline: f64, style: &ChartStyle) -> Vec<Scene> {
         let baseline_y = plot.y.map(baseline);
         let (x_lo, x_hi) = plot.x.domain();
         let mut out = Vec::new();
@@ -362,10 +349,11 @@ impl LineChart {
         out
     }
 
-    /// Right-aligned y-axis labels and centred x-axis labels.
+    /// Right-aligned y-axis labels (the shared [`crate::draw::y_tick_labels`],
+    /// R1377) and centred numeric x-axis labels.
     fn tick_labels(
         &self,
-        plot: &Plot,
+        plot: &CartesianPlot,
         rect: Rect,
         x_ticks: &[f64],
         y_ticks: &[f64],
@@ -373,21 +361,13 @@ impl LineChart {
         steps: Steps,
     ) -> Vec<Scene> {
         let size = style.label_size_px.max(1);
-        let mut out = Vec::new();
-        let gutter = style.margin.left.saturating_sub(6).max(1);
-        for (k, &t) in y_ticks.iter().enumerate() {
-            let y = to_u32(plot.y.map(t)).saturating_sub(size / 2 + 1);
-            out.push(label_node(
-                format_axis_tick(t, steps.y),
-                rect.x + 2,
-                y,
-                gutter,
-                TextAlign::End,
-                style.label,
-                size,
-                format!("{}.label.y.{k}", self.tag_prefix),
-            ));
-        }
+        let y_pos: Vec<f32> = y_ticks.iter().map(|&t| plot.y.map(t)).collect();
+        let mut out =
+            crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, steps.y, style, &self.tag_prefix);
+        // The numeric x-axis labels stay here: shared only with the scatter chart
+        // (two consumers) — the categorical bar chart labels its slots with
+        // category names instead — so the numeric x-label loop is deferred from
+        // the R1377 lift until a third numeric-x consumer arrives.
         let slot = 60;
         for (k, &t) in x_ticks.iter().enumerate() {
             let cx = to_u32(plot.x.map(t));
@@ -406,74 +386,38 @@ impl LineChart {
         out
     }
 
-    /// The legend row (fixed-width slots) in the top margin band.
+    /// The legend row (fixed-width slots) in the top margin band — the shared
+    /// [`crate::draw::legend_row`] (R1377); this resolves each series' colour +
+    /// name into an entry and positions the row at the top-left of the plot.
     fn legend(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
-        let size = style.label_size_px.max(1);
-        let swatch = size;
-        let slot = 104;
-        let row_y = rect.y + 6;
+        let entries: Vec<(Color, String)> = self
+            .series
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                (
+                    s.color.unwrap_or_else(|| self.palette.color(i)),
+                    s.name.clone(),
+                )
+            })
+            .collect();
         let start_x = rect.x + style.margin.left;
-        let mut out = Vec::new();
-        for (i, s) in self.series.iter().enumerate() {
-            let color = s.color.unwrap_or_else(|| self.palette.color(i));
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "legend index is small; slot offset stays within u32"
-            )]
-            let entry_x = start_x + (i as u32) * slot;
-            out.push(box_node(
-                Rect::new(entry_x, row_y, swatch, swatch),
-                color,
-                format!("{}.legend.{i}.swatch", self.tag_prefix),
-            ));
-            out.push(label_node(
-                s.name.clone(),
-                entry_x + swatch + 4,
-                row_y.saturating_sub(1),
-                slot.saturating_sub(swatch + 4),
-                TextAlign::Start,
-                style.label,
-                size,
-                format!("{}.legend.{i}.label", self.tag_prefix),
-            ));
-        }
-        out
+        let row_y = rect.y + 6;
+        crate::draw::legend_row(&entries, start_x, row_y, style, &self.tag_prefix)
     }
 
-    /// Resolve which data point the inspect cursor is focused on: the
-    /// focus x, plus the nearest visible point of each series.
-    ///
-    /// The single source for "what is the inspector pointing at" — the
-    /// painted overlay ([`Self::resolve_inspect`]) and the AT-facing
-    /// readout ([`Self::inspect_readout`]) both derive from it, so the
-    /// tooltip a sighted user sees and the description a screen reader
-    /// hears can never disagree.
-    fn resolve_focus(&self, plot: &Plot, rect: Rect) -> Option<(f64, Vec<(usize, DataPoint)>)> {
-        let fraction = self.inspect?;
-        let span = plot.right - plot.left;
-        if span <= 0.0 {
-            return None;
-        }
-        // chart-rect fraction -> plot fraction -> data x.
-        let cursor_px = to_f32(rect.x) + fraction.clamp(0.0, 1.0) * to_f32(rect.w);
-        let plot_frac = ((cursor_px - plot.left) / span).clamp(0.0, 1.0);
-        let (x_lo, x_hi) = plot.x.domain();
-        let data_x = x_lo + f64::from(plot_frac) * (x_hi - x_lo);
-
-        // Nearest point per series + the overall focus x (the series
-        // point nearest the cursor across every series).
-        let mut focus_x: Option<f64> = None;
-        let mut hits: Vec<(usize, DataPoint)> = Vec::new();
-        for (i, s) in self.series.iter().enumerate() {
-            if let Some(p) = nearest_point_in(s, data_x, x_lo, x_hi) {
-                let better = focus_x.is_none_or(|fx| (p.x - data_x).abs() < (fx - data_x).abs());
-                if better {
-                    focus_x = Some(p.x);
-                }
-                hits.push((i, p));
-            }
-        }
-        Some((focus_x?, hits))
+    /// Resolve which data point the inspect cursor is focused on — the shared
+    /// [`crate::plot::resolve_focus`] (R1377), gated on this chart's `inspect`
+    /// fraction. The single source for "what is the inspector pointing at": the
+    /// painted overlay ([`Self::resolve_inspect`]) and the AT-facing readout
+    /// ([`Self::inspect_readout`]) both derive from it, so the tooltip a sighted
+    /// user sees and the description a screen reader hears can never disagree.
+    fn resolve_focus(
+        &self,
+        plot: &CartesianPlot,
+        rect: Rect,
+    ) -> Option<(f64, Vec<(usize, DataPoint)>)> {
+        crate::plot::resolve_focus(&self.series, self.inspect?, plot, rect)
     }
 
     /// The inspect readout as one line of text — the same focus and values
@@ -487,9 +431,9 @@ impl LineChart {
     /// chart exists to deliver actually reaches a screen reader.
     #[must_use]
     pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
-        let plot = Plot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
-        let x_ticks: Vec<f64> = Self::axis_ticks(plot.x.domain(), style.x_ticks);
-        let y_ticks: Vec<f64> = Self::axis_ticks(plot.y.domain(), style.y_ticks);
+        let plot = CartesianPlot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
+        let x_ticks: Vec<f64> = axis_ticks(plot.x.domain(), style.x_ticks);
+        let y_ticks: Vec<f64> = axis_ticks(plot.y.domain(), style.y_ticks);
         let steps = Steps {
             x: tick_step(&x_ticks),
             y: tick_step(&y_ticks),
@@ -509,21 +453,12 @@ impl LineChart {
         Some(out)
     }
 
-    /// Nice ticks for `domain`, clipped to it — the axis's own tick set.
-    fn axis_ticks(domain: (f64, f64), target: usize) -> Vec<f64> {
-        let (lo, hi) = domain;
-        nice_ticks(lo, hi, target)
-            .into_iter()
-            .filter(|t| in_domain(*t, lo, hi))
-            .collect()
-    }
-
     /// Resolve the inspect overlay for the current `inspect` fraction, or
     /// `None` when inspection is off, the plot is degenerate, or there is
     /// no data under the cursor.
     fn resolve_inspect(
         &self,
-        plot: &Plot,
+        plot: &CartesianPlot,
         rect: Rect,
         style: &ChartStyle,
         steps: Steps,
@@ -569,7 +504,7 @@ impl LineChart {
     /// per-series row content is what stays here.
     fn inspect_tooltip(
         &self,
-        plot: &Plot,
+        plot: &CartesianPlot,
         focus_pixel: f32,
         focus_x: f64,
         hits: &[(usize, DataPoint)],
@@ -687,132 +622,6 @@ fn clip_to_x_domain(points: &[DataPoint], lo: f64, hi: f64) -> Vec<DataPoint> {
     out
 }
 
-/// The series point whose x is nearest `data_x`, restricted to the
-/// visible x range `[lo, hi]` so a zoomed chart never inspects a point
-/// outside the plot. Non-finite points are skipped.
-fn nearest_point_in(series: &Series, data_x: f64, lo: f64, hi: f64) -> Option<DataPoint> {
-    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
-    series
-        .points
-        .iter()
-        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x >= lo && p.x <= hi)
-        .copied()
-        .min_by(|a, b| {
-            (a.x - data_x)
-                .abs()
-                .partial_cmp(&(b.x - data_x).abs())
-                .unwrap_or(core::cmp::Ordering::Equal)
-        })
-}
-
-/// A filled circle marker at `(cx, cy)`, approximated by four cubic
-/// Béziers (no arc `PathCommand`; kappa = 0.5522847498).
-fn marker_node(cx: f32, cy: f32, r: u32, fill: Color, tag: String) -> Scene {
-    let bbox = Rect::new(
-        to_u32(cx - to_f32(r)),
-        to_u32(cy - to_f32(r)),
-        r * 2 + 1,
-        r * 2 + 1,
-    );
-    // R1358 — rect-relative commands; the circle centres on its own bbox.
-    let commands = circle_commands(cx - to_f32(bbox.x), cy - to_f32(bbox.y), to_f32(r));
-    Scene::Path(
-        PathNode::new(bbox, commands, PathStyle::filled(fill))
-            .with_tag(tag)
-            .with_layout(absolute(bbox)),
-    )
-}
-
-fn circle_commands(cx: f32, cy: f32, r: f32) -> Vec<PathCommand> {
-    let k = 0.552_285 * r;
-    let p = |x: f32, y: f32| PathPoint::new(x, y);
-    vec![
-        PathCommand::MoveTo(p(cx + r, cy)),
-        PathCommand::CurveTo {
-            c1: p(cx + r, cy + k),
-            c2: p(cx + k, cy + r),
-            end: p(cx, cy + r),
-        },
-        PathCommand::CurveTo {
-            c1: p(cx - k, cy + r),
-            c2: p(cx - r, cy + k),
-            end: p(cx - r, cy),
-        },
-        PathCommand::CurveTo {
-            c1: p(cx - r, cy - k),
-            c2: p(cx - k, cy - r),
-            end: p(cx, cy - r),
-        },
-        PathCommand::CurveTo {
-            c1: p(cx + k, cy - r),
-            c2: p(cx + r, cy - k),
-            end: p(cx + r, cy),
-        },
-        PathCommand::Close,
-    ]
-}
-
-/// The resolved plot rectangle (in float pixels) plus the two scales.
-#[derive(Debug, Clone, Copy)]
-struct Plot {
-    left: f32,
-    right: f32,
-    top: f32,
-    bottom: f32,
-    x: crate::scale::LinearScale,
-    y: crate::scale::LinearScale,
-}
-
-impl Plot {
-    fn resolve(
-        rect: Rect,
-        series: &[Series],
-        x_domain: Option<(f64, f64)>,
-        y_domain: Option<(f64, f64)>,
-        style: &ChartStyle,
-    ) -> Self {
-        let (left, right, top, bottom) = plot_rect(rect, style.margin);
-
-        let bounds = data_bounds(series);
-        let raw_x = x_domain.or(bounds.map(|b| b.x)).unwrap_or((0.0, 1.0));
-        let raw_y = y_domain.or(bounds.map(|b| b.y)).unwrap_or((0.0, 1.0));
-        // Auto domains snap to the nice-tick extent so the outer gridlines
-        // land on the plot edges (Qt `applyNiceNumbers`); a pinned domain
-        // is honoured verbatim.
-        let dom_x = domain_from_ticks(x_domain, raw_x, style.x_ticks);
-        let dom_y = domain_from_ticks(y_domain, raw_y, style.y_ticks);
-
-        Self {
-            left,
-            right,
-            top,
-            bottom,
-            x: crate::scale::LinearScale::new(dom_x, (left, right)),
-            // y is inverted: domain-hi maps to the top (small pixel).
-            y: crate::scale::LinearScale::new(dom_y, (bottom, top)),
-        }
-    }
-}
-
-/// Resolve a final domain: a pinned domain verbatim, else the nice-tick
-/// extent of the raw data domain (falling back to the raw domain when
-/// ticks are unavailable, e.g. a collapsed range).
-fn domain_from_ticks(pinned: Option<(f64, f64)>, raw: (f64, f64), target: usize) -> (f64, f64) {
-    if let Some(d) = pinned {
-        return d;
-    }
-    let ticks = nice_ticks(raw.0, raw.1, target);
-    match (ticks.first(), ticks.last()) {
-        (Some(&lo), Some(&hi)) if (hi - lo).abs() > f64::EPSILON => (lo, hi),
-        _ => raw,
-    }
-}
-
-fn in_domain(value: f64, lo: f64, hi: f64) -> bool {
-    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
-    value >= lo - f64::EPSILON && value <= hi + f64::EPSILON
-}
-
 fn clamp(value: f64, lo: f64, hi: f64) -> f64 {
     let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
     value.max(lo).min(hi)
@@ -821,8 +630,10 @@ fn clamp(value: f64, lo: f64, hi: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::draw::to_f32;
     use crate::series::DataPoint;
     use crate::style::Margin;
+    use pinion_core::scene::PathCommand;
     use pinion_core::style::{Size, SizeValue};
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {

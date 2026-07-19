@@ -57,9 +57,18 @@
 //! on the focused bar + a value tooltip, over the lifted `callout` tooltip core
 //! the chart types now share; and (R1376) a [`DonutChart`] — the crate's first
 //! PART-OF-WHOLE form (filled Bézier-arc sectors, a centre hole, a legend, and
-//! the same scrub inspect showing each slice's percent share).
+//! the same scrub inspect showing each slice's percent share); and (R1377) a
+//! [`ScatterChart`] — the crate's third cartesian chart (numeric x AND y),
+//! plotting each series as filled point marks. Being the third axis chart, it
+//! is what let the shared cartesian substrate finally factor out — each helper
+//! collapsing to ONE definition at the round its consumer count reached: line,
+//! bar, and scatter now CALL one set of axis furniture (`gridlines` / `axes` /
+//! `y_tick_labels`, in [`draw`](crate)) rather than re-derive it; line and
+//! scatter share one plot resolver (`crate::plot`); the legend row is one
+//! definition across line, donut, and scatter; and the circle geometry one
+//! across the line and scatter markers.
 //!
-//! Not yet: treemap / scatter, legend-toggle, cross-filtering, and a y-rescale
+//! Not yet: treemap, legend-toggle, cross-filtering, and a y-rescale
 //! on zoom — follow-up slices on that same core. (A frequency *histogram* is a
 //! consumer pattern over [`BarChart`], not a distinct type —
 //! `hello-frame-profiler` bins its frame times into one, and R1375 lets a
@@ -114,7 +123,9 @@ mod donut;
 mod draw;
 mod line;
 mod palette;
+mod plot;
 mod scale;
+mod scatter;
 mod series;
 mod style;
 mod ticks;
@@ -124,6 +135,7 @@ pub use donut::{DonutChart, Slice};
 pub use line::LineChart;
 pub use palette::CategoricalPalette;
 pub use scale::LinearScale;
+pub use scatter::ScatterChart;
 pub use series::{Bounds, DataPoint, Series, data_bounds};
 pub use style::{ChartStyle, Margin};
 pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};

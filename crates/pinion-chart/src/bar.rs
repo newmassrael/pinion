@@ -10,14 +10,14 @@
 //! [`crate::line`]: the value [`LinearScale`], the Heckbert nice ticks, the
 //! [`plot_rect`](crate::draw) margin math, the categorical palette, and the
 //! retained draw primitives ([`crate::draw`] — a bar IS a `box_node`, an axis a
-//! `stroke_path`, a tick a `label_node`). It still re-derives the mid-level
-//! ASSEMBLY that sits on that core — the horizontal gridlines, the two axes,
-//! and the y-tick-label loop are near-identical to [`crate::line`]'s; that
-//! duplication is deliberately deferred, not lifted, until a third chart type
-//! shows the right axis-furniture API (an axis helper fitted to only line + bar
-//! risks being wrong for a scatter / donut). Both builders emit the same
-//! tagged, layout-native `Scene`, so a bar chart docks / flexes / resizes and
-//! reads back over §2 #7 introspection exactly as a line chart does.
+//! `stroke_path`, a tick a `label_node`). R1377's scatter chart was the third
+//! axis-based chart the mid-level ASSEMBLY was waiting for, so the horizontal
+//! gridlines, the two axes, and the y-tick-label loop are now the SHARED
+//! [`crate::draw`] furniture (`gridlines` / `axes` / `y_tick_labels`) this
+//! builder CALLS rather than re-derives; the categorical `chart.xlabel.{i}` loop
+//! stays its own (a bar's x-axis has no numeric ticks). Both builders emit the
+//! same tagged, layout-native `Scene`, so a bar chart docks / flexes / resizes
+//! and reads back over §2 #7 introspection exactly as a line chart does.
 //!
 //! # Introspection
 //!
@@ -46,11 +46,10 @@
 
 use pinion_core::Scene;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
-use pinion_core::style::{Border, BorderPlacement, BoxStyle, Color, Stroke, TextAlign};
+use pinion_core::style::{Border, BorderPlacement, BoxStyle, Color, TextAlign};
 
 use crate::draw::{
-    CalloutRow, absolute, box_node, callout, fill_parent, label_node, plot_rect, stroke_path,
-    to_f32, to_u32,
+    CalloutRow, absolute, box_node, callout, fill_parent, label_node, plot_rect, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::scale::LinearScale;
@@ -210,27 +209,21 @@ impl BarChart {
         if let Some(bg) = style.background {
             children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
         }
-        // Horizontal gridlines, one per y-tick.
-        let grid = Stroke::new(style.grid, 1);
-        for (k, &t) in g.y_ticks.iter().enumerate() {
-            let gy = g.y.map(t);
-            children.push(stroke_path(
-                &[(g.left, gy), (g.right, gy)],
-                grid,
-                format!("{}.grid.y.{k}", self.tag_prefix),
-            ));
-        }
-        // Axes.
-        let axis = Stroke::new(style.axis, 1);
-        children.push(stroke_path(
-            &[(g.left, g.top), (g.left, g.bottom)],
-            axis,
-            format!("{}.axis.y", self.tag_prefix),
+        // Horizontal gridlines (one per y-tick) + the L-frame axes — the shared
+        // cartesian furniture (R1377). A bar chart's x-axis is CATEGORICAL, so
+        // it passes NO x-gridline positions (its slots are labelled, not ticked).
+        let y_pos: Vec<f32> = g.y_ticks.iter().map(|&t| g.y.map(t)).collect();
+        children.extend(crate::draw::gridlines(
+            (g.left, g.right, g.top, g.bottom),
+            &[],
+            &y_pos,
+            style,
+            &self.tag_prefix,
         ));
-        children.push(stroke_path(
-            &[(g.left, g.bottom), (g.right, g.bottom)],
-            axis,
-            format!("{}.axis.x", self.tag_prefix),
+        children.extend(crate::draw::axes(
+            (g.left, g.right, g.top, g.bottom),
+            style,
+            &self.tag_prefix,
         ));
 
         // Bars — evenly spaced slots across the plot width, each bar centred
@@ -269,21 +262,16 @@ impl BarChart {
             children.push(highlight);
         }
 
-        // Right-aligned y-axis tick labels in the left gutter.
-        let gutter = style.margin.left.saturating_sub(6).max(1);
-        for (k, &t) in g.y_ticks.iter().enumerate() {
-            let ly = to_u32(g.y.map(t)).saturating_sub(size / 2 + 1);
-            children.push(label_node(
-                format_axis_tick(t, g.y_step),
-                rect.x + 2,
-                ly,
-                gutter,
-                TextAlign::End,
-                style.label,
-                size,
-                format!("{}.label.y.{k}", self.tag_prefix),
-            ));
-        }
+        // Right-aligned y-axis tick labels in the left gutter — the shared
+        // cartesian furniture (R1377), reusing the `y_pos` mapped above.
+        children.extend(crate::draw::y_tick_labels(
+            rect.x,
+            &g.y_ticks,
+            &y_pos,
+            g.y_step,
+            style,
+            &self.tag_prefix,
+        ));
 
         // The tooltip paints above everything.
         children.extend(tooltip);

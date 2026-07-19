@@ -7,13 +7,15 @@
 //! A donut is the crate's first PART-OF-WHOLE form: it has no value axis, no
 //! gridlines, and no categorical or numeric x — a slice's size is its share of
 //! the total, drawn as an angular sector, not a height against a baseline. So
-//! it shares NONE of the axis furniture line + bar share (which is why the
-//! deferred axis-furniture lift is still deferred — a donut is not the third
-//! axis-based chart that would settle it). What it DOES reuse is the crate's
-//! genuinely cross-cutting core: the categorical [`palette`](crate::palette),
-//! the leaf draw primitives ([`box_node`](crate::draw) / [`label_node`](crate::draw)
-//! for the legend), and the inspect [`callout`](crate::draw) tooltip (the same
-//! box the line + bar inspectors use).
+//! it shares NONE of the axis furniture line + bar + scatter share (a donut has
+//! no axes — R1377's scatter, not the donut, was the third axis-based chart that
+//! settled the axis-furniture lift). What it DOES reuse is the crate's genuinely
+//! cross-cutting core: the categorical [`palette`](crate::palette), the shared
+//! [`legend_row`](crate::draw) leaf (the swatch + label loop line and scatter
+//! also emit), the shared [`arc_beziers`](crate::draw) arc its sectors are drawn
+//! from (the same arc the line + scatter circle markers close into a full
+//! circle, R1377), and the inspect [`callout`](crate::draw) tooltip (the same
+//! box the line + bar + scatter inspectors use).
 //!
 //! # Geometry
 //!
@@ -51,10 +53,11 @@ use core::f32::consts::PI;
 
 use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect};
-use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
+use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::draw::{
-    CalloutRow, absolute, box_node, callout, fill_parent, label_node, to_f32, to_u32,
+    CalloutRow, LEGEND_SLOT, absolute, arc_beziers, box_node, callout, fill_parent, legend_row,
+    to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::style::ChartStyle;
@@ -374,43 +377,30 @@ impl DonutChart {
     /// The legend row (fixed-width slots), centred along the reserved bottom
     /// band beneath the donut.
     fn legend(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
-        let size = style.label_size_px.max(1);
-        let swatch = size;
-        let slot = 104;
         let band = self.legend_band(style);
         let row_y = rect.y + rect.h.saturating_sub(band).saturating_add(3);
-        // Centre the legend row under the (centred) donut.
+        // Centre the legend row under the (centred) donut, then hand the entries
+        // to the shared `legend_row` (R1377) — the byte-identical swatch + label
+        // loop the line and scatter charts also emit; only the WHERE (a centred
+        // bottom band, vs their top band) is the donut's own.
         #[allow(
             clippy::cast_possible_truncation,
             reason = "slice count is a small display count; the total legend width stays within u32"
         )]
-        let total_w = (self.slices.len() as u32) * slot;
+        let total_w = (self.slices.len() as u32) * LEGEND_SLOT;
         let start_x = rect.x + rect.w.saturating_sub(total_w) / 2;
-        let mut out = Vec::new();
-        for (i, s) in self.slices.iter().enumerate() {
-            let color = s.color.unwrap_or_else(|| self.palette.color(i));
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "legend index is small; the slot offset stays within u32"
-            )]
-            let entry_x = start_x + (i as u32) * slot;
-            out.push(box_node(
-                Rect::new(entry_x, row_y, swatch, swatch),
-                color,
-                format!("{}.legend.{i}.swatch", self.tag_prefix),
-            ));
-            out.push(label_node(
-                s.label.clone(),
-                entry_x + swatch + 4,
-                row_y.saturating_sub(1),
-                slot.saturating_sub(swatch + 4),
-                TextAlign::Start,
-                style.label,
-                size,
-                format!("{}.legend.{i}.label", self.tag_prefix),
-            ));
-        }
-        out
+        let entries: Vec<(Color, String)> = self
+            .slices
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                (
+                    s.color.unwrap_or_else(|| self.palette.color(i)),
+                    s.label.clone(),
+                )
+            })
+            .collect();
+        legend_row(&entries, start_x, row_y, style, &self.tag_prefix)
     }
 }
 
@@ -488,40 +478,6 @@ fn sector_commands(cx: f32, cy: f32, r_out: f32, r_in: f32, a0: f32, a1: f32) ->
         cmds.push(PathCommand::Close);
     }
     cmds
-}
-
-/// Append cubic-Bézier `CurveTo`s approximating the arc from `a0` to `a1`
-/// (radians, either direction) at radius `r`, split into <=90-degree segments.
-/// The caller has already emitted the arc's start point.
-fn arc_beziers(cx: f32, cy: f32, r: f32, a0: f32, a1: f32, cmds: &mut Vec<PathCommand>) {
-    let sweep = a1 - a0;
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a segment count is small and non-negative"
-    )]
-    let steps = ((sweep.abs() / (PI / 2.0)).ceil() as u32).max(1);
-    let step = sweep / to_f32(steps);
-    // A point on the circle at angle `a` (clockwise from the top).
-    let point = |a: f32| PathPoint::new(cx + r * a.sin(), cy - r * a.cos());
-    for i in 0..steps {
-        let a_start = a0 + step * to_f32(i);
-        let a_end = a_start + step;
-        // The control-point offset along the unit tangent (cos, sin); the
-        // `k = 4/3 * tan(step/4)` factor makes the cubic match a true arc.
-        let k = (4.0 / 3.0) * (step / 4.0).tan() * r;
-        cmds.push(PathCommand::CurveTo {
-            c1: PathPoint::new(
-                cx + r * a_start.sin() + k * a_start.cos(),
-                cy - r * a_start.cos() + k * a_start.sin(),
-            ),
-            c2: PathPoint::new(
-                cx + r * a_end.sin() - k * a_end.cos(),
-                cy - r * a_end.cos() - k * a_end.sin(),
-            ),
-            end: point(a_end),
-        });
-    }
 }
 
 /// A slice value + its percent share of the total, e.g. `"12 (30%)"`.

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1377 correlation-view chart consumer: pinion-forge renderer manifest for
+  hello-scatter. Emits `HelloScatterRenderer` (Vello-backed RenderContext +
+  RenderSurface + Renderer wrapper). Identical manifest shape to
+  hello-donut's `HelloDonutRenderer` — single-source-of-truth emit
+  template, only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloScatterRenderer"
+        backend="vello"/>
