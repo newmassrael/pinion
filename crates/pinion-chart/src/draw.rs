@@ -18,7 +18,13 @@ use pinion_core::style::{
     BoxStyle, Color, LayoutStyle, PathStyle, Size, SizeValue, Stroke, TextAlign, TextStyle,
 };
 
-use crate::style::Margin;
+use crate::style::{ChartStyle, Margin};
+
+/// Fixed width (px) of the inspect [`callout`] tooltip box. Wide enough for a
+/// line chart's `"{series}  {value}"` value rows; a bar chart's shorter
+/// `"{value}"` row sits comfortably inside the same box, so both chart types
+/// share the one width rather than each choosing its own (R1375).
+pub(crate) const TOOLTIP_WIDTH: u32 = 132;
 
 /// The plotting area inside `rect` after the [`Margin`] insets — `(left, right,
 /// top, bottom)` in device pixels (each edge `+1`-clamped so a zero-inset side
@@ -138,6 +144,99 @@ pub(crate) fn label_node(
                 .with_size(Size::px(width.max(1), size + 4)),
         ),
     )
+}
+
+/// A filled, rounded, tagged box — the inspect tooltip's backing plate. A
+/// [`box_node`] with a corner radius; kept distinct so the sharp-cornered bars
+/// and the rounded callout do not have to thread a radius through every call.
+pub(crate) fn rounded_box_node(rect: Rect, fill: Color, radius: u32, tag: String) -> Scene {
+    Scene::Box(
+        BoxNode::new(rect, BoxStyle::filled(fill).with_corner_radius(radius))
+            .with_tag(tag)
+            .with_layout(absolute(rect)),
+    )
+}
+
+/// One value line of a [`callout`]: its text, its own colour (a line chart
+/// colours each row by its series; a bar chart uses the tooltip foreground),
+/// and the full introspection tag the caller assigns it.
+pub(crate) struct CalloutRow {
+    /// The row's text (e.g. `"ingress  2.4k"` or `"3 frames"`).
+    pub text: String,
+    /// The row's text colour.
+    pub color: Color,
+    /// The row's introspection tag (e.g. `"chart.inspect.value.0"`).
+    pub tag: String,
+}
+
+/// The inspect tooltip callout: a rounded backing box, a header line, and one
+/// colour-per-row value line, placed to the RIGHT of `anchor_x` and flipped to
+/// the LEFT when it would overrun `plot_right`. The one definition both the
+/// line chart (crosshair-anchored, one row per series) and the bar chart
+/// (bar-anchored, one value row) emit (R1375) — the mechanical box geometry
+/// they share, distinct from the per-chart choice of what the rows SAY.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a callout is intrinsically an anchor + two plot bounds + a \
+              header (text, tag) + rows + style + box tag; grouping them into a \
+              struct would not reduce the real parameter count"
+)]
+pub(crate) fn callout(
+    anchor_x: f32,
+    plot_right: f32,
+    plot_top: f32,
+    header: &str,
+    header_tag: String,
+    rows: &[CalloutRow],
+    style: &ChartStyle,
+    box_tag: String,
+) -> Vec<Scene> {
+    let size = style.label_size_px.max(1);
+    let line_h = size + 6;
+    let pad = 8;
+    let width = TOOLTIP_WIDTH;
+    let row_count = u32::try_from(rows.len()).unwrap_or(0) + 1; // header + values
+    let height = row_count * line_h + pad;
+    // Place right of the anchor; flip left if it would overflow the plot.
+    let mut box_x = to_u32(anchor_x) + 12;
+    if box_x + width > to_u32(plot_right) {
+        box_x = to_u32(anchor_x).saturating_sub(width + 12);
+    }
+    let box_y = to_u32(plot_top) + 8;
+    let text_x = box_x + pad;
+
+    let mut out = vec![rounded_box_node(
+        Rect::new(box_x, box_y, width, height),
+        style.tooltip_bg,
+        6,
+        box_tag,
+    )];
+    let mut ty = box_y + pad / 2;
+    out.push(label_node(
+        header,
+        text_x,
+        ty,
+        width - pad * 2,
+        TextAlign::Start,
+        style.tooltip_fg,
+        size,
+        header_tag,
+    ));
+    ty += line_h;
+    for row in rows {
+        out.push(label_node(
+            row.text.clone(),
+            text_x,
+            ty,
+            width - pad * 2,
+            TextAlign::Start,
+            row.color,
+            size,
+            row.tag.clone(),
+        ));
+        ty += line_h;
+    }
+    out
 }
 
 /// A layout that pins a node to `rect` (parent-relative absolute position + size).

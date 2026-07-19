@@ -130,15 +130,16 @@
 //! chart is fed by the seam, tracks its flex slot, and draws a budget line
 //! exactly when a budget exists.
 
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
+use pinion_a11y::described::describedby_region;
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{Bar, BarChart, ChartStyle, DataPoint, LineChart, Series};
-use pinion_core::external::IntrospectValue;
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
     TextStyle,
 };
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::slider::SliderExternal;
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{
     ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_pane_viewport_size, use_theme,
@@ -176,6 +177,16 @@ const CHART_TAG: &str = "chart";
 /// time"; the histogram answers "how OFTEN do I land in each duration band",
 /// the distribution the time-series cannot show.
 const HIST_TAG: &str = "histogram";
+
+/// The transparent capture surface over the histogram panel — the press-drag
+/// scrub's tag (R1375). It hosts a sibling [`SliderExternal`] (a captured 1-D
+/// fraction, RPC-drivable) whose value the histogram's
+/// [`BarChart::inspect`](pinion_chart::BarChart::inspect) turns into a
+/// highlight ring + a per-bin value tooltip. pinion only forwards a continuous
+/// pointer position under capture (free hover reports only WHICH tag), so the
+/// inspector is a drag over this surface — the same design `hello-chart` uses
+/// for the line chart's scrub.
+const HIST_SCRUB_TAG: &str = "hist_scrub";
 
 /// The distribution histogram's bucket count. 12 keeps each bar wide enough to
 /// read + label across the panel while still resolving a bimodal frame-time
@@ -365,22 +376,72 @@ fn chart_style(theme: &pinion_core::Theme) -> ChartStyle {
     }
 }
 
+/// The distribution [`BarChart`], built identically for the painted panel and
+/// the a11y readout (R1375) so the two cannot disagree — the R1355 parity, now
+/// for the bar chart. `scrub` is the inspect fraction across the panel.
+fn histogram_chart(view: &FrameTimingsView, theme: &pinion_core::Theme, scrub: f32) -> BarChart {
+    BarChart::new(histogram_bars(
+        view,
+        theme.resolve(ColorRole::Accent),
+        theme.resolve(ColorRole::Error),
+    ))
+    .with_tag_prefix(HIST_TAG)
+    .inspect(Some(scrub))
+}
+
+/// R1249 — the histogram scrub as an `External`, dispatched by tag. A
+/// [`SliderExternal`] (a captured 1-D fraction) seeded to the panel centre so
+/// the boot frame shows a centred inspector, exactly as `hello-chart`'s scrub.
+fn hist_scrub_extras() -> Vec<ExtraExternal> {
+    let mut slider = SliderExternal::new();
+    slider.set_value(0.5);
+    vec![ExtraExternal::new(HIST_SCRUB_TAG, Box::new(slider))]
+}
+
+/// Read the histogram scrub fraction `0.0..=1.0` from the sibling external. A
+/// missing external falls back to the panel centre.
+fn read_scrub(scene: &Scene) -> f32 {
+    scene
+        .find_external_with_tag(HIST_SCRUB_TAG)
+        .and_then(|node| node.handle.introspect())
+        .and_then(|intro| intro.query("value"))
+        .and_then(|v| v.as_f32())
+        .unwrap_or(0.5)
+}
+
 /// R1374 — the distribution histogram panel below the timeline: the SAME
 /// window's total frame times, binned. Under-budget bars in the accent,
 /// over-budget (jank) bars in the error colour — the timeline's horizontal
 /// budget line re-encoded as a colour boundary along the x-axis. A fixed-height
 /// slot (the timeline flex-grows above it), on its own `HIST_TAG` measured-rect
 /// seam (`size` = the slot's measured px).
-fn histogram_panel(view: &FrameTimingsView, theme: &pinion_core::Theme, size: (u32, u32)) -> Scene {
-    let histogram = BarChart::new(histogram_bars(
-        view,
-        theme.resolve(ColorRole::Accent),
-        theme.resolve(ColorRole::Error),
-    ))
-    .with_tag_prefix(HIST_TAG)
-    .build_fill(size, &chart_style(theme));
+///
+/// R1375 — a transparent `HIST_SCRUB_TAG` capture surface fills the panel (the
+/// scrub slider's basis), and `scrub` drives the bar chart's inspect overlay.
+/// The surface sits ON TOP so a press anywhere on the panel captures the scrub;
+/// transparent so the histogram shows through, and geometric hit-test is
+/// alpha-independent so it still captures.
+fn histogram_panel(
+    view: &FrameTimingsView,
+    theme: &pinion_core::Theme,
+    size: (u32, u32),
+    scrub: f32,
+) -> Scene {
+    let (hw, hh) = size;
+    let histogram = histogram_chart(view, theme, scrub).build_fill(size, &chart_style(theme));
+    // The scrub's a11y name lives on its `AccessNode` (the manual `WidgetA11y`
+    // impl), not the scene node — a `BoxNode` has no `aria_label`.
+    let scrub_surface = Scene::Box(
+        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
+            .with_tag(HIST_SCRUB_TAG)
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(0, 0)
+                    .with_size(Size::px(hw.max(1), hh.max(1))),
+            ),
+    );
     Scene::Container(
-        ContainerNode::new(vec![histogram]).with_layout(
+        ContainerNode::new(vec![histogram, scrub_surface]).with_layout(
             LayoutStyle::new().with_size(
                 Size::auto()
                     .with_width(SizeValue::Percent(100))
@@ -390,14 +451,15 @@ fn histogram_panel(view: &FrameTimingsView, theme: &pinion_core::Theme, size: (u
     )
 }
 
-/// view-fn (§6.3): pure sync `(ToggleState, bool) -> Scene`.
+/// view-fn (§6.3): pure sync `(ToggleState, bool, f32) -> Scene` (R1375 added
+/// the histogram scrub fraction).
 ///
 /// Pure *of published state*, which is what the `dry_run` guarantee needs:
 /// the wall-clock non-determinism enters at the shell's publish, exactly as
 /// an animation's `dt` enters at `tick_animations_for_window` rather than
 /// here.
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
+fn view(state: ToggleState, on: bool, scrub: f32, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -436,8 +498,9 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
         ),
     );
 
-    // R1374 — the distribution histogram below the timeline (its own seam).
-    let hist_slot = histogram_panel(&timings, &theme, (hw, hh));
+    // R1374 — the distribution histogram below the timeline (its own seam);
+    // R1375 — `scrub` drives its per-bin inspect overlay.
+    let hist_slot = histogram_panel(&timings, &theme, (hw, hh), scrub);
 
     let status = Scene::Text(
         TextNode::styled(
@@ -511,27 +574,23 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 
 /// `WidgetView` binding. The §5.38 Toggle is reused as the RPC-drivable
 /// repaint trigger (see the module doc); `#[widget]` derives the mechanical
-/// [`WidgetCore`] / [`WidgetA11y`] / [`WidgetView`] trio.
+/// [`WidgetCore`] + [`WidgetView`]. R1375's `a11y_manual` opts OUT of the
+/// derived [`WidgetA11y`] so the histogram scrub node can join the repaint
+/// Switch (the hand-written impl below).
 ///
 /// [`WidgetCore`]: pinion_core::WidgetCore
 /// [`WidgetA11y`]: pinion_a11y::WidgetA11y
 /// [`WidgetView`]: pinion_shell::WidgetView
 #[widget(
     tag = "repaint",
-    state = (ToggleState, bool),
+    state = (ToggleState, bool, f32),
     event = ToggleEvent,
     title = "pinion hello-frame-profiler (R1361 §5.16 live frame-time chart)",
     renderer = HelloFrameProfilerRenderer,
     initial_size = (WIN_W, WIN_H),
     external = ToggleExternal::new,
-    role = Switch,
-    state_flags(
-        hovered = Hover,
-        pressed = Pressed,
-        disabled = Disabled,
-        checked = bool_field(1),
-    ),
-    access_value = bool_field(1),
+    extra_externals = hist_scrub_extras,
+    a11y_manual,
     apply_key,
     keybinding,
     initial_size_strategy,
@@ -556,25 +615,21 @@ impl ProfilerView {
         }
     }
 
-    /// Tuple-state introspect: SCXML state name + the repaint bit.
-    fn read_state(scene: &Scene) -> (ToggleState, bool) {
-        if let Scene::External(node) = scene {
-            if let Some(intro) = node.handle.introspect() {
-                let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    ToggleState::from_name_or_default(&name)
-                } else {
-                    ToggleState::Idle
-                };
-                let value = matches!(intro.query("value"), Some(IntrospectValue::Bool(true)));
-                return (state, value);
-            }
-        }
-        (ToggleState::Idle, false)
+    /// Tuple-state introspect: the repaint Toggle (SCXML state name + the
+    /// repaint bit) read BY TAG plus the histogram scrub fraction. R1375 — the
+    /// `extra_externals` slot wraps the primary Toggle in a
+    /// `Container([primary, ...extras])`, so the pre-R1375 `Scene::External`
+    /// root read no longer holds; both externals are found by tag now (the
+    /// Toggle read reuses `toggle_group::read_toggle`, the crate's SSOT for that
+    /// introspect walk, rather than re-deriving it here).
+    fn read_state(scene: &Scene) -> (ToggleState, bool, f32) {
+        let (state, on) = pinion_core::widgets::toggle_group::read_toggle(scene, REPAINT_TAG);
+        (state, on, read_scrub(scene))
     }
 
     /// R641 §5.16 inherent view shim — unpacks the tuple and forwards.
-    fn view(state: (ToggleState, bool), frame: Frame) -> Scene {
-        view(state.0, state.1, &frame)
+    fn view(state: (ToggleState, bool, f32), frame: Frame) -> Scene {
+        view(state.0, state.1, state.2, &frame)
     }
 
     fn event_name(event: ToggleEvent) -> &'static str {
@@ -598,6 +653,68 @@ impl ProfilerView {
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
+    }
+}
+
+/// R1375 §5.16 §5.40 — manual a11y (the `a11y_manual` opt-out): the repaint
+/// Switch (reproducing verbatim the pre-R1375 derived form) plus the histogram
+/// scrub Slider `describedby` the histogram's inspect tooltip region — so when a
+/// bin is focused the tree is three nodes (Switch + scrub + region), and two
+/// (Switch + scrub, no `describedby`) when there is nothing to read. That region
+/// carries the per-bin readout a sighted user sees in the tooltip, so it reaches
+/// a screen reader too (the R1355 parity, now for the bar chart). It is computed
+/// against the
+/// LIVE measured panel size — `access_node` runs inside `root_owner.run`, so
+/// `use_pane_viewport_size(HIST_TAG)` resolves here to the SAME size the view
+/// built the painted overlay at, and the two cannot disagree even though the
+/// histogram is a `build_fill` (layout-derived-geometry) chart.
+impl WidgetA11y for ProfilerView {
+    fn access_node(state: &(ToggleState, bool, f32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, on, scrub) = (state.0, state.1, state.2);
+        // Reproduces `emit_a11y_impl`'s Switch form exactly (disabled/hovered/
+        // pressed by variant, checked = the repaint bit).
+        let access_state = AccessState {
+            focused: focused == Some(<Self as WidgetCore>::tag()),
+            disabled: matches!(interaction, ToggleState::Disabled),
+            hovered: matches!(interaction, ToggleState::Hover),
+            pressed: matches!(interaction, ToggleState::Pressed),
+            checked: Some(on),
+            ..AccessState::default()
+        };
+        let switch = AccessNode::new(REPAINT_TAG, AriaRole::Switch)
+            .with_value(AccessValue::Bool(on))
+            .with_state(access_state);
+
+        // The scrub readout, over the SAME measured size the view paints at.
+        // `(0, 0)` = unmeasured: mirror `build_fill`'s empty sentinel (no
+        // overlay painted ⇒ no readout) so a11y and paint stay in lockstep.
+        let timings = use_frame_timings();
+        let theme = use_theme(THEME_TAG).theme_animated();
+        let (hw, hh) = use_pane_viewport_size(HIST_TAG);
+        let readout = if hw != 0 && hh != 0 {
+            histogram_chart(&timings, &theme, scrub)
+                .inspect_readout(Rect::new(0, 0, hw, hh), &chart_style(&theme))
+        } else {
+            None
+        };
+        let has_readout = readout.is_some();
+
+        let scrub_node = AccessNode::new(HIST_SCRUB_TAG, AriaRole::Slider)
+            .with_name("Frame-time histogram scrub".to_string())
+            .with_value(AccessValue::Float {
+                value: scrub,
+                min: 0.0,
+                max: 1.0,
+            });
+        let mut nodes = vec![switch];
+        nodes.extend(describedby_region(
+            scrub_node,
+            format!("{HIST_TAG}.inspect.tooltip"),
+            AriaRole::Tooltip,
+            readout,
+            has_readout,
+        ));
+        nodes
     }
 }
 
@@ -643,10 +760,19 @@ mod tests {
     /// `hello-chart-fill` does: view → layout → publish → (dirty ⇒ re-view
     /// + re-layout). Nothing seeds a rect by hand.
     fn paint_cycle(core: &pinion_runtime::CoreShell<ProfilerView>, w: u32, h: u32) -> Scene {
+        paint_cycle_scrub(core, w, h, 0.5)
+    }
+
+    fn paint_cycle_scrub(
+        core: &pinion_runtime::CoreShell<ProfilerView>,
+        w: u32,
+        h: u32,
+        scrub: f32,
+    ) -> Scene {
         let mut cache = pinion_text::LayoutCache::new();
         let run_view = || {
             core.root_owner()
-                .run(|| view(ToggleState::Idle, false, &Frame::new()))
+                .run(|| view(ToggleState::Idle, false, scrub, &Frame::new()))
         };
         let mut scene = run_view();
         compute_layout(&mut scene, &mut cache, w, h);
@@ -833,15 +959,15 @@ mod tests {
         // The off/on bit must change the painted tree so each click is a
         // distinct paint the profiler records (re-keys the paint hash).
         let owner = Owner::new();
-        let off = owner.run(|| view(ToggleState::Idle, false, &Frame::new()));
-        let on = owner.run(|| view(ToggleState::Idle, true, &Frame::new()));
+        let off = owner.run(|| view(ToggleState::Idle, false, 0.5, &Frame::new()));
+        let on = owner.run(|| view(ToggleState::Idle, true, 0.5, &Frame::new()));
         assert_ne!(off.paint_hash(), on.paint_hash());
     }
 
     #[test]
     fn r55_g20_view_carries_composite_paint_root_tag() {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<ProfilerView>(
-            (ToggleState::Idle, false),
+            (ToggleState::Idle, false, 0.5),
             &Frame::new(),
         );
     }
@@ -849,14 +975,20 @@ mod tests {
     #[test]
     fn r1360_2_view_paints_an_opaque_root() {
         pinion_core::test_fixtures::assert_widget_view_paints_opaque_root::<ProfilerView>(
-            (ToggleState::Idle, false),
+            (ToggleState::Idle, false, 0.5),
             &Frame::new(),
         );
     }
 
     #[test]
     fn repaint_chip_reports_switch_role() {
-        let nodes = <ProfilerView as WidgetA11y>::access_node(&(ToggleState::Idle, true), None);
+        // R1375 — access_node now reads reactive hooks (the histogram readout
+        // against the live measured size), so it runs inside an Owner scope
+        // exactly as the shell wraps it (`collect_access_emit_inputs`).
+        let owner = Owner::new();
+        let nodes = owner.run(|| {
+            <ProfilerView as WidgetA11y>::access_node(&(ToggleState::Idle, true, 0.5), None)
+        });
         assert_eq!(nodes[0].role, AriaRole::Switch);
         assert_eq!(nodes[0].tag, REPAINT_TAG);
     }
@@ -944,6 +1076,67 @@ mod tests {
         assert!(
             find(&scene, "chart.series.0").is_some(),
             "the timeline still paints too"
+        );
+    }
+
+    /// R1375 — a press-drag scrub over the histogram emits a per-bin inspect
+    /// overlay, AND the readout it paints reaches a11y describedby the tooltip
+    /// region. The readout is computed against the SAME live measured size the
+    /// paint used (`access_node` runs in the owner scope), so paint and a11y
+    /// agree even though the histogram is a `build_fill` chart.
+    #[test]
+    fn r1375_histogram_scrub_emits_overlay_and_a11y_readout() {
+        let core: pinion_runtime::CoreShell<ProfilerView> = pinion_runtime::CoreShell::new();
+        seed(
+            core.root_owner(),
+            &[2_000, 3_000, 20_000, 2_500],
+            Some(16_666),
+        );
+        // A scrub near the right edge focuses a higher bin; the paint_cycle also
+        // publishes the HIST_TAG measured size the a11y readout then reads.
+        let scene = paint_cycle_scrub(&core, 760, 520, 0.9);
+        assert!(
+            find(&scene, "histogram.inspect.tooltip").is_some(),
+            "the scrub paints a tooltip"
+        );
+        assert!(
+            find(&scene, "histogram.inspect.header").is_some(),
+            "with a bin-label header"
+        );
+        assert!(
+            find(&scene, "histogram.inspect.value").is_some(),
+            "and a value row"
+        );
+        // The overlay is the histogram's, NOT the timeline's — the timeline
+        // (line chart) has no inspect here, so it emits no inspect nodes.
+        assert!(
+            find(&scene, "chart.inspect.tooltip").is_none(),
+            "only the histogram is scrubbed, not the timeline"
+        );
+
+        // a11y: the scrub Slider node, describedby the histogram inspect region
+        // that carries the readout.
+        let nodes = core.root_owner().run(|| {
+            <ProfilerView as WidgetA11y>::access_node(&(ToggleState::Idle, false, 0.9), None)
+        });
+        let scrub = nodes
+            .iter()
+            .find(|n| n.tag == HIST_SCRUB_TAG)
+            .expect("scrub node in the a11y tree");
+        assert_eq!(scrub.role, AriaRole::Slider);
+        let region_tag = scrub
+            .described_by
+            .as_deref()
+            .expect("scrub is describedby a region");
+        assert_eq!(region_tag, "histogram.inspect.tooltip");
+        let region = nodes
+            .iter()
+            .find(|n| n.tag == region_tag)
+            .expect("the described region is IN the tree (no dangling reference)");
+        let name = region.name.as_deref().expect("region carries the readout");
+        assert!(
+            name.contains('='),
+            "readout names the focused bin and its value: {name:?}"
         );
     }
 }

@@ -67,11 +67,12 @@
 use core::fmt::Write as _;
 
 use pinion_core::Scene;
-use pinion_core::scene::{BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect};
-use pinion_core::style::{BoxStyle, Color, PathStyle, Stroke, StrokeCap, TextAlign};
+use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect};
+use pinion_core::style::{Color, PathStyle, Stroke, StrokeCap, TextAlign};
 
 use crate::draw::{
-    absolute, area_path, box_node, fill_parent, label_node, plot_rect, stroke_path, to_f32, to_u32,
+    CalloutRow, absolute, area_path, box_node, callout, fill_parent, label_node, plot_rect,
+    stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::series::{DataPoint, Series, data_bounds};
@@ -562,7 +563,10 @@ impl LineChart {
     }
 
     /// The inspect tooltip: a rounded box, an `x = …` header, and one
-    /// series-coloured value line per hit series.
+    /// series-coloured value line per hit series. Assembles the header + rows
+    /// and hands them to the shared [`callout`] placement (R1375) — the box
+    /// geometry / right-flip it shares with the bar chart lives there; the
+    /// per-series row content is what stays here.
     fn inspect_tooltip(
         &self,
         plot: &Plot,
@@ -572,59 +576,31 @@ impl LineChart {
         style: &ChartStyle,
         steps: Steps,
     ) -> Vec<Scene> {
-        let size = style.label_size_px.max(1);
-        let line_h = size + 6;
-        let pad = 8;
-        let width = 132;
-        let rows = u32::try_from(hits.len()).unwrap_or(0) + 1; // header + values
-        let height = rows * line_h + pad;
-        // Place right of the crosshair; flip left if it would overflow.
-        let mut box_x = to_u32(focus_pixel) + 12;
-        if box_x + width > to_u32(plot.right) {
-            box_x = to_u32(focus_pixel).saturating_sub(width + 12);
-        }
-        let box_y = to_u32(plot.top) + 8;
-        let text_x = box_x + pad;
-
-        let mut out = vec![rounded_box_node(
-            Rect::new(box_x, box_y, width, height),
-            style.tooltip_bg,
-            6,
-            format!("{}.inspect.tooltip", self.tag_prefix),
-        )];
-        let mut ty = box_y + pad / 2;
-        out.push(label_node(
-            format!("x = {}", format_axis_tick(focus_x, steps.x)),
-            text_x,
-            ty,
-            width - pad * 2,
-            TextAlign::Start,
-            style.tooltip_fg,
-            size,
-            format!("{}.inspect.header", self.tag_prefix),
-        ));
-        ty += line_h;
-        for (i, p) in hits {
-            let color = self.series[*i]
-                .color
-                .unwrap_or_else(|| self.palette.color(*i));
-            out.push(label_node(
-                format!(
+        let header = format!("x = {}", format_axis_tick(focus_x, steps.x));
+        let rows: Vec<CalloutRow> = hits
+            .iter()
+            .map(|(i, p)| CalloutRow {
+                text: format!(
                     "{}  {}",
                     self.series[*i].name,
                     format_axis_tick(p.y, steps.y)
                 ),
-                text_x,
-                ty,
-                width - pad * 2,
-                TextAlign::Start,
-                color,
-                size,
-                format!("{}.inspect.value.{i}", self.tag_prefix),
-            ));
-            ty += line_h;
-        }
-        out
+                color: self.series[*i]
+                    .color
+                    .unwrap_or_else(|| self.palette.color(*i)),
+                tag: format!("{}.inspect.value.{i}", self.tag_prefix),
+            })
+            .collect();
+        callout(
+            focus_pixel,
+            plot.right,
+            plot.top,
+            &header,
+            format!("{}.inspect.header", self.tag_prefix),
+            &rows,
+            style,
+            format!("{}.inspect.tooltip", self.tag_prefix),
+        )
     }
 }
 
@@ -774,14 +750,6 @@ fn circle_commands(cx: f32, cy: f32, r: f32) -> Vec<PathCommand> {
         },
         PathCommand::Close,
     ]
-}
-
-fn rounded_box_node(rect: Rect, fill: Color, radius: u32, tag: String) -> Scene {
-    Scene::Box(
-        BoxNode::new(rect, BoxStyle::filled(fill).with_corner_radius(radius))
-            .with_tag(tag)
-            .with_layout(absolute(rect)),
-    )
 }
 
 /// The resolved plot rectangle (in float pixels) plus the two scales.

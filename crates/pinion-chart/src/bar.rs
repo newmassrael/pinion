@@ -29,6 +29,13 @@
 //! tick: different cardinality, different meaning). A bar with a non-finite
 //! value emits no `chart.bar.{i}` node (present-if-finite).
 //!
+//! When [`inspect`](BarChart::inspect) is set the overlay adds
+//! `chart.inspect.highlight` (a ring framing the focused bar — absent when that
+//! bar draws no box), `chart.inspect.tooltip` (the callout box),
+//! `chart.inspect.header` (the focused category label) and `chart.inspect.value`
+//! (its value — one, singular, unlike line's per-series `chart.inspect.value.{i}`,
+//! because a categorical slot holds one value).
+//!
 //! # Coordinate contract
 //!
 //! Identical to [`crate::line`]: [`BarChart::build_fill`] is the
@@ -38,10 +45,13 @@
 //! Vello-only, and `Scene::Path` (the axes / gridlines) does not render on TUI.
 
 use pinion_core::Scene;
-use pinion_core::scene::{ContainerNode, Rect};
-use pinion_core::style::{Color, Stroke, TextAlign};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+use pinion_core::style::{Border, BorderPlacement, BoxStyle, Color, Stroke, TextAlign};
 
-use crate::draw::{absolute, box_node, fill_parent, label_node, plot_rect, stroke_path, to_u32};
+use crate::draw::{
+    CalloutRow, absolute, box_node, callout, fill_parent, label_node, plot_rect, stroke_path,
+    to_f32, to_u32,
+};
 use crate::palette::CategoricalPalette;
 use crate::scale::LinearScale;
 use crate::style::ChartStyle;
@@ -89,19 +99,21 @@ pub struct BarChart {
     bars: Vec<Bar>,
     palette: CategoricalPalette,
     y_domain: Option<(f64, f64)>,
+    inspect: Option<f32>,
     tag_prefix: String,
 }
 
 impl BarChart {
     /// A bar chart over `bars`, using the default palette, an auto y-domain
-    /// (baseline `0` to the data max, nice-tick-snapped), and the `"chart"`
-    /// tag prefix.
+    /// (baseline `0` to the data max, nice-tick-snapped), no inspect overlay,
+    /// and the `"chart"` tag prefix.
     #[must_use]
     pub fn new(bars: Vec<Bar>) -> Self {
         Self {
             bars,
             palette: CategoricalPalette::default(),
             y_domain: None,
+            inspect: None,
             tag_prefix: "chart".to_string(),
         }
     }
@@ -126,6 +138,21 @@ impl BarChart {
     #[must_use]
     pub fn with_tag_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.tag_prefix = prefix.into();
+        self
+    }
+
+    /// Show the inspect overlay (a highlight ring around the focused bar and a
+    /// value tooltip) at `fraction` — the cursor's position as a fraction
+    /// `0.0..=1.0` across the chart `rect` width. `None` (the default) draws no
+    /// overlay. Mirrors [`LineChart::inspect`](crate::line::LineChart::inspect):
+    /// the fraction is the natural output of a pointer-capture scrub
+    /// (`SliderExternal` value / `pointer_move` `x_rel`), and the chart maps it
+    /// through its own margins to the CATEGORICAL slot under the cursor (the
+    /// bar-chart analogue of the line chart's nearest-numeric-point), so the
+    /// caller needs no layout knowledge.
+    #[must_use]
+    pub fn inspect(mut self, fraction: Option<f32>) -> Self {
+        self.inspect = fraction;
         self
     }
 
@@ -169,18 +196,15 @@ impl BarChart {
         reason = "the bar index / count is a small display count, well under 2^24 where f32 is exact"
     )]
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
-        let (left, right, top, bottom) = plot_rect(rect, style.margin);
-
-        // Auto domain: baseline 0 to the data max (a bar reads against zero),
-        // snapped to the nice-tick extent so the outer gridlines land on the
-        // plot edges; a pinned domain is honoured verbatim.
-        let (y_lo, y_hi) = self.y_domain_snapped(style.y_ticks);
-        let y = LinearScale::new((y_lo, y_hi), (bottom, top));
-        let y_ticks = nice_ticks(y_lo, y_hi, style.y_ticks);
-        let y_step = tick_step(&y_ticks);
-        // The baseline the bars grow from — 0 when it is in the domain, else
-        // the nearer domain edge.
-        let baseline_y = y.map(0.0_f64.clamp(y_lo, y_hi));
+        let g = self.geom(rect, style);
+        // Resolved once so the painted bars, the highlight ring, and the
+        // tooltip all read the ONE geometry (R1375); split so the ring paints
+        // over the bars and the tooltip above everything (`Scene` is not
+        // `Clone`, so the two layers move out by value here).
+        let (highlight, tooltip) = match self.resolve_inspect(&g, rect, style) {
+            Some(i) => (i.highlight, i.tooltip),
+            None => (None, Vec::new()),
+        };
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
@@ -188,10 +212,10 @@ impl BarChart {
         }
         // Horizontal gridlines, one per y-tick.
         let grid = Stroke::new(style.grid, 1);
-        for (k, &t) in y_ticks.iter().enumerate() {
-            let gy = y.map(t);
+        for (k, &t) in g.y_ticks.iter().enumerate() {
+            let gy = g.y.map(t);
             children.push(stroke_path(
-                &[(left, gy), (right, gy)],
+                &[(g.left, gy), (g.right, gy)],
                 grid,
                 format!("{}.grid.y.{k}", self.tag_prefix),
             ));
@@ -199,84 +223,58 @@ impl BarChart {
         // Axes.
         let axis = Stroke::new(style.axis, 1);
         children.push(stroke_path(
-            &[(left, top), (left, bottom)],
+            &[(g.left, g.top), (g.left, g.bottom)],
             axis,
             format!("{}.axis.y", self.tag_prefix),
         ));
         children.push(stroke_path(
-            &[(left, bottom), (right, bottom)],
+            &[(g.left, g.bottom), (g.right, g.bottom)],
             axis,
             format!("{}.axis.x", self.tag_prefix),
         ));
 
         // Bars — evenly spaced slots across the plot width, each bar centred
-        // in its slot and grown from the baseline to its value.
-        let n = self.bars.len();
-        if n > 0 {
-            let slot = (right - left).max(1.0) / n as f32;
-            let bar_w = (slot * (1.0 - BAR_GAP_FRAC)).max(1.0);
-            let size = style.label_size_px.max(1);
-            for (i, bar) in self.bars.iter().enumerate() {
-                let slot_x = left + (i as f32) * slot;
-                if bar.value.is_finite() {
-                    // A bar defaults to its palette colour BY INDEX (a categorical
-                    // chart's distinct-per-bar colouring); a per-bar override wins
-                    // (a histogram paints every bin uniform + its over-budget bins
-                    // in the jank colour).
-                    let color = bar.color.unwrap_or_else(|| self.palette.color(i));
-                    let bx = slot_x + (slot - bar_w) / 2.0;
-                    // Clamp the bar top into the plot: a value outside a PINNED
-                    // `y_domain` would otherwise map past the plot edge and — a
-                    // `Scene::Box` is not rect-clipped by its container — paint over
-                    // the axis / gridlines / neighbours (the R1356 non-containment
-                    // the line chart clips series against). The auto domain always
-                    // brackets the data, so this only guards a pinned domain.
-                    let top_y = y.map(bar.value).clamp(top, bottom);
-                    // A bar above the baseline grows up (top = value, height =
-                    // baseline - value); a negative bar grows down.
-                    let (rect_top, rect_h) = if top_y <= baseline_y {
-                        (top_y, baseline_y - top_y)
-                    } else {
-                        (baseline_y, top_y - baseline_y)
-                    };
-                    // `max(1.0)`: a zero-value bar (an empty histogram bin) still
-                    // emits a 1px baseline stub, so its slot stays addressable
-                    // (`chart.bar.{i}` present) and slot-aligned — distinct from a
-                    // non-finite bar, which is omitted entirely. A reader tells 0
-                    // from a real count by the stub's 1px height vs the y-scale.
-                    children.push(box_node(
-                        Rect::new(
-                            to_u32(bx),
-                            to_u32(rect_top),
-                            to_u32(bar_w),
-                            to_u32(rect_h.max(1.0)),
-                        ),
-                        color,
-                        format!("{}.bar.{i}", self.tag_prefix),
-                    ));
-                }
-                // Category label centred under the slot (always, even for a
-                // non-finite bar, so the axis stays legible).
-                children.push(label_node(
-                    bar.label.clone(),
-                    to_u32(slot_x),
-                    to_u32(bottom) + 4,
-                    to_u32(slot),
-                    TextAlign::Center,
-                    style.label,
-                    size,
-                    format!("{}.xlabel.{i}", self.tag_prefix),
-                ));
+        // in its slot and grown from the baseline to its value. The per-slot
+        // geometry lives in `bar_slot_center_and_rect`, the shared source the
+        // inspect highlight also reads.
+        let size = style.label_size_px.max(1);
+        for (i, bar) in self.bars.iter().enumerate() {
+            let (_, bar_rect) = self.bar_slot_center_and_rect(&g, i);
+            if let Some(r) = bar_rect {
+                // A bar defaults to its palette colour BY INDEX (a categorical
+                // chart's distinct-per-bar colouring); a per-bar override wins
+                // (a histogram paints every bin uniform + its over-budget bins
+                // in the jank colour).
+                let color = bar.color.unwrap_or_else(|| self.palette.color(i));
+                children.push(box_node(r, color, format!("{}.bar.{i}", self.tag_prefix)));
             }
+            // Category label centred under the slot (always, even for a
+            // non-finite bar, so the axis stays legible).
+            let slot_x = g.left + (i as f32) * g.slot;
+            children.push(label_node(
+                bar.label.clone(),
+                to_u32(slot_x),
+                to_u32(g.bottom) + 4,
+                to_u32(g.slot),
+                TextAlign::Center,
+                style.label,
+                size,
+                format!("{}.xlabel.{i}", self.tag_prefix),
+            ));
+        }
+
+        // The highlight ring sits over the bars (so it frames the focused one)
+        // but under the y-labels and tooltip.
+        if let Some(highlight) = highlight {
+            children.push(highlight);
         }
 
         // Right-aligned y-axis tick labels in the left gutter.
-        let size = style.label_size_px.max(1);
         let gutter = style.margin.left.saturating_sub(6).max(1);
-        for (k, &t) in y_ticks.iter().enumerate() {
-            let ly = to_u32(y.map(t)).saturating_sub(size / 2 + 1);
+        for (k, &t) in g.y_ticks.iter().enumerate() {
+            let ly = to_u32(g.y.map(t)).saturating_sub(size / 2 + 1);
             children.push(label_node(
-                format_axis_tick(t, y_step),
+                format_axis_tick(t, g.y_step),
                 rect.x + 2,
                 ly,
                 gutter,
@@ -287,7 +285,165 @@ impl BarChart {
             ));
         }
 
+        // The tooltip paints above everything.
+        children.extend(tooltip);
+
         ContainerNode::new(children).with_tag(self.tag_prefix.clone())
+    }
+
+    /// The plot geometry, value scale, y-tick set, and slot metrics every bar,
+    /// gridline, and the inspect hit-test derive from — the ONE definition of
+    /// "where does bar `i` sit" (R1375), so the painted bar and the inspect
+    /// highlight can never disagree.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the bar count is a small display count, exact in f32"
+    )]
+    fn geom(&self, rect: Rect, style: &ChartStyle) -> BarGeom {
+        let (left, right, top, bottom) = plot_rect(rect, style.margin);
+        // Auto domain: baseline 0 to the data max (a bar reads against zero),
+        // snapped to the nice-tick extent so the outer gridlines land on the
+        // plot edges; a pinned domain is honoured verbatim.
+        let (y_lo, y_hi) = self.y_domain_snapped(style.y_ticks);
+        let y = LinearScale::new((y_lo, y_hi), (bottom, top));
+        let y_ticks = nice_ticks(y_lo, y_hi, style.y_ticks);
+        let y_step = tick_step(&y_ticks);
+        // The baseline the bars grow from — 0 when it is in the domain, else
+        // the nearer domain edge.
+        let baseline_y = y.map(0.0_f64.clamp(y_lo, y_hi));
+        let n = self.bars.len();
+        let slot = if n > 0 {
+            (right - left).max(1.0) / n as f32
+        } else {
+            0.0
+        };
+        let bar_w = (slot * (1.0 - BAR_GAP_FRAC)).max(1.0);
+        BarGeom {
+            left,
+            right,
+            top,
+            bottom,
+            y,
+            y_ticks,
+            y_step,
+            baseline_y,
+            n,
+            slot,
+            bar_w,
+        }
+    }
+
+    /// Bar `i`'s slot-centre x (the inspect anchor) and its filled box rect —
+    /// `None` for a non-finite value (present as a slot, but no drawn box). The
+    /// single arithmetic both [`Self::build_body`] and the inspect highlight
+    /// read, so the ring lands exactly on the bar.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the bar index is a small display count, exact in f32"
+    )]
+    fn bar_slot_center_and_rect(&self, g: &BarGeom, i: usize) -> (f32, Option<Rect>) {
+        let slot_x = g.left + (i as f32) * g.slot;
+        let bx = slot_x + (g.slot - g.bar_w) / 2.0;
+        let center_x = bx + g.bar_w / 2.0;
+        let bar = &self.bars[i];
+        let rect = bar.value.is_finite().then(|| {
+            // Clamp the bar top into the plot: a value outside a PINNED
+            // `y_domain` would otherwise map past the plot edge and — a
+            // `Scene::Box` is not rect-clipped by its container — paint over the
+            // axis / gridlines / neighbours. The auto domain always brackets the
+            // data, so this only guards a pinned domain.
+            let top_y = g.y.map(bar.value).clamp(g.top, g.bottom);
+            // A bar above the baseline grows up (top = value, height = baseline
+            // - value); a negative bar grows down.
+            let (rect_top, rect_h) = if top_y <= g.baseline_y {
+                (top_y, g.baseline_y - top_y)
+            } else {
+                (g.baseline_y, top_y - g.baseline_y)
+            };
+            // `max(1.0)`: a zero-value bar (an empty histogram bin) still emits a
+            // 1px baseline stub, so its slot stays addressable and slot-aligned —
+            // distinct from a non-finite bar, which is omitted entirely.
+            Rect::new(
+                to_u32(bx),
+                to_u32(rect_top),
+                to_u32(g.bar_w),
+                to_u32(rect_h.max(1.0)),
+            )
+        });
+        (center_x, rect)
+    }
+
+    /// The slot index the inspect cursor is over, or `None` when inspection is
+    /// off / there are no bars / the plot is degenerate. A CATEGORICAL
+    /// hit-test: the fraction across the chart rect maps to a plot fraction,
+    /// which selects one of the `n` evenly-spaced slots — the bar-chart
+    /// analogue of the line chart's nearest-numeric-point resolve.
+    fn resolve_focus(&self, g: &BarGeom, rect: Rect) -> Option<usize> {
+        let fraction = self.inspect?;
+        if g.n == 0 {
+            return None;
+        }
+        let span = g.right - g.left;
+        if span <= 0.0 {
+            return None;
+        }
+        let cursor_px = to_f32(rect.x) + fraction.clamp(0.0, 1.0) * to_f32(rect.w);
+        let plot_frac = ((cursor_px - g.left) / span).clamp(0.0, 1.0);
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "plot_frac is 0..=1 and n a small slot count; the product is \
+                      a valid slot index, clamped to the last slot below"
+        )]
+        let idx = (plot_frac * g.n as f32).floor() as usize;
+        Some(idx.min(g.n - 1))
+    }
+
+    /// Resolve the inspect overlay: a highlight ring around the focused bar
+    /// (absent when that bar draws no box, e.g. a non-finite value) and a value
+    /// tooltip (`{label}` header + one `{value}` row).
+    fn resolve_inspect(&self, g: &BarGeom, rect: Rect, style: &ChartStyle) -> Option<BarInspect> {
+        let idx = self.resolve_focus(g, rect)?;
+        let bar = &self.bars[idx];
+        let (center_x, bar_rect) = self.bar_slot_center_and_rect(g, idx);
+        let highlight = bar_rect.map(|r| {
+            outline_box(
+                r,
+                style.crosshair,
+                format!("{}.inspect.highlight", self.tag_prefix),
+            )
+        });
+        let rows = vec![CalloutRow {
+            text: value_text(bar, g.y_step),
+            color: style.tooltip_fg,
+            tag: format!("{}.inspect.value", self.tag_prefix),
+        }];
+        let tooltip = callout(
+            center_x,
+            g.right,
+            g.top,
+            &bar.label,
+            format!("{}.inspect.header", self.tag_prefix),
+            &rows,
+            style,
+            format!("{}.inspect.tooltip", self.tag_prefix),
+        );
+        Some(BarInspect { highlight, tooltip })
+    }
+
+    /// The inspect readout as one line — the same focus label + value the
+    /// tooltip paints (`8 = 3`), or `None` when nothing is inspected. A
+    /// consumer wires this into the scrub control's `WidgetA11y` node (via
+    /// `pinion_a11y::described::describedby_region`) so the reading a sighted
+    /// user sees in the tooltip reaches a screen reader too — the R1355 parity
+    /// the line chart established, now for the bar chart.
+    #[must_use]
+    pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
+        let g = self.geom(rect, style);
+        let idx = self.resolve_focus(&g, rect)?;
+        let bar = &self.bars[idx];
+        Some(format!("{} = {}", bar.label, value_text(bar, g.y_step)))
     }
 
     /// The final y-domain: a pinned domain verbatim, else `[min(0, data_min),
@@ -314,6 +470,59 @@ impl BarChart {
             (Some(&t_lo), Some(&t_hi)) if (t_hi - t_lo).abs() > f64::EPSILON => (t_lo, t_hi),
             _ => (lo, hi),
         }
+    }
+}
+
+/// The plot geometry, value scale, y-tick set, and slot metrics a bar chart
+/// body derives everything from (R1375). One resolve, shared by the painted
+/// bars, the gridlines, and the inspect hit-test.
+struct BarGeom {
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+    y: LinearScale,
+    y_ticks: Vec<f64>,
+    y_step: f64,
+    baseline_y: f32,
+    n: usize,
+    slot: f32,
+    bar_w: f32,
+}
+
+/// The resolved inspect overlay: a highlight ring around the focused bar
+/// (absent when that bar draws no box, e.g. a non-finite value) and a value
+/// tooltip. Split so `build_body` paints the ring over the bars and the tooltip
+/// above everything.
+struct BarInspect {
+    highlight: Option<Scene>,
+    tooltip: Vec<Scene>,
+}
+
+/// A hollow, tagged ring framing `rect` — the inspect highlight. A transparent
+/// fill with an `Outside`-placed border in the crosshair colour, so the ring
+/// frames the focused bar without tinting or covering it.
+fn outline_box(rect: Rect, color: Color, tag: String) -> Scene {
+    Scene::Box(
+        BoxNode::new(
+            rect,
+            BoxStyle::filled(Color::TRANSPARENT)
+                .with_border(Border::new(color, 2).with_placement(BorderPlacement::Outside))
+                .with_corner_radius(2),
+        )
+        .with_tag(tag)
+        .with_layout(absolute(rect)),
+    )
+}
+
+/// A bar's value formatted at the y-axis precision, or `"—"` for a non-finite
+/// value (a slot with no drawn bar). Shared by the tooltip and the a11y readout
+/// so the two never disagree.
+fn value_text(bar: &Bar, y_step: f64) -> String {
+    if bar.value.is_finite() {
+        format_axis_tick(bar.value, y_step)
+    } else {
+        "\u{2014}".to_string()
     }
 }
 
@@ -474,6 +683,140 @@ mod tests {
             bar.rect.h.abs_diff(expected_h) <= 2,
             "50 of [0,100] fills ~half the plot height, got {} vs {expected_h}",
             bar.rect.h
+        );
+    }
+
+    fn text_of<'a>(scene: &'a Scene, tag: &str) -> Option<&'a str> {
+        match find(scene, tag)? {
+            Scene::Text(t) => Some(t.content.as_str()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn no_inspect_overlay_by_default() {
+        let scene = BarChart::new(three()).build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert!(find(&scene, "chart.inspect.highlight").is_none());
+        assert!(find(&scene, "chart.inspect.tooltip").is_none());
+        assert!(find(&scene, "chart.inspect.header").is_none());
+        assert!(find(&scene, "chart.inspect.value").is_none());
+    }
+
+    #[test]
+    fn inspect_emits_a_highlight_ring_and_a_value_tooltip() {
+        let scene = BarChart::new(three())
+            .inspect(Some(0.5))
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert!(find(&scene, "chart.inspect.highlight").is_some());
+        assert!(find(&scene, "chart.inspect.tooltip").is_some());
+        assert!(find(&scene, "chart.inspect.header").is_some());
+        assert!(find(&scene, "chart.inspect.value").is_some());
+    }
+
+    #[test]
+    fn inspect_hit_test_selects_the_slot_under_the_cursor() {
+        // Three evenly-spaced slots: the fraction across the chart maps to the
+        // categorical slot, so the tooltip header names the bar under the
+        // cursor (left -> a, middle -> b, right -> c).
+        for (fraction, label) in [(0.0_f32, "a"), (0.5, "b"), (1.0, "c")] {
+            let scene = BarChart::new(three())
+                .inspect(Some(fraction))
+                .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+            assert_eq!(
+                text_of(&scene, "chart.inspect.header"),
+                Some(label),
+                "fraction {fraction} focuses bar {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn inspect_highlight_frames_exactly_the_focused_bar() {
+        // The geom SSOT: the highlight ring's rect must equal the focused bar's
+        // own box rect, so the ring can never drift off its bar.
+        let scene = BarChart::new(three())
+            .inspect(Some(0.5)) // -> bar b (index 1)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        let Scene::Box(ring) = find(&scene, "chart.inspect.highlight").expect("highlight") else {
+            panic!("highlight is a box")
+        };
+        let Scene::Box(bar) = find(&scene, "chart.bar.1").expect("bar b") else {
+            panic!("bar is a box")
+        };
+        assert_eq!(
+            ring.rect, bar.rect,
+            "the highlight ring frames exactly the focused bar's rect"
+        );
+    }
+
+    #[test]
+    fn inspect_readout_names_the_focused_bar_and_its_value() {
+        let chart = BarChart::new(three()).inspect(Some(0.5)); // -> bar b, value 40
+        let readout = chart
+            .inspect_readout(Rect::new(0, 0, 400, 300), &ChartStyle::default())
+            .expect("a readout when inspecting");
+        assert!(
+            readout.starts_with("b = "),
+            "readout names the focused label: {readout:?}"
+        );
+        assert!(
+            readout.contains("40"),
+            "readout carries the value: {readout:?}"
+        );
+        // And the painted tooltip must agree with the readout (R1355 parity).
+        assert_eq!(
+            text_of(
+                &chart.build(Rect::new(0, 0, 400, 300), &ChartStyle::default()),
+                "chart.inspect.header"
+            ),
+            Some("b")
+        );
+        assert!(
+            BarChart::new(three())
+                .inspect(None)
+                .inspect_readout(Rect::new(0, 0, 400, 300), &ChartStyle::default())
+                .is_none(),
+            "no readout when inspection is off"
+        );
+    }
+
+    #[test]
+    fn inspect_a_non_finite_bar_shows_no_ring_but_a_dashed_value() {
+        // A NaN bar draws no box, so hovering it must emit NO highlight ring —
+        // but the tooltip still names the category with an em-dash value, so
+        // the reader learns the slot is empty rather than getting nothing.
+        let bars = vec![Bar::new("ok", 10.0), Bar::new("gap", f64::NAN)];
+        let scene = BarChart::new(bars)
+            .inspect(Some(1.0)) // rightmost slot -> the NaN bar (index 1)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(text_of(&scene, "chart.inspect.header"), Some("gap"));
+        assert_eq!(
+            text_of(&scene, "chart.inspect.value"),
+            Some("\u{2014}"),
+            "a non-finite bar's value reads as an em-dash"
+        );
+        assert!(
+            find(&scene, "chart.inspect.highlight").is_none(),
+            "no ring for a bar that draws no box"
+        );
+    }
+
+    #[test]
+    fn inspect_tooltip_flips_left_at_the_right_edge_and_stays_in_the_chart() {
+        // Hovering the LAST bar would push a right-placed tooltip off the plot;
+        // it must flip left and stay inside the chart width.
+        const W: u32 = 400;
+        let scene = BarChart::new(three())
+            .inspect(Some(1.0))
+            .build(Rect::new(0, 0, W, 300), &ChartStyle::default());
+        let Scene::Box(tip) = find(&scene, "chart.inspect.tooltip").expect("tooltip") else {
+            panic!("tooltip is a box")
+        };
+        assert!(
+            tip.rect.x + tip.rect.w <= W,
+            "the tooltip stays within the chart ({}+{} <= {W})",
+            tip.rect.x,
+            tip.rect.w
         );
     }
 }

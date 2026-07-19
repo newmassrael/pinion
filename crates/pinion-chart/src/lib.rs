@@ -50,14 +50,18 @@
 //! and a legend (R1354); a scrub [`inspect`](LineChart::inspect) overlay —
 //! crosshair, per-series markers, value tooltip (R1355); x-domain clipping
 //! (R1356) and the pinned-domain re-scaling a brush zoom drives (R1357);
-//! a **layout-native** entry point, [`LineChart::build_fill`] (R1360); and a
+//! a **layout-native** entry point, [`LineChart::build_fill`] (R1360); a
 //! categorical [`BarChart`] with per-bar colours (R1374), sharing the same
-//! `scale` / `ticks` / `palette` / [`draw`](crate) core.
+//! `scale` / `ticks` / `palette` / [`draw`](crate) core; and (R1375) that bar
+//! chart's own scrub [`inspect`](BarChart::inspect) overlay — a highlight ring
+//! on the focused bar + a value tooltip, over the lifted `callout` tooltip core
+//! both chart types now share.
 //!
 //! Not yet: donut / treemap / scatter, legend-toggle, cross-filtering, and a
 //! y-rescale on zoom — follow-up slices on that same core. (A frequency
 //! *histogram* is a consumer pattern over [`BarChart`], not a distinct type —
-//! `hello-frame-profiler` bins its frame times into one.)
+//! `hello-frame-profiler` bins its frame times into one, and R1375 lets a
+//! reader scrub it for each bin's frame count.)
 //!
 //! # Two entry points — pick by who places the chart
 //!
