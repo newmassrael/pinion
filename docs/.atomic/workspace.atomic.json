@@ -25568,6 +25568,48 @@
         "Remaining: **SCE-002 stays open** (per R1368's note, widget_state_name!/widget_event_name! are macro_rules not derive macros, so the injectable-derive hook does not auto-clear it — needs a separate proc-macro round). Then Phase B feature return (DCC / Model-View)."
       ]
     },
+    "R1370": {
+      "decision_summary": "R1370 §5.16: bump the sce pin 27051d77a -> 9a0a650c2 (dual-pin), picking up sce 9ec9ad906 'Surface statechart initial-default and drivable-event markers' — the upstream implementation of the SCE-RFC-002-structural handoff (2026-07-18). sce adds Default + #[default] on the initial State variant (RFC marker 1) and emits a {Machine}Event::EXTERNALLY_DRIVABLE_EVENTS associated const (RFC marker 2); d640d96f3 excludes finalize-raised events from the drivable surface. BEHAVIOR-NEUTRAL for pinion: it still uses the hand-written widget_state_name!/widget_event_name! macros, so the markers are present but unconsumed and the regenerated code compiles clean. Verified: cargo build + clippy --all-targets + test --workspace all green. This UNBLOCKS the SCE-002 consumption round: #[derive(WidgetStateName)] will use Self::default(), #[derive(WidgetEventName)] will filter from_name on EXTERNALLY_DRIVABLE_EVENTS.",
+      "changes_bullets": [
+        "`Cargo.toml` (root `[workspace.dependencies]`): both `sce-rust-runtime` + `sce-build` `rev` `27051d77a` -> `9a0a650c2c4c4ce484dd2084deeb2ed8caffaccc`; `Cargo.lock` resolved rev updated by `cargo build`; `vendor/sce` submodule gitlink -> `9a0a650c2` in the SAME commit (dual-pin, [[sce-git-rev-pin-dual-discipline]]).",
+        "No pinion source change: `build.rs` still calls `compile_scxml_with_derives` (the serde extras from R1368); the two new markers are additive (a `Default` impl + `#[default]` on the initial `State` variant; an `EXTERNALLY_DRIVABLE_EVENTS` assoc const on `Event`) and unconsumed by pinion's current hand-written `widget_state_name!`/`widget_event_name!` path.",
+        "Upstream picked up (4 commits): `9ec9ad906 feat: Surface statechart initial-default and drivable-event markers` (the two RFC markers — \"Add Default to StatechartState, #[default] on the initial variant\" + \"Emit {Machine}Event::EXTERNALLY_DRIVABLE_EVENTS associated const\"), `d640d96f3 fix: Exclude finalize-raised events from the drivable surface` (refines the drivable set), plus `8c9e31eb0` + `9a0a650c2` (committed-tree regen for the marker/initial_state edits)."
+      ],
+      "verification_bullets": [
+        "`cargo build --workspace` — green. Re-fetched sce at `9a0a650c2`, regenerated the widget state machines with the new markers, compiled clean: the added `Default`/`#[default]`/`EXTERNALLY_DRIVABLE_EVENTS` do not conflict with pinion's current macro_rules path.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean.",
+        "`cargo test --workspace -j2 --features pinion-runtime/vello` — 0 failed. The bump is behavior-neutral (markers present, unconsumed).",
+        "Faithful implementation confirmed: the marker commit message names exactly the RFC's two markers (`#[default]` on the initial variant; `EXTERNALLY_DRIVABLE_EVENTS` assoc const). Dual-pin consistency: submodule HEAD == both Cargo revs == `origin/main` == `9a0a650c2`."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "**SCE-002 UNBLOCKED** — both structural markers landed upstream (9ec9ad906, refined by d640d96f3). NEXT = the pinion consumption round: add `#[proc_macro_derive(WidgetStateName)]` + `#[proc_macro_derive(WidgetEventName)]` to `pinion-derive` (mirror `WidgetTag`; `from_name_or_default` -> `Self::default()`; `from_name` -> filter on `EXTERNALLY_DRIVABLE_EVENTS`); switch `build.rs` extras to inject them; delete every per-widget `widget_state_name!`/`widget_event_name!` + the two `macro_rules!`. That round CLEARS SCE-002.",
+        "The SCE-RFC-002-structural handoff (2026-07-18, `4528733d`) is now consumed on the upstream side; only the pinion consumption remains.",
+        "Then Phase B feature return (DCC / Model-View), or standing debts (⑱ quit-veto, demo-sweep push gating)."
+      ],
+      "publishable_decision_summary": "R1370 §5.16: bump the sce pin 27051d77a -> 9a0a650c2 (dual-pin), picking up sce 9ec9ad906 'Surface statechart initial-default and drivable-event markers' — the upstream implementation of the SCE-RFC-002-structural handoff (2026-07-18). sce adds Default + #[default] on the initial State variant (RFC marker 1) and emits a {Machine}Event::EXTERNALLY_DRIVABLE_EVENTS associated const (RFC marker 2); d640d96f3 excludes finalize-raised events from the drivable surface. BEHAVIOR-NEUTRAL for pinion: it still uses the hand-written widget_state_name!/widget_event_name! macros, so the markers are present but unconsumed and the regenerated code compiles clean. Verified: cargo build + clippy --all-targets + test --workspace all green. This UNBLOCKS the SCE-002 consumption round: #[derive(WidgetStateName)] will use Self::default(), #[derive(WidgetEventName)] will filter from_name on EXTERNALLY_DRIVABLE_EVENTS.",
+      "publishable_changes_bullets": [
+        "`Cargo.toml` (root `[workspace.dependencies]`): both `sce-rust-runtime` + `sce-build` `rev` `27051d77a` -> `9a0a650c2c4c4ce484dd2084deeb2ed8caffaccc`; `Cargo.lock` resolved rev updated by `cargo build`; `vendor/sce` submodule gitlink -> `9a0a650c2` in the SAME commit (dual-pin, [[sce-git-rev-pin-dual-discipline]]).",
+        "No pinion source change: `build.rs` still calls `compile_scxml_with_derives` (the serde extras from R1368); the two new markers are additive (a `Default` impl + `#[default]` on the initial `State` variant; an `EXTERNALLY_DRIVABLE_EVENTS` assoc const on `Event`) and unconsumed by pinion's current hand-written `widget_state_name!`/`widget_event_name!` path.",
+        "Upstream picked up (4 commits): `9ec9ad906 feat: Surface statechart initial-default and drivable-event markers` (the two RFC markers — \"Add Default to StatechartState, #[default] on the initial variant\" + \"Emit {Machine}Event::EXTERNALLY_DRIVABLE_EVENTS associated const\"), `d640d96f3 fix: Exclude finalize-raised events from the drivable surface` (refines the drivable set), plus `8c9e31eb0` + `9a0a650c2` (committed-tree regen for the marker/initial_state edits)."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo build --workspace` — green. Re-fetched sce at `9a0a650c2`, regenerated the widget state machines with the new markers, compiled clean: the added `Default`/`#[default]`/`EXTERNALLY_DRIVABLE_EVENTS` do not conflict with pinion's current macro_rules path.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean.",
+        "`cargo test --workspace -j2 --features pinion-runtime/vello` — 0 failed. The bump is behavior-neutral (markers present, unconsumed).",
+        "Faithful implementation confirmed: the marker commit message names exactly the RFC's two markers (`#[default]` on the initial variant; `EXTERNALLY_DRIVABLE_EVENTS` assoc const). Dual-pin consistency: submodule HEAD == both Cargo revs == `origin/main` == `9a0a650c2`."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "**SCE-002 UNBLOCKED** — both structural markers landed upstream (9ec9ad906, refined by d640d96f3). NEXT = the pinion consumption round: add `#[proc_macro_derive(WidgetStateName)]` + `#[proc_macro_derive(WidgetEventName)]` to `pinion-derive` (mirror `WidgetTag`; `from_name_or_default` -> `Self::default()`; `from_name` -> filter on `EXTERNALLY_DRIVABLE_EVENTS`); switch `build.rs` extras to inject them; delete every per-widget `widget_state_name!`/`widget_event_name!` + the two `macro_rules!`. That round CLEARS SCE-002.",
+        "The SCE-RFC-002-structural handoff (2026-07-18, `4528733d`) is now consumed on the upstream side; only the pinion consumption remains.",
+        "Then Phase B feature return (DCC / Model-View), or standing debts (⑱ quit-veto, demo-sweep push gating)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
