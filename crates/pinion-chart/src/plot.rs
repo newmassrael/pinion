@@ -130,6 +130,12 @@ pub(crate) fn resolve_focus(
     let mut focus_x: Option<f64> = None;
     let mut hits: Vec<(usize, DataPoint)> = Vec::new();
     for (i, s) in series.iter().enumerate() {
+        // A hidden series is not inspectable — skip it so the scrub never rings /
+        // reports a point whose geometry was dropped (R1379; the R1377
+        // visible_hits class, applied at the focus source).
+        if !s.visible {
+            continue;
+        }
         if let Some(p) = nearest_point_in(s, data_x, x_lo, x_hi) {
             let better = focus_x.is_none_or(|fx| (p.x - data_x).abs() < (fx - data_x).abs());
             if better {
@@ -139,4 +145,50 @@ pub(crate) fn resolve_focus(
         }
     }
     Some((focus_x?, hits))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn two() -> Vec<Series> {
+        vec![
+            Series::new(
+                "a",
+                vec![DataPoint::new(0.0, 0.0), DataPoint::new(10.0, 10.0)],
+            ),
+            Series::new(
+                "b",
+                vec![DataPoint::new(0.0, 5.0), DataPoint::new(10.0, 5.0)],
+            ),
+        ]
+    }
+
+    #[test]
+    fn resolve_focus_skips_hidden_series() {
+        let rect = Rect::new(0, 0, 400, 300);
+        let style = ChartStyle::default();
+        let plot = CartesianPlot::resolve(rect, &two(), None, None, &style);
+
+        // Both visible -> a hit per series.
+        let (_fx, hits) = resolve_focus(&two(), 0.5, &plot, rect).expect("focus with two visible");
+        assert_eq!(hits.len(), 2, "both visible series produce a hit");
+
+        // Hide series 0 -> only series 1 hits, and it keeps its original index.
+        let mut hidden = two();
+        hidden[0].visible = false;
+        let (_fx, hits) = resolve_focus(&hidden, 0.5, &plot, rect).expect("focus with one visible");
+        assert_eq!(hits.len(), 1, "a hidden series is not a focus hit");
+        assert_eq!(
+            hits[0].0, 1,
+            "the surviving hit keeps its original series index"
+        );
+
+        // All hidden -> no focus at all (the scrub overlay then paints nothing).
+        let all_hidden: Vec<Series> = two().into_iter().map(|s| s.with_visible(false)).collect();
+        assert!(
+            resolve_focus(&all_hidden, 0.5, &plot, rect).is_none(),
+            "no focus when every series is hidden"
+        );
+    }
 }

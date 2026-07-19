@@ -313,6 +313,11 @@ impl LineChart {
         let (x_lo, x_hi) = plot.x.domain();
         let mut out = Vec::new();
         for (i, s) in self.series.iter().enumerate() {
+            // A hidden series draws no area / polyline (R1379); it keeps its
+            // palette index `i` so the visible series never re-colour.
+            if !s.visible {
+                continue;
+            }
             let color = s.color.unwrap_or_else(|| self.palette.color(i));
             // Clip to the x-domain BEFORE mapping: path commands are
             // absolute device pixels the paint adapter does not clip to
@@ -759,6 +764,39 @@ mod tests {
             },
         );
         assert_eq!(count_prefix(&off, "chart.legend."), 0);
+    }
+
+    #[test]
+    fn r1379_hidden_series_drops_area_and_polyline_but_keeps_legend() {
+        let mut series = two_series();
+        series[1].visible = false;
+        let scene = LineChart::new(series)
+            .filled(true)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(
+            count_prefix(&scene, "chart.series.1"),
+            0,
+            "hidden: no polyline"
+        );
+        assert_eq!(
+            count_prefix(&scene, "chart.area.1"),
+            0,
+            "hidden: no fill area"
+        );
+        assert_eq!(
+            count_prefix(&scene, "chart.series.0"),
+            1,
+            "visible series unaffected"
+        );
+        assert_eq!(count_prefix(&scene, "chart.area.0"), 1);
+        // Geometry drops, but the palette index + legend slot are retained
+        // (hiding series 1 never re-colours or re-indexes series 0).
+        assert_eq!(count_prefix(&scene, "chart.legend.0"), 2);
+        assert_eq!(
+            count_prefix(&scene, "chart.legend.1"),
+            2,
+            "hidden series keeps its legend slot"
+        );
     }
 
     #[test]

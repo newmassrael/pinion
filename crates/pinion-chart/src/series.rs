@@ -34,16 +34,24 @@ pub struct Series {
     pub points: Vec<DataPoint>,
     /// Explicit colour override; `None` uses the palette by index.
     pub color: Option<Color>,
+    /// Whether this series' geometry is drawn (R1379). A hidden series still
+    /// occupies its palette index and legend slot, so hiding it never re-colours
+    /// or re-indexes the others; it only drops the series' own marks / polyline.
+    /// The **auto-domain is unaffected** — [`data_bounds`] measures every series
+    /// regardless, so toggling visibility never rescales the axes (a hidden
+    /// series that later returns lands on the same grid).
+    pub visible: bool,
 }
 
 impl Series {
-    /// A series with the given name and samples, palette-coloured.
+    /// A series with the given name and samples, palette-coloured, visible.
     #[must_use]
     pub fn new(name: impl Into<String>, points: Vec<DataPoint>) -> Self {
         Self {
             name: name.into(),
             points,
             color: None,
+            visible: true,
         }
     }
 
@@ -51,6 +59,15 @@ impl Series {
     #[must_use]
     pub fn with_color(mut self, color: Color) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// Set whether this series' geometry is drawn (default `true`). Hiding a
+    /// series drops only its own marks / polyline — the palette, legend indices,
+    /// and auto-domain are unchanged (R1379).
+    #[must_use]
+    pub fn with_visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
         self
     }
 }

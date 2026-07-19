@@ -3036,6 +3036,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-series-toggle"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-slider"
 version = "0.0.1"
 dependencies = [

@@ -210,6 +210,11 @@ impl ScatterChart {
         let (y_lo, y_hi) = plot.y.domain();
         let mut out = Vec::new();
         for (i, s) in self.series.iter().enumerate() {
+            // A hidden series draws no point marks (R1379); it keeps its palette
+            // index `i` so the visible series never re-colour.
+            if !s.visible {
+                continue;
+            }
             let color = s.color.unwrap_or_else(|| self.palette.color(i));
             for (j, p) in s.points.iter().enumerate() {
                 if !p.x.is_finite()
@@ -664,6 +669,46 @@ mod tests {
                 .expect("readout")
         };
         assert_ne!(chart(0.0), chart(1.0), "the scrub picks a different point");
+    }
+
+    #[test]
+    fn r1379_hidden_series_draws_no_marks_but_keeps_legend() {
+        let mut series = two_series();
+        series[0].visible = false;
+        let scene =
+            ScatterChart::new(series).build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(
+            count_prefix(&scene, "chart.point.0."),
+            0,
+            "hidden series 0: no marks"
+        );
+        assert!(
+            count_prefix(&scene, "chart.point.1.") > 0,
+            "visible series 1 still marks"
+        );
+        assert_eq!(
+            count_prefix(&scene, "chart.legend.0"),
+            2,
+            "hidden series keeps its legend slot"
+        );
+    }
+
+    #[test]
+    fn r1379_hidden_series_is_not_scrub_inspectable() {
+        // Every series hidden -> no visible point -> the scrub resolves no focus,
+        // so no inspect overlay paints (the resolve_focus visibility skip).
+        let series: Vec<Series> = two_series()
+            .into_iter()
+            .map(|s| s.with_visible(false))
+            .collect();
+        let scene = ScatterChart::new(series)
+            .inspect(Some(0.5))
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(
+            count_prefix(&scene, "chart.inspect"),
+            0,
+            "no focus overlay when every series is hidden"
+        );
     }
 
     #[test]
