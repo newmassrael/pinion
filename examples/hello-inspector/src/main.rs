@@ -53,21 +53,28 @@
 //!
 //! The §2 AI-first vertical slice — multi-select (RPC + keyboard +
 //! modifier-click), common-property derivation, mixed-value reporting, and
-//! the write-all edit — is complete and entirely RPC-driven. Inline
-//! click-to-edit cell delegates (the property grid's popup / scrub
-//! richness) remain the documented GUI follow-up; the property *value* is
-//! edited through `intervene value.<i>` (the §2 primary path).
+//! the write-all edit — is complete and entirely RPC-driven. R1373 adds the
+//! iconic DCC **numeric drag-scrub** (press-and-drag a common `Int` / `Float`
+//! row to shift it across the WHOLE selection, mix-preserving — the continuous
+//! peer of the R1221 steppers), riding the already-lifted [`DragCalibration`]
+//! substrate. The remaining property-grid delegate richness — the Choice
+//! dropdown popup and the Colour swatch popup (both a floating overlay, not yet
+//! a lifted substrate) — stays the documented GUI follow-up; those kinds keep
+//! their click-cycle / hex type-in, and every value is editable through
+//! `intervene value.<i>` (the §2 primary path).
 //!
 //! ## Verification
 //!
 //! `tools/demos/r909_inspector.py` drives single-select + editing (the
 //! cardinality-1 degenerate case), `tools/demos/r910_inspector_interaction.py`
-//! the pointer/keyboard navigation, and `tools/demos/r922_inspector_multi.py`
+//! the pointer/keyboard navigation, `tools/demos/r922_inspector_multi.py`
 //! the multi-object core (multi-select, common-property panel, "Multiple
-//! Values", write-all). All scene-as-data, deterministic
-//! ([[ai-first-rpc-introspection-obligation]],
+//! Values", write-all), and `tools/demos/r1373_inspector_scrub.py` the numeric
+//! drag-scrub (single + multi-object mix-preserving). All scene-as-data,
+//! deterministic ([[ai-first-rpc-introspection-obligation]],
 //! [[introspection-from-paint-not-screen]]).
 
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
@@ -77,13 +84,14 @@ use pinion_a11y::{
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::command::Command;
 use pinion_core::composite_tag::{prefixed_index, split_send_payload};
-use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField,
+    Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership, read_only_or_unknown,
 };
 use pinion_core::input::{
-    Modifiers, MultiSelectKeyOp, SelectionChord, edit_field_keymap, is_activation_event,
+    DRAG_CLICK_THRESHOLD_PX, DragCalibration, Modifiers, MultiSelectKeyOp, SelectionChord,
+    edit_field_keymap, is_activation_event,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -117,6 +125,13 @@ const WIN_H: u32 = 420;
 const INSPECTOR_TAG: &str = "inspector";
 /// The object-list container tag — the `aria-multiselectable` `listbox`.
 const OBJECTS_TAG: &str = "inspector_objects";
+/// The Details-panel container tag — a WAI-ARIA `group` of the common-property
+/// controls (R1224; a `list` of read-only rows pre-R1224), and (R1373) the
+/// numeric scrub's [`capture_normalize`](External::capture_normalize) basis rect
+/// (a fixed [`DETAIL_PANEL_W`]-wide column, so a captured cursor's fraction
+/// recovers true pixel travel). One tag: the view, the a11y group node, and the
+/// scrub basis cannot drift.
+const DETAIL_TAG: &str = "detail_panel";
 const THEME_TAG: &str = "app";
 
 /// R1249 — the ONE shared inline numeric type-in editor hosted as an extra
@@ -164,6 +179,23 @@ const EDIT_FIELD_W: u32 = 110;
 /// row of whichever pane currently owns the keyboard (the paint peer of the a11y
 /// active-descendant `focused`).
 const FOCUS_RING: u32 = 2;
+
+/// R1373 — the Details panel width (px), the scrub's stable pixel basis. One
+/// SSOT: the view sizes the [`DETAIL_TAG`] container to this and the scrub
+/// multiplies the captured cursor fraction by it, so the drag distance is
+/// measured against exactly the column it drags in (the property-grid
+/// `GRID_W_PX` rule). `WIN_W - LIST_W - 40` = the row area minus the list column
+/// and the inter-pane / edge gaps.
+const DETAIL_PANEL_W: u32 = WIN_W - LIST_W - 40;
+/// R1373 — this widget's numeric drag-scrub sensitivities: a `Float` moves 0.01
+/// per pixel of cursor travel; an `Int` steps one whole unit every 8px. Applied
+/// as `base + travel_px · sensitivity` per selected object. These match the
+/// property-grid / data-grid values, but — per the [`DragCalibration`] contract
+/// (value application stays with the caller, R935) — the sensitivity is this
+/// widget's own tuning, NOT a shared invariant; a DCC panel is free to tune its
+/// own feel, so the identical values are convention, not a lifted SSOT.
+const SCRUB_FLOAT_PER_PX: f64 = 0.01;
+const SCRUB_INT_PX_PER_STEP: f64 = 8.0;
 
 /// R1224 — which pane owns the keyboard cursor. The inspector is a single
 /// focus stop (`with_focusable(true)` on the root) that hosts TWO composite
@@ -555,6 +587,21 @@ fn selection_summary(objects: &[ObjectData], selection: &BTreeSet<usize>) -> Str
 
 // ─── External (the §5.15 AI surface) ──────────────────────────────
 
+/// R1373 — the target the numeric scrub snapshots at its first captured
+/// `pointer_move`: the scrubbed property's STABLE `name` plus each selected
+/// object's base value. Keyed by name (not the selection-derived row index) so a
+/// later move re-resolves the SAME property even if a mid-drag RPC `select`
+/// reordered the `common_properties` list — the property-grid stable-`ValueRef`
+/// discipline (R1372.2: never re-resolve a gesture target through a mutable
+/// index). The cursor anchor + the `CellKind` ride the `Copy`
+/// [`DragCalibration`] payload; the per-object bases do not fit a `Copy` payload
+/// (a MULTI-object scrub), so they live here behind the `RefCell`.
+#[derive(Clone)]
+struct ScrubTarget {
+    name: String,
+    bases: Vec<(usize, CellValue)>,
+}
+
 /// The inspector coordinator: owns the object model + a [`VirtualSelect`]
 /// multi-selection, and exposes the selection wire (mirroring
 /// `VirtualSelectExternal`) plus selection-relative common-property
@@ -581,6 +628,25 @@ struct InspectorExternal {
     /// R1249 — the shared inline editor's text buffer, captured from
     /// [`use_text_edit_state`] so `begin_edit` can seed it off-Owner.
     editor: Rc<TextEditState>,
+    /// R1373 — the common-property row armed by a `PointerDown` over a numeric
+    /// Details value cell (`inspector#typein<i>`), before the first captured
+    /// `pointer_move` calibrates the drag. `None` for a press on a non-numeric
+    /// cell — a Colour typein cell arms nothing, so its drag stays a click.
+    scrub_armed: Cell<Option<usize>>,
+    /// R1373 — the live scrub calibration ([`DragCalibration`], the already-lifted
+    /// substrate — R935 ruled the per-widget scrub glue divergent, the basis /
+    /// value application staying with the caller). Its `Copy` payload is the
+    /// scrubbed [`CellKind`]; active between the first `pointer_move` and the
+    /// release; its travel at `PointerUp` distinguishes a scrub (committed live)
+    /// from a click.
+    scrub_cal: DragCalibration<CellKind>,
+    /// R1373 — the name-keyed target + per-object base snapshot captured at the
+    /// scrub's first move ([`ScrubTarget`]). Each later move writes `base +
+    /// travel` per object, so a mixed numeric stays mixed but shifts TOGETHER —
+    /// the multi-object relative scrub (the divergence from the single-source
+    /// property-grid / data-grid scrub, whose one base fits the `Copy` payload).
+    /// `None` when no scrub is calibrated.
+    scrub_target: RefCell<Option<ScrubTarget>>,
 }
 
 impl InspectorExternal {
@@ -599,6 +665,9 @@ impl InspectorExternal {
             focus,
             editing_prop,
             editor,
+            scrub_armed: Cell::new(None),
+            scrub_cal: DragCalibration::new(),
+            scrub_target: RefCell::new(None),
         }
     }
 
@@ -848,6 +917,42 @@ impl InspectorExternal {
             }
             return;
         }
+        // R1373 — a numeric Details value cell (`inspector#typein<i>`) is a
+        // press-and-drag SCRUB target (the Blender / Unreal "drag the number"
+        // gesture): a `PointerDown` arms it, the captured `pointer_move` drives it
+        // across the whole selection (mix-preserving), and the release (or a
+        // capture-stray `PointerLeave` / `PointerCancel`) tears it down. A real
+        // scrub committed live, so its trailing click is suppressed — the typein
+        // cell's only click action is `DoubleClick` (its own event), so nothing
+        // further needs gating here. A Colour typein cell arms nothing
+        // (`arm_scrub` declines a non-numeric row), so a Colour drag stays a click.
+        if let Some(idx) = prefixed_index(key, TYPEIN_PREFIX) {
+            match event_name {
+                "PointerDown" => {
+                    self.arm_scrub(idx);
+                    return;
+                }
+                "PointerUp" | "PointerLeave" | "PointerCancel" => {
+                    self.end_scrub();
+                    return;
+                }
+                _ => {}
+            }
+        } else if matches!(
+            event_name,
+            "PointerDown" | "PointerUp" | "PointerLeave" | "PointerCancel"
+        ) {
+            // R1373 — a pointer press/release on any NON-scrub affordance abandons
+            // an armed scrub. This defends the desync where an RPC `send
+            // "typein<i>:PointerDown"` with no paired `PointerUp` leaks `scrub_armed`
+            // (the RPC `send` path never enters the router, so no capture + no
+            // release): the next REAL press elsewhere would otherwise have its
+            // forwarded initial `pointer_move` seed a PHANTOM scrub off the leaked
+            // arm. Clearing here (the router dispatches this `PointerDown` before it
+            // forwards that initial move) makes a fresh gesture start clean. Falls
+            // through: a `PointerUp` still needs its activation dispatch below.
+            self.end_scrub();
+        }
         if !is_activation_event(event_name) {
             return;
         }
@@ -1056,6 +1161,134 @@ impl InspectorExternal {
         true
     }
 
+    /// R1373 — arm a numeric scrub: a `PointerDown` over a numeric (`Int` /
+    /// `Float`) Details value cell records the row so the first captured
+    /// `pointer_move` can calibrate. A press on a non-numeric cell (a Colour
+    /// typein) leaves the arm clear — it never scrubs. A fresh press starts a
+    /// fresh calibration so a scrub never inherits a stale base from a drag whose
+    /// release was missed (the R51.34 capture lock makes that unreachable, but
+    /// the arm should not depend on it — the property-grid `arm_scrub` rule).
+    fn arm_scrub(&self, row: usize) {
+        self.scrub_cal.end();
+        let numeric = self
+            .common()
+            .get(row)
+            .is_some_and(|p| matches!(p.value, CellValue::Int(_) | CellValue::Float(_)));
+        self.scrub_armed.set(numeric.then_some(row));
+    }
+
+    /// R1373 — drive the live numeric scrub from the captured cursor's horizontal
+    /// fraction `x_rel` across the Details panel ([`DETAIL_TAG`]) through the
+    /// already-lifted [`DragCalibration`] substrate. The FIRST move calibrates:
+    /// `seed` snapshots the armed row's [`CellKind`] into the `Copy` payload and
+    /// the STABLE property name + every selected object's base value into
+    /// [`ScrubTarget`] (declining — `None` — if nothing is armed or the row is no
+    /// longer numeric), and mutates nothing (the user has not dragged yet). Each
+    /// LATER move yields the fraction delta, which `· DETAIL_PANEL_W` recovers as
+    /// pixel travel; the scrub writes `base + travel · sensitivity` to EVERY
+    /// selected object relative to its OWN snapshot base — so a mixed numeric
+    /// stays mixed but shifts together (the multi-object relative scrub, the
+    /// continuous peer of the discrete [`step_property`](Self::step_property)).
+    ///
+    /// The later moves re-resolve the target by the snapshot NAME, never the
+    /// selection-derived row index: a mid-drag RPC `select` can reorder
+    /// `common_properties` (the capture lock is pointer-routing only, so RPC is
+    /// reachable between moves), and re-deriving through a stale row index is the
+    /// R1372.2 stale-index hazard.
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        reason = "scrub values are small game-object property magnitudes (layer / \
+                  health / speed), nowhere near f64's 2^53 exact-int limit or i64's \
+                  range; the f64->i64 step is an intentional round-to-unit"
+    )]
+    fn scrub_to(&self, x_rel: f64) {
+        let Some((kind, delta)) = self.scrub_cal.drive(x_rel, || {
+            let row = self.scrub_armed.get()?;
+            let common = self.common();
+            let prop = common.get(row)?;
+            let kind = match prop.value {
+                CellValue::Int(_) => CellKind::Int,
+                CellValue::Float(_) => CellKind::Float,
+                // Nothing armed to a numeric (e.g. the armed row changed shape) —
+                // decline the drag.
+                _ => return None,
+            };
+            // Snapshot the STABLE name + each selected object's base value, so every
+            // later move writes `base + travel` (mix-PRESERVING) against a target
+            // that a mid-drag selection change cannot silently retarget.
+            let name = prop.name.clone();
+            let objects = self.objects.get();
+            let bases: Vec<(usize, CellValue)> = self
+                .selection_set()
+                .into_iter()
+                .filter_map(|j| {
+                    objects
+                        .get(j)
+                        .and_then(|o| o.properties.iter().find(|p| p.name == name))
+                        .map(|p| (j, p.value.clone()))
+                })
+                .collect();
+            *self.scrub_target.borrow_mut() = Some(ScrubTarget { name, bases });
+            Some(kind)
+        }) else {
+            return;
+        };
+        // R915 dead zone — a sub-threshold press is a click, not a scrub: stay put
+        // until the cursor strays past DRAG_CLICK_THRESHOLD_PX, so a plain click on
+        // a numeric cell does not nudge its value.
+        if !self.is_scrubbing() {
+            return;
+        }
+        let travel_px = delta * f64::from(DETAIL_PANEL_W);
+        let Some(ScrubTarget { name, bases }) = self.scrub_target.borrow().clone() else {
+            return;
+        };
+        self.mutate_selected(&name, move |j, _cur| {
+            // `base + travel` off THIS object's own press snapshot (mix-preserving);
+            // an object dropped from the selection since the snapshot simply is not
+            // iterated by `mutate_selected`, and one absent from `bases` (a mid-drag
+            // extend) is left untouched — never a wrong-value write.
+            let base = bases.iter().find(|(bj, _)| *bj == j).map(|(_, v)| v)?;
+            match (kind, base) {
+                (CellKind::Int, CellValue::Int(b)) => {
+                    let steps = (travel_px / SCRUB_INT_PX_PER_STEP).round() as i64;
+                    Some(CellValue::Int(b.saturating_add(steps)))
+                }
+                (CellKind::Float, CellValue::Float(b)) => {
+                    Some(CellValue::Float(b + travel_px * SCRUB_FLOAT_PER_PX))
+                }
+                _ => None,
+            }
+        });
+    }
+
+    /// R1373 — tear the scrub down: clear the arm, end the calibration, drop the
+    /// snapshot. Returns whether a REAL scrub ran (the cursor strayed past the
+    /// click dead zone); the sibling grids read this to suppress the trailing
+    /// click, but this binding's typein cell has no click action to suppress (its
+    /// only click gesture is `DoubleClick`, a separate event), so the caller
+    /// discards it — the return is kept for parity + the state-machine assertions
+    /// in the tests (scrub-vs-click).
+    fn end_scrub(&self) -> bool {
+        self.scrub_armed.set(None);
+        let was_scrub = self.is_scrubbing();
+        self.scrub_cal.end();
+        *self.scrub_target.borrow_mut() = None;
+        was_scrub
+    }
+
+    /// R1373 — whether a *real* numeric scrub is live: the press has strayed past
+    /// `DRAG_CLICK_THRESHOLD_PX` of travel across the Details-panel basis
+    /// ([`DETAIL_PANEL_W`]). The one decision the scrub mutation gate, the
+    /// click-suppression at release, and the AI-first `scrubbing` query share.
+    /// A thin wrapper over the lifted [`DragCalibration::traveled_beyond`] SSOT —
+    /// only the per-widget basis diverges (R935: the basis stays with the caller).
+    fn is_scrubbing(&self) -> bool {
+        self.scrub_cal
+            .traveled_beyond(f64::from(DETAIL_PANEL_W), DRAG_CLICK_THRESHOLD_PX)
+    }
+
     /// R1249/R1251 — open the inline ABSOLUTE type-in editor on common property
     /// `idx`. Gated to the field-editable kinds — `Int` / `Float` (R1249, the
     /// gap the steppers left) and `Color` (R1251, its `#RRGGBB` hex, the
@@ -1149,11 +1382,67 @@ impl core::fmt::Debug for InspectorExternal {
     }
 }
 
-// R913.1 — the Gui+Rpc / Framework / UiThreadSync `impl External` skeleton is
-// the `query_proxy_external_impl!` SSOT (a config-holder External whose state
-// is a shared reactive holder); hand-rolling it was a
-// [[use-substrate-not-hand-rolled-equivalent]] miss.
-query_proxy_external_impl!(InspectorExternal);
+// R913.1 / R1373 — the Gui+Rpc / Framework / UiThreadSync skeleton was the
+// `query_proxy_external_impl!` config-holder SSOT. R1373 adds the numeric-scrub
+// pointer capture (`wants_pointer_capture` / `capture_normalize` / `pointer_move`),
+// which the macro does not express, so the impl is hand-written here — the
+// property-grid / data-grid scrub precedent: a capture External is no longer a
+// pure query proxy. The five skeleton methods stay byte-identical to the macro's;
+// only the three capture methods are new.
+impl External for InspectorExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    /// R1373 — opt into the R51.34 capture lock so a numeric scrub survives the
+    /// cursor straying off the Details row (the property-grid / data-grid scrub
+    /// stance). A press that never moves is still a click (the release dispatches
+    /// `PointerUp` with no scrub calibrated, and a non-`typein` press seeds no
+    /// scrub), so every CLICK path — object-select / stepper / toggle / cycle /
+    /// reset — runs unchanged (pinned by the r909-r1251 demos + the tests).
+    ///
+    /// Capture is per-External, so it also spans the object `listbox`, not only
+    /// the Details panel. This changes one PRESS-DRAG behavior there: an
+    /// object-row press dragged onto a DIFFERENT row and released now selects the
+    /// PRESS row (the capture lock delivers `PointerUp` to the press tag), where
+    /// free-mode routed it to the release-hover row. There is no drag-select
+    /// gesture, so this is the more intuitive "select what you pressed" — and it
+    /// matches the sibling grids; pinned by
+    /// `r1373_object_row_press_drag_selects_the_press_row`.
+    fn wants_pointer_capture(&self) -> bool {
+        true
+    }
+
+    /// R1373 — normalize the captured cursor against the Details panel
+    /// ([`DETAIL_TAG`], a fixed-width rect), so the cursor-fraction delta recovers
+    /// true pixel travel for the scrub (the property-grid stable-basis rule — the
+    /// scrubbed row never resizes, so the whole panel is a fine basis).
+    fn capture_normalize(&self) -> CaptureNormalize<'_> {
+        CaptureNormalize::Tag(DETAIL_TAG)
+    }
+
+    /// R1373 — drive the live numeric scrub from the captured cursor's horizontal
+    /// fraction across the Details panel; `y_rel` is ignored (scrub is the X axis).
+    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
+        self.scrub_to(f64::from(x_rel));
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
 
 impl ExternalIntrospect for InspectorExternal {
     fn schema(&self) -> IntrospectSchema {
@@ -1235,6 +1524,12 @@ impl ExternalIntrospect for InspectorExternal {
                     SchemaField::new("begin_edit", "int"),
                     SchemaField::new("commit_edit", "string"),
                     SchemaField::new("cancel_edit", "null"),
+                    // R1373 — the numeric-scrub live state (§2 #2: the AI reads
+                    // whether a press-drag is mid-scrub, the property-grid /
+                    // data-grid `scrubbing` peer). The scrub itself is driven by
+                    // the deterministic `scene/drag` RPC (press + captured moves +
+                    // release under the capture lock), not a bespoke verb.
+                    SchemaField::new("scrubbing", "bool"),
                 ]
             },
         )
@@ -1264,6 +1559,8 @@ impl ExternalIntrospect for InspectorExternal {
             // buffer, the read half of the type-in surface.
             "editing" => Some(selected_to_value(self.editing_prop.get())),
             "edit_text" => Some(IntrospectValue::Text(self.editor.text())),
+            // R1373 — is a numeric press-drag mid-scrub (past the click dead zone)?
+            "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
             _ => {
                 if let Some(j) = path.strip_prefix("object_name.") {
                     let j: usize = j.parse().ok()?;
@@ -1349,7 +1646,13 @@ impl ExternalIntrospect for InspectorExternal {
                     return Err(InterveneError::ReadOnly);
                 }
                 let Some(idx_str) = path.strip_prefix("value.") else {
-                    return Err(InterveneError::UnknownPath);
+                    // R1373 — a schema-declared but non-intervene path (`scrubbing`,
+                    // `editing`, `edit_text`, `prop_cursor`, `any_modified`, the
+                    // invoke verbs) is `ReadOnly`, not `UnknownPath`: an agent that
+                    // can plainly `query` it must not be told it does not exist
+                    // (§2 #7; the `read_only_or_unknown` SSOT). Truly-unknown paths
+                    // still return `UnknownPath`.
+                    return Err(read_only_or_unknown(&self.schema(), path));
                 };
                 let idx: usize = idx_str.parse().map_err(|_| InterveneError::UnknownPath)?;
                 self.set_property(idx, &value)
@@ -2102,12 +2405,12 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
     }
     let detail = Scene::Container(
         ContainerNode::new(detail_children)
-            .with_tag("detail_panel")
+            .with_tag(DETAIL_TAG)
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_gap(6)
-                    .with_size(Size::px(WIN_W - LIST_W - 40, WIN_H - 70)),
+                    .with_size(Size::px(DETAIL_PANEL_W, WIN_H - 70)),
             ),
     );
 
@@ -2452,10 +2755,6 @@ fn edit_property_at(
     let _ = intro.invoke(verb, arg);
     true
 }
-
-/// The Details-panel tag — a WAI-ARIA `group` of the common-property controls
-/// (R1224; a `list` of read-only rows pre-R1224).
-const DETAIL_TAG: &str = "detail_panel";
 
 impl WidgetA11y for InspectorView {
     /// The whole inspector a11y tree, all derived from one `InspectorState`:
@@ -2860,6 +3159,332 @@ mod tests {
             obj_value(&e, 2, "Layer"),
             CellValue::Int(b + 1),
             "net +1 from inc,inc,dec"
+        );
+    }
+
+    // ─── R1373 numeric drag-scrub ─────────────────────────────────
+
+    /// The cursor fraction across the Details panel that a `travel_px` pixel drag
+    /// produces (the scrub's inverse basis), so the tests read in pixels and stay
+    /// basis-agnostic if [`DETAIL_PANEL_W`] changes.
+    fn frac(travel_px: f64) -> f64 {
+        travel_px / f64::from(DETAIL_PANEL_W)
+    }
+
+    /// The scrub arms only on a numeric cell; a Bool / Choice / Colour / out-of-
+    /// range press leaves the arm clear (those never scrub).
+    #[test]
+    fn r1373_scrub_arms_only_a_numeric_row() {
+        let e = ext();
+        e.select(0); // Player: Visible/Layer/Locked/Health/Speed/Team/Tint
+        e.arm_scrub(4); // Speed (Float)
+        assert_eq!(e.scrub_armed.get(), Some(4), "a Float cell arms");
+        e.arm_scrub(1); // Layer (Int)
+        assert_eq!(e.scrub_armed.get(), Some(1), "an Int cell arms");
+        e.arm_scrub(0); // Visible (Bool)
+        assert_eq!(e.scrub_armed.get(), None, "a Bool cell does not arm");
+        e.arm_scrub(5); // Team (Choice)
+        assert_eq!(e.scrub_armed.get(), None, "a Choice cell does not arm");
+        e.arm_scrub(6); // Tint (Colour)
+        assert_eq!(e.scrub_armed.get(), None, "a Colour cell does not arm");
+        e.arm_scrub(99); // out of range
+        assert_eq!(
+            e.scrub_armed.get(),
+            None,
+            "an out-of-range row does not arm"
+        );
+    }
+
+    /// The headline gesture: a scrub over a MULTI-object selection writes
+    /// `base + travel` to every selected object relative to its OWN press value,
+    /// so a mixed numeric stays mixed but shifts together (the continuous peer of
+    /// the discrete `step_property`). Layer is Player 1 / Camera 1 / Light 2.
+    #[test]
+    fn r1373_multi_object_scrub_preserves_the_mix() {
+        let e = ext();
+        e.select_all();
+        assert_eq!(
+            e.query("mixed.1"),
+            Some(IntrospectValue::Bool(true)),
+            "Layer starts mixed (1,1,2)"
+        );
+        e.arm_scrub(1);
+        e.scrub_to(0.0); // calibrate: no mutation
+        assert_eq!(
+            obj_value(&e, 2, "Layer"),
+            CellValue::Int(2),
+            "the first move only calibrates"
+        );
+        assert!(
+            !e.is_scrubbing(),
+            "the calibration frame is not yet a scrub"
+        );
+        // +24px -> round(24/8) = +3 steps to EACH object.
+        e.scrub_to(frac(3.0 * SCRUB_INT_PX_PER_STEP));
+        assert!(e.is_scrubbing(), "a drag past the dead zone is a scrub");
+        assert_eq!(obj_value(&e, 0, "Layer"), CellValue::Int(4), "Player 1 + 3");
+        assert_eq!(obj_value(&e, 1, "Layer"), CellValue::Int(4), "Camera 1 + 3");
+        assert_eq!(obj_value(&e, 2, "Layer"), CellValue::Int(5), "Light 2 + 3");
+        assert_eq!(
+            e.query("mixed.1"),
+            Some(IntrospectValue::Bool(true)),
+            "still mixed after a uniform shift (4,4,5)"
+        );
+        assert!(e.end_scrub(), "end_scrub reports a real scrub ran");
+        assert!(
+            e.scrub_target.borrow().is_none(),
+            "the name-keyed snapshot is dropped at release"
+        );
+        assert!(!e.is_scrubbing(), "the release cleared the scrub");
+    }
+
+    /// A `Float` scrub is continuous and ABSOLUTE from the press snapshot: the
+    /// value tracks the cursor (a move back to the press fraction restores the
+    /// base), it does not accumulate; a leftward drag is signed.
+    #[test]
+    fn r1373_float_scrub_is_continuous_and_absolute_from_base() {
+        let e = ext();
+        e.select(0); // Speed (row 4) = 6.5
+        e.arm_scrub(4);
+        e.scrub_to(0.0);
+        let CellValue::Float(v0) = obj_value(&e, 0, "Speed") else {
+            panic!("Speed is Float");
+        };
+        assert!((v0 - 6.5).abs() < 1e-9, "the first move only calibrates");
+        e.scrub_to(frac(100.0)); // +100px * 0.01 = +1.0
+        let CellValue::Float(v1) = obj_value(&e, 0, "Speed") else {
+            panic!()
+        };
+        assert!((v1 - 7.5).abs() < 1e-6, "6.5 + 100px*0.01 = 7.5, got {v1}");
+        e.scrub_to(0.0); // back to the press fraction
+        let CellValue::Float(v2) = obj_value(&e, 0, "Speed") else {
+            panic!()
+        };
+        assert!(
+            (v2 - 6.5).abs() < 1e-6,
+            "absolute-from-snapshot: back at press restores 6.5, got {v2}"
+        );
+        e.scrub_to(frac(-50.0)); // signed: leftward decreases
+        let CellValue::Float(v3) = obj_value(&e, 0, "Speed") else {
+            panic!()
+        };
+        assert!((v3 - 6.0).abs() < 1e-6, "6.5 - 50px*0.01 = 6.0, got {v3}");
+    }
+
+    /// An `Int` scrub steps in whole units (8px/step, rounded to the nearest).
+    #[test]
+    fn r1373_int_scrub_steps_in_whole_units() {
+        let e = ext();
+        e.select(0); // Health (row 3) = 100
+        e.arm_scrub(3);
+        e.scrub_to(0.0);
+        e.scrub_to(frac(5.0 * SCRUB_INT_PX_PER_STEP)); // +40px -> +5
+        assert_eq!(
+            obj_value(&e, 0, "Health"),
+            CellValue::Int(105),
+            "100 + round(40/8) = 105"
+        );
+        e.scrub_to(frac(2.0 * SCRUB_INT_PX_PER_STEP + 3.0)); // 19px -> round(2.375) = 2
+        assert_eq!(
+            obj_value(&e, 0, "Health"),
+            CellValue::Int(102),
+            "19px rounds to +2 whole steps"
+        );
+    }
+
+    /// A sub-threshold press is a click, not a scrub: within `DRAG_CLICK_THRESHOLD_PX`
+    /// the value does not move and `end_scrub` reports no scrub ran.
+    #[test]
+    fn r1373_a_sub_threshold_press_is_a_click_not_a_scrub() {
+        let e = ext();
+        e.select(0);
+        e.arm_scrub(4); // Speed
+        e.scrub_to(0.0);
+        e.scrub_to(frac(2.0)); // 2px < 4px threshold
+        assert!(!e.is_scrubbing(), "2px is inside the click dead zone");
+        let CellValue::Float(v) = obj_value(&e, 0, "Speed") else {
+            panic!()
+        };
+        assert!(
+            (v - 6.5).abs() < 1e-9,
+            "a dead-zone press does not nudge the value"
+        );
+        assert!(
+            !e.end_scrub(),
+            "end_scrub reports NO scrub ran (it was a click)"
+        );
+    }
+
+    /// A drag with nothing armed never scrubs: the first move's seed declines, so
+    /// no calibration is ever set and later moves stay inert.
+    #[test]
+    fn r1373_scrub_with_nothing_armed_is_a_noop() {
+        let e = ext();
+        e.select(0);
+        e.scrub_to(0.0);
+        e.scrub_to(frac(100.0));
+        assert!(!e.is_scrubbing(), "an un-armed drag never scrubs");
+        let CellValue::Float(v) = obj_value(&e, 0, "Speed") else {
+            panic!()
+        };
+        assert!((v - 6.5).abs() < 1e-9, "nothing moved");
+    }
+
+    /// The AI-first `scrubbing` state is schema-declared and reflects the live
+    /// drag (the read half of the §2 #2 scrub surface).
+    #[test]
+    fn r1373_scrubbing_query_and_schema() {
+        let e = ext();
+        assert!(
+            e.schema().fields.iter().any(|f| f.path == "scrubbing"),
+            "scrubbing is schema-declared"
+        );
+        e.select(0);
+        assert_eq!(
+            e.query("scrubbing"),
+            Some(IntrospectValue::Bool(false)),
+            "not scrubbing at rest"
+        );
+        e.arm_scrub(4);
+        e.scrub_to(0.0);
+        e.scrub_to(frac(100.0));
+        assert_eq!(
+            e.query("scrubbing"),
+            Some(IntrospectValue::Bool(true)),
+            "mid-drag scrubbing = true"
+        );
+        e.end_scrub();
+        assert_eq!(
+            e.query("scrubbing"),
+            Some(IntrospectValue::Bool(false)),
+            "released -> false"
+        );
+    }
+
+    /// The scrub is driven end-to-end over the wire: a `typein<i>:PointerDown`
+    /// arms, `pointer_move` (the captured cursor the router forwards) scrubs, and
+    /// a `typein<i>:PointerUp` clears — the path a real mouse / the `scene/drag`
+    /// RPC takes. A Colour typein press arms nothing (stays a click).
+    #[test]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a scrub fraction in [0,1]; narrowing it to the f32 pointer_move \
+                  takes is exact enough for the >=0.05-tolerance assertion"
+    )]
+    fn r1373_scrub_routes_through_the_send_wire_and_pointer_move() {
+        let mut e = ext();
+        e.invoke("select", IntrospectValue::Int(0)).unwrap(); // Player
+        e.invoke(
+            "send",
+            IntrospectValue::Text("typein4:PointerDown".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(e.scrub_armed.get(), Some(4), "the send wire armed Speed");
+        e.pointer_move(0.0, 0.0); // calibrate
+        e.pointer_move(frac(100.0) as f32, 0.0); // +1.0
+        assert_eq!(
+            e.query("scrubbing"),
+            Some(IntrospectValue::Bool(true)),
+            "the wire drag scrubs"
+        );
+        let CellValue::Float(v) = obj_value(&e, 0, "Speed") else {
+            panic!()
+        };
+        // The only imprecision on this in-process path is the f64->f32 fraction
+        // narrowing (~1e-5); a wrong basis / sensitivity would be off by >=0.5.
+        assert!((v - 7.5).abs() < 1e-3, "Speed scrubbed to ~7.5, got {v}");
+        e.invoke(
+            "send",
+            IntrospectValue::Text("typein4:PointerUp".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(e.scrub_armed.get(), None, "the release cleared the arm");
+        assert_eq!(
+            e.query("scrubbing"),
+            Some(IntrospectValue::Bool(false)),
+            "the release cleared the scrub"
+        );
+        // A Colour typein press arms nothing.
+        e.invoke(
+            "send",
+            IntrospectValue::Text("typein6:PointerDown".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            e.scrub_armed.get(),
+            None,
+            "a Colour cell press does not arm a scrub"
+        );
+    }
+
+    /// R1373 — a leaked arm (an RPC `send "typein<i>:PointerDown"` with no paired
+    /// release) is abandoned by the next press on a non-scrub affordance, so it
+    /// cannot seed a PHANTOM scrub off a stale row.
+    #[test]
+    fn r1373_a_press_elsewhere_abandons_a_leaked_scrub_arm() {
+        let mut e = ext();
+        e.invoke("select", IntrospectValue::Int(0)).unwrap();
+        // Leak the arm: a bare PointerDown over the numeric cell, no PointerUp.
+        e.invoke(
+            "send",
+            IntrospectValue::Text("typein4:PointerDown".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(e.scrub_armed.get(), Some(4), "the arm is leaked");
+        // A press on the object list (a non-scrub affordance) clears it before its
+        // forwarded initial pointer_move could seed a phantom scrub.
+        e.invoke("send", IntrospectValue::Text("2:PointerDown".to_owned()))
+            .unwrap();
+        assert_eq!(e.scrub_armed.get(), None, "the leaked arm is abandoned");
+        // Proof it cannot phantom-scrub: a drive now declines (nothing armed).
+        e.pointer_move(0.0, 0.0);
+        e.pointer_move(0.5, 0.0);
+        assert!(
+            !e.is_scrubbing(),
+            "no phantom scrub after the leak was cleared"
+        );
+    }
+
+    /// R1373 — `intervene` on the query-only `scrubbing` field is `ReadOnly`, not
+    /// `UnknownPath`: an agent that can `query` it must not be told it does not
+    /// exist (§2 #7). The pre-existing query-only peers now share this honesty.
+    #[test]
+    fn r1373_intervene_scrubbing_is_read_only_not_unknown() {
+        let mut e = ext();
+        assert_eq!(
+            e.intervene("scrubbing", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly),
+            "scrubbing is queryable, so intervene is ReadOnly (not UnknownPath)"
+        );
+        assert_eq!(
+            e.intervene("editing", IntrospectValue::Int(1)),
+            Err(InterveneError::ReadOnly),
+            "the pre-existing query-only peers are honest too"
+        );
+        assert_eq!(
+            e.intervene("no_such_field", IntrospectValue::Null),
+            Err(InterveneError::UnknownPath),
+            "a truly-unknown path is still UnknownPath"
+        );
+    }
+
+    /// R1373 — the capture broadening's one behavior change on the object list: a
+    /// press-drag-release across rows selects the PRESS row (the capture lock
+    /// delivers `PointerUp` to the press tag), disclosed on `wants_pointer_capture`.
+    #[test]
+    fn r1373_object_row_press_drag_selects_the_press_row() {
+        let mut e = ext();
+        e.invoke("select", IntrospectValue::Int(0)).unwrap();
+        // Press row 2, then release on row 2's tag (the capture lock routes the
+        // release to the PRESS tag even if the cursor strayed). Selection = press.
+        e.invoke("send", IntrospectValue::Text("2:PointerDown".to_owned()))
+            .unwrap();
+        e.invoke("send", IntrospectValue::Text("2:PointerUp".to_owned()))
+            .unwrap();
+        assert_eq!(
+            e.query("selected"),
+            Some(IntrospectValue::Int(2)),
+            "the press row (2) is selected, not row 0"
         );
     }
 
