@@ -86,6 +86,7 @@ use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::anchor::{AnchorSide, flip_y};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::button::{read_button_focused, read_button_state};
 use pinion_widget_paint::listbox::{OptionRow, view_option};
@@ -129,16 +130,20 @@ const CHEVRON_UP: &str = "\u{25B4}";
 /// `Owner::cache` key for the `Signal<bool>` "is the popup open".
 const OPEN_KEY: &str = "hello_combobox.open";
 
-// Absolute geometry so the dropdown anchors deterministically under the
-// trigger (and the boot-frame pixel guard can sample fixed points).
+// Absolute geometry so the dropdown anchors deterministically to the trigger.
+// The trigger sits low in the window on purpose: opening below would overflow
+// the bottom, so [`flip_y`] opens the panel UPWARD — this demo is the forcing
+// consumer for the R1378 anchored-flip lift (the panel bottom lands flush
+// against the trigger top).
 const TRIGGER_X: u32 = 180;
-const TRIGGER_Y: u32 = 110;
+const TRIGGER_Y: u32 = 280;
 const TRIGGER_W: u32 = 200;
 const TRIGGER_H: u32 = 48;
 const OPT_H: u32 = 40;
-/// Panel sits 4 px below the trigger, same width.
+/// The dropdown panel, same width as the trigger; its top-left `x`. The `y` is
+/// resolved at open by [`flip_y`] (drops below with room, flips above near the
+/// window bottom — the case this demo exercises).
 const PANEL_X: u32 = TRIGGER_X;
-const PANEL_Y: u32 = TRIGGER_Y + TRIGGER_H + 4;
 const PANEL_PAD: u32 = 6;
 
 /// `Owner::cache`-keyed hook: the shared `Rc<Signal<bool>>` open flag.
@@ -343,17 +348,18 @@ fn view(state: &ComboViewState, _frame: &Frame) -> Scene {
         let options: Vec<Scene> = (0..N)
             .map(|i| option_scene(i, state, active, &theme))
             .collect();
+        // The panel drops below the trigger, or flips above when that would
+        // overflow the window bottom (the shared R1378 `flip_y` positioner).
+        let panel_h = u32::try_from(N).expect("N fits in u32") * OPT_H + 2 * PANEL_PAD;
+        let panel_y = flip_y(TRIGGER_Y, TRIGGER_H, panel_h, WIN_H, AnchorSide::Below);
         let panel = Scene::Container(
             ContainerNode::new(options)
                 .with_tag(PANEL_TAG)
                 .with_style(popup_surface(&theme))
                 .with_layout(
                     LayoutStyle::new()
-                        .with_absolute_position(PANEL_X, PANEL_Y)
-                        .with_size(Size::px(
-                            TRIGGER_W,
-                            u32::try_from(N).expect("N fits in u32") * OPT_H + 2 * PANEL_PAD,
-                        ))
+                        .with_absolute_position(PANEL_X, panel_y)
+                        .with_size(Size::px(TRIGGER_W, panel_h))
                         .flex(FlexDirection::Column)
                         .with_align_items(AlignItems::Stretch)
                         .with_gap(2)
@@ -661,6 +667,33 @@ mod tests {
             ));
         }
         Scene::Container(ContainerNode::new(children))
+    }
+
+    // ----- R1378 anchored-flip forcing consumer -----
+
+    #[test]
+    fn r1378_dropdown_flips_above_the_low_trigger() {
+        // This demo is the forcing consumer for the R1378 `flip_y` lift: the
+        // trigger sits low enough that dropping the panel below would overflow
+        // the window bottom, so `flip_y` opens it UPWARD, flush at the trigger
+        // top. The first assert guards the *premise* — if a future edit raises
+        // the trigger so a below-drop fits, the flip would silently stop being
+        // exercised.
+        let panel_h = u32::try_from(N).expect("N fits in u32") * OPT_H + 2 * PANEL_PAD;
+        assert!(
+            TRIGGER_Y + TRIGGER_H + panel_h > WIN_H,
+            "trigger low enough that a below-drop overflows (else the flip is untested)"
+        );
+        let panel_y = flip_y(TRIGGER_Y, TRIGGER_H, panel_h, WIN_H, AnchorSide::Below);
+        assert!(
+            panel_y < TRIGGER_Y,
+            "panel flips above the trigger (top {panel_y} < trigger {TRIGGER_Y})"
+        );
+        assert_eq!(
+            panel_y + panel_h,
+            TRIGGER_Y,
+            "panel bottom lands flush against the trigger top"
+        );
     }
 
     // ----- reducer + signal -----

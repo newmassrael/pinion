@@ -8,12 +8,13 @@
 //! popups) — a Rule-of-Three lift the colour popup pushed to a 4th copy, so
 //! the surface SSOT lifts here.
 //!
-//! Only the *surface* lifts: each callsite still owns its panel **layout**
-//! (anchor position, size, flex direction, padding) — those genuinely diverge
-//! (a fixed-position combobox panel vs the grid's edge-flipping anchor). A
-//! reusable anchored-overlay positioning helper (the `popup_origin` edge-flip)
-//! is a separate, larger substrate that is not yet duplicated across bindings
-//! (only the property grid flips today); it lifts when a 2nd binding needs it.
+//! Only the *surface* lifts here: each callsite still owns its panel **layout**
+//! (anchor position, size, flex direction, padding). The one shared slice of
+//! that layout — the anchored-overlay **vertical flip** (drop below, flip above
+//! on overflow) — lifted separately to [`crate::anchor::flip_y`] once the
+//! property-grid + data-grid dropdowns became its 2nd/3rd consumers (R1378),
+//! the 2nd-binding gate this doc earmarked. The cross-axis clamp and per-panel
+//! anchor `x` stay per-callsite (still single-consumer).
 
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::theme::{ColorRole, Theme};

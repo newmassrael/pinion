@@ -207,6 +207,7 @@ use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, c
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::anchor::{AnchorSide, flip_y};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox_box};
 use pinion_widget_paint::group_header::group_header_row;
@@ -4522,9 +4523,9 @@ fn choice_panel_h(n: usize) -> u32 {
 /// R940 — the open dropdown panel's GRID-LOCAL top-left, or `None` when the
 /// editing row is scrolled out of the body viewport (so no panel is painted —
 /// the property-grid hidden-row discipline, extended to the virtualized grid's
-/// vertical scroll). Anchored under the value cell — dropping below the row, or
-/// flipped above it when the panel would overflow the grid's bottom (the native
-/// dropdown edge behaviour). GRID-LOCAL because the panel is a sibling of the
+/// vertical scroll). Anchored under the value cell, its `y` from the shared
+/// R1378 [`flip_y`] positioner (drop below the row, flip above on grid-bottom
+/// overflow). GRID-LOCAL because the panel is a sibling of the
 /// scroll viewport inside the grid container, so it subtracts both scroll
 /// offsets by hand (it is outside the scrolls that translate the cells): `col`'s
 /// x walks the column widths past the handle column; `visual_pos`'s y sits below
@@ -4544,18 +4545,20 @@ fn popup_anchor(
     if row_top_in_body + row_h <= 0 || row_top_in_body >= body_h {
         return None;
     }
-    let grid_row_top = row_h + row_top_in_body; // below the pinned header
-    let ph = i32::try_from(panel_h).ok()?;
-    let win_h = i32::try_from(GRID_VIEWPORT_H).ok()?;
-    let below = grid_row_top + row_h;
-    let y = if below + ph <= win_h {
-        below
-    } else {
-        (grid_row_top - ph).max(0)
-    };
+    let grid_row_top = row_h + row_top_in_body; // below the pinned header, > 0 by the guard
+    // Drop below the cell, flipping above on grid-bottom overflow — the shared
+    // R1378 [`anchor::flip_y`] positioner. GRID_VIEWPORT_H is the local bottom
+    // bound (the panel is a sibling of the scroll viewport inside the grid).
+    let y = flip_y(
+        u32::try_from(grid_row_top).ok()?,
+        ROW_H,
+        panel_h,
+        GRID_VIEWPORT_H,
+        AnchorSide::Below,
+    );
     let col_left = i32::try_from(HANDLE_W + COL_W[..col].iter().sum::<u32>()).ok()?;
     let x = (col_left - h_off).max(0);
-    Some((u32::try_from(x).ok()?, u32::try_from(y).ok()?))
+    Some((u32::try_from(x).ok()?, y))
 }
 
 /// R940 — the open dropdown panel: one [`view_option`] row per option (the R867

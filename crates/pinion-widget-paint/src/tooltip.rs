@@ -15,18 +15,18 @@
 //! that external's `visible` slot and calls [`view_tooltip`] only while
 //! it is set.
 //!
-//! ## Anchored positioning (inline first consumer)
+//! ## Anchored positioning
 //!
 //! [`anchor_position`] resolves the overlay's absolute `(left, top)`
 //! from the anchor rect, the tooltip size, the viewport, and a preferred
 //! [`TooltipSide`], **flipping to the opposite side** when the preferred
 //! side would overflow the viewport and **clamping the cross-axis** so
-//! the tooltip never paints off-screen. This is the framework's first
-//! anchor-relative-with-flip positioner; it stays inline here (not a
-//! shared substrate) until a 2nd overlay consumer — a `Menu` dropdown
-//! that flips, a `Popover`, a `ComboBox` list — needs the same math
-//! (`[[abstraction-needs-second-consumer]]`; the R691 `Menu` dropdown
-//! does *not* flip, so it is not yet that consumer).
+//! the tooltip never paints off-screen. The vertical flip decision is the
+//! shared [`crate::anchor::flip_y`] primitive (R1378 — lifted once the
+//! property-grid + data-grid dropdowns became its 2nd/3rd consumers, the
+//! Rule-of-Three; a `ComboBox` list is now its 4th). The cross-axis clamp
+//! remains inline: it is still a single-consumer concern
+//! (`[[abstraction-needs-second-consumer]]`).
 //!
 //! ## WCAG 1.4.13 "hoverable" — the shared-tag contract
 //!
@@ -149,31 +149,21 @@ pub fn anchor_position(placement: &TooltipPlacement, viewport: (u32, u32)) -> (u
     let (tip_w, tip_h) = tip_size;
     let (win_w, win_h) = viewport;
 
-    // Vertical placement, flush against the anchor edge (gap 0).
-    let below_top = anchor.y + anchor.h;
-    let above_top = anchor.y.saturating_sub(tip_h);
-    let fits_below = below_top.saturating_add(tip_h) <= win_h;
-    let fits_above = anchor.y >= tip_h;
-    let top = match side {
-        // Prefer below; flip up only if it overflows *and* up fits.
-        TooltipSide::Below => {
-            if fits_below || !fits_above {
-                below_top
-            } else {
-                above_top
-            }
-        }
-        // Prefer above; flip down only if it overflows *and* down fits.
-        TooltipSide::Above => {
-            if fits_above || !fits_below {
-                above_top
-            } else {
-                below_top
-            }
-        }
-    };
+    // Vertical placement, flush against the anchor edge (gap 0), flipping on
+    // viewport overflow — the shared R1378 [`crate::anchor::flip_y`] primitive.
+    let top = crate::anchor::flip_y(
+        anchor.y,
+        anchor.h,
+        tip_h,
+        win_h,
+        match side {
+            TooltipSide::Below => crate::anchor::AnchorSide::Below,
+            TooltipSide::Above => crate::anchor::AnchorSide::Above,
+        },
+    );
 
-    // Horizontal: anchor-left aligned, clamped into [0, win_w - tip_w].
+    // Horizontal: anchor-left aligned, clamped into [0, win_w - tip_w]. A
+    // single-consumer concern today, so it stays inline (see `anchor` docs).
     let max_left = win_w.saturating_sub(tip_w);
     let left = anchor.x.min(max_left);
 

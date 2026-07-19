@@ -150,6 +150,7 @@ use pinion_core::widgets::tree_nav::{
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Color, Command, DirEntry, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::anchor::{AnchorSide, flip_y};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::button::{
     ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
@@ -3598,26 +3599,29 @@ fn view_color_popup(
 }
 
 /// The top-left of a popup of height `panel_h` for the editing row at flatten
-/// **visual position** `view_pos`: anchored at the value column, dropping below
-/// the row — or flipped above it when it would overflow the window bottom (the
-/// native dropdown edge behaviour). Shared by the choice + colour popups;
-/// deterministic because every row (the column header, the category headers,
-/// and the data rows) shares the uniform [`ROW_H`] + [`ROW_GAP`] pitch and the
-/// title band has a fixed height ([`TITLE_H`]). The leading `row_step` skips
-/// the `Property` / `Value` column-header row above the flatten.
+/// **visual position** `view_pos`: anchored at the value column, its `y`
+/// resolved by the shared [`flip_y`] positioner (drop below the row, flip above
+/// on bottom overflow). This fn owns only the grid-specific row → anchor `y`
+/// arithmetic: deterministic because every row (the column header, the category
+/// headers, and the data rows) shares the uniform [`ROW_H`] + [`ROW_GAP`] pitch
+/// and the title band has a fixed height ([`TITLE_H`]). The leading `row_step`
+/// skips the `Property` / `Value` column-header row above the flatten. Shared
+/// by the choice + colour popups.
 fn popup_origin(view_pos: usize, panel_h: u32) -> (u32, u32) {
     let x = PANEL_PAD + GRID_BORDER + NAME_COL_W;
     let row_step = ROW_H + ROW_GAP;
     let grid_top = PANEL_PAD + TITLE_H + TITLE_GAP + GRID_BORDER;
     let row_top =
         grid_top + row_step + u32::try_from(view_pos).expect("row fits in u32") * row_step;
-    let below = row_top + ROW_H;
-    let content_bottom = WIN_H - PANEL_PAD;
-    let y = if below + panel_h <= content_bottom {
-        below
-    } else {
-        row_top.saturating_sub(panel_h)
-    };
+    // Drop below the row, flipping above when it overflows the padded content
+    // bottom — the shared R1378 [`anchor::flip_y`] positioner.
+    let y = flip_y(
+        row_top,
+        ROW_H,
+        panel_h,
+        WIN_H - PANEL_PAD,
+        AnchorSide::Below,
+    );
     (x, y)
 }
 

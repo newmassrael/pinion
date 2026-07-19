@@ -19,7 +19,9 @@ Atomic verification scope (>=30 assertions):
   (A) closed shape — trigger + placeholder value + "(none)" status, no
       panel / options painted, chevron points DOWN.
   (B) open via trigger click — barrier + panel + N options appear, chevron
-      flips UP; the dropdown panel floats at MD3 menu elevation (L2).
+      glyph flips UP; the dropdown panel floats at MD3 menu elevation (L2)
+      and — because the trigger sits low — the panel FLIPS ABOVE it (R1378
+      `flip_y`), its bottom flush against the trigger top, inside the viewport.
   (C) keyboard roving — focus the trigger, ArrowDown/End move the popup's
       `focused_index` active descendant (queried off the listbox external).
   (D) commit via click — clicking an option closes the popup, updates the
@@ -157,6 +159,17 @@ def body() -> None:
         shadows = (panel.get("style") or {}).get("shadows") or []
         assert_eq(len(shadows), 2, "dropdown panel casts key + ambient (MD3 L2)")
         assert abs(shadows[0]["blur"] - 3.0) < 1e-3, f"L2 key blur 3.0; got {shadows[0]}"
+        # R1378 — the trigger sits low in the window, so the dropdown FLIPS
+        # ABOVE it (opening below would overflow the window bottom). The
+        # shared `flip_y` positioner lands the panel bottom flush at the
+        # trigger top and keeps the whole panel inside the viewport.
+        rects = abs_rects_of(snap)
+        tr, pn = rects[TRIGGER], rects[PANEL]
+        assert pn[1] < tr[1], (
+            f"dropdown flips ABOVE the low trigger (panel top {pn[1]} < trigger top {tr[1]})"
+        )
+        assert_eq(pn[1] + pn[3], tr[1], "panel bottom flush against the trigger top (flip_y)")
+        assert pn[1] + pn[3] <= VIEWPORT[1], "flipped panel stays within the viewport bottom"
 
         # ── (C) keyboard roving active descendant ───────────────────
         tf.request("focus/set", {"tag": TRIGGER})
