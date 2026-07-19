@@ -11,9 +11,10 @@ block and the copy reads top-to-bottom exactly as a paste writes.
 
 Wire (the cross-grid cell-selection vocabulary — the Table widget /
 hello-cell-select speak it identically):
-  invoke  select-cell "r,c" / extend-cell "r,c" / clear-cell-selection / copy
+  invoke  select-cell "r,c" / extend-cell "r,c" / clear-cell-selection
   query   cell_selection ("p0,c0,p1,c1" VISIBLE positions / null) /
-          cell_selection_count / cell_selection_tsv
+          cell_selection_count / cell_selection_tsv /
+          copy_tsv (what Ctrl+C copies: range TSV or the lone focused cell)
 
 The seed table is 4 rows x 6 cols (Asset / Type / Count / Scale / Active / Tint);
 Asset is col 0 (Text: Hero / Tree / Coin / Boss), Count is col 2 (Int: 1/24/99/1).
@@ -86,19 +87,19 @@ def body() -> None:
         assert "\nTree\t" in tsv, "row 1 asset is Tree"
         assert "\nCoin\t" in tsv, "row 2 asset is Coin"
 
-        # ── (C) copy — the action mirrors the read; lone cell fallback ─
-        assert_eq(inv(tf, "copy"), tsv, "`copy` == cell_selection_tsv (one funnel)")
+        # ── (C) copy_tsv — a READ (CQS), not an action; lone-cell fallback ─
+        assert_eq(q(tf, "copy_tsv"), tsv, "copy_tsv == cell_selection_tsv (one funnel)")
         assert_eq(inv(tf, "clear-cell-selection"), True, "drop the range")
         assert_eq(q(tf, "cell_selection"), None, "range cleared")
         cursor(tf, 1, 0)  # lone cursor on Tree
-        assert_eq(inv(tf, "copy"), "Tree", "with no range, copy yields the lone cell")
+        assert_eq(q(tf, "copy_tsv"), "Tree", "with no range, copy_tsv is the lone cell")
 
         # ── (D) copy -> paste ROUND-TRIP (the symmetry payoff) ───────
         # Copy the Asset column rows 0..1 ("Hero\nTree") then paste it at row 2,
         # so rows 2 and 3 Asset become Hero and Tree — all via the same string.
         inv(tf, "select-cell", "0,0")
         inv(tf, "extend-cell", "1,0")
-        col_copy = inv(tf, "copy")
+        col_copy = q(tf, "copy_tsv")
         assert_eq(col_copy, "Hero\nTree", "copied the Asset column top pair")
         cursor(tf, 2, 0)
         assert_eq(inv(tf, "paste", col_copy), 2, "the copied block pastes 2 cells")
@@ -122,8 +123,8 @@ def body() -> None:
         assert_eq(inv(tf, "extend-cell", f"{s1},0"), True, "extend to visual row 1's source")
         # The rectangle reads in VISIBLE positions (0..1), not the source rows.
         assert_eq(q(tf, "cell_selection"), "0,0,1,0", "bounds are visible positions")
-        # The copy reads the VISUAL order: sorted Asset column top pair = Boss, Coin.
-        assert_eq(inv(tf, "copy"), "Boss\nCoin", "copy reads the sorted visual order")
+        # copy_tsv reads the VISUAL order: sorted Asset column top pair = Boss, Coin.
+        assert_eq(q(tf, "copy_tsv"), "Boss\nCoin", "copy_tsv reads the sorted visual order")
 
 
 if __name__ == "__main__":

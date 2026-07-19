@@ -215,7 +215,7 @@ use pinion_widget_paint::popup::popup_surface;
 use pinion_widget_paint::table::{GridScroll, view_virtual_grid_body};
 use pinion_widget_paint::text_field as tf_paint;
 
-use pinion_widget_paint::state_layer::focus_fill;
+use pinion_widget_paint::state_layer::{focus_fill, selection_fill};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloDataGridRenderer, HelloDataGridRendererError);
@@ -813,9 +813,10 @@ fn use_focused_col() -> Rc<Signal<usize>> {
 /// single cell). The selected RECTANGLE is derived at paint / copy time as the
 /// bbox of the anchor's and cursor's CURRENT visible positions (the source-keyed
 /// discipline every axis here follows — only paint / nav consult the visible
-/// order), so the highlight is always one contiguous, paintable screen rectangle
-/// even under an active sort / filter / group; an anchor hidden by a filter /
-/// collapse collapses the selection to the cursor.
+/// order), so the highlight is a contiguous run of DATA positions under any sort
+/// / filter / group (a literal screen rectangle when ungrouped; a grouped view
+/// may interpose a group header — see [`cell_selection_bounds`]); an anchor
+/// hidden by a filter / collapse collapses the selection to the cursor.
 #[must_use]
 fn use_cell_anchor() -> Rc<Signal<Option<(usize, usize)>>> {
     let owner = Owner::current().expect("use_cell_anchor requires an active Owner scope");
@@ -1084,10 +1085,14 @@ fn reanchor_cursor(visible: &[usize], cursor: &Signal<usize>, prior_vis: usize) 
 /// `(pos0, col0, pos1, col1)` (inclusive, normalized), derived from the
 /// SOURCE-keyed `anchor` + cursor (`cursor_row` is a SOURCE index) mapped through
 /// the CURRENT `visible` data order. Because the two endpoints are re-projected
-/// each read, the rectangle is ALWAYS one contiguous, paintable screen region
-/// under any sort / filter / group — unlike the Table widget's data-indexed
-/// rectangle (R952), which scatters under a sort and there suppresses its
-/// overlay. `None` — the selection collapses to the single focused cell — when
+/// each read, the rectangle is ALWAYS a contiguous run of DATA positions — unlike
+/// the Table widget's data-indexed rectangle (R952), which scatters under a sort
+/// and there suppresses its overlay. R1372.2 — "contiguous run of data positions"
+/// is a literally-contiguous screen block when ungrouped; when GROUPED a group
+/// header can interpose on screen between two selected data rows (the coords are
+/// the header-less data order), but the wash / a11y / copy all read that SAME
+/// order, so they stay mutually consistent. `None` — the selection collapses to
+/// the single focused cell — when
 /// there is no anchor, or the anchor OR the cursor row is not currently visible
 /// (a filter excluded it, a collapse hid it): the same "endpoint off-view -> no
 /// block" guard [`DataGridExternal::paste_block`] applies to its paste anchor,
@@ -1109,6 +1114,17 @@ fn cell_selection_bounds(
     ))
 }
 
+/// R1372.2 — the ONE inclusive-rect membership predicate: is the cell at visible
+/// position `pos`, column `col` inside the selection rectangle `bounds`
+/// (`p0,c0,p1,c1` from [`cell_selection_bounds`])? Lifted so the grouped-a11y
+/// stamp and the flat-a11y `aria-selected` (which both have a `pos` from
+/// enumerate) test membership through one definition — an off-by-one or an
+/// inclusive/exclusive flip cannot silently disagree between them (the paint view
+/// keeps a source-band variant for the virtualized case; see [`view`]).
+fn cell_in_bounds(pos: usize, col: usize, (p0, c0, p1, c1): (usize, usize, usize, usize)) -> bool {
+    pos >= p0 && pos <= p1 && col >= c0 && col <= c1
+}
+
 /// R1372.1 — stamp per-cell `aria-selected` onto the GROUPED treegrid's emitted
 /// gridcells. The flat grid sets `GridCell.selected` at build time, but the
 /// grouped path goes through `pinion_a11y::grouped_grid_access_nodes`, whose
@@ -1125,16 +1141,15 @@ fn stamp_cell_selection(
     visible_sources: &[usize],
     focus: (usize, usize),
 ) {
-    let Some((p0, c0, p1, c1)) =
+    let Some(bounds) =
         cell_selection_bounds(visible_sources, use_cell_anchor().get(), focus.0, focus.1)
     else {
         return;
     };
     for (pos, &source) in visible_sources.iter().enumerate() {
         for col in 0..NCOLS {
-            let selected = pos >= p0 && pos <= p1 && col >= c0 && col <= c1;
             if let Some(node) = nodes.iter_mut().find(|n| n.tag == cell_tag(source, col)) {
-                node.selected = Some(selected);
+                node.selected = Some(cell_in_bounds(pos, col, bounds));
             }
         }
     }
@@ -1157,6 +1172,9 @@ struct GridUndoCtx {
     model: Rc<Signal<Vec<CellValue>>>,
     focused_row: Rc<Signal<usize>>,
     editing_cell: Rc<Signal<Option<(usize, usize)>>>,
+    /// R1372.2 — the cell-range anchor, a source-keyed latch an undo/redo
+    /// structural splice invalidates exactly like [`editing_cell`](Self::editing_cell).
+    cell_anchor: Rc<Signal<Option<(usize, usize)>>>,
     sort: Rc<Signal<Option<(usize, bool)>>>,
     filter: Rc<Signal<Option<GridFilter>>>,
     group_col: Rc<Signal<Option<usize>>>,
@@ -1171,6 +1189,7 @@ impl GridUndoCtx {
             model: use_data_model(),
             focused_row: use_focused_row(),
             editing_cell: use_editing_cell(),
+            cell_anchor: use_cell_anchor(),
             sort: use_sort(),
             filter: use_filter(),
             group_col: use_group_col(),
@@ -1187,6 +1206,10 @@ impl GridUndoCtx {
     /// undo from being the lone mutator that breaks the R930.1 invariants.
     fn restore(&self, cursor: usize, mutate: impl FnOnce(&mut Vec<CellValue>)) {
         self.editing_cell.set(None);
+        // R1372.2 — an undo/redo splice reshapes the source order, so collapse
+        // the cell-range selection (the anchor is a source-keyed latch, like the
+        // edit latch just cancelled) rather than leave it denoting stale rows.
+        self.cell_anchor.set(None);
         self.model.set_with(|prev| {
             let mut next = prev.clone();
             mutate(&mut next);
@@ -1591,12 +1614,22 @@ impl DataGridExternal {
 
     /// R1372 §5.38 — the selected cell rectangle serialized as TSV, VISIBLE-order
     /// (top row first, following the active sort / filter / group exactly as the
-    /// grid reads AND as [`paste_block`](Self::paste_block) writes — so a copy
-    /// round-trips through a paste). Reads each cell's display in visible order,
-    /// then the shared [`rows_to_tsv`] codec (the R1222 `Table::selected_tsv`
-    /// SSOT, lifted at this 2nd consumer) sanitizes + joins. `None` when no
-    /// multi-cell range is active; a bare `Ctrl`+`C` copies the single focused
-    /// cell instead (see [`copy_tsv`](Self::copy_tsv)).
+    /// grid reads AND as [`paste_block`](Self::paste_block) writes). Every column
+    /// serializes its [`CellValue::display`] — the faithful export of the visible
+    /// table (the primary use: copy to an external app). R1372.2 — the *internal*
+    /// copy->paste round-trip is exact for the **text / int / float / colour**
+    /// columns (whose [`CellKind::parse`] inverts `display`), but NOT for **bool /
+    /// choice**: [`paste_block`](Self::paste_block) deserializes through
+    /// `CellKind::parse`, which is
+    /// the inline-editor-commit path and by design does not text-parse a bool
+    /// (it toggles) or a choice (it popup-selects — and `CellKind::Choice` carries
+    /// no option list to map a label back to an index; the options live on the
+    /// value). So a bool / choice column is copy-for-export, paste-inert — a
+    /// PASTE-domain limit rooted in the kind/value split, not a copy gap. Reads
+    /// each cell's display in visible order, then the shared [`rows_to_tsv`] codec
+    /// (the R1222 `Table::selected_tsv` SSOT, lifted at this 2nd consumer)
+    /// sanitizes + joins. `None` when no multi-cell range is active; a bare
+    /// `Ctrl`+`C` copies the single focused cell instead (see [`copy_tsv`](Self::copy_tsv)).
     fn selected_tsv(&self) -> Option<String> {
         let model = self.model.get();
         let visible = self.cur_visible();
@@ -1631,14 +1664,27 @@ impl DataGridExternal {
         })
     }
 
-    /// R1372 §5.38 — the cell-range selection reads, the cross-grid wire the
-    /// Table widget (R952) / `hello-cell-select` (R1222) speak, so an AI client
-    /// drives copy identically on every grid: `cell_selection` = the rectangle
-    /// "pos0,col0,pos1,col1" (Null when no range), `cell_selection_count` = its
-    /// area, `cell_selection_tsv` = the spreadsheet TSV block. The coords are
-    /// VISIBLE positions (like `source_at.<pos>`) — the rectangle is defined over
-    /// the view, not the source order `value.<row>.<col>` addresses. `None` for
-    /// any other path (the [`query`](ExternalIntrospect::query) falls through).
+    /// R1372 §5.38 — the cell-range selection reads, sharing the cross-grid
+    /// cell-selection VOCABULARY the Table widget (R952) / `hello-cell-select`
+    /// (R1222) speak: `cell_selection` = the rectangle "pos0,col0,pos1,col1"
+    /// (Null when no range), `cell_selection_count` = its area,
+    /// `cell_selection_tsv` = the spreadsheet TSV block, `copy_tsv` = what Ctrl+C
+    /// copies.
+    ///
+    /// R1372.2 — the vocabulary is uniform but the COORDINATE SPACE is not, and an
+    /// AI must not assume it is. `cell_selection` here reports **VISIBLE positions**
+    /// (like `source_at.<pos>` — the rectangle is defined over the view, always
+    /// contiguous), whereas the `select-cell` / `extend-cell` WRITES take **SOURCE**
+    /// coords (like `value.<row>.<col>`), and the Table widget's same-named
+    /// `cell_selection` reports DATA coords. So `select-cell "3,0"` under an active
+    /// sort does NOT echo back as `cell_selection = "3,0"` — you write a source
+    /// cell, you read the visible rectangle. This is deliberate (the visible model
+    /// is sort-stable + paint-faithful), but because [`SchemaField`] carries no
+    /// prose description, the space cannot be advertised in the machine-readable
+    /// `$schema` — an AI discovers it only from this doc / a `source_at` probe.
+    /// (Framework gap: `SchemaField` needs a description slot; see the R1372.2
+    /// carry.) `None` for any other path (the [`query`](ExternalIntrospect::query)
+    /// falls through).
     fn query_cell_selection(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "cell_selection" => Some(
@@ -1654,6 +1700,11 @@ impl DataGridExternal {
                 self.selected_tsv()
                     .map_or(IntrospectValue::Null, IntrospectValue::Text),
             ),
+            // R1372.2 — the payload a `Ctrl`+`C` copies: the selected rectangle
+            // TSV, or (no range) the lone focused cell's display. A READ, not an
+            // action (CQS): the keyboard reads this then writes the OS clipboard,
+            // and it never yields `Null` (a lone cursor always has one cell).
+            "copy_tsv" => Some(IntrospectValue::Text(self.copy_tsv())),
             _ => None,
         }
     }
@@ -1997,6 +2048,12 @@ impl DataGridExternal {
         // shift down), so cancel any in-flight edit — otherwise a later
         // `commit_edit` would write a stale, now-out-of-range index.
         self.editing_cell.set(None);
+        // R1372.2 — the cell-range anchor is the SAME kind of source-keyed latch:
+        // a remove shifts source indices, so a surviving anchor would denote a
+        // DIFFERENT cell (silently copying / washing / announcing the wrong
+        // rectangle). Collapse the selection, exactly as the edit latch is
+        // cancelled (the R930.1 discipline the anchor was missing from).
+        self.cell_anchor.set(None);
         let at = idx(row, 0);
         let before_cursor = self.focused_row.get();
         // R932 — snapshot the dropped row's cells BEFORE the drain so undo can
@@ -2055,6 +2112,10 @@ impl DataGridExternal {
         // in-flight edit latch (a stale `(row, col)` would commit into the
         // wrong row), exactly like `remove_row`.
         self.editing_cell.set(None);
+        // R1372.2 — collapse the cell-range selection too: a move permutes source
+        // indices, so a surviving anchor would denote the wrong cell (the same
+        // source-keyed-latch reason the edit latch is cancelled).
+        self.cell_anchor.set(None);
         let before_cursor = self.focused_row.get();
         self.model.set_with(move |prev| {
             let mut next = prev.clone();
@@ -2900,6 +2961,8 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("cell_selection", "string"),
     SchemaField::new("cell_selection_count", "int"),
     SchemaField::new("cell_selection_tsv", "string"),
+    // R1372.2 — what Ctrl+C copies (range TSV, or the lone focused cell).
+    SchemaField::new("copy_tsv", "string"),
     SchemaField::parametric(
         "source_at.<pos>",
         "int",
@@ -3417,15 +3480,12 @@ impl ExternalIntrospect for DataGridExternal {
                     if !self.reorder_enabled() {
                         return Err(InvokeError::Rejected);
                     }
-                    let (from, to) = s
-                        .split_once(',')
-                        .and_then(|(a, b)| {
-                            Some((
-                                a.trim().parse::<usize>().ok()?,
-                                b.trim().parse::<usize>().ok()?,
-                            ))
-                        })
-                        .ok_or(InvokeError::Rejected)?;
+                    // R1372.2 — `"from,to"` is a comma-separated `usize` pair, the
+                    // same wire shape `select-cell`/`extend-cell` parse, so route
+                    // it through the one `parse_row_col` SSOT rather than a 4th
+                    // inline copy (the row/col vs from/to naming differs; the parse
+                    // does not).
+                    let (from, to) = parse_row_col(s).ok_or(InvokeError::Rejected)?;
                     Ok(IntrospectValue::Bool(self.move_row(from, to)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -3465,13 +3525,6 @@ impl ExternalIntrospect for DataGridExternal {
                 self.clear_cell_selection();
                 Ok(IntrospectValue::Bool(true))
             }
-            // R1372 §5.38 — copy the current selection (or, with no range, the
-            // single focused cell) as a spreadsheet TSV block, RETURNING it. The
-            // action peer of the range-only `query cell_selection_tsv`: `copy`
-            // ALWAYS yields something copyable when the grid has focus (a lone
-            // cursor copies its one cell), so the keyboard Ctrl+C and an AI client
-            // share ONE serialization funnel. The inverse of `paste`.
-            "copy" => Ok(IntrospectValue::Text(self.copy_tsv())),
             // R960 — reset cell `"<row>_<col>"` (the `GridSendKey::Cell` wire,
             // the same grammar the reset-dot click sends) to its column default;
             // returns whether it was modified. The AI-first peer of a click on
@@ -3801,11 +3854,13 @@ fn apply_key_color(scene: &mut Scene, key: &str) -> bool {
 /// Split out of [`apply_key_grid`] for the line ceiling. `false` when the grid
 /// external is absent (defensive), so the key can fall through.
 fn copy_selection_to_clipboard(scene: &mut Scene) -> bool {
-    let tsv = external_mut(scene, GRID_TAG).and_then(|intro| {
-        match intro.invoke("copy", IntrospectValue::Null) {
-            Ok(IntrospectValue::Text(t)) => Some(t),
-            _ => None,
-        }
+    // R1372.2 — copy is a READ (CQS): query the payload, then perform the OS
+    // clipboard side effect here. `external_mut` hands back a `&mut dyn`
+    // trait object (no downcast to the coordinator), so the query wire is the
+    // seam the keyboard shares with an AI client's `query copy_tsv`.
+    let tsv = external_mut(scene, GRID_TAG).and_then(|intro| match intro.query("copy_tsv") {
+        Some(IntrospectValue::Text(t)) => Some(t),
+        _ => None,
     });
     if let Some(tsv) = tsv {
         use_app_clipboard(GRID_TAG).copy(tsv);
@@ -4041,25 +4096,18 @@ fn color_cell_inner(c: Color, theme: &Theme) -> Scene {
     )
 }
 
-/// R1372 §5.38 — the fraction a selected (non-focused) cell's background washes
-/// from `Surface` toward the theme's `Accent` (its "selection" role). Subtle
-/// enough to read as a block, distinct from the greyer `OnSurface`-tinted focus
-/// highlight the active cell keeps.
-const SELECTION_TINT: f32 = 0.18;
-
 /// R1372 §5.38 — a cell's background fill: the [`focus_fill`] highlight when it
-/// is the active cell (the SSOT the property grid shares), else a subtle Accent
-/// wash when it is inside the selected range, else transparent. Focus takes
-/// precedence, so the active descendant reads distinctly within a washed block.
+/// is the active cell, else the [`selection_fill`] Accent wash when it is inside
+/// the selected range, else transparent. Focus takes precedence, so the active
+/// descendant reads distinctly within a washed block. R1372.2 — BOTH branches
+/// now delegate to the shared `state_layer` SSOTs (the selection wash was a local
+/// `0.18` magic literal, breaking the drift-prevention symmetry `focus_fill` was
+/// shared to enforce; `selection_fill` is its peer).
 fn cell_fill(theme: &Theme, focused: bool, selected: bool) -> Color {
     if focused {
         focus_fill(theme, true)
-    } else if selected {
-        theme
-            .resolve(ColorRole::Surface)
-            .lerp(theme.resolve(ColorRole::Accent), SELECTION_TINT)
     } else {
-        Color::TRANSPARENT
+        selection_fill(theme, selected)
     }
 }
 
@@ -4876,6 +4924,11 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             GroupRow::Data { source } => {
                 // R1372 — this row is in the selection when its source falls in
                 // the visible-position band; pass the col range so its cells wash.
+                // R1372.2 — the source-band form of [`cell_in_bounds`]: the body
+                // is VIRTUALIZED (only windowed rows build, source in hand but no
+                // cheap `pos`), so it tests row membership by the selected source
+                // slice once per row, then the per-cell col-range test in
+                // `view_data_row` is the same `(c0..=c1)` half the helper uses.
                 let selection = sel_bounds
                     .filter(|&(p0, _, p1, _)| sel_visible[p0..=p1].contains(&source))
                     .map(|(_, c0, _, c1)| (c0, c1));
@@ -5153,7 +5206,8 @@ impl WidgetA11y for DataGridView {
                 cell_selection_bounds(&order, use_cell_anchor().get(), focused_row, focused_col);
             let rows: Vec<GridRow> = order
                 .iter()
-                .map(|&row| GridRow {
+                .enumerate()
+                .map(|(pos, &row)| GridRow {
                     tag: data_row_tag(row),
                     selected: false,
                     state: RadioState::Idle,
@@ -5162,9 +5216,9 @@ impl WidgetA11y for DataGridView {
                             tag: cell_tag(row, col),
                             name: format!("{}: {}", COL_NAMES[col], model[idx(row, col)].display()),
                             focused: row == focused_row && col == focused_col,
-                            selected: sel_bounds.map(|(p0, c0, p1, c1)| {
-                                order[p0..=p1].contains(&row) && (c0..=c1).contains(&col)
-                            }),
+                            // R1372.2 — one membership SSOT (`pos` from enumerate,
+                            // no per-cell `contains` re-scan of the row band).
+                            selected: sel_bounds.map(|b| cell_in_bounds(pos, col, b)),
                         })
                         .collect(),
                 })
@@ -10444,16 +10498,16 @@ mod tests {
             let mut scene = boot_scene();
             let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            // With no range, `copy` yields the lone FOCUSED cell (boot cursor
-            // (0,0) = Hero) — a bare Ctrl+C copies one cell.
+            // With no range, `copy_tsv` (a READ, not an action) yields the lone
+            // FOCUSED cell (boot cursor (0,0) = Hero) — a bare Ctrl+C copies one.
             assert_eq!(
-                intro.invoke("copy", IntrospectValue::Null),
-                Ok(IntrospectValue::Text("Hero".to_owned())),
+                intro.query("copy_tsv"),
+                Some(IntrospectValue::Text("Hero".to_owned())),
             );
-            // With a range, `copy` == `cell_selection_tsv` (the one funnel).
+            // With a range, `copy_tsv` == `cell_selection_tsv` (the one funnel).
             let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
             let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,0".to_owned()));
-            let copied = intro.invoke("copy", IntrospectValue::Null).unwrap();
+            let copied = intro.query("copy_tsv").unwrap();
             assert_eq!(copied, intro.query("cell_selection_tsv").unwrap());
             assert_eq!(copied, IntrospectValue::Text("Hero\nTree".to_owned()));
         });
@@ -10645,6 +10699,239 @@ mod tests {
                 Some(false),
                 "Tree (visible pos 2) outside"
             );
+        });
+    }
+
+    // ─── R1372.2 remediation (independent-review findings) ─────────────
+
+    #[test]
+    fn r1372_2_remove_and_move_collapse_the_selection() {
+        // The must-fix: `cell_anchor` is source-keyed; a structural row splice
+        // shifts/permutes source indices, so a surviving anchor would denote the
+        // WRONG cells. remove_row / move_row must collapse the selection.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Select Tree..Boss (sources 1..3), col 0.
+            let _ = intro.invoke("select-cell", IntrospectValue::Text("1,0".to_owned()));
+            let _ = intro.invoke("extend-cell", IntrospectValue::Text("3,0".to_owned()));
+            assert_eq!(
+                intro.query("cell_selection_tsv"),
+                Some(IntrospectValue::Text("Tree\nCoin\nBoss".to_owned())),
+            );
+            // Remove the unrelated Hero (source 0) above the selection.
+            assert_eq!(
+                intro.invoke("remove_row", IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(
+                intro.query("cell_selection"),
+                Some(IntrospectValue::Null),
+                "remove_row collapses the selection (no stale source anchor)",
+            );
+            // move_row collapses too.
+            let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+            let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,0".to_owned()));
+            assert_ne!(intro.query("cell_selection"), Some(IntrospectValue::Null));
+            assert_eq!(
+                intro.invoke("move_row", IntrospectValue::Text("2,0".to_owned())),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(
+                intro.query("cell_selection"),
+                Some(IntrospectValue::Null),
+                "move_row collapses the selection",
+            );
+        });
+    }
+
+    #[test]
+    fn r1372_2_undo_restore_collapses_a_live_selection() {
+        // The undo/redo `restore` path is the third structural mutator: undoing a
+        // row splice reshapes the source order, so a LIVE anchor must collapse.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                // Remove Hero (pushes a RowEdit), THEN arm a fresh selection.
+                let _ = intro.invoke("remove_row", IntrospectValue::Int(0));
+                let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+                let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,0".to_owned()));
+                assert_ne!(intro.query("cell_selection"), Some(IntrospectValue::Null));
+            }
+            // Undo re-inserts Hero through `GridUndoCtx::restore`; the live anchor
+            // must collapse (it would otherwise denote shifted data).
+            assert!(undo_invoke(&mut scene, "undo"), "undo the remove");
+            assert_eq!(
+                grid_intro(&scene).query("cell_selection"),
+                Some(IntrospectValue::Null),
+                "an undo splice collapses a live selection (restore clears the anchor)",
+            );
+        });
+    }
+
+    #[test]
+    fn r1372_2_select_then_sort_follows_the_source_endpoints() {
+        // Pin the deliberate model: the anchor + cursor are SOURCE-keyed, so a
+        // sort AFTER a selection re-projects both endpoints and the band spans
+        // whatever is now visually between them (NOT Excel's fixed screen rect,
+        // NOT the Table widget's fixed data set). Documented, now tested.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Plain view: select Hero..Tree (sources 0,1) col 0.
+            let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+            let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,0".to_owned()));
+            assert_eq!(
+                intro.query("cell_selection_tsv"),
+                Some(IntrospectValue::Text("Hero\nTree".to_owned())),
+            );
+            // Sort col 0 ascending: Boss, Coin, Hero, Tree. The endpoints Hero
+            // (now pos 2) and Tree (now pos 3) re-project; the band is pos 2..3.
+            let _ = intro.invoke("cycle_sort", IntrospectValue::Int(0));
+            assert_eq!(
+                intro.query("cell_selection"),
+                Some(IntrospectValue::Text("2,0,3,0".to_owned())),
+                "the source endpoints re-project through the new visible order",
+            );
+            assert_eq!(
+                intro.query("cell_selection_tsv"),
+                Some(IntrospectValue::Text("Hero\nTree".to_owned())),
+                "Hero + Tree are now adjacent under the sort, so the band is still them",
+            );
+        });
+    }
+
+    #[test]
+    fn r1372_2_copy_omits_an_interior_filtered_row() {
+        // A filter that hides an INTERIOR row between two selected endpoints (both
+        // surviving) must drop that row from the copied block — the copy reads the
+        // visible order, so the hidden row is simply not in it.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Active (col 4): Hero/Tree/Boss = true, Coin = false. Filter to the
+            // `true` rows → visible = [Hero(0), Tree(1), Boss(3)]; Coin(2) hidden.
+            let _ = intro.invoke("set_filter", IntrospectValue::Text("4=true".to_owned()));
+            let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+            let _ = intro.invoke("extend-cell", IntrospectValue::Text("3,0".to_owned()));
+            assert_eq!(
+                intro.query("cell_selection_tsv"),
+                Some(IntrospectValue::Text("Hero\nTree\nBoss".to_owned())),
+                "the filtered-out interior Coin row is omitted from the block",
+            );
+        });
+    }
+
+    #[test]
+    fn r1372_2_copy_and_count_under_grouping() {
+        // The coordinator copy path (selected_tsv / cell_selection_count), not just
+        // the a11y aria-selected, must be correct under grouping.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            group_by_type(&mut scene);
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Grouped visible order = [Hero(0), Coin(2), Tree(1), Boss(3)]. Select
+            // col 0 of the first two visible rows (sources 0 and 2).
+            let _ = intro.invoke("select-cell", IntrospectValue::Text("0,0".to_owned()));
+            let _ = intro.invoke("extend-cell", IntrospectValue::Text("2,0".to_owned()));
+            assert_eq!(
+                intro.query("cell_selection_count"),
+                Some(IntrospectValue::Int(2))
+            );
+            assert_eq!(
+                intro.query("cell_selection_tsv"),
+                Some(IntrospectValue::Text("Hero\nCoin".to_owned())),
+                "the copy reads the grouped visible order",
+            );
+        });
+    }
+
+    #[test]
+    fn r1372_2_keyboard_shift_home_end_extends_columns() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let shift = Modifiers {
+                shift: true,
+                ..Modifiers::empty()
+            };
+            let plain = Modifiers::empty();
+            // From (0,0): Shift+End extends the column range to the last column.
+            assert!(DataGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "End",
+                shift
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("cell_selection"),
+                Some(IntrospectValue::Text(format!("0,0,0,{}", NCOLS - 1))),
+                "Shift+End extends across all columns of the anchor row",
+            );
+            // A plain Home collapses the range and moves to col 0.
+            assert!(DataGridView::apply_key(
+                &mut scene,
+                Some(GRID_TAG),
+                "Home",
+                plain
+            ));
+            assert_eq!(
+                grid_intro(&scene).query("cell_selection"),
+                Some(IntrospectValue::Null),
+                "a plain Home collapses the selection",
+            );
+        });
+    }
+
+    #[test]
+    fn r1372_2_bool_and_choice_columns_copy_as_display_but_paste_inert() {
+        // C2: copy EXPORTS every column's display faithfully; the internal
+        // paste-back round-trip is text/int/float/colour only — Bool and Choice
+        // are copy-for-export, paste-inert (paste's `CellKind::parse` does not
+        // text-parse them; Choice's kind carries no options to map a label).
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Active (Bool, col 4): Hero=On, Tree=On. Copy exports the display.
+            let _ = intro.invoke("select-cell", IntrospectValue::Text("0,4".to_owned()));
+            let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,4".to_owned()));
+            assert_eq!(
+                intro.query("cell_selection_tsv"),
+                Some(IntrospectValue::Text("On\nOn".to_owned())),
+                "a Bool column copies as its On/Off display",
+            );
+            // Coin's Active (col 4) is Off/false; pasting "On" onto it is a no-op
+            // (Bool.parse is None), so it stays false — export works, paste inert.
+            assert_eq!(intro.query("value.2.4"), Some(IntrospectValue::Bool(false)));
+            let _ = intro.invoke("clear-cell-selection", IntrospectValue::Null);
+            intro.intervene("focused_row", IntrospectValue::Int(2)).ok();
+            intro.intervene("focused_col", IntrospectValue::Int(4)).ok();
+            assert_eq!(
+                intro.invoke("paste", IntrospectValue::Text("On".to_owned())),
+                Ok(IntrospectValue::Int(0)),
+                "pasting a Bool display is inert (0 cells written)",
+            );
+            assert_eq!(
+                intro.query("value.2.4"),
+                Some(IntrospectValue::Bool(false)),
+                "the Bool cell is unchanged (paste-inert)",
+            );
+            // A Choice column (col 1) likewise copies as its label but is
+            // paste-inert (the kind carries no option list to reconstruct it).
+            let _ = intro.invoke("select-cell", IntrospectValue::Text("0,1".to_owned()));
+            let _ = intro.invoke("extend-cell", IntrospectValue::Text("1,1".to_owned()));
+            let choice_tsv = intro.query("cell_selection_tsv").unwrap();
+            let IntrospectValue::Text(t) = choice_tsv else {
+                panic!("choice column copies as text");
+            };
+            assert_eq!(t.matches('\n').count(), 1, "2 choice rows -> 1 newline");
+            assert!(!t.is_empty(), "the choice labels export non-empty");
         });
     }
 }

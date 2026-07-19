@@ -51,6 +51,15 @@ pub const PRESSED: f32 = 0.12;
 /// `Surface`. M3 canonical 38 %.
 pub const DISABLED: f32 = 0.38;
 
+/// R1372.2 — the DCC cell/row **selection** wash fraction: `Surface` lerped
+/// toward [`ColorRole::Accent`] (the theme's selection hue) by this amount.
+/// NOT one of the three M3 interaction state-layer opacities above — a
+/// persistent selection is a tonal/accent indicator, not a hover/press overlay
+/// — so it is its own named token: 16 % reads as a distinct band while staying
+/// subtle, and being heavier than [`HOVER`]'s 8 % focus tint keeps a selected
+/// cell visually distinct from the focused one when both apply.
+pub const SELECTION: f32 = 0.16;
+
 /// The common-case M3 state-layer overlay: tint `base` toward `OnSurface`
 /// by [`HOVER`] / [`PRESSED`], or toward `Surface` by [`DISABLED`]; an
 /// idle control is `base` untinted (`Color::lerp` in linear space, see
@@ -95,6 +104,26 @@ pub fn focus_fill(theme: &Theme, focused: bool) -> Color {
         theme
             .resolve(ColorRole::Surface)
             .lerp(theme.resolve(ColorRole::OnSurface), HOVER)
+    } else {
+        Color::TRANSPARENT
+    }
+}
+
+/// R1372.2 §5.38 §5.50 — the Material 3 DCC cell/row **selection wash**: the
+/// [`SELECTION`] state-layer tinted from `Surface` toward [`ColorRole::Accent`]
+/// (the theme's selection/active hue) when `selected`, else
+/// [`Color::TRANSPARENT`]. The peer of [`focus_fill`]: the editable data grid's
+/// cell range (and any future property-grid / inspector cell selection) share
+/// this ONE wash so their selection tint cannot drift apart — exactly the
+/// drift-prevention reason `focus_fill` is shared. Accent-toned (vs
+/// `focus_fill`'s `OnSurface` tone) so a selected cell reads distinctly from the
+/// focused one when both apply; focus takes precedence where a cell is both.
+#[must_use]
+pub fn selection_fill(theme: &Theme, selected: bool) -> Color {
+    if selected {
+        theme
+            .resolve(ColorRole::Surface)
+            .lerp(theme.resolve(ColorRole::Accent), SELECTION)
     } else {
         Color::TRANSPARENT
     }
@@ -165,6 +194,34 @@ mod tests {
             focus_fill(&theme, false),
             Color::TRANSPARENT,
             "an unfocused cell is transparent"
+        );
+    }
+
+    #[test]
+    fn r1372_2_selection_fill_is_the_accent_wash_over_surface_or_transparent() {
+        // The DCC selection wash: selected == Surface tinted toward Accent by
+        // the SELECTION token; unselected == transparent. The shared SSOT the
+        // data-grid cell range uses (and any future DCC cell selection), so the
+        // selection tint cannot drift — the focus_fill peer.
+        let theme = Theme::light();
+        let surface = theme.resolve(ColorRole::Surface);
+        let accent = theme.resolve(ColorRole::Accent);
+        assert_eq!(
+            selection_fill(&theme, true),
+            surface.lerp(accent, SELECTION),
+            "a selected cell wears the Accent selection wash over Surface"
+        );
+        assert_eq!(
+            selection_fill(&theme, false),
+            Color::TRANSPARENT,
+            "an unselected cell is transparent"
+        );
+        // Distinct from the focus tone (Accent vs OnSurface), so the two read
+        // apart when a cell is both focused and selected.
+        assert_ne!(
+            selection_fill(&theme, true),
+            focus_fill(&theme, true),
+            "selection wash != focus highlight"
         );
     }
 }
