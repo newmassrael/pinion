@@ -81,6 +81,7 @@ members = [
     "examples/hello-path",
     "examples/hello-chart",
     "examples/hello-chart-fill",
+    "examples/hello-donut",
     "examples/hello-snackbar",
     "examples/hello-richtext",
     "examples/hello-color-picker",

@@ -55,11 +55,13 @@
 //! `scale` / `ticks` / `palette` / [`draw`](crate) core; and (R1375) that bar
 //! chart's own scrub [`inspect`](BarChart::inspect) overlay — a highlight ring
 //! on the focused bar + a value tooltip, over the lifted `callout` tooltip core
-//! both chart types now share.
+//! the chart types now share; and (R1376) a [`DonutChart`] — the crate's first
+//! PART-OF-WHOLE form (filled Bézier-arc sectors, a centre hole, a legend, and
+//! the same scrub inspect showing each slice's percent share).
 //!
-//! Not yet: donut / treemap / scatter, legend-toggle, cross-filtering, and a
-//! y-rescale on zoom — follow-up slices on that same core. (A frequency
-//! *histogram* is a consumer pattern over [`BarChart`], not a distinct type —
+//! Not yet: treemap / scatter, legend-toggle, cross-filtering, and a y-rescale
+//! on zoom — follow-up slices on that same core. (A frequency *histogram* is a
+//! consumer pattern over [`BarChart`], not a distinct type —
 //! `hello-frame-profiler` bins its frame times into one, and R1375 lets a
 //! reader scrub it for each bin's frame count.)
 //!
@@ -108,6 +110,7 @@
 //!   §2 #6 today, and that gap is stated here rather than left silent.
 
 mod bar;
+mod donut;
 mod draw;
 mod line;
 mod palette;
@@ -117,6 +120,7 @@ mod style;
 mod ticks;
 
 pub use bar::{Bar, BarChart};
+pub use donut::{DonutChart, Slice};
 pub use line::LineChart;
 pub use palette::CategoricalPalette;
 pub use scale::LinearScale;

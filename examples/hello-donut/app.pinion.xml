@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1376 part-of-whole chart consumer: pinion-forge renderer manifest for
+  hello-donut. Emits `HelloDonutRenderer` (Vello-backed RenderContext +
+  RenderSurface + Renderer wrapper). Identical manifest shape to
+  hello-chart's `HelloChartRenderer` — single-source-of-truth emit
+  template, only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloDonutRenderer"
+        backend="vello"/>
