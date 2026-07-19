@@ -5429,6 +5429,272 @@ fn r948_layout_verbs_dispatch_and_are_schema_declared() {
     });
 }
 
+// ── R1383 auto-layout (layered / Sugiyama) ────────────────────────
+
+/// A Vector-typed node for the pure `layered_layout` tests. Its stored x/y are
+/// deliberately `(0, 0)` — the layout reads only id / [`GraphNode::height`] /
+/// edges, never the position, so the seeds are structural.
+fn lnode(id: u32, inputs: usize, outputs: usize) -> GraphNode {
+    GraphNode::new(
+        id,
+        "n",
+        0,
+        0,
+        &vec![PortType::Vector; inputs],
+        &vec![PortType::Vector; outputs],
+        NodeOp::Multiply,
+    )
+}
+
+/// An edge `from -> to` (port 0 both ends) with id `eid`.
+fn ledge(eid: u32, from: u32, to: u32) -> Edge {
+    Edge {
+        id: EdgeId(eid),
+        from_node: NodeId(from),
+        from_port: 0,
+        to_node: NodeId(to),
+        to_port: 0,
+    }
+}
+
+/// The column pitch (`NODE_W + LAYER_GAP`) an auto-layout advances per layer.
+const LAYOUT_PITCH: i32 = NODE_W + LAYER_GAP;
+
+/// Whether two `NODE_W`-wide cards' rects overlap (half-open on each axis).
+fn cards_overlap(a: (i32, i32), ha: i32, b: (i32, i32), hb: i32) -> bool {
+    let x_over = a.0 < b.0 + NODE_W && b.0 < a.0 + NODE_W;
+    let y_over = a.1 < b.1 + hb && b.1 < a.1 + ha;
+    x_over && y_over
+}
+
+#[test]
+fn r1383_linear_chain_lays_out_in_forward_columns() {
+    let nodes = [
+        lnode(0, 0, 1),
+        lnode(1, 1, 1),
+        lnode(2, 1, 1),
+        lnode(3, 1, 0),
+    ];
+    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 2, 3)];
+    let out = layered_layout(&nodes, &edges, (0, 0));
+    let x = |id: u32| out[&NodeId(id)].0;
+    assert_eq!(x(0), 0, "the source anchors at origin.x");
+    assert_eq!(x(1), LAYOUT_PITCH, "each hop advances exactly one column");
+    assert_eq!(x(2), 2 * LAYOUT_PITCH);
+    assert_eq!(x(3), 3 * LAYOUT_PITCH);
+    let y = |id: u32| out[&NodeId(id)].1;
+    assert_eq!(y(0), y(3), "single-node columns share the centred y");
+}
+
+#[test]
+fn r1383_diamond_columns_the_middle_pair_without_overlap() {
+    // 0 -> {1, 2} -> 3.
+    let nodes = [
+        lnode(0, 0, 1),
+        lnode(1, 1, 1),
+        lnode(2, 1, 1),
+        lnode(3, 2, 0),
+    ];
+    let edges = [
+        ledge(0, 0, 1),
+        ledge(1, 0, 2),
+        ledge(2, 1, 3),
+        ledge(3, 2, 3),
+    ];
+    let out = layered_layout(&nodes, &edges, (0, 0));
+    let p = |id: u32| out[&NodeId(id)];
+    assert_eq!(p(1).0, p(2).0, "the fan-out pair shares a column");
+    assert!(
+        p(0).0 < p(1).0 && p(1).0 < p(3).0,
+        "the diamond flows forward"
+    );
+    assert_ne!(p(1).1, p(2).1, "the pair is stacked, not co-located");
+    assert!(
+        !cards_overlap(p(1), nodes[1].height(), p(2), nodes[2].height()),
+        "stacked siblings never overlap"
+    );
+}
+
+#[test]
+fn r1383_every_acyclic_edge_flows_forward() {
+    let nodes: Vec<GraphNode> = (0..6).map(|i| lnode(i, 1, 1)).collect();
+    let edges = [
+        ledge(0, 0, 2),
+        ledge(1, 1, 2),
+        ledge(2, 2, 3),
+        ledge(3, 2, 4),
+        ledge(4, 3, 5),
+        ledge(5, 4, 5),
+    ];
+    let out = layered_layout(&nodes, &edges, (10, 20));
+    for e in &edges {
+        let (fx, tx) = (out[&e.from_node].0, out[&e.to_node].0);
+        assert!(
+            fx < tx,
+            "edge {:?}->{:?} must flow forward (x {fx} < {tx})",
+            e.from_node,
+            e.to_node
+        );
+    }
+}
+
+#[test]
+fn r1383_no_two_cards_overlap() {
+    let nodes: Vec<GraphNode> = (0..6).map(|i| lnode(i, 1, 1)).collect();
+    let edges = [
+        ledge(0, 0, 2),
+        ledge(1, 1, 2),
+        ledge(2, 2, 3),
+        ledge(3, 2, 4),
+        ledge(4, 3, 5),
+        ledge(5, 4, 5),
+    ];
+    let out = layered_layout(&nodes, &edges, (0, 0));
+    let h = |id: u32| nodes.iter().find(|n| n.id == NodeId(id)).unwrap().height();
+    for i in 0..6u32 {
+        for j in (i + 1)..6 {
+            assert!(
+                !cards_overlap(out[&NodeId(i)], h(i), out[&NodeId(j)], h(j)),
+                "cards {i} and {j} overlap"
+            );
+        }
+    }
+}
+
+#[test]
+fn r1383_layout_is_deterministic_and_position_independent() {
+    let edges = [
+        ledge(0, 0, 1),
+        ledge(1, 0, 2),
+        ledge(2, 1, 3),
+        ledge(3, 2, 3),
+    ];
+    let a: Vec<GraphNode> = (0..4).map(|i| lnode(i, 1, 1)).collect();
+    // The same graph, but every node parked at a scattered position.
+    let mut b = a.clone();
+    for (k, n) in b.iter_mut().enumerate() {
+        n.x = 999 - i32::try_from(k).unwrap() * 37;
+        n.y = i32::try_from(k).unwrap() * 53;
+    }
+    let la = layered_layout(&a, &edges, (0, 0));
+    let lb = layered_layout(&b, &edges, (0, 0));
+    assert_eq!(
+        la, lb,
+        "the layout reads only structure, never the stored x/y"
+    );
+    assert_eq!(
+        la,
+        layered_layout(&a, &edges, (0, 0)),
+        "identical input -> identical output"
+    );
+}
+
+#[test]
+fn r1383_cycle_does_not_hang_and_places_every_node() {
+    // 0 -> 1 -> 2 -> 0; the 2->0 back-edge is dropped for layering.
+    let nodes = [lnode(0, 1, 1), lnode(1, 1, 1), lnode(2, 1, 1)];
+    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 2, 0)];
+    let out = layered_layout(&nodes, &edges, (0, 0));
+    assert_eq!(out.len(), 3, "every node is placed despite the cycle");
+    let x = |id: u32| out[&NodeId(id)].0;
+    assert!(
+        x(0) < x(1) && x(1) < x(2),
+        "the acyclic spine still flows forward"
+    );
+}
+
+#[test]
+fn r1383_isolated_node_is_a_layer_zero_source() {
+    let nodes = [lnode(0, 0, 0), lnode(1, 0, 1), lnode(2, 1, 0)];
+    let edges = [ledge(0, 1, 2)];
+    let out = layered_layout(&nodes, &edges, (5, 5));
+    assert!(out.contains_key(&NodeId(0)), "the isolated node is placed");
+    assert_eq!(out[&NodeId(0)].0, 5, "an edge-less node sits in layer 0");
+    assert_eq!(out[&NodeId(1)].0, 5, "as does the connected source");
+    assert!(
+        out[&NodeId(2)].0 > out[&NodeId(1)].0,
+        "its consumer is one column to the right"
+    );
+}
+
+#[test]
+fn r1383_barycenter_reduces_crossings() {
+    // layer 0 = {0, 1} (id order 0 above 1); layer 1 = {2, 3} (init [2, 3]).
+    // The edges 0->3 and 1->2 cross until node 3 is lifted above node 2.
+    let nodes = [
+        lnode(0, 0, 1),
+        lnode(1, 0, 1),
+        lnode(2, 1, 0),
+        lnode(3, 1, 0),
+    ];
+    let edges = [ledge(0, 0, 3), ledge(1, 1, 2)];
+    let out = layered_layout(&nodes, &edges, (0, 0));
+    assert_eq!(
+        out[&NodeId(2)].0,
+        out[&NodeId(3)].0,
+        "2 and 3 share layer 1"
+    );
+    assert!(
+        out[&NodeId(3)].1 < out[&NodeId(2)].1,
+        "barycenter lifts node 3 above node 2 so the wires stop crossing"
+    );
+}
+
+#[test]
+fn r1383_auto_layout_tidies_the_graph_in_one_undo_step() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let stack = use_undo();
+        // Scramble the seed graph: sink far left, sources far right (reversed).
+        place_and_select(
+            &coord,
+            &[(3, 40, 60), (2, 240, 300), (1, 500, 60), (0, 520, 260)],
+        );
+        let before0 = pos_of(&coord, NodeId(0));
+        assert!(
+            coord.auto_layout(),
+            "auto_layout rearranged the scrambled graph"
+        );
+        assert_eq!(
+            stack.len(),
+            1,
+            "a whole re-layout is ONE discrete undo step"
+        );
+        let x = |id: u32| pos_of(&coord, NodeId(id)).0;
+        // Texture(0) x Color(1) -> Multiply(2) -> Output(3).
+        assert!(x(0) < x(2), "source 0 lands left of its consumer");
+        assert!(x(1) < x(2), "source 1 lands left of its consumer");
+        assert!(x(2) < x(3), "Multiply lands left of Output");
+        assert_eq!(x(0), x(1), "the two sources share the layer-0 column");
+        assert!(stack.undo(), "one undo reverts the whole arrangement");
+        assert_eq!(
+            pos_of(&coord, NodeId(0)),
+            before0,
+            "undo restores the pre-layout position"
+        );
+    });
+}
+
+#[test]
+fn r1383_auto_layout_is_idempotent_and_needs_two_nodes() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        assert!(coord.auto_layout(), "the first pass tidies the seed graph");
+        let snapshot: Vec<(i32, i32)> = [0u32, 1, 2, 3]
+            .map(|id| pos_of(&coord, NodeId(id)))
+            .to_vec();
+        assert!(
+            !coord.auto_layout(),
+            "a second pass moves nothing (idempotent)"
+        );
+        for (id, before) in [0u32, 1, 2, 3].iter().zip(snapshot) {
+            assert_eq!(pos_of(&coord, NodeId(*id)), before, "node {id} unchanged");
+        }
+    });
+}
+
 // ── R1226 wire knife (cut_wires) ──────────────────────────────────
 
 #[test]

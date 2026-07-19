@@ -236,6 +236,13 @@
 //!   toolbar, no GUI chrome needed (`query node.<id>.{x,y}` reads the result).
 //!   Align needs ≥2 selected, distribute ≥3; the move loop is the shared
 //!   `apply_node_moves` SSOT (nudge / align / distribute).
+//! - **Auto-layout** (R1383): `invoke auto_layout` (no args) tidies the WHOLE
+//!   graph into a layered left-to-right (Sugiyama) arrangement — data flows
+//!   forward across columns, vertical order crossing-reduced — in ONE undo step
+//!   through the same `apply_node_moves` SSOT. The AI-first peer of an editor's
+//!   "arrange" command; the pure geometry is `layered_layout` (cycle-broken,
+//!   longest-path layered, barycenter-ordered, deterministic — it reads only the
+//!   node set + heights + edges, never the current positions).
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -1011,6 +1018,281 @@ fn cycle_nodes(nodes: &[GraphNode], edges: &[Edge]) -> Vec<NodeId> {
         .collect();
     on_cycle.sort_by_key(|id| id.raw());
     on_cycle
+}
+
+/// R1383 — horizontal gap (graph units) between the layered columns a
+/// [`layered_layout`] pass produces; a column's pitch is [`NODE_W`] + this.
+const LAYER_GAP: i32 = 60;
+
+/// R1383 — the vertical gap between two nodes stacked in one auto-layout column.
+const LAYOUT_ROW_GAP: i32 = 24;
+
+/// R1383 — the barycenter crossing-reduction sweep count (alternating down / up).
+/// Fixed, so the layout is deterministic (ZERO-FLAKE) and always terminates.
+const LAYOUT_SWEEPS: usize = 4;
+
+/// R1383 — a **layered (Sugiyama) auto-layout** of the graph: the pure geometry
+/// the `auto_layout` verb applies. Maps every node id to a target `(x, y)` in
+/// graph units, arranging the graph into left-to-right columns so data flows
+/// forward (a source's column sits left of its consumer's) with a
+/// crossing-reduced vertical order inside each column, anchored at `origin` (the
+/// graph's current top-left, so the tidied graph stays put).
+///
+/// The three classic Sugiyama phases, each deterministic — id-ordered iteration,
+/// stable total-order sorts, integer keys, id tie-breaks — and, crucially, the
+/// algorithm reads only the node *set*, each node's [`GraphNode::height`], and
+/// the edges, **never** the current `x` / `y`, so identical inputs always yield
+/// an identical layout (the pass is idempotent once applied):
+///
+/// 1. **Cycle breaking** — a forward DFS in id order classifies each edge; an
+///    edge into a node still on the DFS stack is a *back-edge*, dropped from the
+///    layering set. A data-flow graph is usually a DAG ([`graph_is_acyclic`]),
+///    but the model permits a cycle and a layered form needs an acyclic base.
+/// 2. **Layer assignment** — longest-path layering by Kahn topological order over
+///    the acyclic edges: a source (no acyclic in-edge) is layer 0, every other
+///    node one past its deepest predecessor, so each acyclic edge spans ≥1 layer.
+/// 3. **Ordering + coordinates** — nodes are grouped by layer (id order), then
+///    [`LAYOUT_SWEEPS`] barycenter sweeps reorder each layer by the mean index of
+///    its neighbours in the adjacent layer (the crossing-reduction heuristic).
+///    Layer `l` becomes the column at `origin.x + l·(NODE_W + LAYER_GAP)`; within
+///    it nodes stack top-to-bottom by their own height + [`LAYOUT_ROW_GAP`], and
+///    every column is centred against the tallest so the graph is balanced.
+///
+/// A long edge spanning >1 layer is **not** split with dummy vertices (the
+/// textbook refinement for perfectly straight long wires) — the barycenter still
+/// reads its endpoints, so crossings are reduced but not provably minimised; the
+/// wire router draws the slack. Comment frames are annotations left where they
+/// are (a full re-layout may orphan a frame from its nodes — the same
+/// nodes-only contract `align_selected` / `distribute_selected` keep).
+fn layered_layout(
+    nodes: &[GraphNode],
+    edges: &[Edge],
+    origin: (i32, i32),
+) -> BTreeMap<NodeId, (i32, i32)> {
+    if nodes.is_empty() {
+        return BTreeMap::new();
+    }
+    let mut ids: Vec<NodeId> = nodes.iter().map(|n| n.id).collect();
+    ids.sort_by_key(|id| id.raw());
+    let node_set: BTreeSet<NodeId> = ids.iter().copied().collect();
+
+    let succ = layout_successors(&ids, &node_set, edges);
+    let back = layout_back_edges(&ids, &succ);
+    let layer = layout_assign_layers(&ids, &succ, &back);
+
+    // Group by layer (each column starts id-ordered, since `ids` is sorted),
+    // then crossing-reduce the vertical order within each.
+    let max_layer = layer.values().copied().max().unwrap_or(0);
+    let mut layers: Vec<Vec<NodeId>> = vec![Vec::new(); max_layer + 1];
+    for &id in &ids {
+        layers[layer[&id]].push(id);
+    }
+    let nbr = layout_neighbours(&ids, &node_set, edges);
+    layout_reduce_crossings(&mut layers, &layer, &nbr);
+
+    // Coordinates: a column per layer at `x = origin.x + layer·pitch`, nodes
+    // stacked top-to-bottom, each column centred against the tallest.
+    let height_of: BTreeMap<NodeId, i32> = nodes.iter().map(|n| (n.id, n.height())).collect();
+    let col_height = |lyr: &[NodeId]| -> i32 {
+        let stacked: i32 = lyr.iter().map(|id| height_of[id]).sum();
+        stacked + LAYOUT_ROW_GAP * i32::try_from(lyr.len().saturating_sub(1)).unwrap_or(0)
+    };
+    let tallest = layers.iter().map(|l| col_height(l)).max().unwrap_or(0);
+    let mut out: BTreeMap<NodeId, (i32, i32)> = BTreeMap::new();
+    for (li, lyr) in layers.iter().enumerate() {
+        let x = origin.0 + i32::try_from(li).unwrap_or(0) * (NODE_W + LAYER_GAP);
+        let mut y = origin.1 + (tallest - col_height(lyr)) / 2;
+        for &id in lyr {
+            out.insert(id, (x, y));
+            y += height_of[&id] + LAYOUT_ROW_GAP;
+        }
+    }
+    out
+}
+
+/// R1383 helper — id-ordered, edge-index-tagged successor lists over the present
+/// nodes ([`layered_layout`] phase 0). A self-loop and any edge touching an
+/// absent node are skipped (they cannot constrain a forward layering).
+fn layout_successors(
+    ids: &[NodeId],
+    node_set: &BTreeSet<NodeId>,
+    edges: &[Edge],
+) -> BTreeMap<NodeId, Vec<(usize, NodeId)>> {
+    let mut succ: BTreeMap<NodeId, Vec<(usize, NodeId)>> =
+        ids.iter().map(|&id| (id, Vec::new())).collect();
+    for (i, e) in edges.iter().enumerate() {
+        if e.from_node != e.to_node
+            && node_set.contains(&e.from_node)
+            && node_set.contains(&e.to_node)
+        {
+            succ.get_mut(&e.from_node)
+                .expect("from in node_set")
+                .push((i, e.to_node));
+        }
+    }
+    for v in succ.values_mut() {
+        v.sort_by_key(|&(_, to)| to.raw());
+    }
+    succ
+}
+
+/// R1383 helper — the back-edge indices ([`layered_layout`] phase 1): an
+/// iterative forward DFS in id order, where an edge into a node still on the DFS
+/// stack is a back-edge. Dropping these from layering makes any cyclic graph
+/// acyclic (the model permits a cycle — [`graph_is_acyclic`]).
+fn layout_back_edges(
+    ids: &[NodeId],
+    succ: &BTreeMap<NodeId, Vec<(usize, NodeId)>>,
+) -> BTreeSet<usize> {
+    let mut color: BTreeMap<NodeId, u8> = BTreeMap::new(); // absent=white, 1=on-stack, 2=done
+    let mut back: BTreeSet<usize> = BTreeSet::new();
+    for &root in ids {
+        if color.contains_key(&root) {
+            continue;
+        }
+        color.insert(root, 1);
+        let mut stack: Vec<(NodeId, usize)> = vec![(root, 0)];
+        while let Some(&(node, cursor)) = stack.last() {
+            let kids = &succ[&node];
+            if cursor < kids.len() {
+                let (edge_i, to) = kids[cursor];
+                stack.last_mut().expect("non-empty").1 += 1;
+                match color.get(&to) {
+                    Some(1) => {
+                        back.insert(edge_i);
+                    }
+                    Some(2) => {}
+                    _ => {
+                        color.insert(to, 1);
+                        stack.push((to, 0));
+                    }
+                }
+            } else {
+                color.insert(node, 2);
+                stack.pop();
+            }
+        }
+    }
+    back
+}
+
+/// R1383 helper — the longest-path layer of every node ([`layered_layout`] phase
+/// 2): Kahn topological order over the acyclic edges, smallest id first. A
+/// source (no acyclic in-edge) is layer 0; every other node sits one past its
+/// deepest predecessor.
+fn layout_assign_layers(
+    ids: &[NodeId],
+    succ: &BTreeMap<NodeId, Vec<(usize, NodeId)>>,
+    back: &BTreeSet<usize>,
+) -> BTreeMap<NodeId, usize> {
+    let mut indeg: BTreeMap<NodeId, usize> = ids.iter().map(|&id| (id, 0)).collect();
+    for kids in succ.values() {
+        for &(ei, to) in kids {
+            if !back.contains(&ei) {
+                *indeg.get_mut(&to).expect("to in node_set") += 1;
+            }
+        }
+    }
+    let mut layer: BTreeMap<NodeId, usize> = ids.iter().map(|&id| (id, 0)).collect();
+    let mut ready: BTreeSet<NodeId> = ids.iter().copied().filter(|id| indeg[id] == 0).collect();
+    while let Some(&u) = ready.iter().next() {
+        ready.remove(&u);
+        let layer_u = layer[&u];
+        for &(ei, v) in &succ[&u] {
+            if back.contains(&ei) {
+                continue;
+            }
+            if layer[&v] < layer_u + 1 {
+                layer.insert(v, layer_u + 1);
+            }
+            let d = indeg.get_mut(&v).expect("v in node_set");
+            *d -= 1;
+            if *d == 0 {
+                ready.insert(v);
+            }
+        }
+    }
+    layer
+}
+
+/// R1383 helper — undirected neighbour lists ([`layered_layout`] phase 3 input):
+/// the adjacency the barycenter reads, over the present nodes (self-loops and
+/// absent-node edges skipped, as in [`layout_successors`]).
+fn layout_neighbours(
+    ids: &[NodeId],
+    node_set: &BTreeSet<NodeId>,
+    edges: &[Edge],
+) -> BTreeMap<NodeId, Vec<NodeId>> {
+    let mut nbr: BTreeMap<NodeId, Vec<NodeId>> = ids.iter().map(|&id| (id, Vec::new())).collect();
+    for e in edges {
+        if e.from_node != e.to_node
+            && node_set.contains(&e.from_node)
+            && node_set.contains(&e.to_node)
+        {
+            nbr.get_mut(&e.from_node)
+                .expect("from present")
+                .push(e.to_node);
+            nbr.get_mut(&e.to_node)
+                .expect("to present")
+                .push(e.from_node);
+        }
+    }
+    nbr
+}
+
+/// R1383 helper — reorder each layer in place by [`LAYOUT_SWEEPS`] alternating
+/// barycenter sweeps ([`layered_layout`] phase 3, crossing reduction). A node's
+/// key is the mean index of its neighbours in the adjacent layer, compared as an
+/// exact rational (`num_a·den_b` vs `num_b·den_a`); a node with no adjacent
+/// neighbour keeps its slot, and ties break by id (fully deterministic).
+fn layout_reduce_crossings(
+    layers: &mut [Vec<NodeId>],
+    layer: &BTreeMap<NodeId, usize>,
+    nbr: &BTreeMap<NodeId, Vec<NodeId>>,
+) {
+    let max_layer = layers.len().saturating_sub(1);
+    for sweep in 0..LAYOUT_SWEEPS {
+        let down = sweep % 2 == 0;
+        let order: Vec<usize> = if down {
+            (1..=max_layer).collect()
+        } else {
+            (0..max_layer).rev().collect()
+        };
+        // Current within-layer index of every node (refreshed as layers reorder).
+        let mut pos: BTreeMap<NodeId, i64> = BTreeMap::new();
+        for lyr in layers.iter() {
+            for (i, &id) in lyr.iter().enumerate() {
+                pos.insert(id, i64::try_from(i).unwrap_or(0));
+            }
+        }
+        for &l in &order {
+            let adj = if down { l - 1 } else { l + 1 };
+            let mut keyed: Vec<(i64, i64, u32, NodeId)> = layers[l]
+                .iter()
+                .enumerate()
+                .map(|(i, &id)| {
+                    let mut sum = 0i64;
+                    let mut cnt = 0i64;
+                    for &m in &nbr[&id] {
+                        if layer[&m] == adj {
+                            sum += pos[&m];
+                            cnt += 1;
+                        }
+                    }
+                    if cnt == 0 {
+                        (i64::try_from(i).unwrap_or(0), 1, id.raw(), id)
+                    } else {
+                        (sum, cnt, id.raw(), id)
+                    }
+                })
+                .collect();
+            keyed.sort_by(|a, b| (a.0 * b.1).cmp(&(b.0 * a.1)).then(a.2.cmp(&b.2)));
+            layers[l] = keyed.iter().map(|t| t.3).collect();
+            for (i, &id) in layers[l].iter().enumerate() {
+                pos.insert(id, i64::try_from(i).unwrap_or(0));
+            }
+        }
+    }
 }
 
 /// R1258 — the canonical `(input, output)` port shape a compute op must have,
@@ -5128,6 +5410,37 @@ impl NodeGraphExternal {
         })
     }
 
+    /// R1383 — tidy the WHOLE graph into a layered (Sugiyama) left-to-right
+    /// arrangement in ONE discrete undo step: data flows forward across columns
+    /// with a crossing-reduced vertical order (see [`layered_layout`]). The
+    /// AI-first peer of a node editor's "arrange" / "tidy" command (Unreal
+    /// Blueprint, Blender, Substance) — no selection needed (it lays out
+    /// everything), anchored at the graph's current top-left so the graph stays
+    /// roughly in place instead of jumping to the origin. A no-op `false` on
+    /// fewer than two nodes (a single node is already tidy) or when nothing moves
+    /// (the graph is already laid out — the pass is idempotent). Routes through
+    /// the same [`apply_node_moves`](Self::apply_node_moves) SSOT as align /
+    /// distribute / nudge, so a single `Ctrl+Z` reverts the whole arrangement;
+    /// comment frames are left in place (the align / distribute precedent).
+    fn auto_layout(&self) -> bool {
+        // A stable snapshot pointer — the live signal is replaced wholesale by
+        // `set_node_pos`, so this held copy stays valid while `apply_node_moves`
+        // mutates it (the `selected_nodes` stability discipline, no clone needed).
+        let snapshot = self.nodes.get();
+        if snapshot.len() < 2 {
+            return false;
+        }
+        let edges = self.edges.get();
+        // Anchor at the current bounding-box top-left (clamped on-world) so the
+        // tidied graph occupies roughly the same region it already did.
+        let origin =
+            node_bounds(snapshot.iter()).map_or((0, 0), |(l, t, _, _)| (l.max(0), t.max(0)));
+        let targets = layered_layout(&snapshot, &edges, origin);
+        self.apply_node_moves(&snapshot, false, |n| {
+            targets.get(&n.id).copied().unwrap_or((n.x, n.y))
+        })
+    }
+
     /// Select a node by id (must exist). The sum type makes any prior edge
     /// selection vanish for free — no "clear the other" bookkeeping.
     /// R920 — write the selection, first committing any in-flight *panel* edit
@@ -6194,6 +6507,9 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("align_bottom", "json"),
     SchemaField::new("distribute_h", "json"),
     SchemaField::new("distribute_v", "json"),
+    // R1383 — tidy the whole graph into a layered left-to-right arrangement
+    // (Sugiyama); no args, ONE undo step, returns whether anything moved.
+    SchemaField::new("auto_layout", "json"),
     SchemaField::new("serialized", "string"),
     SchemaField::new("set_graph", "string"),
     SchemaField::new("save", "json"),
@@ -6619,6 +6935,8 @@ impl NodeGraphExternal {
             "align_bottom" => self.align_selected(AlignSpec::Bottom),
             "distribute_h" => self.distribute_selected(DistributeAxis::Horizontal),
             "distribute_v" => self.distribute_selected(DistributeAxis::Vertical),
+            // R1383 — whole-graph layered auto-layout (no selection needed).
+            "auto_layout" => self.auto_layout(),
             _ => return None,
         })
     }
