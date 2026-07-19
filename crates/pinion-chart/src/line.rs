@@ -95,6 +95,7 @@ pub struct LineChart {
     fill_area: bool,
     inspect: Option<f32>,
     legend_tags: Option<Vec<String>>,
+    rescale_to_visible: bool,
     tag_prefix: String,
 }
 
@@ -111,6 +112,7 @@ impl LineChart {
             fill_area: false,
             inspect: None,
             legend_tags: None,
+            rescale_to_visible: false,
             tag_prefix: "chart".to_string(),
         }
     }
@@ -176,6 +178,21 @@ impl LineChart {
     #[must_use]
     pub fn interactive_legend(mut self, tags: Vec<String>) -> Self {
         self.legend_tags = Some(tags);
+        self
+    }
+
+    /// Rescale the auto-domain to the **visible** series (R1381): when `true`,
+    /// hiding the dominant series lets the axes snap to the remaining visible
+    /// ones so a small series becomes readable, instead of staying pinned to
+    /// the (now-hidden) big one. Default `false` — every series is measured, so
+    /// the grid is stable across toggles (the R1379 dashboard default). When
+    /// every series is hidden the domain falls back to the all-series bounds
+    /// (the grid stays put rather than collapsing), and a pinned
+    /// [`with_x_domain`](Self::with_x_domain) /
+    /// [`with_y_domain`](Self::with_y_domain) still wins over either.
+    #[must_use]
+    pub fn rescale_to_visible(mut self, rescale: bool) -> Self {
+        self.rescale_to_visible = rescale;
         self
     }
 
@@ -258,7 +275,14 @@ impl LineChart {
     /// `rect` enters only as an additive origin, so callers pass a
     /// zero-origin rect to get a local-frame body.
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
-        let plot = CartesianPlot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
+        let plot = CartesianPlot::resolve(
+            rect,
+            &self.series,
+            self.x_domain,
+            self.y_domain,
+            style,
+            self.rescale_to_visible,
+        );
         let (y_lo, y_hi) = plot.y.domain();
         let (x_lo, x_hi) = plot.x.domain();
         // One tick-set resolver, shared with `inspect_readout` so the
@@ -539,7 +563,14 @@ impl LineChart {
     /// chart exists to deliver actually reaches a screen reader.
     #[must_use]
     pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
-        let plot = CartesianPlot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
+        let plot = CartesianPlot::resolve(
+            rect,
+            &self.series,
+            self.x_domain,
+            self.y_domain,
+            style,
+            self.rescale_to_visible,
+        );
         let x_ticks: Vec<f64> = axis_ticks(plot.x.domain(), style.x_ticks);
         let y_ticks: Vec<f64> = axis_ticks(plot.y.domain(), style.y_ticks);
         let steps = Steps {
@@ -1422,6 +1453,43 @@ mod tests {
             entry_swatch_fill(&scene, "leg.1"),
             style.label,
             "hidden entry greys to the muted label colour"
+        );
+    }
+
+    #[test]
+    fn rescale_to_visible_grows_a_small_series_when_the_big_one_is_hidden() {
+        // series 0 dominates (y to ~4000), series 1 is small (y to 8). With the
+        // big one hidden, rescale_to_visible snaps the y-domain to the small
+        // series, so its polyline spans most of the plot instead of a sliver.
+        let build = |rescale: bool| {
+            let series = vec![
+                Series::new(
+                    "big",
+                    (0..=3)
+                        .map(|i| DataPoint::new(f64::from(i), f64::from(i) * 1333.0))
+                        .collect(),
+                )
+                .with_visible(false),
+                Series::new(
+                    "small",
+                    (0..=3)
+                        .map(|i| DataPoint::new(f64::from(i), 2.0 + f64::from(i) * 2.0))
+                        .collect(),
+                ),
+            ];
+            let scene = LineChart::new(series)
+                .rescale_to_visible(rescale)
+                .build(Rect::new(0, 0, 400, 300), &no_legend_zero_margin());
+            let Scene::Path(p) = find(&scene, "chart.series.1").expect("small series") else {
+                panic!("series is a path")
+            };
+            p.rect.h
+        };
+        let h_off = build(false);
+        let h_on = build(true);
+        assert!(
+            h_on > h_off * 3,
+            "rescale grows the small series' vertical extent (off={h_off}, on={h_on})"
         );
     }
 

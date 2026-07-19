@@ -37,9 +37,11 @@ pub struct Series {
     /// Whether this series' geometry is drawn (R1379). A hidden series still
     /// occupies its palette index and legend slot, so hiding it never re-colours
     /// or re-indexes the others; it only drops the series' own marks / polyline.
-    /// The **auto-domain is unaffected** — [`data_bounds`] measures every series
-    /// regardless, so toggling visibility never rescales the axes (a hidden
-    /// series that later returns lands on the same grid).
+    /// By default the **auto-domain is unaffected** — [`data_bounds`] measures
+    /// every series regardless, so toggling visibility never rescales the axes
+    /// (a hidden series that later returns lands on the same grid). A chart
+    /// built with `rescale_to_visible` (R1381) instead measures only the
+    /// visible series ([`visible_data_bounds`]), so hiding one *does* rescale.
     pub visible: bool,
 }
 
@@ -81,10 +83,11 @@ pub struct Bounds {
     pub y: (f64, f64),
 }
 
-/// The combined data bounds across `series`, or `None` when there is not
-/// a single point to measure. Non-finite coordinates are skipped.
-#[must_use]
-pub fn data_bounds(series: &[Series]) -> Option<Bounds> {
+/// The `(x, y)` extent across every point of `series`, or `None` when not a
+/// single finite point is present. The shared scan behind [`data_bounds`] and
+/// [`visible_data_bounds`] — the only difference between them is which series
+/// the caller feeds in.
+fn bounds_of<'a>(series: impl IntoIterator<Item = &'a Series>) -> Option<Bounds> {
     let mut min_x = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
     let mut min_y = f64::INFINITY;
@@ -102,14 +105,30 @@ pub fn data_bounds(series: &[Series]) -> Option<Bounds> {
             max_y = max_y.max(p.y);
         }
     }
-    if seen {
-        Some(Bounds {
-            x: (min_x, max_x),
-            y: (min_y, max_y),
-        })
-    } else {
-        None
-    }
+    seen.then_some(Bounds {
+        x: (min_x, max_x),
+        y: (min_y, max_y),
+    })
+}
+
+/// The combined data bounds across ALL `series` (visible or not), or `None`
+/// when there is not a single point to measure. Non-finite coordinates are
+/// skipped. This is the default auto-domain source, so hiding a series never
+/// rescales the axes — see [`visible_data_bounds`] for the opt-in that does.
+#[must_use]
+pub fn data_bounds(series: &[Series]) -> Option<Bounds> {
+    bounds_of(series)
+}
+
+/// The data bounds across only the VISIBLE series (R1381) — the auto-domain a
+/// chart built with `rescale_to_visible` snaps to, so hiding the dominant
+/// series lets the axes rescale to reveal the rest. `None` when no visible
+/// series has a finite point (the caller then falls back to the all-series
+/// [`data_bounds`], so hiding the last series leaves the grid put rather than
+/// collapsing it).
+#[must_use]
+pub fn visible_data_bounds(series: &[Series]) -> Option<Bounds> {
+    bounds_of(series.iter().filter(|s| s.visible))
 }
 
 /// The series point whose x is nearest `data_x`, restricted to the visible x
@@ -196,5 +215,44 @@ mod tests {
     fn with_color_pins_override() {
         let s = Series::new("c", vec![]).with_color(Color::rgb(1, 2, 3));
         assert_eq!(s.color, Some(Color::rgb(1, 2, 3)));
+    }
+
+    #[test]
+    fn visible_bounds_measure_only_visible_series() {
+        // A dominant series [0, 4000] plus a small one [0, 8]: the all-series
+        // bounds span the big one, but with the big one hidden the visible
+        // bounds collapse to the small one — the rescale-to-visible domain.
+        let big = Series::new(
+            "big",
+            vec![DataPoint::new(0.0, 0.0), DataPoint::new(3.0, 4000.0)],
+        );
+        let small = Series::new(
+            "small",
+            vec![DataPoint::new(0.0, 2.0), DataPoint::new(3.0, 8.0)],
+        );
+        let all = vec![big.clone().with_visible(false), small.clone()];
+
+        assert_eq!(
+            data_bounds(&all).expect("has points").y,
+            (0.0, 4000.0),
+            "all-series bounds still span the hidden big series"
+        );
+        assert_eq!(
+            visible_data_bounds(&all).expect("one visible").y,
+            (2.0, 8.0),
+            "visible-only bounds collapse to the small series"
+        );
+    }
+
+    #[test]
+    fn visible_bounds_none_when_all_hidden() {
+        let all: Vec<Series> = sample()
+            .into_iter()
+            .map(|s| s.with_visible(false))
+            .collect();
+        assert!(
+            visible_data_bounds(&all).is_none(),
+            "no visible series -> None (caller falls back to all-series bounds)"
+        );
     }
 }

@@ -154,7 +154,14 @@ impl ScatterChart {
     /// The chart body, authored in the frame `rect` describes — the ONE builder
     /// both entry points wrap (the R1360.4 shape the line chart also uses).
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
-        let plot = CartesianPlot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
+        let plot = CartesianPlot::resolve(
+            rect,
+            &self.series,
+            self.x_domain,
+            self.y_domain,
+            style,
+            false,
+        );
         let x_ticks = axis_ticks(plot.x.domain(), style.x_ticks);
         let y_ticks = axis_ticks(plot.y.domain(), style.y_ticks);
         let steps = Steps {
@@ -300,7 +307,14 @@ impl ScatterChart {
     /// deferred to a third consumer (R1377).
     #[must_use]
     pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
-        let plot = CartesianPlot::resolve(rect, &self.series, self.x_domain, self.y_domain, style);
+        let plot = CartesianPlot::resolve(
+            rect,
+            &self.series,
+            self.x_domain,
+            self.y_domain,
+            style,
+            false,
+        );
         let x_step = tick_step(&axis_ticks(plot.x.domain(), style.x_ticks));
         let y_step = tick_step(&axis_ticks(plot.y.domain(), style.y_ticks));
         let (focus_x, hits) = resolve_focus(&self.series, self.inspect?, &plot, rect)?;

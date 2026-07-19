@@ -2971,6 +2971,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-rescale-toggle"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-richtext"
 version = "0.0.1"
 dependencies = [
