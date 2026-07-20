@@ -93,6 +93,7 @@ members = [
     "examples/hello-linked-brush",
     "examples/hello-histogram-brush",
     "examples/hello-dock-chart",
+    "examples/hello-autoscale-y",
     "examples/hello-stat-tiles",
     "examples/hello-timeline",
     "examples/hello-snackbar",

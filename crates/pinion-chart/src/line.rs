@@ -78,7 +78,7 @@ use crate::draw::{
     marker_node, stroke_path, to_u32,
 };
 use crate::palette::CategoricalPalette;
-use crate::plot::{CartesianPlot, axis_ticks};
+use crate::plot::{CartesianPlot, Rescale, axis_ticks};
 use crate::series::{DataPoint, Series};
 use crate::style::ChartStyle;
 use crate::ticks::{format_axis_tick, tick_step};
@@ -96,6 +96,7 @@ pub struct LineChart {
     inspect: Option<f32>,
     legend_tags: Option<Vec<String>>,
     rescale_to_visible: bool,
+    rescale_y_to_x_window: bool,
     select_x_range: Option<(f64, f64)>,
     tag_prefix: String,
 }
@@ -114,6 +115,7 @@ impl LineChart {
             inspect: None,
             legend_tags: None,
             rescale_to_visible: false,
+            rescale_y_to_x_window: false,
             select_x_range: None,
             tag_prefix: "chart".to_string(),
         }
@@ -195,6 +197,27 @@ impl LineChart {
     #[must_use]
     pub fn rescale_to_visible(mut self, rescale: bool) -> Self {
         self.rescale_to_visible = rescale;
+        self
+    }
+
+    /// Fit the auto y-axis to the **brushed x-window** (R1397): when `true` and
+    /// the y-domain is auto, the y-axis measures only the points whose x falls
+    /// inside the resolved x-domain — so pairing it with a brush that
+    /// [`with_x_domain`](Self::with_x_domain)-zooms the chart lets the y-axis
+    /// zoom in on just that window's values. A large transient outside the
+    /// window then stops flattening the detail inside it (the canonical
+    /// "auto-scale Y to the visible X range" of a monitoring chart).
+    ///
+    /// Distinct from [`rescale_to_visible`](Self::rescale_to_visible): that one
+    /// picks which *series* the axes measure (the visible-toggle axis); this one
+    /// windows the *y-fit* to the visible *x-range* (the brush-zoom axis). They
+    /// are orthogonal opt-ins. Default `false`. Only bites when the x-domain is
+    /// narrower than the data — a full-width x-domain includes every point, so
+    /// the fit is a no-op — and a pinned [`with_y_domain`](Self::with_y_domain)
+    /// still wins.
+    #[must_use]
+    pub fn rescale_y_to_x_window(mut self, rescale: bool) -> Self {
+        self.rescale_y_to_x_window = rescale;
         self
     }
 
@@ -284,6 +307,17 @@ impl LineChart {
         Scene::Container(body.with_layout(fill_parent()))
     }
 
+    /// Bundle this chart's two rescale opt-ins into the [`Rescale`] the plot
+    /// resolver takes — one place, so `build_body` and `inspect_readout` resolve
+    /// the identical domains (the tooltip a sighted user sees and the a11y
+    /// readout can never disagree).
+    fn rescale(&self) -> Rescale {
+        Rescale {
+            to_visible: self.rescale_to_visible,
+            y_to_x_window: self.rescale_y_to_x_window,
+        }
+    }
+
     /// The chart body, authored in the frame `rect` describes — the ONE
     /// builder both entry points wrap.
     ///
@@ -303,7 +337,7 @@ impl LineChart {
             self.x_domain,
             self.y_domain,
             style,
-            self.rescale_to_visible,
+            self.rescale(),
         );
         let (y_lo, y_hi) = plot.y.domain();
         let (x_lo, x_hi) = plot.x.domain();
@@ -611,7 +645,7 @@ impl LineChart {
             self.x_domain,
             self.y_domain,
             style,
-            self.rescale_to_visible,
+            self.rescale(),
         );
         let x_ticks: Vec<f64> = axis_ticks(plot.x.domain(), style.x_ticks);
         let y_ticks: Vec<f64> = axis_ticks(plot.y.domain(), style.y_ticks);

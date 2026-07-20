@@ -1,0 +1,36 @@
+[package]
+name = "hello-autoscale-y"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1397 Phase-B dataviz consumer — the y-axis auto-fits the brushed x-window. A single signal (a large startup transient over a long steady-state of small ripples) is charted with a brush over its x-axis; brushing past the transient re-domains the chart AND, via LineChart::rescale_y_to_x_window, snaps the y-axis to just the window's values so the steady-state detail resolves. Substrate-first: the y-axis rescale reads back as data via scene/snapshot (chart.label.y.N tick text + chart.series.0 geometry), so the auto-scale is verifiable without OCR."
+publish = false
+
+[[bin]]
+name = "hello-autoscale-y"
+path = "src/main.rs"
+
+[dependencies]
+# R1397 — the charting substrate under test (LineChart::rescale_y_to_x_window).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.16 — the `HelloAutoscaleYRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper (identical
+# shape to hello-chart / hello-range-slider).
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

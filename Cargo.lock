@@ -1842,6 +1842,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-autoscale-y"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-badge"
 version = "0.0.1"
 dependencies = [

@@ -16,10 +16,32 @@ use pinion_core::scene::Rect;
 use crate::draw::{plot_rect, to_f32};
 use crate::scale::LinearScale;
 use crate::series::{
-    DataPoint, Series, data_bounds, in_domain, nearest_point_in, visible_data_bounds,
+    DataPoint, Series, bounds_in_x_window, data_bounds, in_domain, nearest_point_in,
+    visible_data_bounds,
 };
 use crate::style::ChartStyle;
 use crate::ticks::nice_ticks;
+
+/// How the auto-domains are derived when they are not pinned — the two
+/// orthogonal rescale opt-ins, bundled into one named-field value so the two
+/// booleans can never be swapped at a call site (the R832-class silent-swap the
+/// crate has been bitten by before).
+///
+/// `Default` is `{ to_visible: false, y_to_x_window: false }`: every series is
+/// measured over its full x-extent, so the grid is stable across visibility
+/// toggles and x-zooms (the R1379 dashboard default).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Rescale {
+    /// Measure only the *visible* series (R1381) instead of all of them, so
+    /// hiding the dominant series lets the axes rescale to reveal the rest.
+    pub to_visible: bool,
+    /// Fit the auto **y**-domain to the points inside the resolved x-window
+    /// (R1397), so brushing to a narrow x-window zooms the y-axis in on just
+    /// that window's values. Only bites when the x-domain is narrower than the
+    /// data (a zoom); a full-width x-domain includes every point, so the y-fit
+    /// is a no-op.
+    pub y_to_x_window: bool,
+}
 
 /// The resolved plot rectangle (in float pixels) plus the two value scales.
 #[derive(Debug, Clone, Copy)]
@@ -44,7 +66,7 @@ impl CartesianPlot {
     /// domain verbatim, else the data extent snapped to its nice-tick range so
     /// the outer gridlines land on the plot edges — Qt `applyNiceNumbers`).
     ///
-    /// `rescale_to_visible` (R1381) chooses the auto-domain source: `false`
+    /// [`Rescale::to_visible`] (R1381) chooses the auto-domain source: `false`
     /// measures every series ([`data_bounds`] — hiding a series never rescales
     /// the axes, the R1379 default), `true` measures only the visible ones
     /// ([`visible_data_bounds`] — hiding the dominant series lets the axes
@@ -52,26 +74,44 @@ impl CartesianPlot {
     /// nothing is visible so hiding the last series leaves the grid put. A
     /// pinned `x_domain` / `y_domain` overrides either, so this only moves an
     /// auto axis.
+    ///
+    /// [`Rescale::y_to_x_window`] (R1397) then re-fits an *auto* y-domain to the
+    /// points inside the resolved x-window ([`bounds_in_x_window`]): the x-window
+    /// is settled first, so brushing to a narrow x-domain lets the y-axis zoom in
+    /// on just that window's values. A window with no points, or a pinned
+    /// `y_domain`, leaves the y-domain untouched.
     pub(crate) fn resolve(
         rect: Rect,
         series: &[Series],
         x_domain: Option<(f64, f64)>,
         y_domain: Option<(f64, f64)>,
         style: &ChartStyle,
-        rescale_to_visible: bool,
+        rescale: Rescale,
     ) -> Self {
         let (left, right, top, bottom) = plot_rect(rect, style.margin);
 
-        let bounds = if rescale_to_visible {
+        let bounds = if rescale.to_visible {
             visible_data_bounds(series).or_else(|| data_bounds(series))
         } else {
             data_bounds(series)
         };
         let raw_x = x_domain.or(bounds.map(|b| b.x)).unwrap_or((0.0, 1.0));
-        let raw_y = y_domain.or(bounds.map(|b| b.y)).unwrap_or((0.0, 1.0));
-        // Auto domains snap to the nice-tick extent so the outer gridlines land
-        // on the plot edges; a pinned domain is honoured verbatim.
+        // The x-window must be settled before the y-fit reads it, so resolve the
+        // final x-domain first. A pinned domain is honoured verbatim; an auto one
+        // snaps to the nice-tick extent so the outer gridlines land on the edges.
         let dom_x = domain_from_ticks(x_domain, raw_x, style.x_ticks);
+        // y: a pinned domain wins; else an opt-in fit to the x-window's points
+        // (R1397); else the whole measured extent. The window fit falls back to
+        // `bounds` when it is empty, so a brush past the data keeps the grid.
+        let raw_y = y_domain
+            .or_else(|| {
+                rescale
+                    .y_to_x_window
+                    .then(|| bounds_in_x_window(series, dom_x).map(|b| b.y))
+                    .flatten()
+            })
+            .or(bounds.map(|b| b.y))
+            .unwrap_or((0.0, 1.0));
         let dom_y = domain_from_ticks(y_domain, raw_y, style.y_ticks);
 
         Self {
@@ -184,7 +224,7 @@ mod tests {
     fn resolve_focus_skips_hidden_series() {
         let rect = Rect::new(0, 0, 400, 300);
         let style = ChartStyle::default();
-        let plot = CartesianPlot::resolve(rect, &two(), None, None, &style, false);
+        let plot = CartesianPlot::resolve(rect, &two(), None, None, &style, Rescale::default());
 
         // Both visible -> a hit per series.
         let (_fx, hits) = resolve_focus(&two(), 0.5, &plot, rect).expect("focus with two visible");
@@ -227,14 +267,18 @@ mod tests {
             ),
         ];
 
-        let default = CartesianPlot::resolve(rect, &series, None, None, &style, false);
+        let default = CartesianPlot::resolve(rect, &series, None, None, &style, Rescale::default());
         let (_, hi_default) = default.y.domain();
         assert!(
             hi_default >= 4000.0,
             "default domain still spans the hidden big series (got hi={hi_default})"
         );
 
-        let rescaled = CartesianPlot::resolve(rect, &series, None, None, &style, true);
+        let visible = Rescale {
+            to_visible: true,
+            ..Rescale::default()
+        };
+        let rescaled = CartesianPlot::resolve(rect, &series, None, None, &style, visible);
         let (_, hi_rescaled) = rescaled.y.domain();
         assert!(
             hi_rescaled < 100.0,
@@ -242,11 +286,77 @@ mod tests {
         );
 
         // A pinned domain overrides rescale entirely.
-        let pinned = CartesianPlot::resolve(rect, &series, None, Some((0.0, 9000.0)), &style, true);
+        let pinned =
+            CartesianPlot::resolve(rect, &series, None, Some((0.0, 9000.0)), &style, visible);
         assert_eq!(
             pinned.y.domain(),
             (0.0, 9000.0),
             "a pinned domain wins over rescale"
+        );
+    }
+
+    #[test]
+    fn rescale_y_to_x_window_fits_the_y_axis_to_the_brushed_window() {
+        // A big transient at x=1 (y=1000) plus small ripples at x=5..8 (y in
+        // 40..70). With the x-domain pinned to the ripple window, y_to_x_window
+        // drops the transient from the y-fit so the ripples fill the axis;
+        // without it the y-axis still spans the (now-off-window) transient.
+        let rect = Rect::new(0, 0, 400, 300);
+        let style = ChartStyle::default();
+        let series = vec![Series::new(
+            "signal",
+            vec![
+                DataPoint::new(0.0, 60.0),
+                DataPoint::new(1.0, 1000.0),
+                DataPoint::new(5.0, 40.0),
+                DataPoint::new(6.0, 70.0),
+                DataPoint::new(8.0, 55.0),
+            ],
+        )];
+        let window = Some((5.0, 8.0));
+
+        let off = CartesianPlot::resolve(rect, &series, window, None, &style, Rescale::default());
+        let (_, hi_off) = off.y.domain();
+        assert!(
+            hi_off >= 1000.0,
+            "without the fit the y-axis still spans the off-window transient (got hi={hi_off})"
+        );
+
+        let fit = Rescale {
+            y_to_x_window: true,
+            ..Rescale::default()
+        };
+        let on = CartesianPlot::resolve(rect, &series, window, None, &style, fit);
+        let (_, hi_on) = on.y.domain();
+        assert!(
+            hi_on < 200.0,
+            "the fit snaps the y-axis to the window's ripples (got hi={hi_on})"
+        );
+
+        // A full-width x-domain includes every point, so the fit is a no-op:
+        // the transient is back in-window and the y-axis spans it again.
+        let full = CartesianPlot::resolve(rect, &series, Some((0.0, 8.0)), None, &style, fit);
+        let (_, hi_full) = full.y.domain();
+        assert!(
+            hi_full >= 1000.0,
+            "a full-width x-window fits nothing away (got hi={hi_full})"
+        );
+
+        // A window with no points leaves the y-domain on the full data rather
+        // than collapsing the axis.
+        let empty = CartesianPlot::resolve(rect, &series, Some((2.0, 4.0)), None, &style, fit);
+        let (_, hi_empty) = empty.y.domain();
+        assert!(
+            hi_empty >= 1000.0,
+            "an empty window keeps the full-data y-domain (got hi={hi_empty})"
+        );
+
+        // A pinned y-domain still wins over the window fit.
+        let pinned = CartesianPlot::resolve(rect, &series, window, Some((0.0, 500.0)), &style, fit);
+        assert_eq!(
+            pinned.y.domain(),
+            (0.0, 500.0),
+            "a pinned y-domain overrides the window fit"
         );
     }
 }

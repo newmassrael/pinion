@@ -50,7 +50,7 @@ use crate::draw::{
     marker_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
-use crate::plot::{CartesianPlot, axis_ticks, resolve_focus};
+use crate::plot::{CartesianPlot, Rescale, axis_ticks, resolve_focus};
 use crate::series::{DataPoint, Series, in_domain};
 use crate::style::ChartStyle;
 use crate::ticks::{format_axis_tick, tick_step};
@@ -201,7 +201,7 @@ impl ScatterChart {
             self.x_domain,
             self.y_domain,
             style,
-            false,
+            Rescale::default(),
         );
         let x_ticks = axis_ticks(plot.x.domain(), style.x_ticks);
         let y_ticks = axis_ticks(plot.y.domain(), style.y_ticks);
@@ -396,7 +396,7 @@ impl ScatterChart {
             self.x_domain,
             self.y_domain,
             style,
-            false,
+            Rescale::default(),
         );
         let x_step = tick_step(&axis_ticks(plot.x.domain(), style.x_ticks));
         let y_step = tick_step(&axis_ticks(plot.y.domain(), style.y_ticks));

@@ -84,10 +84,24 @@ pub struct Bounds {
 }
 
 /// The `(x, y)` extent across every point of `series`, or `None` when not a
-/// single finite point is present. The shared scan behind [`data_bounds`] and
-/// [`visible_data_bounds`] — the only difference between them is which series
-/// the caller feeds in.
-fn bounds_of<'a>(series: impl IntoIterator<Item = &'a Series>) -> Option<Bounds> {
+/// single finite point is present. The shared scan behind [`data_bounds`],
+/// [`visible_data_bounds`], and [`bounds_in_x_window`] — the only differences
+/// between them are which series the caller feeds in and whether points are
+/// restricted to an x-window.
+///
+/// `x_window` (`Some((lo, hi))`, order-agnostic) restricts the scan to points
+/// whose x falls inside it — the auto-y-fit source for a brush-zoomed chart
+/// ([`bounds_in_x_window`]). `None` measures every finite point.
+fn bounds_of<'a>(
+    series: impl IntoIterator<Item = &'a Series>,
+    x_window: Option<(f64, f64)>,
+) -> Option<Bounds> {
+    let in_window = |x: f64| {
+        x_window.is_none_or(|(lo, hi)| {
+            let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+            x >= lo && x <= hi
+        })
+    };
     let mut min_x = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
     let mut min_y = f64::INFINITY;
@@ -95,7 +109,7 @@ fn bounds_of<'a>(series: impl IntoIterator<Item = &'a Series>) -> Option<Bounds>
     let mut seen = false;
     for s in series {
         for p in &s.points {
-            if !p.x.is_finite() || !p.y.is_finite() {
+            if !p.x.is_finite() || !p.y.is_finite() || !in_window(p.x) {
                 continue;
             }
             seen = true;
@@ -117,7 +131,7 @@ fn bounds_of<'a>(series: impl IntoIterator<Item = &'a Series>) -> Option<Bounds>
 /// rescales the axes — see [`visible_data_bounds`] for the opt-in that does.
 #[must_use]
 pub fn data_bounds(series: &[Series]) -> Option<Bounds> {
-    bounds_of(series)
+    bounds_of(series, None)
 }
 
 /// The data bounds across only the VISIBLE series (R1381) — the auto-domain a
@@ -128,7 +142,25 @@ pub fn data_bounds(series: &[Series]) -> Option<Bounds> {
 /// collapsing it).
 #[must_use]
 pub fn visible_data_bounds(series: &[Series]) -> Option<Bounds> {
-    bounds_of(series.iter().filter(|s| s.visible))
+    bounds_of(series.iter().filter(|s| s.visible), None)
+}
+
+/// The data bounds across only the points whose x falls inside `window`
+/// (`(lo, hi)`, order-agnostic), across ALL `series` (R1397) — the auto-y-fit
+/// source a chart built with
+/// [`LineChart::rescale_y_to_x_window`](crate::LineChart::rescale_y_to_x_window)
+/// snaps its y-axis to, so brushing to a narrow x-window lets the y-axis zoom in
+/// on just that window's values (a large transient elsewhere no longer flattens
+/// the detail). `None` when no point falls inside the window (the caller then
+/// keeps the full-data y-domain rather than collapsing the axis).
+///
+/// This measures every series, in parallel with [`data_bounds`] (the stable-grid
+/// default) — the x-window axis is orthogonal to the visible-series axis of
+/// [`visible_data_bounds`]; composing the two (a windowed *and* visible-only
+/// fit) is deferred until a consumer needs both at once.
+#[must_use]
+pub fn bounds_in_x_window(series: &[Series], window: (f64, f64)) -> Option<Bounds> {
+    bounds_of(series, Some(window))
 }
 
 /// The series point whose x is nearest `data_x`, restricted to the visible x
@@ -241,6 +273,61 @@ mod tests {
             visible_data_bounds(&all).expect("one visible").y,
             (2.0, 8.0),
             "visible-only bounds collapse to the small series"
+        );
+    }
+
+    #[test]
+    fn windowed_bounds_fit_y_to_the_x_window() {
+        // A big transient at x=1 (y=1000) plus small ripples at x=5..8 (y in
+        // 40..70). The full bounds span the transient; windowing to x>=5 drops
+        // it, so the y-extent collapses to the ripples — the auto-y-fit a
+        // brush-zoom relies on.
+        let series = vec![Series::new(
+            "signal",
+            vec![
+                DataPoint::new(0.0, 60.0),
+                DataPoint::new(1.0, 1000.0),
+                DataPoint::new(5.0, 40.0),
+                DataPoint::new(6.0, 70.0),
+                DataPoint::new(8.0, 55.0),
+            ],
+        )];
+        assert_eq!(
+            data_bounds(&series).expect("has points").y,
+            (40.0, 1000.0),
+            "full bounds span the transient"
+        );
+        let win = bounds_in_x_window(&series, (5.0, 8.0)).expect("points in window");
+        assert_eq!(win.y, (40.0, 70.0), "windowed y fits the ripples only");
+        assert_eq!(win.x, (5.0, 8.0), "windowed x is the in-window extent");
+    }
+
+    #[test]
+    fn windowed_bounds_are_order_agnostic_and_inclusive() {
+        let series = vec![Series::new(
+            "s",
+            vec![
+                DataPoint::new(0.0, 1.0),
+                DataPoint::new(5.0, 9.0),
+                DataPoint::new(10.0, 2.0),
+            ],
+        )];
+        // Reversed window == forward window; the x=5 point sits on/inside it.
+        let fwd = bounds_in_x_window(&series, (4.0, 6.0)).expect("in window");
+        let rev = bounds_in_x_window(&series, (6.0, 4.0)).expect("in window");
+        assert_eq!(fwd, rev, "the window is order-agnostic");
+        assert_eq!(fwd.y, (9.0, 9.0), "only the x=5 point is inside");
+    }
+
+    #[test]
+    fn windowed_bounds_none_when_the_window_is_empty() {
+        let series = vec![Series::new(
+            "s",
+            vec![DataPoint::new(0.0, 1.0), DataPoint::new(10.0, 2.0)],
+        )];
+        assert!(
+            bounds_in_x_window(&series, (3.0, 7.0)).is_none(),
+            "a window with no points -> None (caller keeps the full-data y)"
         );
     }
 
