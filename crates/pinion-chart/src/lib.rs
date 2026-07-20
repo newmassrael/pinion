@@ -90,10 +90,14 @@
 //! draggable **playhead** scrubber whose readout names the span under it per
 //! lane (the track view a sequencer / capture-replay tool needs).
 //! `examples/hello-timeline` is the forcing consumer — a flame view of the real
-//! per-frame render phases (`use_frame_timings`).
+//! per-frame render phases (`use_frame_timings`). And (R1391) the numeric
+//! cross-filter leg — [`ScatterChart::select_x_range`] mutes the point marks
+//! outside a numeric x-range (the mark-level, continuous-range twin of the
+//! categorical [`BarChart::select`], sharing the one lifted `MUTED_ALPHA`);
+//! `examples/hello-scatter`'s brush strip drives it, so a numeric BRUSH in one
+//! widget dims the corresponding points in another.
 //!
-//! Not yet: cross-filtering driven by a numeric BRUSH range (rather than a
-//! categorical selection) or between two arbitrary chart types, and a y-rescale
+//! Not yet: cross-filtering between two ARBITRARY chart types, and a y-rescale
 //! to a brush-zoomed x-window (distinct from R1381's rescale-to-VISIBLE-series)
 //! — follow-up slices on that same core. (A frequency *histogram* is a consumer
 //! pattern over [`BarChart`], not a distinct type — `hello-frame-profiler` bins

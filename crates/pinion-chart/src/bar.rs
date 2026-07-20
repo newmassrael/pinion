@@ -58,8 +58,8 @@ use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, LayoutStyle, Size, TextAlign};
 
 use crate::draw::{
-    CalloutRow, absolute, box_node, callout, fill_parent, label_node, outline_box, plot_rect,
-    to_f32, to_u32,
+    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, fill_parent, label_node, outline_box,
+    plot_rect, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::scale::LinearScale;
@@ -69,13 +69,6 @@ use crate::ticks::{format_axis_tick, nice_ticks, tick_step};
 /// The fraction of each bar's slot left empty as the inter-bar gap (so
 /// adjacent bars read as distinct). `0.2` = a bar fills 80% of its slot.
 const BAR_GAP_FRAC: f32 = 0.2;
-
-/// The alpha a bar OUTSIDE the active cross-filter selection is dimmed to
-/// (R1384) — low enough to read as "muted / filtered out" beside the full-
-/// strength selected bars, but not invisible (the category stays legible and
-/// re-selectable). The bar-chart analogue of the line chart's legend-mute
-/// idiom (a dimmed alpha, [`crate::line`]).
-const MUTED_ALPHA: u8 = 0x4D;
 
 /// One bar: a category `label`, its `value`, and an optional per-bar `color`
 /// override (else the chart's palette colour). The override is what lets a

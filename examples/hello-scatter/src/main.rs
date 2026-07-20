@@ -13,7 +13,7 @@
 //! binding is the consumer that pays for that lift. The chart is built from
 //! retained primitives the paint adapter already rasterizes: filled
 //! [`Scene::Path`] circles (one per point), [`Scene::Box`] legend swatches, and
-//! [`Scene::Text`] labels. One interaction sits on top:
+//! [`Scene::Text`] labels. Two interactions sit on top:
 //!
 //! * **Scrub inspect** (R1355's overlay, now for scatter) — press-drag across
 //!   the chart SCRUBS the x-axis; a vertical crosshair marks the scrubbed x, a
@@ -22,12 +22,20 @@
 //!   gesture is a capture drag whose 1-D fraction the chart maps through its
 //!   margins + domain to a data x (a 2-D nearest-point hover would need a 2-D
 //!   pointer external — deferred).
+//! * **Brush cross-filter** (R1391) — drag the overview strip UNDER the plot to
+//!   select an x-window; the scatter mutes every point outside it (dimmed, still
+//!   drawn as context) through [`ScatterChart::select_x_range`]. The strip and
+//!   the plot are two distinct widgets, so this is a numeric cross-filter (a
+//!   brush in one widget dims marks in another) — the continuous-range twin of
+//!   `hello-cross-filter`'s categorical bar-click (R1384).
 //!
-//! ## Why a Slider
+//! ## Why a Slider + a `RangeSlider`
 //!
-//! The §5.38 [`SliderExternal`] (a captured 1-D fraction) is reused as the scrub
-//! position, exactly as `hello-donut` — RPC-drivable (`scene/intervene`) and
-//! introspectable, no new external invented.
+//! The §5.38 [`SliderExternal`] (a captured 1-D fraction) is the scrub position,
+//! and the [`RangeSliderExternal`] (a captured 1-D pair) is the brush window —
+//! the latter a sibling in the R1249 `extra_externals` slot, so the router
+//! dispatches each drag by tag (the `hello-chart` idiom). Both are RPC-drivable
+//! (`scene/intervene`) and introspectable, no new external invented.
 //!
 //! ## Verification (substrate-first)
 //!
@@ -39,9 +47,11 @@
 
 use pinion_a11y::described::describedby_region;
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_chart::{ChartStyle, DataPoint, ScatterChart, Series};
+use pinion_chart::{ChartStyle, DataPoint, ScatterChart, Series, data_bounds};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::range_slider::RangeSliderExternal;
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
 use pinion_derive::widget;
@@ -59,6 +69,17 @@ const WIN_H: u32 = 460;
 const THEME_TAG: &str = "app";
 const SCRUB_TAG: &str = "scatter_scrub";
 
+/// R1391 — the brush strip is a sibling `chart_brush` external (the R1357 idiom):
+/// its selected x-window cross-filters the SCATTER (a different widget) rather
+/// than zooming itself, muting the point marks outside the window.
+const BRUSH_TAG: &str = "scatter_brush";
+const BRUSH_H: u32 = 14;
+const BRUSH_GAP: u32 = 8;
+
+/// Narrowest window the brush can select, as a fraction of the x-extent — keeps
+/// the range non-degenerate.
+const MIN_BRUSH_SPAN: f32 = 0.04;
+
 const TITLE_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 12;
 
@@ -67,7 +88,7 @@ const STATUS_FONT_PX: u32 = 12;
 /// (the profiler already proves `build_fill`), so a const rect keeps it simple.
 /// It is also the scrub capture basis: the `scatter_scrub` box covers exactly
 /// this rect, so the slider value `0.0..=1.0` is the cursor fraction across it.
-const CHART_RECT: Rect = Rect::new(10, 40, WIN_W - 20, WIN_H - 74);
+const CHART_RECT: Rect = Rect::new(10, 40, WIN_W - 20, WIN_H - 104);
 
 /// Two illustrative sample series — the canonical correlation a scatter shows.
 /// Fixed sample data (like `hello-chart`'s `sample_series`): the demo exists to
@@ -112,6 +133,118 @@ fn scrub_external() -> SliderExternal {
     slider
 }
 
+/// R1391 — the brush window as a sibling `External`, dispatched by tag (the
+/// R1357 idiom). `RangeSliderExternal::new()` selects the full span, so the boot
+/// frame cross-filters nothing (every point full).
+fn brush_extras() -> Vec<ExtraExternal> {
+    vec![ExtraExternal::new(
+        BRUSH_TAG,
+        Box::new(RangeSliderExternal::new()),
+    )]
+}
+
+/// Read the brush window `(low, high)` fractions from the sibling external. A
+/// missing external falls back to the full span (no filter).
+fn read_brush(scene: &Scene) -> (f32, f32) {
+    let Some(node) = scene.find_external_with_tag(BRUSH_TAG) else {
+        return (0.0, 1.0);
+    };
+    let Some(intro) = node.handle.introspect() else {
+        return (0.0, 1.0);
+    };
+    let read = |field: &str, fallback: f32| {
+        intro
+            .query(field)
+            .and_then(|v| v.as_f32())
+            .unwrap_or(fallback)
+    };
+    (read("low", 0.0), read("high", 1.0))
+}
+
+/// The full x-extent of [`samples`] — the domain the brush fractions map onto.
+/// Derived from the data (never hand-written), the `data_bounds` SSOT.
+fn x_extent() -> (f64, f64) {
+    data_bounds(&samples()).map_or((0.0, 1.0), |b| b.x)
+}
+
+/// Map the brush fractions onto the data x-extent, enforcing [`MIN_BRUSH_SPAN`]
+/// so the window never collapses. The result feeds
+/// [`ScatterChart::select_x_range`] — points outside it mute.
+fn brush_domain(low: f32, high: f32) -> (f64, f64) {
+    let (low, high) = if low <= high {
+        (low, high)
+    } else {
+        (high, low)
+    };
+    let high = high.max(low + MIN_BRUSH_SPAN).min(1.0);
+    let low = low.min(high - MIN_BRUSH_SPAN).max(0.0);
+    let (x_min, x_max) = x_extent();
+    let span = x_max - x_min;
+    (
+        x_min + f64::from(low) * span,
+        x_min + f64::from(high) * span,
+    )
+}
+
+/// The brush strip under the plot: a `scatter_brush`-tagged track (the
+/// `RangeSlider` capture basis) holding the selected span + two thumbs, aligned
+/// to the plot x range so it reads as an overview of the full x-axis.
+fn brush_strip(theme: &pinion_core::Theme, low: f32, high: f32) -> Scene {
+    let track_x = CHART_RECT.x;
+    let track_w = CHART_RECT.w;
+    let track_y = CHART_RECT.y + CHART_RECT.h + BRUSH_GAP;
+
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "fraction * track width -> px offset; both are display-bounded"
+    )]
+    let (span_x, span_w) = {
+        let w = track_w as f32;
+        let lo = (low.clamp(0.0, 1.0) * w).round() as u32;
+        let hi = (high.clamp(0.0, 1.0) * w).round() as u32;
+        (lo, hi.saturating_sub(lo).max(2))
+    };
+
+    let accent = theme.resolve(ColorRole::Accent);
+    let selected = Scene::Box(
+        BoxNode::new(Rect::default(), BoxStyle::filled(accent.with_alpha(0x66))).with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(span_x, 0)
+                .with_size(Size::px(span_w, BRUSH_H)),
+        ),
+    );
+    let thumb = |x: u32| {
+        Scene::Box(
+            BoxNode::new(
+                Rect::default(),
+                BoxStyle::filled(accent).with_corner_radius(2),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(x.saturating_sub(2), 0)
+                    .with_size(Size::px(4, BRUSH_H)),
+            ),
+        )
+    };
+
+    Scene::Container(
+        ContainerNode::new(vec![selected, thumb(span_x), thumb(span_x + span_w)])
+            .with_tag(BRUSH_TAG)
+            .with_aria_label("Scatter x-window brush")
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
+                    .with_corner_radius(BRUSH_H / 2),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(track_x, track_y)
+                    .with_size(Size::px(track_w, BRUSH_H)),
+            ),
+    )
+}
+
 /// Resolve the theme into a [`ChartStyle`]. Only colours are overridden — the
 /// margins / tick targets stay the defaults, which is what lets the a11y readout
 /// (computed with the default style) resolve the identical focus point.
@@ -126,17 +259,19 @@ fn chart_style(theme: &pinion_core::Theme) -> ChartStyle {
     }
 }
 
-/// view-fn (§6.3): pure sync `(SliderState, f32) -> Scene`. `scrub` is the
-/// inspect fraction across [`CHART_RECT`] that scrubs the x-axis.
+/// view-fn (§6.3): pure sync mapping. `scrub` is the inspect fraction across
+/// [`CHART_RECT`] that scrubs the x-axis; `(low, high)` is the brushed x-window
+/// that cross-filters the point marks (R1391).
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn view(state: SliderState, scrub: f32, _frame: &Frame) -> Scene {
+fn view(state: SliderState, scrub: f32, low: f32, high: f32, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
+    let (x_lo, x_hi) = brush_domain(low, high);
 
     let title = Scene::Text(
         TextNode::styled(
-            "Two samples (illustrative) — drag across the plot to inspect a point",
+            "Two samples — drag the plot to inspect, the strip to brush-filter",
             Rect::default(),
             TextStyle::new()
                 .with_size_px(TITLE_FONT_PX)
@@ -145,9 +280,15 @@ fn view(state: SliderState, scrub: f32, _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(14, 12)),
     );
 
+    // R1391 — the brush window cross-filters the SCATTER: points outside
+    // `[x_lo, x_hi]` mute (dimmed, still drawn), so brushing the overview strip
+    // highlights the corresponding points in the plot above.
     let scatter = ScatterChart::new(samples())
         .inspect(Some(scrub))
+        .select_x_range(Some((x_lo, x_hi)))
         .build(CHART_RECT, &chart_style(&theme));
+
+    let brush = brush_strip(&theme, low, high);
 
     // Transparent capture surface over the plot — the `scatter_scrub` primary
     // tag. On top so a press anywhere on the chart drives the scrub; transparent
@@ -164,7 +305,10 @@ fn view(state: SliderState, scrub: f32, _frame: &Frame) -> Scene {
 
     let status = Scene::Text(
         TextNode::styled(
-            format!("{} | scrub {scrub:.2}", state.as_name()),
+            format!(
+                "{} | scrub {scrub:.2} | brush x {x_lo:.1}..{x_hi:.1}",
+                state.as_name()
+            ),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(STATUS_FONT_PX)
@@ -174,23 +318,25 @@ fn view(state: SliderState, scrub: f32, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![scatter, scrub_surface, title, status])
+        ContainerNode::new(vec![scatter, scrub_surface, brush, title, status])
             .with_style(BoxStyle::filled(surface))
             .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
     )
 }
 
-/// `WidgetView` binding. The Slider is the scrub position (primary); `#[widget]`
-/// derives WidgetCore + WidgetView, and `a11y_manual` provides the hand-written
+/// `WidgetView` binding. The Slider is the scrub position (primary); the
+/// RangeSlider is the brush window (R1391 sibling external). `#[widget]` derives
+/// WidgetCore + WidgetView, and `a11y_manual` provides the hand-written
 /// [`WidgetA11y`] below (the scrub Slider describedby the inspect region).
 #[widget(
     tag = "scatter_scrub",
-    state = (SliderState, f32),
+    state = (SliderState, f32, f32, f32),
     event = SliderEvent,
-    title = "pinion hello-scatter (R1377 correlation scatter + scrub inspect)",
+    title = "pinion hello-scatter (R1377 scatter + scrub + R1391 brush-filter)",
     renderer = HelloScatterRenderer,
     initial_size = (WIN_W, WIN_H),
     external = scrub_external,
+    extra_externals = brush_extras,
     apply_key,
     keybinding,
     event_name_derive,
@@ -199,13 +345,18 @@ fn view(state: SliderState, scrub: f32, _frame: &Frame) -> Scene {
 struct ScatterView;
 
 impl ScatterView {
-    /// Reads the scrub fraction from the primary Slider external.
-    fn read_state(scene: &Scene) -> (SliderState, f32) {
-        read_slider_state(scene, SCRUB_TAG).unwrap_or((SliderState::Idle, 0.5))
+    /// Reads both externals by tag — the scrub fraction (primary Slider) and the
+    /// brush window (sibling `RangeSlider`). The `Container([primary, ...extras])`
+    /// shape extras impose rules out the derived single-External read.
+    fn read_state(scene: &Scene) -> (SliderState, f32, f32, f32) {
+        let (state, scrub) =
+            read_slider_state(scene, SCRUB_TAG).unwrap_or((SliderState::Idle, 0.5));
+        let (low, high) = read_brush(scene);
+        (state, scrub, low, high)
     }
 
-    fn view(state: (SliderState, f32), frame: Frame) -> Scene {
-        view(state.0, state.1, &frame)
+    fn view(state: (SliderState, f32, f32, f32), frame: Frame) -> Scene {
+        view(state.0, state.1, state.2, state.3, &frame)
     }
 
     /// ARIA slider keyboard scrub, mirrored through the RPC `scene/intervene`
@@ -239,8 +390,8 @@ impl ScatterView {
 /// x + per-series values a sighted user reads in the tooltip reach a screen
 /// reader too (the R1355 parity, now for scatter).
 impl WidgetA11y for ScatterView {
-    fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, scrub) = (state.0, state.1);
+    fn access_node(state: &(SliderState, f32, f32, f32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, scrub, low, high) = (state.0, state.1, state.2, state.3);
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
             ..AccessState::from_interaction(interaction, None)
@@ -264,13 +415,23 @@ impl WidgetA11y for ScatterView {
                 max: 1.0,
             })
             .with_state(access_state);
-        describedby_region(
+        let mut nodes = describedby_region(
             control,
             "chart.inspect.tooltip",
             AriaRole::Tooltip,
             readout,
             true,
-        )
+        );
+        // The brush window is a sibling external (R1391). A two-thumb range has
+        // no single-Float shape, so `AccessValue::Text` states the filtered
+        // x-window plainly rather than leaving the cross-filter inaudible.
+        let (x_lo, x_hi) = brush_domain(low, high);
+        nodes.push(
+            AccessNode::new(BRUSH_TAG, AriaRole::Slider)
+                .with_name("Scatter x-window brush".to_string())
+                .with_value(AccessValue::Text(format!("x from {x_lo:.1} to {x_hi:.1}"))),
+        );
+        nodes
     }
 }
 
@@ -309,8 +470,12 @@ mod tests {
     }
 
     fn rendered(scrub: f32) -> Scene {
+        rendered_brushed(scrub, 0.0, 1.0)
+    }
+
+    fn rendered_brushed(scrub: f32, low: f32, high: f32) -> Scene {
         let owner = Owner::new();
-        owner.run(|| view(SliderState::Idle, scrub, &Frame::new()))
+        owner.run(|| view(SliderState::Idle, scrub, low, high, &Frame::new()))
     }
 
     #[test]
@@ -350,7 +515,7 @@ mod tests {
     #[test]
     fn r55_g20_view_carries_composite_paint_root_tag() {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<ScatterView>(
-            (SliderState::Idle, 0.5),
+            (SliderState::Idle, 0.5, 0.0, 1.0),
             &Frame::new(),
         );
     }
@@ -358,14 +523,15 @@ mod tests {
     #[test]
     fn r1360_2_view_paints_an_opaque_root() {
         pinion_core::test_fixtures::assert_widget_view_paints_opaque_root::<ScatterView>(
-            (SliderState::Idle, 0.5),
+            (SliderState::Idle, 0.5, 0.0, 1.0),
             &Frame::new(),
         );
     }
 
     #[test]
     fn scrub_reports_slider_role_and_is_describedby_the_readout() {
-        let nodes = <ScatterView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5), None);
+        let nodes =
+            <ScatterView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5, 0.0, 1.0), None);
         assert_eq!(nodes[0].role, AriaRole::Slider);
         assert_eq!(nodes[0].tag, SCRUB_TAG);
         assert_eq!(
@@ -385,6 +551,67 @@ mod tests {
         assert!(
             name.contains("rising") && name.contains("falling"),
             "the readout names both series: {name:?}"
+        );
+    }
+
+    // ── R1391 numeric brush-range cross-filter ────────────────────────
+
+    /// A point mark's fill colour (each point is a filled circle `Scene::Path`).
+    fn point_fill(scene: &Scene, tag: &str) -> Color {
+        let Scene::Path(p) = find(scene, tag).expect("a point") else {
+            panic!("a point mark is a path")
+        };
+        p.style.fill.expect("a point is filled")
+    }
+
+    #[test]
+    fn r1391_brush_mutes_out_of_range_points_but_keeps_them_drawn() {
+        // Brush the lower half (fractions 0..0.5 -> x in ~[1, 4.75]): rising's
+        // point 0 (x=1) is inside the window, point 7 (x=8) is outside.
+        let scene = rendered_brushed(0.5, 0.0, 0.5);
+        // Muting DIMS, it does not DROP — all 16 marks still emit a node.
+        assert_eq!(
+            count_prefix(&scene, "chart.point."),
+            16,
+            "every point stays drawn"
+        );
+        assert_ne!(
+            point_fill(&scene, "chart.point.0.0"),
+            point_fill(&scene, "chart.point.0.7"),
+            "an in-range and an out-of-range point of the SAME series differ (one muted)",
+        );
+    }
+
+    #[test]
+    fn r1391_full_brush_filters_nothing() {
+        // The boot / full-span brush leaves every point at full colour, so two
+        // points of one series share the identical fill.
+        let scene = rendered_brushed(0.5, 0.0, 1.0);
+        assert_eq!(
+            point_fill(&scene, "chart.point.0.0"),
+            point_fill(&scene, "chart.point.0.7"),
+            "full span = no filter => same-series fills are equal",
+        );
+    }
+
+    #[test]
+    fn r1391_brush_strip_present_and_announced() {
+        let scene = rendered_brushed(0.5, 0.2, 0.6);
+        assert!(
+            find(&scene, BRUSH_TAG).is_some(),
+            "the brush strip is in the scene"
+        );
+        let nodes =
+            <ScatterView as WidgetA11y>::access_node(&(SliderState::Idle, 0.5, 0.2, 0.6), None);
+        let brush = nodes
+            .iter()
+            .find(|n| n.tag == BRUSH_TAG)
+            .expect("the brush a11y node");
+        assert_eq!(brush.role, AriaRole::Slider);
+        assert_eq!(
+            brush.name.as_deref(),
+            Some("Scatter x-window brush"),
+            "the brush announces itself",
         );
     }
 }

@@ -29,6 +29,15 @@ use crate::ticks::format_axis_tick;
 /// the one width rather than each choosing its own (R1375).
 pub(crate) const TOOLTIP_WIDTH: u32 = 132;
 
+/// The alpha a mark OUTSIDE the active cross-filter selection is dimmed to — low
+/// enough to read as "muted / filtered out" beside the full-strength selected
+/// marks, high enough to stay visible (and re-selectable) as context. Shared by
+/// the categorical [`BarChart::select`](crate::BarChart::select) (R1384) and the
+/// numeric [`ScatterChart::select_x_range`](crate::ScatterChart::select_x_range)
+/// (R1391) so the two cross-filter forms dim to the identical strength — lifted
+/// here from `bar.rs` at the 2nd consumer, the [`TOOLTIP_WIDTH`] precedent.
+pub(crate) const MUTED_ALPHA: u8 = 0x4D;
+
 /// The plotting area inside `rect` after the [`Margin`] insets — `(left, right,
 /// top, bottom)` in device pixels (each edge `+1`-clamped so a zero-inset side
 /// still leaves a paintable span). Pure margin→pixel geometry, independent of

@@ -46,8 +46,8 @@ use pinion_core::scene::{ContainerNode, PathNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
 
 use crate::draw::{
-    CalloutRow, absolute, box_node, callout, circle_commands, fill_parent, label_node, marker_node,
-    stroke_path, to_f32, to_u32,
+    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, fill_parent, label_node,
+    marker_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{CartesianPlot, axis_ticks, resolve_focus};
@@ -64,6 +64,7 @@ pub struct ScatterChart {
     x_domain: Option<(f64, f64)>,
     y_domain: Option<(f64, f64)>,
     inspect: Option<f32>,
+    select_x_range: Option<(f64, f64)>,
     tag_prefix: String,
 }
 
@@ -78,6 +79,7 @@ impl ScatterChart {
             x_domain: None,
             y_domain: None,
             inspect: None,
+            select_x_range: None,
             tag_prefix: "chart".to_string(),
         }
     }
@@ -111,6 +113,23 @@ impl ScatterChart {
     #[must_use]
     pub fn inspect(mut self, fraction: Option<f32>) -> Self {
         self.inspect = fraction;
+        self
+    }
+
+    /// Cross-filter the point marks to a numeric x-range: with `Some((lo, hi))`,
+    /// every point whose x falls OUTSIDE `[lo, hi]` (inclusive) renders muted
+    /// (its fill dimmed to a low alpha) while the in-range points stay full — the
+    /// numeric-range twin of the categorical [`BarChart::select`](crate::BarChart::select)
+    /// (R1384), the mark-level peer a numeric BRUSH drives (R1391). Muted points
+    /// are still DRAWN (unlike a pinned [`with_x_domain`](Self::with_x_domain),
+    /// which drops out-of-domain points): the out-of-range marks stay on screen as
+    /// context, so a brush on one widget highlights the corresponding points here.
+    /// `None` (the default) is "no filter" and every point renders full — the
+    /// crossfilter convention that no selection = all data. Render-only; the
+    /// caller owns the range (e.g. wired from a `RangeSlider` brush).
+    #[must_use]
+    pub fn select_x_range(mut self, range: Option<(f64, f64)>) -> Self {
+        self.select_x_range = range;
         self
     }
 
@@ -211,6 +230,13 @@ impl ScatterChart {
 
     /// One filled circle per finite, in-domain point of every series. A point
     /// outside the (pinned) domain is dropped so it never paints past the axes.
+    /// Whether a point at x `px` falls OUTSIDE the active cross-filter range (so
+    /// its mark mutes). No range set = nothing muted (every point renders full).
+    /// Boundaries are inclusive: a point exactly on `lo` or `hi` stays selected.
+    fn is_muted(&self, px: f64) -> bool {
+        matches!(self.select_x_range, Some((lo, hi)) if px < lo || px > hi)
+    }
+
     fn point_marks(&self, plot: &CartesianPlot, style: &ChartStyle) -> Vec<Scene> {
         let radius = style.marker_radius.max(1);
         let (x_lo, x_hi) = plot.x.domain();
@@ -231,11 +257,18 @@ impl ScatterChart {
                 {
                     continue;
                 }
+                // Cross-filter (R1391): a point outside the active brush range is
+                // dimmed but still drawn (context), unlike the domain drop above.
+                let mark_color = if self.is_muted(p.x) {
+                    color.with_alpha(MUTED_ALPHA)
+                } else {
+                    color
+                };
                 out.push(marker_node(
                     plot.x.map(p.x),
                     plot.y.map(p.y),
                     radius,
-                    color,
+                    mark_color,
                     format!("{}.point.{i}.{j}", self.tag_prefix),
                 ));
             }
@@ -588,6 +621,87 @@ mod tests {
         // In-domain: a(0,1) yes; a(5,8) no (y); b(2,6) no (y). => only 1.
         assert_eq!(count_prefix(&scene, "chart.point."), 1);
         assert!(find(&scene, "chart.point.0.0").is_some());
+    }
+
+    // ── R1391 numeric brush-range cross-filter (select_x_range) ───────
+
+    /// A point mark's fill colour (each point is a filled circle `Scene::Path`).
+    fn point_fill(scene: &Scene, tag: &str) -> Color {
+        let Scene::Path(p) = find(scene, tag).expect("a point") else {
+            panic!("a point mark is a path")
+        };
+        p.style.fill.expect("a point is filled")
+    }
+
+    #[test]
+    fn r1391_select_x_range_mutes_points_outside_and_keeps_them_drawn() {
+        // two_series: a=[(0,1),(5,8),(10,4)], b=[(2,6),(8,2)]. Brush x in [3,9]
+        // selects a(5,8)=0.1 and b(8,2)=1.1; the other three mute.
+        let scene = ScatterChart::new(two_series())
+            .select_x_range(Some((3.0, 9.0)))
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        // Muting DIMS, it does not DROP: all five points still emit a node
+        // (unlike a pinned domain, which drops out-of-domain points).
+        assert_eq!(
+            count_prefix(&scene, "chart.point."),
+            5,
+            "every point stays drawn"
+        );
+        let full = CategoricalPalette::default().color(0);
+        assert_eq!(
+            point_fill(&scene, "chart.point.0.1"),
+            full,
+            "an in-range point keeps its full colour",
+        );
+        assert_eq!(
+            point_fill(&scene, "chart.point.0.0"),
+            full.with_alpha(MUTED_ALPHA),
+            "an out-of-range point is its own colour dimmed to MUTED_ALPHA",
+        );
+        assert_eq!(
+            point_fill(&scene, "chart.point.1.0"),
+            CategoricalPalette::default()
+                .color(1)
+                .with_alpha(MUTED_ALPHA),
+            "series b's out-of-range point mutes in its own colour",
+        );
+    }
+
+    #[test]
+    fn r1391_select_x_range_none_leaves_every_point_full() {
+        let scene = ScatterChart::new(two_series())
+            .select_x_range(None)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        let full = CategoricalPalette::default().color(0);
+        for tag in ["chart.point.0.0", "chart.point.0.1", "chart.point.0.2"] {
+            assert_eq!(point_fill(&scene, tag), full, "no range = every point full");
+        }
+    }
+
+    #[test]
+    fn r1391_select_x_range_boundary_is_inclusive() {
+        // Brush exactly [5, 8]: a(5,8)=0.1 and b(8,2)=1.1 sit ON the boundary and
+        // stay selected; a(0,1) and b(2,6) fall outside and mute.
+        let scene = ScatterChart::new(two_series())
+            .select_x_range(Some((5.0, 8.0)))
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        let a = CategoricalPalette::default().color(0);
+        let b = CategoricalPalette::default().color(1);
+        assert_eq!(
+            point_fill(&scene, "chart.point.0.1"),
+            a,
+            "x==lo stays selected"
+        );
+        assert_eq!(
+            point_fill(&scene, "chart.point.1.1"),
+            b,
+            "x==hi stays selected"
+        );
+        assert_eq!(
+            point_fill(&scene, "chart.point.0.0"),
+            a.with_alpha(MUTED_ALPHA),
+            "x below lo mutes",
+        );
     }
 
     #[test]
