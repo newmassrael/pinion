@@ -2063,6 +2063,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-cross-filter"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-data-grid"
 version = "0.0.1"
 dependencies = [

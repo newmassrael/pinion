@@ -87,6 +87,7 @@ members = [
     "examples/hello-series-toggle",
     "examples/hello-legend-toggle",
     "examples/hello-rescale-toggle",
+    "examples/hello-cross-filter",
     "examples/hello-snackbar",
     "examples/hello-richtext",
     "examples/hello-color-picker",

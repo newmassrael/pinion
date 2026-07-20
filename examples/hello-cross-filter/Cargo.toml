@@ -1,0 +1,26 @@
+[package]
+name = "hello-cross-filter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1384 click a bar to cross-filter a companion line chart — forcing consumer of BarChart::select / selectable; 6th consumer of the toggle_group substrate"
+publish = false
+
+[[bin]]
+name = "hello-cross-filter"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -36,6 +36,15 @@
 //! (its value — one, singular, unlike line's per-series `chart.inspect.value.{i}`,
 //! because a categorical slot holds one value).
 //!
+//! [`select`](BarChart::select) + [`selectable`](BarChart::selectable) add
+//! cross-filtering (R1384): `select` mutes the bars outside the active category
+//! set (their `chart.bar.{i}` box keeps its tag but drops to a low alpha),
+//! and `selectable` overlays one transparent, focusable, hit-testable region per
+//! bar — tagged in the CALLER's namespace (not `chart.*`), spanning the whole
+//! slot column — so a click in a category's column routes to that bar's tag.
+//! The chart only renders the selection; the caller owns the state and the
+//! cross-widget link (see `examples/hello-cross-filter`).
+//!
 //! # Coordinate contract
 //!
 //! Identical to [`crate::line`]: [`BarChart::build_fill`] is the
@@ -46,7 +55,7 @@
 
 use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect};
-use pinion_core::style::{Color, TextAlign};
+use pinion_core::style::{Color, LayoutStyle, Size, TextAlign};
 
 use crate::draw::{
     CalloutRow, absolute, box_node, callout, fill_parent, label_node, outline_box, plot_rect,
@@ -60,6 +69,13 @@ use crate::ticks::{format_axis_tick, nice_ticks, tick_step};
 /// The fraction of each bar's slot left empty as the inter-bar gap (so
 /// adjacent bars read as distinct). `0.2` = a bar fills 80% of its slot.
 const BAR_GAP_FRAC: f32 = 0.2;
+
+/// The alpha a bar OUTSIDE the active cross-filter selection is dimmed to
+/// (R1384) — low enough to read as "muted / filtered out" beside the full-
+/// strength selected bars, but not invisible (the category stays legible and
+/// re-selectable). The bar-chart analogue of the line chart's legend-mute
+/// idiom (a dimmed alpha, [`crate::line`]).
+const MUTED_ALPHA: u8 = 0x4D;
 
 /// One bar: a category `label`, its `value`, and an optional per-bar `color`
 /// override (else the chart's palette colour). The override is what lets a
@@ -100,6 +116,12 @@ pub struct BarChart {
     palette: CategoricalPalette,
     y_domain: Option<(f64, f64)>,
     inspect: Option<f32>,
+    /// The active cross-filter mask (R1384): `selected[i]` = category `i` is in
+    /// the filter set. Empty / all-`false` = no filter (every bar full).
+    selected: Vec<bool>,
+    /// Per-bar caller tags making the bars clickable (R1384); `None` = the bars
+    /// are display-only.
+    select_tags: Option<Vec<String>>,
     tag_prefix: String,
 }
 
@@ -114,6 +136,8 @@ impl BarChart {
             palette: CategoricalPalette::default(),
             y_domain: None,
             inspect: None,
+            selected: Vec::new(),
+            select_tags: None,
             tag_prefix: "chart".to_string(),
         }
     }
@@ -154,6 +178,50 @@ impl BarChart {
     pub fn inspect(mut self, fraction: Option<f32>) -> Self {
         self.inspect = fraction;
         self
+    }
+
+    /// Mark the active cross-filter selection (R1384): given a per-bar mask
+    /// (`active[i]` = category `i` is in the filter set), every bar OUTSIDE the
+    /// set renders muted (dimmed to a low alpha) while the selected bars
+    /// keep full strength — so the chart reads as "these categories are the
+    /// active filter". An empty mask, or an all-`false` one, is "no filter" and
+    /// leaves every bar at full strength (the crossfilter convention: no
+    /// selection = all data).
+    ///
+    /// This is only the RENDER of the selection state.
+    /// [`selectable`](Self::selectable) is what makes the bars *drive* it from a
+    /// pointer, and a companion widget reads the same mask to filter its own
+    /// data — the cross-widget link that makes this cross-filtering rather than
+    /// a self-contained toggle. Mirrors the line chart's
+    /// [`Series::visible`](crate::Series) mute + interactive-legend split
+    /// ("the chart emits, the caller owns the state").
+    #[must_use]
+    pub fn select(mut self, active: Vec<bool>) -> Self {
+        self.selected = active;
+        self
+    }
+
+    /// Make each bar a focusable, hit-testable region tagged with the caller's
+    /// `tags[i]` (one per bar, in bar order): a transparent overlay spanning the
+    /// bar's whole slot COLUMN, so the router's deepest-tagged-ancestor hit-test
+    /// resolves a click anywhere in that category's column to `tags[i]`. This is
+    /// the same chip mechanism
+    /// [`LineChart::interactive_legend`](crate::LineChart::interactive_legend)
+    /// gives its legend entries, now applied to the bars themselves — the caller
+    /// owns the tag namespace and wires each tag to set [`select`](Self::select),
+    /// so the chart stays a pure scene producer. Only the first `tags.len()`
+    /// bars become clickable; any extra tags past the last bar are ignored, and
+    /// bars past `tags.len()` stay display-only.
+    #[must_use]
+    pub fn selectable(mut self, tags: Vec<String>) -> Self {
+        self.select_tags = Some(tags);
+        self
+    }
+
+    /// Whether bar `i` is in the active cross-filter set. An out-of-range index
+    /// is inactive, so a short mask simply leaves the trailing bars unselected.
+    fn is_active(&self, i: usize) -> bool {
+        self.selected.get(i).copied().unwrap_or(false)
     }
 
     /// The bars this chart was built with.
@@ -227,6 +295,11 @@ impl BarChart {
             &self.tag_prefix,
         ));
 
+        // The cross-filter selection (R1384): when ANY category is selected,
+        // bars OUTSIDE the active set render muted; an empty / all-`false` mask
+        // is "no filter" and leaves every bar full.
+        let any_selected = self.selected.iter().any(|&a| a);
+
         // Bars — evenly spaced slots across the plot width, each bar centred
         // in its slot and grown from the baseline to its value. The per-slot
         // geometry lives in `bar_slot_center_and_rect`, the shared source the
@@ -239,7 +312,13 @@ impl BarChart {
                 // chart's distinct-per-bar colouring); a per-bar override wins
                 // (a histogram paints every bin uniform + its over-budget bins
                 // in the jank colour).
-                let color = bar.color.unwrap_or_else(|| self.palette.color(i));
+                let base = bar.color.unwrap_or_else(|| self.palette.color(i));
+                // A bar not in a non-empty active set is dimmed (filtered out).
+                let color = if any_selected && !self.is_active(i) {
+                    base.with_alpha(MUTED_ALPHA)
+                } else {
+                    base
+                };
                 children.push(box_node(r, color, format!("{}.bar.{i}", self.tag_prefix)));
             }
             // Category label centred under the slot (always, even for a
@@ -276,6 +355,32 @@ impl BarChart {
 
         // The tooltip paints above everything.
         children.extend(tooltip);
+
+        // Cross-filter click surfaces (R1384): a transparent, focusable, tagged
+        // overlay per bar spanning its FULL slot column, emitted LAST so the
+        // geometric hit-test resolves a click anywhere in a category's column to
+        // that bar's caller tag (the bar analogue of the interactive legend's
+        // per-entry chip). Transparent (no `BoxStyle`), so it never obscures the
+        // bar / mute beneath it — it exists only to be hit.
+        if let Some(tags) = &self.select_tags {
+            let col_h = to_u32(g.bottom - g.top);
+            for (i, tag) in tags.iter().enumerate() {
+                if i >= g.n {
+                    break;
+                }
+                let slot_x = g.left + (i as f32) * g.slot;
+                children.push(Scene::Container(
+                    ContainerNode::new(Vec::new())
+                        .with_tag(tag.clone())
+                        .with_layout(
+                            LayoutStyle::new()
+                                .with_absolute_position(to_u32(slot_x), to_u32(g.top))
+                                .with_size(Size::px(to_u32(g.slot), col_h))
+                                .with_focusable(true),
+                        ),
+                ));
+            }
+        }
 
         ContainerNode::new(children).with_tag(self.tag_prefix.clone())
     }
@@ -790,6 +895,131 @@ mod tests {
             "the tooltip stays within the chart ({}+{} <= {W})",
             tip.rect.x,
             tip.rect.w
+        );
+    }
+
+    // ── R1384 cross-filter: select() mutes, selectable() adds click surfaces ──
+
+    fn fill_of(scene: &Scene, i: usize) -> pinion_core::style::Color {
+        let Scene::Box(b) = find(scene, &format!("chart.bar.{i}")).expect("bar box") else {
+            panic!("bar is a box")
+        };
+        b.style.fill
+    }
+
+    #[test]
+    fn no_selection_leaves_every_bar_full() {
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(three()).build(rect, &ChartStyle::default());
+        // Both an all-false mask AND an empty mask are "no filter": no mute
+        // (the crossfilter convention that an empty selection = all data).
+        let all_false = BarChart::new(three())
+            .select(vec![false, false, false])
+            .build(rect, &ChartStyle::default());
+        let empty = BarChart::new(three())
+            .select(vec![])
+            .build(rect, &ChartStyle::default());
+        for i in 0..3 {
+            assert_eq!(
+                fill_of(&all_false, i),
+                fill_of(&full, i),
+                "an all-false mask mutes nothing"
+            );
+            assert_eq!(
+                fill_of(&empty, i),
+                fill_of(&full, i),
+                "an empty mask mutes nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn select_mutes_the_bars_outside_the_active_set() {
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(three()).build(rect, &ChartStyle::default());
+        // Select ONLY category b (index 1): a and c mute, b stays full.
+        let sel = BarChart::new(three())
+            .select(vec![false, true, false])
+            .build(rect, &ChartStyle::default());
+        assert_eq!(
+            fill_of(&sel, 1),
+            fill_of(&full, 1),
+            "the selected bar keeps its full colour"
+        );
+        assert_ne!(
+            fill_of(&sel, 0),
+            fill_of(&full, 0),
+            "an unselected bar is muted"
+        );
+        assert_ne!(
+            fill_of(&sel, 2),
+            fill_of(&full, 2),
+            "an unselected bar is muted"
+        );
+        // The mute is EXACTLY the full colour at MUTED_ALPHA (a dimmed alpha,
+        // not some other tint) — so the category stays recognisable.
+        assert_eq!(
+            fill_of(&sel, 0),
+            fill_of(&full, 0).with_alpha(MUTED_ALPHA),
+            "a muted bar is its own colour dimmed to MUTED_ALPHA"
+        );
+    }
+
+    #[test]
+    fn selectable_makes_each_bar_a_focusable_tagged_hit_region() {
+        let tags = vec![
+            "cat_0".to_string(),
+            "cat_1".to_string(),
+            "cat_2".to_string(),
+        ];
+        let scene = BarChart::new(three())
+            .selectable(tags.clone())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        for tag in &tags {
+            let Some(Scene::Container(hit)) = find(&scene, tag) else {
+                panic!("hit region {tag} is a focusable container")
+            };
+            assert!(hit.layout.focusable, "region {tag} is a Tab / click target");
+        }
+        // And NONE of those tags exists when the chart is not made selectable.
+        let plain = BarChart::new(three()).build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        for tag in &tags {
+            assert!(
+                find(&plain, tag).is_none(),
+                "no hit region without selectable()"
+            );
+        }
+    }
+
+    #[test]
+    fn selectable_tags_only_as_many_bars_as_tags_given() {
+        // Two tags for three bars -> only the first two columns are clickable.
+        let scene = BarChart::new(three())
+            .selectable(vec!["c0".to_string(), "c1".to_string()])
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert!(find(&scene, "c0").is_some());
+        assert!(find(&scene, "c1").is_some());
+        assert!(
+            find(&scene, "c2").is_none(),
+            "the untagged third bar gets no hit region"
+        );
+    }
+
+    #[test]
+    fn selectable_ignores_tags_past_the_last_bar() {
+        // Four tags for three bars -> the phantom fourth tag emits no region.
+        let scene = BarChart::new(three())
+            .selectable(vec![
+                "c0".to_string(),
+                "c1".to_string(),
+                "c2".to_string(),
+                "c3".to_string(),
+            ])
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert!(find(&scene, "c2").is_some());
+        assert!(
+            find(&scene, "c3").is_none(),
+            "no phantom hit region past the last bar"
         );
     }
 }

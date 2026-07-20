@@ -75,14 +75,21 @@
 //! the axes to only the visible series. And (R1382) the [`Treemap`] — the
 //! crate's SECOND part-of-whole form, area-encoded rather than angular: a
 //! squarified (Bruls-Huizing-van Wijk) tile layout with contrast-aware in-tile
-//! labels and the same scrub inspect (ring + `value (percent%)` tooltip).
+//! labels and the same scrub inspect (ring + `value (percent%)` tooltip). And
+//! (R1384) the first CROSS-FILTER surface — [`BarChart::select`] mutes the bars
+//! outside an active category set, [`BarChart::selectable`] overlays one
+//! focusable, caller-tagged hit region per bar (the `interactive_legend` chip
+//! mechanism applied to the bars), and `examples/hello-cross-filter` wires that
+//! selection to filter a companion line chart: a click in one widget reshapes
+//! another.
 //!
-//! Not yet: cross-filtering across charts, and a y-rescale to a brush-zoomed
-//! x-window (distinct from R1381's rescale-to-VISIBLE-series) — follow-up
-//! slices on that same core. (A frequency *histogram* is a consumer pattern
-//! over [`BarChart`], not a distinct type — `hello-frame-profiler` bins its
-//! frame times into one, and R1375 lets a reader scrub it for each bin's frame
-//! count.)
+//! Not yet: cross-filtering driven by a numeric BRUSH range (rather than a
+//! categorical selection) or between two arbitrary chart types, and a y-rescale
+//! to a brush-zoomed x-window (distinct from R1381's rescale-to-VISIBLE-series)
+//! — follow-up slices on that same core. (A frequency *histogram* is a consumer
+//! pattern over [`BarChart`], not a distinct type — `hello-frame-profiler` bins
+//! its frame times into one, and R1375 lets a reader scrub it for each bin's
+//! frame count.)
 //!
 //! # Two entry points — pick by who places the chart
 //!
