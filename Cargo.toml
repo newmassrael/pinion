@@ -91,6 +91,7 @@ members = [
     "examples/hello-cross-filter",
     "examples/hello-linked-legend",
     "examples/hello-linked-brush",
+    "examples/hello-histogram-brush",
     "examples/hello-stat-tiles",
     "examples/hello-timeline",
     "examples/hello-snackbar",

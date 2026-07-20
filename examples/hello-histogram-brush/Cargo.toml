@@ -1,0 +1,40 @@
+[package]
+name = "hello-histogram-brush"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1395 numeric different-geometry cross-filter consumer — the forcing consumer for BarChart::select_x_range. One x-window brush (a sibling RangeSliderExternal, wired through the pinion_chart::Brush substrate — its fourth consumer, which only CALLS the R1394 lift) cross-filters TWO UNLIKE geometries at once: a ScatterChart on top mutes the points outside the window (R1391), and a BarChart histogram below mutes the BINS whose numeric [lo, hi) extent falls outside it (BarChart::select_x_range, new in R1395 — a numeric brush over a categorical bar layout). The completing leg of the cross-filter matrix: the same window filters point marks AND histogram bins. A primary Slider scrub over the scatter is the secondary inspector. Exercises the brush wiring, the bar chart's numeric bin cross-filter, and distinct tag prefixes end-to-end in the real windowed shell + over RPC."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# R1395 — the two geometries under test (ScatterChart + BarChart histogram) and
+# the Brush substrate (`pinion_chart::Brush` / `BrushStripColors`), whose fourth
+# consumer this is (a call, not a lift — R1394 established the SSOT).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 — `#[pinion_derive::widget(...)]` emits WidgetCore + WidgetView (the
+# `a11y_manual` opt-out leaves WidgetA11y to the hand-written impl in main.rs).
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.38 — shared slider introspect reader + ARIA keyboard scaffold
+# (`read_slider_state` / `slider_apply_key`); the SliderExternal is reused as
+# the scrub-position holder over the scatter (value 0..1 = the fraction).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloHistogramBrushRenderer` struct emitted by build.rs names `::vello::*`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# `assert_widget_view_carries_tag`: the primary surface carries the widget tag.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# Build-time codegen for the `HelloHistogramBrushRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

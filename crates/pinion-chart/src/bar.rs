@@ -45,6 +45,15 @@
 //! The chart only renders the selection; the caller owns the state and the
 //! cross-widget link (see `examples/hello-cross-filter`).
 //!
+//! [`select_x_range`](BarChart::select_x_range) adds the NUMERIC cross-filter
+//! (R1395): when a bar declares a numeric [`bin`](Bar::bin) (`[lo, hi)`), a
+//! brush window mutes the bars whose bin falls outside it — so the same numeric
+//! x-window brush that dims scatter points ([`ScatterChart::select_x_range`](crate::ScatterChart::select_x_range))
+//! or a line's out-of-window portion ([`LineChart::select_x_range`](crate::LineChart::select_x_range))
+//! also dims the matching HISTOGRAM bins here. It is the DIFFERENT-geometry leg
+//! of the cross-filter matrix (a numeric brush over a categorical bar layout);
+//! see `examples/hello-histogram-brush`.
+//!
 //! # Coordinate contract
 //!
 //! Identical to [`crate::line`]: [`BarChart::build_fill`] is the
@@ -70,9 +79,11 @@ use crate::ticks::{format_axis_tick, nice_ticks, tick_step};
 /// adjacent bars read as distinct). `0.2` = a bar fills 80% of its slot.
 const BAR_GAP_FRAC: f32 = 0.2;
 
-/// One bar: a category `label`, its `value`, and an optional per-bar `color`
-/// override (else the chart's palette colour). The override is what lets a
-/// histogram paint its over-budget bins in a distinct colour.
+/// One bar: a category `label`, its `value`, an optional per-bar `color`
+/// override (else the chart's palette colour), and an optional numeric `bin`
+/// extent. The colour override is what lets a histogram paint its over-budget
+/// bins in a distinct colour; the `bin` is what lets a numeric brush
+/// cross-filter it ([`BarChart::select_x_range`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bar {
     /// The category label, centred under the bar on the x-axis.
@@ -81,16 +92,25 @@ pub struct Bar {
     pub value: f64,
     /// An optional colour override for THIS bar.
     pub color: Option<Color>,
+    /// The numeric half-open interval `[lo, hi)` this bar spans on an implicit
+    /// x-axis — a histogram bin. `None` (the default) = a purely categorical
+    /// bar with no numeric position, which [`BarChart::select_x_range`] never
+    /// mutes (there is no window to compare it to). Set it (via
+    /// [`Bar::with_bin`]) to make the bar a histogram bin a numeric brush can
+    /// cross-filter — the categorical-layout analogue of a scatter point's own
+    /// numeric x.
+    pub bin: Option<(f64, f64)>,
 }
 
 impl Bar {
-    /// A bar with the default (palette) colour.
+    /// A bar with the default (palette) colour and no numeric bin extent.
     #[must_use]
     pub fn new(label: impl Into<String>, value: f64) -> Self {
         Self {
             label: label.into(),
             value,
             color: None,
+            bin: None,
         }
     }
 
@@ -98,6 +118,15 @@ impl Bar {
     #[must_use]
     pub fn with_color(mut self, color: Color) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// Declare this bar a histogram bin spanning the numeric half-open interval
+    /// `[lo, hi)` — the numeric x-extent a [`BarChart::select_x_range`] brush
+    /// window is tested against. A bar without a bin is never numerically muted.
+    #[must_use]
+    pub fn with_bin(mut self, lo: f64, hi: f64) -> Self {
+        self.bin = Some((lo, hi));
         self
     }
 }
@@ -115,6 +144,11 @@ pub struct BarChart {
     /// Per-bar caller tags making the bars clickable (R1384); `None` = the bars
     /// are display-only.
     select_tags: Option<Vec<String>>,
+    /// The active numeric cross-filter window (R1395): a bar whose
+    /// [`bin`](Bar::bin) does not overlap `[lo, hi]` renders muted. `None` = no
+    /// numeric filter. Orthogonal to the categorical [`selected`](Self::selected)
+    /// mask; either dims a bar.
+    select_x_range: Option<(f64, f64)>,
     tag_prefix: String,
 }
 
@@ -131,6 +165,7 @@ impl BarChart {
             inspect: None,
             selected: Vec::new(),
             select_tags: None,
+            select_x_range: None,
             tag_prefix: "chart".to_string(),
         }
     }
@@ -211,10 +246,47 @@ impl BarChart {
         self
     }
 
+    /// Cross-filter the bars to a numeric x-range: with `Some((lo, hi))`, every
+    /// bar whose [`bin`](Bar::bin) does NOT overlap `[lo, hi]` renders muted
+    /// (its box dimmed to a low alpha) while the in-window bars stay full — the
+    /// **different-geometry** peer of the numeric-range
+    /// [`ScatterChart::select_x_range`](crate::ScatterChart::select_x_range)
+    /// (R1391) / [`LineChart::select_x_range`](crate::LineChart::select_x_range)
+    /// (R1394): the same brush window that mutes scatter points or a line's
+    /// out-of-window portion here mutes the matching HISTOGRAM bins, so one
+    /// numeric brush cross-filters a bar chart's categorical bar layout too.
+    ///
+    /// A bar with no `bin` is never muted by this (it has no numeric position);
+    /// a bar's bin `[blo, bhi)` overlaps the window iff `blo < hi && bhi > lo`,
+    /// so a bin touching a window edge follows the half-open convention. `None`
+    /// (the default) is "no filter" and every bar renders full — the crossfilter
+    /// convention that no selection = all data, which makes a full-span brush a
+    /// natural no-op (no bin is ever outside the whole extent). Muted bars stay
+    /// DRAWN (dimmed as context), like the scatter's muted points. Render-only;
+    /// the caller owns the range (e.g. wired from a `RangeSlider` brush through
+    /// the [`Brush`](crate::Brush) substrate). Orthogonal to
+    /// [`select`](Self::select): either dims a bar.
+    #[must_use]
+    pub fn select_x_range(mut self, range: Option<(f64, f64)>) -> Self {
+        self.select_x_range = range;
+        self
+    }
+
     /// Whether bar `i` is in the active cross-filter set. An out-of-range index
     /// is inactive, so a short mask simply leaves the trailing bars unselected.
     fn is_active(&self, i: usize) -> bool {
         self.selected.get(i).copied().unwrap_or(false)
+    }
+
+    /// Whether `bar` falls OUTSIDE the active numeric brush window (R1395), so
+    /// its box mutes. A bar with no [`bin`](Bar::bin), or no active range, is
+    /// never x-muted; otherwise the bin `[blo, bhi)` is muted when it does not
+    /// overlap the window `[lo, hi]` (`blo >= hi || bhi <= lo`).
+    fn is_x_muted(&self, bar: &Bar) -> bool {
+        match (self.select_x_range, bar.bin) {
+            (Some((lo, hi)), Some((blo, bhi))) => blo >= hi || bhi <= lo,
+            _ => false,
+        }
     }
 
     /// The bars this chart was built with.
@@ -306,8 +378,11 @@ impl BarChart {
                 // (a histogram paints every bin uniform + its over-budget bins
                 // in the jank colour).
                 let base = bar.color.unwrap_or_else(|| self.palette.color(i));
-                // A bar not in a non-empty active set is dimmed (filtered out).
-                let color = if any_selected && !self.is_active(i) {
+                // A bar is dimmed when EITHER cross-filter excludes it: the
+                // categorical set (R1384 — not in a non-empty active set) or the
+                // numeric brush window (R1395 — its bin outside `[lo, hi]`).
+                let muted = (any_selected && !self.is_active(i)) || self.is_x_muted(bar);
+                let color = if muted {
                     base.with_alpha(MUTED_ALPHA)
                 } else {
                     base
@@ -1013,6 +1088,184 @@ mod tests {
         assert!(
             find(&scene, "c3").is_none(),
             "no phantom hit region past the last bar"
+        );
+    }
+
+    // ── R1395 numeric cross-filter: select_x_range mutes out-of-window bins ──
+
+    /// Three histogram bins tiling `[0, 3)` uniformly (`[0,1)`, `[1,2)`, `[2,3)`),
+    /// so a brush window over the numeric x-axis can select a sub-range of them.
+    fn histogram() -> Vec<Bar> {
+        vec![
+            Bar::new("0", 10.0).with_bin(0.0, 1.0),
+            Bar::new("1", 40.0).with_bin(1.0, 2.0),
+            Bar::new("2", 20.0).with_bin(2.0, 3.0),
+        ]
+    }
+
+    #[test]
+    fn select_x_range_mutes_bins_outside_the_window_and_keeps_them_drawn() {
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(histogram()).build(rect, &ChartStyle::default());
+        // Brush x in [1, 2] selects the middle bin ([1,2)); the outer bins
+        // ([0,1) and [2,3)) do not overlap it, so they mute.
+        let sel = BarChart::new(histogram())
+            .select_x_range(Some((1.0, 2.0)))
+            .build(rect, &ChartStyle::default());
+        // Muting DIMS, it does not DROP: every bin still emits a box.
+        for i in 0..3 {
+            assert!(
+                find(&sel, &format!("chart.bar.{i}")).is_some(),
+                "bin {i} stays drawn (muted, not dropped)"
+            );
+        }
+        assert_eq!(
+            fill_of(&sel, 1),
+            fill_of(&full, 1),
+            "the in-window bin keeps its full colour"
+        );
+        assert_eq!(
+            fill_of(&sel, 0),
+            fill_of(&full, 0).with_alpha(MUTED_ALPHA),
+            "a bin below the window is its own colour dimmed to MUTED_ALPHA"
+        );
+        assert_eq!(
+            fill_of(&sel, 2),
+            fill_of(&full, 2).with_alpha(MUTED_ALPHA),
+            "a bin above the window mutes too"
+        );
+    }
+
+    #[test]
+    fn select_x_range_none_leaves_every_bar_full() {
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(histogram()).build(rect, &ChartStyle::default());
+        let none = BarChart::new(histogram())
+            .select_x_range(None)
+            .build(rect, &ChartStyle::default());
+        for i in 0..3 {
+            assert_eq!(
+                fill_of(&none, i),
+                fill_of(&full, i),
+                "no range = bin {i} full"
+            );
+        }
+    }
+
+    #[test]
+    fn a_full_span_window_mutes_nothing() {
+        // A brush covering the whole extent [0, 3] leaves every bin in the
+        // window — the natural no-op a full brush must be (the scatter symmetry).
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(histogram()).build(rect, &ChartStyle::default());
+        let spanned = BarChart::new(histogram())
+            .select_x_range(Some((0.0, 3.0)))
+            .build(rect, &ChartStyle::default());
+        for i in 0..3 {
+            assert_eq!(
+                fill_of(&spanned, i),
+                fill_of(&full, i),
+                "bin {i} inside the full span stays full"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bar_without_a_bin_is_never_x_muted() {
+        // A categorical bar (no `with_bin`) has no numeric position, so a brush
+        // window cannot exclude it — it stays full regardless of the range.
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(three()).build(rect, &ChartStyle::default());
+        let sel = BarChart::new(three())
+            .select_x_range(Some((100.0, 200.0))) // a window disjoint from any data
+            .build(rect, &ChartStyle::default());
+        for i in 0..3 {
+            assert_eq!(
+                fill_of(&sel, i),
+                fill_of(&full, i),
+                "binless bar {i} is untouched by a numeric brush"
+            );
+        }
+    }
+
+    #[test]
+    fn select_x_range_overlap_is_half_open_at_the_window_edges() {
+        // Window [1, 2]: the middle bin [1,2) overlaps (in); [0,1)'s right edge
+        // touches lo (bhi==lo -> out); [2,3)'s left edge touches hi (blo==hi ->
+        // out). A bin only survives if it genuinely overlaps the window.
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(histogram()).build(rect, &ChartStyle::default());
+        let sel = BarChart::new(histogram())
+            .select_x_range(Some((1.0, 2.0)))
+            .build(rect, &ChartStyle::default());
+        assert_ne!(
+            fill_of(&sel, 0),
+            fill_of(&full, 0),
+            "[0,1) ends at lo -> out"
+        );
+        assert_eq!(fill_of(&sel, 1), fill_of(&full, 1), "[1,2) overlaps -> in");
+        assert_ne!(
+            fill_of(&sel, 2),
+            fill_of(&full, 2),
+            "[2,3) starts at hi -> out"
+        );
+    }
+
+    #[test]
+    fn a_partial_overlap_bin_stays_in_the_window() {
+        // A window [1.5, 2.5] straddles two bins: [1,2) (1<2.5 && 2>1.5) and
+        // [2,3) (2<2.5 && 3>1.5) both overlap, so both stay full; [0,1) does not.
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(histogram()).build(rect, &ChartStyle::default());
+        let sel = BarChart::new(histogram())
+            .select_x_range(Some((1.5, 2.5)))
+            .build(rect, &ChartStyle::default());
+        assert_ne!(
+            fill_of(&sel, 0),
+            fill_of(&full, 0),
+            "[0,1) disjoint -> muted"
+        );
+        assert_eq!(
+            fill_of(&sel, 1),
+            fill_of(&full, 1),
+            "[1,2) partial overlap -> in"
+        );
+        assert_eq!(
+            fill_of(&sel, 2),
+            fill_of(&full, 2),
+            "[2,3) partial overlap -> in"
+        );
+    }
+
+    #[test]
+    fn categorical_and_numeric_cross_filters_each_dim_a_bar() {
+        // The two filters are orthogonal: a bar is dimmed if EITHER excludes it.
+        // Categorical select picks bin 0; the brush window [1,2] picks bin 1.
+        // Bin 2 is excluded by both, bin 0 kept by select but dropped by the
+        // window, bin 1 dropped by select but kept by the window -> only a bar
+        // in BOTH active sets stays full, and here that is none, so every bar
+        // that is out of EITHER dims. Concretely: bin 0 (select=in, window=out)
+        // and bin 1 (select=out, window=in) both mute.
+        let rect = Rect::new(0, 0, 400, 300);
+        let full = BarChart::new(histogram()).build(rect, &ChartStyle::default());
+        let both = BarChart::new(histogram())
+            .select(vec![true, false, false]) // categorical: only bin 0 active
+            .select_x_range(Some((1.0, 2.0))) // numeric: only bin 1 in window
+            .build(rect, &ChartStyle::default());
+        assert_ne!(
+            fill_of(&both, 0),
+            fill_of(&full, 0),
+            "bin 0 is in the categorical set but OUT of the window -> muted"
+        );
+        assert_ne!(
+            fill_of(&both, 1),
+            fill_of(&full, 1),
+            "bin 1 is in the window but OUT of the categorical set -> muted"
+        );
+        assert_ne!(
+            fill_of(&both, 2),
+            fill_of(&full, 2),
+            "bin 2 out of both -> muted"
         );
     }
 }
