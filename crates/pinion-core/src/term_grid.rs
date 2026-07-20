@@ -215,12 +215,57 @@ impl Default for Palette {
     }
 }
 
+/// The style of a cell's underline (R1399 §5.41) — the ECMA-48 SGR 4:x
+/// axis every modern terminal (`kitty` / `vte` / `alacritty`) and VT
+/// parser (`termwiz`'s `Underline`) speaks. A cell's underline is no
+/// longer a single on/off bool: SGR distinguishes a plain rule from a
+/// double rule, an *undercurl* (the squiggle editors draw under a
+/// diagnostic), and dotted / dashed rules — and an editor's LSP
+/// diagnostics rely on the distinction (a red curly error vs a blue
+/// dotted spellcheck) being renderable, not flattened to one rule.
+///
+/// Like [`TermColor`] / [`CursorShape`] / [`CellWidth`] this is the
+/// *complete, closed* SGR underline vocabulary (SGR `4` / `4:0`–`4:5` and
+/// `21`), so `#[non_exhaustive]` is deliberately **not** applied and
+/// callers may match exhaustively. The underline *colour* is a separate,
+/// orthogonal axis carried on [`TermCell::underline_color`] (SGR 58 / 59),
+/// exactly as the glyph colour ([`TermCell::fg`]) is separate from the
+/// bold / italic attributes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum UnderlineStyle {
+    /// SGR 24 / 4:0 — no underline. The default a cell carries.
+    #[default]
+    None,
+    /// SGR 4 / 4:1 — a single straight rule (the classic underline).
+    Single,
+    /// SGR 21 / 4:2 — a double straight rule.
+    Double,
+    /// SGR 4:3 — an *undercurl*: a wavy squiggle, the form an editor draws
+    /// under an error / warning / spelling diagnostic.
+    Curly,
+    /// SGR 4:4 — a dotted rule.
+    Dotted,
+    /// SGR 4:5 — a dashed rule.
+    Dashed,
+}
+
+impl UnderlineStyle {
+    /// `true` for any drawn underline — i.e. every variant but
+    /// [`Self::None`]. The one query a backend that cannot distinguish
+    /// styles (the ratatui TUI has a single `UNDERLINED` modifier) needs.
+    #[must_use]
+    pub const fn is_on(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// The SGR display attributes a terminal cell carries (R974) — the
-/// standard boolean set every terminal (`xterm` / `vte` / `alacritty`)
-/// and Rust terminal library (`ratatui` `Modifier`, `crossterm`) speaks.
-/// Each flag is an independent SGR toggle, so this is a struct of named
-/// booleans (mirroring [`crate::input::Modifiers`] / [`TextDecoration`]),
-/// not a bifurcating enum.
+/// standard set every terminal (`xterm` / `vte` / `alacritty`) and Rust
+/// terminal library (`ratatui` `Modifier`, `crossterm`) speaks. Every
+/// attribute but the underline is an independent SGR on/off toggle, so
+/// this is a struct of named booleans (mirroring [`crate::input::Modifiers`]
+/// / [`TextDecoration`]) plus the one [`UnderlineStyle`] axis (R1399: SGR
+/// 4:x is not a bool — single / double / curly / dotted / dashed).
 ///
 /// [`Self::reverse`] is the attribute that most directly drives colour
 /// resolution: at *paint* time a reversed cell swaps its effective
@@ -235,9 +280,10 @@ impl Default for Palette {
 /// [`crate::input::Modifiers`]: the SGR attribute set is a fixed industry
 /// vocabulary, and a bitflag would diverge from the names callers expect.
 /// `#[non_exhaustive]` per the R974.1 forward-compat hedge: later S5
-/// slices add SGR flags (e.g. an underline-style axis), and construction
-/// already routes through [`Self::empty`] + the `with_*` builders, so the
-/// hedge is free (matching the [`TextDecoration`] sibling).
+/// slices add SGR flags, and construction already routes through
+/// [`Self::empty`] + the `with_*` builders, so the hedge is free (matching
+/// the [`TextDecoration`] sibling). R1399 filled the hedge's own named
+/// example — the underline is now a [`UnderlineStyle`] axis, not a bool.
 ///
 /// [`TextDecoration`]: crate::style::TextDecoration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -250,8 +296,10 @@ pub struct CellAttrs {
     pub dim: bool,
     /// SGR 3 — italic.
     pub italic: bool,
-    /// SGR 4 — underline.
-    pub underline: bool,
+    /// SGR 4:x — underline style (R1399): none / single / double / curly /
+    /// dotted / dashed. Its colour is the orthogonal
+    /// [`TermCell::underline_color`] (SGR 58 / 59).
+    pub underline: UnderlineStyle,
     /// SGR 5 — blink (slow / rapid are folded into one flag).
     pub blink: bool,
     /// SGR 7 — reverse video: swaps effective fg / bg at paint time.
@@ -270,7 +318,7 @@ impl CellAttrs {
             bold: false,
             dim: false,
             italic: false,
-            underline: false,
+            underline: UnderlineStyle::None,
             blink: false,
             reverse: false,
             hidden: false,
@@ -278,13 +326,13 @@ impl CellAttrs {
         }
     }
 
-    /// `true` iff no attribute is set.
+    /// `true` iff no attribute is set (every flag off and no underline).
     #[must_use]
     pub const fn is_empty(self) -> bool {
         !(self.bold
             || self.dim
             || self.italic
-            || self.underline
+            || self.underline.is_on()
             || self.blink
             || self.reverse
             || self.hidden
@@ -312,10 +360,26 @@ impl CellAttrs {
         self
     }
 
-    /// Builder: set the underline flag.
+    /// Builder: set the underline on ([`UnderlineStyle::Single`]) or off
+    /// ([`UnderlineStyle::None`]). Preserved from the pre-R1399 bool API —
+    /// `with_underline(true)` still means a single underline; reach for
+    /// [`Self::with_underline_style`] to pick double / curly / dotted /
+    /// dashed.
     #[must_use]
     pub const fn with_underline(mut self, on: bool) -> Self {
-        self.underline = on;
+        self.underline = if on {
+            UnderlineStyle::Single
+        } else {
+            UnderlineStyle::None
+        };
+        self
+    }
+
+    /// Builder: set the underline [`UnderlineStyle`] (R1399) — the full
+    /// SGR 4:x axis (none / single / double / curly / dotted / dashed).
+    #[must_use]
+    pub const fn with_underline_style(mut self, style: UnderlineStyle) -> Self {
+        self.underline = style;
         self
     }
 
@@ -400,6 +464,7 @@ pub enum CellWidth {
 /// refinements add fields (e.g. an OSC-8 hyperlink target), and
 /// construction routes through [`Self::new`] / [`Self::blank`] + the
 /// builders, so the hedge is free (matching [`crate::scene::TextGridNode`]).
+/// R1399 filled that hedge with [`Self::underline_color`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct TermCell {
@@ -412,6 +477,17 @@ pub struct TermCell {
     pub bg: TermColor,
     /// SGR display attributes (R974). Empty for a blank cell.
     pub attrs: CellAttrs,
+    /// Underline colour (R1399 — SGR 58 set / 59 reset), the axis
+    /// orthogonal to the [`CellAttrs::underline`] *style*. `None` is the
+    /// SGR-59 default: the underline is drawn in the cell's own foreground
+    /// (so it tracks the text colour). `Some(colour)` is an explicit SGR-58
+    /// underline colour — what makes an editor's red-curly error legible
+    /// against black text. It is a third colour slot beside [`Self::fg`] /
+    /// [`Self::bg`] and resolves through the grid's [`Palette`] identically
+    /// (`#[serde(default)]` so a pre-R1399 payload without the field still
+    /// deserializes to the `None` default).
+    #[serde(default)]
+    pub underline_color: Option<TermColor>,
     /// Display-width role (R976). [`CellWidth::Narrow`] for a blank cell.
     pub width: CellWidth,
 }
@@ -427,6 +503,7 @@ impl TermCell {
             fg: TermColor::Default,
             bg: TermColor::Default,
             attrs: CellAttrs::empty(),
+            underline_color: None,
             width: CellWidth::Narrow,
         }
     }
@@ -441,6 +518,7 @@ impl TermCell {
             fg,
             bg,
             attrs: CellAttrs::empty(),
+            underline_color: None,
             width: CellWidth::Narrow,
         }
     }
@@ -449,6 +527,17 @@ impl TermCell {
     #[must_use]
     pub fn with_attrs(mut self, attrs: CellAttrs) -> Self {
         self.attrs = attrs;
+        self
+    }
+
+    /// Set an explicit SGR-58 underline colour (R1399, builder form). The
+    /// underline is then drawn in `color` (resolved as a foreground slot)
+    /// instead of tracking the cell's own [`fg`](Self::fg) — what an editor
+    /// uses to tint an undercurl red for an error. Clearing back to the
+    /// SGR-59 default (track the foreground) is the field's `None`.
+    #[must_use]
+    pub fn with_underline_color(mut self, color: TermColor) -> Self {
+        self.underline_color = Some(color);
         self
     }
 
@@ -474,6 +563,7 @@ impl TermCell {
             fg: self.fg,
             bg: self.bg,
             attrs: self.attrs,
+            underline_color: self.underline_color,
             width: CellWidth::Trailer,
         }
     }
@@ -814,7 +904,7 @@ impl GridBuffer {
 mod tests {
     use super::{
         CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette,
-        ScreenKind, TermCell, TermColor,
+        ScreenKind, TermCell, TermColor, UnderlineStyle,
     };
     use crate::style::Color;
 
@@ -942,10 +1032,56 @@ mod tests {
         // Builders set independent, non-interfering flags.
         let a = CellAttrs::empty().with_bold(true).with_reverse(true);
         assert!(a.bold && a.reverse);
-        assert!(!a.italic && !a.underline && !a.dim);
+        assert!(!a.italic && !a.underline.is_on() && !a.dim);
         assert!(!a.is_empty());
         // A flag can be cleared back off.
         assert!(a.with_bold(false).with_reverse(false).is_empty());
+    }
+
+    #[test]
+    fn underline_style_axis_replaces_the_bool() {
+        // R1399 §5.41 — the underline is a closed SGR 4:x axis, not a bool.
+        assert_eq!(UnderlineStyle::default(), UnderlineStyle::None);
+        assert!(!UnderlineStyle::None.is_on());
+        for s in [
+            UnderlineStyle::Single,
+            UnderlineStyle::Double,
+            UnderlineStyle::Curly,
+            UnderlineStyle::Dotted,
+            UnderlineStyle::Dashed,
+        ] {
+            assert!(s.is_on(), "{s:?} is a drawn underline");
+        }
+        // The preserved bool builder means exactly Single / None...
+        assert_eq!(
+            CellAttrs::empty().with_underline(true).underline,
+            UnderlineStyle::Single
+        );
+        assert_eq!(
+            CellAttrs::empty().with_underline(false).underline,
+            UnderlineStyle::None
+        );
+        // ...and the style builder reaches the whole axis, driving is_empty.
+        let curly = CellAttrs::empty().with_underline_style(UnderlineStyle::Curly);
+        assert_eq!(curly.underline, UnderlineStyle::Curly);
+        assert!(!curly.is_empty());
+        assert!(curly.with_underline_style(UnderlineStyle::None).is_empty());
+    }
+
+    #[test]
+    fn underline_color_is_an_optional_third_colour_slot() {
+        // R1399 §5.41 — SGR 58 / 59: default None (track the fg), Some for
+        // an explicit colour. Independent of the underline *style*.
+        assert_eq!(TermCell::blank().underline_color, None);
+        let red = TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00));
+        let cell = TermCell::new("E", TermColor::Default, TermColor::Default)
+            .with_attrs(CellAttrs::empty().with_underline_style(UnderlineStyle::Curly))
+            .with_underline_color(red);
+        assert_eq!(cell.underline_color, Some(red));
+        assert_eq!(cell.attrs.underline, UnderlineStyle::Curly);
+        // The trailer of a wide head carries the same underline colour so a
+        // coloured undercurl paints across both columns.
+        assert_eq!(cell.wide().trailer().underline_color, Some(red));
     }
 
     #[test]
@@ -958,7 +1094,7 @@ mod tests {
         );
         let styled = TermCell::new("x", TermColor::Default, TermColor::Default)
             .with_attrs(CellAttrs::empty().with_italic(true).with_underline(true));
-        assert!(styled.attrs.italic && styled.attrs.underline);
+        assert!(styled.attrs.italic && styled.attrs.underline.is_on());
         assert!(!styled.attrs.bold);
     }
 
@@ -1142,7 +1278,15 @@ mod tests {
             TermColor::Rgb(Color::rgb(0x12, 0x34, 0x56)),
             TermColor::Indexed(4),
         )
-        .with_attrs(CellAttrs::empty().with_reverse(true).with_bold(true))
+        .with_attrs(
+            CellAttrs::empty()
+                .with_reverse(true)
+                .with_bold(true)
+                // R1399 — a non-bool underline style on the wire.
+                .with_underline_style(UnderlineStyle::Curly),
+        )
+        // R1399 — an explicit underline colour (SGR 58) round-trips too.
+        .with_underline_color(TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)))
         .wide();
         let buf = GridBuffer::new(3, 2)
             .with_row(
@@ -1173,6 +1317,16 @@ mod tests {
         assert_eq!(back.cell(2, 0).unwrap().fg, TermColor::Default);
         let a = back.cell(0, 0).unwrap().attrs;
         assert!(a.reverse && a.bold);
+        assert_eq!(a.underline, UnderlineStyle::Curly);
+        assert_eq!(
+            back.cell(0, 0).unwrap().underline_color,
+            Some(TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)))
+        );
+        // The trailer inherits the head's underline colour across columns.
+        assert_eq!(
+            back.cell(1, 0).unwrap().underline_color,
+            Some(TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)))
+        );
         assert_eq!(back.cursor(), GridCursor::new(1, 0, CursorShape::Bar, true));
         assert_eq!(back.screen(), ScreenKind::Alternate);
         assert_eq!(back.row_generation(1), Some(42));

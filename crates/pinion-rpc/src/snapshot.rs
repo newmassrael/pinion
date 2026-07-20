@@ -344,6 +344,13 @@ pub struct GridStyleRun {
     pub fg: TermColorSnapshot,
     pub bg: TermColorSnapshot,
     pub attrs: CellAttrs,
+    /// R1399 §5.41 — the run's explicit SGR-58 underline colour, resolved
+    /// like [`fg`](Self::fg) / [`bg`](Self::bg). `None` is the SGR-59
+    /// default (the underline tracks the foreground), so an underline
+    /// colour change (as well as an `fg` / `bg` / `attrs` / `width` change)
+    /// starts a new run. The underline *style* rides in
+    /// [`attrs`](Self::attrs) ([`CellAttrs::underline`]).
+    pub underline_color: Option<TermColorSnapshot>,
     pub width: &'static str,
 }
 
@@ -593,12 +600,27 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
         .map(|row| {
             let mut text = String::new();
             let mut runs: Vec<GridStyleRun> = Vec::new();
-            let mut prev: Option<(TermColor, TermColor, CellAttrs, CellWidth)> = None;
+            // R1399 — `underline_color` joins the run key: a change in the
+            // explicit SGR-58 colour (like any fg / bg / attrs / width
+            // change) starts a new run.
+            let mut prev: Option<(
+                TermColor,
+                TermColor,
+                CellAttrs,
+                CellWidth,
+                Option<TermColor>,
+            )> = None;
             for col in 0..buffer.cols() {
                 // Every coordinate in `0..cols × 0..rows` is in bounds.
                 let cell = buffer.cell(col, row).expect("cell within buffer bounds");
                 text.push_str(&cell.cluster);
-                let style = (cell.fg, cell.bg, cell.attrs, cell.width);
+                let style = (
+                    cell.fg,
+                    cell.bg,
+                    cell.attrs,
+                    cell.width,
+                    cell.underline_color,
+                );
                 match runs.last_mut() {
                     Some(run) if prev == Some(style) => run.len += 1,
                     _ => runs.push(GridStyleRun {
@@ -607,6 +629,11 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
                         fg: term_color_snapshot(cell.fg, ColorTarget::Foreground, palette),
                         bg: term_color_snapshot(cell.bg, ColorTarget::Background, palette),
                         attrs: cell.attrs,
+                        // The underline colour resolves as a foreground slot
+                        // (it tints ink, not a background fill).
+                        underline_color: cell
+                            .underline_color
+                            .map(|c| term_color_snapshot(c, ColorTarget::Foreground, palette)),
                         width: cell_width_wire(cell.width),
                     }),
                 }

@@ -3790,6 +3790,14 @@ fn grid_style_run_to_json(run: &GridStyleRun) -> Value {
     obj.insert("fg".to_string(), term_color_snapshot_to_json(&run.fg));
     obj.insert("bg".to_string(), term_color_snapshot_to_json(&run.bg));
     obj.insert("attrs".to_string(), cell_attrs_to_json(run.attrs));
+    // R1399 — the explicit SGR-58 underline colour (resolved like fg / bg),
+    // or `null` for the SGR-59 default (the underline tracks the foreground).
+    obj.insert(
+        "underline_color".to_string(),
+        run.underline_color
+            .as_ref()
+            .map_or(Value::Null, term_color_snapshot_to_json),
+    );
     obj.insert("width".to_string(), Value::String(run.width.to_string()));
     Value::Object(obj)
 }
@@ -3798,13 +3806,26 @@ fn grid_style_run_to_json(run: &GridStyleRun) -> Value {
 /// booleans. `reverse` is the cell's stored flag; a renderer swaps the
 /// effective fg / bg for it at paint time.
 ///
+/// R1399 — `underline` is no longer a bool but the [`UnderlineStyle`]
+/// axis, reported as a self-describing string discriminator (`"none"` /
+/// `"single"` / `"double"` / `"curly"` / `"dotted"` / `"dashed"`, mirroring
+/// how the cursor `shape` reports `"block"` / `"bar"` / `"underline"`), so
+/// an AI client discovers the full SGR 4:x vocabulary from a snapshot. The
+/// underline *colour* is the run-level [`underline_color`] field, resolved
+/// like `fg` / `bg`.
+///
 /// [`CellAttrs`]: pinion_core::CellAttrs
+/// [`UnderlineStyle`]: pinion_core::UnderlineStyle
+/// [`underline_color`]: crate::snapshot::GridStyleRun::underline_color
 fn cell_attrs_to_json(attrs: pinion_core::CellAttrs) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("bold".to_string(), Value::Bool(attrs.bold));
     obj.insert("dim".to_string(), Value::Bool(attrs.dim));
     obj.insert("italic".to_string(), Value::Bool(attrs.italic));
-    obj.insert("underline".to_string(), Value::Bool(attrs.underline));
+    obj.insert(
+        "underline".to_string(),
+        Value::String(underline_style_wire(attrs.underline).to_string()),
+    );
     obj.insert("blink".to_string(), Value::Bool(attrs.blink));
     obj.insert("reverse".to_string(), Value::Bool(attrs.reverse));
     obj.insert("hidden".to_string(), Value::Bool(attrs.hidden));
@@ -3813,6 +3834,22 @@ fn cell_attrs_to_json(attrs: pinion_core::CellAttrs) -> Value {
         Value::Bool(attrs.strikethrough),
     );
     Value::Object(obj)
+}
+
+/// R1399 §5.41 — the wire string for an [`UnderlineStyle`](pinion_core::UnderlineStyle)
+/// used as the `attrs.underline` discriminator (mirroring the
+/// `cursor.shape` / `run.width` wire vocabularies). Closed match — the SGR
+/// 4:x axis has no further variant.
+fn underline_style_wire(style: pinion_core::UnderlineStyle) -> &'static str {
+    use pinion_core::UnderlineStyle;
+    match style {
+        UnderlineStyle::None => "none",
+        UnderlineStyle::Single => "single",
+        UnderlineStyle::Double => "double",
+        UnderlineStyle::Curly => "curly",
+        UnderlineStyle::Dotted => "dotted",
+        UnderlineStyle::Dashed => "dashed",
+    }
 }
 
 /// R973 §5.41 — wire form for one [`TermColorSnapshot`]: the stored

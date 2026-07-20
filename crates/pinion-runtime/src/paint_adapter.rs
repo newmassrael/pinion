@@ -52,7 +52,7 @@ use pinion_core::style::{
     Gradient, GradientKind, LineHeight, StrokeCap, TextOverflow, TextStyle,
 };
 use pinion_core::term_grid::{
-    CellWidth, ColorTarget, CursorShape, GridBuffer, Palette, TermCell, TermColor,
+    CellWidth, ColorTarget, CursorShape, GridBuffer, Palette, TermCell, TermColor, UnderlineStyle,
 };
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
@@ -1274,6 +1274,117 @@ fn stroke_hrule(
     out.stroke(&Stroke::new(width.max(1.0)), transform, brush, None, &line);
 }
 
+/// R1399 §5.41 — paint one cell's underline in the given `brush` for its
+/// SGR 4:x [`UnderlineStyle`]. `[x0, x1)` is the cell's horizontal span and
+/// `cell_bottom` its bottom edge; the rule (or wave) sits just inside the
+/// bottom in a `rule_w`-thick stroke. The caller has already resolved the
+/// underline colour (explicit SGR-58 or the effective foreground) and only
+/// calls this for a drawn style ([`UnderlineStyle::is_on`]).
+///
+/// The dotted / dashed forms are drawn as explicit short segments rather
+/// than a `kurbo` dash pattern: Vello's sparse rasteriser handles a plain
+/// stroked `Line` / `BezPath` predictably, and short segments keep the
+/// `headless_screenshot` pixel witness deterministic — the same reason the
+/// overlay edges avoid exotic stroke features.
+#[allow(clippy::too_many_arguments)]
+fn paint_underline(
+    out: &mut VelloScene,
+    transform: Affine,
+    brush: PenikoColor,
+    x0: f64,
+    x1: f64,
+    cell_bottom: f64,
+    rule_w: f64,
+    style: UnderlineStyle,
+) {
+    // The lower straight rule sits one stroke-width above the cell bottom.
+    let y_low = cell_bottom - rule_w;
+    match style {
+        // Handled by the caller's `is_on` guard, but keep the match total.
+        UnderlineStyle::None => {}
+        UnderlineStyle::Single => stroke_hrule(out, transform, brush, x0, x1, y_low, rule_w),
+        UnderlineStyle::Double => {
+            // A second rule a clear gap (2·rule_w) above the first.
+            stroke_hrule(out, transform, brush, x0, x1, y_low, rule_w);
+            stroke_hrule(out, transform, brush, x0, x1, y_low - 2.0 * rule_w, rule_w);
+        }
+        UnderlineStyle::Curly => {
+            // An undercurl: a smooth sinusoid of quadratic arcs about a
+            // centre line, amplitude `rule_w` so the wave stays within the
+            // cell's bottom band. Half-wavelength `hp` ties the squiggle
+            // density to the stroke weight.
+            let amp = rule_w;
+            let mid = cell_bottom - rule_w - amp;
+            let hp = (amp * 2.0).max(2.0);
+            let mut path = BezPath::new();
+            path.move_to(KurboPoint::new(x0, mid));
+            let mut x = x0;
+            let mut up = true;
+            while x < x1 - f64::EPSILON {
+                let nx = (x + hp).min(x1);
+                let ctrl_x = x + (nx - x) * 0.5;
+                let ctrl_y = if up { mid - amp } else { mid + amp };
+                path.quad_to(KurboPoint::new(ctrl_x, ctrl_y), KurboPoint::new(nx, mid));
+                x = nx;
+                up = !up;
+            }
+            out.stroke(&Stroke::new(rule_w.max(1.0)), transform, brush, None, &path);
+        }
+        UnderlineStyle::Dotted => {
+            // Short dots: a `dash` on, a `2·dash` gap off — sparser than the
+            // dashed form so the two read (and measure) distinctly.
+            let dash = rule_w.max(1.0);
+            stroke_dashed_hrule(
+                out,
+                transform,
+                brush,
+                x0,
+                x1,
+                y_low,
+                rule_w,
+                dash,
+                dash * 2.0,
+            );
+        }
+        UnderlineStyle::Dashed => {
+            // Longer dashes: a quarter-cell on, an eighth-cell off.
+            let span = x1 - x0;
+            let dash = (span / 4.0).max(rule_w * 3.0);
+            let gap = (span / 8.0).max(rule_w * 2.0);
+            stroke_dashed_hrule(out, transform, brush, x0, x1, y_low, rule_w, dash, gap);
+        }
+    }
+}
+
+/// R1399 §5.41 — a horizontal rule at `y` broken into `dash`-long segments
+/// separated by `gap`-long holes, in `rule_w`-thick strokes. Used for the
+/// dotted / dashed underline forms (see [`paint_underline`]). Segments are
+/// drawn explicitly (not via a `kurbo` dash pattern) for a deterministic
+/// pixel witness.
+#[allow(clippy::too_many_arguments)]
+fn stroke_dashed_hrule(
+    out: &mut VelloScene,
+    transform: Affine,
+    brush: PenikoColor,
+    x0: f64,
+    x1: f64,
+    y: f64,
+    rule_w: f64,
+    dash: f64,
+    gap: f64,
+) {
+    let step = dash + gap;
+    if step <= 0.0 {
+        return;
+    }
+    let mut x = x0;
+    while x < x1 - f64::EPSILON {
+        let seg_end = (x + dash).min(x1);
+        stroke_hrule(out, transform, brush, x, seg_end, y, rule_w);
+        x += step;
+    }
+}
+
 /// R993 §5.41 — shape one cell's grapheme `cell.cluster` (with its SGR
 /// bold / italic weight / slant) through the shared `cache` and draw the
 /// glyph run at `glyph_transform` in `brush`. The shared cell-glyph emit
@@ -2166,14 +2277,30 @@ fn paint_text_grid(
                 let glyph_transform = origin * Affine::translate((cx, cy));
                 draw_cell_glyph(out, cache, &style, cell, glyph_transform, fg_brush);
             }
-            // Underline / strikethrough rules spanning the full cell (so
-            // adjacent attributed cells, and a wide head + trailer, form one
-            // continuous rule; a blank cell still shows its rule), in the
-            // effective foreground.
-            if cell.attrs.underline {
-                // Sit the rule just above the cell's bottom edge.
-                let y = cy + cell_h - rule_w;
-                stroke_hrule(out, origin, fg_brush, cx, cx + cell_w, y, rule_w);
+            // Underline (R1399: the SGR 4:x style — single / double / curly /
+            // dotted / dashed — drawn in its own SGR-58 colour when set, else
+            // the effective foreground) + strikethrough rules spanning the
+            // full cell (so adjacent attributed cells, and a wide head +
+            // trailer, form one continuous rule; a blank cell still shows its
+            // rule).
+            if cell.attrs.underline.is_on() {
+                // An explicit underline colour (SGR 58) tints the rule at full
+                // intensity; the SGR-59 default follows the (dim-attenuated)
+                // effective foreground so a plain underline still fades with
+                // `dim`.
+                let ul_brush = cell.underline_color.map_or(fg_brush, |uc| {
+                    to_peniko(palette.resolve(uc, ColorTarget::Foreground))
+                });
+                paint_underline(
+                    out,
+                    origin,
+                    ul_brush,
+                    cx,
+                    cx + cell_w,
+                    cy + cell_h,
+                    rule_w,
+                    cell.attrs.underline,
+                );
             }
             if cell.attrs.strikethrough {
                 let y = cy + cell_h * 0.5;

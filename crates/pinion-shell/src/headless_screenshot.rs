@@ -1421,6 +1421,171 @@ mod tests {
         );
     }
 
+    /// R1399 §5.41 §5.16 — deterministic guard for the underline-style axis
+    /// ([`UnderlineStyle`]) and the explicit SGR-58 underline colour. Like the
+    /// R992 guard the assertions are **geometric** and font-independent
+    /// (blank white-on-black cells, so only the underline inks), asserted via
+    /// alignment-invariant area integrals:
+    ///
+    /// - each style inks the bottom band (all five paint paths draw);
+    /// - `Double` / `Curly` reach a *high* band a straight single rule never
+    ///   touches (the second rule / the wave crest), so the styles are not
+    ///   collapsed to one form;
+    /// - `Dotted` / `Dashed` ink strictly *less* than the solid single rule
+    ///   over the same window (their gaps), with the dashed duty cycle above
+    ///   the dotted one — a broken rule, deterministically;
+    /// - a red SGR-58 underline inks the *red* channel but not the *green*,
+    ///   proving the colour axis paints in its own colour (the LSP-diagnostic
+    ///   forcing case), not the white foreground.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling tests;
+    /// run with `--ignored`.
+    ///
+    /// [`UnderlineStyle`]: pinion_core::term_grid::UnderlineStyle
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    #[allow(clippy::too_many_lines)]
+    fn r1399_text_grid_paints_underline_styles_and_color() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{CellAttrs, GridBuffer, TermCell, TermColor, UnderlineStyle};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 16;
+        const CH: u32 = 24;
+        const COLS: u16 = 6;
+        const ROWS: u16 = 1;
+        const W: u32 = CW * COLS as u32;
+        const H: u32 = CH * ROWS as u32;
+
+        let white = TermColor::Rgb(Color::rgb(0xff, 0xff, 0xff));
+        let black = TermColor::Rgb(Color::rgb(0x00, 0x00, 0x00));
+        let red = TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00));
+        let e = CellAttrs::empty;
+        let styled = |s: UnderlineStyle| {
+            TermCell::new(" ", white, black).with_attrs(e().with_underline_style(s))
+        };
+
+        // cols 0..=4 — one style each, default (foreground-tracking) colour.
+        // col 5 — a single rule with an explicit SGR-58 red underline colour.
+        let row0 = vec![
+            styled(UnderlineStyle::Single),
+            styled(UnderlineStyle::Double),
+            styled(UnderlineStyle::Curly),
+            styled(UnderlineStyle::Dotted),
+            styled(UnderlineStyle::Dashed),
+            TermCell::new(" ", white, black)
+                .with_attrs(e().with_underline_style(UnderlineStyle::Single))
+                .with_underline_color(red),
+        ];
+
+        let buffer = GridBuffer::new(COLS, ROWS).with_row(0, row0);
+        let mut node =
+            TextGridNode::new(CellMetric::new(CW, CH).expect("non-zero")).with_cells(buffer);
+        node.rect = Rect::new(0, 0, W, H);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let base = vello::peniko::Color::BLACK;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+
+        // Channel-summed ink over a column's interior x-range and a y-band —
+        // the same alignment-invariant area integral the R992 guard uses.
+        // `chan` picks the RGBA byte offset (0 = red, 1 = green).
+        let interior = |c: u32| (c * CW + 2, c * CW + CW - 2);
+        let band = |c: u32, y0: u32, y1: u32, chan: usize| -> i64 {
+            let (x0, x1) = interior(c);
+            let mut sum = 0i64;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = ((y * W + x) * 4) as usize + chan;
+                    sum += i64::from(rgba8[i]);
+                }
+            }
+            sum
+        };
+        // The bottom band contains every style's lowest rule; the high band
+        // sits above a single rule (only Double's second rule / Curly's crest
+        // reach it).
+        let bottom = |c: u32| band(c, CH - 6, CH, 0);
+        let high = |c: u32| band(c, CH - 6, CH - 3, 0);
+
+        let single = bottom(0);
+        let double = bottom(1);
+        let curly = bottom(2);
+        let dotted = bottom(3);
+        let dashed = bottom(4);
+
+        // Every style inks its bottom rule.
+        assert!(single > 2000, "single underline must ink, sum={single}");
+        assert!(double > 2000, "double underline must ink, sum={double}");
+        assert!(curly > 1000, "curly underline must ink, sum={curly}");
+        assert!(dotted > 600, "dotted underline must ink, sum={dotted}");
+        assert!(dashed > 600, "dashed underline must ink, sum={dashed}");
+
+        // Style differentiation: a single straight rule leaves the high band
+        // dark; Double (second rule) and Curly (wave crest) reach it.
+        assert!(
+            high(0) < 600,
+            "single rule must not ink the high band, {}",
+            high(0)
+        );
+        assert!(
+            high(1) > 600,
+            "double's upper rule must ink the high band, {}",
+            high(1)
+        );
+        assert!(
+            high(2) > 600,
+            "curly's crest must ink the high band, {}",
+            high(2)
+        );
+        // Double is two rules in the bottom band — clearly more ink than one.
+        assert!(
+            double > single * 13 / 10,
+            "double must ink more than a single rule: double={double}, single={single}"
+        );
+
+        // Dotted / dashed are broken rules: strictly less bottom ink than the
+        // solid single rule, and the dashed duty cycle is above the dotted.
+        assert!(
+            dotted < single * 3 / 4,
+            "dotted must ink less than the solid rule: dotted={dotted}, single={single}"
+        );
+        assert!(
+            dashed < single * 9 / 10 && dashed > dotted,
+            "dashed must be a broken rule denser than dotted: dashed={dashed}, dotted={dotted}, single={single}"
+        );
+
+        // The SGR-58 colour axis (col 5): the red underline inks the red
+        // channel like a normal rule but leaves the green channel dark —
+        // proving it paints in its own colour, not the white foreground.
+        let red_ink = band(5, CH - 6, CH, 0);
+        let green_ink = band(5, CH - 6, CH, 1);
+        assert!(
+            red_ink > 2000,
+            "red underline must ink the red channel, {red_ink}"
+        );
+        assert!(
+            green_ink < red_ink / 5,
+            "red underline must not ink the green channel: green={green_ink}, red={red_ink}"
+        );
+    }
+
     /// R993 §5.41 — deterministic guard for the cell-grid [`GridCursor`]
     /// overlay. Every shape is a *fill* (block / bar / underline), so the
     /// assertions are pixel-aligned and font-independent: the block fills the

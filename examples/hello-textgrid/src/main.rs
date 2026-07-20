@@ -108,7 +108,7 @@ use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{
     CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, ScreenKind, TermCell,
-    TermColor, WidgetCore,
+    TermColor, UnderlineStyle, WidgetCore,
 };
 use pinion_shell::{WidgetView, vello_renderer_impl};
 
@@ -395,6 +395,63 @@ fn damage_buffer() -> GridBuffer {
         .with_row_generation(2, DAMAGE_GENS.2)
 }
 
+/// Tag of the R1399 underline-style + colour grid, and its placement.
+const UNDERLINE_TAG: &str = "htg_underline";
+/// Tucked in the free strip below the measured grid (which ends at y=792).
+const UNDERLINE_POS: (u32, u32) = (16, 800);
+/// `6 × 2` cells at the `8×16` baseline metric → `48 × 32` px.
+const UNDERLINE_COLS: u16 = 6;
+const UNDERLINE_ROWS: u16 = 2;
+const UNDERLINE_SIZE: (u32, u32) = (48, 32);
+
+/// Build the R1399 underline projection. Row 0 shows each [`UnderlineStyle`]
+/// in isolation (one style per cell, default foreground-tracking colour);
+/// row 1 is the editor-LSP forcing case — coloured undercurls (SGR 4:3 +
+/// SGR 58) an IDE draws under diagnostics: a red-curly error, a
+/// yellow-curly warning, a blue-dotted spellcheck, and a green single rule.
+/// The underline colour is a distinct SGR-58 axis from the glyph colour, so
+/// each glyph stays the default foreground while its underline is tinted.
+fn underline_buffer() -> GridBuffer {
+    let e = CellAttrs::empty;
+    let plain = |c: &'static str, s: UnderlineStyle| {
+        TermCell::new(c, TermColor::Default, TermColor::Default)
+            .with_attrs(e().with_underline_style(s))
+    };
+    let tinted = |c: &'static str, s: UnderlineStyle, color: TermColor| {
+        TermCell::new(c, TermColor::Default, TermColor::Default)
+            .with_attrs(e().with_underline_style(s))
+            .with_underline_color(color)
+    };
+    GridBuffer::new(UNDERLINE_COLS, UNDERLINE_ROWS)
+        // Row 0 — one style per cell (default colour), in SGR 4:x order.
+        .with_row(
+            0,
+            [
+                plain("s", UnderlineStyle::Single),
+                plain("d", UnderlineStyle::Double),
+                plain("c", UnderlineStyle::Curly),
+                plain("o", UnderlineStyle::Dotted),
+                plain("a", UnderlineStyle::Dashed),
+                plain("n", UnderlineStyle::None),
+            ],
+        )
+        // Row 1 — coloured diagnostics: red-curly error, yellow-curly warning,
+        // blue-dotted spellcheck, green single (truecolor + palette forms).
+        .with_row(
+            1,
+            [
+                tinted(
+                    "E",
+                    UnderlineStyle::Curly,
+                    TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)),
+                ),
+                tinted("W", UnderlineStyle::Curly, TermColor::Indexed(11)),
+                tinted("z", UnderlineStyle::Dotted, TermColor::Indexed(4)),
+                tinted("g", UnderlineStyle::Single, TermColor::Indexed(2)),
+            ],
+        )
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -419,6 +476,24 @@ fn grid(
     Scene::TextGrid(node)
 }
 
+/// Build one absolutely-positioned **celled** grid: a `CellMetric::DEFAULT`
+/// [`TextGridNode`] carrying `cells` at an absolute pixel rect. Every R973+
+/// scaffold grid (content / attrs / cursor / wide / alt / damage /
+/// underline) shares this exact shape, so it lives in one helper — the
+/// geometry-only [`grid`] sibling carries no cell projection.
+fn celled_grid(tag: &'static str, cells: GridBuffer, pos: (u32, u32), size: (u32, u32)) -> Scene {
+    Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(tag)
+            .with_cells(cells)
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(pos.0, pos.1)
+                    .with_size(Size::px(size.0, size.1)),
+            ),
+    )
+}
+
 /// view-fn (§6.3): pure sync `() -> Scene`. A plain surface-filled root
 /// (tagged [`ROOT_TAG`]) holding the two geometry grids.
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -439,87 +514,23 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         ),
     };
 
-    // The R973 content grid: an `8×16` baseline grid carrying the cell
-    // projection. Sized to derive exactly `CONTENT_COLS × CONTENT_ROWS`.
-    let content = Scene::TextGrid(
-        TextGridNode::new(CellMetric::DEFAULT)
-            .with_tag(CONTENT_TAG)
-            .with_cells(content_buffer())
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(CONTENT_POS.0, CONTENT_POS.1)
-                    .with_size(Size::px(CONTENT_SIZE.0, CONTENT_SIZE.1)),
-            ),
-    );
-
-    // The R974 SGR-attribute grid (also 8×16 baseline), carrying the
-    // attribute projection. Isolated from `htg_content` so the R973
-    // colour demo stays regression-free.
-    let attrs = Scene::TextGrid(
-        TextGridNode::new(CellMetric::DEFAULT)
-            .with_tag(ATTRS_TAG)
-            .with_cells(attrs_buffer())
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(ATTRS_POS.0, ATTRS_POS.1)
-                    .with_size(Size::px(ATTRS_SIZE.0, ATTRS_SIZE.1)),
-            ),
-    );
-
-    // The R975 cursor grid (8×16 baseline), carrying a prompt projection
-    // with a visible bar cursor. Isolated from the other grids so their
-    // demos stay regression-free (they keep the default hidden cursor).
-    let cursor = Scene::TextGrid(
-        TextGridNode::new(CellMetric::DEFAULT)
-            .with_tag(CURSOR_TAG)
-            .with_cells(cursor_buffer())
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(CURSOR_POS.0, CURSOR_POS.1)
-                    .with_size(Size::px(CURSOR_SIZE.0, CURSOR_SIZE.1)),
-            ),
-    );
-
-    // The R976 wide-char grid (8×16 baseline), carrying a projection with
-    // wide CJK / fullwidth clusters (head + trailer). Isolated from the
-    // other grids so their demos stay regression-free (all-narrow).
-    let wide = Scene::TextGrid(
-        TextGridNode::new(CellMetric::DEFAULT)
-            .with_tag(WIDE_TAG)
-            .with_cells(wide_buffer())
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(WIDE_POS.0, WIDE_POS.1)
-                    .with_size(Size::px(WIDE_SIZE.0, WIDE_SIZE.1)),
-            ),
-    );
-
-    // The R977 alternate-screen grid (8×16 baseline): a fullscreen-app
-    // projection tagged ScreenKind::Alternate, with its own block cursor.
-    // Every other grid stays on the main screen (the additive default).
-    let alt = Scene::TextGrid(
-        TextGridNode::new(CellMetric::DEFAULT)
-            .with_tag(ALT_TAG)
-            .with_cells(alt_buffer())
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(ALT_POS.0, ALT_POS.1)
-                    .with_size(Size::px(ALT_SIZE.0, ALT_SIZE.1)),
-            ),
-    );
-
-    // The R978 damage grid (8×16 baseline): three streamed output lines
-    // carrying per-row monotonic damage generations. The other grids leave
-    // every row at the default generation 0 (additive).
-    let damage = Scene::TextGrid(
-        TextGridNode::new(CellMetric::DEFAULT)
-            .with_tag(DAMAGE_TAG)
-            .with_cells(damage_buffer())
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(DAMAGE_POS.0, DAMAGE_POS.1)
-                    .with_size(Size::px(DAMAGE_SIZE.0, DAMAGE_SIZE.1)),
-            ),
+    // The R973+ scaffold grids (all 8×16 baseline), each carrying its own
+    // isolated projection so a sibling demo stays regression-free: R973
+    // colour content, R974 SGR attributes, R975 bar cursor, R976 wide CJK
+    // clusters, R977 alternate screen, R978 damage generations, and the
+    // R1399 underline style axis + SGR-58 colour (coloured undercurls for
+    // editor diagnostics).
+    let content = celled_grid(CONTENT_TAG, content_buffer(), CONTENT_POS, CONTENT_SIZE);
+    let attrs = celled_grid(ATTRS_TAG, attrs_buffer(), ATTRS_POS, ATTRS_SIZE);
+    let cursor = celled_grid(CURSOR_TAG, cursor_buffer(), CURSOR_POS, CURSOR_SIZE);
+    let wide = celled_grid(WIDE_TAG, wide_buffer(), WIDE_POS, WIDE_SIZE);
+    let alt = celled_grid(ALT_TAG, alt_buffer(), ALT_POS, ALT_SIZE);
+    let damage = celled_grid(DAMAGE_TAG, damage_buffer(), DAMAGE_POS, DAMAGE_SIZE);
+    let underline = celled_grid(
+        UNDERLINE_TAG,
+        underline_buffer(),
+        UNDERLINE_POS,
+        UNDERLINE_SIZE,
     );
 
     Scene::Container(
@@ -544,6 +555,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             wide,
             alt,
             damage,
+            underline,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -714,6 +726,7 @@ mod tests {
         assert!(scene.contains_tag(WIDE_TAG));
         assert!(scene.contains_tag(ALT_TAG));
         assert!(scene.contains_tag(DAMAGE_TAG));
+        assert!(scene.contains_tag(UNDERLINE_TAG));
     }
 
     #[test]
@@ -814,6 +827,43 @@ mod tests {
         assert_eq!(content_buffer().cursor(), GridCursor::default());
         assert_eq!(attrs_buffer().cursor(), GridCursor::default());
         assert!(!content_buffer().cursor().visible);
+    }
+
+    #[test]
+    fn underline_buffer_carries_the_style_axis_and_colour() {
+        let b = underline_buffer();
+        assert_eq!((b.cols(), b.rows()), (UNDERLINE_COLS, UNDERLINE_ROWS));
+        // Row 0 — one style per cell, default (None) underline colour.
+        let row0 = [
+            UnderlineStyle::Single,
+            UnderlineStyle::Double,
+            UnderlineStyle::Curly,
+            UnderlineStyle::Dotted,
+            UnderlineStyle::Dashed,
+            UnderlineStyle::None,
+        ];
+        for (col, style) in row0.into_iter().enumerate() {
+            let cell = b.cell(u16::try_from(col).unwrap(), 0).unwrap();
+            assert_eq!(cell.attrs.underline, style, "row0 col{col} style");
+            assert_eq!(cell.underline_color, None, "row0 col{col} default colour");
+        }
+        // Row 1 — the coloured-diagnostic forcing case: an explicit SGR-58
+        // colour, style independent of the glyph colour (which stays default).
+        let err = b.cell(0, 1).unwrap();
+        assert_eq!(err.attrs.underline, UnderlineStyle::Curly);
+        assert_eq!(
+            err.underline_color,
+            Some(TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)))
+        );
+        assert_eq!(
+            err.fg,
+            TermColor::Default,
+            "glyph colour untouched by SGR 58"
+        );
+        assert_eq!(
+            b.cell(2, 1).unwrap().underline_color,
+            Some(TermColor::Indexed(4))
+        );
     }
 
     #[test]

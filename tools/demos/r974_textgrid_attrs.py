@@ -44,15 +44,23 @@ from rpc_verify import (
 WIN = (680, 840)
 ATTRS_TAG = "htg_attrs"
 
-# SGR flags in the declaration order row 0 sets them, one per cell.
-FLAGS = ["bold", "dim", "italic", "underline", "blink", "reverse", "hidden", "strikethrough"]
-ALL_OFF = {f: False for f in FLAGS}
+# The boolean SGR flags. R1399 lifted `underline` out of the bool set: it
+# is now the SGR 4:x `UnderlineStyle` string axis ("none" .. "dashed"), so
+# the all-off default carries "none" and `only("underline")` means "single".
+BOOL_FLAGS = ["bold", "dim", "italic", "blink", "reverse", "hidden", "strikethrough"]
+# Row 0 sets one attribute per cell, in this declaration order (underline in
+# slot 3).
+ROW0_ORDER = ["bold", "dim", "italic", "underline", "blink", "reverse", "hidden", "strikethrough"]
+ALL_OFF = {**{f: False for f in BOOL_FLAGS}, "underline": "none"}
 
 
-def only(flag: str) -> dict:
-    """The attrs object with exactly `flag` set."""
+def only(attr: str) -> dict:
+    """The attrs object with exactly `attr` set (underline -> the string 'single')."""
     d = dict(ALL_OFF)
-    d[flag] = True
+    if attr == "underline":
+        d["underline"] = "single"
+    else:
+        d[attr] = True
     return d
 
 
@@ -81,12 +89,14 @@ def body() -> None:
         r0 = rows[0]
         assert_eq(r0["text"], "BDIUKRHS", "row0 text = one glyph per flag")
         assert_eq(len(r0["runs"]), 8, "row0 has 8 single-flag runs")
-        for i, flag in enumerate(FLAGS):
+        for i, flag in enumerate(ROW0_ORDER):
             run = r0["runs"][i]
             assert_eq(run["start"], i, f"row0 {flag} run start")
             assert_eq(run["len"], 1, f"row0 {flag} run len")
             # Exactly this one flag is set, all others off.
             assert_eq(run["attrs"], only(flag), f"row0 cell {i} attrs = only {flag}")
+            # R1399 — the additive underline colour is null unless SGR 58 set.
+            assert_eq(run["underline_color"], None, f"row0 {flag} underline_color null")
             # Attributes do not disturb the (default) colours.
             assert_eq(run["fg"]["kind"], "default", f"row0 {flag} fg default")
             assert_eq(run["fg"]["rgb"], "#e5e5e5", f"row0 {flag} fg rgb")
@@ -98,10 +108,11 @@ def body() -> None:
 
         combo = r1["runs"][0]
         assert combo["attrs"]["bold"] and combo["attrs"]["italic"], "row1 cell0 bold+italic"
-        assert not combo["attrs"]["underline"], "row1 cell0 no underline"
+        assert_eq(combo["attrs"]["underline"], "none", "row1 cell0 no underline")
 
         deco = r1["runs"][1]
-        assert deco["attrs"]["underline"] and deco["attrs"]["strikethrough"], "row1 cell1 U+S"
+        assert_eq(deco["attrs"]["underline"], "single", "row1 cell1 underlined")
+        assert deco["attrs"]["strikethrough"], "row1 cell1 struck through"
 
         rev = r1["runs"][2]
         assert rev["attrs"]["reverse"], "row1 cell2 reverse set"

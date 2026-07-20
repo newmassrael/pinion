@@ -697,7 +697,11 @@ fn cell_attrs_to_modifier(attrs: CellAttrs) -> Modifier {
     if attrs.italic {
         m |= Modifier::ITALIC;
     }
-    if attrs.underline {
+    // R1399 — ratatui's `Modifier` has one `UNDERLINED` bit, so every drawn
+    // SGR 4:x style (single / double / curly / dotted / dashed) collapses to
+    // it here (the TUI's best approximation); the underline *colour* is
+    // applied separately on the `Style` at the cell-paint site.
+    if attrs.underline.is_on() {
         m |= Modifier::UNDERLINED;
     }
     if attrs.blink {
@@ -809,10 +813,16 @@ fn paint_text_grid_inner(
             } else {
                 cell.cluster.as_ref()
             };
-            let style = Style::default()
+            let mut style = Style::default()
                 .fg(term_color_to_tui(cell.fg))
                 .bg(term_color_to_tui(cell.bg))
                 .add_modifier(modifier);
+            // R1399 — an explicit SGR-58 underline colour rides on the
+            // ratatui `Style` (0.29 `underline_color`); the SGR-59 default
+            // (`None`) is left unset so the terminal tracks the foreground.
+            if let Some(uc) = cell.underline_color {
+                style = style.underline_color(term_color_to_tui(uc));
+            }
             let bcell = &mut buf[(bx, by)];
             bcell.set_symbol(symbol);
             bcell.set_style(style);
