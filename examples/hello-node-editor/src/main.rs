@@ -243,6 +243,14 @@
 //!   "arrange" command; the pure geometry is `layered_layout` (cycle-broken,
 //!   longest-path layered, barycenter-ordered, deterministic — it reads only the
 //!   node set + heights + edges, never the current positions).
+//! - **Force layout** (R1390): `invoke force_layout` (no args) relaxes the WHOLE
+//!   graph into a force-directed (organic) cluster — every node repels every
+//!   other, every edge springs its endpoints together, annealed to a compact
+//!   symmetric rest state — in ONE undo step through the same `apply_node_moves`
+//!   SSOT. The organic counterpart to `auto_layout`'s layered tidy (the yEd
+//!   "organic" / Graphviz `neato` mode a pro editor offers beside "arrange");
+//!   the pure geometry is `force_directed_layout` (grid-seeded, fixed-iteration,
+//!   deterministic — it too reads only the node set + edges, never positions).
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -1293,6 +1301,179 @@ fn layout_reduce_crossings(
             }
         }
     }
+}
+
+/// R1390 — the fixed iteration count of the force-directed relaxation. Fixed so
+/// the annealing always terminates and the layout is deterministic (ZERO-FLAKE),
+/// the [`LAYOUT_SWEEPS`] discipline carried to the spring-electrical loop.
+const FORCE_ITERS: usize = 200;
+
+/// R1390 — the ideal edge length: the natural spring rest length a connected pair
+/// settles toward, and the repulsion's length scale. One column pitch (`NODE_W`
+/// 130 + `LAYER_GAP` 60), so the organic layout spaces nodes comparably to the
+/// layered one.
+const FORCE_K: f64 = 190.0;
+
+/// R1390 — the distance floor guarding the inverse-distance repulsion from a
+/// divide-by-zero when two nodes (near-)coincide.
+const FORCE_EPS: f64 = 1.0;
+
+/// R1390 — a **force-directed (Fruchterman–Reingold spring-electrical) organic
+/// layout** of the graph: the pure geometry the `force_layout` verb applies, the
+/// organic counterpart to the layered [`layered_layout`]. Where the layered pass
+/// columns a DAG so data flows forward, this relaxes the graph into a compact,
+/// symmetric cluster — the canonical layout for a cyclic or undirected topology
+/// (yEd "organic", Graphviz `neato`, Gephi ForceAtlas), a second arrangement mode
+/// a pro editor offers beside "tidy".
+///
+/// Every node repels every other by an inverse-distance electrical force
+/// (`k²/d`); every edge pulls its endpoints together by a spring (`d²/k`). Each
+/// step sums those into a per-node displacement, moves the node by at most a
+/// linearly-cooling *temperature*, and repeats — the system anneals to a
+/// low-energy rest state. `k` is [`FORCE_K`], the ideal edge length.
+///
+/// **Deterministic (ZERO-FLAKE), like [`layered_layout`]:** it reads only the
+/// node *set* and the edges — never the current `x` / `y` — seeding from a fixed
+/// grid in id order ([`force_grid_cols`], no trigonometry, so the arithmetic is
+/// `+ − × ÷ √` only and bit-identical across platforms), then running a fixed
+/// [`FORCE_ITERS`] iterations with id-ordered accumulation and integer tie-breaks
+/// ([`force_unit`]). Identical inputs always yield an identical layout, so the
+/// pass is idempotent once applied. The relaxed cloud is finally translated so
+/// its bounding-box top-left sits at `origin` (the graph's current top-left, so
+/// the organic graph stays roughly put), then rounded to graph units.
+fn force_directed_layout(
+    nodes: &[GraphNode],
+    edges: &[Edge],
+    origin: (i32, i32),
+) -> BTreeMap<NodeId, (i32, i32)> {
+    if nodes.is_empty() {
+        return BTreeMap::new();
+    }
+    let mut ids: Vec<NodeId> = nodes.iter().map(|n| n.id).collect();
+    ids.sort_by_key(|id| id.raw());
+    let node_set: BTreeSet<NodeId> = ids.iter().copied().collect();
+
+    // Deterministic grid seed in id order (no trig -> bit-identical across
+    // platforms): distinct positions, so no pair starts coincident.
+    let cols = force_grid_cols(ids.len());
+    let mut pos: BTreeMap<NodeId, (f64, f64)> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| {
+            let col = f64::from(u32::try_from(i % cols).unwrap_or(0));
+            let row = f64::from(u32::try_from(i / cols).unwrap_or(0));
+            (id, (col * FORCE_K, row * FORCE_K))
+        })
+        .collect();
+
+    // The springs: present, non-self edges (undirected — direction is irrelevant
+    // to an organic layout).
+    let springs: Vec<(NodeId, NodeId)> = edges
+        .iter()
+        .filter(|e| {
+            e.from_node != e.to_node
+                && node_set.contains(&e.from_node)
+                && node_set.contains(&e.to_node)
+        })
+        .map(|e| (e.from_node, e.to_node))
+        .collect();
+
+    let iters_f = f64::from(u32::try_from(FORCE_ITERS).unwrap_or(1)).max(1.0);
+    for iter in 0..FORCE_ITERS {
+        // Linearly-cooling temperature: a full ideal length at first, annealing
+        // toward zero so late steps only fine-tune.
+        let temp = FORCE_K * (1.0 - f64::from(u32::try_from(iter).unwrap_or(0)) / iters_f);
+        let mut disp: BTreeMap<NodeId, (f64, f64)> =
+            ids.iter().map(|&id| (id, (0.0, 0.0))).collect();
+
+        // Repulsion between every unordered id pair (electrical, k²/d).
+        for (ai, &a) in ids.iter().enumerate() {
+            for &b in &ids[ai + 1..] {
+                let (ux, uy, apart) = force_unit(a, pos[&a], b, pos[&b]);
+                let rep = FORCE_K * FORCE_K / apart;
+                {
+                    let d = disp.get_mut(&a).expect("a present");
+                    d.0 += ux * rep;
+                    d.1 += uy * rep;
+                }
+                {
+                    let d = disp.get_mut(&b).expect("b present");
+                    d.0 -= ux * rep;
+                    d.1 -= uy * rep;
+                }
+            }
+        }
+
+        // Attraction along each spring (d²/k), pulling the endpoints together.
+        for &(from, to) in &springs {
+            let (ux, uy, apart) = force_unit(from, pos[&from], to, pos[&to]);
+            let att = apart * apart / FORCE_K;
+            {
+                let d = disp.get_mut(&from).expect("from present");
+                d.0 -= ux * att;
+                d.1 -= uy * att;
+            }
+            {
+                let d = disp.get_mut(&to).expect("to present");
+                d.0 += ux * att;
+                d.1 += uy * att;
+            }
+        }
+
+        // Move each node by its displacement, capped at the temperature.
+        for &id in &ids {
+            let (dx, dy) = disp[&id];
+            let mag = (dx * dx + dy * dy).sqrt();
+            let scale = if mag > temp { temp / mag } else { 1.0 };
+            let p = pos.get_mut(&id).expect("id present");
+            p.0 += dx * scale;
+            p.1 += dy * scale;
+        }
+    }
+
+    // Translate the relaxed cloud so its bounding-box top-left sits at `origin`.
+    let min_x = pos.values().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let min_y = pos.values().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    ids.iter()
+        .map(|&id| {
+            let (x, y) = pos[&id];
+            (
+                id,
+                (
+                    origin.0 + round_i32(x - min_x),
+                    origin.1 + round_i32(y - min_y),
+                ),
+            )
+        })
+        .collect()
+}
+
+/// R1390 helper — the unit vector pointing from `b` toward `a` and their
+/// distance ([`force_directed_layout`]'s repulsion/attraction direction), the
+/// distance floored at [`FORCE_EPS`]. If the two (near-)coincide the direction
+/// falls back to a deterministic ±x axis by id order, so the force never divides
+/// by zero and the layout stays reproducible.
+fn force_unit(a: NodeId, ap: (f64, f64), b: NodeId, bp: (f64, f64)) -> (f64, f64, f64) {
+    let dx = ap.0 - bp.0;
+    let dy = ap.1 - bp.1;
+    let dist2 = dx * dx + dy * dy;
+    if dist2 > FORCE_EPS * FORCE_EPS {
+        let dist = dist2.sqrt();
+        (dx / dist, dy / dist, dist)
+    } else {
+        let dir = if a.raw() < b.raw() { 1.0 } else { -1.0 };
+        (dir, 0.0, FORCE_EPS)
+    }
+}
+
+/// R1390 helper — the column count of the deterministic grid seed: `ceil(√n)` by
+/// integer search, so the seed is a near-square block (at least one column).
+fn force_grid_cols(n: usize) -> usize {
+    let mut c = 1usize;
+    while c * c < n {
+        c += 1;
+    }
+    c
 }
 
 /// R1258 — the canonical `(input, output)` port shape a compute op must have,
@@ -5441,6 +5622,34 @@ impl NodeGraphExternal {
         })
     }
 
+    /// R1390 — relax the WHOLE graph into a **force-directed (organic)**
+    /// arrangement in ONE undo step: nodes repel, edges spring them together,
+    /// annealed to a compact symmetric cluster (see [`force_directed_layout`]).
+    /// The organic counterpart to [`auto_layout`](Self::auto_layout)'s layered
+    /// "tidy" — the mode a pro editor offers for a cyclic or undirected topology
+    /// (yEd organic, Graphviz neato). No selection needed (it lays out
+    /// everything), anchored at the graph's current top-left so it stays roughly
+    /// put, and routed through the same [`apply_node_moves`](Self::apply_node_moves)
+    /// SSOT as align / distribute / auto-layout, so a single `Ctrl+Z` reverts the
+    /// whole relaxation. A no-op `false` on fewer than two nodes or when nothing
+    /// moves (the pass reads only structure, so re-running is idempotent).
+    fn force_layout(&self) -> bool {
+        // A stable snapshot pointer — the `auto_layout` discipline: the live
+        // signal is replaced wholesale by `set_node_pos`, so this held copy stays
+        // valid while `apply_node_moves` mutates it.
+        let snapshot = self.nodes.get();
+        if snapshot.len() < 2 {
+            return false;
+        }
+        let edges = self.edges.get();
+        let origin =
+            node_bounds(snapshot.iter()).map_or((0, 0), |(l, t, _, _)| (l.max(0), t.max(0)));
+        let targets = force_directed_layout(&snapshot, &edges, origin);
+        self.apply_node_moves(&snapshot, false, |n| {
+            targets.get(&n.id).copied().unwrap_or((n.x, n.y))
+        })
+    }
+
     /// Select a node by id (must exist). The sum type makes any prior edge
     /// selection vanish for free — no "clear the other" bookkeeping.
     /// R920 — write the selection, first committing any in-flight *panel* edit
@@ -6510,6 +6719,9 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     // R1383 — tidy the whole graph into a layered left-to-right arrangement
     // (Sugiyama); no args, ONE undo step, returns whether anything moved.
     SchemaField::new("auto_layout", "json"),
+    // R1390 — relax the whole graph into a force-directed (organic) cluster;
+    // no args, ONE undo step, returns whether anything moved.
+    SchemaField::new("force_layout", "json"),
     SchemaField::new("serialized", "string"),
     SchemaField::new("set_graph", "string"),
     SchemaField::new("save", "json"),
@@ -6937,6 +7149,8 @@ impl NodeGraphExternal {
             "distribute_v" => self.distribute_selected(DistributeAxis::Vertical),
             // R1383 — whole-graph layered auto-layout (no selection needed).
             "auto_layout" => self.auto_layout(),
+            // R1390 — whole-graph force-directed (organic) layout.
+            "force_layout" => self.force_layout(),
             _ => return None,
         })
     }

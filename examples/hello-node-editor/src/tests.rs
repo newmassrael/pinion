@@ -5695,6 +5695,191 @@ fn r1383_auto_layout_is_idempotent_and_needs_two_nodes() {
     });
 }
 
+// ── R1390 force-directed (organic) auto-layout ────────────────────
+
+/// Euclidean distance between two placed nodes' top-left corners.
+fn node_dist(out: &BTreeMap<NodeId, (i32, i32)>, a: u32, b: u32) -> f64 {
+    let pa = out[&NodeId(a)];
+    let pb = out[&NodeId(b)];
+    let dx = f64::from(pa.0 - pb.0);
+    let dy = f64::from(pa.1 - pb.1);
+    (dx * dx + dy * dy).sqrt()
+}
+
+#[test]
+fn r1390_force_layout_places_every_node_anchored_at_origin() {
+    let nodes: Vec<GraphNode> = (0..5).map(|i| lnode(i, 1, 1)).collect();
+    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 3, 4)];
+    let out = force_directed_layout(&nodes, &edges, (30, 40));
+    assert_eq!(out.len(), 5, "every node is placed");
+    let min_x = out.values().map(|p| p.0).min().unwrap();
+    let min_y = out.values().map(|p| p.1).min().unwrap();
+    assert_eq!(min_x, 30, "the relaxed cloud's left edge sits at origin.x");
+    assert_eq!(min_y, 40, "and its top edge at origin.y");
+}
+
+#[test]
+fn r1390_layout_is_deterministic_and_position_independent() {
+    let edges = [
+        ledge(0, 0, 1),
+        ledge(1, 0, 2),
+        ledge(2, 1, 3),
+        ledge(3, 2, 3),
+    ];
+    let a: Vec<GraphNode> = (0..4).map(|i| lnode(i, 1, 1)).collect();
+    // The same graph, but every node parked at a scattered position.
+    let mut b = a.clone();
+    for (k, n) in b.iter_mut().enumerate() {
+        n.x = 777 - i32::try_from(k).unwrap() * 41;
+        n.y = i32::try_from(k).unwrap() * 59;
+    }
+    let la = force_directed_layout(&a, &edges, (0, 0));
+    let lb = force_directed_layout(&b, &edges, (0, 0));
+    assert_eq!(
+        la, lb,
+        "the force layout reads only structure, never the stored x/y"
+    );
+    assert_eq!(
+        la,
+        force_directed_layout(&a, &edges, (0, 0)),
+        "identical input -> identical output"
+    );
+}
+
+#[test]
+fn r1390_edge_pulls_endpoints_closer_than_an_isolated_node() {
+    // 0-1 wired; 2 isolated. The spring holds 0,1 near the ideal length while
+    // repulsion pushes the unattached 2 away from both.
+    let nodes = [lnode(0, 1, 1), lnode(1, 1, 1), lnode(2, 0, 0)];
+    let edges = [ledge(0, 0, 1)];
+    let out = force_directed_layout(&nodes, &edges, (0, 0));
+    let d01 = node_dist(&out, 0, 1);
+    assert!(
+        d01 < node_dist(&out, 0, 2),
+        "the wired pair 0-1 is tighter than 0..isolated-2"
+    );
+    assert!(
+        d01 < node_dist(&out, 1, 2),
+        "and tighter than 1..isolated-2"
+    );
+}
+
+#[test]
+fn r1390_repulsion_separates_every_node() {
+    let nodes: Vec<GraphNode> = (0..6).map(|i| lnode(i, 1, 1)).collect();
+    let edges = [
+        ledge(0, 0, 1),
+        ledge(1, 1, 2),
+        ledge(2, 2, 3),
+        ledge(3, 3, 4),
+        ledge(4, 4, 5),
+    ];
+    let out = force_directed_layout(&nodes, &edges, (0, 0));
+    for i in 0..6u32 {
+        for j in (i + 1)..6 {
+            assert_ne!(
+                out[&NodeId(i)],
+                out[&NodeId(j)],
+                "repulsion keeps nodes {i} and {j} from coinciding"
+            );
+        }
+    }
+}
+
+#[test]
+fn r1390_cycle_does_not_hang_and_places_every_node() {
+    // 0 -> 1 -> 2 -> 0; the undirected springs relax it without a cycle guard.
+    let nodes = [lnode(0, 1, 1), lnode(1, 1, 1), lnode(2, 1, 1)];
+    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 2, 0)];
+    let out = force_directed_layout(&nodes, &edges, (0, 0));
+    assert_eq!(out.len(), 3, "a 3-cycle terminates and places every node");
+}
+
+#[test]
+fn r1390_force_and_layered_are_distinct_arrangements() {
+    // The two modes place the same graph differently — organic vs columned.
+    let nodes: Vec<GraphNode> = (0..4).map(|i| lnode(i, 1, 1)).collect();
+    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 2, 3)];
+    let force = force_directed_layout(&nodes, &edges, (0, 0));
+    let layered = layered_layout(&nodes, &edges, (0, 0));
+    assert_ne!(
+        force, layered,
+        "force-directed and layered yield different layouts"
+    );
+}
+
+#[test]
+fn r1390_force_layout_tidies_in_one_undo_step_and_reverts() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let stack = use_undo();
+        // Scramble the seed graph, then relax it.
+        place_and_select(
+            &coord,
+            &[(3, 40, 60), (2, 240, 300), (1, 500, 60), (0, 520, 260)],
+        );
+        let before0 = pos_of(&coord, NodeId(0));
+        assert!(
+            coord.force_layout(),
+            "force_layout relaxed the scrambled graph"
+        );
+        assert_eq!(
+            stack.len(),
+            1,
+            "a whole relaxation is ONE discrete undo step"
+        );
+        assert!(stack.undo(), "one undo reverts the whole relaxation");
+        assert_eq!(
+            pos_of(&coord, NodeId(0)),
+            before0,
+            "undo restores the pre-layout position"
+        );
+    });
+}
+
+#[test]
+fn r1390_force_layout_is_idempotent_and_needs_two_nodes() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        assert!(
+            coord.force_layout(),
+            "the first pass relaxes the seed graph"
+        );
+        let snapshot: Vec<(i32, i32)> = [0u32, 1, 2, 3]
+            .map(|id| pos_of(&coord, NodeId(id)))
+            .to_vec();
+        assert!(
+            !coord.force_layout(),
+            "a second pass moves nothing (idempotent)"
+        );
+        for (id, before) in [0u32, 1, 2, 3].iter().zip(snapshot) {
+            assert_eq!(pos_of(&coord, NodeId(*id)), before, "node {id} unchanged");
+        }
+    });
+}
+
+#[test]
+fn r1390_force_layout_dispatches_via_invoke_and_is_schema_declared() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        // Schema-declared (AI-discoverable) beside the layered `auto_layout`.
+        let fields: Vec<&str> = coord.schema().fields.iter().map(|f| f.path).collect();
+        assert!(
+            fields.contains(&"force_layout"),
+            "force_layout must be schema-declared"
+        );
+        // Routes through invoke_layout -> Bool, relaxing the seed graph.
+        assert_eq!(
+            coord.invoke("force_layout", IntrospectValue::Null),
+            Ok(IntrospectValue::Bool(true)),
+            "force_layout dispatches and relaxes the seed graph",
+        );
+    });
+}
+
 // ── R1226 wire knife (cut_wires) ──────────────────────────────────
 
 #[test]
