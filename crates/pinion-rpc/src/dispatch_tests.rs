@@ -763,7 +763,108 @@ fn path_error_inside_query_also_maps_to_invalid_params() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("Path".to_string())));
+    // R1386 — the mapper no longer collapses every window-prefix failure
+    // to a blanket "Path"; it surfaces the concrete PathError reason tag.
+    // Here the prefix `/window[main` has no closing `]` => MalformedPrefix.
+    assert_eq!(err.data, Some(Value::String("MalformedPrefix".to_string())));
+}
+
+// ---- R1386 §2 #7 — scene/snapshot path errors teach the valid form ----
+// PINION-PR66: a failing snapshot path must state what is valid and echo
+// what was sent, so an AI agent recovers from the message alone (the same
+// bar the sibling `params.from` error already meets), instead of getting a
+// bare variant name and having to read pinion's source.
+
+#[test]
+fn snapshot_root_slash_teaches_valid_path_form() {
+    // R-66.1 — `{"path":"/"}` is the natural "give me the whole tree" try.
+    // The error must name the valid form AND echo the offending input.
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"/","from":"state"},"id":1}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    let Some(Value::String(msg)) = err.data else {
+        panic!("expected a string error.data, got {:?}", err.data);
+    };
+    assert_ne!(msg, "UnsupportedPath", "no bare variant name");
+    // Teaches the valid form ...
+    assert!(
+        msg.contains("/window[<id>]") && msg.contains("empty"),
+        "message must name the valid form, got {msg:?}"
+    );
+    // ... and echoes the offending path back.
+    assert!(
+        msg.contains("\"/\""),
+        "message must echo the offending path, got {msg:?}"
+    );
+}
+
+#[test]
+fn snapshot_window_prefixed_tail_echoes_both_raw_and_tail() {
+    // R-66.1 — with a `/window[main]/…` tail the message keeps the full
+    // raw path and calls out the offending remainder after the prefix.
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"/window[main]/external/count","from":"state"},"id":2}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let Some(Value::String(msg)) = resp.error.unwrap().data else {
+        panic!("expected a string error.data");
+    };
+    assert!(
+        msg.contains("\"/window[main]/external/count\""),
+        "echoes the raw path, got {msg:?}"
+    );
+    assert!(
+        msg.contains("scene tail") && msg.contains("\"/external/count\""),
+        "isolates the offending tail, got {msg:?}"
+    );
+}
+
+#[test]
+fn snapshot_unknown_window_surfaces_concrete_reason_not_path() {
+    // R-66.2 — a mistyped window id surfaces the concrete PathError reason
+    // tag (`UnknownWindow`), never the collapsed blanket `"Path"`.
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"/window[nope]","from":"state"},"id":3}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.data, Some(Value::String("UnknownWindow".to_string())));
+    assert_ne!(err.data, Some(Value::String("Path".to_string())));
+}
+
+#[test]
+fn snapshot_from_param_error_context_is_unregressed() {
+    // R-66 acceptance — the sibling `params.from` error keeps its full
+    // context (the violating value + the valid set): the fix must not
+    // regress the bar it set.
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"","from":"sideways"},"id":4}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let Some(Value::String(msg)) = resp.error.unwrap().data else {
+        panic!("expected a string error.data");
+    };
+    assert!(
+        msg.contains("state") && msg.contains("paint"),
+        "valid set: {msg:?}"
+    );
+    assert!(msg.contains("sideways"), "violating value echoed: {msg:?}");
+}
+
+#[test]
+fn snapshot_class_fix_also_covers_a_sibling_method() {
+    // R-66.2 was a CLASS defect: the same `Path(_) => "Path"` collapse
+    // lived at every method that resolves a `/window[<id>]/…` path. The
+    // shared `PathError::wire_tag` SSOT fixes them uniformly — proven here
+    // on `scene/simulate`, a different method whose step path carries the
+    // identical PathError.
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/simulate","params":{"steps":[{"path":"/window[nope]/external/count","value":1}]},"id":5}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.data, Some(Value::String("UnknownWindow".to_string())));
+    assert_ne!(err.data, Some(Value::String("Path".to_string())));
 }
 
 // ---- R51.197 §5.49 §5.45 — scene/key injection ----

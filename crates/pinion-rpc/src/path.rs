@@ -35,6 +35,33 @@ pub enum PathError {
     UnknownWindow,
 }
 
+impl PathError {
+    /// The machine-matchable reason tag carried in a failing RPC
+    /// response's `error.data` — the concrete variant name, not a
+    /// blanket `"Path"`.
+    ///
+    /// This is the SSOT for the reason string: every RPC error surface
+    /// that wraps a [`PathError`] (each method's `…Error::Path` arm —
+    /// `scene/snapshot`, `scene/query`, `scene/invoke`, `scene/simulate`,
+    /// the preview `set_signal` apply, …) forwards it, so an AI agent
+    /// switches on the exact failure — a mistyped window id
+    /// (`UnknownWindow`) reads differently from a syntax slip
+    /// (`MalformedPrefix` / `EmptyWindowId`) without parsing prose. It
+    /// replaces the family of `Path(_) => "Path"` mappers, each of which
+    /// used to collapse all three reasons into one uninformative tag —
+    /// the same concrete-reason-tag discipline the codebase's error
+    /// `data` already follows elsewhere (see
+    /// [`crate::preview::ApplyError::ApplyRejected`]).
+    #[must_use]
+    pub fn wire_tag(self) -> &'static str {
+        match self {
+            PathError::MalformedPrefix => "MalformedPrefix",
+            PathError::EmptyWindowId => "EmptyWindowId",
+            PathError::UnknownWindow => "UnknownWindow",
+        }
+    }
+}
+
 /// Split `scene_path` at the literal `/external/` separator (§5.34 R42).
 ///
 /// Returns `Some((scene_segments, introspect_path))` when the
@@ -164,6 +191,27 @@ mod tests {
         assert_eq!(
             resolve("/window[ghost]/scene"),
             Err(PathError::UnknownWindow)
+        );
+    }
+
+    #[test]
+    fn wire_tag_names_the_concrete_reason() {
+        // The SSOT that replaces the `Path(_) => "Path"` collapse: each
+        // reason surfaces its own machine-matchable tag, never a blanket
+        // "Path". A distinct tag per variant is the whole point.
+        assert_eq!(PathError::MalformedPrefix.wire_tag(), "MalformedPrefix");
+        assert_eq!(PathError::EmptyWindowId.wire_tag(), "EmptyWindowId");
+        assert_eq!(PathError::UnknownWindow.wire_tag(), "UnknownWindow");
+        let tags = [
+            PathError::MalformedPrefix.wire_tag(),
+            PathError::EmptyWindowId.wire_tag(),
+            PathError::UnknownWindow.wire_tag(),
+        ];
+        let distinct: std::collections::HashSet<_> = tags.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            tags.len(),
+            "every reason has a distinct tag"
         );
     }
 

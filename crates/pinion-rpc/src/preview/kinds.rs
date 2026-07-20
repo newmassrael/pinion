@@ -229,7 +229,9 @@ fn apply_set_signal(
 
 fn rewind_error_tag(err: RewindError) -> String {
     match err {
-        RewindError::Path(_) => "Path".to_string(),
+        // R1386 — forward the inner PathError reason via the shared
+        // `PathError::wire_tag` SSOT, not the collapsed blanket "Path".
+        RewindError::Path(inner) => inner.wire_tag().to_string(),
         RewindError::UnsupportedPath => "UnsupportedPath".to_string(),
         RewindError::NoExternalAtPath => "NoExternalAtPath".to_string(),
         RewindError::IntrospectionOptedOut => "IntrospectionOptedOut".to_string(),
@@ -298,6 +300,23 @@ mod tests {
         // Ensure both still report the same paths after Clone.
         assert_eq!(p.target_path(), q.target_path());
         assert_eq!(p.affected_paths(), q.affected_paths());
+    }
+
+    #[test]
+    fn set_signal_bad_window_path_surfaces_concrete_reason() {
+        // R1386 — the preview `set_signal` apply path shares the
+        // `PathError::wire_tag` reason SSOT: a mistyped window id surfaces
+        // the concrete `UnknownWindow`, never the collapsed blanket "Path"
+        // (this surface used to hand-roll its own `Path => "Path"` tag).
+        let mut scene = dummy_scene();
+        let err = apply_set_signal(
+            &mut scene,
+            "/window[nope]/external/count",
+            &serde_json::json!(1),
+        )
+        .unwrap_err();
+        assert_eq!(err, "UnknownWindow");
+        assert_ne!(err, "Path", "no collapsed blanket tag");
     }
 
     #[test]

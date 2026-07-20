@@ -409,14 +409,35 @@ pub struct ExternalSnapshot {
 }
 
 /// Reasons [`snapshot`] can fail.
+///
+/// Both variants carry enough context for the failing RPC response's
+/// `error.data` to name *what* was wrong — and, for `UnsupportedPath`,
+/// *what is valid* — meeting the same recovery-from-the-message-alone
+/// bar the sibling `params.from` error already sets (§2 #7
+/// scene-as-data: an AI agent recovers without reading pinion's source).
+/// `Path` forwards the inner [`PathError`], whose
+/// [`wire_tag`](PathError::wire_tag) names the concrete reason;
+/// `UnsupportedPath` carries the offending input so the message can echo
+/// it back and teach the valid form.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapshotError {
-    /// Window-prefix parsing failed.
+    /// Window-prefix parsing failed; the inner [`PathError`] names the
+    /// concrete reason.
     Path(PathError),
-    /// Scene path is not v0-supported (must be empty after window
-    /// prefix).
-    UnsupportedPath,
+    /// Scene path is not v0-supported: `scene/snapshot` is the
+    /// whole-tree dump, so the path must be empty or a bare
+    /// `/window[<id>]` — a non-empty scene tail (sub-tree addressing) is
+    /// `scene/query`'s job. Carries the caller's `raw_path` and the
+    /// offending non-empty `scene_tail` so the RPC message echoes both.
+    UnsupportedPath {
+        /// The full path the caller sent (echoed as the "got" value).
+        raw_path: String,
+        /// The non-empty remainder after the optional `/window[<id>]`
+        /// prefix — the part that makes the path unsupported. Equals
+        /// `raw_path` when no window prefix was present.
+        scene_tail: String,
+    },
 }
 
 impl From<PathError> for SnapshotError {
@@ -436,9 +457,13 @@ pub fn snapshot(scene: &Scene, raw_path: &str) -> Result<SnapshotNode, SnapshotE
     let _ = resolved.window;
 
     // v0: scene path must be empty. Tails like /external/count belong
-    // to scene/query, not scene/snapshot.
+    // to scene/query, not scene/snapshot. Carry both the raw input and
+    // the offending tail so the RPC message can teach the valid form.
     if !resolved.scene_path.is_empty() {
-        return Err(SnapshotError::UnsupportedPath);
+        return Err(SnapshotError::UnsupportedPath {
+            raw_path: raw_path.to_string(),
+            scene_tail: resolved.scene_path.to_string(),
+        });
     }
 
     Ok(snapshot_root(scene))
@@ -918,7 +943,38 @@ mod tests {
     fn scene_path_tail_is_unsupported() {
         let scene = counted_scene(0);
         let err = snapshot(&scene, "/external/count").unwrap_err();
-        assert_eq!(err, SnapshotError::UnsupportedPath);
+        // R1386 — the error now carries the offending input so the RPC
+        // layer can echo it back. With no window prefix the raw path and
+        // the offending tail are the same string.
+        match err {
+            SnapshotError::UnsupportedPath {
+                raw_path,
+                scene_tail,
+            } => {
+                assert_eq!(raw_path, "/external/count");
+                assert_eq!(scene_tail, "/external/count");
+            }
+            other => panic!("expected UnsupportedPath, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn window_prefixed_tail_carries_raw_and_offending_tail() {
+        // R1386 — a `/window[main]/…` tail keeps the full raw path AND
+        // isolates the offending remainder after the prefix, so an agent
+        // sees both what it sent and the exact part that is unsupported.
+        let scene = counted_scene(0);
+        let err = snapshot(&scene, "/window[main]/external/count").unwrap_err();
+        match err {
+            SnapshotError::UnsupportedPath {
+                raw_path,
+                scene_tail,
+            } => {
+                assert_eq!(raw_path, "/window[main]/external/count");
+                assert_eq!(scene_tail, "/external/count");
+            }
+            other => panic!("expected UnsupportedPath, got {other:?}"),
+        }
     }
 
     #[test]

@@ -26568,6 +26568,68 @@
         "Standing defers unchanged: `select` / `selectable` are BarChart-only (2nd categorical-select chart = the lift trigger); quit-veto forcing consumer `[[debt-r1364-quit-split-clearance]]`; the demo-sweep push gap (`[[r1322-r1323-dock-gesture-regressions]]`, pre-push runs unit + clippy + doc, not the demo sweep)."
       ]
     },
+    "R1386": {
+      "decision_summary": "R1386 §5.12 §5.18 §5.34: scene/snapshot path errors teach the valid form, and the whole PathError family surfaces its concrete reason (sprag PINION-PR66 consumer-forced seam). R-66.1: SnapshotError::UnsupportedPath goes from a payload-free unit variant to {raw_path, scene_tail}, so the RPC error data echoes the offending input and names the valid form (empty or /window[<id>], no scene tail) in the same register as the sibling params.from error — recovery from the message alone (§2 #7 scene-as-data extends to the error surface). R-66.2: the Path(_) => \"Path\" collapse that discarded PathError's reason is replaced by a PathError::wire_tag() SSOT (MalformedPrefix / EmptyWindowId / UnknownWindow — machine-matchable, matching the codebase's own error-data tag philosophy). An independent read-only 3-reviewer audit found the collapse was a CLASS defect at 12 error surfaces, not the 1 sprag reported; wire_tag is applied uniformly across all 12 (10 dispatch mappers + simulate + the preview set_signal hand-rolled tag). Behaviour, wire shape, syntax, and control flow are unchanged — only the failure response's data string becomes informative.",
+      "changes_bullets": [
+        "`crates/pinion-rpc/src/path.rs`: add `PathError::wire_tag()` SSOT — the concrete machine-matchable reason tag (`MalformedPrefix` / `EmptyWindowId` / `UnknownWindow`) per the codebase's own error-`data` tag philosophy (see `preview::ApplyError::ApplyRejected`) + a distinctness unit test.",
+        "`crates/pinion-rpc/src/snapshot.rs` (R-66.1): `SnapshotError::UnsupportedPath` unit variant -> struct `{raw_path, scene_tail}` (drops `Copy`); `snapshot()` populates both fields; enum doc rewritten; 2 tests (no-prefix raw==tail, window-prefixed tail isolated).",
+        "`crates/pinion-rpc/src/dispatch.rs` (R-66.1 + R-66.2): `snapshot_error_to_rpc` emits a prose message teaching the valid form + echoing the input for `UnsupportedPath`, and `wire_tag()` for `Path`; the same `wire_tag()` applied to 9 sibling `Path(_) => \"Path\"` mappers (rewind/dry_run/wait_for/screenshot/bbox/layout_query/invoke/intervene/query) + `simulate_error_to_rpc` (the audit-found 11th site).",
+        "`crates/pinion-rpc/src/preview/kinds.rs`: `rewind_error_tag` (the `set_signal` apply surface) forwards `wire_tag()` instead of its hand-rolled blanket `\"Path\"` (the audit-found 12th site) + a test over `apply_set_signal`.",
+        "`crates/pinion-rpc/src/dispatch_tests.rs`: the query path-error assertion `\"Path\"` -> `\"MalformedPrefix\"`; +5 tests (snapshot `/` prose, window-prefixed tail echo, unknown-window reason, `from` no-regression, `simulate` class-fix proof).",
+        "`tools/demos/r1386_snapshot_path_error.py` (NEW, >=30 assertions over real windowed RPC, `hello-button` host): snapshot/query/simulate path errors teach the valid form and name the concrete reason; the `params.from` error keeps its full context."
+      ],
+      "verification_bullets": [
+        "`cargo test -p pinion-rpc` (all targets): 910 passed, 0 failed.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello`: clean (`-D pedantic`).",
+        "`cargo doc` (pinion-rpc, `--no-deps --document-private-items`, `-D warnings`): clean; the new `crate::preview::ApplyError` intra-doc link resolves ([[cargo-doc-not-in-commit-gate]] pre-checked locally).",
+        "`cargo fmt --all --check`: clean.",
+        "`tools/demos/r1386_snapshot_path_error.py`: PASS over real windowed RPC (rebuilt host, no stale binary).",
+        "Independent read-only 3-reviewer audit (correctness / doc-honesty / regression) BEFORE commit: all three independently found the SAME 2 missed class sites (`simulate_error_to_rpc` dispatch.rs, `rewind_error_tag` preview/kinds.rs) — a `[[self-grep-count-all-sites-not-just-new-pair]]` miss from a too-narrow census grep; both cleared inline and the `wire_tag` / demo \"whole family\" doc claims corrected to be true.",
+        "Exhaustive re-census: every error surface wrapping `path::PathError` (12 total) now uses `wire_tag()`; the only remaining `=> \"Path\"` arms are node-TYPE tags (`SnapshotNode::Path`, `Scene::Path`), not errors.",
+        "No behavior / wire-shape / JSON-RPC-code (-32602) / control-flow change — only the failure response's `data` string; removing `Copy` from `SnapshotError` breaks no consumer (both discard via `map_err(|_e| ...)`)."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.18",
+        "5.34"
+      ],
+      "carry_forward_bullets": [
+        "snapshot's `UnsupportedPath` is now prose; the sibling `UnsupportedPath` tags (simulate step, query/invoke \"no /external/ separator\") stay machine tags by design — different meaning, and the sprag doc scoped prose to snapshot only.",
+        "Not asked / not done: `PathError` does not carry the offending window-id string, so `UnknownWindow` is a bare reason tag, not \"no window 'nope'\". Enriching to `UnknownWindow(String)` would touch `resolve()` + all 12 sites — a future round if an agent needs the echoed id.",
+        "§7 API surface stays unfrozen: `SnapshotError` is a public re-export whose variant shape changed (pre-1.0; §7 parked).",
+        "Remaining Phase B dataviz gaps `[[debt-dataviz-dashboard-substrate]]` untouched — this was a consumer-forced RPC-DX seam (sprag PINION-PR66), not a feature round. Next round returns to the dataviz roadmap (timeline/scrubber, force-directed layout, brush-range cross-filter, live-streaming feed)."
+      ],
+      "publishable_decision_summary": "R1386 §5.12 §5.18 §5.34: scene/snapshot path errors teach the valid form, and the whole PathError family surfaces its concrete reason (sprag PINION-PR66 consumer-forced seam). R-66.1: SnapshotError::UnsupportedPath goes from a payload-free unit variant to {raw_path, scene_tail}, so the RPC error data echoes the offending input and names the valid form (empty or /window[<id>], no scene tail) in the same register as the sibling params.from error — recovery from the message alone (§2 #7 scene-as-data extends to the error surface). R-66.2: the Path(_) => \"Path\" collapse that discarded PathError's reason is replaced by a PathError::wire_tag() SSOT (MalformedPrefix / EmptyWindowId / UnknownWindow — machine-matchable, matching the codebase's own error-data tag philosophy). An independent read-only 3-reviewer audit found the collapse was a CLASS defect at 12 error surfaces, not the 1 sprag reported; wire_tag is applied uniformly across all 12 (10 dispatch mappers + simulate + the preview set_signal hand-rolled tag). Behaviour, wire shape, syntax, and control flow are unchanged — only the failure response's data string becomes informative.",
+      "publishable_changes_bullets": [
+        "`crates/pinion-rpc/src/path.rs`: add `PathError::wire_tag()` SSOT — the concrete machine-matchable reason tag (`MalformedPrefix` / `EmptyWindowId` / `UnknownWindow`) per the codebase's own error-`data` tag philosophy (see `preview::ApplyError::ApplyRejected`) + a distinctness unit test.",
+        "`crates/pinion-rpc/src/snapshot.rs` (R-66.1): `SnapshotError::UnsupportedPath` unit variant -> struct `{raw_path, scene_tail}` (drops `Copy`); `snapshot()` populates both fields; enum doc rewritten; 2 tests (no-prefix raw==tail, window-prefixed tail isolated).",
+        "`crates/pinion-rpc/src/dispatch.rs` (R-66.1 + R-66.2): `snapshot_error_to_rpc` emits a prose message teaching the valid form + echoing the input for `UnsupportedPath`, and `wire_tag()` for `Path`; the same `wire_tag()` applied to 9 sibling `Path(_) => \"Path\"` mappers (rewind/dry_run/wait_for/screenshot/bbox/layout_query/invoke/intervene/query) + `simulate_error_to_rpc` (the audit-found 11th site).",
+        "`crates/pinion-rpc/src/preview/kinds.rs`: `rewind_error_tag` (the `set_signal` apply surface) forwards `wire_tag()` instead of its hand-rolled blanket `\"Path\"` (the audit-found 12th site) + a test over `apply_set_signal`.",
+        "`crates/pinion-rpc/src/dispatch_tests.rs`: the query path-error assertion `\"Path\"` -> `\"MalformedPrefix\"`; +5 tests (snapshot `/` prose, window-prefixed tail echo, unknown-window reason, `from` no-regression, `simulate` class-fix proof).",
+        "`tools/demos/r1386_snapshot_path_error.py` (NEW, >=30 assertions over real windowed RPC, `hello-button` host): snapshot/query/simulate path errors teach the valid form and name the concrete reason; the `params.from` error keeps its full context."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-rpc` (all targets): 910 passed, 0 failed.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello`: clean (`-D pedantic`).",
+        "`cargo doc` (pinion-rpc, `--no-deps --document-private-items`, `-D warnings`): clean; the new `crate::preview::ApplyError` intra-doc link resolves ([[cargo-doc-not-in-commit-gate]] pre-checked locally).",
+        "`cargo fmt --all --check`: clean.",
+        "`tools/demos/r1386_snapshot_path_error.py`: PASS over real windowed RPC (rebuilt host, no stale binary).",
+        "Independent read-only 3-reviewer audit (correctness / doc-honesty / regression) BEFORE commit: all three independently found the SAME 2 missed class sites (`simulate_error_to_rpc` dispatch.rs, `rewind_error_tag` preview/kinds.rs) — a `[[self-grep-count-all-sites-not-just-new-pair]]` miss from a too-narrow census grep; both cleared inline and the `wire_tag` / demo \"whole family\" doc claims corrected to be true.",
+        "Exhaustive re-census: every error surface wrapping `path::PathError` (12 total) now uses `wire_tag()`; the only remaining `=> \"Path\"` arms are node-TYPE tags (`SnapshotNode::Path`, `Scene::Path`), not errors.",
+        "No behavior / wire-shape / JSON-RPC-code (-32602) / control-flow change — only the failure response's `data` string; removing `Copy` from `SnapshotError` breaks no consumer (both discard via `map_err(|_e| ...)`)."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.18",
+        "5.34"
+      ],
+      "publishable_carry_forward_bullets": [
+        "snapshot's `UnsupportedPath` is now prose; the sibling `UnsupportedPath` tags (simulate step, query/invoke \"no /external/ separator\") stay machine tags by design — different meaning, and the sprag doc scoped prose to snapshot only.",
+        "Not asked / not done: `PathError` does not carry the offending window-id string, so `UnknownWindow` is a bare reason tag, not \"no window 'nope'\". Enriching to `UnknownWindow(String)` would touch `resolve()` + all 12 sites — a future round if an agent needs the echoed id.",
+        "§7 API surface stays unfrozen: `SnapshotError` is a public re-export whose variant shape changed (pre-1.0; §7 parked).",
+        "Remaining Phase B dataviz gaps `[[debt-dataviz-dashboard-substrate]]` untouched — this was a consumer-forced RPC-DX seam (sprag PINION-PR66), not a feature round. Next round returns to the dataviz roadmap (timeline/scrubber, force-directed layout, brush-range cross-filter, live-streaming feed)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
