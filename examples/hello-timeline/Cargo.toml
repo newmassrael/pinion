@@ -1,0 +1,42 @@
+[package]
+name = "hello-timeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1389 track-view timeline consumer — the forcing consumer for pinion-chart's Timeline, the crate's first non-value (time) form. A flame view of the real per-frame render phases (build / encode / acquire / render), each phase a lane, each frame a span at its cumulative-time offset, over a shared time ruler. Dragging the transparent capture surface scrubs a playhead whose readout names the frame + phase under it (and reaches a11y, the R1355 parity). Reuses the profiler's streaming `use_frame_timings` seam rather than synthetic data, exercising the lane / span / ruler / playhead geometry end-to-end in the real windowed shell + over RPC."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# R1389 — the timeline under test (Timeline -> Scene).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R1361 — the frame-timing seam this flame is built from (`use_frame_timings`,
+# `FrameTiming`, `FrameTimingsView`).
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 — `#[pinion_derive::widget(...)]` emits WidgetCore + WidgetView (the
+# `a11y_manual` opt-out leaves WidgetA11y to the hand-written impl in main.rs).
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.38 — shared slider introspect reader + ARIA keyboard scaffold
+# (`read_slider_state` / `slider_apply_key`); the SliderExternal is reused as
+# the playhead-position holder (value 0..1 = the fraction that scrubs the axis).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloTimelineRenderer` struct emitted by build.rs names `::vello::*`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R1360.2 — `assert_widget_view_paints_opaque_root`: this binding's root fill IS
+# the window's clear colour.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# Build-time codegen for the `HelloTimelineRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

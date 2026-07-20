@@ -89,6 +89,7 @@ members = [
     "examples/hello-rescale-toggle",
     "examples/hello-cross-filter",
     "examples/hello-stat-tiles",
+    "examples/hello-timeline",
     "examples/hello-snackbar",
     "examples/hello-richtext",
     "examples/hello-color-picker",

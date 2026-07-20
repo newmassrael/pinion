@@ -84,7 +84,13 @@
 //! another. And (R1385) the [`Sparkline`] — a compact, axis-less trend line (no
 //! axes / ticks / gridlines / legend, an optional faint area fill + end / min /
 //! max reference dots) for inline display in a table cell or a KPI stat tile;
-//! `examples/hello-stat-tiles` composes a row of them.
+//! `examples/hello-stat-tiles` composes a row of them. And (R1389) the
+//! [`Timeline`] — the crate's first NON-value form: labelled time [`Span`]s
+//! grouped into horizontal [`Lane`]s over a shared numeric time ruler, with a
+//! draggable **playhead** scrubber whose readout names the span under it per
+//! lane (the track view a sequencer / capture-replay tool needs).
+//! `examples/hello-timeline` is the forcing consumer — a flame view of the real
+//! per-frame render phases (`use_frame_timings`).
 //!
 //! Not yet: cross-filtering driven by a numeric BRUSH range (rather than a
 //! categorical selection) or between two arbitrary chart types, and a y-rescale
@@ -150,6 +156,7 @@ mod series;
 mod sparkline;
 mod style;
 mod ticks;
+mod timeline;
 mod treemap;
 
 pub use bar::{Bar, BarChart};
@@ -162,4 +169,5 @@ pub use series::{Bounds, DataPoint, Series, data_bounds, visible_data_bounds};
 pub use sparkline::Sparkline;
 pub use style::{ChartStyle, Margin};
 pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};
+pub use timeline::{Lane, Span, Timeline};
 pub use treemap::{Tile, Treemap};
