@@ -68,7 +68,7 @@ pub enum LocateError {
 
 /// Reasons [`bbox`] can fail.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BboxError {
     /// Path string did not start with `/`, did not contain a valid
     /// `/window[id]/` prefix, or had a malformed prefix.

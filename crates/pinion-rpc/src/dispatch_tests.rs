@@ -822,14 +822,18 @@ fn snapshot_window_prefixed_tail_echoes_both_raw_and_tail() {
 
 #[test]
 fn snapshot_unknown_window_surfaces_concrete_reason_not_path() {
-    // R-66.2 — a mistyped window id surfaces the concrete PathError reason
-    // tag (`UnknownWindow`), never the collapsed blanket `"Path"`.
+    // R-66.2 + R1387 — a mistyped window id surfaces the concrete reason
+    // AND echoes the offending id (`UnknownWindow: "nope"`), never the
+    // collapsed blanket `"Path"`; the tag stays a machine-matchable prefix.
     let mut scene = counted_scene(0);
     let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"/window[nope]","from":"state"},"id":3}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("UnknownWindow".to_string())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("UnknownWindow: \"nope\"".to_string()))
+    );
     assert_ne!(err.data, Some(Value::String("Path".to_string())));
 }
 
@@ -863,8 +867,40 @@ fn snapshot_class_fix_also_covers_a_sibling_method() {
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("UnknownWindow".to_string())));
+    // R1387 — the id echo travels through the sibling method too.
+    assert_eq!(
+        err.data,
+        Some(Value::String("UnknownWindow: \"nope\"".to_string()))
+    );
     assert_ne!(err.data, Some(Value::String("Path".to_string())));
+}
+
+#[test]
+fn unknown_window_error_echoes_the_offending_id() {
+    // R1387 — the carry cleared: two DIFFERENT mistyped ids produce two
+    // DIFFERENT messages, each echoing exactly what the caller sent, so an
+    // agent sees which window it got wrong (not a bare, identical tag).
+    let mut scene = counted_scene(0);
+    let mut data_for = |id: &str| {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"/window[{id}]/external/count"}},"id":9}}"#
+        );
+        parse_response(&dispatch_t(&mut scene, &req).unwrap())
+            .error
+            .unwrap()
+            .data
+    };
+    let a = data_for("dahsboard");
+    let b = data_for("sesion");
+    assert_eq!(
+        a,
+        Some(Value::String("UnknownWindow: \"dahsboard\"".to_string()))
+    );
+    assert_eq!(
+        b,
+        Some(Value::String("UnknownWindow: \"sesion\"".to_string()))
+    );
+    assert_ne!(a, b, "each offending id produces its own message");
 }
 
 // ---- R51.197 §5.49 §5.45 — scene/key injection ----

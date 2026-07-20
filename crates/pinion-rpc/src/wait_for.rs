@@ -31,7 +31,7 @@ pub struct WaitOutcome {
 
 /// Reasons [`wait_for`] can fail.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WaitForError {
     /// Window-prefix parsing failed.
     Path(PathError),

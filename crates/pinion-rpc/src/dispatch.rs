@@ -3204,7 +3204,7 @@ fn handle_scene_rewind(scene: &mut Scene, params: Option<&Value>) -> Result<Valu
 
 fn rewind_error_to_rpc(err: RewindError) -> RpcError {
     let variant = match err {
-        RewindError::Path(inner) => inner.wire_tag(),
+        RewindError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         RewindError::UnsupportedPath => "UnsupportedPath",
         RewindError::NoExternalAtPath => "NoExternalAtPath",
         RewindError::IntrospectionOptedOut => "IntrospectionOptedOut",
@@ -4300,7 +4300,7 @@ fn handle_scene_dry_run(scene: &mut Scene, params: Option<&Value>) -> Result<Val
 
 fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
     let variant = match err {
-        DryRunError::Path(inner) => inner.wire_tag(),
+        DryRunError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         DryRunError::UnsupportedPath => "UnsupportedPath",
         DryRunError::NoExternalAtPath => "NoExternalAtPath",
         DryRunError::IntrospectionOptedOut => "IntrospectionOptedOut",
@@ -4383,7 +4383,7 @@ fn simulate_error_to_rpc(err: &SimulateError) -> RpcError {
     let variant = match err {
         // R1386 — forward the inner PathError reason (same SSOT as every
         // other path-resolving method), not the collapsed blanket "Path".
-        SimulateError::Path { error, .. } => error.wire_tag(),
+        SimulateError::Path { error, .. } => return RpcError::invalid_params(error.wire_tag()),
         SimulateError::UnsupportedPath { .. } => "UnsupportedPath",
         SimulateError::NoExternalAtPath => "NoExternalAtPath",
         SimulateError::IntrospectionOptedOut => "IntrospectionOptedOut",
@@ -4450,7 +4450,7 @@ fn wait_outcome_to_json(outcome: &WaitOutcome) -> Value {
 
 fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
     let variant = match err {
-        WaitForError::Path(inner) => inner.wire_tag(),
+        WaitForError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         WaitForError::Query(_) => "Query",
         WaitForError::ZeroAttempts => "ZeroAttempts",
     };
@@ -4508,7 +4508,7 @@ fn screenshot_to_json(shot: &Screenshot) -> Value {
 
 fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
     let variant = match err {
-        ScreenshotError::Path(inner) => inner.wire_tag(),
+        ScreenshotError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         ScreenshotError::UnsupportedPath => "UnsupportedPath",
         ScreenshotError::RenderBackendUnavailable => "RenderBackendUnavailable",
     };
@@ -5686,7 +5686,7 @@ fn handle_scene_bbox(scene: &Scene, params: Option<&Value>) -> Result<Value, Rpc
 
 fn bbox_error_to_rpc(err: BboxError) -> RpcError {
     let variant = match err {
-        BboxError::Path(inner) => inner.wire_tag(),
+        BboxError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         BboxError::UnknownPath => "UnknownPath",
     };
     RpcError::invalid_params(variant)
@@ -5721,7 +5721,7 @@ where
 
 fn layout_query_error_to_rpc(err: LayoutQueryError) -> RpcError {
     let variant = match err {
-        LayoutQueryError::Path(inner) => inner.wire_tag(),
+        LayoutQueryError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         LayoutQueryError::PaintProducerUnavailable => "PaintProducerUnavailable",
         LayoutQueryError::InvalidViewport => "InvalidViewport",
         LayoutQueryError::NoLastPaintLayout => "NoLastPaintLayout",
@@ -6435,7 +6435,7 @@ fn preview_view_to_json(view: &PreviewView, now: std::time::Instant) -> Value {
 
 fn invoke_error_to_rpc(err: &InvokeError) -> RpcError {
     let variant = match err {
-        InvokeError::Path(inner) => inner.wire_tag(),
+        InvokeError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         InvokeError::UnsupportedPath => "UnsupportedPath",
         InvokeError::NoExternalAtPath => "NoExternalAtPath",
         InvokeError::IntrospectionOptedOut => "IntrospectionOptedOut",
@@ -6476,7 +6476,7 @@ fn handle_scene_intervene(scene: &mut Scene, params: Option<&Value>) -> Result<V
 
 fn intervene_error_to_rpc(err: &InterveneError) -> RpcError {
     let variant = match err {
-        InterveneError::Path(inner) => inner.wire_tag(),
+        InterveneError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         InterveneError::UnsupportedPath => "UnsupportedPath",
         InterveneError::NoExternalAtPath => "NoExternalAtPath",
         InterveneError::IntrospectionOptedOut => "IntrospectionOptedOut",
@@ -6755,7 +6755,7 @@ fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
 
 fn query_error_to_rpc(err: QueryError) -> RpcError {
     let variant = match err {
-        QueryError::Path(inner) => inner.wire_tag(),
+        QueryError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
         QueryError::UnsupportedPath => "UnsupportedPath",
         QueryError::NoExternalAtPath => "NoExternalAtPath",
         QueryError::IntrospectionOptedOut => "IntrospectionOptedOut",

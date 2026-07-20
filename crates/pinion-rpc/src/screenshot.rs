@@ -62,7 +62,7 @@ impl Screenshot {
 
 /// Reasons a `scene/screenshot` dispatch can fail.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScreenshotError {
     /// Window-prefix parsing failed.
     Path(PathError),

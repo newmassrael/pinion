@@ -118,7 +118,7 @@ fn schema_value(intro: &dyn ExternalIntrospect) -> IntrospectValue {
 
 /// Reasons the typed [`query`] dispatcher can fail.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryError {
     /// Window-prefix parsing failed (see [`PathError`]).
     Path(PathError),

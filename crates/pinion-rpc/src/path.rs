@@ -25,39 +25,50 @@ pub struct ResolvedPath<'a> {
 }
 
 /// Reasons path resolution can fail. Absent prefix never errors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathError {
     /// Input started with `/window[` but had no closing `]`.
     MalformedPrefix,
     /// Window id between `[` and `]` was empty.
     EmptyWindowId,
     /// Id parsed cleanly but did not match any SCE-declared window.
-    UnknownWindow,
+    /// Carries the offending id so the RPC message can echo *which*
+    /// window was not found (R1387 — a valid-syntax id that simply did
+    /// not match is the one worth echoing back; the two syntax errors
+    /// above have no such parameter).
+    UnknownWindow(String),
 }
 
 impl PathError {
     /// The machine-matchable reason tag carried in a failing RPC
-    /// response's `error.data` — the concrete variant name, not a
-    /// blanket `"Path"`.
+    /// response's `error.data` — the concrete reason, not a blanket
+    /// `"Path"`.
     ///
     /// This is the SSOT for the reason string: every RPC error surface
     /// that wraps a [`PathError`] (each method's `…Error::Path` arm —
     /// `scene/snapshot`, `scene/query`, `scene/invoke`, `scene/simulate`,
     /// the preview `set_signal` apply, …) forwards it, so an AI agent
-    /// switches on the exact failure — a mistyped window id
-    /// (`UnknownWindow`) reads differently from a syntax slip
-    /// (`MalformedPrefix` / `EmptyWindowId`) without parsing prose. It
-    /// replaces the family of `Path(_) => "Path"` mappers, each of which
-    /// used to collapse all three reasons into one uninformative tag —
-    /// the same concrete-reason-tag discipline the codebase's error
-    /// `data` already follows elsewhere (see
+    /// switches on the exact failure — a mistyped window id reads
+    /// differently from a syntax slip without parsing prose. It replaces
+    /// the family of `Path(_) => "Path"` mappers, each of which used to
+    /// collapse all three reasons into one uninformative tag — the same
+    /// concrete-reason-tag discipline the codebase's error `data` already
+    /// follows elsewhere (see
     /// [`crate::preview::ApplyError::ApplyRejected`]).
+    ///
+    /// The tag is the variant name; [`UnknownWindow`](PathError::UnknownWindow)
+    /// appends its offending id (`UnknownWindow: "nope"`) so the message
+    /// names the reason AND echoes what was rejected while staying
+    /// prefix-matchable. The paramless variants borrow a `'static` string
+    /// (no allocation); only the id-bearing one owns.
     #[must_use]
-    pub fn wire_tag(self) -> &'static str {
+    pub fn wire_tag(&self) -> std::borrow::Cow<'static, str> {
         match self {
-            PathError::MalformedPrefix => "MalformedPrefix",
-            PathError::EmptyWindowId => "EmptyWindowId",
-            PathError::UnknownWindow => "UnknownWindow",
+            PathError::MalformedPrefix => std::borrow::Cow::Borrowed("MalformedPrefix"),
+            PathError::EmptyWindowId => std::borrow::Cow::Borrowed("EmptyWindowId"),
+            PathError::UnknownWindow(id) => {
+                std::borrow::Cow::Owned(format!("UnknownWindow: {id:?}"))
+            }
         }
     }
 }
@@ -124,7 +135,8 @@ pub fn resolve(input: &str) -> Result<ResolvedPath<'_>, PathError> {
         if id.is_empty() {
             return Err(PathError::EmptyWindowId);
         }
-        let window = App::window_from_name(id).ok_or(PathError::UnknownWindow)?;
+        let window =
+            App::window_from_name(id).ok_or_else(|| PathError::UnknownWindow(id.to_string()))?;
         let scene_path = &rest[close + 1..];
         Ok(ResolvedPath {
             window,
@@ -188,9 +200,11 @@ mod tests {
 
     #[test]
     fn unknown_window_id_rejected() {
+        // R1387 — the rejected id is carried on the error so the wire can
+        // echo which window was not found.
         assert_eq!(
             resolve("/window[ghost]/scene"),
-            Err(PathError::UnknownWindow)
+            Err(PathError::UnknownWindow("ghost".to_string()))
         );
     }
 
@@ -201,11 +215,23 @@ mod tests {
         // "Path". A distinct tag per variant is the whole point.
         assert_eq!(PathError::MalformedPrefix.wire_tag(), "MalformedPrefix");
         assert_eq!(PathError::EmptyWindowId.wire_tag(), "EmptyWindowId");
-        assert_eq!(PathError::UnknownWindow.wire_tag(), "UnknownWindow");
+        // R1387 — UnknownWindow appends the offending id, staying
+        // prefix-matchable ("UnknownWindow: …") while echoing what was
+        // rejected.
+        assert_eq!(
+            PathError::UnknownWindow("nope".to_string()).wire_tag(),
+            "UnknownWindow: \"nope\""
+        );
+        assert!(
+            PathError::UnknownWindow("nope".to_string())
+                .wire_tag()
+                .starts_with("UnknownWindow"),
+            "the reason tag stays a machine-matchable prefix"
+        );
         let tags = [
             PathError::MalformedPrefix.wire_tag(),
             PathError::EmptyWindowId.wire_tag(),
-            PathError::UnknownWindow.wire_tag(),
+            PathError::UnknownWindow("x".to_string()).wire_tag(),
         ];
         let distinct: std::collections::HashSet<_> = tags.iter().collect();
         assert_eq!(

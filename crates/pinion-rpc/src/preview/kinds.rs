@@ -315,8 +315,9 @@ mod tests {
             &serde_json::json!(1),
         )
         .unwrap_err();
-        assert_eq!(err, "UnknownWindow");
-        assert_ne!(err, "Path", "no collapsed blanket tag");
+        // R1387 — the reason echoes the offending id, staying prefix-matchable.
+        assert_eq!(err, "UnknownWindow: \"nope\"");
+        assert!(err.starts_with("UnknownWindow") && err != "Path");
     }
 
     #[test]

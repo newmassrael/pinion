@@ -34,7 +34,7 @@ use crate::snapshot::{SnapshotError, SnapshotNode, snapshot};
 
 /// Reasons [`dry_run`] can fail.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DryRunError {
     /// Window-prefix parsing failed.
     Path(PathError),

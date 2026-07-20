@@ -122,7 +122,7 @@ pub struct LayoutRect {
 
 /// Reasons `scene/layout` can fail.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutQueryError {
     /// The window-prefix portion of `path` failed to parse.
     Path(PathError),

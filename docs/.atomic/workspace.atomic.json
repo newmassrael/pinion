@@ -26630,6 +26630,66 @@
         "Remaining Phase B dataviz gaps `[[debt-dataviz-dashboard-substrate]]` untouched — this was a consumer-forced RPC-DX seam (sprag PINION-PR66), not a feature round. Next round returns to the dataviz roadmap (timeline/scrubber, force-directed layout, brush-range cross-filter, live-streaming feed)."
       ]
     },
+    "R1387": {
+      "decision_summary": "R1387 §5.18 §5.12 §5.34: clear the R1386 carry — PathError::UnknownWindow now carries the offending window-id and echoes it on the wire (UnknownWindow: \"nope\"), so an AI agent sees WHICH window it mistyped instead of a bare, identical tag. User-directed follow-up to R1386 (sprag PINION-PR66). UnknownWindow unit variant -> UnknownWindow(String); Copy dropped from PathError (String payload) cascading to 7 wrapper error enums that derived Copy (DryRunError/LayoutQueryError/BboxError/QueryError/RewindError/ScreenshotError/WaitForError; the other wrappers were already non-Copy). wire_tag(self)->&static str became wire_tag(&self)->Cow<static,str>: paramless reasons keep their borrowed static tag, UnknownWindow owns the id-bearing string and stays a machine-matchable PREFIX. The 10 dispatch mappers' Path arm early-returns invalid_params(wire_tag()) since the Cow won't unify with the &str sibling arms. Wire change is data-only: JSON-RPC code -32602 / message / control flow unchanged; UnknownWindow's data string is the only new value. Independent read-only 3-reviewer audit (completeness+correctness / regression+doc) PASS: no missed Copy site, no broken assertion, docs honest.",
+      "changes_bullets": [
+        "`crates/pinion-rpc/src/path.rs`: `PathError::UnknownWindow` unit variant -> `UnknownWindow(String)` carrying the offending id; `Copy` dropped (String payload); `wire_tag(self) -> &'static str` -> `wire_tag(&self) -> Cow<'static, str>` — paramless reasons keep their borrowed `'static` tag, `UnknownWindow` owns `UnknownWindow: \"<id>\"` (id via `{:?}`), staying a machine-matchable PREFIX; `resolve()` populates the id; tests updated + a prefix-match assertion.",
+        "`crates/pinion-rpc/src/dispatch.rs`: the 10 mappers' `Path` arm -> `return RpcError::invalid_params(inner.wire_tag())` (the `Cow` won't unify with the `&'static str` sibling arms in `let variant = match`); `snapshot_error_to_rpc` unchanged (already direct-return; `Cow: Display`).",
+        "7 wrapper error enums drop `Copy` forced by the non-`Copy` `PathError`: `DryRunError` / `LayoutQueryError` / `BboxError` / `QueryError` / `RewindError` / `ScreenshotError` / `WaitForError` (the other wrappers — `InvokeError` / `InterveneError` / `SimulateError` / `ResolveExternalError` / `SnapshotError` — were already non-`Copy`).",
+        "`crates/pinion-rpc/src/preview/kinds.rs`: the `set_signal` apply test asserts the echoed id; the `.to_string()` on the now-`Cow` return needed no code change.",
+        "`crates/pinion-rpc/src/dispatch_tests.rs`: `UnknownWindow` assertions -> `UnknownWindow: \"nope\"`; +`unknown_window_error_echoes_the_offending_id` (two mistyped ids -> two distinct messages, over the real dispatch).",
+        "`tools/demos/r1386_snapshot_path_error.py`: (D2) two mistyped ids yield two distinct messages echoing what was sent; (F) `scene/query` and `scene/simulate` echo the id too."
+      ],
+      "verification_bullets": [
+        "`cargo test -p pinion-rpc` (all targets): 911 passed, 0 failed.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello`: clean (`-D pedantic`).",
+        "`cargo doc` (pinion-rpc, `--no-deps --document-private-items`, `-D warnings`): clean; `PathError::UnknownWindow` / `crate::preview::ApplyError` links resolve.",
+        "`cargo fmt --all --check`: clean.",
+        "`tools/demos/r1386_snapshot_path_error.py`: PASS over real windowed RPC — the id echo is asserted on snapshot/query/simulate; two ids yield two distinct messages.",
+        "Independent read-only 3-reviewer audit (completeness+correctness / regression+doc) BEFORE commit: PASS. Enumerated every `PathError` wrapper — the 7 `Copy` removals are exhaustive; no downstream crate (`pinion-cli` / `pinion-runtime` / `pinion-shell` / `examples`) consumes these by value expecting `Copy`; the only surviving bare `\"UnknownWindow\"` is the unrelated `WindowMoveError::UnknownWindow`.",
+        "Register coherence: `UnknownWindow` is prefix-matchable (`startswith`), the two syntax reasons stay exact `==` — asserted consistently in tests + demo. Wire change is `error.data`-only (code -32602 / message / control flow unchanged)."
+      ],
+      "impact_refs": [
+        "5.18",
+        "5.12",
+        "5.34"
+      ],
+      "carry_forward_bullets": [
+        "The valid window SET is still not listed (`App` exposes `window_name` / `window_from_name` / `initial_window`, no enumerate-all). Echoing the offending id clears the stated carry; listing valid windows would need a new pinion-core `App` enumeration API — a future round only if an agent needs it.",
+        "`MalformedPrefix` / `EmptyWindowId` still do not echo their raw input; their reason names the syntax fault and the offending string is the caller's own. Symmetric enrichment only if a consumer needs it.",
+        "`UnknownWindow`'s wire `data` is now a tag PREFIX (`UnknownWindow: \"<id>\"`), not an exact tag; a machine client matches on the prefix. The two syntax reasons remain exact tags. If a future need arises for uniformly structured error `data` (an object `{reason, ...}`), that is a separate cross-cutting decision, not this carry.",
+        "Remaining Phase B dataviz gaps `[[debt-dataviz-dashboard-substrate]]` untouched; R1388 returns to that roadmap (this was the R1386 seam's carry clearance)."
+      ],
+      "publishable_decision_summary": "R1387 §5.18 §5.12 §5.34: clear the R1386 carry — PathError::UnknownWindow now carries the offending window-id and echoes it on the wire (UnknownWindow: \"nope\"), so an AI agent sees WHICH window it mistyped instead of a bare, identical tag. User-directed follow-up to R1386 (sprag PINION-PR66). UnknownWindow unit variant -> UnknownWindow(String); Copy dropped from PathError (String payload) cascading to 7 wrapper error enums that derived Copy (DryRunError/LayoutQueryError/BboxError/QueryError/RewindError/ScreenshotError/WaitForError; the other wrappers were already non-Copy). wire_tag(self)->&static str became wire_tag(&self)->Cow<static,str>: paramless reasons keep their borrowed static tag, UnknownWindow owns the id-bearing string and stays a machine-matchable PREFIX. The 10 dispatch mappers' Path arm early-returns invalid_params(wire_tag()) since the Cow won't unify with the &str sibling arms. Wire change is data-only: JSON-RPC code -32602 / message / control flow unchanged; UnknownWindow's data string is the only new value. Independent read-only 3-reviewer audit (completeness+correctness / regression+doc) PASS: no missed Copy site, no broken assertion, docs honest.",
+      "publishable_changes_bullets": [
+        "`crates/pinion-rpc/src/path.rs`: `PathError::UnknownWindow` unit variant -> `UnknownWindow(String)` carrying the offending id; `Copy` dropped (String payload); `wire_tag(self) -> &'static str` -> `wire_tag(&self) -> Cow<'static, str>` — paramless reasons keep their borrowed `'static` tag, `UnknownWindow` owns `UnknownWindow: \"<id>\"` (id via `{:?}`), staying a machine-matchable PREFIX; `resolve()` populates the id; tests updated + a prefix-match assertion.",
+        "`crates/pinion-rpc/src/dispatch.rs`: the 10 mappers' `Path` arm -> `return RpcError::invalid_params(inner.wire_tag())` (the `Cow` won't unify with the `&'static str` sibling arms in `let variant = match`); `snapshot_error_to_rpc` unchanged (already direct-return; `Cow: Display`).",
+        "7 wrapper error enums drop `Copy` forced by the non-`Copy` `PathError`: `DryRunError` / `LayoutQueryError` / `BboxError` / `QueryError` / `RewindError` / `ScreenshotError` / `WaitForError` (the other wrappers — `InvokeError` / `InterveneError` / `SimulateError` / `ResolveExternalError` / `SnapshotError` — were already non-`Copy`).",
+        "`crates/pinion-rpc/src/preview/kinds.rs`: the `set_signal` apply test asserts the echoed id; the `.to_string()` on the now-`Cow` return needed no code change.",
+        "`crates/pinion-rpc/src/dispatch_tests.rs`: `UnknownWindow` assertions -> `UnknownWindow: \"nope\"`; +`unknown_window_error_echoes_the_offending_id` (two mistyped ids -> two distinct messages, over the real dispatch).",
+        "`tools/demos/r1386_snapshot_path_error.py`: (D2) two mistyped ids yield two distinct messages echoing what was sent; (F) `scene/query` and `scene/simulate` echo the id too."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-rpc` (all targets): 911 passed, 0 failed.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello`: clean (`-D pedantic`).",
+        "`cargo doc` (pinion-rpc, `--no-deps --document-private-items`, `-D warnings`): clean; `PathError::UnknownWindow` / `crate::preview::ApplyError` links resolve.",
+        "`cargo fmt --all --check`: clean.",
+        "`tools/demos/r1386_snapshot_path_error.py`: PASS over real windowed RPC — the id echo is asserted on snapshot/query/simulate; two ids yield two distinct messages.",
+        "Independent read-only 3-reviewer audit (completeness+correctness / regression+doc) BEFORE commit: PASS. Enumerated every `PathError` wrapper — the 7 `Copy` removals are exhaustive; no downstream crate (`pinion-cli` / `pinion-runtime` / `pinion-shell` / `examples`) consumes these by value expecting `Copy`; the only surviving bare `\"UnknownWindow\"` is the unrelated `WindowMoveError::UnknownWindow`.",
+        "Register coherence: `UnknownWindow` is prefix-matchable (`startswith`), the two syntax reasons stay exact `==` — asserted consistently in tests + demo. Wire change is `error.data`-only (code -32602 / message / control flow unchanged)."
+      ],
+      "publishable_impact_refs": [
+        "5.18",
+        "5.12",
+        "5.34"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The valid window SET is still not listed (`App` exposes `window_name` / `window_from_name` / `initial_window`, no enumerate-all). Echoing the offending id clears the stated carry; listing valid windows would need a new pinion-core `App` enumeration API — a future round only if an agent needs it.",
+        "`MalformedPrefix` / `EmptyWindowId` still do not echo their raw input; their reason names the syntax fault and the offending string is the caller's own. Symmetric enrichment only if a consumer needs it.",
+        "`UnknownWindow`'s wire `data` is now a tag PREFIX (`UnknownWindow: \"<id>\"`), not an exact tag; a machine client matches on the prefix. The two syntax reasons remain exact tags. If a future need arises for uniformly structured error `data` (an object `{reason, ...}`), that is a separate cross-cutting decision, not this carry.",
+        "Remaining Phase B dataviz gaps `[[debt-dataviz-dashboard-substrate]]` untouched; R1388 returns to that roadmap (this was the R1386 seam's carry clearance)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
@@ -79574,5 +79634,6 @@
   "edge_guards": {},
   "parameters": {},
   "parameter_deltas": {},
-  "schema_version": 34
+  "parameter_gates": {},
+  "schema_version": 35
 }
