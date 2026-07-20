@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1392 §5.38 — pinion-forge renderer manifest for hello-linked-legend.
+  Same single-source-of-truth template as hello-legend-toggle / hello-chart;
+  only the struct name diverges. backend=vello + default Area antialiasing.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloLinkedLegendRenderer"
+        backend="vello"/>

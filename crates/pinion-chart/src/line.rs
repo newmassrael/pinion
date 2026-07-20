@@ -67,15 +67,12 @@
 use core::fmt::Write as _;
 
 use pinion_core::Scene;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, Size, Stroke, StrokeCap, TextAlign,
-    TextStyle,
-};
+use pinion_core::scene::{ContainerNode, Rect};
+use pinion_core::style::{Color, Stroke, StrokeCap, TextAlign};
 
 use crate::draw::{
-    CalloutRow, LEGEND_SLOT, absolute, area_path, box_node, callout, fill_parent, label_node,
-    marker_node, stroke_path, to_u32,
+    CalloutRow, absolute, area_path, box_node, callout, fill_parent, label_node, marker_node,
+    stroke_path, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{CartesianPlot, axis_ticks};
@@ -468,7 +465,7 @@ impl LineChart {
     }
 
     /// The interactive legend (R1380): one focusable, hit-testable entry per
-    /// series, on the same [`LEGEND_SLOT`] grid as the static row, each tagged
+    /// series, on the same `LEGEND_SLOT` grid as the static row, each tagged
     /// with the caller's `tags[i]`. The entry is a `Container` whose only
     /// children are an untagged swatch + label, so the router's
     /// deepest-tagged-ancestor hit-test resolves a click anywhere on it to
@@ -483,59 +480,19 @@ impl LineChart {
         row_y: u32,
         style: &ChartStyle,
     ) -> Vec<Scene> {
-        let size = style.label_size_px.max(1);
-        // A little taller than the swatch so the whole slot is a comfortable
-        // click / Tab target; the swatch + label centre inside it.
-        let entry_h = size + 6;
-        self.series
+        let entries: Vec<(Color, String, bool)> = self
+            .series
             .iter()
             .enumerate()
-            .zip(tags)
-            .map(|((i, s), tag)| {
-                let swatch_color = if s.visible {
-                    s.color.unwrap_or_else(|| self.palette.color(i))
-                } else {
-                    // Grey swatch — the series colour is gone, so is the line.
-                    style.label
-                };
-                // Full-strength label when visible; dimmed when hidden.
-                let ink = if s.visible {
-                    style.label
-                } else {
-                    style.label.with_alpha(0x80)
-                };
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "the legend index is small; the slot offset stays within u32"
-                )]
-                let entry_x = start_x + (i as u32) * LEGEND_SLOT;
-                let swatch = Scene::Box(
-                    BoxNode::new(
-                        Rect::default(),
-                        BoxStyle::filled(swatch_color).with_corner_radius(3),
-                    )
-                    .with_layout(LayoutStyle::new().with_size(Size::px(size, size))),
-                );
-                let label = Scene::Text(TextNode::styled(
+            .map(|(i, s)| {
+                (
+                    s.color.unwrap_or_else(|| self.palette.color(i)),
                     s.name.clone(),
-                    Rect::default(),
-                    TextStyle::new().with_size_px(size).with_fg(ink),
-                ));
-                Scene::Container(
-                    ContainerNode::new(vec![swatch, label])
-                        .with_tag(tag.clone())
-                        .with_layout(
-                            LayoutStyle::new()
-                                .flex(FlexDirection::Row)
-                                .with_align_items(AlignItems::Center)
-                                .with_gap(4)
-                                .with_absolute_position(entry_x, row_y)
-                                .with_size(Size::px(LEGEND_SLOT.saturating_sub(8), entry_h))
-                                .with_focusable(true),
-                        ),
+                    s.visible,
                 )
             })
-            .collect()
+            .collect();
+        crate::draw::interactive_legend_row(&entries, tags, start_x, row_y, style)
     }
 
     /// Resolve which data point the inspect cursor is focused on — the shared

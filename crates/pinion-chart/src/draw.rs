@@ -13,10 +13,12 @@
 //! introspection ownership stays with the chart builder, not here.
 
 use pinion_core::Scene;
-use pinion_core::scene::{BoxNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
+use pinion_core::scene::{
+    BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode,
+};
 use pinion_core::style::{
-    Border, BorderPlacement, BoxStyle, Color, LayoutStyle, PathStyle, Size, SizeValue, Stroke,
-    TextAlign, TextStyle,
+    AlignItems, Border, BorderPlacement, BoxStyle, Color, FlexDirection, LayoutStyle, PathStyle,
+    Size, SizeValue, Stroke, TextAlign, TextStyle,
 };
 
 use crate::style::{ChartStyle, Margin};
@@ -487,6 +489,74 @@ pub(crate) fn legend_row(
         ));
     }
     out
+}
+
+/// R1392 — the INTERACTIVE legend row: one focusable, hit-testable entry per
+/// `entries[i] = (color, name, visible)` on the same [`LEGEND_SLOT`] grid as the
+/// static [`legend_row`], each a `Container([swatch, label])` tagged with the
+/// caller's `tags[i]` (so the router's deepest-tagged-ancestor hit-test resolves
+/// a click anywhere on the entry to that tag — the R1380 chip structure). A
+/// hidden entry (`visible == false`) greys its swatch to `style.label` and dims
+/// its label — the "this series is off" affordance — while keeping its slot (the
+/// toggle back on). The clickable twin of [`legend_row`], shared by the line and
+/// scatter charts: lifted from `line.rs`'s `interactive_legend_entries` at the
+/// 2nd consumer so the two charts emit an identical, chart-owned interactive
+/// legend rather than each re-deriving the chip geometry. Entries and tags zip to
+/// the shorter, so extra tags past the last series are ignored.
+pub(crate) fn interactive_legend_row(
+    entries: &[(Color, String, bool)],
+    tags: &[String],
+    start_x: u32,
+    row_y: u32,
+    style: &ChartStyle,
+) -> Vec<Scene> {
+    let size = style.label_size_px.max(1);
+    // A little taller than the swatch so the whole slot is a comfortable
+    // click / Tab target; the swatch + label centre inside it.
+    let entry_h = size + 6;
+    entries
+        .iter()
+        .zip(tags)
+        .enumerate()
+        .map(|(i, ((color, name, visible), tag))| {
+            let swatch_color = if *visible { *color } else { style.label };
+            let ink = if *visible {
+                style.label
+            } else {
+                style.label.with_alpha(0x80)
+            };
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "the legend index is small; the slot offset stays within u32"
+            )]
+            let entry_x = start_x + (i as u32) * LEGEND_SLOT;
+            let swatch = Scene::Box(
+                BoxNode::new(
+                    Rect::default(),
+                    BoxStyle::filled(swatch_color).with_corner_radius(3),
+                )
+                .with_layout(LayoutStyle::new().with_size(Size::px(size, size))),
+            );
+            let label = Scene::Text(TextNode::styled(
+                name.clone(),
+                Rect::default(),
+                TextStyle::new().with_size_px(size).with_fg(ink),
+            ));
+            Scene::Container(
+                ContainerNode::new(vec![swatch, label])
+                    .with_tag(tag.clone())
+                    .with_layout(
+                        LayoutStyle::new()
+                            .flex(FlexDirection::Row)
+                            .with_align_items(AlignItems::Center)
+                            .with_gap(4)
+                            .with_absolute_position(entry_x, row_y)
+                            .with_size(Size::px(LEGEND_SLOT.saturating_sub(8), entry_h))
+                            .with_focusable(true),
+                    ),
+            )
+        })
+        .collect()
 }
 
 /// A layout that pins a node to `rect` (parent-relative absolute position + size).
