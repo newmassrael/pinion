@@ -51,6 +51,9 @@
 //!
 //! Every emitted node carries a tag under the chart's `tag_prefix`
 //! (default `"chart"`): `chart.bg`, `chart.series.{i}`, `chart.area.{i}`,
+//! and — when [`select_x_range`](LineChart::select_x_range) is set — the
+//! full-colour in-window overdraw `chart.focus.series.{i}` /
+//! `chart.focus.area.{i}` (the muted `chart.series.{i}` staying as context),
 //! `chart.grid.y.{k}` / `chart.grid.x.{k}`, `chart.axis.x` /
 //! `chart.axis.y`, `chart.label.y.{k}` / `chart.label.x.{k}`,
 //! `chart.legend.{i}.swatch` / `chart.legend.{i}.label`, and — when
@@ -71,8 +74,8 @@ use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, Stroke, StrokeCap, TextAlign};
 
 use crate::draw::{
-    CalloutRow, absolute, area_path, box_node, callout, fill_parent, label_node, marker_node,
-    stroke_path, to_u32,
+    CalloutRow, MUTED_ALPHA, absolute, area_path, box_node, callout, fill_parent, label_node,
+    marker_node, stroke_path, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{CartesianPlot, axis_ticks};
@@ -93,6 +96,7 @@ pub struct LineChart {
     inspect: Option<f32>,
     legend_tags: Option<Vec<String>>,
     rescale_to_visible: bool,
+    select_x_range: Option<(f64, f64)>,
     tag_prefix: String,
 }
 
@@ -110,6 +114,7 @@ impl LineChart {
             inspect: None,
             legend_tags: None,
             rescale_to_visible: false,
+            select_x_range: None,
             tag_prefix: "chart".to_string(),
         }
     }
@@ -190,6 +195,26 @@ impl LineChart {
     #[must_use]
     pub fn rescale_to_visible(mut self, rescale: bool) -> Self {
         self.rescale_to_visible = rescale;
+        self
+    }
+
+    /// Numeric brush-range **cross-filter** (R1394): the polyline portion whose
+    /// x falls outside `[lo, hi]` mutes (dimmed to a context ghost, still drawn)
+    /// while the in-window portion keeps full colour — the "focus + context"
+    /// twin of
+    /// [`ScatterChart::select_x_range`](crate::ScatterChart::select_x_range) for
+    /// a continuous line, so a brush over one chart can emphasise the matching
+    /// window of another. `None` (the default) — and any window that already
+    /// covers the whole visible domain (a full brush) — draws every series full.
+    ///
+    /// Boundaries are inclusive: the focus segment is cut at exactly `lo` / `hi`
+    /// with y interpolated at each crossing (the same domain clip R1356 uses),
+    /// so it meets the window edge precisely. Independent of
+    /// [`with_x_domain`](Self::with_x_domain) — the domain sets what is
+    /// *visible*, this sets what is *emphasised* within it.
+    #[must_use]
+    pub fn select_x_range(mut self, range: Option<(f64, f64)>) -> Self {
+        self.select_x_range = range;
         self
     }
 
@@ -359,6 +384,13 @@ impl LineChart {
     fn series_layer(&self, plot: &CartesianPlot, baseline: f64, style: &ChartStyle) -> Vec<Scene> {
         let baseline_y = plot.y.map(baseline);
         let (x_lo, x_hi) = plot.x.domain();
+        // R1394 — a window that already covers the whole visible domain clips
+        // nothing, so it filters nothing (a full brush = no cross-filter): drop
+        // it to `None` here so the line stays full, matching the scatter's
+        // per-point `is_muted` (which never mutes an in-domain point at full span).
+        let window = self
+            .select_x_range
+            .filter(|&(lo, hi)| lo > x_lo || hi < x_hi);
         let mut out = Vec::new();
         for (i, s) in self.series.iter().enumerate() {
             // A hidden series draws no area / polyline (R1379); it keeps its
@@ -384,20 +416,58 @@ impl LineChart {
             if pts.is_empty() {
                 continue;
             }
+            // R1394 cross-filter: when a brush window is set, the whole line
+            // draws muted (a context ghost) and the in-window portion is
+            // overdrawn at full colour below, so the emphasis reads as focus.
+            let muted = window.is_some();
+            let width = style.series_width.max(1);
             if self.fill_area {
+                let alpha = if muted {
+                    mul_alpha(style.area_alpha, MUTED_ALPHA)
+                } else {
+                    style.area_alpha
+                };
                 out.push(area_path(
                     &pts,
                     baseline_y,
-                    color.with_alpha(style.area_alpha),
+                    color.with_alpha(alpha),
                     format!("{}.area.{i}", self.tag_prefix),
                 ));
             }
-            let stroke = Stroke::new(color, style.series_width.max(1)).with_cap(StrokeCap::Round);
+            let line_color = if muted {
+                color.with_alpha(MUTED_ALPHA)
+            } else {
+                color
+            };
             out.push(stroke_path(
                 &pts,
-                stroke,
+                Stroke::new(line_color, width).with_cap(StrokeCap::Round),
                 format!("{}.series.{i}", self.tag_prefix),
             ));
+            // The focus overdraw: the in-window sub-polyline at full colour.
+            // `clip_to_x_domain` interpolates y at the `[lo, hi]` crossings, so
+            // the segment meets the brush edge exactly (R1356's clip reused).
+            if let Some((lo, hi)) = window {
+                let focus: Vec<(f32, f32)> = clip_to_x_domain(&finite, lo.max(x_lo), hi.min(x_hi))
+                    .iter()
+                    .map(|p| (plot.x.map(p.x), plot.y.map(p.y)))
+                    .collect();
+                if focus.len() >= 2 {
+                    if self.fill_area {
+                        out.push(area_path(
+                            &focus,
+                            baseline_y,
+                            color.with_alpha(style.area_alpha),
+                            format!("{}.focus.area.{i}", self.tag_prefix),
+                        ));
+                    }
+                    out.push(stroke_path(
+                        &focus,
+                        Stroke::new(color, width).with_cap(StrokeCap::Round),
+                        format!("{}.focus.series.{i}", self.tag_prefix),
+                    ));
+                }
+            }
         }
         out
     }
@@ -662,6 +732,17 @@ fn push_unique(out: &mut Vec<DataPoint>, p: DataPoint) {
     }
 }
 
+/// Multiply two `0..=255` alphas (`a * b / 255`) — dims an already
+/// translucent fill (the area alpha) by the cross-filter mute factor so a
+/// muted area reads lighter than a muted stroke, not the same weight.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "(a * b) / 255 <= 255, so it fits u8"
+)]
+fn mul_alpha(a: u8, b: u8) -> u8 {
+    ((u16::from(a) * u16::from(b)) / 255) as u8
+}
+
 /// Clip a point sequence to the x range `[lo, hi]`, interpolating y at
 /// each boundary crossing so the polyline meets the plot edge exactly
 /// instead of extrapolating outside it. Points must already be finite.
@@ -905,6 +986,80 @@ mod tests {
             panic!("path")
         };
         assert_eq!(p.style.stroke.unwrap().color, Color::rgb(0x11, 0x22, 0x33));
+    }
+
+    // ── R1394 numeric brush-range cross-filter (select_x_range) ───────────
+    /// A diagonal five-point ramp over x `0..=4`, pinned so the brush window
+    /// maps predictably onto the plot.
+    fn ramp_chart(range: Option<(f64, f64)>) -> Scene {
+        let series = vec![Series::new(
+            "s",
+            (0..=4)
+                .map(|i| DataPoint::new(f64::from(i), f64::from(i)))
+                .collect(),
+        )];
+        LineChart::new(series)
+            .with_x_domain(0.0, 4.0)
+            .with_y_domain(0.0, 4.0)
+            .select_x_range(range)
+            .build(Rect::new(0, 0, 200, 200), &no_legend_zero_margin())
+    }
+
+    #[test]
+    fn select_x_range_none_leaves_the_line_full_and_emits_no_focus() {
+        let scene = ramp_chart(None);
+        assert_eq!(
+            count_prefix(&scene, "chart.focus."),
+            0,
+            "no focus overdraw without a window"
+        );
+        let Scene::Path(p) = find(&scene, "chart.series.0").expect("series") else {
+            panic!("path")
+        };
+        assert_eq!(
+            p.style.stroke.unwrap().color,
+            CategoricalPalette::default().color(0),
+            "the line stays full colour"
+        );
+    }
+
+    #[test]
+    fn select_x_range_mutes_the_context_line_and_overdraws_a_focus_segment() {
+        let scene = ramp_chart(Some((1.0, 3.0)));
+        let full = CategoricalPalette::default().color(0);
+        let Scene::Path(context) = find(&scene, "chart.series.0").expect("context line") else {
+            panic!("path")
+        };
+        assert_eq!(
+            context.style.stroke.unwrap().color,
+            full.with_alpha(MUTED_ALPHA),
+            "the whole line dims to a context ghost"
+        );
+        let Scene::Path(focus) = find(&scene, "chart.focus.series.0").expect("focus segment")
+        else {
+            panic!("path")
+        };
+        assert_eq!(
+            focus.style.stroke.unwrap().color,
+            full,
+            "the in-window segment keeps full colour"
+        );
+    }
+
+    #[test]
+    fn select_x_range_outside_the_series_draws_context_only() {
+        // A window entirely past the data: the whole line is context, and the
+        // focus overdraw would be a single point, so it is dropped.
+        let scene = ramp_chart(Some((10.0, 20.0)));
+        assert_eq!(
+            count_prefix(&scene, "chart.focus.series.0"),
+            0,
+            "a window past the data emits no focus segment"
+        );
+        assert!(
+            find(&scene, "chart.series.0").is_some(),
+            "the context line is still drawn"
+        );
     }
 
     #[test]

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1394 numeric cross-type cross-filter consumer: pinion-forge renderer
+  manifest for hello-linked-brush. Emits `HelloLinkedBrushRenderer` (Vello-backed
+  RenderContext + RenderSurface + Renderer wrapper). Identical manifest shape to
+  hello-scatter's `HelloScatterRenderer` — single-source-of-truth emit template,
+  only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloLinkedBrushRenderer"
+        backend="vello"/>

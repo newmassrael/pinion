@@ -22,9 +22,11 @@
 //! delivers only which tag is hovered, not a position. So both gestures are
 //! capture drags, and each needs its own captured value. Rather than invent
 //! externals, the binding reuses the §5.38 [`SliderExternal`] (a captured
-//! 1-D fraction) as the scrub position and the [`RangeSliderExternal`] (a
-//! captured 1-D *pair*) as the brush window — the latter hosted through the
-//! R1249 `extra_externals` slot, so the router dispatches each drag by tag.
+//! 1-D fraction) as the scrub position and the
+//! [`RangeSliderExternal`](pinion_core::widgets::range_slider::RangeSliderExternal)
+//! (a captured 1-D *pair*) as the brush window — the latter hosted through the
+//! R1249 `extra_externals` slot via the lifted [`Brush`] substrate (R1394,
+//! shared with `hello-scatter`), so the router dispatches each drag by tag.
 //! Both are RPC-drivable (`scene/intervene`) and introspectable.
 //!
 //! ## Verification (substrate-first)
@@ -37,11 +39,12 @@
 
 use pinion_a11y::described::describedby_region;
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
-use pinion_chart::{ChartStyle, DataPoint, LineChart, Series, data_bounds};
+use pinion_chart::{
+    Brush, BrushStripColors, ChartStyle, DataPoint, LineChart, Series, data_bounds,
+};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::range_slider::RangeSliderExternal;
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
 use pinion_derive::widget;
@@ -85,9 +88,12 @@ fn x_extent() -> (f64, f64) {
     data_bounds(&sample_series()).map_or((0.0, 1.0), |b| b.x)
 }
 
-/// Narrowest window the brush can select, as a fraction of the extent —
-/// keeps the domain non-degenerate.
-const MIN_BRUSH_SPAN: f32 = 0.04;
+/// The brush over the chart's x-axis — the lifted [`Brush`] substrate (R1394).
+/// Its `(low, high)` window maps onto the data x-extent and re-domains the
+/// chart ([`LineChart::with_x_domain`]) for a zoom.
+fn brush() -> Brush {
+    Brush::new(BRUSH_TAG, x_extent())
+}
 
 /// Deterministic sample data — three throughput series over 12 buckets.
 #[allow(
@@ -129,49 +135,23 @@ fn scrub_external() -> SliderExternal {
     slider
 }
 
-/// R1249 — the brush window as a sibling `External`, dispatched by tag.
-/// `RangeSliderExternal::new()` selects the full span (boot = no zoom).
+/// R1249 — the brush window as a sibling `External` ([`Brush::extras`]); the fn
+/// the `#[widget]` `extra_externals` attribute points at. A full-span boot
+/// selection means no zoom until the user drags.
 fn brush_extras() -> Vec<ExtraExternal> {
-    vec![ExtraExternal::new(
-        BRUSH_TAG,
-        Box::new(RangeSliderExternal::new()),
-    )]
+    brush().extras()
 }
 
-/// Read the brush window `(low, high)` from the sibling external. A
-/// missing external falls back to the full span.
+/// Read the brush window `(low, high)` from the sibling external
+/// ([`Brush::read`]); a missing external falls back to the full span.
 fn read_brush(scene: &Scene) -> (f32, f32) {
-    let Some(node) = scene.find_external_with_tag(BRUSH_TAG) else {
-        return (0.0, 1.0);
-    };
-    let Some(intro) = node.handle.introspect() else {
-        return (0.0, 1.0);
-    };
-    let read = |field: &str, fallback: f32| {
-        intro
-            .query(field)
-            .and_then(|v| v.as_f32())
-            .unwrap_or(fallback)
-    };
-    (read("low", 0.0), read("high", 1.0))
+    brush().read(scene)
 }
 
-/// Map the brush fractions onto the data x extent, enforcing a minimum
-/// span so the domain never collapses.
+/// Map the brush fractions onto the data x-extent ([`Brush::domain`]) — the
+/// window that re-domains the chart for a zoom.
 fn brush_domain(low: f32, high: f32) -> (f64, f64) {
-    let (low, high) = if low <= high {
-        (low, high)
-    } else {
-        (high, low)
-    };
-    let high = high.max(low + MIN_BRUSH_SPAN).min(1.0);
-    let low = low.min(high - MIN_BRUSH_SPAN).max(0.0);
-    let (x_min, x_max) = x_extent();
-    let span = x_max - x_min;
-    (
-        x_min + f64::from(low) * span,
-        x_min + f64::from(high) * span,
-    )
+    brush().domain(low, high)
 }
 
 /// Resolve the theme into a [`ChartStyle`].
@@ -190,64 +170,22 @@ fn chart_style(theme: &pinion_core::Theme) -> ChartStyle {
     }
 }
 
-/// The brush strip: a `chart_brush`-tagged track (the `RangeSlider` capture
-/// basis) holding the selected span + two thumbs, aligned to the plot x
-/// range so the strip reads as an overview of the full series.
+/// The brush strip ([`Brush::strip`]) aligned to the plot's x range — inset by
+/// the chart's axis `margin` so it sits under the data, not the y-axis labels —
+/// reading as an overview of the full series.
 fn brush_strip(theme: &pinion_core::Theme, style: &ChartStyle, low: f32, high: f32) -> Scene {
     let m = style.margin;
-    let track_x = CHART_RECT.x + m.left;
-    let track_w = CHART_RECT.w.saturating_sub(m.left + m.right).max(1);
-    let track_y = CHART_RECT.y + CHART_RECT.h + BRUSH_GAP;
-
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "fraction * track width -> px offset; both are display-bounded"
-    )]
-    let (span_x, span_w) = {
-        let w = track_w as f32;
-        let lo = (low.clamp(0.0, 1.0) * w).round() as u32;
-        let hi = (high.clamp(0.0, 1.0) * w).round() as u32;
-        (lo, hi.saturating_sub(lo).max(2))
-    };
-
-    let accent = theme.resolve(ColorRole::Accent);
-    let selected = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(accent.with_alpha(0x66))).with_layout(
-            LayoutStyle::new()
-                .with_absolute_position(span_x, 0)
-                .with_size(Size::px(span_w, BRUSH_H)),
-        ),
+    let track = Rect::new(
+        CHART_RECT.x + m.left,
+        CHART_RECT.y + CHART_RECT.h + BRUSH_GAP,
+        CHART_RECT.w.saturating_sub(m.left + m.right).max(1),
+        BRUSH_H,
     );
-    let thumb = |x: u32| {
-        Scene::Box(
-            BoxNode::new(
-                Rect::default(),
-                BoxStyle::filled(accent).with_corner_radius(2),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(x.saturating_sub(2), 0)
-                    .with_size(Size::px(4, BRUSH_H)),
-            ),
-        )
+    let colors = BrushStripColors {
+        track_bg: theme.resolve(ColorRole::SurfaceContainerHighest),
+        accent: theme.resolve(ColorRole::Accent),
     };
-
-    Scene::Container(
-        ContainerNode::new(vec![selected, thumb(span_x), thumb(span_x + span_w)])
-            .with_tag(BRUSH_TAG)
-            .with_aria_label("Chart x-window brush")
-            .with_style(
-                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
-                    .with_corner_radius(BRUSH_H / 2),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(track_x, track_y)
-                    .with_size(Size::px(track_w, BRUSH_H)),
-            ),
-    )
+    brush().strip(track, low, high, colors, "Chart x-window brush")
 }
 
 /// view-fn (§6.3): pure sync mapping. `scrub` is the inspect fraction

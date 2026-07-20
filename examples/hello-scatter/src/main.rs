@@ -32,9 +32,10 @@
 //! ## Why a Slider + a `RangeSlider`
 //!
 //! The §5.38 [`SliderExternal`] (a captured 1-D fraction) is the scrub position,
-//! and the [`RangeSliderExternal`] (a captured 1-D pair) is the brush window —
-//! the latter a sibling in the R1249 `extra_externals` slot, so the router
-//! dispatches each drag by tag (the `hello-chart` idiom). Both are RPC-drivable
+//! and the [`RangeSliderExternal`](pinion_core::widgets::range_slider::RangeSliderExternal)
+//! (a captured 1-D pair) is the brush window — the latter a sibling in the
+//! R1249 `extra_externals` slot, so the router dispatches each drag by tag (the
+//! lifted [`Brush`] substrate, shared with `hello-chart`). Both are RPC-drivable
 //! (`scene/intervene`) and introspectable, no new external invented.
 //!
 //! ## Verification (substrate-first)
@@ -47,11 +48,12 @@
 
 use pinion_a11y::described::describedby_region;
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_chart::{ChartStyle, DataPoint, ScatterChart, Series, data_bounds};
+use pinion_chart::{
+    Brush, BrushStripColors, ChartStyle, DataPoint, ScatterChart, Series, data_bounds,
+};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::range_slider::RangeSliderExternal;
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
 use pinion_derive::widget;
@@ -69,16 +71,14 @@ const WIN_H: u32 = 460;
 const THEME_TAG: &str = "app";
 const SCRUB_TAG: &str = "scatter_scrub";
 
-/// R1391 — the brush strip is a sibling `chart_brush` external (the R1357 idiom):
-/// its selected x-window cross-filters the SCATTER (a different widget) rather
-/// than zooming itself, muting the point marks outside the window.
+/// R1391/R1394 — the brush strip is a sibling `scatter_brush` external whose
+/// selected x-window cross-filters the SCATTER (a different widget) rather than
+/// zooming itself, muting the point marks outside the window. The wiring is the
+/// lifted [`Brush`] substrate (R1394), shared with `hello-chart` and
+/// `hello-linked-brush`.
 const BRUSH_TAG: &str = "scatter_brush";
 const BRUSH_H: u32 = 14;
 const BRUSH_GAP: u32 = 8;
-
-/// Narrowest window the brush can select, as a fraction of the x-extent — keeps
-/// the range non-degenerate.
-const MIN_BRUSH_SPAN: f32 = 0.04;
 
 const TITLE_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 12;
@@ -133,32 +133,24 @@ fn scrub_external() -> SliderExternal {
     slider
 }
 
-/// R1391 — the brush window as a sibling `External`, dispatched by tag (the
-/// R1357 idiom). `RangeSliderExternal::new()` selects the full span, so the boot
-/// frame cross-filters nothing (every point full).
-fn brush_extras() -> Vec<ExtraExternal> {
-    vec![ExtraExternal::new(
-        BRUSH_TAG,
-        Box::new(RangeSliderExternal::new()),
-    )]
+/// The brush over the scatter's x-axis — the lifted [`Brush`] substrate
+/// (R1394). Its `(low, high)` window maps onto the data x-extent and drives
+/// [`ScatterChart::select_x_range`].
+fn brush() -> Brush {
+    Brush::new(BRUSH_TAG, x_extent())
 }
 
-/// Read the brush window `(low, high)` fractions from the sibling external. A
-/// missing external falls back to the full span (no filter).
+/// R1391 — the brush window as a sibling `External` ([`Brush::extras`]); the fn
+/// the `#[widget]` `extra_externals` attribute points at. A full-span boot
+/// selection cross-filters nothing until the user drags.
+fn brush_extras() -> Vec<ExtraExternal> {
+    brush().extras()
+}
+
+/// Read the brush window `(low, high)` fractions from the sibling external
+/// ([`Brush::read`]); a missing external falls back to the full span.
 fn read_brush(scene: &Scene) -> (f32, f32) {
-    let Some(node) = scene.find_external_with_tag(BRUSH_TAG) else {
-        return (0.0, 1.0);
-    };
-    let Some(intro) = node.handle.introspect() else {
-        return (0.0, 1.0);
-    };
-    let read = |field: &str, fallback: f32| {
-        intro
-            .query(field)
-            .and_then(|v| v.as_f32())
-            .unwrap_or(fallback)
-    };
-    (read("low", 0.0), read("high", 1.0))
+    brush().read(scene)
 }
 
 /// The full x-extent of [`samples`] — the domain the brush fractions map onto.
@@ -167,82 +159,27 @@ fn x_extent() -> (f64, f64) {
     data_bounds(&samples()).map_or((0.0, 1.0), |b| b.x)
 }
 
-/// Map the brush fractions onto the data x-extent, enforcing [`MIN_BRUSH_SPAN`]
-/// so the window never collapses. The result feeds
-/// [`ScatterChart::select_x_range`] — points outside it mute.
+/// Map the brush fractions onto the data x-extent ([`Brush::domain`]) — the
+/// window that feeds [`ScatterChart::select_x_range`] so points outside it mute.
 fn brush_domain(low: f32, high: f32) -> (f64, f64) {
-    let (low, high) = if low <= high {
-        (low, high)
-    } else {
-        (high, low)
-    };
-    let high = high.max(low + MIN_BRUSH_SPAN).min(1.0);
-    let low = low.min(high - MIN_BRUSH_SPAN).max(0.0);
-    let (x_min, x_max) = x_extent();
-    let span = x_max - x_min;
-    (
-        x_min + f64::from(low) * span,
-        x_min + f64::from(high) * span,
-    )
+    brush().domain(low, high)
 }
 
-/// The brush strip under the plot: a `scatter_brush`-tagged track (the
-/// `RangeSlider` capture basis) holding the selected span + two thumbs, aligned
-/// to the plot x range so it reads as an overview of the full x-axis.
+/// The brush strip under the plot ([`Brush::strip`]), aligned to the full
+/// scatter rect (the scatter draws no axis margins) so it reads as an overview
+/// of the x-axis.
 fn brush_strip(theme: &pinion_core::Theme, low: f32, high: f32) -> Scene {
-    let track_x = CHART_RECT.x;
-    let track_w = CHART_RECT.w;
-    let track_y = CHART_RECT.y + CHART_RECT.h + BRUSH_GAP;
-
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "fraction * track width -> px offset; both are display-bounded"
-    )]
-    let (span_x, span_w) = {
-        let w = track_w as f32;
-        let lo = (low.clamp(0.0, 1.0) * w).round() as u32;
-        let hi = (high.clamp(0.0, 1.0) * w).round() as u32;
-        (lo, hi.saturating_sub(lo).max(2))
-    };
-
-    let accent = theme.resolve(ColorRole::Accent);
-    let selected = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(accent.with_alpha(0x66))).with_layout(
-            LayoutStyle::new()
-                .with_absolute_position(span_x, 0)
-                .with_size(Size::px(span_w, BRUSH_H)),
-        ),
+    let track = Rect::new(
+        CHART_RECT.x,
+        CHART_RECT.y + CHART_RECT.h + BRUSH_GAP,
+        CHART_RECT.w,
+        BRUSH_H,
     );
-    let thumb = |x: u32| {
-        Scene::Box(
-            BoxNode::new(
-                Rect::default(),
-                BoxStyle::filled(accent).with_corner_radius(2),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(x.saturating_sub(2), 0)
-                    .with_size(Size::px(4, BRUSH_H)),
-            ),
-        )
+    let colors = BrushStripColors {
+        track_bg: theme.resolve(ColorRole::SurfaceContainerHighest),
+        accent: theme.resolve(ColorRole::Accent),
     };
-
-    Scene::Container(
-        ContainerNode::new(vec![selected, thumb(span_x), thumb(span_x + span_w)])
-            .with_tag(BRUSH_TAG)
-            .with_aria_label("Scatter x-window brush")
-            .with_style(
-                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
-                    .with_corner_radius(BRUSH_H / 2),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(track_x, track_y)
-                    .with_size(Size::px(track_w, BRUSH_H)),
-            ),
-    )
+    brush().strip(track, low, high, colors, "Scatter x-window brush")
 }
 
 /// Resolve the theme into a [`ChartStyle`]. Only colours are overridden — the

@@ -2656,6 +2656,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-linked-brush"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-linked-legend"
 version = "0.0.1"
 dependencies = [

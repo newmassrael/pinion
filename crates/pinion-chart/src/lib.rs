@@ -149,6 +149,7 @@
 //!   §2 #6 today, and that gap is stated here rather than left silent.
 
 mod bar;
+mod brush;
 mod donut;
 mod draw;
 mod line;
@@ -164,6 +165,7 @@ mod timeline;
 mod treemap;
 
 pub use bar::{Bar, BarChart};
+pub use brush::{Brush, BrushStripColors};
 pub use donut::{DonutChart, Slice};
 pub use line::LineChart;
 pub use palette::CategoricalPalette;
