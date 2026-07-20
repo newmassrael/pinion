@@ -36,7 +36,7 @@ use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
 use pinion_core::style::CursorHint;
-use pinion_rpc::{RpcFrame, RpcIngress, RpcReply, try_async_wait_for};
+use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply, try_async_wait_for};
 use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
 use vello::kurbo::Affine;
@@ -1135,7 +1135,14 @@ impl<V: WidgetView> AppShell<V> {
         // sink that routes the response back to the originating
         // transport. `reply` is consumed on exactly one path below: the
         // parse-error short-circuit, or the post-dispatch response write.
-        let RpcFrame { request, reply } = frame;
+        // R-PR67 — `conn` is carried on the frame but unused by the GUI
+        // shell (its `ProxyRpcIngress` keeps the default no-op lifecycle
+        // hooks); a stateful ingress reads it instead.
+        let RpcFrame {
+            request,
+            reply,
+            conn: _,
+        } = frame;
         // R671 §5.7 §5.16 — single-parse per-window RPC dispatch.
         // Pre-R671 (R670.B) AppShell parsed the JSON-RPC envelope
         // *twice*: once to sniff `params.window` (the per-window
@@ -3706,6 +3713,12 @@ fn stdout_reply() -> RpcReply {
 /// [`ProxyRpcIngress`].
 fn spawn_stdin_rpc_reader(ingress: Arc<dyn RpcIngress>) {
     thread::spawn(move || {
+        // R-PR67 — stdin is a single logical connection for the process
+        // lifetime: one stable id, its open announced before the first
+        // frame and its close on EOF. A stateless ingress ignores the
+        // lifecycle hooks (default no-op), so the pipe workflow is unchanged.
+        let conn = ConnId::allocate();
+        ingress.on_connect(conn);
         let stdin = std::io::stdin();
         let handle = stdin.lock();
         for line in handle.lines() {
@@ -3715,8 +3728,10 @@ fn spawn_stdin_rpc_reader(ingress: Arc<dyn RpcIngress>) {
             if text.trim().is_empty() {
                 continue;
             }
-            ingress.submit(RpcFrame::new(text, stdout_reply()));
+            ingress.submit(RpcFrame::new(conn, text, stdout_reply()));
         }
+        // EOF (or a read error): the stdin peer closed. Balance on_connect.
+        ingress.on_disconnect(conn);
     });
 }
 

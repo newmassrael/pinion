@@ -89,7 +89,7 @@ pub use executor::{
     build_executor_and_sink,
 };
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
-pub use pinion_rpc::{RpcFrame, RpcIngress, RpcReply, WaiterRegistry};
+pub use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply, WaiterRegistry};
 pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 pub use waiter::use_scene_revision;
 // R1362 PR-65 §5.16 §5.49 §2 #2 — the binding-facing "request a window control

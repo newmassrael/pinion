@@ -50,7 +50,7 @@ use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use pinion_rpc::{RpcFrame, RpcIngress, RpcReply};
+use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply};
 
 /// How long the accept loop parks between `WouldBlock` polls of the
 /// non-blocking listener.
@@ -80,6 +80,12 @@ impl UnixSocketTransport {
     /// that same connection), so a response always reaches the client that
     /// asked — unlike the single global stdout of the built-in transport.
     /// Multiple clients may connect concurrently.
+    ///
+    /// R-PR67 — each connection is given a fresh [`ConnId`]; every frame
+    /// carries it, [`RpcIngress::on_connect`] fires when the connection
+    /// opens, and [`RpcIngress::on_disconnect`] fires when it closes
+    /// (crash-safe: however the client dies, its reader thread ends and
+    /// signals). A stateful ingress uses these to keep per-connection state.
     ///
     /// A stale socket file left at `path` by a previous crashed run is
     /// removed before binding. The returned [`TransportControl`] owns the
@@ -237,9 +243,14 @@ fn accept_loop(
     }
 }
 
-/// Serve one connection: read line-delimited JSON-RPC frames, submit each
-/// through `ingress` with a reply that routes the response back to *this*
-/// connection's writer, until the client closes.
+/// Serve one connection: allocate its [`ConnId`], announce
+/// [`RpcIngress::on_connect`], read line-delimited JSON-RPC frames and
+/// submit each (stamped with that id) through `ingress` with a reply that
+/// routes the response back to *this* connection's writer, and — however
+/// the client goes away — announce [`RpcIngress::on_disconnect`] when the
+/// reader loop ends. The disconnect signal is guaranteed because the reader
+/// thread always reaches the end of this function when the client closes,
+/// resets, or crashes (R-PR67 crash-safe cleanup).
 fn handle_connection(stream: &UnixStream, ingress: &Arc<dyn RpcIngress>) {
     // The reader half blocks on incoming lines; the accepted stream was
     // set non-blocking by the listener, so restore blocking for clean
@@ -268,6 +279,14 @@ fn handle_connection(stream: &UnixStream, ingress: &Arc<dyn RpcIngress>) {
             }
         });
 
+    // R-PR67 — a fresh, process-unique id for this connection. Its open is
+    // announced to the ingress before any frame; every frame is stamped
+    // with it; its close is announced when the reader loop ends below.
+    // Allocated after the `try_clone` guards so an early return there
+    // leaves `on_connect` / `on_disconnect` balanced (neither fires).
+    let conn = ConnId::allocate();
+    ingress.on_connect(conn);
+
     let reader = BufReader::new(read_half);
     for line in reader.lines() {
         let Ok(text) = line else {
@@ -282,8 +301,17 @@ fn handle_connection(stream: &UnixStream, ingress: &Arc<dyn RpcIngress>) {
             // a failed send is then simply dropped.
             let _ = reply_tx.send(response);
         });
-        ingress.submit(RpcFrame::new(text, reply));
+        ingress.submit(RpcFrame::new(conn, text, reply));
     }
+
+    // R-PR67 — the reader loop ended: the client closed its write side
+    // (EOF), reset, or crashed. Announce the disconnect immediately — this
+    // is the crash-safe cleanup signal, fired however the client went away,
+    // and it happens-after every `submit` for `conn` above — before draining
+    // the writer, so a stateful ingress releases the connection's state
+    // within a bounded time of the client vanishing (the writer teardown
+    // that follows only flushes already-produced replies).
+    ingress.on_disconnect(conn);
 
     // Client closed the read side. Drop this frame-submitting `tx` so the
     // writer's channel closes once every in-flight reply clone has fired

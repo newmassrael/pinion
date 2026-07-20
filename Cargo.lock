@@ -2051,6 +2051,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-conn-lifecycle"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-rpc",
+ "pinion-rpc-transport",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-contextmenu"
 version = "0.0.1"
 dependencies = [

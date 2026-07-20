@@ -132,7 +132,7 @@ pub use theme::{
     SetThemeModeParams, ThemeTokenView, ThemeTokensError, ThemeTokensOutcome, set_theme_mode,
     theme_tokens,
 };
-pub use transport::{RpcFrame, RpcIngress, RpcReply};
+pub use transport::{ConnId, RpcFrame, RpcIngress, RpcReply};
 pub use wait_for::{WaitForError, WaitOutcome, wait_for};
 pub use waiter::{WaiterRegistry, try_async_wait_for, waiter_response};
 pub use window_move::{WindowMoveError, WindowMoveOutcome, WindowMoveParams, window_move};

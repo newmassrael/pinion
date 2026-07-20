@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1393 §5.7 PINION-PR67 connection lifecycle: pinion-forge renderer manifest
+  for hello-conn-lifecycle. Emits `HelloConnLifecycleRenderer` (Vello-backed).
+  Same manifest shape as hello-live-data / hello-chart-fill — only the struct
+  name diverges; the scene structure lives entirely in the binding's view fn.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloConnLifecycleRenderer"
+        backend="vello"/>

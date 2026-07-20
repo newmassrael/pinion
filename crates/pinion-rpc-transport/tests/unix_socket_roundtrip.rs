@@ -10,11 +10,11 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use pinion_rpc::{RpcFrame, RpcIngress};
+use pinion_rpc::{ConnId, RpcFrame, RpcIngress};
 use pinion_rpc_transport::UnixSocketTransport;
 
 /// Inline echo ingress: answers each frame with `echo:<request>` on the
@@ -23,7 +23,7 @@ struct EchoIngress;
 
 impl RpcIngress for EchoIngress {
     fn submit(&self, frame: RpcFrame) {
-        let RpcFrame { request, reply } = frame;
+        let RpcFrame { request, reply, .. } = frame;
         reply.send(format!("echo:{request}"));
     }
 }
@@ -38,6 +38,84 @@ impl RpcIngress for SilentIngress {
         // Drop the reply unused — no response is written.
         drop(frame.reply);
     }
+}
+
+/// R-PR67 — one recorded lifecycle event, capturing the `ConnId` (as its
+/// raw value) the transport attributed it to.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum Life {
+    Connect(u64),
+    Frame(u64, String),
+    Disconnect(u64),
+}
+
+/// R-PR67 lifecycle-recording ingress: logs each `on_connect` / `submit` /
+/// `on_disconnect` in arrival order with the connection id, so a test can
+/// assert the transport fires the hooks with the right ids in the right
+/// order. Echoes each frame (like `EchoIngress`) so the client still gets a
+/// response — proving frames flow while the lifecycle is tracked.
+#[derive(Default)]
+struct RecordingIngress {
+    events: Mutex<Vec<Life>>,
+}
+
+impl RecordingIngress {
+    fn events(&self) -> Vec<Life> {
+        self.events.lock().unwrap().clone()
+    }
+}
+
+impl RpcIngress for RecordingIngress {
+    fn submit(&self, frame: RpcFrame) {
+        let RpcFrame {
+            conn,
+            request,
+            reply,
+        } = frame;
+        // Record the frame BEFORE producing the echo, so a client that has
+        // read the response is guaranteed the frame is already logged.
+        self.events
+            .lock()
+            .unwrap()
+            .push(Life::Frame(conn.get(), request.clone()));
+        reply.send(format!("echo:{request}"));
+    }
+
+    fn on_connect(&self, conn: ConnId) {
+        self.events.lock().unwrap().push(Life::Connect(conn.get()));
+    }
+
+    fn on_disconnect(&self, conn: ConnId) {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Life::Disconnect(conn.get()));
+    }
+}
+
+/// Poll the recorder (bounded, deterministic — not a sleep-and-hope) until
+/// `done` holds over the recorded events, then return them.
+fn poll_until(recorder: &Arc<RecordingIngress>, done: impl Fn(&[Life]) -> bool) -> Vec<Life> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let events = recorder.events();
+        if done(&events) {
+            return events;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "lifecycle condition never met; recorded: {events:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The conn id the transport attributed to the frame carrying `request`.
+fn frame_conn(recorder: &Arc<RecordingIngress>, request: &str) -> Option<u64> {
+    recorder.events().iter().find_map(|e| match e {
+        Life::Frame(c, r) if r == request => Some(*c),
+        _ => None,
+    })
 }
 
 fn unique_socket_path() -> PathBuf {
@@ -194,4 +272,81 @@ fn drop_unbinds_the_socket_path() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn lifecycle_connect_frames_then_disconnect() {
+    // R-PR67 — a connection's whole life, observed by a stateful ingress:
+    // one on_connect, then every frame stamped with that id, then exactly
+    // one on_disconnect when the client goes away — in order.
+    let path = unique_socket_path();
+    let recorder = Arc::new(RecordingIngress::default());
+    let control = UnixSocketTransport::serve(&path, recorder.clone()).unwrap();
+
+    let mut stream = connect(&path);
+    send_line(&mut stream, "req-1");
+    assert_eq!(read_line(&stream).unwrap(), "echo:req-1");
+    send_line(&mut stream, "req-2");
+    assert_eq!(read_line(&stream).unwrap(), "echo:req-2");
+
+    // Close the client fully: the server's reader hits EOF and must fire
+    // on_disconnect within a bounded time — the crash-safe cleanup edge.
+    stream.shutdown(std::net::Shutdown::Both).unwrap();
+    let events = poll_until(&recorder, |e| {
+        e.iter().any(|x| matches!(x, Life::Disconnect(_)))
+    });
+
+    // The id is opaque, but the same one threads the whole sequence.
+    let conn = match events.first() {
+        Some(Life::Connect(c)) => *c,
+        other => panic!("first lifecycle event must be Connect, got {other:?}"),
+    };
+    assert_eq!(
+        events,
+        vec![
+            Life::Connect(conn),
+            Life::Frame(conn, "req-1".to_owned()),
+            Life::Frame(conn, "req-2".to_owned()),
+            Life::Disconnect(conn),
+        ],
+        "connect, then both frames on that id, then disconnect — in order",
+    );
+
+    drop(control);
+}
+
+#[test]
+fn two_connections_get_distinct_ids_and_independent_disconnect() {
+    // R-PR67 — concurrent connections are attributed distinct ids, and
+    // closing one fires only that one's disconnect: the crash-safe cleanup
+    // targets the connection that actually went away (the sprag
+    // per-session-attachment refcount case).
+    let path = unique_socket_path();
+    let recorder = Arc::new(RecordingIngress::default());
+    let control = UnixSocketTransport::serve(&path, recorder.clone()).unwrap();
+
+    let mut a = connect(&path);
+    send_line(&mut a, "from-A");
+    assert_eq!(read_line(&a).unwrap(), "echo:from-A");
+    let mut b = connect(&path);
+    send_line(&mut b, "from-B");
+    assert_eq!(read_line(&b).unwrap(), "echo:from-B");
+
+    let id_a = frame_conn(&recorder, "from-A").expect("A's frame was attributed");
+    let id_b = frame_conn(&recorder, "from-B").expect("B's frame was attributed");
+    assert_ne!(id_a, id_b, "concurrent connections get distinct ids");
+
+    // Close A only: A disconnects, B does not.
+    a.shutdown(std::net::Shutdown::Both).unwrap();
+    poll_until(&recorder, |e| e.contains(&Life::Disconnect(id_a)));
+    assert!(
+        !recorder.events().contains(&Life::Disconnect(id_b)),
+        "B's disconnect must not fire while only A closed",
+    );
+
+    // Close B: now B disconnects with its own id.
+    b.shutdown(std::net::Shutdown::Both).unwrap();
+    poll_until(&recorder, |e| e.contains(&Life::Disconnect(id_b)));
+
+    drop(control);
 }

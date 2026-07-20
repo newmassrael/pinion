@@ -97,7 +97,7 @@ use std::time::Duration;
 use pinion_core::event::WheelDelta;
 use pinion_core::renderer::WidgetRenderer;
 use pinion_core::{Intent, Scene};
-use pinion_rpc::{RpcFrame, RpcReply};
+use pinion_rpc::{ConnId, RpcFrame, RpcReply};
 use pinion_runtime::{CommandExecutor, HandlerRegistry};
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
@@ -639,7 +639,14 @@ fn drain_rpc_into_substrate<V: WidgetViewTui>(
     rx: &mpsc::Receiver<RpcFrame>,
 ) -> bool {
     let mut any_frame = false;
-    while let Ok(RpcFrame { request, reply }) = rx.try_recv() {
+    // R-PR67 — `conn` is carried on the frame; the TUI stdin path is a
+    // single logical connection so its stateless drain ignores the id.
+    while let Ok(RpcFrame {
+        request,
+        reply,
+        conn: _,
+    }) = rx.try_recv()
+    {
         // R-PR47 §5.7 — dispatch through the identical transport-agnostic
         // core, then route the response (if any) through the frame's own
         // reply sink rather than a hard-coded stderr write. For the
@@ -701,6 +708,12 @@ impl pinion_core::QuitSink for TuiQuitSink {
 
 fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<RpcFrame>) {
     thread::spawn(move || {
+        // R-PR67 — stdin is a single logical connection: one stable id
+        // stamped on every frame. The TUI stdin path forwards frames over a
+        // raw `mpsc::Sender` (not an `RpcIngress`), so there is no lifecycle
+        // hook to fire here — the id is carried for wire parity with the
+        // socket transport.
+        let conn = ConnId::allocate();
         let stdin = std::io::stdin();
         let handle = stdin.lock();
         for line in handle.lines() {
@@ -710,7 +723,7 @@ fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<RpcFrame>) {
             if text.trim().is_empty() {
                 continue;
             }
-            if tx.send(RpcFrame::new(text, stderr_reply())).is_err() {
+            if tx.send(RpcFrame::new(conn, text, stderr_reply())).is_err() {
                 break;
             }
         }

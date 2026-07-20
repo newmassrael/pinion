@@ -1,0 +1,31 @@
+[package]
+name = "hello-conn-lifecycle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1393 §5.7 PINION-PR67 reference consumer — a stateful RpcIngress mounts the Unix-socket transport and tracks live connections through the ConnId + on_connect/on_disconnect lifecycle seam, reflecting a crash-safe 'N connections attached' count into the scene as data (the sprag list-clients / detach-on-destroy no-detached case)"
+publish = false
+
+[[bin]]
+name = "hello-conn-lifecycle"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1393 §5.7 — the winit-free RPC ingress seam (`ConnId` / `RpcIngress`).
+pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
+# R1393 §5.7 — the Unix-socket transport this example mounts to get multiple,
+# lifecycle-tracked connections (the seam PINION-PR67 adds hooks to).
+pinion-rpc-transport = { path = "../../crates/pinion-rpc-transport", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
