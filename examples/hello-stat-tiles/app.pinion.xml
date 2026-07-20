@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1385 — pinion-forge renderer manifest for hello-stat-tiles.
+  Same single-source-of-truth template as hello-chart-fill; only the struct
+  name diverges. backend=vello + default Area antialiasing.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloStatTilesRenderer"
+        backend="vello"/>

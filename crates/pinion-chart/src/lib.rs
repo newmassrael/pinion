@@ -81,7 +81,10 @@
 //! focusable, caller-tagged hit region per bar (the `interactive_legend` chip
 //! mechanism applied to the bars), and `examples/hello-cross-filter` wires that
 //! selection to filter a companion line chart: a click in one widget reshapes
-//! another.
+//! another. And (R1385) the [`Sparkline`] — a compact, axis-less trend line (no
+//! axes / ticks / gridlines / legend, an optional faint area fill + end / min /
+//! max reference dots) for inline display in a table cell or a KPI stat tile;
+//! `examples/hello-stat-tiles` composes a row of them.
 //!
 //! Not yet: cross-filtering driven by a numeric BRUSH range (rather than a
 //! categorical selection) or between two arbitrary chart types, and a y-rescale
@@ -144,6 +147,7 @@ mod plot;
 mod scale;
 mod scatter;
 mod series;
+mod sparkline;
 mod style;
 mod ticks;
 mod treemap;
@@ -155,6 +159,7 @@ pub use palette::CategoricalPalette;
 pub use scale::LinearScale;
 pub use scatter::ScatterChart;
 pub use series::{Bounds, DataPoint, Series, data_bounds, visible_data_bounds};
+pub use sparkline::Sparkline;
 pub use style::{ChartStyle, Margin};
 pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};
 pub use treemap::{Tile, Treemap};

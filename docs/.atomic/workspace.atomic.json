@@ -26510,6 +26510,64 @@
         "Standing defers unchanged: quit-veto forcing consumer `[[debt-r1364-quit-split-clearance]]`; the demo-sweep push gap (`[[r1322-r1323-dock-gesture-regressions]]`, pre-push runs unit + clippy + doc, not the demo sweep)."
       ]
     },
+    "R1385": {
+      "decision_summary": "R1385 §5.7 §5.16 §5.40: the sparkline — a compact, axis-less trend line (pinion-chart) for inline display in a table cell or a KPI stat tile, the glanceable counterpart to the full LineChart. Sparkline::new(Vec<f64>) (x = the implicit index) reuses the crate's LinearScale + retained draw core (stroke_path / area_path / marker_node / box_node) VERBATIM but drops all the furniture (axes, ticks, gridlines, legend) and adds inline affordances a full chart lacks: an optional faint area fill, an end-cap dot marking the latest value (accent colour, drawn last), and optional min/max reference dots (subdued axis tone). A single value draws a lone dot; a flat series centres. Being a distinct chart TYPE (like treemap/donut/scatter), not a LineChart mode. Forced by the new display-only example hello-stat-tiles (PR-51 no-primary-surface, the hello-chart-fill mould) — a KPI row where each tile composes a card + metric name + value + a period-over-period delta coloured by SIGN (rise green, fall red — the semantic colours the dashboard brief keeps distinct from any brand accent) + a trend sparkline; it is the FIRST scene to compose several sparklines, so each takes a distinct spark_{i} tag prefix (the documented row-collision guard). Closes the dataviz debt #7 stat-tile / sparkline gap. Verified by an >=30-assertion RPC demo reading every value, delta text, semantic delta colour, and sparkline mark back as scene data (§2 #7).",
+      "changes_bullets": [
+        "`crates/pinion-chart/src/sparkline.rs` (NEW): the `Sparkline` builder over a bare `Vec<f64>` (x = the implicit index) — the compact, axis-less counterpart to `LineChart`. `build` / `build_fill` (the R1360 layout-native contract), an optional faint area fill, an end-cap dot marking the LATEST value (accent colour, drawn last), and optional min / max reference dots (subdued axis tone). A single value draws a lone dot (not a line); a flat / all-equal series centres vertically rather than dividing by zero. Reuses the crate's `LinearScale` + retained `draw` core (`stroke_path` / `area_path` / `marker_node` / `box_node`) verbatim, dropping ALL the furniture (axes, ticks, gridlines, legend). Tags `spark.bg` / `.area` / `.line` / `.min` / `.max` / `.end` under a caller prefix. 11 tests.",
+        "`crates/pinion-chart/src/lib.rs`: register the `sparkline` module + `pub use Sparkline`; the scope doc records R1385.",
+        "`examples/hello-stat-tiles/` (NEW display-only consumer, PR-51 `primary_surface() -> None`): a KPI row of four tiles, each a card surface + metric name + big value + a period-over-period delta coloured by SIGN (a rise green, a fall red — the semantic colours the dashboard brief keeps distinct from any brand accent, theme-independent) + a filled, marked trend sparkline. The FIRST scene to compose several sparklines, so each takes a distinct `spark_{i}` tag prefix (the documented row-collision guard). `WidgetA11y` = one `AriaRole::Group` per tile named with the full KPI readout. 6 tests.",
+        "`tools/demos/r1385_stat_tiles.py` (NEW, >=30 assertions over real windowed RPC): (A) structure — four tiles each with card + label + value + delta + sparkline, plus a title; (B) values — each tile's label + value text; (C) SEMANTIC delta colours — the three rising deltas render green, the one falling delta red, with signed text to match; (D) sparklines — each a filled area chart with a line + an end cap IN THE TILE'S ACCENT COLOUR + min / max dots, and NO un-prefixed `spark.*` (the collision guard); (E) negative — no phantom fifth tile, unknown query rejected.",
+        "`Cargo.toml`: register `examples/hello-stat-tiles` in the workspace members."
+      ],
+      "verification_bullets": [
+        "`cargo test --workspace -j2`: green, 0 failed across every crate. `pinion-chart` lib = 127 passed (`sparkline::tests` = 11); `hello-stat-tiles` = 6 passed. Run before and after `cargo fmt`.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello`: clean (`-D pedantic`). Three lints caught + fixed at the gate: `manual_midpoint` (-> `f32::midpoint`), `cast_possible_truncation` on `usize -> u32` (removed by hard-coding the fixed 4-tile geometry + `u32::try_from`), and `needless_range_loop` (-> `.iter().enumerate()`).",
+        "`cargo doc --workspace --no-deps --document-private-items`: clean. A `redundant_explicit_links` on an `AriaRole::Group` intra-doc link was caught and the explicit target dropped (the imported name resolves) — the doc-gate class `[[cargo-doc-not-in-commit-gate]]`, fixed before commit.",
+        "`cargo fmt --all --check`: clean.",
+        "`tools/demos/r1385_stat_tiles.py`: PASS (2.94s) over real windowed RPC, rebuilt after the clippy/doc fixes (no stale binary). Reads every tile's value, delta text, SEMANTIC delta colour (three rising green + one falling red), and each sparkline's filled area + line + accent end cap + min/max dots back as scene data (§2 #7), plus the no-un-prefixed-`spark.*` collision guard.",
+        "Self-grep (3b mandate): `Sparkline` is a DISTINCT chart TYPE (like treemap / donut / scatter), not a `LineChart` mode — it reuses the shared `draw` + `scale` core VERBATIM (`stroke_path` / `area_path` / `marker_node` / `box_node` + `LinearScale`) and adds only the furniture-less render + inline end / min / max markers; no code duplicated. `hello-stat-tiles` is display-only (PR-51, the `hello-chart-fill` no-primary-surface mould), composing `Sparkline` + Card + Text; no new interaction substrate.",
+        "Mnemosyne `validate-workspace`: baseline T1 orphan total held pre/post (new orphan +0); impact sections §5.7 / §5.16 / §5.40 confirmed present before append."
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.16",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "`Sparkline` has no scrub-inspect overlay — authentic to a glanceable micro-chart (the tile's value / delta IS the readout). If a hover readout is ever wanted it reuses the line / bar scrub pattern.",
+        "Stat tiles are DISPLAY-ONLY (PR-51 no primary surface, no gesture). A clickable / drill-down tile would add an `External` (and could cross-filter, R1384).",
+        "Remaining dataviz gaps `[[debt-dataviz-dashboard-substrate]]`: timeline / scrubber / playhead (#4), force-directed graph layout (#3 has the layered solver R1383), named layout presets (#5), palette->canvas DnD + drag ghost (#6), brush-range cross-filter, and a live-streaming chart feed (RepaintSink ready).",
+        "Standing defers unchanged: `select` / `selectable` are BarChart-only (2nd categorical-select chart = the lift trigger); quit-veto forcing consumer `[[debt-r1364-quit-split-clearance]]`; the demo-sweep push gap (`[[r1322-r1323-dock-gesture-regressions]]`, pre-push runs unit + clippy + doc, not the demo sweep)."
+      ],
+      "publishable_decision_summary": "R1385 §5.7 §5.16 §5.40: the sparkline — a compact, axis-less trend line (pinion-chart) for inline display in a table cell or a KPI stat tile, the glanceable counterpart to the full LineChart. Sparkline::new(Vec<f64>) (x = the implicit index) reuses the crate's LinearScale + retained draw core (stroke_path / area_path / marker_node / box_node) VERBATIM but drops all the furniture (axes, ticks, gridlines, legend) and adds inline affordances a full chart lacks: an optional faint area fill, an end-cap dot marking the latest value (accent colour, drawn last), and optional min/max reference dots (subdued axis tone). A single value draws a lone dot; a flat series centres. Being a distinct chart TYPE (like treemap/donut/scatter), not a LineChart mode. Forced by the new display-only example hello-stat-tiles (PR-51 no-primary-surface, the hello-chart-fill mould) — a KPI row where each tile composes a card + metric name + value + a period-over-period delta coloured by SIGN (rise green, fall red — the semantic colours the dashboard brief keeps distinct from any brand accent) + a trend sparkline; it is the FIRST scene to compose several sparklines, so each takes a distinct spark_{i} tag prefix (the documented row-collision guard). Closes the dataviz debt #7 stat-tile / sparkline gap. Verified by an >=30-assertion RPC demo reading every value, delta text, semantic delta colour, and sparkline mark back as scene data (§2 #7).",
+      "publishable_changes_bullets": [
+        "`crates/pinion-chart/src/sparkline.rs` (NEW): the `Sparkline` builder over a bare `Vec<f64>` (x = the implicit index) — the compact, axis-less counterpart to `LineChart`. `build` / `build_fill` (the R1360 layout-native contract), an optional faint area fill, an end-cap dot marking the LATEST value (accent colour, drawn last), and optional min / max reference dots (subdued axis tone). A single value draws a lone dot (not a line); a flat / all-equal series centres vertically rather than dividing by zero. Reuses the crate's `LinearScale` + retained `draw` core (`stroke_path` / `area_path` / `marker_node` / `box_node`) verbatim, dropping ALL the furniture (axes, ticks, gridlines, legend). Tags `spark.bg` / `.area` / `.line` / `.min` / `.max` / `.end` under a caller prefix. 11 tests.",
+        "`crates/pinion-chart/src/lib.rs`: register the `sparkline` module + `pub use Sparkline`; the scope doc records R1385.",
+        "`examples/hello-stat-tiles/` (NEW display-only consumer, PR-51 `primary_surface() -> None`): a KPI row of four tiles, each a card surface + metric name + big value + a period-over-period delta coloured by SIGN (a rise green, a fall red — the semantic colours the dashboard brief keeps distinct from any brand accent, theme-independent) + a filled, marked trend sparkline. The FIRST scene to compose several sparklines, so each takes a distinct `spark_{i}` tag prefix (the documented row-collision guard). `WidgetA11y` = one `AriaRole::Group` per tile named with the full KPI readout. 6 tests.",
+        "`tools/demos/r1385_stat_tiles.py` (NEW, >=30 assertions over real windowed RPC): (A) structure — four tiles each with card + label + value + delta + sparkline, plus a title; (B) values — each tile's label + value text; (C) SEMANTIC delta colours — the three rising deltas render green, the one falling delta red, with signed text to match; (D) sparklines — each a filled area chart with a line + an end cap IN THE TILE'S ACCENT COLOUR + min / max dots, and NO un-prefixed `spark.*` (the collision guard); (E) negative — no phantom fifth tile, unknown query rejected.",
+        "`Cargo.toml`: register `examples/hello-stat-tiles` in the workspace members."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test --workspace -j2`: green, 0 failed across every crate. `pinion-chart` lib = 127 passed (`sparkline::tests` = 11); `hello-stat-tiles` = 6 passed. Run before and after `cargo fmt`.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello`: clean (`-D pedantic`). Three lints caught + fixed at the gate: `manual_midpoint` (-> `f32::midpoint`), `cast_possible_truncation` on `usize -> u32` (removed by hard-coding the fixed 4-tile geometry + `u32::try_from`), and `needless_range_loop` (-> `.iter().enumerate()`).",
+        "`cargo doc --workspace --no-deps --document-private-items`: clean. A `redundant_explicit_links` on an `AriaRole::Group` intra-doc link was caught and the explicit target dropped (the imported name resolves) — the doc-gate class `[[cargo-doc-not-in-commit-gate]]`, fixed before commit.",
+        "`cargo fmt --all --check`: clean.",
+        "`tools/demos/r1385_stat_tiles.py`: PASS (2.94s) over real windowed RPC, rebuilt after the clippy/doc fixes (no stale binary). Reads every tile's value, delta text, SEMANTIC delta colour (three rising green + one falling red), and each sparkline's filled area + line + accent end cap + min/max dots back as scene data (§2 #7), plus the no-un-prefixed-`spark.*` collision guard.",
+        "Self-grep (3b mandate): `Sparkline` is a DISTINCT chart TYPE (like treemap / donut / scatter), not a `LineChart` mode — it reuses the shared `draw` + `scale` core VERBATIM (`stroke_path` / `area_path` / `marker_node` / `box_node` + `LinearScale`) and adds only the furniture-less render + inline end / min / max markers; no code duplicated. `hello-stat-tiles` is display-only (PR-51, the `hello-chart-fill` no-primary-surface mould), composing `Sparkline` + Card + Text; no new interaction substrate.",
+        "Mnemosyne `validate-workspace`: baseline T1 orphan total held pre/post (new orphan +0); impact sections §5.7 / §5.16 / §5.40 confirmed present before append."
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.16",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "`Sparkline` has no scrub-inspect overlay — authentic to a glanceable micro-chart (the tile's value / delta IS the readout). If a hover readout is ever wanted it reuses the line / bar scrub pattern.",
+        "Stat tiles are DISPLAY-ONLY (PR-51 no primary surface, no gesture). A clickable / drill-down tile would add an `External` (and could cross-filter, R1384).",
+        "Remaining dataviz gaps `[[debt-dataviz-dashboard-substrate]]`: timeline / scrubber / playhead (#4), force-directed graph layout (#3 has the layered solver R1383), named layout presets (#5), palette->canvas DnD + drag ghost (#6), brush-range cross-filter, and a live-streaming chart feed (RepaintSink ready).",
+        "Standing defers unchanged: `select` / `selectable` are BarChart-only (2nd categorical-select chart = the lift trigger); quit-veto forcing consumer `[[debt-r1364-quit-split-clearance]]`; the demo-sweep push gap (`[[r1322-r1323-dock-gesture-regressions]]`, pre-push runs unit + clippy + doc, not the demo sweep)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
@@ -79452,5 +79510,7 @@
   "disclosure_plans": {},
   "edge_costs": {},
   "edge_guards": {},
-  "schema_version": 33
+  "parameters": {},
+  "parameter_deltas": {},
+  "schema_version": 34
 }
