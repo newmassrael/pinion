@@ -18,7 +18,7 @@ use pinion_core::scene::{
 };
 use pinion_core::style::{
     AlignItems, Border, BorderPlacement, BoxStyle, Color, FlexDirection, LayoutStyle, PathStyle,
-    Size, SizeValue, Stroke, TextAlign, TextStyle,
+    Size, SizeValue, Stroke, TextAlign, TextOverflow, TextStyle,
 };
 
 use crate::style::{ChartStyle, Margin};
@@ -150,7 +150,13 @@ pub(crate) fn label_node(
             TextStyle::new()
                 .with_size_px(size)
                 .with_fg(color)
-                .with_align(align),
+                .with_align(align)
+                // (R1396) A label box has a fixed width; a longer string used to
+                // paint past it (`TextOverflow::Visible` default), so a wide
+                // tick / legend label overran the chart into a neighbouring dock
+                // pane. Clip scissors the glyphs to the box, so the box's own
+                // clamp is the only containment the caller must get right.
+                .with_overflow(TextOverflow::Clip),
         )
         .with_tag(tag)
         .with_layout(
@@ -443,10 +449,160 @@ pub(crate) fn y_tick_labels(
     out
 }
 
-/// Fixed width (px) of one legend entry slot — a swatch + its label. Shared so
-/// every chart WITH a legend (line, donut, scatter — the bar chart has none)
-/// lays it out on the same grid (R1377).
+/// Left edge of a `slot`-wide label box centred on `center_px`, clamped so the
+/// whole box stays inside `bounds` (R1396).
+///
+/// Every axis label in this crate is a fixed-width box centred on a tick, and
+/// each builder used to write `to_u32(px).saturating_sub(slot / 2)` — which
+/// bounds the LEFT edge (a tick near x=0 stops at 0) and leaves the RIGHT edge
+/// free, so the last tick's box always overhung the chart by `slot / 2 -
+/// margin.right`. Inside a window that overhang lands in the window's own
+/// padding and is invisible; inside a **dock pane** it paints over the
+/// neighbouring pane, which is what R1396's docked consumer surfaced. Clamping
+/// here rather than at each call site makes "a chart paints only inside its own
+/// frame" one rule with one definition: the third consumer (line + scatter
+/// x-ticks, the timeline's ruler) is what lifted it.
+///
+/// A slot wider than `bounds` clamps to `bounds.x` — the box is then wider than
+/// the chart, which only a degenerate (a few px) chart can produce, and the
+/// label's own `TextOverflow::Clip` still scissors the glyphs to it.
+pub(crate) fn centered_label_x(center_px: f32, slot: u32, bounds: Rect) -> u32 {
+    let max_x = (bounds.x + bounds.w).saturating_sub(slot).max(bounds.x);
+    to_u32(center_px)
+        .saturating_sub(slot / 2)
+        .clamp(bounds.x, max_x)
+}
+
+/// Preferred width (px) of one legend entry slot — a swatch + its label. Shared
+/// so every chart WITH a legend (line, donut, scatter — the bar chart has none)
+/// lays it out on the same grid (R1377). It is the *preferred* width since
+/// R1396: [`legend_fit`] shrinks it toward [`LEGEND_MIN_SLOT`] when the chart is
+/// too narrow to seat every entry at this width.
 pub(crate) const LEGEND_SLOT: u32 = 104;
+
+/// The narrowest legend slot (px) that still reads as "swatch + a word": below
+/// this [`legend_fit`] stops shrinking and starts dropping entries, because a
+/// 20px slot is a colour chip beside a clipped glyph — noise that costs the same
+/// width as a truthful `+N`.
+pub(crate) const LEGEND_MIN_SLOT: u32 = 44;
+
+/// Width (px) reserved for the `+N` marker that stands for the entries a too-narrow
+/// legend dropped. Fits `+99` at the label sizes this crate uses.
+pub(crate) const LEGEND_OVERFLOW_SLOT: u32 = 32;
+
+/// How a legend row seats `entries` entries in `avail` px (R1396).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LegendFit {
+    /// Per-entry slot width — [`LEGEND_SLOT`] when everything fits at the
+    /// preferred width, shrunk toward [`LEGEND_MIN_SLOT`] when it does not.
+    pub slot: u32,
+    /// How many entries are drawn, in order.
+    pub shown: usize,
+    /// How many entries were dropped (`0` = the row is complete). A non-zero
+    /// count is drawn as a `+N` marker in [`LEGEND_OVERFLOW_SLOT`] px.
+    pub hidden: usize,
+}
+
+/// Seat `entries` legend entries in `avail` px: shrink the slot to fit, and when
+/// even [`LEGEND_MIN_SLOT`] does not fit them all, drop the tail and reserve
+/// [`LEGEND_OVERFLOW_SLOT`] px for the `+N` marker (R1396).
+///
+/// The alternative — wrapping the legend onto further rows — is the richer
+/// answer and is NOT built: the top band's height is `margin.top`, so a second
+/// row would have to feed back into the plot rect, making the plot's geometry
+/// depend on legend text. That is a domain change, not a clamp; this keeps the
+/// row one row and never paints outside the chart.
+pub(crate) fn legend_fit(avail: u32, entries: usize) -> LegendFit {
+    let Ok(n) = u32::try_from(entries) else {
+        return LegendFit {
+            slot: LEGEND_MIN_SLOT,
+            shown: 0,
+            hidden: entries,
+        };
+    };
+    if n == 0 {
+        return LegendFit {
+            slot: LEGEND_SLOT,
+            shown: 0,
+            hidden: 0,
+        };
+    }
+    let ideal = avail / n;
+    if ideal >= LEGEND_MIN_SLOT {
+        return LegendFit {
+            slot: ideal.min(LEGEND_SLOT),
+            shown: entries,
+            hidden: 0,
+        };
+    }
+    // Not even the minimum slot fits every entry, so a `+N` marker will stand in
+    // for the tail. If the marker itself does not fit, the row is omitted whole:
+    // a legend area narrower than one `+N` is a sub-`LEGEND_OVERFLOW_SLOT`-px
+    // chart, and a marker painted there would itself overrun the frame — the very
+    // thing this fit exists to prevent. The count is dropped with it (there is
+    // nowhere to show it), which only a degenerate chart width reaches.
+    if avail < LEGEND_OVERFLOW_SLOT {
+        return LegendFit {
+            slot: LEGEND_MIN_SLOT,
+            shown: 0,
+            hidden: 0,
+        };
+    }
+    // Draw as many as fit beside the marker. `shown` may be 0 — a chart wide
+    // enough for the marker but not one entry says only "+N", still true and
+    // still inside its own frame.
+    let shown = (avail.saturating_sub(LEGEND_OVERFLOW_SLOT) / LEGEND_MIN_SLOT) as usize;
+    let shown = shown.min(entries);
+    LegendFit {
+        slot: LEGEND_MIN_SLOT,
+        shown,
+        hidden: entries - shown,
+    }
+}
+
+/// The width (px) a [`legend_row`] actually occupies when it seats `entries`
+/// entries in `avail` px — `shown * slot` plus the `+N` marker's slot when any
+/// were dropped (R1396). Always `<= avail`. The donut centres its legend and
+/// needs this to place the row's left edge; the top-band charts start at a fixed
+/// `margin.left` and do not.
+pub(crate) fn legend_row_width(avail: u32, entries: usize) -> u32 {
+    let fit = legend_fit(avail, entries);
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the shown count is a small display count; the width stays within u32"
+    )]
+    let shown_w = (fit.shown as u32) * fit.slot;
+    shown_w
+        + if fit.hidden > 0 {
+            LEGEND_OVERFLOW_SLOT
+        } else {
+            0
+        }
+}
+
+/// The `+N` marker for a legend row that dropped `hidden` entries, seated at
+/// `x` (R1396). Tagged `.legend.overflow` so an introspecting client can read
+/// "this legend is incomplete, by this much" as scene data (§2 #7) rather than
+/// inferring it from a missing index.
+pub(crate) fn legend_overflow_marker(
+    hidden: usize,
+    x: u32,
+    row_y: u32,
+    style: &ChartStyle,
+    prefix: &str,
+) -> Scene {
+    let size = style.label_size_px.max(1);
+    label_node(
+        format!("+{hidden}"),
+        x,
+        row_y.saturating_sub(1),
+        LEGEND_OVERFLOW_SLOT,
+        TextAlign::Start,
+        style.label,
+        size,
+        format!("{prefix}.legend.overflow"),
+    )
+}
 
 /// One legend row: a colour swatch + a text label per `(color, text)` entry,
 /// laid out left-to-right on the [`LEGEND_SLOT`] grid from `start_x` at `row_y`,
@@ -456,22 +612,29 @@ pub(crate) const LEGEND_SLOT: u32 = 104;
 /// row sits (`start_x` / `row_y` — a top band for line / scatter, a centred
 /// bottom band for the donut) and what fills the entries (series names vs slice
 /// labels), which the caller resolves and passes in.
+///
+/// (R1396) `avail` is the width the row has from `start_x`: the slot shrinks to
+/// fit it and the entries that do not fit collapse into a `+N` marker
+/// ([`legend_fit`]), so the row never runs past the chart into a neighbouring
+/// dock pane.
 pub(crate) fn legend_row(
     entries: &[(Color, String)],
     start_x: u32,
     row_y: u32,
+    avail: u32,
     style: &ChartStyle,
     prefix: &str,
 ) -> Vec<Scene> {
     let size = style.label_size_px.max(1);
     let swatch = size;
+    let fit = legend_fit(avail, entries.len());
     let mut out = Vec::new();
-    for (i, (color, text)) in entries.iter().enumerate() {
+    for (i, (color, text)) in entries.iter().take(fit.shown).enumerate() {
         #[allow(
             clippy::cast_possible_truncation,
             reason = "the legend index is small; the slot offset stays within u32"
         )]
-        let entry_x = start_x + (i as u32) * LEGEND_SLOT;
+        let entry_x = start_x + (i as u32) * fit.slot;
         out.push(box_node(
             Rect::new(entry_x, row_y, swatch, swatch),
             *color,
@@ -481,11 +644,21 @@ pub(crate) fn legend_row(
             text.clone(),
             entry_x + swatch + 4,
             row_y.saturating_sub(1),
-            LEGEND_SLOT.saturating_sub(swatch + 4),
+            fit.slot.saturating_sub(swatch + 4),
             TextAlign::Start,
             style.label,
             size,
             format!("{prefix}.legend.{i}.label"),
+        ));
+    }
+    if fit.hidden > 0 {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "the legend index is small; the slot offset stays within u32"
+        )]
+        let marker_x = start_x + (fit.shown as u32) * fit.slot;
+        out.push(legend_overflow_marker(
+            fit.hidden, marker_x, row_y, style, prefix,
         ));
     }
     out
@@ -503,20 +676,33 @@ pub(crate) fn legend_row(
 /// 2nd consumer so the two charts emit an identical, chart-owned interactive
 /// legend rather than each re-deriving the chip geometry. Entries and tags zip to
 /// the shorter, so extra tags past the last series are ignored.
+///
+/// (R1396) `avail` px seats the row: the slot shrinks to fit (same
+/// [`legend_fit`] as the static [`legend_row`]) and the entries that do not fit
+/// collapse into a non-interactive `+N` marker. A dropped entry loses its click
+/// toggle — a too-narrow pane cannot show every toggle — but the series stays
+/// visible and RPC-drivable, and the marker keeps the drop honest (§2 #7).
 pub(crate) fn interactive_legend_row(
     entries: &[(Color, String, bool)],
     tags: &[String],
     start_x: u32,
     row_y: u32,
+    avail: u32,
     style: &ChartStyle,
+    prefix: &str,
 ) -> Vec<Scene> {
     let size = style.label_size_px.max(1);
     // A little taller than the swatch so the whole slot is a comfortable
     // click / Tab target; the swatch + label centre inside it.
     let entry_h = size + 6;
-    entries
+    // Entries and tags zip to the shorter; fit against THAT count so the `+N`
+    // marker counts only entries that would otherwise have been drawn.
+    let zipped = entries.len().min(tags.len());
+    let fit = legend_fit(avail, zipped);
+    let mut out: Vec<Scene> = entries
         .iter()
         .zip(tags)
+        .take(fit.shown)
         .enumerate()
         .map(|(i, ((color, name, visible), tag))| {
             let swatch_color = if *visible { *color } else { style.label };
@@ -529,7 +715,7 @@ pub(crate) fn interactive_legend_row(
                 clippy::cast_possible_truncation,
                 reason = "the legend index is small; the slot offset stays within u32"
             )]
-            let entry_x = start_x + (i as u32) * LEGEND_SLOT;
+            let entry_x = start_x + (i as u32) * fit.slot;
             let swatch = Scene::Box(
                 BoxNode::new(
                     Rect::default(),
@@ -540,7 +726,10 @@ pub(crate) fn interactive_legend_row(
             let label = Scene::Text(TextNode::styled(
                 name.clone(),
                 Rect::default(),
-                TextStyle::new().with_size_px(size).with_fg(ink),
+                TextStyle::new()
+                    .with_size_px(size)
+                    .with_fg(ink)
+                    .with_overflow(TextOverflow::Clip),
             ));
             Scene::Container(
                 ContainerNode::new(vec![swatch, label])
@@ -551,12 +740,23 @@ pub(crate) fn interactive_legend_row(
                             .with_align_items(AlignItems::Center)
                             .with_gap(4)
                             .with_absolute_position(entry_x, row_y)
-                            .with_size(Size::px(LEGEND_SLOT.saturating_sub(8), entry_h))
+                            .with_size(Size::px(fit.slot.saturating_sub(8), entry_h))
                             .with_focusable(true),
                     ),
             )
         })
-        .collect()
+        .collect();
+    if fit.hidden > 0 {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "the legend index is small; the slot offset stays within u32"
+        )]
+        let marker_x = start_x + (fit.shown as u32) * fit.slot;
+        out.push(legend_overflow_marker(
+            fit.hidden, marker_x, row_y, style, prefix,
+        ));
+    }
+    out
 }
 
 /// A layout that pins a node to `rect` (parent-relative absolute position + size).
@@ -616,4 +816,166 @@ pub(crate) fn to_f32(v: u32) -> f32 {
 )]
 pub(crate) fn to_u32(v: f32) -> u32 {
     v.round().max(0.0) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── centered_label_x (R1396) ────────────────────────────────────────
+
+    #[test]
+    fn centered_label_stays_inside_its_bounds_at_both_edges() {
+        // The whole box (x .. x + slot) must stay within [bounds.x, bounds.x + w].
+        let bounds = Rect::new(0, 0, 300, 100);
+        let slot = 60;
+        // A tick centred at the right edge would want x = 300 - 30 = 270, so the
+        // box would end at 330 — 30px past the edge. It clamps to 300 - 60 = 240.
+        assert_eq!(centered_label_x(300.0, slot, bounds), 240);
+        // A tick centred at the left edge would want a negative x; it clamps to 0.
+        assert_eq!(centered_label_x(0.0, slot, bounds), 0);
+        // A tick comfortably in the middle is centred verbatim (150 - 30 = 120).
+        assert_eq!(centered_label_x(150.0, slot, bounds), 120);
+    }
+
+    #[test]
+    fn centered_label_respects_a_nonzero_bounds_origin() {
+        // A docked chart's rect does not start at 0 — the clamp must use the
+        // rect's own left AND right, not the window's.
+        let bounds = Rect::new(100, 0, 200, 100); // x in [100, 300]
+        let slot = 60;
+        assert_eq!(centered_label_x(100.0, slot, bounds), 100); // left clamp = bounds.x
+        assert_eq!(centered_label_x(300.0, slot, bounds), 240); // right clamp = 300 - 60
+    }
+
+    #[test]
+    fn centered_label_with_a_slot_wider_than_bounds_clamps_to_the_left() {
+        // Degenerate: the box cannot fit; it pins to the left edge and lets the
+        // label's own Clip scissor it, rather than going negative or overflowing.
+        let bounds = Rect::new(10, 0, 40, 100);
+        assert_eq!(centered_label_x(30.0, 60, bounds), 10);
+    }
+
+    // ─── legend_fit / legend_row_width (R1396) ───────────────────────────
+
+    #[test]
+    fn legend_fits_every_entry_at_the_preferred_slot_when_wide() {
+        // 300px, 2 entries → ideal 150, capped at the 104 preferred slot.
+        let fit = legend_fit(300, 2);
+        assert_eq!(fit.slot, LEGEND_SLOT);
+        assert_eq!(fit.shown, 2);
+        assert_eq!(fit.hidden, 0);
+        assert!(legend_row_width(300, 2) <= 300);
+    }
+
+    #[test]
+    fn legend_shrinks_the_slot_before_dropping_anything() {
+        // 160px, 2 entries → ideal 80, above the 44 minimum: shrink, keep both.
+        let fit = legend_fit(160, 2);
+        assert_eq!(fit.slot, 80);
+        assert_eq!(fit.shown, 2);
+        assert_eq!(fit.hidden, 0);
+    }
+
+    #[test]
+    fn legend_drops_to_a_plus_n_marker_when_even_the_minimum_will_not_fit() {
+        // 100px, 4 entries → ideal 25 < 44 minimum. Reserve 32 for `+N`, seat
+        // (100 - 32) / 44 = 1 entry, drop the other 3.
+        let fit = legend_fit(100, 4);
+        assert_eq!(fit.slot, LEGEND_MIN_SLOT);
+        assert_eq!(fit.shown, 1);
+        assert_eq!(fit.hidden, 3);
+        // Never wider than the space it was given.
+        assert!(legend_row_width(100, 4) <= 100);
+    }
+
+    #[test]
+    fn legend_row_width_never_exceeds_avail_across_a_sweep() {
+        // The containment invariant the whole clamp rests on: for any width and
+        // entry count, the laid row fits. Swept so no off-by-one slips through.
+        for avail in [0u32, 10, 43, 44, 60, 88, 104, 200, 401] {
+            for n in 0usize..=8 {
+                assert!(
+                    legend_row_width(avail, n) <= avail,
+                    "width {avail} n {n} → {}",
+                    legend_row_width(avail, n)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_legend_is_a_no_op_and_zero_entries_shows_nothing() {
+        let fit = legend_fit(300, 0);
+        assert_eq!(fit.shown, 0);
+        assert_eq!(fit.hidden, 0);
+        assert_eq!(legend_row_width(300, 0), 0);
+        assert!(legend_row(&[], 10, 6, 300, &ChartStyle::default(), "chart").is_empty());
+    }
+
+    // ─── legend_row / interactive_legend_row emit the +N marker (R1396) ──
+
+    fn tag_of(scene: &Scene) -> Option<&str> {
+        scene.tag()
+    }
+
+    #[test]
+    fn a_narrow_static_legend_emits_a_tagged_overflow_marker() {
+        // 100px, 4 series: 1 shown (swatch + label = 2 nodes) + the `+3` marker.
+        let entries: Vec<(Color, String)> = (0..4)
+            .map(|i| (Color::rgb(0, 0, 0), format!("series-{i}")))
+            .collect();
+        let nodes = legend_row(&entries, 0, 6, 100, &ChartStyle::default(), "chart");
+        let marker = nodes
+            .iter()
+            .find(|n| tag_of(n) == Some("chart.legend.overflow"));
+        assert!(marker.is_some(), "a dropped-entry legend names the drop");
+        // Exactly one entry's swatch survived (index 0), none past it.
+        assert!(
+            nodes
+                .iter()
+                .any(|n| tag_of(n) == Some("chart.legend.0.swatch"))
+        );
+        assert!(
+            !nodes
+                .iter()
+                .any(|n| tag_of(n) == Some("chart.legend.1.swatch"))
+        );
+    }
+
+    #[test]
+    fn a_wide_static_legend_emits_no_overflow_marker() {
+        let entries: Vec<(Color, String)> = (0..2)
+            .map(|i| (Color::rgb(0, 0, 0), format!("series-{i}")))
+            .collect();
+        let nodes = legend_row(&entries, 0, 6, 300, &ChartStyle::default(), "chart");
+        assert!(
+            !nodes
+                .iter()
+                .any(|n| tag_of(n) == Some("chart.legend.overflow")),
+            "a legend with room drops nothing"
+        );
+    }
+
+    #[test]
+    fn a_narrow_interactive_legend_drops_to_a_marker_and_keeps_shown_toggles() {
+        // The interactive twin must overflow identically — a too-narrow pane
+        // shows fewer toggles + a `+N`, never a row running past its frame.
+        let entries: Vec<(Color, String, bool)> = (0..4)
+            .map(|i| (Color::rgb(0, 0, 0), format!("s{i}"), true))
+            .collect();
+        let tags: Vec<String> = (0..4).map(|i| format!("toggle-{i}")).collect();
+        let nodes =
+            interactive_legend_row(&entries, &tags, 0, 6, 100, &ChartStyle::default(), "chart");
+        // The shown entry keeps its caller tag (the clickable target).
+        assert!(nodes.iter().any(|n| tag_of(n) == Some("toggle-0")));
+        // The dropped entries do not (no phantom hit target off-frame).
+        assert!(!nodes.iter().any(|n| tag_of(n) == Some("toggle-3")));
+        // And the drop is named.
+        assert!(
+            nodes
+                .iter()
+                .any(|n| tag_of(n) == Some("chart.legend.overflow"))
+        );
+    }
 }

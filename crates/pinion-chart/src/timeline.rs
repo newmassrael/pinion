@@ -285,7 +285,10 @@ impl Timeline {
         for (k, (&t, &px)) in g.x_ticks.iter().zip(&x_pos).enumerate() {
             children.push(label_node(
                 format_axis_tick(t, g.x_step),
-                to_u32(px).saturating_sub(TICK_LABEL_W / 2),
+                // (R1396) The third x-tick consumer of the shared clamp: the
+                // ruler's last time label no longer overhangs the timeline's
+                // right edge into a docked neighbour.
+                crate::draw::centered_label_x(px, TICK_LABEL_W, rect),
                 rect.y + 4,
                 TICK_LABEL_W,
                 TextAlign::Center,

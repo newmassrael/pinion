@@ -56,8 +56,7 @@ use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::draw::{
-    CalloutRow, LEGEND_SLOT, absolute, arc_beziers, box_node, callout, fill_parent, legend_row,
-    to_f32, to_u32,
+    CalloutRow, absolute, arc_beziers, box_node, callout, fill_parent, legend_row, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::style::ChartStyle;
@@ -383,11 +382,13 @@ impl DonutChart {
         // to the shared `legend_row` (R1377) — the byte-identical swatch + label
         // loop the line and scatter charts also emit; only the WHERE (a centred
         // bottom band, vs their top band) is the donut's own.
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "slice count is a small display count; the total legend width stays within u32"
-        )]
-        let total_w = (self.slices.len() as u32) * LEGEND_SLOT;
+        //
+        // (R1396) The row can use the full width, centred, so `avail = rect.w`;
+        // `legend_row_width` gives the width it actually takes after the shared
+        // fit (shrink / drop-to-`+N`), and centring by THAT keeps a narrow-donut
+        // legend inside the chart instead of overrunning its right edge.
+        let avail = rect.w;
+        let total_w = crate::draw::legend_row_width(avail, self.slices.len());
         let start_x = rect.x + rect.w.saturating_sub(total_w) / 2;
         let entries: Vec<(Color, String)> = self
             .slices
@@ -400,7 +401,7 @@ impl DonutChart {
                 )
             })
             .collect();
-        legend_row(&entries, start_x, row_y, style, &self.tag_prefix)
+        legend_row(&entries, start_x, row_y, avail, style, &self.tag_prefix)
     }
 }
 

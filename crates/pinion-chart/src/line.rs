@@ -493,8 +493,11 @@ impl LineChart {
         // the R1377 lift until a third numeric-x consumer arrives.
         let slot = 60;
         for (k, &t) in x_ticks.iter().enumerate() {
-            let cx = to_u32(plot.x.map(t));
-            let x = cx.saturating_sub(slot / 2);
+            // (R1396) `centered_label_x` clamps the box inside `rect`, so the
+            // last tick's box no longer overhangs the chart into a docked
+            // neighbour; the box's `TextOverflow::Clip` (in `label_node`)
+            // scissors any glyphs the clamp squeezes.
+            let x = crate::draw::centered_label_x(plot.x.map(t), slot, rect);
             out.push(label_node(
                 format_axis_tick(t, steps.x),
                 x,
@@ -517,8 +520,11 @@ impl LineChart {
     fn legend(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
         let start_x = rect.x + style.margin.left;
         let row_y = rect.y + 6;
+        // (R1396) The row's width from `start_x` to the chart's right edge; the
+        // legend shrinks / drops entries to fit it rather than running past.
+        let avail = rect.w.saturating_sub(style.margin.left);
         if let Some(tags) = &self.legend_tags {
-            return self.interactive_legend_entries(tags, start_x, row_y, style);
+            return self.interactive_legend_entries(tags, start_x, row_y, avail, style);
         }
         let entries: Vec<(Color, String)> = self
             .series
@@ -531,7 +537,7 @@ impl LineChart {
                 )
             })
             .collect();
-        crate::draw::legend_row(&entries, start_x, row_y, style, &self.tag_prefix)
+        crate::draw::legend_row(&entries, start_x, row_y, avail, style, &self.tag_prefix)
     }
 
     /// The interactive legend (R1380): one focusable, hit-testable entry per
@@ -548,6 +554,7 @@ impl LineChart {
         tags: &[String],
         start_x: u32,
         row_y: u32,
+        avail: u32,
         style: &ChartStyle,
     ) -> Vec<Scene> {
         let entries: Vec<(Color, String, bool)> = self
@@ -562,7 +569,15 @@ impl LineChart {
                 )
             })
             .collect();
-        crate::draw::interactive_legend_row(&entries, tags, start_x, row_y, style)
+        crate::draw::interactive_legend_row(
+            &entries,
+            tags,
+            start_x,
+            row_y,
+            avail,
+            style,
+            &self.tag_prefix,
+        )
     }
 
     /// Resolve which data point the inspect cursor is focused on — the shared

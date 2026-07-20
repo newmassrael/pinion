@@ -1,0 +1,42 @@
+[package]
+name = "hello-dock-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1396 docked-chart consumer — the forcing consumer that PROVES the dock<->pane-registry<->chart-tag seam the chart crate documented as UNPROVEN. A pinion-chart LineChart::build_fill lives inside a dock pane (view_dock_surface), keyed on use_pane_viewport_size of a tag nested in the pane subtree; dragging the splitter resizes the pane, republishes its measured rect, and re-scales the chart. Also the forcing consumer for R1396's narrow-pane clamp: dragging the chart pane narrow collapses its legend to a `+N` marker and clamps its last x-tick inside the pane instead of overrunning the neighbour."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# R1396 — the docked chart under test (`LineChart::build_fill`) and its style.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 — `#[pinion_derive::widget(...)]` scaffold is unused here (this binding
+# is hand-written, PR-51 display-only like hello-chart-fill), but the crate is
+# still pulled for the shared derive-free `WidgetA11y` blanket impl path.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.49 — the dock surface walker (`view_dock_surface`), `DockTopology` /
+# `DockNode` / `DockSplitState`, and the `SplitterExternal` that makes each
+# split drag-resizable.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloDockChartRenderer` struct emitted by build.rs names `::vello::*`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# The real layout pipeline the scene-shape tests run through (the `hello-chart-fill`
+# test precedent: `CoreShell` + `compute_layout` + `publish_pane_viewports`).
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+
+[build-dependencies]
+# Build-time codegen for the `HelloDockChartRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

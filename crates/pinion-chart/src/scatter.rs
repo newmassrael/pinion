@@ -318,8 +318,9 @@ impl ScatterChart {
             crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, steps.y, style, &self.tag_prefix);
         let slot = 60;
         for (k, &t) in x_ticks.iter().enumerate() {
-            let cx = to_u32(plot.x.map(t));
-            let x = cx.saturating_sub(slot / 2);
+            // (R1396) Clamp the box inside `rect` (see the line chart's twin) so
+            // the last x-tick label no longer overhangs a docked neighbour.
+            let x = crate::draw::centered_label_x(plot.x.map(t), slot, rect);
             out.push(label_node(
                 format_axis_tick(t, steps.x),
                 x,
@@ -339,6 +340,8 @@ impl ScatterChart {
     fn legend(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
         let start_x = rect.x + style.margin.left;
         let row_y = rect.y + 6;
+        // (R1396) The row's width from `start_x` to the chart's right edge.
+        let avail = rect.w.saturating_sub(style.margin.left);
         // R1392 — an interactive legend (focusable tagged entries) when the
         // caller opts in, else the static swatch+label row.
         if let Some(tags) = &self.legend_tags {
@@ -354,7 +357,15 @@ impl ScatterChart {
                     )
                 })
                 .collect();
-            return crate::draw::interactive_legend_row(&entries, tags, start_x, row_y, style);
+            return crate::draw::interactive_legend_row(
+                &entries,
+                tags,
+                start_x,
+                row_y,
+                avail,
+                style,
+                &self.tag_prefix,
+            );
         }
         let entries: Vec<(Color, String)> = self
             .series
@@ -367,7 +378,7 @@ impl ScatterChart {
                 )
             })
             .collect();
-        crate::draw::legend_row(&entries, start_x, row_y, style, &self.tag_prefix)
+        crate::draw::legend_row(&entries, start_x, row_y, avail, style, &self.tag_prefix)
     }
 
     /// The inspect readout as one line of text — the same focus and values the
