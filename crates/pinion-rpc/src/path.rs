@@ -32,11 +32,17 @@ pub enum PathError {
     /// Window id between `[` and `]` was empty.
     EmptyWindowId,
     /// Id parsed cleanly but did not match any SCE-declared window.
-    /// Carries the offending id so the RPC message can echo *which*
-    /// window was not found (R1387 — a valid-syntax id that simply did
-    /// not match is the one worth echoing back; the two syntax errors
-    /// above have no such parameter).
-    UnknownWindow(String),
+    /// Carries the offending `requested` id AND the `valid` window set, so
+    /// the RPC message echoes *which* id was rejected (R1387) AND teaches
+    /// *what would have worked* (R1388) — recovery from the message alone.
+    /// The two syntax errors above have no such parameters. `valid` is
+    /// gathered from [`App::window_names`] at resolve time (document order).
+    UnknownWindow {
+        /// The window id the caller sent that matched no declared window.
+        requested: String,
+        /// Every declared window id (the set `requested` could have been).
+        valid: Vec<&'static str>,
+    },
 }
 
 impl PathError {
@@ -57,18 +63,20 @@ impl PathError {
     /// [`crate::preview::ApplyError::ApplyRejected`]).
     ///
     /// The tag is the variant name; [`UnknownWindow`](PathError::UnknownWindow)
-    /// appends its offending id (`UnknownWindow: "nope"`) so the message
-    /// names the reason AND echoes what was rejected while staying
-    /// prefix-matchable. The paramless variants borrow a `'static` string
-    /// (no allocation); only the id-bearing one owns.
+    /// appends its offending id AND the valid set
+    /// (`UnknownWindow: "nope" (valid: main)`) so the message names the
+    /// reason, echoes what was rejected, and teaches what would work — all
+    /// while staying prefix-matchable. The paramless variants borrow a
+    /// `'static` string (no allocation); only the id-bearing one owns.
     #[must_use]
     pub fn wire_tag(&self) -> std::borrow::Cow<'static, str> {
         match self {
             PathError::MalformedPrefix => std::borrow::Cow::Borrowed("MalformedPrefix"),
             PathError::EmptyWindowId => std::borrow::Cow::Borrowed("EmptyWindowId"),
-            PathError::UnknownWindow(id) => {
-                std::borrow::Cow::Owned(format!("UnknownWindow: {id:?}"))
-            }
+            PathError::UnknownWindow { requested, valid } => std::borrow::Cow::Owned(format!(
+                "UnknownWindow: {requested:?} (valid: {})",
+                valid.join(", ")
+            )),
         }
     }
 }
@@ -135,8 +143,10 @@ pub fn resolve(input: &str) -> Result<ResolvedPath<'_>, PathError> {
         if id.is_empty() {
             return Err(PathError::EmptyWindowId);
         }
-        let window =
-            App::window_from_name(id).ok_or_else(|| PathError::UnknownWindow(id.to_string()))?;
+        let window = App::window_from_name(id).ok_or_else(|| PathError::UnknownWindow {
+            requested: id.to_string(),
+            valid: App::window_names(),
+        })?;
         let scene_path = &rest[close + 1..];
         Ok(ResolvedPath {
             window,
@@ -200,11 +210,15 @@ mod tests {
 
     #[test]
     fn unknown_window_id_rejected() {
-        // R1387 — the rejected id is carried on the error so the wire can
-        // echo which window was not found.
+        // R1387/R1388 — the rejected id AND the valid set are carried on the
+        // error so the wire can echo which window was not found and which
+        // ones would have worked (`main` is the sole declared window).
         assert_eq!(
             resolve("/window[ghost]/scene"),
-            Err(PathError::UnknownWindow("ghost".to_string()))
+            Err(PathError::UnknownWindow {
+                requested: "ghost".to_string(),
+                valid: vec!["main"],
+            })
         );
     }
 
@@ -215,23 +229,30 @@ mod tests {
         // "Path". A distinct tag per variant is the whole point.
         assert_eq!(PathError::MalformedPrefix.wire_tag(), "MalformedPrefix");
         assert_eq!(PathError::EmptyWindowId.wire_tag(), "EmptyWindowId");
-        // R1387 — UnknownWindow appends the offending id, staying
-        // prefix-matchable ("UnknownWindow: …") while echoing what was
-        // rejected.
-        assert_eq!(
-            PathError::UnknownWindow("nope".to_string()).wire_tag(),
-            "UnknownWindow: \"nope\""
-        );
+        // R1387 echoes the offending id; R1388 also teaches the valid set,
+        // all while staying prefix-matchable ("UnknownWindow: …").
+        let unknown = PathError::UnknownWindow {
+            requested: "nope".to_string(),
+            valid: vec!["main"],
+        };
+        assert_eq!(unknown.wire_tag(), "UnknownWindow: \"nope\" (valid: main)");
         assert!(
-            PathError::UnknownWindow("nope".to_string())
-                .wire_tag()
-                .starts_with("UnknownWindow"),
+            unknown.wire_tag().starts_with("UnknownWindow"),
             "the reason tag stays a machine-matchable prefix"
+        );
+        // A multi-window app lists every valid id in order.
+        let multi = PathError::UnknownWindow {
+            requested: "x".to_string(),
+            valid: vec!["main", "settings"],
+        };
+        assert_eq!(
+            multi.wire_tag(),
+            "UnknownWindow: \"x\" (valid: main, settings)"
         );
         let tags = [
             PathError::MalformedPrefix.wire_tag(),
             PathError::EmptyWindowId.wire_tag(),
-            PathError::UnknownWindow("x".to_string()).wire_tag(),
+            unknown.wire_tag(),
         ];
         let distinct: std::collections::HashSet<_> = tags.iter().collect();
         assert_eq!(

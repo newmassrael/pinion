@@ -18,9 +18,10 @@ RPC wire and asserts the error `data` now:
   (D) R-66.2      — a mistyped window id surfaces the concrete PathError reason
                     tag (`UnknownWindow` / `EmptyWindowId` / `MalformedPrefix`),
                     never the collapsed blanket `"Path"`.
-  (D2) R1387      — `UnknownWindow` echoes the offending id
-                    (`UnknownWindow: "nope"`), so two mistyped ids give two
-                    different messages; the tag stays a matchable prefix.
+  (D2) R1387/R1388 — `UnknownWindow` echoes the offending id AND teaches the
+                    valid set (`UnknownWindow: "nope" (valid: main)`), so two
+                    mistyped ids give two different messages that both name
+                    what would have worked; the tag stays a matchable prefix.
   (E) regression  — the sibling `params.from` error keeps its full context
                     (violating value + valid set): the fix does not regress the
                     bar it was measured against.
@@ -113,7 +114,7 @@ def body() -> None:
 
         # ── (D) R-66.2: concrete PathError reason tag, never blanket "Path" ──
         for path, tag in (
-            ("/window[nope]", 'UnknownWindow: "nope"'),  # R1387: echoes the offending id
+            ("/window[nope]", 'UnknownWindow: "nope" (valid: main)'),  # R1387: echoes the offending id
             ("/window[]", "EmptyWindowId"),              # empty id between the brackets
             ("/window[main", "MalformedPrefix"),         # no closing bracket
         ):
@@ -126,10 +127,12 @@ def body() -> None:
         # exactly what the caller sent — an agent recovers from the message.
         d_a = snapshot_data(tf, "/window[dahsboard]")
         d_b = snapshot_data(tf, "/window[sesion]")
-        assert d_a == 'UnknownWindow: "dahsboard"', f"echoes the id, got {d_a!r}"
-        assert d_b == 'UnknownWindow: "sesion"', f"echoes the id, got {d_b!r}"
+        assert d_a == 'UnknownWindow: "dahsboard" (valid: main)', f"echoes id + valid set, got {d_a!r}"
+        assert d_b == 'UnknownWindow: "sesion" (valid: main)', f"echoes id + valid set, got {d_b!r}"
         assert d_a != d_b, "each offending id produces its own message"
         assert d_a.startswith("UnknownWindow"), "reason stays a matchable prefix"
+        # R1388 — every UnknownWindow message teaches the valid window set.
+        assert "(valid: main)" in d_a and "(valid: main)" in d_b, "teaches the valid set"
 
         # ── (E) regression: the sibling `params.from` error keeps context ────
         try:
@@ -146,11 +149,11 @@ def body() -> None:
         # `scene/query` AND `scene/simulate` shared the identical PathError
         # reason-collapse; the SSOT (`PathError::wire_tag`) fixed the family,
         # not just snapshot. Two distinct methods echo the concrete reason.
-        assert_eq(query_data(tf, "/window[nope]/external/count"), 'UnknownWindow: "nope"',
+        assert_eq(query_data(tf, "/window[nope]/external/count"), 'UnknownWindow: "nope" (valid: main)',
                   "scene/query surfaces the concrete reason + id too")
         assert_eq(query_data(tf, "/window[/external/count"), "MalformedPrefix",
                   "scene/query malformed prefix surfaces its reason too")
-        assert_eq(simulate_data(tf, "/window[nope]/external/count"), 'UnknownWindow: "nope"',
+        assert_eq(simulate_data(tf, "/window[nope]/external/count"), 'UnknownWindow: "nope" (valid: main)',
                   "scene/simulate surfaces the concrete reason + id too")
 
 

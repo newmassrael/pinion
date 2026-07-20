@@ -86,6 +86,17 @@ impl App {
     pub fn window_from_name(name: &str) -> Option<AppState> {
         topology::window_from_name::<AppPolicy>(name)
     }
+
+    /// Every declared window's id string, in document order (§5.18).
+    ///
+    /// The forward peer of [`Self::window_from_name`] — an RPC layer that
+    /// rejects an unknown `/window[<id>]` can list the valid ids from this so
+    /// an AI agent recovers from the error message alone. Single-window apps
+    /// return one name; a `<parallel>` root returns one per region.
+    #[must_use]
+    pub fn window_names() -> Vec<&'static str> {
+        topology::window_names::<AppPolicy>()
+    }
 }
 
 impl Default for App {
@@ -112,5 +123,17 @@ mod tests {
         assert_eq!(name, "main");
         assert_eq!(App::window_from_name(name), Some(initial));
         assert_eq!(App::window_from_name("unknown"), None);
+    }
+
+    #[test]
+    fn window_names_lists_every_declared_window() {
+        // The flat single-window `app.scxml` declares exactly `main`; the
+        // forward peer of `window_from_name` enumerates it so an RPC error
+        // can teach the valid set. Every listed name round-trips back.
+        let names = App::window_names();
+        assert_eq!(names, vec!["main"]);
+        for name in names {
+            assert!(App::window_from_name(name).is_some(), "{name} round-trips");
+        }
     }
 }

@@ -26690,6 +26690,60 @@
         "Remaining Phase B dataviz gaps `[[debt-dataviz-dashboard-substrate]]` untouched; R1388 returns to that roadmap (this was the R1386 seam's carry clearance)."
       ]
     },
+    "R1388": {
+      "decision_summary": "R1388 §5.18 §5.17 §5.12: clear the R1387 residual carry — an UnknownWindow RPC error now teaches the VALID window set, not just echoes the rejected id. User-directed follow-up (남은 캐리 청산). New pinion-core enumerator topology::window_names<P>() (forward peer of window_from_name — parallel root: one name per region in document order; flat root: the sole root) + App::window_names(). PathError::UnknownWindow(String) reshaped to {requested, valid: Vec<&static str>}; resolve() fills valid=App::window_names() on the failure branch only (no cost on success); wire_tag() formats UnknownWindow: \"nope\" (valid: main), still a machine-matchable prefix. An agent that mistypes /window[dahsboard] now sees which id was rejected AND that main would have worked. Data-only wire change (JSON-RPC code -32602 / control flow unchanged). Independent read-only 3-reviewer audit SHIP zero defects: variant reshape complete (wire_tag is the only destructure; every other consumer forwards the whole Path(PathError)), window_names accepts exactly the set window_from_name accepts, the empty valid-set (valid: ) is an emitter-forbidden §5.17 zero-region invariant (unreachable).",
+      "changes_bullets": [
+        "`crates/pinion-core/src/topology.rs`: new `window_names<P: StatePolicy>() -> Vec<&'static str>` — the forward peer of `window_from_name` (parallel root: one name per region sorted by document order; flat root: the sole root's name) + rustdoc.",
+        "`crates/pinion-core/src/app.rs`: `App::window_names()` delegating to it + a `window_names_lists_every_declared_window` test (round-trips each listed name back through `window_from_name`).",
+        "`crates/pinion-rpc/src/path.rs`: `PathError::UnknownWindow(String)` reshaped to struct `{requested: String, valid: Vec<&'static str>}`; `resolve()` fills `valid: App::window_names()` on the failure branch only (lazy `ok_or_else` — no cost on success); `wire_tag()` formats `UnknownWindow: {requested:?} (valid: {joined})`, still a machine-matchable prefix; doc + tests (single- and multi-window valid sets).",
+        "`crates/pinion-rpc/src/dispatch_tests.rs` + `preview/kinds.rs`: `UnknownWindow` assertions -> the `(valid: main)` form; +a \"both messages teach the valid set\" check.",
+        "`tools/demos/r1386_snapshot_path_error.py`: `UnknownWindow` assertions -> `(valid: main)`; +a valid-set containment assertion over the real wire."
+      ],
+      "verification_bullets": [
+        "`cargo test -p pinion-core`: 2619 passed, 0 failed. `cargo test -p pinion-rpc`: 911 passed, 0 failed.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello`: clean (`-D pedantic`).",
+        "`cargo doc` (pinion-core + pinion-rpc, `--no-deps --document-private-items`, `-D warnings`): clean.",
+        "`cargo fmt --all --check`: clean.",
+        "`tools/demos/r1386_snapshot_path_error.py`: PASS over real windowed RPC — the valid set is asserted on snapshot/query/simulate; two ids both teach `(valid: main)`.",
+        "Independent read-only 3-reviewer audit BEFORE commit: SHIP, zero defects. Variant reshape complete (grep every crate — `wire_tag` is the SOLE destructure; every other consumer forwards the whole `Path(PathError)` via `From`, so tuple->struct cannot break them). `window_names` accepts EXACTLY the set `window_from_name` accepts (same parallel/flat branch, same document order as `initial_window`). `App::window_names()` runs only on the failure branch. The unrelated `WindowMoveError::UnknownWindow` and the R889 `{window:...}` param surface are correctly untouched."
+      ],
+      "impact_refs": [
+        "5.18",
+        "5.17",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "Fail-quiet vs fail-loud asymmetry (reviewer note, kept by design): `initial_window` panics on a zero-region `<parallel>` root (§5.17 invariant), while `window_names` returns `[]` (rendering `(valid: )`) — panicking while BUILDING an error message would be worse, so the error helper stays total. Only reachable via a hand-written policy that bypasses SCE Forge emit; unreachable for any emitted app.",
+        "The multi-window valid set is unit-tested (`(valid: main, settings)`) but not integration-tested — the shipped `app.scxml` is single-window. Real multi-window coverage lands with the first `<parallel>`-root app (§5.18 perfect-hash caveat).",
+        "The PINION-PR66 seam and both its carries are now fully cleared: R1386 (teach valid form + reason SSOT), R1387 (echo the rejected id), R1388 (teach the valid set). Remaining Phase B dataviz gaps `[[debt-dataviz-dashboard-substrate]]` untouched; next round returns to that roadmap."
+      ],
+      "publishable_decision_summary": "R1388 §5.18 §5.17 §5.12: clear the R1387 residual carry — an UnknownWindow RPC error now teaches the VALID window set, not just echoes the rejected id. User-directed follow-up (남은 캐리 청산). New pinion-core enumerator topology::window_names<P>() (forward peer of window_from_name — parallel root: one name per region in document order; flat root: the sole root) + App::window_names(). PathError::UnknownWindow(String) reshaped to {requested, valid: Vec<&static str>}; resolve() fills valid=App::window_names() on the failure branch only (no cost on success); wire_tag() formats UnknownWindow: \"nope\" (valid: main), still a machine-matchable prefix. An agent that mistypes /window[dahsboard] now sees which id was rejected AND that main would have worked. Data-only wire change (JSON-RPC code -32602 / control flow unchanged). Independent read-only 3-reviewer audit SHIP zero defects: variant reshape complete (wire_tag is the only destructure; every other consumer forwards the whole Path(PathError)), window_names accepts exactly the set window_from_name accepts, the empty valid-set (valid: ) is an emitter-forbidden §5.17 zero-region invariant (unreachable).",
+      "publishable_changes_bullets": [
+        "`crates/pinion-core/src/topology.rs`: new `window_names<P: StatePolicy>() -> Vec<&'static str>` — the forward peer of `window_from_name` (parallel root: one name per region sorted by document order; flat root: the sole root's name) + rustdoc.",
+        "`crates/pinion-core/src/app.rs`: `App::window_names()` delegating to it + a `window_names_lists_every_declared_window` test (round-trips each listed name back through `window_from_name`).",
+        "`crates/pinion-rpc/src/path.rs`: `PathError::UnknownWindow(String)` reshaped to struct `{requested: String, valid: Vec<&'static str>}`; `resolve()` fills `valid: App::window_names()` on the failure branch only (lazy `ok_or_else` — no cost on success); `wire_tag()` formats `UnknownWindow: {requested:?} (valid: {joined})`, still a machine-matchable prefix; doc + tests (single- and multi-window valid sets).",
+        "`crates/pinion-rpc/src/dispatch_tests.rs` + `preview/kinds.rs`: `UnknownWindow` assertions -> the `(valid: main)` form; +a \"both messages teach the valid set\" check.",
+        "`tools/demos/r1386_snapshot_path_error.py`: `UnknownWindow` assertions -> `(valid: main)`; +a valid-set containment assertion over the real wire."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-core`: 2619 passed, 0 failed. `cargo test -p pinion-rpc`: 911 passed, 0 failed.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello`: clean (`-D pedantic`).",
+        "`cargo doc` (pinion-core + pinion-rpc, `--no-deps --document-private-items`, `-D warnings`): clean.",
+        "`cargo fmt --all --check`: clean.",
+        "`tools/demos/r1386_snapshot_path_error.py`: PASS over real windowed RPC — the valid set is asserted on snapshot/query/simulate; two ids both teach `(valid: main)`.",
+        "Independent read-only 3-reviewer audit BEFORE commit: SHIP, zero defects. Variant reshape complete (grep every crate — `wire_tag` is the SOLE destructure; every other consumer forwards the whole `Path(PathError)` via `From`, so tuple->struct cannot break them). `window_names` accepts EXACTLY the set `window_from_name` accepts (same parallel/flat branch, same document order as `initial_window`). `App::window_names()` runs only on the failure branch. The unrelated `WindowMoveError::UnknownWindow` and the R889 `{window:...}` param surface are correctly untouched."
+      ],
+      "publishable_impact_refs": [
+        "5.18",
+        "5.17",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Fail-quiet vs fail-loud asymmetry (reviewer note, kept by design): `initial_window` panics on a zero-region `<parallel>` root (§5.17 invariant), while `window_names` returns `[]` (rendering `(valid: )`) — panicking while BUILDING an error message would be worse, so the error helper stays total. Only reachable via a hand-written policy that bypasses SCE Forge emit; unreachable for any emitted app.",
+        "The multi-window valid set is unit-tested (`(valid: main, settings)`) but not integration-tested — the shipped `app.scxml` is single-window. Real multi-window coverage lands with the first `<parallel>`-root app (§5.18 perfect-hash caveat).",
+        "The PINION-PR66 seam and both its carries are now fully cleared: R1386 (teach valid form + reason SSOT), R1387 (echo the rejected id), R1388 (teach the valid set). Remaining Phase B dataviz gaps `[[debt-dataviz-dashboard-substrate]]` untouched; next round returns to that roadmap."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

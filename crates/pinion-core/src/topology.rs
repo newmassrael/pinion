@@ -64,3 +64,27 @@ where
         None
     }
 }
+
+/// Every declared window's SCE-emit id string (§5.18 RPC path tokens).
+///
+/// The forward peer of [`window_from_name`]: a `<parallel>` root yields one
+/// name per region in document order (the same deterministic order
+/// [`initial_window`] picks its first from); a flat root yields the sole
+/// root's name. Callers use it to *teach the valid set* — e.g. an
+/// `UnknownWindow` RPC error that lists the windows a mistyped id could have
+/// meant. Allocates, so it is a failure-path / introspection helper, not a
+/// hot-path lookup.
+#[must_use]
+pub fn window_names<P: StatePolicy>() -> Vec<&'static str>
+where
+    P::State: Copy,
+{
+    let root = P::initial_state();
+    if P::is_parallel_state(root) {
+        let mut regions: Vec<P::State> = P::get_parallel_regions(root).to_vec();
+        regions.sort_by_key(|&s| P::get_document_order(s));
+        regions.into_iter().map(P::get_state_name).collect()
+    } else {
+        vec![P::get_state_name(root)]
+    }
+}

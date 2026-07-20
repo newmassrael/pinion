@@ -822,9 +822,10 @@ fn snapshot_window_prefixed_tail_echoes_both_raw_and_tail() {
 
 #[test]
 fn snapshot_unknown_window_surfaces_concrete_reason_not_path() {
-    // R-66.2 + R1387 — a mistyped window id surfaces the concrete reason
-    // AND echoes the offending id (`UnknownWindow: "nope"`), never the
-    // collapsed blanket `"Path"`; the tag stays a machine-matchable prefix.
+    // R-66.2 + R1387 + R1388 — a mistyped window id surfaces the concrete
+    // reason, echoes the offending id, AND teaches the valid set
+    // (`UnknownWindow: "nope" (valid: main)`), never the collapsed blanket
+    // `"Path"`; the tag stays a machine-matchable prefix.
     let mut scene = counted_scene(0);
     let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"/window[nope]","from":"state"},"id":3}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
@@ -832,7 +833,9 @@ fn snapshot_unknown_window_surfaces_concrete_reason_not_path() {
     assert_eq!(err.code, -32602);
     assert_eq!(
         err.data,
-        Some(Value::String("UnknownWindow: \"nope\"".to_string()))
+        Some(Value::String(
+            "UnknownWindow: \"nope\" (valid: main)".to_string()
+        ))
     );
     assert_ne!(err.data, Some(Value::String("Path".to_string())));
 }
@@ -870,16 +873,19 @@ fn snapshot_class_fix_also_covers_a_sibling_method() {
     // R1387 — the id echo travels through the sibling method too.
     assert_eq!(
         err.data,
-        Some(Value::String("UnknownWindow: \"nope\"".to_string()))
+        Some(Value::String(
+            "UnknownWindow: \"nope\" (valid: main)".to_string()
+        ))
     );
     assert_ne!(err.data, Some(Value::String("Path".to_string())));
 }
 
 #[test]
 fn unknown_window_error_echoes_the_offending_id() {
-    // R1387 — the carry cleared: two DIFFERENT mistyped ids produce two
-    // DIFFERENT messages, each echoing exactly what the caller sent, so an
-    // agent sees which window it got wrong (not a bare, identical tag).
+    // R1387 — two DIFFERENT mistyped ids produce two DIFFERENT messages,
+    // each echoing exactly what the caller sent (not a bare, identical tag).
+    // R1388 — every message also teaches the valid set (`(valid: main)`), so
+    // the agent learns not just that it was wrong but what would have worked.
     let mut scene = counted_scene(0);
     let mut data_for = |id: &str| {
         let req = format!(
@@ -894,13 +900,25 @@ fn unknown_window_error_echoes_the_offending_id() {
     let b = data_for("sesion");
     assert_eq!(
         a,
-        Some(Value::String("UnknownWindow: \"dahsboard\"".to_string()))
+        Some(Value::String(
+            "UnknownWindow: \"dahsboard\" (valid: main)".to_string()
+        ))
     );
     assert_eq!(
         b,
-        Some(Value::String("UnknownWindow: \"sesion\"".to_string()))
+        Some(Value::String(
+            "UnknownWindow: \"sesion\" (valid: main)".to_string()
+        ))
     );
     assert_ne!(a, b, "each offending id produces its own message");
+    // R1388 — the valid set is the SAME in both (it is the app topology, not
+    // the caller's input): both teach `(valid: main)`.
+    let contains_valid =
+        |d: &Option<Value>| matches!(d, Some(Value::String(s)) if s.contains("(valid: main)"));
+    assert!(
+        contains_valid(&a) && contains_valid(&b),
+        "both teach the valid set"
+    );
 }
 
 // ---- R51.197 §5.49 §5.45 — scene/key injection ----

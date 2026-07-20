@@ -315,8 +315,9 @@ mod tests {
             &serde_json::json!(1),
         )
         .unwrap_err();
-        // R1387 — the reason echoes the offending id, staying prefix-matchable.
-        assert_eq!(err, "UnknownWindow: \"nope\"");
+        // R1387 echoes the offending id; R1388 also teaches the valid set;
+        // still prefix-matchable.
+        assert_eq!(err, "UnknownWindow: \"nope\" (valid: main)");
         assert!(err.starts_with("UnknownWindow") && err != "Path");
     }
 
