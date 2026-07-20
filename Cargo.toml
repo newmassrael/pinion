@@ -94,6 +94,7 @@ members = [
     "examples/hello-histogram-brush",
     "examples/hello-dock-chart",
     "examples/hello-autoscale-y",
+    "examples/hello-live-chart",
     "examples/hello-stat-tiles",
     "examples/hello-timeline",
     "examples/hello-snackbar",

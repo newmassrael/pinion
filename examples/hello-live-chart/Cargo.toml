@@ -1,0 +1,38 @@
+[package]
+name = "hello-live-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1398 Phase-B dataviz consumer — a live telemetry strip chart. A background producer thread (the R1000 RepaintSink off-thread seam) appends samples to a bounded ring; the view charts them over a SLIDING x-window with LineChart::rescale_y_to_x_window (the R1397 y-auto-fit, its 2nd consumer), so a large startup transient scrolls off the left as time advances AND the y-axis auto-fits down to the steady-state detail. Substrate-first: the slide + rescale read back as data via scene/snapshot (the window status + chart.label.y.N + chart.series.0 geometry), so the live chart is verifiable without OCR."
+publish = false
+
+[[bin]]
+name = "hello-live-chart"
+path = "src/main.rs"
+
+[dependencies]
+# R1397 — the charting substrate (LineChart + rescale_y_to_x_window).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC) + `use_scene_revision`.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R727 §5.49 — button paint SSOT (`button_scene` / `read_button_state`); the
+# Tick button pokes the producer thread (the R1000 deterministic-poke pattern).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloLiveChartRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
