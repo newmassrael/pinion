@@ -1,0 +1,41 @@
+[package]
+name = "hello-tabbed-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1409 tabbed-chart consumer — proves a pinion-chart LineChart::build_fill lives inside a dock TAB well (DockNode::Tabs), the case R1396's docked-chart note left UNEXERCISED. A tab well renders ONLY its active panel (not byte-identical to a Leaf: a strip above + a header-suppressed active panel), so this is where the measured-rect seam is proven to descend through a tab well AND to re-measure when the chart tab is re-activated from a sibling — the reappear -> publish -> dirty -> same-frame re-pass chain. Also re-exercises R1396's narrow-pane legend clamp inside a well."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# R1409 — the docked chart under test (`LineChart::build_fill`) and its style.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for the derive-free `WidgetA11y` blanket impl.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 — the derive-free `WidgetA11y` blanket impl path (this binding is
+# hand-written, PR-51 display-only like hello-dock-chart).
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.49 §5.51 — the dock surface walker (`view_dock_surface`), `DockTopology` /
+# `DockNode` (incl. `Tabs`), `DockSplitState`, `DockReorganizer` (the live active
+# tab SSOT), `TabWellExternal` (click-to-switch), and `SplitterExternal`.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloTabbedChartRenderer` struct emitted by build.rs names `::vello::*`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# The real layout pipeline the scene-shape tests run through (the hello-dock-chart
+# test precedent: `CoreShell` + `compute_layout` + `publish_pane_viewports`).
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+
+[build-dependencies]
+# Build-time codegen for the `HelloTabbedChartRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
