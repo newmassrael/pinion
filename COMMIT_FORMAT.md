@@ -47,13 +47,21 @@ Pinion specific scopes:
 - Bullet points (`- ` prefix) only — no prose lead paragraph
 - Bullets must be **contiguous** — no blank line between bullets
 - **1-3 items** — focus on key changes (fewer is better)
-- The `commit-msg` hook enforces bullet-only + contiguity + the 1-3
-  cap (a prose body line, a blank line between bullets, or a 4th
-  bullet is rejected, not just discouraged)
 - **One bullet = one line, max 72 bytes total (incl. `- ` prefix)**
-  - No continuation / indented wrap lines. If a bullet does not fit in
-    72 bytes, rewrite it tighter or split into a separate bullet.
+  - No continuation / indented wrap lines. A bullet that wraps onto a
+    second (indented or not) line is rejected — one bullet, one line.
+    If a bullet does not fit in 72 bytes, rewrite it tighter or split
+    it into a separate bullet.
   - Verify with: `git log -1 --format=%B | awk '{print length, $0}'`
+- **Two-layer enforcement** — the rules above (bullet-only, contiguity,
+  the 1-3 cap, and one-bullet-one-line) are enforced by a SHARED linter
+  (`.githooks/lib/commit-msg-lint.sh`) at BOTH gates:
+  - `commit-msg` rejects a violating message at commit time.
+  - `pre-push` re-lints every commit being pushed, so a `--no-verify`
+    bypass at commit time — or an amend/rebase that reintroduces a
+    violation — is still caught before the commit reaches a remote.
+    (Only commits ahead of the remote are checked; published history is
+    never re-litigated.)
 - Be specific and technical
 - Reference Mnemosyne sections in `§N.M` form (e.g., §5.16, §6.4, §5.15)
 - Reference Mnemosyne rounds as `R<N>` (e.g., R10, R12, R297)
@@ -151,6 +159,23 @@ feat(arch): R10 §5.16 codegen renderer ratify (wrong design call —
 one line ≤72 bytes. Rewrite tighter:
 ```
 feat(arch): R10 §5.16 codegen renderer ratify (R11 supersedes)
+```
+
+### Bad: Wrapped body bullet (indented continuation)
+```
+feat(chart): a chart crosshair follows the bare hover
+
+- hello-crosshair: a CrosshairExternal opts into wants_hover_move
+  (not capture), so a plain hover drives the chart's inspect. It is
+  the 2nd consumer of the seam, with zero framework change.
+```
+**Problem**: the first bullet spills onto two indented continuation
+lines. One bullet = one line ≤72 bytes. Both `commit-msg` and
+`pre-push` (which re-lints every pushed commit, so a `--no-verify`
+bypass is still caught) reject this. Rewrite as terse one-liners:
+```
+- hello-crosshair: 2nd wants_hover_move consumer; hover drives inspect
+- zero framework change; the crosshair rides the existing hover seam
 ```
 
 ### Bad: Too many bullets

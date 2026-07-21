@@ -9,6 +9,14 @@
 #
 # Checks:
 #
+#   0. Commit-message lint (lib/commit-msg-lint.sh) for every commit being
+#      pushed — the SAME rules the commit-msg hook enforces. commit-msg is
+#      bypassable (`--no-verify`) and amend/rebase can reintroduce a
+#      violation after it passed, so re-checking at the publish point closes
+#      that hole (a multi-line body bullet, a 4th bullet, non-English text,
+#      etc. cannot be published). Only commits ahead of the remote are
+#      checked; published history is never re-litigated.
+#
 #   1. `mnemosyne-cli validate-workspace`
 #      - T1 cross-ref orphan delta
 #      - T2 frozen-ledger violations
@@ -42,6 +50,52 @@ fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+
+# --- 0. Commit-message gate (unconditional; cheapest, so run first) ---
+# Re-validate the message of every commit being pushed with the SAME linter
+# the commit-msg hook uses (lib/commit-msg-lint.sh). commit-msg can be
+# bypassed with `--no-verify`, and an amend / rebase can reintroduce a
+# violation after commit-msg already passed; pre-push is the publish gate, so
+# re-checking here closes that hole (e.g. a multi-line body bullet that slips
+# past `--no-verify` cannot be published). Only NEW commits — those ahead of
+# the remote — are checked; already-published history is never re-litigated.
+hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/commit-msg-lint.sh
+source "$hook_dir/lib/commit-msg-lint.sh"
+
+msg_gate_failed=0
+tmp_msg="$(mktemp)"
+trap 'rm -f "$tmp_msg"' EXIT
+
+# git feeds pre-push the ref updates on stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    # Branch deletion (local sha all-zero) — nothing to validate.
+    [[ "$local_sha" =~ ^0+$ ]] && continue
+
+    if [[ "$remote_sha" =~ ^0+$ ]]; then
+        # New ref on the remote — validate only commits not already on any
+        # remote-tracking ref, so a first push does not re-litigate history.
+        range=("$local_sha" --not --remotes)
+    else
+        range=("$remote_sha..$local_sha")
+    fi
+
+    while read -r sha; do
+        [[ -z "$sha" ]] && continue
+        git log -1 --format=%B "$sha" >"$tmp_msg"
+        if ! lint_commit_message "$tmp_msg"; then
+            echo "pre-push: commit $sha violates COMMIT_FORMAT.md (above)" >&2
+            msg_gate_failed=1
+        fi
+    done < <(git rev-list "${range[@]}")
+done
+
+if [[ "$msg_gate_failed" -ne 0 ]]; then
+    echo "pre-push: one or more pushed commit messages violate COMMIT_FORMAT.md" >&2
+    echo "pre-push: reword with 'git rebase -i', then re-push" >&2
+    exit 1
+fi
 
 echo "pre-push: mnemosyne-cli validate-workspace ..." >&2
 if ! mnemosyne-cli validate-workspace; then
