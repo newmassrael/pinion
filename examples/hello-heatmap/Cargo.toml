@@ -1,0 +1,33 @@
+[package]
+name = "hello-heatmap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1408 §5.41 — a sequential-magnitude heatmap over Scene::TextGrid with a bare-hover cell inspector. A 12x8 intensity matrix renders as squarish colour cells (a single-hue surface->accent ramp + a per-cell value label + a legend strip); hovering a cell with no button held reverse-videos it and names its (row, col, value). The third consumer of External::wants_hover_move and of the rect-fraction->cell hit-test (forcing the CellMetric::frac_to_cell lift). Substrate-first: the highlight is cell attributes, so scene/snapshot grid_rows exposes it as data, and the oracle maps a cell to its value with no pixel."
+publish = false
+
+[[bin]]
+name = "hello-heatmap"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.16 — the `HelloHeatmapRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

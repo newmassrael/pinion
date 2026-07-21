@@ -98,6 +98,7 @@ members = [
     "examples/hello-hex-dump",
     "examples/hello-hyperlink",
     "examples/hello-crosshair",
+    "examples/hello-heatmap",
     "examples/hello-memory-image",
     "examples/hello-stat-tiles",
     "examples/hello-timeline",

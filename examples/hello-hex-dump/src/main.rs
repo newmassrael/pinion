@@ -605,9 +605,9 @@ impl External for HexDumpOracle {
     /// focus. A non-byte cell deselects a fresh press but is ignored mid-drag
     /// (dragging over the gutter never collapses the selection).
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        let x_px = CellMetric::frac_to_px(x_rel, GRID_W);
-        let y_px = CellMetric::frac_to_px(y_rel, GRID_H);
-        let (col, row) = CellMetric::DEFAULT.px_to_cell(x_px, y_px);
+        // R1408 — the router's rect fraction → cell in one call (the lifted
+        // `frac_to_px` + `px_to_cell` composite).
+        let (col, row) = CellMetric::DEFAULT.frac_to_cell(x_rel, y_rel, GRID_W, GRID_H);
         let fresh = self.pending_anchor || self.selection.is_none();
         match byte_at_cell(usize::from(col), usize::from(row)) {
             Some(b) if fresh => self.select_byte(b),

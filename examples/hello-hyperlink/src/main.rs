@@ -379,10 +379,9 @@ impl External for HyperlinkOracle {
     /// reconstruct the cell and set the hovered link index (or `None` off a
     /// link).
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        let (col, row) = CellMetric::DEFAULT.px_to_cell(
-            CellMetric::frac_to_px(x_rel, GRID_W),
-            CellMetric::frac_to_px(y_rel, GRID_H),
-        );
+        // R1408 — the router's rect fraction → cell in one call (the lifted
+        // `frac_to_px` + `px_to_cell` composite).
+        let (col, row) = CellMetric::DEFAULT.frac_to_cell(x_rel, y_rel, GRID_W, GRID_H);
         self.hovered = self.link_at(col, row);
     }
 

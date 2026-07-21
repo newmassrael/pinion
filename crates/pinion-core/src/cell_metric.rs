@@ -161,6 +161,41 @@ impl CellMetric {
         (reconstructed.round() as u32).min(extent_px.saturating_sub(1))
     }
 
+    /// Resolve a router `[0, 1]` rect fraction `(x_rel, y_rel)` straight to the
+    /// `(col, row)` cell under it — the [`px_to_cell`] / [`frac_to_px`]
+    /// composite `px_to_cell(frac_to_px(x_rel, rect_w), frac_to_px(y_rel,
+    /// rect_h))` the [`frac_to_px`] doc names as THE pointer→cell hit-test. The
+    /// router forwards a lossy f32 rect fraction on a hover / drag; this is the
+    /// one call that turns it into a cell, so a hover-cell external is
+    /// `metric.frac_to_cell(x_rel, y_rel, rect_w, rect_h)` with no per-axis
+    /// reconstruction of its own.
+    ///
+    /// A grid whose rect is an integer multiple of the cell always resolves
+    /// in-bounds (the fraction clamps to `[0, 1]` and each pixel clamps one
+    /// short of its extent, so the far edge lands on the last whole cell). A
+    /// grid whose rect has a partial trailing cell — or is otherwise larger than
+    /// its `(cols, rows)` — can land one past; such a caller clamps the result to
+    /// its own grid size, exactly as it would a bare [`px_to_cell`] (the
+    /// geometry primitive stays pure).
+    ///
+    /// R1408 lift — the pointer→cell examples (`hello-hex-dump`,
+    /// `hello-hyperlink`, `hello-heatmap`) reconstructed the two pixels then
+    /// floored by hand; this is their SSOT (R727 3rd-consumer), the composite
+    /// twin of the R1405 [`frac_to_px`] lift. `hello-grid-pointer` keeps its own
+    /// `frac_to_px` + a strict-hit `cell_at_px` on purpose: its cell resolver
+    /// CLAMPS to the grid's `(cols, rows)` and is shared with a pixel-based press
+    /// handler, so it is the clamped px→cell variant, not this raw frac→cell.
+    ///
+    /// [`px_to_cell`]: Self::px_to_cell
+    /// [`frac_to_px`]: Self::frac_to_px
+    #[must_use]
+    pub fn frac_to_cell(self, x_rel: f32, y_rel: f32, rect_w: u32, rect_h: u32) -> (u16, u16) {
+        self.px_to_cell(
+            Self::frac_to_px(x_rel, rect_w),
+            Self::frac_to_px(y_rel, rect_h),
+        )
+    }
+
     /// Whole cell columns spanning `width_px` logical pixels — the
     /// authoritative column count for a grid occupying that width (the
     /// R1.4 PTY-winsize authority a terminal host reports via
@@ -227,6 +262,39 @@ mod tests {
         assert_eq!(CellMetric::frac_to_px(frac_of_px8, 640), 8);
         // A zero extent is safe (saturating_sub avoids underflow).
         assert_eq!(CellMetric::frac_to_px(0.5, 0), 0);
+    }
+
+    #[test]
+    fn frac_to_cell_is_the_px_to_cell_of_the_reconstructed_pixels() {
+        // R1408 — a regression guard that the composite stays the two steps by
+        // hand (`px_to_cell(frac_to_px(x, w), frac_to_px(y, h))`), so an edit to
+        // `frac_to_cell` that drifts from its definition trips here. The concrete
+        // corners below are the independent check of the resolved cells.
+        let m = CellMetric::DEFAULT; // 8x16
+        let (w, h) = (624u32, 128u32); // 78 cols x 8 rows (the hex-dump rect)
+        for &(x, y) in &[
+            (0.0, 0.0),
+            (0.5, 0.5),
+            (1.0, 1.0),
+            (0.25, 0.75),
+            (0.99, 0.01),
+        ] {
+            assert_eq!(
+                m.frac_to_cell(x, y, w, h),
+                m.px_to_cell(CellMetric::frac_to_px(x, w), CellMetric::frac_to_px(y, h)),
+                "frac_to_cell composes the two steps at ({x}, {y})",
+            );
+        }
+        // Concrete corners of a grid that fills its rect: top-left = (0,0),
+        // bottom-right = the last cell (clamped one short of the extent).
+        assert_eq!(m.frac_to_cell(0.0, 0.0, w, h), (0, 0));
+        assert_eq!(
+            m.frac_to_cell(1.0, 1.0, w, h),
+            (77, 7),
+            "far corner = last cell"
+        );
+        // Mid-fraction lands on the middle-ish cell.
+        assert_eq!(m.frac_to_cell(0.5, 0.5, w, h), (39, 4));
     }
 
     #[test]
