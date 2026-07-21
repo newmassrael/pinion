@@ -1,11 +1,13 @@
 // R1008 §5.16 — example bindings tolerate looser doc-markdown lints.
 #![allow(clippy::doc_markdown)]
 
-//! `hello-hex-dump` — R1400 / R1401 / R1402 §5.41 — a **hex/byte-dump viewer
-//! over [`Scene::TextGrid`]** with a byte-range brush that highlights across the
-//! hex column AND the ascii gutter at once (R1400), a click-a-byte cursor that
-//! inspects a single byte (R1401), and a **press-drag that selects a byte
-//! range** (R1402, reverse-video, with a `selection_hex` readout).
+//! `hello-hex-dump` — R1400 / R1401 / R1402 / R1407 §5.41 — a **hex/byte-dump
+//! viewer over [`Scene::TextGrid`]** with a byte-range brush that highlights
+//! across the hex column AND the ascii gutter at once (R1400), a click-a-byte
+//! cursor that inspects a single byte (R1401), a **press-drag that selects a
+//! byte range** (R1402, reverse-video, with a `selection_hex` readout), and
+//! **Ctrl/Cmd+C to copy the selected bytes** as hex to the platform clipboard
+//! (R1407, through the lifted `selection_copy_payload` chord handler).
 //!
 //! A fixed byte buffer renders as the classic three-region dump — an offset
 //! column, the 16 bytes as `8 + 8` hex pairs, and an ascii gutter (each
@@ -65,6 +67,7 @@ use pinion_chart::{Brush, BrushStripColors};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    selection_copy_payload,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
@@ -75,6 +78,7 @@ use pinion_core::{
     CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermCell, TermColor,
     WidgetCore,
 };
+use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -832,17 +836,36 @@ impl WidgetCore for HexDumpView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-hex-dump (R1402 §5.41 hex brush + drag byte selection)"
+        "pinion hello-hex-dump (R1407 §5.41 hex brush + drag select + Ctrl+C copy)"
     }
 
-    /// The brush is drag- and RPC-driven and the selection is press-drag- and
-    /// RPC-driven; no keyboard channel, so no key is consumed here.
+    /// R1407 §5.35 §5.22 — Ctrl/Cmd+C copies the selected bytes as a lowercase
+    /// hex string to the platform clipboard, through the lifted
+    /// [`selection_copy_payload`] chord handler — the copy of the R1402
+    /// select-bytes gesture. The `query_field` is the AI-first peer: the SAME
+    /// `selection_hex` the reverse-video selection reports, so a keyboard copy
+    /// and an AI client read one serialization. Only when the grid owns focus;
+    /// unhandled (falls through) with no selection or on a non-copy key — the
+    /// brush + drag stay drag- and RPC-driven, no other keyboard channel.
     fn apply_key(
-        _scene: &mut Scene,
-        _focused: Option<&str>,
-        _key: &str,
-        _modifiers: pinion_core::Modifiers,
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
+        if focused != Some(GRID_TAG) {
+            return false;
+        }
+        let Some(intro) = scene
+            .find_external_with_tag(GRID_TAG)
+            .and_then(|node| node.handle.introspect())
+        else {
+            return false;
+        };
+        if let Some(hex) = selection_copy_payload(intro, key, modifiers, "selection_hex") {
+            use_app_clipboard(GRID_TAG).copy(hex);
+            return true;
+        }
         false
     }
 
@@ -1225,6 +1248,53 @@ mod tests {
         assert_eq!(
             o.invoke("select_range", IntrospectValue::Text("120,200".into())),
             Err(InvokeError::Rejected),
+        );
+    }
+
+    #[test]
+    fn r1407_ctrl_c_payload_is_the_selection_hex() {
+        // The Ctrl+C chord handler yields exactly the bytes `selection_hex`
+        // reports — the payload a copy would write — with no clipboard touched
+        // (the OS write stays in `apply_key`, HW-gated against clobber).
+        let mut o = HexDumpOracle::new();
+        o.invoke("select_range", IntrospectValue::Text("4,8".into()))
+            .unwrap();
+        let ctrl = pinion_core::Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            selection_copy_payload(&o, "c", ctrl, "selection_hex"),
+            Some("0000002c".to_owned()),
+            "the Ctrl+C copy payload is the length field's four bytes",
+        );
+        // A bare "c" (no modifier) is not the copy chord.
+        assert_eq!(
+            selection_copy_payload(&o, "c", pinion_core::Modifiers::default(), "selection_hex"),
+            None,
+        );
+    }
+
+    #[test]
+    fn r1407_ctrl_c_with_no_selection_is_unhandled() {
+        // With nothing selected `selection_hex` is Null, so the chord handler
+        // returns None and `apply_key` never resolves — nor clobbers — the real
+        // OS clipboard. Mirrors the hello-cell-select / hello-data-grid guard.
+        use pinion_core::scene::ExternalNode;
+        let mut scene =
+            Scene::External(ExternalNode::new(HexDumpView::create_external()).with_tag(GRID_TAG));
+        let ctrl = pinion_core::Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert!(
+            !HexDumpView::apply_key(&mut scene, Some(GRID_TAG), "c", ctrl),
+            "Ctrl+C with nothing selected is unhandled (copies nothing)",
+        );
+        // Unfocused, the grid ignores the chord entirely.
+        assert!(
+            !HexDumpView::apply_key(&mut scene, None, "c", ctrl),
+            "an unfocused grid does not claim Ctrl+C",
         );
     }
 

@@ -2596,6 +2596,7 @@ dependencies = [
  "pinion-chart",
  "pinion-core",
  "pinion-forge",
+ "pinion-platform-clipboard",
  "pinion-shell",
  "vello",
 ]

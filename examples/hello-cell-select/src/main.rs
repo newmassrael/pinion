@@ -75,7 +75,7 @@ use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow, WidgetA11y,
     grid_table_nodes,
 };
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::{External, IntrospectValue, selection_copy_payload};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
 use pinion_core::theme::{ColorRole, use_theme};
@@ -373,20 +373,16 @@ impl WidgetCore for CellSelectView {
             let _ = intro.invoke("clear-cell-selection", IntrospectValue::Null);
             return true;
         }
-        // R1222 §5.38 §5.22 — Ctrl/Cmd+C copies the selected cell rectangle as
-        // TSV to the platform clipboard (the spreadsheet copy; the AI-first peer
-        // is `query cell_selection_tsv`, the SAME serialization). Unhandled when
-        // nothing is selected, so the key falls through.
-        // R1223 — `!alt_key()` mirrors the canonical `text_field` chord decode:
-        // on layouts where AltGr = Ctrl+Alt, `command_key()` is true while the
-        // keypress is producing a composed character, so without this guard
-        // AltGr+C would misfire the copy and swallow the character.
-        if modifiers.command_key() && !modifiers.alt_key() && key.eq_ignore_ascii_case("c") {
-            if let Some(IntrospectValue::Text(tsv)) = intro.query("cell_selection_tsv") {
-                use_app_clipboard(PRIMARY_TAG).copy(tsv);
-                return true;
-            }
-            return false;
+        // R1222 §5.38 §5.22 / R1407 — Ctrl/Cmd+C copies the selected cell
+        // rectangle as TSV to the platform clipboard (the spreadsheet copy),
+        // through the lifted `selection_copy_payload` chord handler. The
+        // `query_field` is the AI-first peer: the SAME `cell_selection_tsv`
+        // serialization an out-of-process client reads. Returns `None` (so the
+        // key falls through) on a non-chord key, an AltGr+C (Ctrl+Alt) compose,
+        // or nothing selected; the OS write stays here so it is lazy + tagged.
+        if let Some(tsv) = selection_copy_payload(intro, key, modifiers, "cell_selection_tsv") {
+            use_app_clipboard(PRIMARY_TAG).copy(tsv);
+            return true;
         }
         false
     }

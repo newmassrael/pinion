@@ -30,6 +30,7 @@ use std::borrow::Cow;
 use std::rc::Rc;
 
 use crate::Event;
+use crate::input::Modifiers;
 use crate::intent::Intent;
 
 /// Render backends an `External` may declare support for (§5.15 item 1).
@@ -883,6 +884,61 @@ pub trait ExternalIntrospect {
         _args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         Err(InvokeError::UnknownPath)
+    }
+}
+
+/// R1407 §5.35 §5.22 — the payload a `Ctrl`/`Cmd`+C copy chord would write for
+/// an introspectable external, or `None` when the key is not the copy chord OR
+/// the external has nothing to copy (an empty or non-`Text` `query_field`). The
+/// caller performs the OS side effect with its own clipboard tag:
+///
+/// ```ignore
+/// if let Some(payload) = selection_copy_payload(intro, key, modifiers, FIELD) {
+///     use_app_clipboard(TAG).copy(payload);
+///     return true;
+/// }
+/// ```
+///
+/// `query_field` is the **AI-first peer**: the SAME serialization an
+/// out-of-process `query <field>` reads, so a keyboard copy and an AI client
+/// share one path. Copy is a *read* plus an OS side effect (CQS): this queries
+/// the payload through the `&self` [`query`](ExternalIntrospect::query) — it
+/// never mutates the external — and returns the string; the OS write (a binding's
+/// `use_app_clipboard(TAG).copy(payload)`) stays at the call site.
+///
+/// Returning the payload rather than writing it here is forced by layering, not
+/// preference: the platform clipboard (`pinion-platform-clipboard`) depends on
+/// `pinion-core`, so a core helper that performed the write would invert that
+/// edge into a dependency cycle. The split also keeps the decision unit-testable
+/// **without** a clipboard, so the real OS clipboard is never raced from a test.
+///
+/// The `Ctrl`-OR-`Cmd`-not-`Alt` gate mirrors the `text_field` chord decode: on
+/// layouts where `AltGr` is `Ctrl`+`Alt`,
+/// [`command_key`](Modifiers::command_key) is `true` while the keypress composes
+/// a character, so without the `!alt_key` guard `AltGr`+C would misfire the copy
+/// and swallow the char (R1223). The key match is case-insensitive so
+/// `Shift`+`Ctrl`+`C` (platforms deliver `"C"`) still copies.
+///
+/// This lifts the byte-identical copy chord+query its three consumers had grown
+/// (`hello-cell-select` R1222, `hello-data-grid` R1372, `hello-hex-dump` R1407).
+/// Each consumer's divergent part — *what* to serialize — stays in its own
+/// `query` (the field name it passes), not here. The `text_field` widget's own
+/// `Ctrl`+C is a distinct consumer class (an attached clipboard +
+/// `TextEditState::selection_text`, not an introspect query) and deliberately
+/// does NOT route through this helper.
+#[must_use]
+pub fn selection_copy_payload(
+    intro: &dyn ExternalIntrospect,
+    key: &str,
+    modifiers: Modifiers,
+    query_field: &str,
+) -> Option<String> {
+    if !(modifiers.command_key() && !modifiers.alt_key() && key.eq_ignore_ascii_case("c")) {
+        return None;
+    }
+    match intro.query(query_field) {
+        Some(IntrospectValue::Text(payload)) => Some(payload),
+        _ => None,
     }
 }
 
@@ -2836,5 +2892,113 @@ mod tests {
         assert!(!IntrospectValue::Int(0).is_null());
         assert!(!IntrospectValue::Float(0.0).is_null());
         assert!(!IntrospectValue::Text(String::new()).is_null());
+    }
+}
+
+#[cfg(test)]
+mod selection_copy_payload_tests {
+    //! R1407 §5.35 §5.22 — the lifted `Ctrl`/`Cmd`+C copy chord + query. Pure:
+    //! it returns the string a copy would write (or `None`) and never touches a
+    //! clipboard, so every path — including `AltGr` safety — is asserted without
+    //! racing the real OS clipboard.
+    use super::{
+        ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
+        selection_copy_payload,
+    };
+    use crate::input::Modifiers;
+
+    /// A minimal introspectable whose `"sel"` field returns a fixed payload (or
+    /// `None` when the range is empty), a non-`Text` `"count"`, and no other
+    /// path — the two shapes the copy must accept and reject.
+    struct FakeSelection(Option<&'static str>);
+
+    impl ExternalIntrospect for FakeSelection {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(&[])
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            match path {
+                "sel" => self.0.map(|s| IntrospectValue::Text(s.to_owned())),
+                "count" => Some(IntrospectValue::Int(3)),
+                _ => None,
+            }
+        }
+        fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
+            Err(InterveneError::UnknownPath)
+        }
+    }
+
+    fn ctrl() -> Modifiers {
+        Modifiers {
+            ctrl: true,
+            ..Modifiers::default()
+        }
+    }
+
+    #[test]
+    fn ctrl_c_yields_the_queried_payload() {
+        let ext = FakeSelection(Some("50494e01"));
+        assert_eq!(
+            selection_copy_payload(&ext, "c", ctrl(), "sel"),
+            Some("50494e01".to_owned()),
+            "the chord returns the field's serialization",
+        );
+    }
+
+    #[test]
+    fn cmd_shift_c_still_matches_the_uppercase_key() {
+        // The platform delivers "C" when Shift is held, and Cmd (meta) is the
+        // macOS command key; the case-insensitive match must still fire.
+        let ext = FakeSelection(Some("ab"));
+        let mods = Modifiers {
+            meta: true,
+            shift: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(
+            selection_copy_payload(&ext, "C", mods, "sel"),
+            Some("ab".to_owned()),
+        );
+    }
+
+    #[test]
+    fn a_non_chord_key_yields_nothing() {
+        let ext = FakeSelection(Some("x"));
+        // A bare "c" (no modifier) is a literal, not a copy.
+        assert_eq!(
+            selection_copy_payload(&ext, "c", Modifiers::default(), "sel"),
+            None,
+        );
+        // Ctrl held but the wrong letter.
+        assert_eq!(selection_copy_payload(&ext, "v", ctrl(), "sel"), None);
+    }
+
+    #[test]
+    fn altgr_c_does_not_misfire_the_copy() {
+        // AltGr = Ctrl+Alt: command_key() is true but the key is composing a
+        // character, so the copy must NOT fire and swallow it (R1223).
+        let ext = FakeSelection(Some("x"));
+        let altgr = Modifiers {
+            ctrl: true,
+            alt: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(selection_copy_payload(&ext, "c", altgr, "sel"), None);
+    }
+
+    #[test]
+    fn the_chord_with_nothing_selected_yields_nothing() {
+        // A copy chord whose field is empty returns None, so the caller leaves
+        // the key unhandled and it can bubble to an application shortcut.
+        let ext = FakeSelection(None);
+        assert_eq!(selection_copy_payload(&ext, "c", ctrl(), "sel"), None);
+    }
+
+    #[test]
+    fn a_non_text_payload_yields_nothing() {
+        // A field resolving to a non-Text value is skipped (a copy needs a
+        // string) and the key falls through.
+        let ext = FakeSelection(Some("x"));
+        assert_eq!(selection_copy_payload(&ext, "c", ctrl(), "count"), None);
     }
 }

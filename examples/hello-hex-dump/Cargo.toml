@@ -16,6 +16,9 @@ path = "src/main.rs"
 # R1400 — the byte-range Brush substrate (R1394) this is the fifth consumer of.
 pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R1407 — the `use_app_clipboard` platform bridge for the Ctrl/Cmd+C copy of the
+# selected bytes (the third consumer of the lifted `selection_copy_payload`).
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
 # §5.40 AccessKit substrate for `WidgetA11y::access_node`.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 # §5.16 paint-side AppShell (winit + Vello + RPC).

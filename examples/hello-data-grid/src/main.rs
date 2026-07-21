@@ -178,7 +178,7 @@ use pinion_core::composite_tag::{GridSendKey, prefixed_index, split_subindex};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint, External,
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of,
+    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of, selection_copy_payload,
 };
 use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
 use pinion_core::reactive::{Owner, Signal};
@@ -3846,30 +3846,6 @@ fn apply_key_color(scene: &mut Scene, key: &str) -> bool {
     true
 }
 
-/// Grid-focused keymap: undo / redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), then 2-D
-/// roving navigation + activate.
-/// R1372 §5.38 — the `Ctrl`/`Cmd`+C body: copy the current selection (or, with
-/// no range, the lone focused cell) as a spreadsheet TSV block through the
-/// coordinator's `copy` funnel (the same the AI-first `invoke "copy"` uses, so
-/// there is ONE serialization path), then write it to the platform clipboard.
-/// Split out of [`apply_key_grid`] for the line ceiling. `false` when the grid
-/// external is absent (defensive), so the key can fall through.
-fn copy_selection_to_clipboard(scene: &mut Scene) -> bool {
-    // R1372.2 — copy is a READ (CQS): query the payload, then perform the OS
-    // clipboard side effect here. `external_mut` hands back a `&mut dyn`
-    // trait object (no downcast to the coordinator), so the query wire is the
-    // seam the keyboard shares with an AI client's `query copy_tsv`.
-    let tsv = external_mut(scene, GRID_TAG).and_then(|intro| match intro.query("copy_tsv") {
-        Some(IntrospectValue::Text(t)) => Some(t),
-        _ => None,
-    });
-    if let Some(tsv) = tsv {
-        use_app_clipboard(GRID_TAG).copy(tsv);
-        return true;
-    }
-    false
-}
-
 /// R1372 §5.38 — the cell-range selection's response to a nav-mode keystroke,
 /// BEFORE the plain 2-D nav moves the cursor (the keyboard twin of the
 /// `select-cell` / `extend-cell` / `clear-cell-selection` wire): `Escape` clears
@@ -3926,12 +3902,19 @@ fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     if let Some(verb) = undo_redo_verb(key, modifiers) {
         return invoke_undo(scene, verb);
     }
-    // R1372 §5.38 — Ctrl/Cmd+C copies the selected rectangle (or lone cell) to
-    // the platform clipboard, the copy half of the R1237 paste symmetry. Before
-    // the plain nav so a held Ctrl+C is not read as a bare `c`; `!alt_key()`
-    // mirrors the text_field chord decode (AltGr = Ctrl+Alt would else misfire).
-    if modifiers.command_key() && !modifiers.alt_key() && key.eq_ignore_ascii_case("c") {
-        return copy_selection_to_clipboard(scene);
+    // R1372 §5.38 / R1407 — Ctrl/Cmd+C copies the selected rectangle (or lone
+    // cell) to the platform clipboard, the copy half of the R1237 paste
+    // symmetry, through the lifted `selection_copy_payload` chord handler. The
+    // `query_field` is the AI-first peer — the SAME `copy_tsv` serialization an
+    // out-of-process client reads (R1372.2 CQS). Before the plain nav so a held
+    // Ctrl+C is not read as a bare `c`; the helper's `!alt_key` gate keeps
+    // AltGr+C from misfiring. `None` (non-chord / nothing to copy) falls through
+    // to the nav keymap below.
+    if let Some(tsv) = external_mut(scene, GRID_TAG)
+        .and_then(|intro| selection_copy_payload(intro, key, modifiers, "copy_tsv"))
+    {
+        use_app_clipboard(GRID_TAG).copy(tsv);
+        return true;
     }
     let row_sig = use_focused_row();
     let col_sig = use_focused_col();
