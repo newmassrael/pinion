@@ -312,6 +312,13 @@ struct WindowSlot<R: VelloRenderer> {
     /// decoded once and reused every frame. Per-window for now (a
     /// multi-window image consumer that wants one shared decode is an
     /// additive app-level move, [[abstraction-needs-second-consumer]]).
+    ///
+    /// R1404 §5.16 — built with [`image_cache::with_store`](image_cache::ImageCache::with_store)
+    /// off the shell's seeded [`image_cache::IMAGE_STORE`], so a
+    /// `memory://<key>` source resolves to a producer-registered in-memory
+    /// image (the mutable, filesystem-free path the sprag terminal
+    /// inline-graphics consumer needs). The store is process-shared; only the
+    /// decode-once map for filesystem sources is per-window.
     image_cache: image_cache::ImageCache,
     /// R1027 §5.16 — the window's current winit `scale_factor` (device
     /// pixels per logical pixel). Seeded from `Window::scale_factor()` at
@@ -389,6 +396,7 @@ impl<R: VelloRenderer> WindowSlot<R> {
         spec_id: Cow<'static, str>,
         pending_intrinsic_resize: Option<((u32, u32), (u32, u32))>,
         scale_factor: f64,
+        image_store: image_cache::MemoryImageStore,
     ) -> Self {
         Self {
             render,
@@ -399,7 +407,10 @@ impl<R: VelloRenderer> WindowSlot<R> {
             pending_intrinsic_resize,
             spec_id,
             fragment_cache: paint_adapter::FragmentCache::new(),
-            image_cache: image_cache::ImageCache::new(),
+            // R1404 §5.16 — the window's cache is wired to the shell's seeded
+            // producer store, so `memory://<key>` sources paint the images a
+            // producer registered.
+            image_cache: image_cache::ImageCache::with_store(image_store),
             scale_factor,
             scaled_scene: VelloScene::new(),
             pending_capture: false,
@@ -2852,6 +2863,7 @@ impl<V: WidgetView> AppShell<V> {
                 // per-slot copy + the spec_id_to_window_id map key.
                 // `Cow::Borrowed` clones are pointer-cheap; runtime
                 // ids (`Cow::Owned`) pay one `String::clone`.
+                let image_store = image_cache::resolve_image_store(self.core.root_owner());
                 self.windows.insert(
                     window_id,
                     WindowSlot::build(
@@ -2860,6 +2872,7 @@ impl<V: WidgetView> AppShell<V> {
                         spec.id.clone(),
                         pending_intrinsic_resize,
                         scale_factor,
+                        image_store,
                     ),
                 );
                 self.spec_id_to_window_id.insert(spec.id.clone(), window_id);
@@ -2878,6 +2891,7 @@ impl<V: WidgetView> AppShell<V> {
             self.proxy.clone(),
         );
         let window_id = window.id();
+        let image_store = image_cache::resolve_image_store(self.core.root_owner());
         let mut slot = WindowSlot::build(
             RenderState::Active {
                 window,
@@ -2887,6 +2901,7 @@ impl<V: WidgetView> AppShell<V> {
             spec.id.clone(),
             pending_intrinsic_resize,
             scale_factor,
+            image_store,
         );
         // R1088 §5.16 §5.41 §2 #7 PR-31 — latch the declared position the
         // create (`with_position`) or `Suspended`-resume re-apply just
@@ -5169,7 +5184,12 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
     // matches `to_vello` when both are correct and tracks `to_vello_cached`
     // when they would diverge.
     let mut fragment_cache = paint_adapter::FragmentCache::new();
-    let mut image_cache = image_cache::ImageCache::new();
+    // R1404 §5.16 — resolve the producer store `ShellCore::new` seeded at root
+    // (a `use_image_store` registration in `V::create_external` above already
+    // landed there), so a `memory://<key>` source paints in the headless PNG
+    // exactly as in the live window — the north-star "headless render valid".
+    let mut image_cache =
+        image_cache::ImageCache::with_store(image_cache::resolve_image_store(core.root_owner()));
     // R1072 §5.37 — same engine-aware cached paint as the live winit path, so a
     // headless `PINION_SCREENSHOT` is pixel-faithful to the window painted via §5.37.
     let (text_cache, text_engine) = core.text_cache_and_engine();

@@ -54,6 +54,13 @@ pub use frame_timing::{
     FRAME_TIMING_WINDOW, FRAME_TIMINGS, FrameTiming, FrameTimingStats, FrameTimingsHolder,
     FrameTimingsSnapshot, FrameTimingsView, use_frame_timings,
 };
+/// R1404 §5.16 — the producer in-memory image surface, re-exported at the
+/// crate root (gated with the `image_cache` module on `vello`): the
+/// `memory://<key>` scheme constant, the mutable store, and its resolve
+/// hooks, so a producer names `pinion_runtime::use_image_store` the way it
+/// names [`use_frame_timings`].
+#[cfg(feature = "vello")]
+pub use image_cache::{MEMORY_SCHEME, MemoryImageStore, resolve_image_store, use_image_store};
 pub use input::{
     CrossWindowDrop, InputRouter, Modifiers, PanRelease, PointerId, Touch, TouchPhase,
     rect_for_tag, resolve_cross_window_drop,
@@ -64,6 +71,11 @@ pub use layout::{
     compute_layout_with_text_measure,
 };
 pub use paint_cache_stats::FragmentCacheStats;
+/// R1404 §5.16 — the decoded RGBA image a producer registers into the
+/// [`MemoryImageStore`]. Re-exported (ungated — `pinion-asset` is a
+/// non-optional dependency) so a consumer can name the `insert` parameter
+/// type of this crate's own public store, the [`LayoutCache`] rationale.
+pub use pinion_asset::DecodedImage;
 /// R1344 §5.36 — re-export of the cache every `compute_layout*` entry takes by
 /// `&mut`. Without it a caller cannot name the parameter type of this crate's
 /// own public functions.

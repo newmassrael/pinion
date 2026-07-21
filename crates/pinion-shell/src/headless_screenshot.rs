@@ -541,6 +541,95 @@ mod tests {
         );
     }
 
+    /// R1404 §5.16 — a `memory://<key>` [`Scene::Image`](pinion_core::Scene)
+    /// paints the pixels a producer registered in the
+    /// [`MemoryImageStore`](pinion_runtime::MemoryImageStore), and a
+    /// re-register / remove is visible on the very next render — the
+    /// producer-supplied in-memory image source proved to the GPU, headless
+    /// (the "headless render valid" north-star). Falsifiable: a store that
+    /// never resolved would leave the black base at the sample; a cached
+    /// `memory://` resolve would keep the red image after the blue update.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1404_memory_scheme_image_paints_and_mutates() {
+        use pinion_core::scene::{ImageNode, Rect, Scene};
+        use pinion_core::style::{Fit, ImageStyle};
+        use pinion_runtime::image_cache::ImageCache;
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_runtime::{DecodedImage, MemoryImageStore};
+        use pinion_text::LayoutCache;
+
+        const W: u32 = 32;
+        const H: u32 = 32;
+
+        // A 1x1 solid image per variant — `Fit::Fill` floods the whole rect,
+        // so one sample proves which image (or none) resolved.
+        fn solid(r: u8, g: u8, b: u8) -> DecodedImage {
+            DecodedImage::from_rgba8(1, 1, vec![r, g, b, 0xff]).unwrap()
+        }
+
+        let scene = Scene::Image(ImageNode::styled(
+            "memory://tile",
+            Rect::new(0, 0, W, H),
+            ImageStyle::default().with_fit(Fit::Fill),
+        ));
+
+        // Render the same scene through a store-wired cache, so the ONLY
+        // variable is the store's current pixels.
+        let render = |store: &MemoryImageStore| -> Vec<u8> {
+            let mut text_cache = LayoutCache::new();
+            let mut image_cache = ImageCache::with_store(store.clone());
+            let mut cache = FragmentCache::new();
+            let mut vello = VelloScene::new();
+            to_vello_cached(
+                &scene,
+                &|_| None,
+                &mut text_cache,
+                &mut image_cache,
+                &mut cache,
+                &mut vello,
+            );
+            let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+            shot.render_to_rgba8(&vello, W, H, PenikoColor::BLACK)
+                .expect("render")
+        };
+        let at = |rgba: &[u8], x: u32, y: u32| -> (u8, u8, u8) {
+            let i = ((y * W + x) * 4) as usize;
+            (rgba[i], rgba[i + 1], rgba[i + 2])
+        };
+
+        let store = MemoryImageStore::new();
+        store.insert("tile", &solid(0xff, 0x20, 0x20)); // red
+        let (r, g, b) = at(&render(&store), 16, 16);
+        assert!(
+            r > 150 && g < 100 && b < 100,
+            "the registered red memory image floods the rect, got {:?}",
+            (r, g, b)
+        );
+
+        // Re-register the SAME key with a blue image (a mutable update): the
+        // next render shows blue, not the cached red.
+        store.insert("tile", &solid(0x20, 0x20, 0xff));
+        let (r, g, b) = at(&render(&store), 16, 16);
+        assert!(
+            b > 150 && r < 100,
+            "the updated blue memory image is visible next render, got {:?}",
+            (r, g, b)
+        );
+
+        // Remove the key: the next render paints nothing (the black base).
+        assert!(store.remove("tile"));
+        let (r, g, b) = at(&render(&store), 16, 16);
+        assert!(
+            r < 40 && g < 40 && b < 40,
+            "a removed memory image paints nothing (base black), got {:?}",
+            (r, g, b)
+        );
+    }
+
     /// R1027 §5.16 — the shell lays the scene out in LOGICAL pixels and, on
     /// a `HiDPI` window, rasterizes it by appending into a scratch scene under
     /// `Affine::scale(scale)` before submit (the `render_window` `HiDPI` path).

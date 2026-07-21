@@ -1,0 +1,39 @@
+[package]
+name = "hello-memory-image"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1404 §5.16 producer-supplied in-memory image source — a Scene::Image whose source is memory://<key>, drawn from an RGBA buffer a producer registered at runtime (no filesystem). A MemoryImageStore oracle registers a procedurally-generated image and swaps / removes / restores it; the painter re-resolves the mutable store each frame, so the picture updates and disappears live. The seam sprag needs for terminal inline graphics (Kitty graphics / sixel)."
+publish = false
+
+[[bin]]
+name = "hello-memory-image"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R1404 — the producer image store surface (`use_image_store` /
+# `MemoryImageStore` / `MEMORY_SCHEME`) and the `DecodedImage` insert type,
+# re-exported at the crate root (the store bits gated with the `image_cache`
+# module on `vello`, which `pinion-shell` enables transitively).
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.16 — the `HelloMemoryImageRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper (identical
+# shape to hello-hex-dump / hello-image).
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

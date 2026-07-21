@@ -608,6 +608,18 @@ impl<V: WidgetCore> CoreShell<V> {
         // root's). sprag's R37 undock is the forcing consumer.
         pinion_core::LOCAL_TASK_PUMP.seed_root(&root_owner);
         root_owner.seed_pane_viewport_registry();
+        // R1404 §5.16 — the producer image store, a third root-DRIVEN slot
+        // with no `provide` (created empty, mutated in place). Seeded here at
+        // root so a `create_external` registration (`use_image_store`) and the
+        // shell's per-window `ImageCache::with_store` land on the ONE store,
+        // and so `ShellCore::new()` alone (the `PINION_SCREENSHOT` headless
+        // path) seeds it too — without this a child window scope would mint a
+        // private empty map and a `memory://` source would paint nothing.
+        // Gated with the `image_cache` module (both need `vello`'s
+        // `peniko::ImageData`); a `vello`-less build has no painter to draw an
+        // image, so there is nothing to seed.
+        #[cfg(feature = "vello")]
+        crate::image_cache::IMAGE_STORE.seed_root(&root_owner);
         // (R55.D.5 §5.45) Compose the state-scene root.
         //
         // Default (single-External binding, the entire example
