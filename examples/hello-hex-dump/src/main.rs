@@ -1,10 +1,11 @@
 // R1008 §5.16 — example bindings tolerate looser doc-markdown lints.
 #![allow(clippy::doc_markdown)]
 
-//! `hello-hex-dump` — R1400 / R1401 §5.41 — a **hex/byte-dump viewer over
-//! [`Scene::TextGrid`]** with a byte-range brush that highlights across the
-//! hex column AND the ascii gutter at once (R1400), and a **click-a-byte
-//! cursor** that inspects a single byte (R1401).
+//! `hello-hex-dump` — R1400 / R1401 / R1402 §5.41 — a **hex/byte-dump viewer
+//! over [`Scene::TextGrid`]** with a byte-range brush that highlights across the
+//! hex column AND the ascii gutter at once (R1400), a click-a-byte cursor that
+//! inspects a single byte (R1401), and a **press-drag that selects a byte
+//! range** (R1402, reverse-video, with a `selection_hex` readout).
 //!
 //! A fixed byte buffer renders as the classic three-region dump — an offset
 //! column, the 16 bytes as `8 + 8` hex pairs, and an ascii gutter (each
@@ -28,19 +29,23 @@
 //! exactly the field selection a protocol inspector (Wireshark, a `dlt`
 //! trace) or a hex editor draws when you click a packet field.
 //!
-//! ## Two orthogonal selections: a field brush and a byte cursor
+//! ## Two orthogonal selections: a field brush and a drag selection
 //!
 //! The **brush** (a sibling `RangeSliderExternal`, R1400) selects a byte
-//! *field* — the two-region range highlight. The **cursor** (R1401) inspects a
-//! single *byte*: a click on a byte's hex or ascii cell resolves it via
-//! [`byte_at_cell`] (the inverse of [`hex_col`] / [`ascii_col`], reusing the
-//! R1008 [`CellMetric::px_to_cell`] pointer→cell substrate as its second
-//! consumer) and the view rings it with a [`GridCursor`] (R975). The
-//! [`HexDumpOracle`] (the root external) owns the cursor: a click drives its
-//! `pointer_move`, and an AI client drives it with no pixel via `scene/intervene
-//! /external/cursor_byte` (Int = select, `null` = deselect), reading it back at
-//! `cursor_byte` / `cursor_value` / `cursor_cell`. The brush window is
-//! `scene/intervene /hex_brush/external/{low,high}`.
+//! *field* via the overview strip — the two-region background highlight. The
+//! **selection** (R1401 → R1402) selects bytes by direct manipulation: a click
+//! resolves the byte via [`byte_at_cell`] (the inverse of [`hex_col`] /
+//! [`ascii_col`], reusing the R1008 [`CellMetric::px_to_cell`] pointer→cell
+//! substrate as its second consumer), and a **press-drag** extends the range —
+//! a press latches an anchor, each move extends the focus. The `[start, end)`
+//! bytes reverse-video and the focus byte rings with a [`GridCursor`] (R975); a
+//! plain click is the collapsed single-byte case. The [`HexDumpOracle`] (the
+//! root external) owns the selection: the router drives `pointer_move` +
+//! `invoke("send", "PointerDown"/"PointerUp")`, and an AI client drives it with
+//! no pixel via `scene/intervene /external/cursor_byte` (a collapsed byte) or
+//! `scene/invoke /external/select_range "start,end"` (a range), reading it back
+//! at `cursor_byte` / `selection_start` / `selection_end` / `selection_hex`. The
+//! brush window is `scene/intervene /hex_brush/external/{low,high}`.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
@@ -67,7 +72,8 @@ use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::range_slider::RangeSliderExternal;
 use pinion_core::{
-    CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermCell, TermColor, WidgetCore,
+    CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermCell, TermColor,
+    WidgetCore,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 
@@ -217,17 +223,24 @@ fn read_brush(scene: &Scene) -> (f32, f32) {
     brush().read(scene)
 }
 
-/// Read the click cursor's byte from the primary [`HexDumpOracle`] (tagged
-/// [`GRID_TAG`] in the state scene); `None` before any click.
-fn read_cursor_byte(scene: &Scene) -> Option<usize> {
+/// Read the drag [`Selection`] from the primary [`HexDumpOracle`] (tagged
+/// [`GRID_TAG`] in the state scene); `None` when nothing is selected.
+fn read_selection(scene: &Scene) -> Option<Selection> {
     let intro = scene
         .find_external_with_tag(GRID_TAG)?
         .handle
         .introspect()?;
-    match intro.query("cursor_byte")? {
-        IntrospectValue::Int(i) => usize::try_from(i).ok(),
-        _ => None,
-    }
+    let field = |name: &str| -> Option<usize> {
+        match intro.query(name)? {
+            IntrospectValue::Int(i) => usize::try_from(i).ok(),
+            _ => None,
+        }
+    };
+    Some(Selection {
+        start: field("selection_start")?,
+        end: field("selection_end")?,
+        focus: field("cursor_byte")?,
+    })
 }
 
 /// Map the brush fractions onto the selected byte range `[lo, hi)` — the SSOT
@@ -282,10 +295,18 @@ fn hex_digit(nibble: u8) -> String {
     (HEX[(nibble & 0x0f) as usize] as char).to_string()
 }
 
-/// Build the hex-dump [`GridBuffer`]: offset column, `8 + 8` hex pairs, and
-/// the ascii gutter, with the bytes in `sel` (`lo..hi`) highlighted in BOTH
-/// the hex column and the gutter (the two-region linked field highlight).
-fn hex_dump_buffer(bytes: &[u8], sel: core::ops::Range<usize>, colors: &CellColors) -> GridBuffer {
+/// Build the hex-dump [`GridBuffer`]. Two orthogonal visual channels ride each
+/// byte's three cells (two hex digits + its ascii glyph): the `brush_sel`
+/// (`lo..hi`) fills the background (R1400 field highlight), and `reverse_sel`
+/// (`start..end`) reverse-videos the cells (R1402 drag selection). A byte can
+/// be in both — the accent background reversed — since the two selections are
+/// independent gestures (the minimap field vs the direct byte selection).
+fn hex_dump_buffer(
+    bytes: &[u8],
+    brush_sel: core::ops::Range<usize>,
+    reverse_sel: Option<(usize, usize)>,
+    colors: &CellColors,
+) -> GridBuffer {
     let mut buf = GridBuffer::new(
         u16::try_from(TOTAL_COLS).unwrap_or(0),
         u16::try_from(ROWS).unwrap_or(0),
@@ -300,28 +321,31 @@ fn hex_dump_buffer(bytes: &[u8], sel: core::ops::Range<usize>, colors: &CellColo
             cells[i] = TermCell::new(ch.to_string(), colors.muted, TermColor::Default);
         }
 
-        // The 16 bytes: hex pair + ascii glyph, each highlighted iff selected.
+        // The 16 bytes: hex pair + ascii glyph, each carrying the brush fill
+        // (background) and/or the drag-selection (reverse video).
         for j in 0..BYTES_PER_ROW {
             let idx = base + j;
             let Some(&byte) = bytes.get(idx) else { break };
-            let selected = sel.contains(&idx);
-            let (hex_fg, hl_bg) = if selected {
+            let brushed = brush_sel.contains(&idx);
+            let reversed = reverse_sel.is_some_and(|(s, e)| (s..e).contains(&idx));
+            let attrs = CellAttrs::empty().with_reverse(reversed);
+            let (hex_fg, hl_bg) = if brushed {
                 (colors.on_highlight, colors.highlight)
             } else {
                 (TermColor::Default, TermColor::Default)
             };
 
             let hc = hex_col(j);
-            cells[hc] = TermCell::new(hex_digit(byte >> 4), hex_fg, hl_bg);
-            cells[hc + 1] = TermCell::new(hex_digit(byte), hex_fg, hl_bg);
+            cells[hc] = TermCell::new(hex_digit(byte >> 4), hex_fg, hl_bg).with_attrs(attrs);
+            cells[hc + 1] = TermCell::new(hex_digit(byte), hex_fg, hl_bg).with_attrs(attrs);
 
             let (glyph, glyph_fg) = ascii_glyph(byte, colors);
-            let (ink, fill) = if selected {
+            let (ink, fill) = if brushed {
                 (colors.on_highlight, colors.highlight)
             } else {
                 (glyph_fg, TermColor::Default)
             };
-            cells[ascii_col(j)] = TermCell::new(glyph, ink, fill);
+            cells[ascii_col(j)] = TermCell::new(glyph, ink, fill).with_attrs(attrs);
         }
 
         // The ascii-gutter bars.
@@ -339,11 +363,33 @@ fn strip_track() -> Rect {
     Rect::new(GRID_POS.0, GRID_POS.1 + GRID_H + 8, GRID_W, 14)
 }
 
+/// The drag selection: a byte range `[start, end)` whose live end (the byte the
+/// cursor rings) is `focus`. A single click is a collapsed selection
+/// (`start + 1 == end`, `focus == start`) — the R1401 single-byte inspect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Selection {
+    start: usize,
+    end: usize,
+    focus: usize,
+}
+
+/// The selected bytes as a lowercase hex string (`"50494e01"`) — what a hex
+/// editor would copy. Empty for an out-of-range range.
+fn selection_hex(bytes: &[u8], start: usize, end: usize) -> String {
+    use std::fmt::Write;
+    let mut hex = String::new();
+    for b in bytes.get(start..end).unwrap_or(&[]) {
+        let _ = write!(hex, "{b:02x}");
+    }
+    hex
+}
+
 /// view-fn (§6.3): pure sync mapping. `(low, high)` is the brushed byte-offset
-/// window (the two-region field highlight); `cursor_byte` is the clicked byte
-/// the [`GridCursor`] rings (the single-byte inspect).
+/// window (the R1400 field background); `sel` is the drag selection (R1402) —
+/// its `[start, end)` bytes reverse-video and its `focus` byte rings with the
+/// [`GridCursor`].
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn view(low: f32, high: f32, cursor_byte: Option<usize>, _frame: &Frame) -> Scene {
+fn view(low: f32, high: f32, sel: Option<Selection>, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let on_surface_muted = theme.resolve(ColorRole::OnSurfaceMuted);
@@ -358,13 +404,14 @@ fn view(low: f32, high: f32, cursor_byte: Option<usize>, _frame: &Frame) -> Scen
     let bytes = sample();
     let (lo, hi) = selected_bytes(low, high);
 
-    // The field highlight (R1400), plus a block GridCursor on the clicked
-    // byte's hex cell (R1401) — a hidden default cursor when nothing is clicked.
-    let mut cells = hex_dump_buffer(&bytes, lo..hi, &colors);
-    let cursor = cursor_byte.map_or_else(GridCursor::default, |b| {
+    // The brush field background (R1400) + the drag selection reverse-video
+    // (R1402), plus a block GridCursor on the selection's focus byte.
+    let reverse_sel = sel.map(|s| (s.start, s.end));
+    let mut cells = hex_dump_buffer(&bytes, lo..hi, reverse_sel, &colors);
+    let cursor = sel.map_or_else(GridCursor::default, |s| {
         GridCursor::new(
-            u16::try_from(hex_col(b % BYTES_PER_ROW)).unwrap_or(0),
-            u16::try_from(b / BYTES_PER_ROW).unwrap_or(0),
+            u16::try_from(hex_col(s.focus % BYTES_PER_ROW)).unwrap_or(0),
+            u16::try_from(s.focus / BYTES_PER_ROW).unwrap_or(0),
             CursorShape::Block,
             true,
         )
@@ -379,14 +426,14 @@ fn view(low: f32, high: f32, cursor_byte: Option<usize>, _frame: &Frame) -> Scen
                 LayoutStyle::new()
                     .with_absolute_position(GRID_POS.0, GRID_POS.1)
                     .with_size(Size::px(GRID_W, GRID_H))
-                    // Focusable so a click routes to the oracle's pointer hit-test.
+                    // Focusable so a click / drag routes to the oracle's hit-test.
                     .with_focusable(true),
             ),
     );
 
     let title = Scene::Text(
         TextNode::styled(
-            "Hex dump — brush to select a field, click a byte to inspect it",
+            "Hex dump — brush a field, drag across bytes to select them",
             Rect::default(),
             TextStyle::new()
                 .with_size_px(TITLE_FONT_PX)
@@ -406,14 +453,22 @@ fn view(low: f32, high: f32, cursor_byte: Option<usize>, _frame: &Frame) -> Scen
         "Hex dump byte-range brush",
     );
 
-    let cursor_note = cursor_byte.map_or_else(
-        || "  |  cursor: none (click a byte)".to_owned(),
-        |b| format!("  |  cursor byte 0x{b:02x} = 0x{:02x}", bytes[b]),
+    let sel_note = sel.map_or_else(
+        || "  |  selection: none (drag across bytes)".to_owned(),
+        |s| {
+            format!(
+                "  |  selection 0x{:x}..0x{:x} ({} bytes) = {}",
+                s.start,
+                s.end,
+                s.end - s.start,
+                selection_hex(&bytes, s.start, s.end),
+            )
+        },
     );
     let status = Scene::Text(
         TextNode::styled(
             format!(
-                "field 0x{lo:x}..0x{hi:x} ({} of {SAMPLE_LEN} bytes){cursor_note}",
+                "field 0x{lo:x}..0x{hi:x} ({} of {SAMPLE_LEN} bytes){sel_note}",
                 hi - lo
             ),
             Rect::default(),
@@ -485,28 +540,52 @@ fn frac_to_px(frac: f32, extent_px: u32) -> u32 {
     px.min(extent_px.saturating_sub(1))
 }
 
-/// The dump's layout + the click cursor, as the interactive primary external.
+/// The dump's layout + the drag selection, as the interactive primary external.
 /// The read half is an introspectable oracle so an AI client reads the
 /// byte↔cell mapping directly (`hex_cell` / `ascii_cell` / `byte_at_cell` /
 /// `byte_window`) rather than reverse-engineering the geometry from a snapshot.
-/// The write half is the **click cursor**: a pointer (or an `intervene`
-/// on `cursor_byte`) resolves the byte under it via [`byte_at_cell`], and the
-/// view rings that byte with a [`GridCursor`] — the hex-editor's single-byte
-/// inspect gesture, orthogonal to the brush's range select.
+/// The write half is the **drag selection**: a press latches an anchor byte,
+/// each drag move extends the focus, and the range `[start, end)` reverse-videos
+/// (R1402) — the hex-editor's select-bytes gesture, of which a plain click is
+/// the collapsed single-byte case (the R1401 inspect). The selection also
+/// drives via `intervene cursor_byte` (a collapsed byte) / `invoke select_range`
+/// (a range), so an AI client selects with no pixel.
 #[derive(Debug, Clone)]
 struct HexDumpOracle {
-    /// The dumped bytes (so `cursor_value` reports the inspected byte).
+    /// The dumped bytes (so `cursor_value` / `selection_hex` report them).
     bytes: Vec<u8>,
-    /// The byte under the click cursor, or `None` before any click.
-    cursor_byte: Option<usize>,
+    /// The live selection `(anchor, focus)` bytes, or `None` when nothing is
+    /// selected. The range is `[min, max]`; `focus` is the drag's live end.
+    selection: Option<(usize, usize)>,
+    /// Set by a `PointerDown` send: the next [`pointer_move`](Self::pointer_move)
+    /// latches a fresh anchor (a new gesture) rather than extending the focus.
+    pending_anchor: bool,
 }
 
 impl HexDumpOracle {
     fn new() -> Self {
         Self {
             bytes: sample(),
-            cursor_byte: None,
+            selection: None,
+            pending_anchor: false,
         }
+    }
+
+    /// The selection as an inclusive-start / exclusive-end byte range
+    /// `(start, end)`, normalising the `(anchor, focus)` order.
+    fn range(&self) -> Option<(usize, usize)> {
+        self.selection.map(|(a, f)| (a.min(f), a.max(f) + 1))
+    }
+
+    /// The selection's focus (the drag's live end — the byte the cursor rings).
+    fn focus(&self) -> Option<usize> {
+        self.selection.map(|(_, f)| f)
+    }
+
+    /// Set a collapsed selection at byte `b` (a click / an `intervene`).
+    fn select_byte(&mut self, b: usize) {
+        self.selection = Some((b, b));
+        self.pending_anchor = false;
     }
 }
 
@@ -523,22 +602,36 @@ impl External for HexDumpOracle {
         ThreadOwnership::UiThreadSync
     }
 
-    /// Take pointer capture on a press so the router's click-to-position
-    /// forwards the press cursor as the initial [`pointer_move`](Self::pointer_move):
-    /// a click on a byte cell selects it (the `hello-grid-pointer` gesture).
+    /// Take pointer capture so a press-drag keeps forwarding
+    /// [`pointer_move`](Self::pointer_move) while held (the select-bytes arc),
+    /// and the router delivers `PointerDown` / `PointerUp` via `invoke("send")`.
     fn wants_pointer_capture(&self) -> bool {
         true
     }
 
-    /// The router delivers a `[0, 1]` fraction over the grid's rect on a click
-    /// (and each move while held). Reconstruct grid pixels, floor to the cell
-    /// under the cursor, and resolve the byte it addresses — `None` (deselect)
-    /// on the offset column / gutter / padding.
+    /// The router delivers a `[0, 1]` fraction over the grid's rect on the press
+    /// (click-to-position) and each move while held. Reconstruct grid pixels,
+    /// floor to the cell, and resolve the byte: a fresh press (`pending_anchor`,
+    /// or no prior selection) latches an anchor; a continued drag extends the
+    /// focus. A non-byte cell deselects a fresh press but is ignored mid-drag
+    /// (dragging over the gutter never collapses the selection).
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let x_px = frac_to_px(x_rel, GRID_W);
         let y_px = frac_to_px(y_rel, GRID_H);
         let (col, row) = CellMetric::DEFAULT.px_to_cell(x_px, y_px);
-        self.cursor_byte = byte_at_cell(usize::from(col), usize::from(row));
+        let fresh = self.pending_anchor || self.selection.is_none();
+        match byte_at_cell(usize::from(col), usize::from(row)) {
+            Some(b) if fresh => self.select_byte(b),
+            Some(b) => {
+                let anchor = self.selection.map_or(b, |(a, _)| a);
+                self.selection = Some((anchor, b));
+            }
+            None if fresh => {
+                self.selection = None;
+                self.pending_anchor = false;
+            }
+            None => {}
+        }
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -559,15 +652,23 @@ impl ExternalIntrospect for HexDumpOracle {
                     SchemaField::new("bytes_per_row", "int"),
                     SchemaField::new("row_count", "int"),
                     SchemaField::new("total_cols", "int"),
-                    // The click cursor: the byte under it (writable), its hex
-                    // value, and the hex cell it rings.
+                    // The selection's focus byte (writable = a collapsed
+                    // select), its hex value, and the hex cell it rings.
                     SchemaField::new("cursor_byte", "int"),
                     SchemaField::new("cursor_value", "string"),
                     SchemaField::new("cursor_cell", "string"),
+                    // The drag selection: its byte range, length, and hex bytes.
+                    SchemaField::new("selection_start", "int"),
+                    SchemaField::new("selection_end", "int"),
+                    SchemaField::new("selection_len", "int"),
+                    SchemaField::new("selection_hex", "string"),
                     SchemaField::new("hex_cell", "string"),
                     SchemaField::new("ascii_cell", "string"),
                     SchemaField::new("byte_at_cell", "string"),
+                    SchemaField::new("select_range", "string"),
                     SchemaField::new("byte_window", "string"),
+                    // The router's pointer press / release symbolic events.
+                    SchemaField::new("send", "string"),
                 ]
             },
         )
@@ -575,28 +676,36 @@ impl ExternalIntrospect for HexDumpOracle {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         let int = |n: usize| IntrospectValue::Int(i64::try_from(n).unwrap_or(0));
+        let range = self.range();
         match path {
             "byte_count" => Some(int(SAMPLE_LEN)),
             "bytes_per_row" => Some(int(BYTES_PER_ROW)),
             "row_count" => Some(int(ROWS)),
             "total_cols" => Some(int(TOTAL_COLS)),
-            // The click cursor's byte, or Null before any click.
-            "cursor_byte" => Some(self.cursor_byte.map_or(IntrospectValue::Null, int)),
-            // The inspected byte's value as two hex digits, or Null.
+            // The selection's focus byte, or Null before any select.
+            "cursor_byte" => Some(self.focus().map_or(IntrospectValue::Null, int)),
+            // The focus byte's value as two hex digits, or Null.
             "cursor_value" => Some(
-                self.cursor_byte
+                self.focus()
                     .and_then(|b| self.bytes.get(b))
                     .map_or(IntrospectValue::Null, |&byte| {
                         IntrospectValue::Text(format!("{byte:02x}"))
                     }),
             ),
             // The hex cell the cursor rings ("col,row"), or Null.
-            "cursor_cell" => Some(self.cursor_byte.map_or(IntrospectValue::Null, |b| {
+            "cursor_cell" => Some(self.focus().map_or(IntrospectValue::Null, |b| {
                 IntrospectValue::Text(format!(
                     "{},{}",
                     hex_col(b % BYTES_PER_ROW),
                     b / BYTES_PER_ROW
                 ))
+            })),
+            // The selection range [start, end), its length, and its hex bytes.
+            "selection_start" => Some(range.map_or(IntrospectValue::Null, |(s, _)| int(s))),
+            "selection_end" => Some(range.map_or(IntrospectValue::Null, |(_, e)| int(e))),
+            "selection_len" => Some(range.map_or(IntrospectValue::Null, |(s, e)| int(e - s))),
+            "selection_hex" => Some(range.map_or(IntrospectValue::Null, |(s, e)| {
+                IntrospectValue::Text(selection_hex(&self.bytes, s, e))
             })),
             _ => None,
         }
@@ -604,11 +713,12 @@ impl ExternalIntrospect for HexDumpOracle {
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            // The AI-first, no-pixel write channel for the click cursor: an Int
-            // (or numeric string) selects that byte; Null deselects.
+            // The AI-first, no-pixel collapsed-select channel: an Int (or
+            // numeric string) selects that single byte; Null deselects.
             "cursor_byte" => match value {
                 IntrospectValue::Null => {
-                    self.cursor_byte = None;
+                    self.selection = None;
+                    self.pending_anchor = false;
                     Ok(())
                 }
                 ref v => {
@@ -616,12 +726,13 @@ impl ExternalIntrospect for HexDumpOracle {
                     if b >= SAMPLE_LEN {
                         return Err(InterveneError::OutOfRange);
                     }
-                    self.cursor_byte = Some(b);
+                    self.select_byte(b);
                     Ok(())
                 }
             },
             "byte_count" | "bytes_per_row" | "row_count" | "total_cols" | "cursor_value"
-            | "cursor_cell" => Err(InterveneError::ReadOnly),
+            | "cursor_cell" | "selection_start" | "selection_end" | "selection_len"
+            | "selection_hex" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -656,6 +767,41 @@ impl ExternalIntrospect for HexDumpOracle {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // The AI-first, no-pixel RANGE select: a "start,end" pair (inclusive
+            // start / exclusive end) sets the selection to those bytes (focus at
+            // the last), or "none" clears it. Returns the normalised "start,end".
+            "select_range" => match args {
+                IntrospectValue::Text(ref s) if s.trim() == "none" => {
+                    self.selection = None;
+                    self.pending_anchor = false;
+                    Ok(IntrospectValue::Text("none".to_owned()))
+                }
+                IntrospectValue::Text(ref s) => {
+                    let (start, end) = parse_cell(s).ok_or(InvokeError::TypeMismatch)?;
+                    if end <= start || end > SAMPLE_LEN {
+                        return Err(InvokeError::Rejected);
+                    }
+                    self.selection = Some((start, end - 1));
+                    self.pending_anchor = false;
+                    Ok(IntrospectValue::Text(format!("{start},{end}")))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // The router's pointer press / release symbolic events (R884): a
+            // press latches a fresh anchor for the next pointer_move; a release
+            // (or leave / cancel) just ends the gesture (the selection commits).
+            "send" => {
+                if let IntrospectValue::Text(ref name) = args {
+                    match name.as_str() {
+                        "PointerDown" => self.pending_anchor = true,
+                        "PointerUp" | "PointerLeave" | "PointerCancel" => {
+                            self.pending_anchor = false;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(IntrospectValue::Null)
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -670,9 +816,9 @@ impl ExternalIntrospect for HexDumpOracle {
 struct HexDumpView;
 
 impl WidgetCore for HexDumpView {
-    /// The brush window `(low, high)` fractions (sibling external) + the click
-    /// cursor's byte (primary external).
-    type State = (f32, f32, Option<usize>);
+    /// The brush window `(low, high)` fractions (sibling external) + the drag
+    /// [`Selection`] (primary external).
+    type State = (f32, f32, Option<Selection>);
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
@@ -687,12 +833,12 @@ impl WidgetCore for HexDumpView {
         GRID_TAG
     }
 
-    fn read_state(scene: &Scene) -> (f32, f32, Option<usize>) {
+    fn read_state(scene: &Scene) -> (f32, f32, Option<Selection>) {
         let (low, high) = read_brush(scene);
-        (low, high, read_cursor_byte(scene))
+        (low, high, read_selection(scene))
     }
 
-    fn view(state: (f32, f32, Option<usize>), frame: &Frame) -> Scene {
+    fn view(state: (f32, f32, Option<Selection>), frame: &Frame) -> Scene {
         view(state.0, state.1, state.2, frame)
     }
 
@@ -701,11 +847,11 @@ impl WidgetCore for HexDumpView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-hex-dump (R1401 §5.41 hex byte-range brush + click cursor)"
+        "pinion hello-hex-dump (R1402 §5.41 hex brush + drag byte selection)"
     }
 
-    /// The brush is drag- and RPC-driven and the cursor is click- and RPC-driven
-    /// (the chart-family convention); no keyboard channel, so no key is consumed.
+    /// The brush is drag- and RPC-driven and the selection is press-drag- and
+    /// RPC-driven; no keyboard channel, so no key is consumed here.
     fn apply_key(
         _scene: &mut Scene,
         _focused: Option<&str>,
@@ -715,30 +861,33 @@ impl WidgetCore for HexDumpView {
         false
     }
 
-    fn fmt_state_log(state: &(f32, f32, Option<usize>)) -> String {
+    fn fmt_state_log(state: &(f32, f32, Option<Selection>)) -> String {
         let (lo, hi) = selected_bytes(state.0, state.1);
         format!(
-            "brush {:.3}..{:.3} / field {lo}..{hi} / cursor {:?}",
+            "brush {:.3}..{:.3} / field {lo}..{hi} / selection {:?}",
             state.0, state.1, state.2
         )
     }
 }
 
 impl WidgetA11y for HexDumpView {
-    /// The hex view as a `group` whose value names the inspected cursor byte,
-    /// plus the brush window as a `Slider` node whose `AccessValue::Text` states
-    /// the selected byte range (a two-thumb range has no single-`Float` shape,
-    /// as `hello-autoscale-y` does).
-    fn access_node(state: &(f32, f32, Option<usize>), focused: Option<&str>) -> Vec<AccessNode> {
+    /// The hex view as a `group` whose value names the selected byte range, plus
+    /// the brush window as a `Slider` node whose `AccessValue::Text` states the
+    /// field range (a two-thumb range has no single-`Float` shape, as
+    /// `hello-autoscale-y` does).
+    fn access_node(
+        state: &(f32, f32, Option<Selection>),
+        focused: Option<&str>,
+    ) -> Vec<AccessNode> {
         let (lo, hi) = selected_bytes(state.0, state.1);
-        let cursor_txt = state.2.map_or_else(
-            || "no byte selected".to_owned(),
-            |b| format!("cursor at byte {b}"),
+        let sel_txt = state.2.map_or_else(
+            || "no bytes selected".to_owned(),
+            |s| format!("selected bytes {} to {}", s.start, s.end),
         );
         vec![
             AccessNode::new(GRID_TAG, AriaRole::Group)
                 .with_name("Hex dump")
-                .with_value(AccessValue::Text(cursor_txt)),
+                .with_value(AccessValue::Text(sel_txt)),
             AccessNode::new(BRUSH_TAG, AriaRole::Slider)
                 .with_name("Hex dump byte-range brush".to_string())
                 .with_value(AccessValue::Text(format!("bytes {lo} to {hi}")))
@@ -830,14 +979,14 @@ mod tests {
 
     #[test]
     fn buffer_dimensions_derive_from_the_layout() {
-        let buf = hex_dump_buffer(&sample(), 0..0, &test_colors());
+        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors());
         assert_eq!(buf.cols(), c(TOTAL_COLS));
         assert_eq!(buf.rows(), c(ROWS));
     }
 
     #[test]
     fn row_zero_offset_and_hex_and_ascii_render() {
-        let buf = hex_dump_buffer(&sample(), 0..0, &test_colors());
+        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors());
         // Offset column: "00000000".
         let offset: String = (0..OFFSET_COLS)
             .map(|col| buf.cell(c(col), 0).unwrap().cluster.clone())
@@ -852,7 +1001,7 @@ mod tests {
 
     #[test]
     fn non_printable_bytes_show_a_dot_in_the_gutter() {
-        let buf = hex_dump_buffer(&sample(), 0..0, &test_colors());
+        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors());
         // Byte 3 is 0x01 (non-printable) -> '.' in the muted tint.
         let cell = buf.cell(c(ascii_col(3)), 0).unwrap();
         assert_eq!(cell.cluster, ".");
@@ -866,7 +1015,7 @@ mod tests {
     fn selection_highlights_both_the_hex_and_ascii_regions() {
         let colors = test_colors();
         // Select bytes 8..12 (row 0, second group).
-        let buf = hex_dump_buffer(&sample(), 8..12, &colors);
+        let buf = hex_dump_buffer(&sample(), 8..12, None, &colors);
         for b in 8..12usize {
             let hc = c(hex_col(b));
             // Both hex digit cells carry the highlight background.
@@ -997,17 +1146,101 @@ mod tests {
         px as f32 / extent as f32
     }
 
+    /// Send a `PointerDown` to the oracle (a press latches a fresh anchor).
+    fn press(o: &mut HexDumpOracle) {
+        o.invoke("send", IntrospectValue::Text("PointerDown".into()))
+            .unwrap();
+    }
+
+    /// The `[0, 1]` fraction over the grid at byte `b`'s hex-cell centre.
+    fn byte_frac(b: usize) -> (f32, f32) {
+        let (col, row) = (hex_col(b % BYTES_PER_ROW), b / BYTES_PER_ROW);
+        (frac(col * 8 + 4, GRID_W), frac(row * 16 + 8, GRID_H))
+    }
+
     #[test]
     fn pointer_move_resolves_the_byte_under_the_cursor() {
         let mut o = HexDumpOracle::new();
-        assert_eq!(o.cursor_byte, None, "no cursor before any pointer");
-        // A fraction over byte 8's hex cell centre (row 0): its pixel is
-        // `hex_col(8) * 8 + 4` across, `8` down.
-        o.pointer_move(frac(hex_col(8) * 8 + 4, GRID_W), frac(8, GRID_H));
-        assert_eq!(o.cursor_byte, Some(8), "click on byte 8's hex cell");
-        // A click on the offset column (x near 0) deselects.
+        assert_eq!(o.focus(), None, "no selection before any pointer");
+        // A press then a move over byte 8's hex cell selects it (collapsed).
+        press(&mut o);
+        let (fx, fy) = byte_frac(8);
+        o.pointer_move(fx, fy);
+        assert_eq!(o.focus(), Some(8), "click on byte 8's hex cell");
+        assert_eq!(o.range(), Some((8, 9)), "a click is a 1-byte selection");
+        // A fresh press on the offset column deselects.
+        press(&mut o);
         o.pointer_move(0.0, frac(8, GRID_H));
-        assert_eq!(o.cursor_byte, None, "click on the offset column deselects");
+        assert_eq!(o.focus(), None, "click on the offset column deselects");
+    }
+
+    #[test]
+    fn press_drag_selects_and_extends_a_byte_range() {
+        let mut o = HexDumpOracle::new();
+        // Press on byte 4, drag to byte 9 (same row) -> range [4, 10).
+        press(&mut o);
+        let (ax, ay) = byte_frac(4);
+        o.pointer_move(ax, ay);
+        assert_eq!(o.range(), Some((4, 5)), "anchor at byte 4");
+        let (bx, by) = byte_frac(9);
+        o.pointer_move(bx, by);
+        assert_eq!(o.range(), Some((4, 10)), "drag to byte 9 extends the range");
+        assert_eq!(o.focus(), Some(9), "the focus is the drag's live end");
+        // A backward drag (before the anchor) normalises the range.
+        let (cx, cy) = byte_frac(1);
+        o.pointer_move(cx, cy);
+        assert_eq!(o.range(), Some((1, 5)), "backward drag keeps anchor 4");
+        assert_eq!(o.focus(), Some(1));
+        // Dragging onto a non-byte cell (the gutter) does NOT collapse it.
+        o.pointer_move(frac(ASCII_BAR_L * 8 + 4, GRID_W), frac(8, GRID_H));
+        assert_eq!(o.range(), Some((1, 5)), "gutter drag keeps the last range");
+        // A NEW press (after release) starts a fresh selection.
+        o.invoke("send", IntrospectValue::Text("PointerUp".into()))
+            .unwrap();
+        press(&mut o);
+        let (dx, dy) = byte_frac(18); // row 1
+        o.pointer_move(dx, dy);
+        assert_eq!(o.range(), Some((18, 19)), "new press = fresh 1-byte range");
+    }
+
+    #[test]
+    fn select_range_invoke_and_selection_queries() {
+        let mut o = HexDumpOracle::new();
+        assert_eq!(o.query("selection_start"), Some(IntrospectValue::Null));
+        assert_eq!(o.query("selection_hex"), Some(IntrospectValue::Null));
+        // Select the header's 4-byte length field [4, 8) = 00 00 00 2c.
+        assert_eq!(
+            o.invoke("select_range", IntrospectValue::Text("4,8".into())),
+            Ok(IntrospectValue::Text("4,8".into())),
+        );
+        assert_eq!(o.query("selection_start"), Some(IntrospectValue::Int(4)));
+        assert_eq!(o.query("selection_end"), Some(IntrospectValue::Int(8)));
+        assert_eq!(o.query("selection_len"), Some(IntrospectValue::Int(4)));
+        assert_eq!(
+            o.query("selection_hex"),
+            Some(IntrospectValue::Text("0000002c".into())),
+            "the length field's bytes",
+        );
+        assert_eq!(
+            o.query("cursor_byte"),
+            Some(IntrospectValue::Int(7)),
+            "focus is the last selected byte",
+        );
+        // "none" clears it.
+        assert_eq!(
+            o.invoke("select_range", IntrospectValue::Text("none".into())),
+            Ok(IntrospectValue::Text("none".into())),
+        );
+        assert_eq!(o.query("selection_start"), Some(IntrospectValue::Null));
+        // Empty / out-of-range ranges are rejected.
+        assert_eq!(
+            o.invoke("select_range", IntrospectValue::Text("5,5".into())),
+            Err(InvokeError::Rejected),
+        );
+        assert_eq!(
+            o.invoke("select_range", IntrospectValue::Text("120,200".into())),
+            Err(InvokeError::Rejected),
+        );
     }
 
     #[test]
@@ -1068,21 +1301,61 @@ mod tests {
     }
 
     #[test]
-    fn view_rings_the_clicked_byte_with_a_visible_cursor() {
+    fn view_rings_the_focus_and_reverse_videos_the_selection() {
         let (low, high) = boot_window();
-        // No click -> the default hidden cursor.
+        // No selection -> the default hidden cursor, no reversed cells.
         let plain = pinion_core::Owner::new().run(|| view(low, high, None, &Frame::new()));
         assert_eq!(grid_cursor(&plain), GridCursor::default());
-        // Clicking byte 20 rings its hex cell (row 1) with a visible block.
-        let ringed = pinion_core::Owner::new().run(|| view(low, high, Some(20), &Frame::new()));
-        let cur = grid_cursor(&ringed);
-        assert!(cur.visible, "the clicked byte's cursor is visible");
+
+        // Select bytes [18, 22) with the focus at 20 (row 1).
+        let sel = Selection {
+            start: 18,
+            end: 22,
+            focus: 20,
+        };
+        let scene = pinion_core::Owner::new().run(|| view(low, high, Some(sel), &Frame::new()));
+        // The focus byte (20 = row 1 col 4) rings with a visible block.
+        let cur = grid_cursor(&scene);
+        assert!(cur.visible, "the focus byte's cursor is visible");
         assert_eq!(cur.shape, CursorShape::Block);
-        assert_eq!(
-            (cur.col, cur.row),
-            (c(hex_col(4)), 1),
-            "byte 20 = row 1 col 4"
+        assert_eq!((cur.col, cur.row), (c(hex_col(4)), 1), "focus byte 20");
+        // Every selected byte's hex + ascii cells are reverse-video; the
+        // neighbours just outside the range are not.
+        let buf = grid_buffer(&scene);
+        for b in 18..22u16 {
+            let hc = c(hex_col(usize::from(b) % BYTES_PER_ROW));
+            assert!(
+                buf.cell(hc, 1).unwrap().attrs.reverse,
+                "byte {b} hex reversed"
+            );
+            let ac = c(ascii_col(usize::from(b) % BYTES_PER_ROW));
+            assert!(
+                buf.cell(ac, 1).unwrap().attrs.reverse,
+                "byte {b} ascii reversed"
+            );
+        }
+        assert!(
+            !buf.cell(c(hex_col(1)), 1).unwrap().attrs.reverse,
+            "byte 17 (before the range) is not reversed"
         );
+        assert!(
+            !buf.cell(c(hex_col(6)), 1).unwrap().attrs.reverse,
+            "byte 22 (past the range) is not reversed"
+        );
+    }
+
+    /// The `GridBuffer` carried by the hex-dump grid in a built scene.
+    fn grid_buffer(scene: &Scene) -> GridBuffer {
+        let Scene::Container(root) = scene else {
+            panic!("view root is a Container");
+        };
+        root.children
+            .iter()
+            .find_map(|child| match child {
+                Scene::TextGrid(n) if n.tag.as_deref() == Some(GRID_TAG) => Some(n.cells().clone()),
+                _ => None,
+            })
+            .expect("the hex-dump grid is present")
     }
 
     /// The `GridCursor` carried by the hex-dump grid in a built scene.
