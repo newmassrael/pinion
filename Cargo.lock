@@ -2577,6 +2577,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-hex-dump"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-histogram-brush"
 version = "0.0.1"
 dependencies = [

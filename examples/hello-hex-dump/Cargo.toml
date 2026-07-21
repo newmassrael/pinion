@@ -1,0 +1,36 @@
+[package]
+name = "hello-hex-dump"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1400 Phase-B dataviz consumer — a hex/byte-dump viewer over Scene::TextGrid. A fixed byte buffer renders as the classic offset|hex|ascii dump; a Brush over the byte offsets selects a contiguous byte window that highlights across BOTH the hex column and the ascii gutter — the two-region linked field highlight a protocol inspector / hex editor needs. Substrate-first: the highlight is cell background in the grid projection, so scene/snapshot grid_rows exposes it as data (no OCR), and a sibling layout oracle maps a byte to its (hex_cell, ascii_cell) and a brush window to its byte range."
+publish = false
+
+[[bin]]
+name = "hello-hex-dump"
+path = "src/main.rs"
+
+[dependencies]
+# R1400 — the byte-range Brush substrate (R1394) this is the fifth consumer of.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.16 — the `HelloHexDumpRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper (identical
+# shape to hello-textgrid / hello-autoscale-y).
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
