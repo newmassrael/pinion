@@ -299,6 +299,12 @@ pub struct InputRouter {
     /// documented industry precedent (Button=false, Slider=true)
     /// and pinion's own widget catalog all return static bools.
     hover_wants_capture: HashMap<PointerId, bool>,
+    /// R1405 §5.35 — per-pointer cache of the hover target's
+    /// [`External::wants_hover_move`](pinion_core::External::wants_hover_move),
+    /// resolved once on the Enter (the `hover_wants_capture` sibling) so a
+    /// per-move forward is a map read, not a scene walk. `true` means each
+    /// plain-hover move is also forwarded to the target as `pointer_move`.
+    hover_wants_move: HashMap<PointerId, bool>,
     /// R664 §5.49 — per-pointer "last `pointer_down` we dispatched"
     /// snapshot used by [`pointer_down`](Self::pointer_down) to detect
     /// the W3C `UIEvent.detail == 2` double-click pattern: the next
@@ -903,6 +909,17 @@ impl InputRouter {
             self.forward_pointer_move(state_scene, &tag, x, y);
         } else if !pan_live {
             self.refresh_hover(id, state_scene);
+            // R1405 §5.35 — a hover target that opted into hover-move (a
+            // TextGrid tracking the OSC-8 link cell under the pointer) gets the
+            // position on a plain hover too, not only under capture. Re-read
+            // AFTER `refresh_hover` (which may have just entered a new target),
+            // and forward every move — including moves WITHIN the same target,
+            // where `refresh_hover` early-returns with no Enter to piggyback on.
+            if self.hover_wants_move.get(&id).copied().unwrap_or(false) {
+                if let Some(tag) = self.hover_targets.get(&id).cloned() {
+                    self.forward_pointer_move(state_scene, &tag, x, y);
+                }
+            }
         }
         pan_dispatched
     }
@@ -2168,6 +2185,7 @@ impl InputRouter {
         if let Some(prev_tag) = prev {
             self.hover_targets.remove(&id);
             self.hover_wants_capture.remove(&id);
+            self.hover_wants_move.remove(&id);
             dispatch_send(
                 state_scene,
                 &prev_tag,
@@ -2178,6 +2196,9 @@ impl InputRouter {
             self.hover_targets.insert(id, target.clone());
             let wants = widget_wants_capture(state_scene, &target);
             self.hover_wants_capture.insert(id, wants);
+            // R1405 — cache the hover-move opt-in once, on the Enter.
+            self.hover_wants_move
+                .insert(id, widget_wants_hover_move(state_scene, &target));
             dispatch_send(state_scene, &target, PointerWireEvent::Enter.as_wire_name());
         }
     }
@@ -2840,77 +2861,67 @@ fn normalize_cursor(rect: Rect, cursor_x: f64, cursor_y: f64) -> (f32, f32) {
     (x_rel, y_rel)
 }
 
-/// R51.34 §5.35 — ask the state-scene `ExternalNode` matching
-/// `target_tag` whether it opts in to pointer capture via
-/// [`External::wants_pointer_capture`](pinion_core::external::External::wants_pointer_capture).
-/// `false` when no matching node is found (out-of-sync paint and
-/// state tags) so the router never claims capture on a phantom
-/// widget.
+/// R1405 §5.35 — resolve a bool flag on the state-scene `ExternalNode` whose
+/// tag matches `target_tag`'s primary half, reading it via `read`; `false`
+/// when no matching node is found (an out-of-sync paint / state tag) so the
+/// router never acts on a phantom widget.
 ///
-/// R51.42 §5.35 — composite hit-target paint tags (`"group#i"`)
-/// route the state-scene lookup through the primary half so the
-/// single composite `External` decides capture once for the whole
-/// hit-region. The sub-index is discarded here because capture is
-/// a property of the composite handle, not of any one sub-region.
-fn widget_wants_capture(state_scene: &Scene, target_tag: &str) -> bool {
+/// R51.42 §5.35 — composite hit-target paint tags (`"group#i"`) route the
+/// lookup through the primary half so the single composite `External` decides
+/// once for the whole hit-region; the sub-index is discarded because the flag
+/// is a property of the composite handle, not of any one sub-region.
+///
+/// R1405 lift — the shared resolver behind [`widget_wants_capture`] /
+/// [`widget_cancels_on_release_off`] / [`widget_wants_hover_move`], three
+/// byte-identical walks (differing only in the flag read) before this became
+/// their 3rd consumer (R727).
+fn widget_flag(
+    state_scene: &Scene,
+    target_tag: &str,
+    read: fn(&dyn pinion_core::External) -> bool,
+) -> bool {
     let (primary, _) = split_subindex(target_tag);
-    widget_wants_capture_walk(state_scene, primary).unwrap_or(false)
+    widget_flag_walk(state_scene, primary, read).unwrap_or(false)
+}
+
+/// Recursive helper for [`widget_flag`]: the first `ExternalNode` matching
+/// `target_tag`, read through `read`.
+fn widget_flag_walk(
+    scene: &Scene,
+    target_tag: &str,
+    read: fn(&dyn pinion_core::External) -> bool,
+) -> Option<bool> {
+    match scene {
+        Scene::External(node) => {
+            tag_matches(node.tag.as_deref(), target_tag).then(|| read(&*node.handle))
+        }
+        Scene::Container(c) => c
+            .children
+            .iter()
+            .find_map(|child| widget_flag_walk(child, target_tag, read)),
+        _ => None,
+    }
+}
+
+/// R51.34 / R51.42 §5.35 — does the external at `target_tag` opt in to pointer
+/// capture ([`External::wants_pointer_capture`](pinion_core::external::External::wants_pointer_capture))?
+fn widget_wants_capture(state_scene: &Scene, target_tag: &str) -> bool {
+    widget_flag(state_scene, target_tag, |e| e.wants_pointer_capture())
+}
+
+/// R1405 §5.35 — does the external at `target_tag` opt in to hover-move
+/// forwarding ([`External::wants_hover_move`](pinion_core::external::External::wants_hover_move))?
+fn widget_wants_hover_move(state_scene: &Scene, target_tag: &str) -> bool {
+    widget_flag(state_scene, target_tag, |e| e.wants_hover_move())
 }
 
 /// R741 §5.35 — resolve [`External::cancel_on_release_off_target`](pinion_core::External::cancel_on_release_off_target) for
 /// the external registered at `target_tag`'s primary half. `false` when
 /// the tag is not found or the widget keeps the drag-commit default.
 fn widget_cancels_on_release_off(state_scene: &Scene, target_tag: &str) -> bool {
-    let (primary, _) = split_subindex(target_tag);
-    widget_cancels_on_release_off_walk(state_scene, primary).unwrap_or(false)
-}
-
-/// Recursive helper for [`widget_cancels_on_release_off`] (mirror of
-/// [`widget_wants_capture_walk`]).
-fn widget_cancels_on_release_off_walk(scene: &Scene, target_tag: &str) -> Option<bool> {
-    match scene {
-        Scene::External(node) => {
-            if tag_matches(node.tag.as_deref(), target_tag) {
-                Some(node.handle.cancel_on_release_off_target())
-            } else {
-                None
-            }
-        }
-        Scene::Container(c) => {
-            for child in &c.children {
-                if let Some(found) = widget_cancels_on_release_off_walk(child, target_tag) {
-                    return Some(found);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Recursive helper for [`widget_wants_capture`]. Returns
-/// `Some(bool)` when the tag is found (allowing the caller to
-/// distinguish "found, but declined" from "not found"), `None`
-/// when the walk finds no match.
-fn widget_wants_capture_walk(scene: &Scene, target_tag: &str) -> Option<bool> {
-    match scene {
-        Scene::External(node) => {
-            if tag_matches(node.tag.as_deref(), target_tag) {
-                Some(node.handle.wants_pointer_capture())
-            } else {
-                None
-            }
-        }
-        Scene::Container(c) => {
-            for child in &c.children {
-                if let Some(found) = widget_wants_capture_walk(child, target_tag) {
-                    return Some(found);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
+    widget_flag(state_scene, target_tag, |e| {
+        e.cancel_on_release_off_target()
+    })
 }
 
 /// Saturating cast from a winit cursor coordinate (`f64`) to the
@@ -3371,6 +3382,10 @@ mod tests {
         // (`wants_bare_send_modifiers`), so a background release with held
         // modifiers reaches `send` as `":<EventName>:<token>"`.
         bare_send_modifiers: bool,
+        // R1405 — when true, opts in to hover-move forwarding
+        // (`wants_hover_move`), so a plain hover (no press) also forwards
+        // `pointer_move`.
+        hover_move: bool,
     }
 
     impl DragCaptureExternal {
@@ -3387,10 +3402,18 @@ mod tests {
                     moves: Arc::clone(&moves),
                     normalize_primary,
                     bare_send_modifiers: false,
+                    hover_move: false,
                 },
                 events,
                 moves,
             )
+        }
+
+        /// R1405 — fixture variant opted in to hover-move forwarding.
+        fn with_hover_move() -> (Self, EventLog, MoveLog) {
+            let (mut fixture, events, moves) = Self::new();
+            fixture.hover_move = true;
+            (fixture, events, moves)
         }
 
         /// R880 — fixture variant opted in to the bare-target modifier wire.
@@ -3419,6 +3442,9 @@ mod tests {
         }
         fn wants_pointer_capture(&self) -> bool {
             true
+        }
+        fn wants_hover_move(&self) -> bool {
+            self.hover_move
         }
         fn capture_normalize(&self) -> CaptureNormalize<'_> {
             if self.normalize_primary {
@@ -3622,6 +3648,31 @@ mod tests {
         assert!((log[1].0 - 0.0).abs() < 1e-4 && (log[1].1 - 0.0).abs() < 1e-4);
         assert!((log[2].0 - 1.0).abs() < 1e-4 && (log[2].1 - 1.0).abs() < 1e-4);
         assert!((log[3].0 - 0.5).abs() < 1e-4 && (log[3].1 - 0.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn hover_forwards_pointer_move_only_when_opted_in() {
+        // R1405 §5.35 — a widget that opts into hover-move gets `pointer_move`
+        // on a PLAIN hover (no press held): the router forwards the
+        // widget-relative position, the OSC-8-hover seam. The default
+        // (capture-only) case is the empty `read_moves` the sibling capture
+        // test asserts before its `pointer_down`.
+        let mut router = InputRouter::new();
+        let (capture, _events, moves) = DragCaptureExternal::with_hover_move();
+        let mut state =
+            Scene::External(ExternalNode::new(Box::new(capture)).with_tag("main_slider"));
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        // Two hover moves INSIDE the rect (a hover forwards only while over the
+        // widget — unlike capture, which forwards off-rect too). Rect
+        // (80,80,40,40): (100,100) -> (0.5,0.5) [also the Enter], (110,110) ->
+        // (0.75,0.75). Both forwarded because the widget opted in.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 110.0, 110.0, &mut state);
+        let log = read_moves(&moves);
+        assert_eq!(log.len(), 2, "both hover moves forwarded (opted in)");
+        assert!((log[0].0 - 0.5).abs() < 1e-4 && (log[0].1 - 0.5).abs() < 1e-4);
+        assert!((log[1].0 - 0.75).abs() < 1e-4 && (log[1].1 - 0.75).abs() < 1e-4);
     }
 
     #[test]

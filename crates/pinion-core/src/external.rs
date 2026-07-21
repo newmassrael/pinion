@@ -1087,6 +1087,23 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R1405 §5.35 — opt into receiving [`pointer_move`](Self::pointer_move)
+    /// on **plain hover** (no button held), not only under a capture-lock.
+    ///
+    /// By default the router forwards `pointer_move` to a widget only while it
+    /// holds pointer capture (a drag); a free hover delivers only the
+    /// `Enter` / `Leave` boundary events, never the intra-widget position. A
+    /// widget that must react to *where inside it* the pointer is on hover —
+    /// a `TextGrid` lighting the OSC-8 link cell under the cursor, a chart
+    /// crosshair, a map tooltip — returns `true`, and the router then also
+    /// forwards each hover move's position (the same rel-coord
+    /// `pointer_move(x_rel, y_rel)` the capture path uses). Independent of
+    /// [`wants_pointer_capture`](Self::wants_pointer_capture): a widget can
+    /// want hover positions without capturing the press.
+    fn wants_hover_move(&self) -> bool {
+        false
+    }
+
     /// R741 §5.35 — release-position policy for a captured widget.
     /// Consulted only when [`wants_pointer_capture`](Self::wants_pointer_capture)
     /// is `true`. On `pointer_up`, the router checks whether the cursor

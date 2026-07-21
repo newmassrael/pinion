@@ -105,23 +105,6 @@ impl GridPointerExternal {
         )
     }
 
-    /// Reconstruct a window-relative pixel from a `[0, 1]` axis fraction,
-    /// clamped one short of the extent so the last fraction lands in the last
-    /// cell rather than one past it.
-    fn frac_to_px(frac: f32, extent_px: u32) -> u32 {
-        // The router delivers a LOSSY f32 fraction (`normalize_cursor` casts
-        // `(cursor_px / extent)` to f32), so a cell's leading-edge pixel comes
-        // back a hair under its true value. Reconstruct in f64 and **round** to
-        // recover the integer cursor pixel — truncating instead would floor a
-        // boundary pixel into the previous cell, a hit-vs-paint divergence at
-        // 30+ of the 80 column edges (the painter places cells with
-        // `cell_to_px`, the exact inverse `px_to_cell` undoes).
-        let reconstructed = f64::from(frac.clamp(0.0, 1.0)) * f64::from(extent_px);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let px = reconstructed.round() as u32;
-        px.min(extent_px.saturating_sub(1))
-    }
-
     fn cell_text(&self) -> IntrospectValue {
         match self.cell {
             Some((c, r)) => IntrospectValue::Text(format!("{c},{r}")),
@@ -168,8 +151,8 @@ impl External for GridPointerExternal {
     /// the press is held. Reconstruct grid pixels and resolve the cell under the
     /// cursor: the live R1.8 hit-test.
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        let x_px = Self::frac_to_px(x_rel, self.width_px);
-        let y_px = Self::frac_to_px(y_rel, self.height_px);
+        let x_px = CellMetric::frac_to_px(x_rel, self.width_px);
+        let y_px = CellMetric::frac_to_px(y_rel, self.height_px);
         self.cell = Some(self.cell_at_px(x_px, y_px));
     }
 }

@@ -135,6 +135,32 @@ impl CellMetric {
         )
     }
 
+    /// Reconstruct a grid-relative logical pixel from a router `[0, 1]` axis
+    /// fraction over an `extent_px`-wide axis — the companion [`px_to_cell`]
+    /// mentions: the router delivers a LOSSY f32 `(x_rel, y_rel)`, and a
+    /// pointer→cell hit-test is `px_to_cell(frac_to_px(x_rel, w),
+    /// frac_to_px(y_rel, h))`. Rounds in f64 so a cell's leading-edge pixel
+    /// resolves to its own cell (not the previous one), clamps the fraction to
+    /// `[0, 1]`, and clamps the pixel one short of `extent_px` so the last
+    /// column/row is addressable and an off-by-one at the far edge cannot
+    /// index past the grid (the R1011 recipe).
+    ///
+    /// R1405 lift — three grid-pointer examples (`hello-grid-pointer`,
+    /// `hello-hex-dump`, `hello-hyperlink`) had a byte-identical private copy;
+    /// this is their SSOT (R727 3rd-consumer).
+    ///
+    /// [`px_to_cell`]: Self::px_to_cell
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a clamped fraction * extent is a non-negative in-bounds pixel"
+    )]
+    pub fn frac_to_px(frac: f32, extent_px: u32) -> u32 {
+        let reconstructed = f64::from(frac.clamp(0.0, 1.0)) * f64::from(extent_px);
+        (reconstructed.round() as u32).min(extent_px.saturating_sub(1))
+    }
+
     /// Whole cell columns spanning `width_px` logical pixels — the
     /// authoritative column count for a grid occupying that width (the
     /// R1.4 PTY-winsize authority a terminal host reports via
@@ -183,6 +209,25 @@ impl Default for CellMetric {
 #[cfg(test)]
 mod tests {
     use super::CellMetric;
+
+    #[test]
+    fn frac_to_px_reconstructs_rounds_and_clamps_short_of_the_extent() {
+        // R1405 — a fraction * extent, rounded, clamped one short so the last
+        // cell is addressable and the far edge cannot index past the grid.
+        assert_eq!(CellMetric::frac_to_px(0.0, 640), 0);
+        assert_eq!(CellMetric::frac_to_px(0.5, 640), 320);
+        assert_eq!(CellMetric::frac_to_px(1.0, 640), 639, "clamped one short");
+        // Out-of-range fractions clamp to [0, 1] first.
+        assert_eq!(CellMetric::frac_to_px(-0.5, 640), 0);
+        assert_eq!(CellMetric::frac_to_px(2.0, 640), 639);
+        // A leading-edge pixel rounds to its OWN cell (the R1011 point): the
+        // lossy fraction for pixel 8 reconstructs to 8, not 7.
+        #[allow(clippy::cast_precision_loss)]
+        let frac_of_px8 = 8.0_f32 / 640.0_f32;
+        assert_eq!(CellMetric::frac_to_px(frac_of_px8, 640), 8);
+        // A zero extent is safe (saturating_sub avoids underflow).
+        assert_eq!(CellMetric::frac_to_px(0.5, 0), 0);
+    }
 
     #[test]
     fn default_is_8x16_baseline() {

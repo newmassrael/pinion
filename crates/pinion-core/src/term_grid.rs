@@ -1014,6 +1014,17 @@ impl GridBuffer {
         self.hyperlinks.get(usize::try_from(id.0).ok()?)
     }
 
+    /// The [`Hyperlink`] the cell at `(col, row)` targets, or `None` when the
+    /// cell is out of bounds or carries no link — the `cell(...).hyperlink ->
+    /// hyperlink(id)` resolution in one step. R1405: the exact lookup a
+    /// pointer hit over a `TextGrid` does to answer "is this cell a link, and to
+    /// where" (the OSC-8 hover / click affordance), the [`cell`](Self::cell) +
+    /// [`hyperlink`](Self::hyperlink) pair a consumer would otherwise repeat.
+    #[must_use]
+    pub fn cell_hyperlink(&self, col: u16, row: u16) -> Option<&Hyperlink> {
+        self.hyperlink(self.cell(col, row)?.hyperlink?)
+    }
+
     /// The damage generation of `row`, or `None` if the row is out of
     /// bounds (R978). The monotonic stamp the producer last gave the row; a
     /// client re-reads rows whose generation exceeds the highest it has
@@ -1291,6 +1302,21 @@ mod tests {
         // A blank cell is unlinked, and an out-of-range index resolves to None.
         assert_eq!(buf.cell(1, 0).unwrap().hyperlink, None);
         assert_eq!(buf.hyperlink(HyperlinkId(9)), None);
+
+        // R1405 — `cell_hyperlink` does the cell -> index -> table lookup in one
+        // step (the pointer-hit resolution): the two wrapped cells resolve to
+        // the same link, a plain cell to None, and an off-grid cell to None.
+        assert_eq!(
+            buf.cell_hyperlink(0, 0).unwrap().uri,
+            "https://example.com/spec"
+        );
+        assert_eq!(buf.cell_hyperlink(0, 0), buf.cell_hyperlink(2, 1));
+        assert_eq!(buf.cell_hyperlink(1, 0), None, "a plain cell has no link");
+        assert_eq!(
+            buf.cell_hyperlink(9, 9),
+            None,
+            "an off-grid cell has no link"
+        );
     }
 
     #[test]

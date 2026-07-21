@@ -96,6 +96,7 @@ members = [
     "examples/hello-autoscale-y",
     "examples/hello-live-chart",
     "examples/hello-hex-dump",
+    "examples/hello-hyperlink",
     "examples/hello-memory-image",
     "examples/hello-stat-tiles",
     "examples/hello-timeline",

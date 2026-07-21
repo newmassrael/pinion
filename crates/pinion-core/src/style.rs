@@ -2763,6 +2763,11 @@ pub enum CursorHint {
     /// A vertical (up-down, `↕`) resize affordance — a horizontal divider
     /// between stacked panes. Maps to the CSS `row-resize` / winit `NsResize`.
     RowResize,
+    /// A clickable affordance (`👆`) — a hyperlink or other activatable
+    /// target. Maps to the CSS `pointer` / winit `Pointer` (the pointing
+    /// hand). R1405: an OSC-8 hyperlink cell the pointer is over declares
+    /// this so a `TextGrid` link reads as clickable, the terminal convention.
+    Pointer,
 }
 
 impl LayoutStyle {

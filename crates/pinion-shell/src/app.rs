@@ -210,6 +210,8 @@ fn cursor_icon_for_hint(hint: CursorHint) -> CursorIcon {
     match hint {
         CursorHint::ColResize => CursorIcon::EwResize,
         CursorHint::RowResize => CursorIcon::NsResize,
+        // R1405 — the pointing hand over a clickable target (an OSC-8 link).
+        CursorHint::Pointer => CursorIcon::Pointer,
     }
 }
 

@@ -525,21 +525,6 @@ fn cell_for(
     Ok(IntrospectValue::Text(format!("{col},{row}")))
 }
 
-/// Reconstruct a window-relative pixel from a `[0, 1]` axis fraction (the
-/// router delivers a LOSSY f32 fraction), rounding in f64 so a cell's
-/// leading-edge pixel resolves to its own cell rather than the previous one,
-/// and clamping one short of the extent (the `hello-grid-pointer` R1011 recipe).
-fn frac_to_px(frac: f32, extent_px: u32) -> u32 {
-    let reconstructed = f64::from(frac.clamp(0.0, 1.0)) * f64::from(extent_px);
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a clamped fraction * extent is a non-negative in-bounds pixel"
-    )]
-    let px = reconstructed.round() as u32;
-    px.min(extent_px.saturating_sub(1))
-}
-
 /// The dump's layout + the drag selection, as the interactive primary external.
 /// The read half is an introspectable oracle so an AI client reads the
 /// byte↔cell mapping directly (`hex_cell` / `ascii_cell` / `byte_at_cell` /
@@ -616,8 +601,8 @@ impl External for HexDumpOracle {
     /// focus. A non-byte cell deselects a fresh press but is ignored mid-drag
     /// (dragging over the gutter never collapses the selection).
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        let x_px = frac_to_px(x_rel, GRID_W);
-        let y_px = frac_to_px(y_rel, GRID_H);
+        let x_px = CellMetric::frac_to_px(x_rel, GRID_W);
+        let y_px = CellMetric::frac_to_px(y_rel, GRID_H);
         let (col, row) = CellMetric::DEFAULT.px_to_cell(x_px, y_px);
         let fresh = self.pending_anchor || self.selection.is_none();
         match byte_at_cell(usize::from(col), usize::from(row)) {
