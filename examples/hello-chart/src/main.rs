@@ -17,17 +17,22 @@
 //!
 //! ## Why a Slider + a `RangeSlider`
 //!
-//! pinion forwards a *continuous* pointer position to a binding only under
-//! pointer capture (`External::pointer_move`, button held) — free hover
-//! delivers only which tag is hovered, not a position. So both gestures are
-//! capture drags, and each needs its own captured value. Rather than invent
-//! externals, the binding reuses the §5.38 [`SliderExternal`] (a captured
-//! 1-D fraction) as the scrub position and the
+//! Both gestures here are **capture drags** (a button-held press): the scrub
+//! commits its value on release and is keyboard-drivable as an ARIA slider, and
+//! the brush is a range selection that a drag defines. Each needs its own
+//! captured value. Rather than invent externals, the binding reuses the §5.38
+//! [`SliderExternal`] (a captured 1-D fraction) as the scrub position and the
 //! [`RangeSliderExternal`](pinion_core::widgets::range_slider::RangeSliderExternal)
 //! (a captured 1-D *pair*) as the brush window — the latter hosted through the
 //! R1249 `extra_externals` slot via the lifted [`Brush`] substrate (R1394,
 //! shared with `hello-scatter`), so the router dispatches each drag by tag.
 //! Both are RPC-drivable (`scene/intervene`) and introspectable.
+//!
+//! A crosshair that tracks the **bare hover** (no button) is a different
+//! affordance: `hello-crosshair` (R1406) does that via the R1405
+//! `External::wants_hover_move` seam. This demo keeps the capture-drag scrub on
+//! purpose — the scrub value must persist on release and answer ARIA-slider
+//! keys, which a transient hover position does not.
 //!
 //! ## Verification (substrate-first)
 //!
