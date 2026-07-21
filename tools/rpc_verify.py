@@ -1211,6 +1211,19 @@ def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
     return None
 
 
+def count_indexed_tags(snap: Any, prefix: str, suffix: str = "") -> int:
+    """Count consecutive `{prefix}{k}{suffix}` tags (k = 0, 1, 2, …) present in
+    `snap`, stopping at the first gap. The mechanical counter the chart demos share
+    for `pinion-chart`'s indexed nodes — x-tick labels (`{tag}.label.x.`) and legend
+    rows (`{tag}.legend.` / `.label`). Lifted (R1410 rule-of-three) from the
+    byte-identical `x_label_count` / `legend_label_count` the r1396 / r1409 / r1410
+    chart demos each defined."""
+    k = 0
+    while find_by_tag(snap, f"{prefix}{k}{suffix}") is not None:
+        k += 1
+    return k
+
+
 def cursor_to_source(tf, group_tag: str, source: int) -> None:
     """Move a `GroupOrderExternal`'s roving visual-row cursor onto the data row
     with stable `source` index (R873).

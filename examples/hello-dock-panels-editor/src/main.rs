@@ -61,7 +61,7 @@ use pinion_core::{Frame, JsonValue, Owner, Scene, Signal, SignalExternal, Widget
 use pinion_shell::{
     SizeStrategy, WINDOW_CHROME_CLOSE_TAG, WINDOW_CHROME_MAXIMIZE_TAG, WINDOW_CHROME_MINIMIZE_TAG,
     WidgetView, WindowPolicy, WindowSpec, desktop_position_from, vello_renderer_impl,
-    window_exists,
+    window_exists, window_topology_remove, window_topology_toggle,
 };
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, view_button};
 use pinion_widget_paint::dock::{
@@ -697,31 +697,19 @@ fn floating_panel_ids(panels: &[WindowSpec]) -> Vec<String> {
 /// * Panel floating → remove the `WindowSpec` (dock-back); the placeholder
 ///   reverts to the live panel content.
 fn toggle_panel_floating(panel_id: &str) {
-    let signal = use_editor_windows();
-    let mut current = signal.get();
-    let target = floating_window_id(panel_id);
-    if let Some(idx) = current.iter().position(|w| w.id == target) {
-        current.remove(idx);
-    } else {
-        current.push(floating_window_spec(
-            panel_id,
-            floating_window_position(panel_id),
-        ));
-    }
-    signal.set(current);
+    // R1410 — the toggle shell is the lifted `window_topology_toggle`; the create
+    // arm's `floating_window_spec` is this binding's per-window float policy.
+    window_topology_toggle(&use_editor_windows(), &floating_window_id(panel_id), || {
+        floating_window_spec(panel_id, floating_window_position(panel_id))
+    });
 }
 
 /// Remove `panel_id`'s floating window (redock / restore). Idempotent no-op
 /// when the panel is already docked, so a redock intent that arrives without
 /// a window (a cancelled / never-floated gesture) is harmless.
 fn redock_panel_floating(panel_id: &str) {
-    let signal = use_editor_windows();
-    let mut current = signal.get();
-    let target = floating_window_id(panel_id);
-    if let Some(idx) = current.iter().position(|w| w.id == target) {
-        current.remove(idx);
-        signal.set(current);
-    }
+    // R1410 — the get/find/remove/set shell is the lifted `window_topology_remove`.
+    window_topology_remove(&use_editor_windows(), &floating_window_id(panel_id));
 }
 
 /// (R1163b §5.51 §2 #7) Apply a cross-window dock-back drop through the SAME

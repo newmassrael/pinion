@@ -1,0 +1,40 @@
+[package]
+name = "hello-floating-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1410 floating-chart consumer — proves a pinion-chart LineChart::build_fill re-measures inside a real torn-off (floating) OS window, the LAST docked-chart placement R1396 (Leaf) and R1409 (Tabs well) left UNEXERCISED. A dock panel hosting the chart tears off into a second winit window via the R683 WindowSpec/reconcile lifecycle; the R1021 per-window publish_pane_viewports then measures CHART_TAG in THAT window's paint pass, so the chart reflows to the floating window's size (docked and floating differ). Crosses the two seams hello-dock-chart (chart-in-pane, one window) and pane_viewport_seam (pane-in-floating-window, TextGrid) never joined."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# R1410 — the docked/floating chart under test (`LineChart::build_fill`) + its style.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for the derive-free `WidgetA11y` blanket impl.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 §5.41 paint-side AppShell (winit + Vello + RPC) + `WindowSpec` /
+# `windows_signal` / `view_for_window` multi-window surface + `window_exists`.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.49 §5.51 — `view_dock_panel`, `view_floating_placeholder`, `DockPanelExternal`
+# (the R742 tear-off drag source), `DockPanelStyle` / `FloatingPlaceholderStyle`,
+# `DEFAULT_FLOATING_WINDOW_PREFIX` / `floating_window_id`, and `view_splitter` /
+# `SplitterExternal`.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloFloatingChartRenderer` struct emitted by build.rs names `::vello::*`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# The real per-window paint pipeline the scene-shape tests run through:
+# `ShellCore::compute_paint_scene` (main) + `compute_paint_scene_for_window`
+# (the floating window) — the R1021 `pane_viewport_seam` test precedent, one
+# level above hello-dock-chart's `CoreShell` + manual publish.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+
+[build-dependencies]
+# Build-time codegen for the `HelloFloatingChartRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

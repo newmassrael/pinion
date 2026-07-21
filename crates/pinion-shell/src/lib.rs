@@ -939,6 +939,42 @@ pub fn window_exists(windows: &[WindowSpec], window_id: &str) -> bool {
     windows.iter().any(|w| w.id == window_id)
 }
 
+/// (R1410 §5.16 §5.41 §5.51) Remove the window declared with `window_id` from the
+/// reactive topology `signal` (`get` -> find by id -> `remove` -> `set`), a no-op
+/// when it is absent. The config-free dock-back / redock mutation a multi-window
+/// binding runs when a floating panel returns to its dock. Lifted from the three
+/// dock consumers (`hello-dock-panels` + `hello-dock-panels-editor` +
+/// `hello-floating-chart`), where the body was byte-identical — the same
+/// rule-of-three that lifted [`window_exists`], one wrapper up (the signal, not the
+/// slice, so the get/set lives here too).
+pub fn window_topology_remove(signal: &Signal<Vec<WindowSpec>>, window_id: &str) {
+    let mut current = signal.get();
+    if let Some(idx) = current.iter().position(|w| w.id == window_id) {
+        current.remove(idx);
+        signal.set(current);
+    }
+}
+
+/// (R1410 §5.16 §5.41 §5.51) TOGGLE the window declared with `window_id` in the
+/// reactive topology `signal`: remove it when present (dock-back), else push
+/// `make()` (tear-off). The per-binding float POLICY — the window's size, position,
+/// decorations, title — stays in the caller's `make` closure, invoked ONLY on the
+/// create arm. The config-free mutation shell, lifted from the three dock consumers
+/// where it was byte-identical modulo that one closure (`floating_window_spec`).
+pub fn window_topology_toggle(
+    signal: &Signal<Vec<WindowSpec>>,
+    window_id: &str,
+    make: impl FnOnce() -> WindowSpec,
+) {
+    let mut current = signal.get();
+    if let Some(idx) = current.iter().position(|w| w.id == window_id) {
+        current.remove(idx);
+    } else {
+        current.push(make());
+    }
+    signal.set(current);
+}
+
 /// (R1107.1 §5.16 §5.41 §5.51) Convert a window-logical `cursor` (measured in
 /// `source_window`'s frame) to a DESKTOP outer position by adding that window's
 /// declared outer origin. The gap(b) desktop conversion a live tear-off follow

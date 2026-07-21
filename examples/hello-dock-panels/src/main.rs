@@ -100,7 +100,8 @@ use pinion_core::widgets::tree_nav::{TreeKey, effective_cursor, flat_visible, re
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{
-    SizeStrategy, WidgetView, WindowSpec, desktop_position_from, vello_renderer_impl, window_exists,
+    SizeStrategy, WidgetView, WindowSpec, desktop_position_from, vello_renderer_impl,
+    window_exists, window_topology_remove, window_topology_toggle,
 };
 use pinion_widget_paint::devtools::{
     ClickRouter, find_node_at_path, rebuild_with_highlight_at_path, scene_root_path_segment,
@@ -627,13 +628,10 @@ fn follow_panel_floating(panel_id: &str, source_window: Option<&str>, cursor: (f
 /// so a redock intent that arrives without a window (an editor escape the
 /// binding never floated) is harmless.
 fn redock_panel_floating(panel_id: &str) {
-    let signal = use_windows_topology();
-    let mut current = signal.get();
-    let target = floating_window_id(panel_id);
-    if let Some(idx) = current.iter().position(|w| w.id == target) {
-        current.remove(idx);
-        signal.set(current);
-    }
+    // R1410 — the get/find/remove/set shell is the lifted `window_topology_remove`
+    // (shared with hello-dock-panels-editor + hello-floating-chart); this binding
+    // supplies only the id.
+    window_topology_remove(&use_windows_topology(), &floating_window_id(panel_id));
 }
 
 /// Reducer mutation for a `tear_off` intent. Idempotent on the
@@ -650,21 +648,15 @@ fn redock_panel_floating(panel_id: &str) {
 /// fan-out: subscribed view fns (the main dock layout + the floating
 /// window view fns) re-run automatically.
 fn toggle_panel_floating(panel_id: &str) {
-    let signal = use_windows_topology();
-    let mut current = signal.get();
-    let target = floating_window_id(panel_id);
-    if let Some(idx) = current.iter().position(|w| w.id == target) {
-        current.remove(idx);
-    } else {
-        // R1087 §5.16 §5.41 PR-31 — open the floating window at a declared
-        // position (the first `with_position` consumer), via the shared
-        // `floating_window_spec` so the toggle + follow paths cannot drift.
-        current.push(floating_window_spec(
-            panel_id,
-            floating_window_position(panel_id),
-        ));
-    }
-    signal.set(current);
+    // R1410 — the toggle shell is the lifted `window_topology_toggle`; the create
+    // arm's `floating_window_spec` (opened at the R1087 declared cascade position,
+    // the first `with_position` consumer) is this binding's per-window float policy,
+    // invoked only when the panel was docked.
+    window_topology_toggle(
+        &use_windows_topology(),
+        &floating_window_id(panel_id),
+        || floating_window_spec(panel_id, floating_window_position(panel_id)),
+    );
 }
 
 /// Depth of a slash-separated path (count of segment separators).

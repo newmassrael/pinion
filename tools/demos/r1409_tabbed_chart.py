@@ -51,6 +51,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    count_indexed_tags,
     find_by_tag,
     rect_of,
     run_demo,
@@ -79,17 +80,11 @@ def chart_rect(snap) -> dict:
 
 
 def x_label_count(snap) -> int:
-    k = 0
-    while find_by_tag(snap, f"{CHART_TAG}.label.x.{k}") is not None:
-        k += 1
-    return k
+    return count_indexed_tags(snap, f"{CHART_TAG}.label.x.")
 
 
 def legend_label_count(snap) -> int:
-    k = 0
-    while find_by_tag(snap, f"{CHART_TAG}.legend.{k}.label") is not None:
-        k += 1
-    return k
+    return count_indexed_tags(snap, f"{CHART_TAG}.legend.", ".label")
 
 
 def has_overflow(snap) -> bool:

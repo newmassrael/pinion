@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1410 floating-chart consumer: pinion-forge renderer manifest for
+  hello-floating-chart. Emits `HelloFloatingChartRenderer` (Vello-backed
+  RenderContext + RenderSurface + Renderer wrapper). Identical manifest shape to
+  hello-dock-chart's `HelloDockChartRenderer` — single-source-of-truth emit
+  template, only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloFloatingChartRenderer"
+        backend="vello"/>
