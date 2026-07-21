@@ -3906,11 +3906,15 @@ fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     // cell) to the platform clipboard, the copy half of the R1237 paste
     // symmetry, through the lifted `selection_copy_payload` chord handler. The
     // `query_field` is the AI-first peer — the SAME `copy_tsv` serialization an
-    // out-of-process client reads (R1372.2 CQS). Before the plain nav so a held
-    // Ctrl+C is not read as a bare `c`; the helper's `!alt_key` gate keeps
-    // AltGr+C from misfiring. `None` (non-chord / nothing to copy) falls through
-    // to the nav keymap below.
-    if let Some(tsv) = external_mut(scene, GRID_TAG)
+    // out-of-process client reads (R1372.2 CQS). Copy is a READ, so it resolves
+    // the external through the IMMUTABLE `find_external_with_tag` (not
+    // `external_mut`) — least privilege, matching hello-hex-dump. Before the
+    // plain nav so a held Ctrl+C is not read as a bare `c`; the helper's
+    // `!alt_key` gate keeps AltGr+C from misfiring. `None` (non-chord / nothing
+    // to copy) falls through to the nav keymap below.
+    if let Some(tsv) = scene
+        .find_external_with_tag(GRID_TAG)
+        .and_then(|node| node.handle.introspect())
         .and_then(|intro| selection_copy_payload(intro, key, modifiers, "copy_tsv"))
     {
         use_app_clipboard(GRID_TAG).copy(tsv);
@@ -8953,6 +8957,33 @@ mod tests {
                 None,
                 "a bare z is navigation, not undo"
             );
+        });
+    }
+
+    /// R1407 §5.38 §5.22 — the copy wiring end-to-end: a real `apply_key_grid`
+    /// Ctrl+C writes the `copy_tsv` payload to the grid's clipboard. A seeded
+    /// hermetic `InMemoryClipboard` lets the copy be asserted WITHOUT touching —
+    /// nor racing — the OS clipboard. `copy_tsv` falls back to the lone focused
+    /// cell, so a bare Ctrl+C at boot copies that cell.
+    #[test]
+    fn r1407_ctrl_c_writes_the_copy_tsv_to_the_clipboard() {
+        use pinion_core::InMemoryClipboard;
+        use pinion_platform_clipboard::seed_app_clipboard;
+        Owner::new().run(|| {
+            let clip = seed_app_clipboard(GRID_TAG, Box::new(InMemoryClipboard::new()));
+            let mut scene = boot_scene();
+            let ctrl = Modifiers {
+                ctrl: true,
+                ..Default::default()
+            };
+            assert!(apply_key_grid(&mut scene, "c", ctrl), "Ctrl+C is consumed");
+            // The clipboard got exactly the `copy_tsv` the AI-first peer reads.
+            let expect = match grid_intro(&scene).query("copy_tsv") {
+                Some(IntrospectValue::Text(t)) => Some(t),
+                _ => None,
+            };
+            assert!(expect.is_some(), "the focused cell serialises to TSV");
+            assert_eq!(clip.paste(), expect, "the TSV reached the clipboard");
         });
     }
 

@@ -27918,6 +27918,50 @@
         "debt-dataviz-dashboard-substrate: R1402's byte selection now copies (Ctrl+C); the copy chord is a reusable substrate for future introspect-based widgets. Remaining hex/dataviz gap = a chart in a dock TAB well (leaf verified R1396 = demo gap). No new debt surfaced."
       ]
     },
+    "R1407.1": {
+      "decision_summary": "R1407.1: inline clearance of R1407's two deferred items (user '왜 남겨놔? 전부 개선해' — in-repo debt is not carry, the R1372.1 discipline). (1) The OS clipboard write was un-unit-testable across all 3 copy consumers (no injection seam + a live-display Ctrl+C clobbers the user's clipboard) → NEW pinion_platform_clipboard::seed_app_clipboard(key, Box<dyn Clipboard>) DI seam (seed-if-absent into the SAME Owner::cache slot use_app_clipboard reads), so a test seeds an InMemoryClipboard, drives a REAL apply_key Ctrl+C, and reads the copied bytes back with NO OS clipboard touched — the copy wiring now verified end-to-end for hello-hex-dump + hello-cell-select + hello-data-grid. (2) NIT-2 (reviewer 1): hello-data-grid's copy resolved the external through the mutable external_mut for a read-only query → switched to the immutable find_external_with_tag().introspect() (least privilege, CQS at the borrow level, matching hello-hex-dump). Follows the R1372.1/.2 remediation-as-sub-entry precedent.",
+      "changes_bullets": [
+        "crates/pinion-platform-clipboard/src/lib.rs: NEW `pub fn seed_app_clipboard(key: &'static str, clipboard: Box<dyn Clipboard>) -> Rc<dyn Clipboard>` — installs a chosen Clipboard impl into the SAME `Owner::cache` slot `use_app_clipboard(key)` reads (seed-if-absent), the dependency-inversion seam that makes a keyboard-copy's OS write assertable against an InMemoryClipboard without touching the real one. + 2 unit tests (use_app_clipboard resolves the seeded handle; seed-after-use is a no-op).",
+        "examples/hello-hex-dump + hello-cell-select + hello-data-grid: NEW end-to-end copy-wiring test each — seed an InMemoryClipboard, establish a selection, drive a REAL apply_key Ctrl+C, and assert the clipboard received exactly the query payload (selection_hex / cell_selection_tsv / copy_tsv). Closes R1407's \"OS write untested across all 3 consumers\" carry.",
+        "examples/hello-data-grid: NIT-2 (reviewer 1) — the Ctrl+C copy resolves the grid external through the IMMUTABLE `find_external_with_tag().introspect()` instead of the mutable `external_mut`; a read-only query now takes a read-only borrow (least privilege / CQS at the borrow level, matching hello-hex-dump). r1372 copy demo PASS (regression)."
+      ],
+      "verification_bullets": [
+        "Inline clearance of R1407's two deferred items (user: \"왜 남겨놔? 전부 개선해\" — in-repo debt is not carry, the R1372.1 discipline). Targeted local gate: changed crates = pinion-platform-clipboard + 3 examples.",
+        "cargo test all green: pinion-platform-clipboard (incl. 2 new seed tests) + hello-hex-dump (22, +1 wiring) + hello-cell-select (22, +1 wiring) + hello-data-grid (144, +1 wiring). fmt clean; clippy -D pedantic clean; cargo doc -D warnings clean (fixed a redundant-explicit-link in the seed doc).",
+        "The OS-write gap is now CLOSED at the unit level for ALL 3 copy consumers: a seeded InMemoryClipboard lets a real apply_key Ctrl+C be read back with no OS clipboard touched. The RPC demo still verifies only the AI-observable payload (a subprocess cannot seed its own clipboard).",
+        "Regression: r1372 data-grid copy demo PASS vs a REBUILT release binary after the immutable-resolve change (NIT-2). r1407 / r1222 payload demos unaffected (their binaries unchanged)."
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.35",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "Design decision (durable): `seed_app_clipboard` is the dependency-inversion seam for `use_app_clipboard` — seed-if-absent into the tag's `Owner::cache` slot. A keyboard-copy test seeds an InMemoryClipboard BEFORE the binding's apply_key so the real OS clipboard is never raced; a headless / embedded shell can install a chosen impl the same way. R1407's \"OS write untested\" honest carry is CLOSED (was: no injection seam + a live-display Ctrl+C clobbers the user's clipboard).",
+        "No new debt surfaced. The copy chord (selection_copy_payload) + its OS-write wiring are now both fully covered across the 3 consumers."
+      ],
+      "publishable_decision_summary": "R1407.1: inline clearance of R1407's two deferred items (user '왜 남겨놔? 전부 개선해' — in-repo debt is not carry, the R1372.1 discipline). (1) The OS clipboard write was un-unit-testable across all 3 copy consumers (no injection seam + a live-display Ctrl+C clobbers the user's clipboard) → NEW pinion_platform_clipboard::seed_app_clipboard(key, Box<dyn Clipboard>) DI seam (seed-if-absent into the SAME Owner::cache slot use_app_clipboard reads), so a test seeds an InMemoryClipboard, drives a REAL apply_key Ctrl+C, and reads the copied bytes back with NO OS clipboard touched — the copy wiring now verified end-to-end for hello-hex-dump + hello-cell-select + hello-data-grid. (2) NIT-2 (reviewer 1): hello-data-grid's copy resolved the external through the mutable external_mut for a read-only query → switched to the immutable find_external_with_tag().introspect() (least privilege, CQS at the borrow level, matching hello-hex-dump). Follows the R1372.1/.2 remediation-as-sub-entry precedent.",
+      "publishable_changes_bullets": [
+        "crates/pinion-platform-clipboard/src/lib.rs: NEW `pub fn seed_app_clipboard(key: &'static str, clipboard: Box<dyn Clipboard>) -> Rc<dyn Clipboard>` — installs a chosen Clipboard impl into the SAME `Owner::cache` slot `use_app_clipboard(key)` reads (seed-if-absent), the dependency-inversion seam that makes a keyboard-copy's OS write assertable against an InMemoryClipboard without touching the real one. + 2 unit tests (use_app_clipboard resolves the seeded handle; seed-after-use is a no-op).",
+        "examples/hello-hex-dump + hello-cell-select + hello-data-grid: NEW end-to-end copy-wiring test each — seed an InMemoryClipboard, establish a selection, drive a REAL apply_key Ctrl+C, and assert the clipboard received exactly the query payload (selection_hex / cell_selection_tsv / copy_tsv). Closes R1407's \"OS write untested across all 3 consumers\" carry.",
+        "examples/hello-data-grid: NIT-2 (reviewer 1) — the Ctrl+C copy resolves the grid external through the IMMUTABLE `find_external_with_tag().introspect()` instead of the mutable `external_mut`; a read-only query now takes a read-only borrow (least privilege / CQS at the borrow level, matching hello-hex-dump). r1372 copy demo PASS (regression)."
+      ],
+      "publishable_verification_bullets": [
+        "Inline clearance of R1407's two deferred items (user: \"왜 남겨놔? 전부 개선해\" — in-repo debt is not carry, the R1372.1 discipline). Targeted local gate: changed crates = pinion-platform-clipboard + 3 examples.",
+        "cargo test all green: pinion-platform-clipboard (incl. 2 new seed tests) + hello-hex-dump (22, +1 wiring) + hello-cell-select (22, +1 wiring) + hello-data-grid (144, +1 wiring). fmt clean; clippy -D pedantic clean; cargo doc -D warnings clean (fixed a redundant-explicit-link in the seed doc).",
+        "The OS-write gap is now CLOSED at the unit level for ALL 3 copy consumers: a seeded InMemoryClipboard lets a real apply_key Ctrl+C be read back with no OS clipboard touched. The RPC demo still verifies only the AI-observable payload (a subprocess cannot seed its own clipboard).",
+        "Regression: r1372 data-grid copy demo PASS vs a REBUILT release binary after the immutable-resolve change (NIT-2). r1407 / r1222 payload demos unaffected (their binaries unchanged)."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.35",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Design decision (durable): `seed_app_clipboard` is the dependency-inversion seam for `use_app_clipboard` — seed-if-absent into the tag's `Owner::cache` slot. A keyboard-copy test seeds an InMemoryClipboard BEFORE the binding's apply_key so the real OS clipboard is never raced; a headless / embedded shell can install a chosen impl the same way. R1407's \"OS write untested\" honest carry is CLOSED (was: no injection seam + a live-display Ctrl+C clobbers the user's clipboard).",
+        "No new debt surfaced. The copy chord (selection_copy_payload) + its OS-write wiring are now both fully covered across the 3 consumers."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
@@ -80864,5 +80908,5 @@
   "parameter_deltas": {},
   "parameter_gates": {},
   "fact_counts": {},
-  "schema_version": 38
+  "schema_version": 39
 }

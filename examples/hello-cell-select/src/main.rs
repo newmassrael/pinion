@@ -866,4 +866,46 @@ mod tests {
             "Ctrl+C with nothing selected is unhandled (and copies nothing)",
         );
     }
+
+    /// R1407 §5.38 §5.22 — the copy wiring end-to-end: a real `apply_key`
+    /// Ctrl+C over a live selection writes the cell TSV to the grid's clipboard.
+    /// A seeded hermetic `InMemoryClipboard` lets the copy be asserted WITHOUT
+    /// touching — nor racing — the OS clipboard (the R1222 test could only cover
+    /// the no-selection guard because the with-selection path hits the real one).
+    #[test]
+    fn r1407_ctrl_c_writes_the_cell_tsv_to_the_clipboard() {
+        use pinion_core::InMemoryClipboard;
+        use pinion_core::reactive::Owner;
+        use pinion_platform_clipboard::seed_app_clipboard;
+        Owner::new().run(|| {
+            let clip = seed_app_clipboard(PRIMARY_TAG, Box::new(InMemoryClipboard::new()));
+            let mut scene = scene_fixture();
+            // The first arrow enters at (0,0) and selects one cell.
+            assert!(key(&mut scene, "ArrowDown", false), "a cell is selected");
+            let ctrl = pinion_core::Modifiers {
+                ctrl: true,
+                ..Default::default()
+            };
+            assert!(
+                CellSelectView::apply_key(&mut scene, Some(PRIMARY_TAG), "c", ctrl),
+                "Ctrl+C copies the selection",
+            );
+            // The clipboard got exactly the `cell_selection_tsv` the AI-first
+            // peer reads — readout and clipboard cannot diverge.
+            let Scene::External(node) = &scene else {
+                panic!("external");
+            };
+            let expect = match node
+                .handle
+                .introspect()
+                .unwrap()
+                .query("cell_selection_tsv")
+            {
+                Some(IntrospectValue::Text(t)) => Some(t),
+                _ => None,
+            };
+            assert!(expect.is_some(), "a selection serialises to TSV");
+            assert_eq!(clip.paste(), expect, "the TSV reached the clipboard");
+        });
+    }
 }

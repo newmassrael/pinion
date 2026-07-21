@@ -1276,6 +1276,44 @@ mod tests {
     }
 
     #[test]
+    fn r1407_ctrl_c_writes_the_selection_hex_to_the_clipboard() {
+        // The whole wiring end-to-end: a real `apply_key` Ctrl+C resolves the
+        // grid's clipboard and writes the selected bytes' hex to it. A seeded
+        // hermetic `InMemoryClipboard` stands in for the OS clipboard so the
+        // copy is asserted WITHOUT touching — nor racing — the real one.
+        use pinion_core::InMemoryClipboard;
+        use pinion_core::reactive::Owner;
+        use pinion_core::scene::ExternalNode;
+        use pinion_platform_clipboard::seed_app_clipboard;
+        Owner::new().run(|| {
+            let clip = seed_app_clipboard(GRID_TAG, Box::new(InMemoryClipboard::new()));
+            let mut scene = Scene::External(
+                ExternalNode::new(HexDumpView::create_external()).with_tag(GRID_TAG),
+            );
+            // Select the header's 4-byte length field [4, 8) = 00 00 00 2c.
+            scene
+                .find_external_with_tag_mut(GRID_TAG)
+                .and_then(|n| n.handle.introspect_mut())
+                .unwrap()
+                .invoke("select_range", IntrospectValue::Text("4,8".into()))
+                .unwrap();
+            let ctrl = pinion_core::Modifiers {
+                ctrl: true,
+                ..Default::default()
+            };
+            assert!(
+                HexDumpView::apply_key(&mut scene, Some(GRID_TAG), "c", ctrl),
+                "Ctrl+C is handled",
+            );
+            assert_eq!(
+                clip.paste(),
+                Some("0000002c".to_owned()),
+                "the selected bytes' hex reached the clipboard",
+            );
+        });
+    }
+
+    #[test]
     fn r1407_ctrl_c_with_no_selection_is_unhandled() {
         // With nothing selected `selection_hex` is Null, so the chord handler
         // returns None and `apply_key` never resolves — nor clobbers — the real

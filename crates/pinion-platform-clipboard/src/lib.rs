@@ -351,6 +351,36 @@ impl Clipboard for AppClipboard {
     }
 }
 
+/// R1407 §5.22 — install `clipboard` as the [`use_app_clipboard`] handle for
+/// `key`, returning it. **Seed-if-absent**: parks the impl in the very
+/// [`Owner::cache`] slot `use_app_clipboard(key)` reads (same `AppClipboard`
+/// type + `key`), so a later `use_app_clipboard(key)` in the SAME [`Owner`]
+/// scope resolves to THIS instance instead of building an [`ArboardClipboard`].
+/// If the slot is already populated it is a no-op that returns the existing
+/// handle — so seed BEFORE the first `use_app_clipboard(key)` in the scope.
+///
+/// The dependency-inversion seam for the app clipboard. Its forcing consumer is
+/// the keyboard-copy path: a `Ctrl`/`Cmd`+C handler writes through
+/// `use_app_clipboard(TAG).copy(payload)`, whose OS write cannot be asserted in
+/// a test without touching — and racing — the real clipboard
+/// (the concurrent-clipboard-race hazard). A test seeds an
+/// [`InMemoryClipboard`] here, drives a real
+/// `Ctrl+C` through the binding's `apply_key`, and reads the copied bytes back
+/// from the returned handle — the copy wiring verified end-to-end, no OS
+/// clipboard touched. A headless / embedded shell can equally install a chosen
+/// impl.
+///
+/// # Panics
+/// Panics when called outside an active [`Owner`] scope (mirror of
+/// [`use_app_clipboard`]).
+#[must_use]
+pub fn seed_app_clipboard(key: &'static str, clipboard: Box<dyn Clipboard>) -> Rc<dyn Clipboard> {
+    let cb: Rc<AppClipboard> = Owner::current()
+        .expect("seed_app_clipboard requires an active Owner scope")
+        .cache(key, move || AppClipboard(clipboard));
+    cb
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.2.b §5.22 — `ArboardClipboard` smoke tests.
@@ -503,7 +533,7 @@ mod tests {
     mod r790_lift {
         use std::rc::Rc;
 
-        use super::super::{AppClipboard, use_app_clipboard};
+        use super::super::{AppClipboard, seed_app_clipboard, use_app_clipboard};
         use pinion_core::reactive::Owner;
         use pinion_core::{Clipboard, ClipboardSelection, InMemoryClipboard};
 
@@ -553,6 +583,48 @@ mod tests {
                 // contract (`Rc::ptr_eq`) is the pin; the copy/paste surface
                 // is covered by `r790_app_clipboard_forwards_selection_aware_methods`
                 // over a hermetic `InMemoryClipboard`.
+            });
+        }
+
+        /// R1407 §5.22 — `seed_app_clipboard` installs a chosen impl into the
+        /// slot `use_app_clipboard` reads, so a later `use_app_clipboard(key)`
+        /// resolves the SAME instance (never building an arboard handle). This
+        /// is the seam a keyboard-copy test uses to read back the bytes a
+        /// `Ctrl+C` wrote WITHOUT racing the OS clipboard.
+        #[test]
+        fn r1407_seed_app_clipboard_is_returned_by_use_app_clipboard() {
+            Owner::new().run(|| {
+                let seeded = seed_app_clipboard("seed_key", Box::new(InMemoryClipboard::new()));
+                seeded.copy("copied-via-Ctrl+C".to_owned());
+                // The binding's own `use_app_clipboard(key)` resolves the
+                // seeded instance (a hermetic InMemoryClipboard), so it never
+                // touches — nor races — the real OS clipboard.
+                let resolved = use_app_clipboard("seed_key");
+                assert!(
+                    Rc::ptr_eq(&seeded, &resolved),
+                    "use_app_clipboard resolves the seeded handle",
+                );
+                assert_eq!(
+                    resolved.paste(),
+                    Some("copied-via-Ctrl+C".to_owned()),
+                    "the copied bytes are readable back from the seeded clipboard",
+                );
+            });
+        }
+
+        /// R1407 §5.22 — seed is seed-IF-ABSENT: once a key is populated (here
+        /// by `use_app_clipboard` first) a later `seed_app_clipboard` is a no-op
+        /// returning the existing handle. So a test must seed BEFORE the first
+        /// `use_app_clipboard(key)`.
+        #[test]
+        fn r1407_seed_after_use_is_a_no_op() {
+            Owner::new().run(|| {
+                let first = use_app_clipboard("late_seed");
+                let seeded = seed_app_clipboard("late_seed", Box::new(InMemoryClipboard::new()));
+                assert!(
+                    Rc::ptr_eq(&first, &seeded),
+                    "seeding an already-populated key returns the existing handle",
+                );
             });
         }
     }
