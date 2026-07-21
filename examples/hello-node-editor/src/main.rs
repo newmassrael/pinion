@@ -353,6 +353,15 @@ const PALETTE_W: u32 = 132;
 /// R849 — the palette container tag (a11y `toolbar` root; routes no pointer
 /// events itself — only its `node_graph#palette_<idx>` item cards do).
 const PALETTE_TAG: &str = "node_palette";
+/// R1411 §5.51 — the [`DragPayload::kind`] a palette card carries when it is
+/// DRAGGED onto the canvas to instantiate its node at the drop point, as
+/// opposed to a press-release IN PLACE (which adds the node at the spawn point).
+/// Distinct from the `"node-edge"` wire-drag kind so [`drag_release`] routes the
+/// two gestures apart, and it is the discriminator the generic drop substrate
+/// matches on ([`DragPayload`] doc).
+///
+/// [`drag_release`]: NodeGraphExternal::drag_release
+const PALETTE_DRAG_KIND: &str = "palette-node";
 /// R1220 — the pin-drop create menu width (canvas px).
 const PIN_CREATE_MENU_W: u32 = 150;
 /// R1223 — the create-menu search-header separator glyph (▸ U+25B8), named per
@@ -2864,12 +2873,15 @@ enum PendingPress {
     /// that discarded the identity — the missing half that left reconnect
     /// verb-only.
     InputPort(NodeId, usize),
-    /// R850 — a press on an add-node palette card. Like [`Inert`](Self::Inert)
-    /// it is a non-drag press that must suppress the background edge-probe, but
-    /// it is recorded as its own variant rather than a bare inert press because
-    /// its release has a specific action (it creates a node), so a future branch
-    /// can never misread a palette press as an inert one.
-    Palette,
+    /// R850 — a press on an add-node palette card, carrying the pressed
+    /// [`PALETTE`] index. It suppresses the background edge-probe (like
+    /// [`Inert`](Self::Inert)), and R1411 makes it a DRAG SOURCE: the index lets
+    /// [`begin_drag`](NodeGraphExternal::begin_drag) arm a drag-to-instantiate
+    /// session so a card dropped on the canvas creates that node at the drop
+    /// point, while a press-release IN PLACE still adds it at the spawn point on
+    /// the matching `PointerUp`. Recorded as its own variant so neither release
+    /// path is ever misread as an inert press.
+    Palette(usize),
     /// R918 — a press on a Details-panel property row. A non-drag press whose
     /// inline-editor activation runs on the matching `PointerUp` (the palette
     /// precedent); recorded as its own variant so it is never mistaken for an
@@ -4186,24 +4198,41 @@ impl NodeGraphExternal {
     /// rearranged. A new node has no edges, so no edge / selection bookkeeping
     /// is needed (the stable-id model: adding is purely additive).
     fn add_node(&self, kind: usize) -> Option<NodeId> {
-        let &(title, ..) = PALETTE.get(kind)?;
-        let id = self.mint_node_id();
-        let raw = id.raw();
         // Cascade in minted order from the spawn point so repeated adds fan out
         // instead of stacking exactly on one another. R877 — the spawn point is
         // a fixed *canvas* position projected into graph space through the
         // current viewport, so a new node always lands in the visible view
         // (spawning at a fixed graph point would drop it off-screen once the
-        // canvas has panned away).
-        let step = i32::try_from(raw.saturating_sub(first_dynamic_node_id())).unwrap_or(0) % 8;
+        // canvas has panned away). R1411 — the step reads the id ABOUT to be
+        // minted (`next_node_id` peek == the value `add_node_at` will assign), so
+        // the fan-out is bit-identical to before the `add_node_at` extraction.
+        let step = i32::try_from(
+            self.next_node_id
+                .get()
+                .saturating_sub(first_dynamic_node_id()),
+        )
+        .unwrap_or(0)
+            % 8;
         let (gx, gy) = self.cursor_graph(
             f64::from(SPAWN_X) / f64::from(WIN_W),
             f64::from(SPAWN_Y) / f64::from(WIN_H),
         );
         let x = clamp_node_x(round_i32(gx) + step * SPAWN_STEP);
         let y = clamp_node_y(round_i32(gy) + step * SPAWN_STEP);
+        self.add_node_at(kind, x, y)
+    }
+
+    /// R1411 — instantiate palette `kind` at graph point `(x, y)` (already
+    /// clamped) in one undo step, selecting the new node. The position SSOT the
+    /// two creation gestures share: [`add_node`](Self::add_node) (a click / RPC
+    /// add at the spawn point + fan-out cascade) and the drag-to-instantiate drop
+    /// ([`drag_release`](Self::drag_release), the drop point). Returns the new
+    /// node id, or `None` for an out-of-range `kind`.
+    fn add_node_at(&self, kind: usize, x: i32, y: i32) -> Option<NodeId> {
+        let &(title, ..) = PALETTE.get(kind)?;
+        let id = self.mint_node_id();
         // R1256 — one palette-node constructor SSOT (derives `is_reroute` from op).
-        let node = GraphNode::from_palette(kind, raw, x, y)?;
+        let node = GraphNode::from_palette(kind, id.raw(), x, y)?;
         let sel_before = self.selection.get();
         // `record` applies the edit forward — pushing the node and selecting it
         // (the prior direct writes) — so a single Ctrl+Z removes it again.
@@ -5956,12 +5985,14 @@ impl NodeGraphExternal {
                     self.pending_press.set(PendingPress::NodeBody);
                 } else if let Some((n, j)) = parse_oport_sub(s) {
                     self.pending_press.set(PendingPress::OutputPort(n, j));
-                } else if parse_palette_sub(s).is_some() {
-                    // R850 — a palette card press: not a drag, not an input
-                    // port. Recorded as its own variant so the background
-                    // edge-probe is suppressed without lying about what was
-                    // pressed (the activation runs on the matching PointerUp).
-                    self.pending_press.set(PendingPress::Palette);
+                } else if let Some(kind) = parse_palette_sub(s) {
+                    // R850 — a palette card press: suppresses the background
+                    // edge-probe. R1411 — carries the pressed PALETTE index so
+                    // `begin_drag` can arm a drag-to-instantiate session (a drop
+                    // on the canvas creates that node at the drop point) while a
+                    // press-release IN PLACE still adds it at the spawn point on
+                    // the matching PointerUp.
+                    self.pending_press.set(PendingPress::Palette(kind));
                 } else if parse_create_sub(s).is_some() {
                     // R1220 — a pin-drop create-menu card press: like a palette
                     // press, its commit (the auto-wire) runs on the matching
@@ -5985,10 +6016,14 @@ impl NodeGraphExternal {
                 }
             }
             (Some(s), "PointerUp") => {
-                // R849 — a palette card's release creates a node (the activation
-                // edge); a node card's release selects it. (A palette press set
-                // PendingPress::Palette above, suppressing the edge-probe; the
-                // gesture is reset by `end_gesture` after this branch.)
+                // R849 — a palette card's release creates a node at the spawn
+                // point; a node card's release selects it. R1411 — this is the
+                // CLICK (press-release in place) path only: a palette card that
+                // was DRAGGED onto the canvas committed at the drop point in
+                // `drag_release`, and the router's `!became_drag` gate
+                // (input.rs) suppresses this trailing click for a real drag, so
+                // the two creation gestures are mutually exclusive (never a
+                // double-add).
                 if let Some(kind) = parse_palette_sub(s) {
                     self.add_node(kind);
                 } else if let Some(kind) = parse_create_sub(s) {
@@ -6390,6 +6425,19 @@ impl External for NodeGraphExternal {
     /// payload carries the source `(node, port)`; `None` for any other press,
     /// so a node-body press falls through to the capture-drag move path.
     fn begin_drag(&self) -> Option<DragPayload> {
+        // R1411 — a palette card is a drag source: dragging it onto the canvas
+        // instantiates its node at the drop point (`drag_release`). The payload
+        // value is the node title as Text, which the shell's generic drag-image
+        // follower (R1113) surfaces as the chip label automatically. No wire
+        // preview is armed — that is the port-drag path below, whose loose end
+        // follows a hovered pin; a palette drag's feedback is the title chip.
+        if let PendingPress::Palette(kind) = self.pending_press.get() {
+            let &(title, ..) = PALETTE.get(kind)?;
+            return Some(DragPayload {
+                kind: Cow::Borrowed(PALETTE_DRAG_KIND),
+                value: IntrospectValue::Text(title.to_string()),
+            });
+        }
         let (from_node, from_port, reconnect) = match self.pending_press.get() {
             // A fresh wire pulled from an output port (the R742/R838 connect).
             PendingPress::OutputPort(n, j) => (n, j, None),
@@ -6441,6 +6489,33 @@ impl External for NodeGraphExternal {
     /// untouched (the connect gesture's "release in empty space cancels" behaviour,
     /// which a *reconnect* still gets since it opens no menu).
     fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
+        // R1411 — a palette card dropped on the canvas instantiates its node at
+        // the drop point. `pending_press` still holds the pressed PALETTE index
+        // (reset by `end_gesture` below); the drop graph point is the R1220
+        // pin-drop projection of the release fraction over `GRAPH_TAG`. A release
+        // NOT over the canvas (still over the palette strip, off-window) adds
+        // nothing here — an in-place press-release adds at the spawn point via
+        // the PointerUp click path instead, so the two never both fire.
+        if payload.kind == PALETTE_DRAG_KIND {
+            if let PendingPress::Palette(kind) = self.pending_press.get() {
+                if let Some(dp) = over.as_ref().filter(|dp| dp.tag == GRAPH_TAG) {
+                    let (gx, gy) = cursor_graph_at(
+                        &self.scroll,
+                        self.zoom.get(),
+                        f64::from(dp.x_rel),
+                        f64::from(dp.y_rel),
+                    );
+                    self.add_node_at(
+                        kind,
+                        clamp_node_x(round_i32(gx)),
+                        clamp_node_y(round_i32(gy)),
+                    );
+                }
+            }
+            self.preview.set(None);
+            self.end_gesture();
+            return;
+        }
         let reconnect = self.preview.get().and_then(|p| p.reconnect);
         if let Some((to_node, to_port)) = over.as_ref().and_then(|dp| parse_input_port_tag(&dp.tag))
         {

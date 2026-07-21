@@ -2036,6 +2036,138 @@ fn r1220_port_drop_connects_and_reconnect_drop_never_opens_menu() {
 }
 
 #[test]
+fn r1411_palette_card_dragged_onto_canvas_instantiates_at_drop_point() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        let stack = use_undo();
+        let nodes0 = coord.nodes.get().len();
+        // Press the Scalar palette card (kind 5): begin_drag arms a
+        // drag-to-instantiate carrying the node TITLE as its value — the string
+        // the shell's generic drag-image follower (R1113) surfaces as the chip
+        // label with no per-binding wiring.
+        coord.handle_send("palette_5:PointerDown");
+        let payload = coord
+            .begin_drag()
+            .expect("a palette card press arms a drag");
+        assert_eq!(
+            payload.kind.as_ref(),
+            PALETTE_DRAG_KIND,
+            "the palette drag is its own kind, distinct from a node-edge drag",
+        );
+        assert!(
+            matches!(&payload.value, IntrospectValue::Text(s) if s == "Scalar"),
+            "the payload value is the node title (the follower chip label), got {:?}",
+            payload.value,
+        );
+        // The id the drop is about to mint, so the new node is read by identity
+        // (not by "the last one") — the position claim cannot alias a reorder.
+        let dropped = NodeId(coord.next_node_id.get());
+        // Drop on the canvas at 0.75, 0.5: the R1220 pin-drop projection maps
+        // that release fraction over GRAPH_TAG to graph (0.75*640, 0.5*420) =
+        // (480, 210) at zoom 1 with no pan.
+        coord.drag_release(
+            &payload,
+            Some(DropPoint {
+                tag: GRAPH_TAG.to_owned(),
+                x_rel: 0.75,
+                y_rel: 0.5,
+            }),
+        );
+        assert_eq!(
+            coord.nodes.get().len(),
+            nodes0 + 1,
+            "the drop instantiates exactly one node",
+        );
+        let node = coord.node_by_id(dropped).expect("the dropped node exists");
+        assert_eq!(node.title, "Scalar", "the dropped kind is the pressed card");
+        assert_eq!(
+            (node.x, node.y),
+            (480, 210),
+            "the node lands at the DROP point, not the fixed spawn point",
+        );
+        // One reversible step — the create+select delta, exactly like a click
+        // add (the shared `add_node_at` funnel).
+        assert_eq!(
+            stack.undo_label().as_deref(),
+            Some("Add Scalar"),
+            "the drop is one labelled undo step",
+        );
+        assert!(stack.undo(), "undo removes the dropped node");
+        assert_eq!(coord.nodes.get().len(), nodes0, "... in a single Ctrl+Z",);
+    });
+}
+
+#[test]
+fn r1411_palette_drag_released_off_canvas_instantiates_nothing() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        let nodes0 = coord.nodes.get().len();
+        // A palette drag that never reaches the canvas (released still over the
+        // palette strip, or off-window: `over` is not GRAPH_TAG) adds nothing
+        // through the drag path — the drop-point gate. In the live app a
+        // press-release IN PLACE instead adds at the spawn point via the
+        // trailing PointerUp click, which the router only fires when the gesture
+        // did NOT become a drag (see the click test below).
+        coord.handle_send("palette_5:PointerDown");
+        let payload = coord.begin_drag().expect("palette press arms a drag");
+        coord.drag_release(
+            &payload,
+            Some(DropPoint {
+                tag: format!("{GRAPH_TAG}#palette_5"),
+                x_rel: 0.5,
+                y_rel: 0.5,
+            }),
+        );
+        assert_eq!(
+            coord.nodes.get().len(),
+            nodes0,
+            "a drag not dropped on the canvas creates no node",
+        );
+        // A release over nothing at all (off-window) is equally inert.
+        coord.handle_send("palette_5:PointerDown");
+        let payload = coord.begin_drag().expect("palette press arms a drag");
+        coord.drag_release(&payload, None);
+        assert_eq!(
+            coord.nodes.get().len(),
+            nodes0,
+            "a drag released over no region creates no node",
+        );
+    });
+}
+
+#[test]
+fn r1411_palette_click_in_place_still_adds_at_the_spawn_point() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        let nodes0 = coord.nodes.get().len();
+        // A press-release in place (the R849 click-to-add): PointerDown records
+        // the Palette(kind) arm, PointerUp on the same card adds the node at the
+        // spawn point. R1411 must leave this untouched — the drag path is
+        // additive, and the spawn add stays keyed off the release TAG.
+        let spawned = NodeId(coord.next_node_id.get());
+        coord.handle_send("palette_5:PointerDown");
+        coord.handle_send("palette_5:PointerUp");
+        assert_eq!(
+            coord.nodes.get().len(),
+            nodes0 + 1,
+            "a palette click still adds one node",
+        );
+        let node = coord.node_by_id(spawned).expect("the spawned node exists");
+        assert_eq!(node.title, "Scalar", "the clicked kind");
+        // The spawn point is the fixed canvas SPAWN_X/SPAWN_Y projection — not a
+        // drop point — so it is distinct from the (480, 210) the drag test lands.
+        assert_ne!(
+            (node.x, node.y),
+            (480, 210),
+            "a click lands at the spawn point, not a drop point",
+        );
+    });
+}
+
+#[test]
 fn r1220_filter_narrows_and_highlight_roves_wrapping() {
     Owner::new().run(|| {
         let _ = boot_scene();
