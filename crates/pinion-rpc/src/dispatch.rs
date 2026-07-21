@@ -64,8 +64,8 @@ use crate::scroll_state::{
 };
 use crate::simulate::{SimulateError, SimulateStep, simulate, simulate_with_owner};
 use crate::snapshot::{
-    GridCursorSnapshot, GridRowSnapshot, GridStyleRun, SnapshotError, SnapshotNode,
-    TermColorSnapshot, TextGridSnapshot, snapshot,
+    GridCursorSnapshot, GridRowSnapshot, GridStyleRun, HyperlinkSnapshot, SnapshotError,
+    SnapshotNode, TermColorSnapshot, TextGridSnapshot, snapshot,
 };
 use crate::substrate_introspect::{SubstrateIntrospectError, introspect_error_to_data};
 use crate::text::{NormalizeForm, NormalizeOutcome, text_normalize};
@@ -3798,7 +3798,33 @@ fn grid_style_run_to_json(run: &GridStyleRun) -> Value {
             .as_ref()
             .map_or(Value::Null, term_color_snapshot_to_json),
     );
+    // R1403 — the run's OSC-8 hyperlink target ({uri, id} or null). The `id`
+    // ties non-adjacent runs into one logical link, discoverable as data.
+    obj.insert(
+        "hyperlink".to_string(),
+        run.hyperlink
+            .as_ref()
+            .map_or(Value::Null, hyperlink_to_json),
+    );
     obj.insert("width".to_string(), Value::String(run.width.to_string()));
+    Value::Object(obj)
+}
+
+/// R1403 §5.41 — wire form for a [`HyperlinkSnapshot`]: `{uri, id}` where
+/// `id` is the OSC-8 grouping key (a JSON string, or `null` for an anonymous
+/// link). An AI client reads a run's link target — and recognises two
+/// non-adjacent runs as one link by a shared `id` — without OCR (§2 #7).
+///
+/// [`HyperlinkSnapshot`]: crate::snapshot::HyperlinkSnapshot
+fn hyperlink_to_json(link: &HyperlinkSnapshot) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("uri".to_string(), Value::String(link.uri.clone()));
+    obj.insert(
+        "id".to_string(),
+        link.id
+            .as_ref()
+            .map_or(Value::Null, |id| Value::String(id.clone())),
+    );
     Value::Object(obj)
 }
 

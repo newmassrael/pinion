@@ -48,8 +48,8 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Rect;
 use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
 use pinion_core::{
-    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, Scene,
-    ScreenKind, TermColor,
+    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, HyperlinkId, Palette,
+    Scene, ScreenKind, TermColor,
 };
 
 use crate::path::{self, PathError};
@@ -351,7 +351,29 @@ pub struct GridStyleRun {
     /// starts a new run. The underline *style* rides in
     /// [`attrs`](Self::attrs) ([`CellAttrs::underline`]).
     pub underline_color: Option<TermColorSnapshot>,
+    /// R1403 §5.41 — the run's OSC-8 hyperlink target (URI + optional id),
+    /// resolved through the buffer's interning table, or `None` for an
+    /// un-linked run. A hyperlink change (like `fg` / `bg` / `attrs` /
+    /// `underline_color` / `width`) starts a new run, and the
+    /// [`id`](HyperlinkSnapshot::id) ties non-adjacent runs — a link split
+    /// across a wrap — into one logical link a client can highlight together
+    /// (R-69.3.b), which pure position-based highlighting cannot express.
+    pub hyperlink: Option<HyperlinkSnapshot>,
     pub width: &'static str,
+}
+
+/// R1403 §5.41 — an OSC-8 hyperlink in a snapshot: the `uri` the link opens
+/// plus its optional grouping `id`. Mirrors
+/// [`Hyperlink`](pinion_core::Hyperlink), flattened into the snapshot so an
+/// AI client reads a run's link target as data (§2 #7) — the URI without
+/// OCR, and the `id` so two non-adjacent runs are recognisable as one link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HyperlinkSnapshot {
+    /// The URI the link opens (`https://…`, `file://…`, `mailto:…`).
+    pub uri: String,
+    /// The OSC-8 `id=` grouping key, or `None` for an anonymous link.
+    pub id: Option<String>,
 }
 
 /// R973 §5.41 — a cell colour in a snapshot. Reports both the *stored*
@@ -587,14 +609,29 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
     }
 }
 
+/// R973 §5.41 — the run-coalescing key: the tuple of cell facts that must
+/// all match for two adjacent cells to fold into one [`GridStyleRun`]. A
+/// change in any component starts a new run — `(fg, bg)` colours (R973),
+/// `attrs` (R974), `width` role (R976), the SGR-58 `underline_color` (R1399),
+/// and the OSC-8 `hyperlink` index (R1403). The hyperlink component is the
+/// *index* (not the resolved URI): two cells at the same table entry are the
+/// same link instance.
+type RunKey = (
+    TermColor,
+    TermColor,
+    CellAttrs,
+    CellWidth,
+    Option<TermColor>,
+    Option<HyperlinkId>,
+);
+
 /// R973 §5.41 — project a [`GridBuffer`] into per-row snapshots, resolving
 /// each cell's colours through `palette` (the R969 "resolve at paint
 /// time" contract — a snapshot is a paint-time readback). Consecutive
-/// cells with an identical `(fg, bg, attrs, width)` tuple collapse into
-/// one [`GridStyleRun`] (run-length style compression). A
-/// [`CellWidth::Trailer`] carries the empty cluster, so a wide cluster
-/// contributes its glyph to `text` exactly once even across its two
-/// columns (R976). An empty buffer yields no rows.
+/// cells with an identical [`RunKey`] collapse into one [`GridStyleRun`]
+/// (run-length style compression). A [`CellWidth::Trailer`] carries the
+/// empty cluster, so a wide cluster contributes its glyph to `text` exactly
+/// once even across its two columns (R976). An empty buffer yields no rows.
 fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot> {
     (0..buffer.rows())
         .map(|row| {
@@ -602,24 +639,23 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
             let mut runs: Vec<GridStyleRun> = Vec::new();
             // R1399 — `underline_color` joins the run key: a change in the
             // explicit SGR-58 colour (like any fg / bg / attrs / width
-            // change) starts a new run.
-            let mut prev: Option<(
-                TermColor,
-                TermColor,
-                CellAttrs,
-                CellWidth,
-                Option<TermColor>,
-            )> = None;
+            // change) starts a new run. R1403 — the OSC-8 hyperlink INDEX
+            // joins it too, so a link boundary splits a run (and same-index
+            // adjacent cells coalesce). The index, not the resolved uri, is
+            // the key: two cells at the same table entry are the same link
+            // instance.
+            let mut prev: Option<RunKey> = None;
             for col in 0..buffer.cols() {
                 // Every coordinate in `0..cols × 0..rows` is in bounds.
                 let cell = buffer.cell(col, row).expect("cell within buffer bounds");
                 text.push_str(&cell.cluster);
-                let style = (
+                let style: RunKey = (
                     cell.fg,
                     cell.bg,
                     cell.attrs,
                     cell.width,
                     cell.underline_color,
+                    cell.hyperlink,
                 );
                 match runs.last_mut() {
                     Some(run) if prev == Some(style) => run.len += 1,
@@ -634,6 +670,16 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
                         underline_color: cell
                             .underline_color
                             .map(|c| term_color_snapshot(c, ColorTarget::Foreground, palette)),
+                        // R1403 — resolve the cell's index through the buffer's
+                        // interning table (a snapshot is a paint-time readback,
+                        // like colour resolution).
+                        hyperlink: cell
+                            .hyperlink
+                            .and_then(|id| buffer.hyperlink(id))
+                            .map(|link| HyperlinkSnapshot {
+                                uri: link.uri.clone(),
+                                id: link.id.clone(),
+                            }),
                         width: cell_width_wire(cell.width),
                     }),
                 }
@@ -854,6 +900,55 @@ mod tests {
                 // The trailer carries the head's colour (bg paints across).
                 assert_eq!(row.runs[1].fg.index, Some(1));
                 assert_eq!(row.runs[2].width, "narrow");
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_grid_snapshot_reports_hyperlink_and_groups_by_id() {
+        // R1403 §5.41 — a run's OSC-8 hyperlink (uri + id) is resolved through
+        // the buffer's interning table; a link boundary splits runs, and two
+        // NON-adjacent runs (different rows) that share an id are one logical
+        // link — the case pure position-based highlighting cannot express.
+        use pinion_core::{GridBuffer, Hyperlink, HyperlinkId, TermCell, TermColor};
+        let link = |i: u32| {
+            TermCell::new("L", TermColor::Default, TermColor::Default)
+                .with_hyperlink(HyperlinkId(i))
+        };
+        // Table: index 0 = a wrapped link (id "u1"); index 1 = an anonymous
+        // file link (no id).
+        let buf = GridBuffer::new(2, 2)
+            .with_hyperlinks(vec![
+                Hyperlink::new("https://example.com/spec").with_id("u1"),
+                Hyperlink::new("file:///main.rs"),
+            ])
+            // Row 0: [linked(0), plain]; row 1: [linked(0) again, linked(1)].
+            .with_row(0, [link(0), TermCell::blank()])
+            .with_row(1, [link(0), link(1)]);
+        let mut node =
+            pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT).with_cells(buf);
+        node.rect = Rect::new(0, 0, 16, 32); // 2 × 2 @ 8×16
+        match snapshot(&Scene::TextGrid(node), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                let r0 = &snap.grid_rows[0].runs;
+                let r1 = &snap.grid_rows[1].runs;
+                // Row 0: the linked cell reports the resolved uri + id; the
+                // link boundary splits it from the blank cell.
+                let l0 = r0[0].hyperlink.as_ref().expect("row0 col0 is linked");
+                assert_eq!(l0.uri, "https://example.com/spec");
+                assert_eq!(l0.id.as_deref(), Some("u1"));
+                assert_eq!(r0[1].hyperlink, None, "the blank cell is un-linked");
+                // Row 1 col 0 is the SAME logical link as row 0 col 0 (shared
+                // id) though they are in different rows — grouping by id.
+                let l1 = r1[0].hyperlink.as_ref().expect("row1 col0 is linked");
+                assert_eq!(l1.id.as_deref(), Some("u1"));
+                assert_eq!(l0, l1, "same-id non-adjacent runs are one link");
+                // Row 1 col 1 is a DIFFERENT, anonymous link.
+                let l2 = r1[1].hyperlink.as_ref().expect("row1 col1 is linked");
+                assert_eq!(l2.uri, "file:///main.rs");
+                assert_eq!(l2.id, None);
+                assert_ne!(l1, l2);
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }

@@ -448,6 +448,77 @@ pub enum CellWidth {
     Trailer,
 }
 
+/// An OSC-8 hyperlink target (R1403 §5.41) — the URI a run of cells points
+/// at, plus the optional `id` that ties non-adjacent runs into one logical
+/// link.
+///
+/// This is what a terminal emits as
+/// `ESC ] 8 ; id=<id> ; <uri> ST … ESC ] 8 ; ; ST`: every cell drawn
+/// between the open and the close carries this target, and `ls
+/// --hyperlink`, compiler diagnostics (`gcc` / `cargo`), `gh` / `git`, and
+/// doc renderers use it to make file / URL text clickable. The VT parser
+/// (`termwiz`'s `Hyperlink { uri, params }`) already produces exactly this;
+/// this type is the cell model's home for it.
+///
+/// The `id` (the OSC-8 `id=` param) is the **grouping key**: two separate
+/// runs that share a non-empty `id` are the *same* logical link — a link
+/// split across a soft-wrap, or repeated — so hovering one highlights both.
+/// That is the case pure position-based highlighting (a single contiguous
+/// run) cannot express. `None` is an anonymous link, grouped only within its
+/// own contiguous run.
+///
+/// The `uri` is opaque to pinion: a consumer decides how to open it
+/// (R-69.3 activation). A hyperlink is stored once in a [`GridBuffer`]'s
+/// interning table ([`GridBuffer::hyperlink`]) and referenced per cell by a
+/// [`HyperlinkId`] index, so a link spanning many cells never clones its
+/// URI (R-69.2).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+pub struct Hyperlink {
+    /// The URI the link opens (`https://…`, `file://…`, `mailto:…`). Opaque
+    /// to the framework.
+    pub uri: String,
+    /// The OSC-8 `id=` grouping key. `None` is an anonymous link grouped only
+    /// within its own contiguous run; `Some(id)` ties every run that shares
+    /// the id into one logical link across wraps / repeats.
+    pub id: Option<String>,
+}
+
+impl Hyperlink {
+    /// An anonymous hyperlink to `uri` (no OSC-8 `id`): grouped only within
+    /// its own contiguous run.
+    #[must_use]
+    pub fn new(uri: impl Into<String>) -> Self {
+        Self {
+            uri: uri.into(),
+            id: None,
+        }
+    }
+
+    /// A hyperlink to `uri` tagged with the OSC-8 grouping `id` (builder
+    /// form): every run sharing this id is one logical link.
+    #[must_use]
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+}
+
+/// A cell's reference into its [`GridBuffer`]'s hyperlink interning table
+/// (R1403 §5.41) — the OSC-8 analogue of how [`TermColor::Indexed`]
+/// references the [`Palette`]. A `u32` index keeps the per-cell footprint to
+/// four bytes even for a two-hundred-cell link: the URI string lives once in
+/// the table ([`GridBuffer::hyperlink`]), not cloned per cell (R-69.2).
+///
+/// Serialized transparently as a bare number. An index is only meaningful
+/// against the buffer that owns the table; a [`GridBuffer`] validates on
+/// deserialize that every cell's index is in range (mirroring its cell-count
+/// invariant), so a resolved lookup never dangles.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct HyperlinkId(pub u32);
+
 /// One terminal grid cell: the displayed grapheme cluster plus its
 /// foreground / background [`TermColor`]s, its [`CellAttrs`] (R974), and
 /// its [`CellWidth`] display-width role (R976). The cursor is a grid-level
@@ -461,10 +532,11 @@ pub enum CellWidth {
 /// once to an assembled row even though it occupies two columns.
 ///
 /// `#[non_exhaustive]` per the R974.1 forward-compat hedge: later
-/// refinements add fields (e.g. an OSC-8 hyperlink target), and
-/// construction routes through [`Self::new`] / [`Self::blank`] + the
-/// builders, so the hedge is free (matching [`crate::scene::TextGridNode`]).
-/// R1399 filled that hedge with [`Self::underline_color`].
+/// refinements add fields, and construction routes through [`Self::new`] /
+/// [`Self::blank`] + the builders, so the hedge is free (matching
+/// [`crate::scene::TextGridNode`]). R1399 filled that hedge with
+/// [`Self::underline_color`]; R1403 filled its own named example —
+/// [`Self::hyperlink`], the OSC-8 hyperlink target.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct TermCell {
@@ -488,6 +560,15 @@ pub struct TermCell {
     /// deserializes to the `None` default).
     #[serde(default)]
     pub underline_color: Option<TermColor>,
+    /// R1403 — this cell's OSC-8 hyperlink, as an index into the owning
+    /// [`GridBuffer`]'s interning table ([`GridBuffer::hyperlink`]). `None`
+    /// (the default a blank cell carries) is a plain cell with no link. The
+    /// URI is stored once in the table, not per cell (R-69.2 interning); the
+    /// [`Hyperlink::id`] on the resolved entry ties non-adjacent runs (a link
+    /// split across a wrap) into one logical link. `#[serde(default)]` so a
+    /// pre-R1403 payload without the field deserializes to `None`.
+    #[serde(default)]
+    pub hyperlink: Option<HyperlinkId>,
     /// Display-width role (R976). [`CellWidth::Narrow`] for a blank cell.
     pub width: CellWidth,
 }
@@ -504,6 +585,7 @@ impl TermCell {
             bg: TermColor::Default,
             attrs: CellAttrs::empty(),
             underline_color: None,
+            hyperlink: None,
             width: CellWidth::Narrow,
         }
     }
@@ -519,6 +601,7 @@ impl TermCell {
             bg,
             attrs: CellAttrs::empty(),
             underline_color: None,
+            hyperlink: None,
             width: CellWidth::Narrow,
         }
     }
@@ -538,6 +621,19 @@ impl TermCell {
     #[must_use]
     pub fn with_underline_color(mut self, color: TermColor) -> Self {
         self.underline_color = Some(color);
+        self
+    }
+
+    /// Point this cell at an OSC-8 hyperlink (R1403, builder form): `id` is
+    /// an index into the owning [`GridBuffer`]'s interning table
+    /// ([`GridBuffer::with_hyperlinks`] / [`GridBuffer::hyperlink`]). The
+    /// producer interns each distinct link once and stamps every cell the
+    /// link covers with the same [`HyperlinkId`] — so a link that wraps
+    /// across rows shares one index, which is what groups its non-adjacent
+    /// runs (R-69.2 / R-69.3.b).
+    #[must_use]
+    pub const fn with_hyperlink(mut self, id: HyperlinkId) -> Self {
+        self.hyperlink = Some(id);
         self
     }
 
@@ -564,6 +660,10 @@ impl TermCell {
             bg: self.bg,
             attrs: self.attrs,
             underline_color: self.underline_color,
+            // A wide link cell's continuation column belongs to the same
+            // OSC-8 link (so the whole glyph is one hover / activation
+            // target), just as it carries the head's colours and underline.
+            hyperlink: self.hyperlink,
             width: CellWidth::Trailer,
         }
     }
@@ -692,10 +792,10 @@ pub enum ScreenKind {
 /// The buffer is assembled by the producer and projected wholesale; it
 /// exposes construction ([`Self::new`] / [`Self::with_row`] /
 /// [`Self::with_cursor`] / [`Self::with_screen`] /
-/// [`Self::with_row_generation`]) and reads ([`Self::cell`] /
-/// [`Self::cursor`] / [`Self::screen`] / [`Self::row_generation`]) but the
-/// *node* that holds it never mutates it per-cell — it swaps the whole
-/// projection. The [`GridCursor`] (R975), the [`ScreenKind`] (R977), and
+/// [`Self::with_row_generation`] / [`Self::with_hyperlinks`]) and reads
+/// ([`Self::cell`] / [`Self::cursor`] / [`Self::screen`] /
+/// [`Self::row_generation`] / [`Self::hyperlink`]) but the *node* that holds
+/// it never mutates it per-cell — it swaps the whole projection. The [`GridCursor`] (R975), the [`ScreenKind`] (R977), and
 /// the per-row damage [generations](Self::row_generation) (R978) ride
 /// along with the cells as part of the same self-describing screen
 /// projection.
@@ -719,6 +819,12 @@ pub struct GridBuffer {
     screen: ScreenKind,
     /// One monotonic damage generation per row (length == `rows`), R978.
     row_generations: Vec<u64>,
+    /// R1403 — the OSC-8 hyperlink interning table: each distinct link stored
+    /// once, referenced per cell by a [`HyperlinkId`] index (the position in
+    /// this Vec). Empty when the projection carries no links. `#[serde(default)]`
+    /// so a pre-R1403 payload deserializes to an empty table.
+    #[serde(default)]
+    hyperlinks: Vec<Hyperlink>,
 }
 
 /// The unvalidated wire shape [`GridBuffer`] deserializes through
@@ -739,6 +845,8 @@ struct GridBufferWire {
     cursor: GridCursor,
     screen: ScreenKind,
     row_generations: Vec<u64>,
+    #[serde(default)]
+    hyperlinks: Vec<Hyperlink>,
 }
 
 impl TryFrom<GridBufferWire> for GridBuffer {
@@ -759,6 +867,22 @@ impl TryFrom<GridBufferWire> for GridBuffer {
                 wire.rows,
             ));
         }
+        // R1403 — every cell's hyperlink index must address the table, so a
+        // resolved lookup ([`GridBuffer::hyperlink`]) never dangles: the same
+        // fail-fast-on-a-malformed-payload discipline as the cell-count guard
+        // (the public builders always uphold it — a cell is only stamped with
+        // an index the producer interned).
+        let table_len = wire.hyperlinks.len();
+        if let Some((i, id)) = wire.cells.iter().enumerate().find_map(|(i, c)| {
+            c.hyperlink
+                .filter(|id| usize::try_from(id.0).unwrap_or(usize::MAX) >= table_len)
+                .map(|id| (i, id))
+        }) {
+            return Err(format!(
+                "GridBuffer cell {i} hyperlink index {} is out of range for a {table_len}-entry table",
+                id.0,
+            ));
+        }
         Ok(Self {
             cols: wire.cols,
             rows: wire.rows,
@@ -766,6 +890,7 @@ impl TryFrom<GridBufferWire> for GridBuffer {
             cursor: wire.cursor,
             screen: wire.screen,
             row_generations: wire.row_generations,
+            hyperlinks: wire.hyperlinks,
         })
     }
 }
@@ -795,6 +920,7 @@ impl GridBuffer {
             cursor: GridCursor::default(),
             screen: ScreenKind::Main,
             row_generations: vec![0; usize::from(rows)],
+            hyperlinks: Vec::new(),
         }
     }
 
@@ -865,6 +991,29 @@ impl GridBuffer {
         self
     }
 
+    /// Set the OSC-8 hyperlink interning table (R1403, builder form). The
+    /// producer interns each distinct link once; a cell references an entry
+    /// by its position via [`TermCell::with_hyperlink`]
+    /// ([`HyperlinkId(i)`](HyperlinkId) → `table[i]`). The whole table is
+    /// assembled with the projection and handed over wholesale, exactly like
+    /// the cells (R969 producer-owned state).
+    #[must_use]
+    pub fn with_hyperlinks(mut self, table: impl Into<Vec<Hyperlink>>) -> Self {
+        self.hyperlinks = table.into();
+        self
+    }
+
+    /// Resolve a [`HyperlinkId`] to its [`Hyperlink`] in this buffer's
+    /// interning table (R1403), or `None` if the index is out of range. This
+    /// is the OSC-8 analogue of [`Palette::indexed`]: a cell stores the index,
+    /// resolution happens at paint / introspection time. The deserialize
+    /// validator guarantees every *cell's* index is in range, so resolving a
+    /// cell's own [`TermCell::hyperlink`] never returns `None`.
+    #[must_use]
+    pub fn hyperlink(&self, id: HyperlinkId) -> Option<&Hyperlink> {
+        self.hyperlinks.get(usize::try_from(id.0).ok()?)
+    }
+
     /// The damage generation of `row`, or `None` if the row is out of
     /// bounds (R978). The monotonic stamp the producer last gave the row; a
     /// client re-reads rows whose generation exceeds the highest it has
@@ -903,8 +1052,8 @@ impl GridBuffer {
 #[cfg(test)]
 mod tests {
     use super::{
-        CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette,
-        ScreenKind, TermCell, TermColor, UnderlineStyle,
+        CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Hyperlink,
+        HyperlinkId, Palette, ScreenKind, TermCell, TermColor, UnderlineStyle,
     };
     use crate::style::Color;
 
@@ -1082,6 +1231,91 @@ mod tests {
         // The trailer of a wide head carries the same underline colour so a
         // coloured undercurl paints across both columns.
         assert_eq!(cell.wide().trailer().underline_color, Some(red));
+    }
+
+    #[test]
+    fn hyperlink_default_is_none_and_builder_stamps_the_index() {
+        // R1403 §5.41 — a blank / plain cell carries no link; `with_hyperlink`
+        // stamps the interning index, and a wide head's trailer inherits it
+        // (the whole glyph is one link target).
+        assert_eq!(TermCell::blank().hyperlink, None);
+        assert_eq!(
+            TermCell::new("x", TermColor::Default, TermColor::Default).hyperlink,
+            None
+        );
+        let cell = TermCell::new("h", TermColor::Default, TermColor::Default)
+            .with_hyperlink(HyperlinkId(2));
+        assert_eq!(cell.hyperlink, Some(HyperlinkId(2)));
+        // A link does not disturb the other axes.
+        assert!(cell.attrs.is_empty() && cell.underline_color.is_none());
+        // A wide head's trailer inherits the link (the whole glyph is one
+        // target).
+        assert_eq!(cell.wide().trailer().hyperlink, Some(HyperlinkId(2)));
+    }
+
+    #[test]
+    fn grid_buffer_resolves_cell_hyperlink_and_groups_by_id() {
+        // R1403 §5.41 — the buffer interns each distinct link once; cells
+        // reference entries by index, resolved through the table (the OSC-8
+        // analogue of Palette::indexed). Two NON-adjacent cells that share an
+        // index resolve to the same id — the grouping that a pure
+        // position-based highlight cannot express (R-69.3.b).
+        let table = vec![
+            Hyperlink::new("https://example.com/spec").with_id("u1"),
+            Hyperlink::new("file:///home/user/main.rs"),
+        ];
+        let link = |i: u32| {
+            TermCell::new("L", TermColor::Default, TermColor::Default)
+                .with_hyperlink(HyperlinkId(i))
+        };
+        let buf = GridBuffer::new(3, 2)
+            .with_hyperlinks(table)
+            // (0,0) and (2,1) are the same wrapped link (index 0); (0,1) is the
+            // anonymous file link (index 1); the rest are plain cells.
+            .with_row(0, [link(0), TermCell::blank(), TermCell::blank()])
+            .with_row(1, [link(1), TermCell::blank(), link(0)]);
+
+        // Resolve the index a cell stores through the buffer's table.
+        let a = buf.cell(0, 0).unwrap().hyperlink.unwrap();
+        let b = buf.cell(2, 1).unwrap().hyperlink.unwrap();
+        let c = buf.cell(0, 1).unwrap().hyperlink.unwrap();
+        assert_eq!(buf.hyperlink(a).unwrap().uri, "https://example.com/spec");
+        assert_eq!(buf.hyperlink(a).unwrap().id.as_deref(), Some("u1"));
+        // The two non-adjacent linked cells are ONE logical link (same id).
+        assert_eq!(a, b);
+        assert_eq!(buf.hyperlink(a), buf.hyperlink(b));
+        // The anonymous file link is a distinct entry with no id.
+        assert_ne!(a, c);
+        assert_eq!(buf.hyperlink(c).unwrap().uri, "file:///home/user/main.rs");
+        assert_eq!(buf.hyperlink(c).unwrap().id, None);
+        // A blank cell is unlinked, and an out-of-range index resolves to None.
+        assert_eq!(buf.cell(1, 0).unwrap().hyperlink, None);
+        assert_eq!(buf.hyperlink(HyperlinkId(9)), None);
+    }
+
+    #[test]
+    fn grid_buffer_deserialize_rejects_out_of_range_hyperlink_index() {
+        // R1403 — the validating try_from guards the hyperlink invariant the
+        // builders uphold (a cell only references an interned entry): a cell
+        // index beyond the table would let `hyperlink()` dangle at read time.
+        let good = GridBuffer::new(2, 1)
+            .with_hyperlinks(vec![Hyperlink::new("https://ok")])
+            .with_row(
+                0,
+                [
+                    TermCell::new("a", TermColor::Default, TermColor::Default)
+                        .with_hyperlink(HyperlinkId(0)),
+                    TermCell::blank(),
+                ],
+            );
+        // Round-trips while in range.
+        let json = serde_json::to_string(&good).unwrap();
+        assert_eq!(serde_json::from_str::<GridBuffer>(&json).unwrap(), good);
+        // Point the cell past the single-entry table -> rejected.
+        let mut bad = serde_json::to_value(&good).unwrap();
+        bad["cells"][0]["hyperlink"] = serde_json::json!(5);
+        let err = serde_json::from_value::<GridBuffer>(bad).unwrap_err();
+        assert!(err.to_string().contains("hyperlink index"), "{err}");
     }
 
     #[test]
@@ -1287,8 +1521,11 @@ mod tests {
         )
         // R1399 — an explicit underline colour (SGR 58) round-trips too.
         .with_underline_color(TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)))
+        // R1403 — the wide head is also an OSC-8 link (index 0 in the table).
+        .with_hyperlink(HyperlinkId(0))
         .wide();
         let buf = GridBuffer::new(3, 2)
+            .with_hyperlinks(vec![Hyperlink::new("https://example.com").with_id("h1")])
             .with_row(
                 0,
                 [
@@ -1327,6 +1564,14 @@ mod tests {
             back.cell(1, 0).unwrap().underline_color,
             Some(TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00)))
         );
+        // R1403 — the hyperlink index survives, resolves through the restored
+        // table, and the trailer shares the head's link.
+        assert_eq!(back.cell(0, 0).unwrap().hyperlink, Some(HyperlinkId(0)));
+        assert_eq!(back.cell(1, 0).unwrap().hyperlink, Some(HyperlinkId(0)));
+        let link = back.hyperlink(HyperlinkId(0)).unwrap();
+        assert_eq!(link.uri, "https://example.com");
+        assert_eq!(link.id.as_deref(), Some("h1"));
+        assert_eq!(back.cell(2, 0).unwrap().hyperlink, None);
         assert_eq!(back.cursor(), GridCursor::new(1, 0, CursorShape::Bar, true));
         assert_eq!(back.screen(), ScreenKind::Alternate);
         assert_eq!(back.row_generation(1), Some(42));

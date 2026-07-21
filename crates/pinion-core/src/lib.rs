@@ -111,8 +111,8 @@ pub use style::{
 };
 pub use syntax::{SyntaxPalette, highlight_code};
 pub use term_grid::{
-    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, ScreenKind,
-    TermCell, TermColor, UnderlineStyle,
+    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Hyperlink, HyperlinkId,
+    Palette, ScreenKind, TermCell, TermColor, UnderlineStyle,
 };
 pub use theme::{
     ColorRole, SystemColorScheme, THEME_FADE_SPRING, Theme, ThemeMode, ThemeProvider,

@@ -61,6 +61,21 @@
 //! incremental-update model that completes the S5 data model. The other
 //! grids leave every row at generation 0.
 //!
+//! R1399 adds a ninth grid, **`htg_underline`**, carrying the ECMA-48 SGR
+//! 4:x [`UnderlineStyle`] axis (none / single / double / curly / dotted /
+//! dashed) plus an explicit SGR-58 underline colour — the editor-diagnostic
+//! forcing case (a red-curly error vs a blue-dotted spellcheck).
+//!
+//! R1403 adds a tenth grid, **`htg_hyperlink`**, carrying OSC-8 hyperlink
+//! targets ([`Hyperlink`]: a uri + optional grouping id, interned per
+//! [`GridBuffer`] and referenced per cell by a [`HyperlinkId`]). A wrapped
+//! doc-URL link is split across two rows sharing one id — proving two
+//! non-adjacent runs are one logical link — beside an anonymous `file://`
+//! link. `scene/snapshot` reports each run's resolved `hyperlink` ({uri, id}
+//! or null); `tools/demos/r1403_textgrid_hyperlink.py` asserts the
+//! round-trip and the same-id grouping. The click-to-open interaction is the
+//! next slice (a hex-dump-style oracle round).
+//!
 //! **Glyph paint** (R991 §5.41 §2 #6) renders these grids on the Vello
 //! backend: each cell's palette-resolved background fills its rect and the
 //! grapheme cluster paints in the resolved foreground, with `reverse`
@@ -107,8 +122,8 @@ use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{
-    CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, ScreenKind, TermCell,
-    TermColor, UnderlineStyle, WidgetCore,
+    CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Hyperlink, HyperlinkId,
+    Scene, ScreenKind, TermCell, TermColor, UnderlineStyle, WidgetCore,
 };
 use pinion_shell::{WidgetView, vello_renderer_impl};
 
@@ -117,7 +132,7 @@ vello_renderer_impl!(HelloTextGridRenderer, HelloTextGridRendererError);
 
 /// Window size — large enough to hold both grids with a margin.
 const WIN_W: u32 = 680;
-const WIN_H: u32 = 840;
+const WIN_H: u32 = 900;
 /// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
 /// Paint-root + [`StubExternal`] anchor tag (the `V::tag()` the composite
@@ -452,6 +467,51 @@ fn underline_buffer() -> GridBuffer {
         )
 }
 
+const HYPERLINK_TAG: &str = "htg_hyperlink";
+/// Below the underline strip (which ends at y=832).
+const HYPERLINK_POS: (u32, u32) = (16, 840);
+/// `10 × 3` cells at the `8×16` baseline metric → `80 × 48` px.
+const HYPERLINK_COLS: u16 = 10;
+const HYPERLINK_ROWS: u16 = 3;
+const HYPERLINK_SIZE: (u32, u32) = (80, 48);
+
+/// Build the R1403 OSC-8 hyperlink projection — the forcing case is a
+/// compiler emitting clickable links a real terminal turns into
+/// underline + hover + click-to-open. A **wrapped** doc-URL link
+/// (`rust-lang.org/e0499`) is split across rows 0–1, both segments carrying
+/// the SAME uri and OSC-8 id `"e1"` so they are ONE logical link — the case
+/// pure position-based highlighting cannot express. Row 2 is an
+/// **anonymous** `file://` link (no id), grouped only within its own run.
+///
+/// Each linked cell is drawn blue + single-underlined (the conventional
+/// link affordance, reusing the R1399 underline axis — the framework does
+/// not force a look, the producer chooses one). The interned table stores
+/// each URI once; cells reference it by [`HyperlinkId`] index (R-69.2).
+fn hyperlink_buffer() -> GridBuffer {
+    // A link-styled cell: blue foreground + single underline, pointing at the
+    // interning-table entry `id`.
+    let link = |c: char, id: HyperlinkId| {
+        TermCell::new(c.to_string(), TermColor::Indexed(12), TermColor::Default)
+            .with_attrs(CellAttrs::empty().with_underline(true))
+            .with_hyperlink(id)
+    };
+    // A whole run of cells pointing at the same link.
+    let run = |s: &'static str, id: HyperlinkId| s.chars().map(move |c| link(c, id));
+    let doc = HyperlinkId(0); // rust-lang.org/e0499 (wrapped, id "e1")
+    let file = HyperlinkId(1); // file:///src/main.rs (anonymous)
+    GridBuffer::new(HYPERLINK_COLS, HYPERLINK_ROWS)
+        .with_hyperlinks(vec![
+            Hyperlink::new("https://doc.rust-lang.org/e0499").with_id("e1"),
+            Hyperlink::new("file:///src/main.rs"),
+        ])
+        // Rows 0–1: ONE link wrapped across the row boundary — row 1 reuses
+        // `doc` (the same id "e1"), which is what groups the two segments.
+        .with_row(0, run("rust-lang.", doc))
+        .with_row(1, run("org/e0499", doc))
+        // Row 2: an anonymous file:// link (a compiler diagnostic path).
+        .with_row(2, run("main.rs:12", file))
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -532,6 +592,12 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         UNDERLINE_POS,
         UNDERLINE_SIZE,
     );
+    let hyperlink = celled_grid(
+        HYPERLINK_TAG,
+        hyperlink_buffer(),
+        HYPERLINK_POS,
+        HYPERLINK_SIZE,
+    );
 
     Scene::Container(
         ContainerNode::new(vec![
@@ -556,6 +622,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             alt,
             damage,
             underline,
+            hyperlink,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -727,6 +794,7 @@ mod tests {
         assert!(scene.contains_tag(ALT_TAG));
         assert!(scene.contains_tag(DAMAGE_TAG));
         assert!(scene.contains_tag(UNDERLINE_TAG));
+        assert!(scene.contains_tag(HYPERLINK_TAG));
     }
 
     #[test]
@@ -863,6 +931,42 @@ mod tests {
         assert_eq!(
             b.cell(2, 1).unwrap().underline_color,
             Some(TermColor::Indexed(4))
+        );
+    }
+
+    #[test]
+    fn hyperlink_buffer_wraps_one_link_across_rows_and_groups_by_id() {
+        // R1403 §5.41 — the wrapped doc link (rows 0–1) resolves to one uri +
+        // id across the row boundary; the file link (row 2) is anonymous.
+        let b = hyperlink_buffer();
+        assert_eq!((b.cols(), b.rows()), (HYPERLINK_COLS, HYPERLINK_ROWS));
+
+        let link_at = |col, row| {
+            b.cell(col, row)
+                .unwrap()
+                .hyperlink
+                .and_then(|id| b.hyperlink(id))
+        };
+        // Row 0 and row 1 both point at the SAME wrapped link.
+        let top = link_at(0, 0).expect("row0 is linked");
+        let bottom = link_at(0, 1).expect("row1 is linked");
+        assert_eq!(top.uri, "https://doc.rust-lang.org/e0499");
+        assert_eq!(top.id.as_deref(), Some("e1"));
+        assert_eq!(top, bottom, "the wrapped segments are one logical link");
+        // The link affordance: linked cells are blue + single-underlined.
+        let head = b.cell(0, 0).unwrap();
+        assert_eq!(head.fg, TermColor::Indexed(12));
+        assert_eq!(head.attrs.underline, UnderlineStyle::Single);
+        // Row 2 is a distinct, anonymous file:// link.
+        let file = link_at(0, 2).expect("row2 is linked");
+        assert_eq!(file.uri, "file:///src/main.rs");
+        assert_eq!(file.id, None);
+        assert_ne!(top, file);
+        // The interning table holds each distinct link exactly once.
+        assert_ne!(
+            b.cell(0, 0).unwrap().hyperlink,
+            b.cell(0, 2).unwrap().hyperlink,
+            "the two links have distinct table indices",
         );
     }
 
