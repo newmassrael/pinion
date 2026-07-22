@@ -86,7 +86,7 @@ use pinion_core::external::{
     CaptureNormalize, DOCK_PANEL_DRAG_KIND, DragPayload, DragUpdate, DropPoint, IntrospectValue,
     OUTER_DOCK_MARGIN, OUTER_DOCK_ZONE_TAG,
 };
-use pinion_core::input::PointerWireEvent;
+use pinion_core::input::{PointerButton, PointerEdge, PointerWireEvent, RawPointerButton};
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 use pinion_core::widgets::scroll::ScrollState;
 
@@ -1564,6 +1564,53 @@ impl InputRouter {
         }
     }
 
+    /// R1416 §5.35 §5.15 — route a raw mouse-button edge to a widget that owns
+    /// the multi-button pointer stream. Resolves the target for `id` — its
+    /// captured target if a capture lock is held, else its current hover target
+    /// — and, if that widget opted in via
+    /// [`External::wants_raw_pointer_buttons`](pinion_core::external::External::wants_raw_pointer_buttons),
+    /// delivers the [`RawPointerButton`] and returns `true` (so the shell
+    /// suppresses the GUI default for it). Returns `false` when the target is
+    /// not a raw sink, so the shell runs the standard per-button arc (left =
+    /// focus, middle = paste, right = context menu) unchanged — the
+    /// non-capture invariant.
+    ///
+    /// Stateless w.r.t. the left-button capture machinery: a raw sink resolves
+    /// each edge through the hover target it already tracks (the cursor is
+    /// seeded before every edge — a native `CursorMoved` precedes `MouseInput`,
+    /// and the RPC `scene/pointer_button` drain seeds it first), correlating
+    /// POSITION via [`External::pointer_move`](pinion_core::External::pointer_move)
+    /// (which it opts into with `wants_hover_move` / `wants_pointer_capture`).
+    /// The captured-target
+    /// fallback keeps a raw sink that ALSO holds a left-drag capture receiving
+    /// its middle / right edges while the cursor strays off its rect.
+    pub fn deliver_raw_pointer_button(
+        &mut self,
+        id: PointerId,
+        button: PointerButton,
+        edge: PointerEdge,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> bool {
+        let Some(target) = self
+            .captured_targets
+            .get(&id)
+            .or_else(|| self.hover_targets.get(&id))
+            .cloned()
+        else {
+            return false;
+        };
+        dispatch_raw_button(
+            state_scene,
+            &target,
+            RawPointerButton {
+                button,
+                edge,
+                modifiers,
+            },
+        )
+    }
+
     /// (R51.186 §5.45 R55.C.2) Mouse wheel input dispatch.
     /// Zero-modifier wrapper around
     /// [`wheel_with_modifiers`](Self::wheel_with_modifiers) (native
@@ -2924,6 +2971,28 @@ fn widget_cancels_on_release_off(state_scene: &Scene, target_tag: &str) -> bool 
     })
 }
 
+/// R1416 §5.35 §5.15 — deliver a raw pointer-button edge to the external at
+/// `target_tag` **iff** it owns the raw multi-button stream
+/// ([`External::wants_raw_pointer_buttons`](pinion_core::external::External::wants_raw_pointer_buttons)).
+/// Resolves the `ExternalNode` from the primary half of a (possibly composite)
+/// paint tag — like [`dispatch_send`] — and calls
+/// [`External::raw_pointer_button`](pinion_core::external::External::raw_pointer_button)
+/// on a single scene walk that both TESTS the opt-in and DELIVERS. Returns
+/// `true` when the raw sink consumed the edge (so the caller suppresses the GUI
+/// default for it); `false` when the tag resolves to no external, or to one that
+/// did not opt in — the standard GUI button semantics then run.
+fn dispatch_raw_button(state_scene: &mut Scene, target_tag: &str, event: RawPointerButton) -> bool {
+    let (primary, _) = split_subindex(target_tag);
+    let Some(external) = find_external_by_tag(state_scene, primary) else {
+        return false;
+    };
+    if !external.handle.wants_raw_pointer_buttons() {
+        return false;
+    }
+    external.handle.raw_pointer_button(event);
+    true
+}
+
 /// Saturating cast from a winit cursor coordinate (`f64`) to the
 /// `u32` accepted by [`Scene::hit_test`]. Negative values clamp to
 /// `0` (cursor can never hit at sub-zero coords); fractional
@@ -3076,6 +3145,178 @@ mod tests {
 
     fn read(captures: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
         captures.lock().expect("mutex poisoned").clone()
+    }
+
+    /// R1416 — raw multi-button pointer-sink fixture. Opts into
+    /// [`External::wants_raw_pointer_buttons`] (and, like a realistic pane,
+    /// [`External::wants_pointer_capture`] for stray-motion), and records every
+    /// [`External::raw_pointer_button`] edge as a compact
+    /// `"<button>:<edge>:<mods>"` string so a test can assert the router
+    /// delivered the right button, edge, AND modifiers. Does NOT implement the
+    /// `send` introspect wire — a raw sink trades the legacy `PointerDown` /
+    /// `PointerUp` send stream for the raw one.
+    struct RawButtonExternal {
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RawButtonExternal {
+        fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    log: Arc::clone(&log),
+                },
+                log,
+            )
+        }
+    }
+
+    impl std::fmt::Debug for RawButtonExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("RawButtonExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for RawButtonExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn wants_pointer_capture(&self) -> bool {
+            true
+        }
+        fn wants_hover_move(&self) -> bool {
+            true
+        }
+        fn wants_raw_pointer_buttons(&self) -> bool {
+            true
+        }
+        fn raw_pointer_button(&mut self, event: RawPointerButton) {
+            self.log.lock().expect("mutex poisoned").push(format!(
+                "{}:{}:{}",
+                event.button.as_wire_name(),
+                event.edge.as_wire_name(),
+                event.modifiers.as_wire_token(),
+            ));
+        }
+    }
+
+    /// A raw sink tagged `main_slider` so it reuses [`paint_with_slider`].
+    fn state_with_raw_sink() -> (Scene, Arc<Mutex<Vec<String>>>) {
+        let (sink, log) = RawButtonExternal::new();
+        let scene = Scene::External(ExternalNode::new(Box::new(sink)).with_tag("main_slider"));
+        (scene, log)
+    }
+
+    #[test]
+    fn r1416_raw_sink_receives_all_three_buttons_both_edges_with_modifiers() {
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        // Cursor over the pane so it is the hover target the raw edges resolve to.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::empty()
+        };
+        // Every left / middle / right press + release routes to the raw sink,
+        // carrying the button, the edge, AND the modifiers on BOTH edges (the
+        // press-edge-drops-modifiers gap the legacy send wire had).
+        for (button, edge, mods) in [
+            (PointerButton::Left, PointerEdge::Down, Modifiers::empty()),
+            (PointerButton::Left, PointerEdge::Up, Modifiers::empty()),
+            (PointerButton::Middle, PointerEdge::Down, shift),
+            (PointerButton::Middle, PointerEdge::Up, shift),
+            (PointerButton::Right, PointerEdge::Down, Modifiers::empty()),
+            (PointerButton::Right, PointerEdge::Up, Modifiers::empty()),
+        ] {
+            assert!(
+                router.deliver_raw_pointer_button(PointerId::MOUSE, button, edge, mods, &mut state),
+                "raw sink must consume {button:?} {edge:?}"
+            );
+        }
+        assert_eq!(
+            read(&log),
+            vec![
+                "left:down:".to_string(),
+                "left:up:".into(),
+                "middle:down:s".into(),
+                "middle:up:s".into(),
+                "right:down:".into(),
+                "right:up:".into(),
+            ],
+        );
+    }
+
+    #[test]
+    fn r1416_non_raw_widget_is_not_a_raw_sink() {
+        // A plain button (does NOT opt into the raw stream): the router reports
+        // "not consumed" so the shell falls through to the GUI arc, and no raw
+        // edge is delivered.
+        let mut router = InputRouter::new();
+        let (mut state, _captures) = state_with_button();
+        let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        assert!(!router.deliver_raw_pointer_button(
+            PointerId::MOUSE,
+            PointerButton::Right,
+            PointerEdge::Down,
+            Modifiers::empty(),
+            &mut state,
+        ));
+    }
+
+    #[test]
+    fn r1416_no_target_under_cursor_returns_false() {
+        // Cursor over the untagged background — no hover / capture target — so a
+        // raw button edge resolves to nothing and is not consumed.
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 5.0, 5.0, &mut state); // off the pane
+        assert!(!router.deliver_raw_pointer_button(
+            PointerId::MOUSE,
+            PointerButton::Left,
+            PointerEdge::Down,
+            Modifiers::empty(),
+            &mut state,
+        ));
+        assert!(read(&log).is_empty());
+    }
+
+    #[test]
+    fn r1416_captured_target_receives_raw_edge_after_cursor_strays() {
+        // A raw sink that ALSO holds a capture lock (it opts into
+        // wants_pointer_capture) keeps receiving raw button edges after the
+        // cursor strays off its rect — the captured-target fallback, so a
+        // press-drag-release beyond the pane still pairs on the same widget.
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state); // engages capture
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            Some("main_slider")
+        );
+        router.cursor_moved(PointerId::MOUSE, 300.0, 300.0, &mut state); // stray off
+        assert!(router.deliver_raw_pointer_button(
+            PointerId::MOUSE,
+            PointerButton::Left,
+            PointerEdge::Up,
+            Modifiers::empty(),
+            &mut state,
+        ));
+        assert_eq!(read(&log), vec!["left:up:".to_string()]);
     }
 
     /// Build a paint scene with one tagged button container of fixed

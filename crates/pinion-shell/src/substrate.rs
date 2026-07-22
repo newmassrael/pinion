@@ -1926,6 +1926,74 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
+    /// R1416 §5.35 §5.15 §2 #2 §2 #6 — the ONE dispatch seam for a mouse-button
+    /// EDGE (left / middle / right × press / release), shared by the native
+    /// winit `MouseInput` path ([`AppShell::handle_mouse_button`](crate::AppShell))
+    /// and the RPC `scene/pointer_button` drain per
+    /// [[r47-class-incident-prevention]] (native and RPC MUST reach one
+    /// dispatch path so their behaviour cannot diverge).
+    ///
+    /// A widget that owns the RAW multi-button pointer stream — a terminal pane
+    /// forwarding xterm mouse reports, a game viewport (opts in via
+    /// [`External::wants_raw_pointer_buttons`](pinion_core::External::wants_raw_pointer_buttons))
+    /// — is offered the edge FIRST and receives it verbatim (button +
+    /// press/release + held modifiers), with the GUI default suppressed. A
+    /// `true` (consumed) bumps the §5.34 revision + requests a redraw (the
+    /// `External` mutated its own state — no [`DispatchTail`])
+    /// and returns.
+    ///
+    /// EVERY other widget keeps the standard per-button semantics unchanged —
+    /// the non-capture invariant:
+    ///
+    ///   * left press / release → the pointer down / up arc (focus, select,
+    ///     capture-lock, drag-and-drop, text-select),
+    ///     [`Self::mouse_pressed_for_window`] / [`Self::mouse_released_for_window`].
+    ///   * middle press / release → the R881 middle gesture pair (drag-to-pan,
+    ///     paste-on-release-in-place), [`Self::middle_pressed_for_window`] /
+    ///     [`Self::middle_released_for_window`].
+    ///   * right press → the R772 own-renderer context-menu open,
+    ///     [`Self::secondary_click_for_window`]. Right release has no GUI arm:
+    ///     the context menu is a press-edge one-shot (winit never carried a
+    ///     right-release action), so a non-raw right release is a no-op — the
+    ///     pre-R1416 `_ => {}` behaviour, now a reachable arm but unchanged.
+    pub fn pointer_button_for_window(
+        &mut self,
+        window_id: &str,
+        button: pinion_core::PointerButton,
+        edge: pinion_core::PointerEdge,
+    ) {
+        use pinion_core::{PointerButton, PointerEdge};
+        if self.core.raw_pointer_button_for_window(
+            window_id,
+            PointerId::MOUSE,
+            button,
+            edge,
+            self.modifiers,
+        ) {
+            self.revision.bump();
+            self.request_redraw_for_window(window_id);
+            return;
+        }
+        match (button, edge) {
+            (PointerButton::Left, PointerEdge::Down) => {
+                self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
+            }
+            (PointerButton::Left, PointerEdge::Up) => {
+                self.mouse_released_for_window(window_id, PointerId::MOUSE);
+            }
+            (PointerButton::Middle, PointerEdge::Down) => {
+                self.middle_pressed_for_window(window_id, PointerId::MOUSE);
+            }
+            (PointerButton::Middle, PointerEdge::Up) => {
+                self.middle_released_for_window(window_id, PointerId::MOUSE);
+            }
+            (PointerButton::Right, PointerEdge::Down) => {
+                self.secondary_click_for_window(window_id, PointerId::MOUSE);
+            }
+            (PointerButton::Right, PointerEdge::Up) => {}
+        }
+    }
+
     /// R51.78 §5.39 — Tab / Shift+Tab dispatch decoupled from winit.
     ///
     /// `AppShell::handle_key_press` (winit-side) maps
@@ -2682,8 +2750,22 @@ impl<V: WidgetView> ShellCore<V> {
                         None => false,
                     };
                     if !consumed {
-                        self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
-                        self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                        // R1416 — route through the unified button seam (not
+                        // `mouse_pressed_for_window` directly) so a `scene/click`
+                        // on a raw-pointer sink reaches the raw stream exactly as
+                        // the native left-click does. For every non-raw widget
+                        // the seam calls the same `mouse_pressed`/`mouse_released`
+                        // pair, byte-identical to before.
+                        self.pointer_button_for_window(
+                            window_id,
+                            pinion_core::PointerButton::Left,
+                            pinion_core::PointerEdge::Down,
+                        );
+                        self.pointer_button_for_window(
+                            window_id,
+                            pinion_core::PointerButton::Left,
+                            pinion_core::PointerEdge::Up,
+                        );
                     }
                 }
                 // R887 §5.49 §5.53 — `scene/click {button: "right"}`
@@ -2694,7 +2776,29 @@ impl<V: WidgetView> ShellCore<V> {
                 // release half).
                 DeferredInput::SecondaryClick { x, y } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
-                    self.secondary_click_for_window(window_id, PointerId::MOUSE);
+                    // R1416 — through the unified seam: a raw sink gets the raw
+                    // right-press edge, every other widget gets the identical
+                    // `secondary_click_for_window` context-menu open (press-edge
+                    // one-shot, no release half).
+                    self.pointer_button_for_window(
+                        window_id,
+                        pinion_core::PointerButton::Right,
+                        pinion_core::PointerEdge::Down,
+                    );
+                }
+                // R1416 §5.35 §5.15 §2 #2 — `scene/pointer_button`: one raw
+                // button EDGE (left / middle / right × down / up) at (x, y).
+                // Seed the cursor first (so a raw sink's hover-tracked position
+                // is fresh before the edge — a native `CursorMoved` precedes
+                // `MouseInput` the same way), then route through the unified
+                // `pointer_button_for_window` seam the native winit path also
+                // reaches, so an RPC-injected edge is indistinguishable from a
+                // physical one (§2 #6). Held modifiers ride the R763 out-of-band
+                // `scene/modifiers` cache (`self.modifiers`), read inside the
+                // seam, exactly like the wheel / click paths.
+                DeferredInput::PointerButton { x, y, button, edge } => {
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.pointer_button_for_window(window_id, button, edge);
                 }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate
@@ -2705,10 +2809,22 @@ impl<V: WidgetView> ShellCore<V> {
                 // cursor-frozen window.
                 DeferredInput::DoubleClick { x, y } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
-                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
-                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
-                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
-                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                    // R1416 — both press/release pairs through the unified seam
+                    // (a raw sink sees two down/up cycles; every non-raw widget
+                    // sees the identical `mouse_pressed`/`mouse_released` cadence
+                    // the router's double-click detector counts).
+                    for _ in 0..2 {
+                        self.pointer_button_for_window(
+                            window_id,
+                            pinion_core::PointerButton::Left,
+                            pinion_core::PointerEdge::Down,
+                        );
+                        self.pointer_button_for_window(
+                            window_id,
+                            pinion_core::PointerButton::Left,
+                            pinion_core::PointerEdge::Up,
+                        );
+                    }
                 }
                 // R695 §5.49 §5.35 — `scene/hover` mirror: a bare cursor
                 // move with no press. `cursor_moved_for_window` re-resolves
@@ -3003,12 +3119,19 @@ impl<V: WidgetView> ShellCore<V> {
         button: DragButton,
         phase: DragPhase,
     ) {
+        // R1416 — the drag button maps to the unified button seam so a raw
+        // sink receives the press / release edges (its `pointer_move` marches
+        // supply the positions) while a non-raw widget keeps the identical
+        // left-capture / middle-gesture arc `mouse_pressed`/`middle_pressed`
+        // ran before. `scene/drag` has no `right` button, so only left /
+        // middle reach here.
+        let pbutton = match button {
+            DragButton::Left => pinion_core::PointerButton::Left,
+            DragButton::Middle => pinion_core::PointerButton::Middle,
+        };
         self.cursor_moved_for_window(window_id, PointerId::MOUSE, from.0, from.1);
         if phase.presses() {
-            match button {
-                DragButton::Left => self.mouse_pressed_for_window(window_id, PointerId::MOUSE),
-                DragButton::Middle => self.middle_pressed_for_window(window_id, PointerId::MOUSE),
-            }
+            self.pointer_button_for_window(window_id, pbutton, pinion_core::PointerEdge::Down);
         }
         if steps > 0 {
             for step in 1..=steps {
@@ -3019,10 +3142,7 @@ impl<V: WidgetView> ShellCore<V> {
             }
         }
         if phase.releases() {
-            match button {
-                DragButton::Left => self.mouse_released_for_window(window_id, PointerId::MOUSE),
-                DragButton::Middle => self.middle_released_for_window(window_id, PointerId::MOUSE),
-            }
+            self.pointer_button_for_window(window_id, pbutton, pinion_core::PointerEdge::Up);
         }
     }
 

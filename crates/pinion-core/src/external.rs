@@ -30,7 +30,7 @@ use std::borrow::Cow;
 use std::rc::Rc;
 
 use crate::Event;
-use crate::input::Modifiers;
+use crate::input::{Modifiers, RawPointerButton};
 use crate::intent::Intent;
 
 /// Render backends an `External` may declare support for (§5.15 item 1).
@@ -1159,6 +1159,52 @@ pub trait External: core::fmt::Debug {
     fn wants_hover_move(&self) -> bool {
         false
     }
+
+    /// R1416 §5.35 §5.15 — opt into the **raw multi-button pointer stream**:
+    /// receive [`raw_pointer_button`](Self::raw_pointer_button) for EVERY mouse
+    /// button (left / middle / right) on BOTH the press and release edge, each
+    /// carrying the held modifiers, with the button identified.
+    ///
+    /// The default pipeline routes only the LEFT button to a widget (as the
+    /// `send`-wire `PointerDown` / `PointerUp`), and its right / middle presses
+    /// drive GUI *default actions* instead — a right press opens the
+    /// own-renderer context menu, a middle press-release pastes the PRIMARY
+    /// selection, a middle drag pans. A widget that IS the pointer authority
+    /// for its region — a terminal pane forwarding xterm mouse reports, a game
+    /// viewport, a remote-desktop surface — needs the raw edges, not those
+    /// GUI interpretations. Returning `true` makes the router deliver each
+    /// button edge to this widget through
+    /// [`raw_pointer_button`](Self::raw_pointer_button) and **suppress the GUI
+    /// default** for it (no context menu, no paste, no pan, no legacy
+    /// `PointerDown` / `PointerUp` send wire).
+    ///
+    /// The suppression is scoped to THIS widget: every other widget keeps the
+    /// standard button semantics (left = focus / select, middle = PRIMARY
+    /// paste, right = context menu). Only the widget that owns the raw stream
+    /// trades them for the raw edges — the W3C model, where a listener that
+    /// handles `mousedown` / `contextmenu` opts out of the browser's default.
+    ///
+    /// Independent of, and usually paired with,
+    /// [`wants_hover_move`](Self::wants_hover_move) (or
+    /// [`wants_pointer_capture`](Self::wants_pointer_capture)): those forward
+    /// the cursor POSITION a raw sink correlates each button edge against;
+    /// this forwards the button EDGES. A raw sink wants both.
+    fn wants_raw_pointer_buttons(&self) -> bool {
+        false
+    }
+
+    /// R1416 §5.35 §5.15 — deliver one raw mouse-button edge to a widget that
+    /// opted into the multi-button stream via
+    /// [`wants_raw_pointer_buttons`](Self::wants_raw_pointer_buttons).
+    ///
+    /// Called for each left / middle / right press and release while this
+    /// widget is the pointer target (the hover target under the cursor, or its
+    /// captured target while it holds capture). The [`RawPointerButton`] carries
+    /// the button, the press/release edge, and the modifiers held at that edge;
+    /// the cursor POSITION arrives separately via
+    /// [`pointer_move`](Self::pointer_move) (see the type docs). Default no-op,
+    /// so a widget that does not opt in never sees this.
+    fn raw_pointer_button(&mut self, _event: RawPointerButton) {}
 
     /// R741 §5.35 — release-position policy for a captured widget.
     /// Consulted only when [`wants_pointer_capture`](Self::wants_pointer_capture)

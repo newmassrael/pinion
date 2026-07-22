@@ -28,6 +28,7 @@
 use pinion_a11y::{AccessFocus, AccessNode};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
+use pinion_core::input::{PointerButton, PointerEdge};
 use pinion_core::intent::Intent;
 use pinion_core::style::{Border, BoxStyle, Color};
 use pinion_core::{Owner, Scene, SceneRevision};
@@ -834,6 +835,29 @@ pub enum DeferredInput {
     ///
     /// [`WidgetCore::apply_secondary_click`]: pinion_core::WidgetCore::apply_secondary_click
     SecondaryClick { x: f64, y: f64 },
+    /// R1416 §5.35 §5.15 — `scene/pointer_button` injection: ONE raw mouse
+    /// button EDGE (left / middle / right × press / release) at `(x, y)`. The
+    /// embedder applies `cursor_moved(MOUSE, x, y)` then routes the edge through
+    /// the unified `ShellCore::pointer_button_for_window` seam — the SAME method
+    /// the native winit `MouseInput` path reaches, so a widget that owns the raw
+    /// multi-button stream ([`External::wants_raw_pointer_buttons`]) sees the
+    /// injected edge identically to a physical one (§2 #2 / §2 #6). Held
+    /// modifiers ride the R763 out-of-band [`Self::SetModifiers`] cache
+    /// (`scene/modifiers`), read inside the seam, exactly like `scene/wheel` /
+    /// `scene/click`.
+    ///
+    /// This is the single-edge peer the press-pair `Click` / press-only
+    /// `SecondaryClick` / gesture `Drag` arcs never expressed: a raw sink needs
+    /// each button's press AND release, with the button identified and the
+    /// modifiers on both edges — the shape an xterm mouse report encodes.
+    ///
+    /// [`External::wants_raw_pointer_buttons`]: pinion_core::External::wants_raw_pointer_buttons
+    PointerButton {
+        x: f64,
+        y: f64,
+        button: PointerButton,
+        edge: PointerEdge,
+    },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -1692,6 +1716,27 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 HandlerKind::Mutate,
             )
         }
+        "scene/pointer_button" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pointer_button(
+                    inbox,
+                    producer,
+                    last_paint_scene,
+                    request.params.as_ref(),
+                ),
+                HandlerKind::Mutate,
+            )
+        }
         "scene/hover" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -2269,6 +2314,15 @@ fn handle_scene_query(
 /// vocabulary change edits one string).
 const CLICK_BUTTON_VOCAB_ERR: &str = "params.button must be \"left\" or \"right\"";
 
+/// R1416 §5.35 — `scene/pointer_button`'s required-`button` vocabulary error
+/// (the raw stream carries the full left / middle / right set, unlike the
+/// click / drag subsets).
+const POINTER_BUTTON_VOCAB_ERR: &str = "params.button must be \"left\", \"middle\", or \"right\"";
+
+/// R1416 §5.35 — `scene/pointer_button`'s required-`state` (edge) vocabulary
+/// error.
+const POINTER_EDGE_VOCAB_ERR: &str = "params.state must be \"down\" or \"up\"";
+
 /// R51.196 / R51.201 §5.49 — `scene/click` typed dispatcher.
 ///
 /// Two mutually-exclusive parameter shapes:
@@ -2340,6 +2394,49 @@ where
         ClickButton::Left => DeferredInput::Click { x, y },
         ClickButton::Right => DeferredInput::SecondaryClick { x, y },
     });
+    Ok(Value::Null)
+}
+
+/// R1416 §5.35 §5.15 — `scene/pointer_button` handler: inject ONE raw mouse
+/// button EDGE (left / middle / right × press / release) at a position, the
+/// single-edge peer `scene/click` (a press+release pair) / `scene/drag` (a
+/// gesture) never expressed. A widget that owns the raw multi-button stream
+/// ([`External::wants_raw_pointer_buttons`](pinion_core::External::wants_raw_pointer_buttons))
+/// consumes it verbatim; a non-raw widget under the cursor runs the standard
+/// per-button GUI arc (left = focus, middle = paste-gesture, right = context
+/// menu), so this method is a faithful `MouseInput` peer for BOTH.
+///
+/// Required params: `button` ([`PointerButton`] — `"left"` / `"middle"` /
+/// `"right"`) and `state` ([`PointerEdge`] — `"down"` / `"up"`); both are
+/// required because a raw edge is meaningless without them (there is no
+/// sensible default button or edge). Position comes from the `at` / `path`
+/// selector shared with `scene/click`. Held modifiers ride the out-of-band
+/// `scene/modifiers` cache, not a per-call field.
+fn handle_scene_pointer_button<F>(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    let button = params
+        .get("button")
+        .and_then(Value::as_str)
+        .and_then(PointerButton::from_wire_name)
+        .ok_or_else(|| RpcError::invalid_params(POINTER_BUTTON_VOCAB_ERR))?;
+    let edge = params
+        .get("state")
+        .and_then(Value::as_str)
+        .and_then(PointerEdge::from_wire_name)
+        .ok_or_else(|| RpcError::invalid_params(POINTER_EDGE_VOCAB_ERR))?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
+    inbox.push(DeferredInput::PointerButton { x, y, button, edge });
     Ok(Value::Null)
 }
 

@@ -608,6 +608,137 @@ impl PointerWireEvent {
     }
 }
 
+/// R1416 §5.35 §5.15 — which mouse button a pointer edge belongs to, for the
+/// **raw multi-button pointer stream** an [`External`](crate::external::External)
+/// receives when it opts into
+/// [`wants_raw_pointer_buttons`](crate::external::External::wants_raw_pointer_buttons).
+///
+/// The full W3C `PointerEvent` primary / auxiliary / secondary set, named (not
+/// numbered) in the lower-case string-vocab convention the RPC transport shares.
+/// The transport's `DragButton` (`left` / `middle`, the R881 gesture arc) and
+/// `ClickButton` (`left` / `right`, the R887 click arc) are button SUBSETS that
+/// each predate this stream and answer a *different* question (which gesture /
+/// click arc to run); this is the one an `External` sees on the typed
+/// [`RawPointerButton`] carrier. It lives in core — where the trait method that
+/// takes it lives — rather than being folded into either transport subset, the
+/// [[wire-vocab-canon-pin-not-fold]] discipline: a shared vocabulary is pinned
+/// at the boundary, not merged across it.
+///
+/// Not `#[non_exhaustive]`: a closed three-button mouse set, matching the
+/// [`PointerWireEvent`] / `DragButton` / `ClickButton` precedent (a future
+/// `Back` / `Forward` is a deliberate spec expansion, not a silent wildcard).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerButton {
+    /// The primary button (`"left"`) — focus / select / activate by default.
+    Left,
+    /// The auxiliary button (`"middle"`) — pan / PRIMARY paste by default.
+    Middle,
+    /// The secondary button (`"right"`) — the context-menu button by default.
+    Right,
+}
+
+impl PointerButton {
+    /// Canonical lower-case wire name. Inverse of [`from_wire_name`](Self::from_wire_name).
+    #[must_use]
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            PointerButton::Left => "left",
+            PointerButton::Middle => "middle",
+            PointerButton::Right => "right",
+        }
+    }
+
+    /// Decode a wire button name; `None` for anything outside the vocabulary so
+    /// a typo surfaces at the call site. Inverse of
+    /// [`as_wire_name`](Self::as_wire_name).
+    #[must_use]
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "left" => Some(PointerButton::Left),
+            "middle" => Some(PointerButton::Middle),
+            "right" => Some(PointerButton::Right),
+            _ => None,
+        }
+    }
+}
+
+/// R1416 §5.35 — a raw pointer-button transition: the press or the release
+/// edge. The winit `ElementState::Pressed` / `Released` mirror, named in core
+/// so the [`External`](crate::external::External) trait and the RPC
+/// `scene/pointer_button` decode share one vocabulary without a winit
+/// dependency (`pinion-core` sits below the platform bridges).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerEdge {
+    /// The button was pressed (`"down"`).
+    Down,
+    /// The button was released (`"up"`).
+    Up,
+}
+
+impl PointerEdge {
+    /// Canonical lower-case wire name. Inverse of [`from_wire_name`](Self::from_wire_name).
+    #[must_use]
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            PointerEdge::Down => "down",
+            PointerEdge::Up => "up",
+        }
+    }
+
+    /// Decode a wire edge name; `None` outside the vocabulary. Inverse of
+    /// [`as_wire_name`](Self::as_wire_name).
+    #[must_use]
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "down" => Some(PointerEdge::Down),
+            "up" => Some(PointerEdge::Up),
+            _ => None,
+        }
+    }
+
+    /// `true` for the press edge ([`Down`](Self::Down)).
+    #[must_use]
+    pub fn is_down(self) -> bool {
+        matches!(self, PointerEdge::Down)
+    }
+}
+
+/// R1416 §5.35 §5.15 — one raw mouse-button edge delivered to an
+/// [`External`](crate::external::External) that owns the multi-button pointer
+/// stream (opts in via
+/// [`wants_raw_pointer_buttons`](crate::external::External::wants_raw_pointer_buttons)).
+/// Carries the `button`, the press/release `edge`, and the `modifiers` held AT
+/// THAT EDGE.
+///
+/// **Position is deliberately absent.** The widget correlates the edge with the
+/// cursor position it already tracks through
+/// [`pointer_move`](crate::external::External::pointer_move) — a raw sink also
+/// sets [`wants_hover_move`](crate::external::External::wants_hover_move) (or
+/// [`wants_pointer_capture`](crate::external::External::wants_pointer_capture)) —
+/// exactly as a pre-R1416 consumer paired the `send`-wire `PointerDown` with the
+/// last forwarded move. Splitting position out keeps this carrier the pure
+/// *button* channel; the move channel already exists.
+///
+/// **Both edges carry modifiers.** This closes the press-edge-drops-modifiers
+/// gap the legacy `PointerDown` send wire has (that path routed the press
+/// through the zero-modifier `dispatch_send`, only the release through
+/// `dispatch_send_mods`), so a raw sink reads a consistent modifier state on
+/// down and up — the shape a terminal mouse report or a marquee gesture needs.
+///
+/// Not `#[non_exhaustive]`: the router (pinion-runtime) constructs it with a
+/// struct literal across the crate boundary, the
+/// [`DragUpdate`](crate::external::DragUpdate) / [`DropPoint`](crate::external::DropPoint)
+/// cross-crate-carrier precedent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RawPointerButton {
+    /// Which mouse button transitioned.
+    pub button: PointerButton,
+    /// Whether the button was pressed or released.
+    pub edge: PointerEdge,
+    /// The keyboard modifiers held at this edge.
+    pub modifiers: Modifiers,
+}
+
 /// The keyboard-side activation token: the `send`-payload event name a focused
 /// command widget receives on keyboard activation (Enter / Space), the
 /// keyboard peer of the pointer-release activation edge ([`PointerWireEvent::Up`]).

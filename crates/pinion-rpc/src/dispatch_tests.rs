@@ -1604,6 +1604,74 @@ fn r887_scene_click_path_form_with_right_button_resolves_rect_centre() {
 }
 
 #[test]
+fn r1416_scene_pointer_button_enqueues_the_edge_for_every_button() {
+    // The single-edge peer: each left / middle / right press and release at a
+    // coordinate enqueues one PointerButton with the decoded button + edge.
+    for (button, pb) in [
+        ("left", PointerButton::Left),
+        ("middle", PointerButton::Middle),
+        ("right", PointerButton::Right),
+    ] {
+        for (state, pe) in [("down", PointerEdge::Down), ("up", PointerEdge::Up)] {
+            let mut scene = counted_scene(0);
+            let previews = PreviewLedger::default();
+            let revision = SceneRevision::default();
+            let mut inbox: Vec<DeferredInput> = Vec::new();
+            let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+                .with_deferred_inputs(&mut inbox);
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/pointer_button","params":{{"at":{{"x":3.0,"y":4.0}},"button":"{button}","state":"{state}"}},"id":1}}"#
+            );
+            let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+            assert!(resp.error.is_none(), "{button}:{state}: {:?}", resp.error);
+            assert_eq!(inbox.len(), 1);
+            let DeferredInput::PointerButton {
+                x,
+                y,
+                button: got_b,
+                edge: got_e,
+            } = inbox[0]
+            else {
+                panic!("expected PointerButton, got {:?}", inbox[0]);
+            };
+            assert!((x - 3.0).abs() < f64::EPSILON && (y - 4.0).abs() < f64::EPSILON);
+            assert_eq!(got_b, pb, "{button} decoded");
+            assert_eq!(got_e, pe, "{state} decoded");
+        }
+    }
+}
+
+#[test]
+fn r1416_scene_pointer_button_requires_button_and_state() {
+    // Both are required (a raw edge is meaningless without them) — a missing or
+    // out-of-vocabulary button / state rejects with invalid_params and enqueues
+    // nothing, so a typo surfaces at the call site rather than as a silent edge.
+    for params in [
+        r#"{"at":{"x":1.0,"y":2.0},"state":"down"}"#, // no button
+        r#"{"at":{"x":1.0,"y":2.0},"button":"left"}"#, // no state
+        r#"{"at":{"x":1.0,"y":2.0},"button":"scroll","state":"down"}"#, // bad button
+        r#"{"at":{"x":1.0,"y":2.0},"button":"left","state":"press"}"#, // bad state
+    ] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/pointer_button","params":{params},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        let err = resp.error.expect("must reject");
+        assert_eq!(err.code, -32602, "invalid_params for {params}");
+        assert!(
+            inbox.is_empty(),
+            "rejected request enqueues nothing: {params}"
+        );
+    }
+}
+
+#[test]
 fn r887_scene_click_explicit_left_button_enqueues_click() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();
@@ -1687,6 +1755,46 @@ fn click_and_drag_button_vocabularies_share_left() {
         ClickButton::Left.as_wire_name(),
         DragButton::Left.as_wire_name()
     );
+}
+
+#[test]
+fn pointer_button_vocab_agrees_with_the_click_and_drag_subsets() {
+    // R1416 cross-vocab pin ([[wire-vocab-canon-pin-not-fold]]): the core
+    // `PointerButton` is the FULL raw-stream set; the transport's `DragButton`
+    // (left / middle) and `ClickButton` (left / right) are subsets that each
+    // name the buttons THEIR method can mirror. The three are deliberately not
+    // folded, so their SHARED tokens must stay byte-identical or an injected
+    // `scene/pointer_button {button}` would decode to a different button than
+    // the click / drag arcs — a silent wire bug. This pins every overlap.
+    assert_eq!(
+        PointerButton::Left.as_wire_name(),
+        DragButton::Left.as_wire_name()
+    );
+    assert_eq!(
+        PointerButton::Middle.as_wire_name(),
+        DragButton::Middle.as_wire_name()
+    );
+    assert_eq!(
+        PointerButton::Left.as_wire_name(),
+        ClickButton::Left.as_wire_name()
+    );
+    assert_eq!(
+        PointerButton::Right.as_wire_name(),
+        ClickButton::Right.as_wire_name()
+    );
+    // Round-trips through its own decoder (decode == inverse(encode)).
+    for b in [
+        PointerButton::Left,
+        PointerButton::Middle,
+        PointerButton::Right,
+    ] {
+        assert_eq!(PointerButton::from_wire_name(b.as_wire_name()), Some(b));
+    }
+    for e in [PointerEdge::Down, PointerEdge::Up] {
+        assert_eq!(PointerEdge::from_wire_name(e.as_wire_name()), Some(e));
+    }
+    assert_eq!(PointerButton::from_wire_name("scroll"), None);
+    assert_eq!(PointerEdge::from_wire_name("press"), None);
 }
 
 // ---- R881 §5.35 §5.49 — scene/drag button param (DragButton) ----

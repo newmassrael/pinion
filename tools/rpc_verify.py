@@ -655,6 +655,46 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params["button"] = button
         self.request("scene/click", params)
 
+    def pointer_button(
+        self,
+        button: str,
+        state: str,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+    ) -> None:
+        """`scene/pointer_button` typed wrapper (R1416 §5.35 §5.15).
+
+        Inject ONE raw mouse-button EDGE — the single-edge peer the press-pair
+        `click()` / press-only right-click / gesture `drag()` never expressed.
+        `button` is `"left"` / `"middle"` / `"right"` (both required — a raw
+        edge is meaningless without them); `state` is `"down"` / `"up"`.
+
+        A widget that owns the raw multi-button stream
+        (`External::wants_raw_pointer_buttons`) receives the edge verbatim, with
+        the held modifiers (set out-of-band via `modifiers()`) on BOTH edges and
+        the button identified — while a non-raw widget under the cursor runs the
+        standard per-button GUI arc (left = focus, middle = paste, right =
+        context menu). The shell seeds the cursor with a `cursor_moved` before
+        the edge (so a raw sink's hover-tracked position is fresh) then routes
+        through the SAME `pointer_button_for_window` seam the native winit
+        `MouseInput` path reaches, so an injected edge is indistinguishable from
+        a physical one.
+
+        Selector taxonomy mirrors `click()` — supply exactly one of
+        `at = (x, y)` or `path = "<tag>"`.
+        """
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        if at is not None:
+            params: dict[str, Any] = {"at": {"x": float(at[0]), "y": float(at[1])}}
+        else:
+            assert path is not None
+            params = {"path": path}
+        params["button"] = button
+        params["state"] = state
+        self.request("scene/pointer_button", params)
+
     def hover(
         self,
         at: Optional[tuple[float, float]] = None,

@@ -2503,6 +2503,32 @@ impl<V: WidgetCore> CoreShell<V> {
         self.left_release_for_window(DEFAULT_WINDOW, pid, modifiers)
     }
 
+    /// R1416 §5.35 §5.15 — offer a raw mouse-button edge (any of left / middle
+    /// / right, press or release) to a widget that owns the multi-button
+    /// pointer stream for the addressed window. Returns `true` when a raw sink
+    /// consumed it — the shell then suppresses the GUI default (context menu /
+    /// paste / pan / legacy `PointerDown` send wire) for that button. `false`
+    /// leaves the shell to run the standard per-button arc unchanged, so a
+    /// non-raw widget keeps left = focus, middle = paste, right = context menu.
+    ///
+    /// Delivers the edge directly to the [`External`](pinion_core::External) (no
+    /// [`DispatchTail`]): a raw sink mutates its own state in
+    /// [`External::raw_pointer_button`](pinion_core::External::raw_pointer_button),
+    /// the `pointer_move` precedent, so the caller bumps the revision + requests
+    /// a redraw rather than draining a statechart transition.
+    pub fn raw_pointer_button_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        button: pinion_core::PointerButton,
+        edge: pinion_core::PointerEdge,
+        modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        router.deliver_raw_pointer_button(pid, button, edge, modifiers, scene)
+    }
+
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's
     /// `CursorLeft`). Drops the cursor + rolls back any in-flight
     /// `Hover`.

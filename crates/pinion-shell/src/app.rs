@@ -2050,8 +2050,20 @@ impl<V: WidgetView> AppShell<V> {
     ///
     /// winit normalises each platform's button events (X11 `ButtonEvent` /
     /// Wayland `wl_pointer` button / macOS `NSEvent` / Windows
-    /// `WM_*BUTTONDOWN`) under one enum, so these five arms cover every
-    /// backend. Other button / state combinations are ignored.
+    /// `WM_*BUTTONDOWN`) under one enum, so these arms cover every backend.
+    /// Back / forward (and `Other`) buttons have no pinion semantics yet and
+    /// are ignored.
+    ///
+    /// R1416 §5.35 §5.15 — every left / middle / right EDGE now routes through
+    /// the unified [`ShellCore::pointer_button_for_window`](crate::ShellCore::pointer_button_for_window)
+    /// seam (which the RPC `scene/pointer_button` drain also reaches), so a
+    /// widget that owns the raw multi-button stream receives the button verbatim
+    /// while a non-raw widget keeps the per-button GUI arc unchanged. The right
+    /// RELEASE arm — absent before R1416 (`_ => {}` swallowed it) — now exists so
+    /// a raw sink sees the release edge; for a non-raw widget it is still a no-op
+    /// inside the seam (the context menu is a press-edge one-shot). The
+    /// chrome-press interception and drag-preview teardown stay here, at the
+    /// winit / window-handle layer, around the seam call.
     fn handle_mouse_button(
         &mut self,
         spec_id: &str,
@@ -2059,37 +2071,32 @@ impl<V: WidgetView> AppShell<V> {
         state: ElementState,
         event_loop: &ActiveEventLoop,
     ) {
-        match (button, state) {
-            (MouseButton::Left, ElementState::Pressed) => {
-                // R1121 §5.16 §5.39 — a press on a client-side window-chrome
-                // control (borderless title bar) is consumed by the shell, not
-                // forwarded to widget routing.
-                if self.try_chrome_press(spec_id, event_loop) {
-                    return;
-                }
-                self.core
-                    .mouse_pressed_for_window(spec_id, PointerId::MOUSE);
-            }
-            (MouseButton::Left, ElementState::Released) => {
-                self.core
-                    .mouse_released_for_window(spec_id, PointerId::MOUSE);
-                // R1147 §5.51 — a left release ends the drag session, so hide the
-                // cross-desktop drag preview (kept for reuse) + clear suppression.
-                self.hide_drag_preview();
-            }
-            (MouseButton::Middle, ElementState::Pressed) => {
-                self.core
-                    .middle_pressed_for_window(spec_id, PointerId::MOUSE);
-            }
-            (MouseButton::Middle, ElementState::Released) => {
-                self.core
-                    .middle_released_for_window(spec_id, PointerId::MOUSE);
-            }
-            (MouseButton::Right, ElementState::Pressed) => {
-                self.core
-                    .secondary_click_for_window(spec_id, PointerId::MOUSE);
-            }
-            _ => {}
+        use pinion_core::{PointerButton, PointerEdge};
+        let pbutton = match button {
+            MouseButton::Left => PointerButton::Left,
+            MouseButton::Middle => PointerButton::Middle,
+            MouseButton::Right => PointerButton::Right,
+            // Back / Forward / Other — no pinion semantics yet.
+            MouseButton::Back | MouseButton::Forward | MouseButton::Other(_) => return,
+        };
+        let edge = match state {
+            ElementState::Pressed => PointerEdge::Down,
+            ElementState::Released => PointerEdge::Up,
+        };
+        // R1121 §5.16 §5.39 — a left PRESS on a client-side window-chrome control
+        // (borderless title bar) is consumed by the shell, not forwarded to
+        // widget routing / the button seam.
+        if pbutton == PointerButton::Left
+            && edge == PointerEdge::Down
+            && self.try_chrome_press(spec_id, event_loop)
+        {
+            return;
+        }
+        self.core.pointer_button_for_window(spec_id, pbutton, edge);
+        // R1147 §5.51 — a left release ends the drag session, so hide the
+        // cross-desktop drag preview (kept for reuse) + clear suppression.
+        if pbutton == PointerButton::Left && edge == PointerEdge::Up {
+            self.hide_drag_preview();
         }
     }
 
