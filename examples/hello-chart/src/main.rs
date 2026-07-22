@@ -47,8 +47,8 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_chart::{
     Brush, BrushStripColors, ChartStyle, DataPoint, LineChart, Series, data_bounds,
 };
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
+use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
@@ -224,15 +224,8 @@ fn view(state: SliderState, scrub: f32, low: f32, high: f32, _frame: &Frame) -> 
     // primary tag. On top so a press anywhere on the plot drives the
     // scrub; transparent so the chart shows through, pointer-opaque so it
     // captures (geometric hit-test is alpha-independent).
-    let scrub_surface = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
-            .with_tag(SCRUB_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(CHART_RECT.x, CHART_RECT.y)
-                    .with_size(Size::px(CHART_RECT.w, CHART_RECT.h)),
-            ),
-    );
+    // R1417 capture_surface lift.
+    let scrub_surface = capture_surface(SCRUB_TAG, CHART_RECT, false);
 
     let status = Scene::Text(
         TextNode::styled(

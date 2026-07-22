@@ -58,8 +58,8 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode, capture_surface};
+use pinion_core::style::{Border, BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{
     Frame, Modifiers, PointerButton, PointerEdge, RawPointerButton, Scene, WidgetCore,
@@ -177,19 +177,11 @@ fn view(state: SinkState, _frame: &Frame) -> Scene {
         ),
     );
 
-    // Transparent, pointer-opaque surface over the pane — the `pane` primary
-    // tag the sink registers under. On top so a button anywhere over the pane
-    // resolves to it; transparent so the body shows through, pointer-opaque so
-    // the hit-test lands here (geometric hit-test is alpha-independent).
-    let pane_surface = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
-            .with_tag(PANE_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(PANE_RECT.x, PANE_RECT.y)
-                    .with_size(Size::px(PANE_RECT.w, PANE_RECT.h)),
-            ),
-    );
+    // Transparent, pointer-opaque capture surface over the pane — the `pane`
+    // primary tag the sink registers under. On top so a button anywhere over
+    // the pane resolves to it; transparent so the body shows through. R1417
+    // capture_surface lift.
+    let pane_surface = capture_surface(PANE_TAG, PANE_RECT, false);
 
     let status = Scene::Text(
         TextNode::styled(

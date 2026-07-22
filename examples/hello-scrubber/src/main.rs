@@ -47,8 +47,8 @@
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::External;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode, capture_surface};
+use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
@@ -216,16 +216,13 @@ fn view(state: ScrubState, _frame: &Frame) -> Scene {
 
     // Transparent capture surface over the bar — the `scrubber_scrub` primary
     // Slider tag. Focusable so Tab reaches it and Arrow keys scrub; on top so a
-    // press anywhere on the bar drives a seek; pointer-opaque so it captures.
-    let scrub_surface = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
-            .with_tag(SCRUB_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(TRACK_X, TRACK_Y.saturating_sub(12))
-                    .with_size(Size::px(TRACK_W, TRACK_H + 24))
-                    .with_focusable(true),
-            ),
+    // press anywhere on the bar drives a seek. The hit area is the track
+    // inflated by 12px vertically so a slightly-off press still grabs. R1417
+    // capture_surface lift.
+    let scrub_surface = capture_surface(
+        SCRUB_TAG,
+        Rect::new(TRACK_X, TRACK_Y.saturating_sub(12), TRACK_W, TRACK_H + 24),
+        true,
     );
 
     let toggle_label = if clock.is_playing() { "Pause" } else { "Play" };

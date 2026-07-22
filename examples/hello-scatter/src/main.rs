@@ -51,8 +51,8 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{
     Brush, BrushStripColors, ChartStyle, DataPoint, ScatterChart, Series, data_bounds,
 };
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
+use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
@@ -230,15 +230,8 @@ fn view(state: SliderState, scrub: f32, low: f32, high: f32, _frame: &Frame) -> 
     // Transparent capture surface over the plot — the `scatter_scrub` primary
     // tag. On top so a press anywhere on the chart drives the scrub; transparent
     // so the points show through, pointer-opaque so it captures.
-    let scrub_surface = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
-            .with_tag(SCRUB_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(CHART_RECT.x, CHART_RECT.y)
-                    .with_size(Size::px(CHART_RECT.w, CHART_RECT.h)),
-            ),
-    );
+    // R1417 capture_surface lift.
+    let scrub_surface = capture_surface(SCRUB_TAG, CHART_RECT, false);
 
     let status = Scene::Text(
         TextNode::styled(
@@ -380,6 +373,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::Owner;
+    use pinion_core::style::Color;
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
         match scene {

@@ -49,8 +49,8 @@
 use pinion_a11y::described::describedby_region;
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, Lane, Span, Timeline};
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
+use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, use_theme};
 use pinion_derive::widget;
@@ -218,15 +218,8 @@ fn view(scrub: f32, _frame: &Frame) -> Scene {
     // Transparent capture surface over the plot — the `timeline_scrub` primary
     // tag. On top so a press anywhere on the timeline drives the playhead;
     // transparent so the flame shows through, pointer-opaque so it captures.
-    let scrub_surface = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
-            .with_tag(SCRUB_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(CHART_RECT.x, CHART_RECT.y)
-                    .with_size(Size::px(CHART_RECT.w, CHART_RECT.h)),
-            ),
-    );
+    // R1417 capture_surface lift.
+    let scrub_surface = capture_surface(SCRUB_TAG, CHART_RECT, false);
 
     let status = Scene::Text(
         TextNode::styled(

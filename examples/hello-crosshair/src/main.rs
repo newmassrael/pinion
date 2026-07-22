@@ -48,8 +48,8 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
 };
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
+use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
+use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -160,21 +160,12 @@ fn view(x_frac: Option<f32>, _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(18, 16)),
     );
 
-    // Transparent capture-free surface over the plot — the `plot` primary tag.
-    // On top so a hover anywhere over the plot resolves to it; transparent so
-    // the chart shows through, pointer-opaque so the hover hit-test lands here
-    // (geometric hit-test is alpha-independent). It does NOT capture: the
-    // external opts into hover-move, not pointer-capture, so the position
-    // arrives on a bare hover.
-    let plot_surface = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
-            .with_tag(PLOT_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(CHART_RECT.x, CHART_RECT.y)
-                    .with_size(Size::px(CHART_RECT.w, CHART_RECT.h)),
-            ),
-    );
+    // Transparent capture surface over the plot — the `plot` primary tag. On
+    // top so a hover anywhere over the plot resolves to it; transparent so the
+    // chart shows through, pointer-opaque so the hover hit-test lands here. Not
+    // focusable: the external opts into hover-move, not focus, so the position
+    // arrives on a bare hover. R1417 capture_surface lift.
+    let plot_surface = capture_surface(PLOT_TAG, CHART_RECT, false);
 
     let status = Scene::Text(
         TextNode::styled(

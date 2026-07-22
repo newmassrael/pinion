@@ -1643,6 +1643,40 @@ impl BoxNode {
     }
 }
 
+/// R1417 §5.35 §5.15 — a **capture surface**: a transparent, geometrically
+/// pointer-opaque [`Scene::Box`] laid out over `rect` and carrying `tag`.
+///
+/// The one idiom for an *invisible interaction layer* over content — a chart
+/// plot, a scrub track, a terminal pane — so a pointer anywhere on the region
+/// routes to the [`External`](crate::external::External) / widget registered
+/// under `tag`. It is transparent so the content behind shows through, and
+/// geometrically opaque so the §5.35 hit-test lands here (the router's
+/// hit-test is alpha-independent — a zero-alpha fill still occupies its rect).
+/// `focusable` marks it a Tab stop ([`LayoutStyle::with_focusable`]) for the
+/// widgets whose keyboard interaction needs focus (a scrub bar); the dataviz
+/// hover / brush surfaces pass `false`.
+///
+/// Lifted at R1417 from the ~10 hand-rolled copies the interaction examples had
+/// each grown (`hello-chart` / `-timeline` / `-scatter` / `-donut` / `-treemap`
+/// / `-crosshair` / `-histogram-brush` / `-linked-brush` / `-scrubber` /
+/// `-raw-pointer`) — every one byte-identical but for `(tag, rect, focusable)`,
+/// so the surface's construction lives in exactly one place. A caller that
+/// wants an enlarged hit area (the scrubber's padded track) inflates `rect`
+/// before the call; the surface's own shape is not the variable.
+#[must_use]
+pub fn capture_surface(tag: impl Into<Cow<'static, str>>, rect: Rect, focusable: bool) -> Scene {
+    Scene::Box(
+        BoxNode::filled(Rect::default(), Color::TRANSPARENT)
+            .with_tag(tag)
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(rect.x, rect.y)
+                    .with_size(Size::px(rect.w, rect.h))
+                    .with_focusable(focusable),
+            ),
+    )
+}
+
 /// R713 §5.36 — a styled span over a sub-range of [`TextNode::content`].
 ///
 /// The styled-run substrate (`RichText` / `Text.rich`): a [`TextNode`]
@@ -3521,6 +3555,52 @@ mod tests {
 
     fn stub_handle() -> Box<dyn External> {
         Box::new(StubExternal::new())
+    }
+
+    /// R1417 — the lifted [`capture_surface`] is BYTE-IDENTICAL to the
+    /// hand-rolled idiom its ~10 consumers each grew, for both the plain
+    /// (`focusable = false`, the dataviz hover / brush surfaces) and the
+    /// focusable (`true`, the scrub bar) shapes. If this holds, migrating a
+    /// consumer to the helper cannot change its scene.
+    #[test]
+    fn r1417_capture_surface_matches_the_hand_rolled_idiom() {
+        // `Scene` is not `PartialEq` (a `Box<dyn External>` variant), so compare
+        // the full `Debug` form — it captures every field (rect, transparent
+        // style, tag, absolute position, size, focusable) the surfaces carry.
+        let rect = Rect::new(16, 48, 688, 336);
+        for focusable in [false, true] {
+            let hand_rolled = Scene::Box(
+                BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
+                    .with_tag("plot")
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_absolute_position(rect.x, rect.y)
+                            .with_size(Size::px(rect.w, rect.h))
+                            .with_focusable(focusable),
+                    ),
+            );
+            assert_eq!(
+                format!("{:?}", capture_surface("plot", rect, focusable)),
+                format!("{hand_rolled:?}"),
+                "focusable = {focusable}",
+            );
+        }
+        // The plain (non-focusable) consumers omit `.with_focusable` entirely,
+        // relying on the LayoutStyle default — the helper's explicit
+        // `with_focusable(false)` must match that default too.
+        let omitted = Scene::Box(
+            BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
+                .with_tag("plot")
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_absolute_position(rect.x, rect.y)
+                        .with_size(Size::px(rect.w, rect.h)),
+                ),
+        );
+        assert_eq!(
+            format!("{:?}", capture_surface("plot", rect, false)),
+            format!("{omitted:?}"),
+        );
     }
 
     #[test]

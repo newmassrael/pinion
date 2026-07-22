@@ -133,7 +133,7 @@
 use pinion_a11y::described::describedby_region;
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{Bar, BarChart, ChartStyle, DataPoint, LineChart, Series};
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
     TextStyle,
@@ -431,15 +431,9 @@ fn histogram_panel(
     let histogram = histogram_chart(view, theme, scrub).build_fill(size, &chart_style(theme));
     // The scrub's a11y name lives on its `AccessNode` (the manual `WidgetA11y`
     // impl), not the scene node — a `BoxNode` has no `aria_label`.
-    let scrub_surface = Scene::Box(
-        BoxNode::new(Rect::default(), BoxStyle::filled(Color::TRANSPARENT))
-            .with_tag(HIST_SCRUB_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(0, 0)
-                    .with_size(Size::px(hw.max(1), hh.max(1))),
-            ),
-    );
+    // R1417 capture_surface lift.
+    let scrub_surface =
+        capture_surface(HIST_SCRUB_TAG, Rect::new(0, 0, hw.max(1), hh.max(1)), false);
     Scene::Container(
         ContainerNode::new(vec![histogram, scrub_surface]).with_layout(
             LayoutStyle::new().with_size(
