@@ -146,6 +146,35 @@ impl TransportClock {
         self.status.set(TransportStatus::Stopped);
         self.position.set(0.0);
     }
+
+    /// Jump the playhead to `fraction` (clamped to `0.0..=1.0`) **without**
+    /// advancing wall-clock time — the scrub / seek this clock's doc-comment
+    /// promises an "animation preview scrubber" needs, but which [`play`](Self::play) /
+    /// [`pause`](Self::pause) / [`stop`](Self::stop) / [`tick`](Tickable::tick)
+    /// cannot express (they only ever zero the playhead or advance it
+    /// monotonically). A seek bar drives this to place the playhead anywhere.
+    ///
+    /// A seek never *stops* the transport ([`stop`](Self::stop) is the sole
+    /// rewind-and-park):
+    ///
+    /// * while [`Playing`](TransportStatus::Playing) it stays playing and
+    ///   resumes advancing from the new spot (jump-and-continue);
+    /// * a [`Stopped`](TransportStatus::Stopped) or
+    ///   [`Paused`](TransportStatus::Paused) transport is held
+    ///   [`Paused`](TransportStatus::Paused) at the new spot — a moved playhead
+    ///   is no longer "parked at the start", which is what `Stopped` means, so a
+    ///   seek promotes it to the explicit `Paused`-at-`fraction` state.
+    ///
+    /// Seeking to `1.0` parks at the end exactly as reaching it under
+    /// [`tick`](Tickable::tick) does, so a subsequent [`play`](Self::play)
+    /// rewinds and replays — one consistent end-of-clip rule however the end is
+    /// reached.
+    pub fn seek(&self, fraction: f32) {
+        self.position.set(fraction.clamp(0.0, 1.0));
+        if self.status.get() != TransportStatus::Playing {
+            self.status.set(TransportStatus::Paused);
+        }
+    }
 }
 
 impl Tickable for TransportClock {
@@ -322,6 +351,99 @@ mod tests {
             (c.position() - 1.0).abs() < f32::EPSILON && c.status() == TransportStatus::Paused,
             "a zero-duration transport clamps to done, not NaN: {}",
             c.position()
+        );
+    }
+
+    #[test]
+    fn seek_jumps_the_playhead_and_pauses_a_stopped_clock() {
+        let c = clock();
+        assert_eq!(c.status(), TransportStatus::Stopped);
+        c.seek(0.4);
+        assert!(
+            (c.position() - 0.4).abs() < f32::EPSILON,
+            "seek sets the playhead directly: {}",
+            c.position()
+        );
+        assert_eq!(
+            c.status(),
+            TransportStatus::Paused,
+            "seeking a stopped transport holds it paused at the sought spot"
+        );
+        assert!(
+            c.is_at_rest(0.001),
+            "a sought-and-paused clock releases frames"
+        );
+    }
+
+    #[test]
+    fn seek_while_playing_jumps_and_continues() {
+        let c = clock();
+        c.play();
+        c.tick(DURATION / 4.0); // ~0.25
+        c.seek(0.8);
+        assert_eq!(
+            c.status(),
+            TransportStatus::Playing,
+            "seek keeps it playing"
+        );
+        assert!((c.position() - 0.8).abs() < 1e-4, "jumped to 0.8");
+        c.tick(DURATION / 4.0); // advances from 0.8, not from 0.25
+        assert!(
+            c.position() > 0.8,
+            "playback resumes from the sought spot: {}",
+            c.position()
+        );
+    }
+
+    #[test]
+    fn seek_clamps_out_of_range() {
+        let c = clock();
+        c.seek(1.7);
+        assert!(
+            (c.position() - 1.0).abs() < f32::EPSILON,
+            "clamps above 1.0"
+        );
+        c.seek(-0.3);
+        assert!(
+            (c.position() - 0.0).abs() < f32::EPSILON,
+            "clamps below 0.0"
+        );
+    }
+
+    #[test]
+    fn seek_a_paused_clock_stays_paused_at_the_new_spot() {
+        let c = clock();
+        c.play();
+        c.tick(2.0);
+        c.pause();
+        assert_eq!(c.status(), TransportStatus::Paused);
+        c.seek(0.6);
+        assert_eq!(
+            c.status(),
+            TransportStatus::Paused,
+            "still paused after a seek"
+        );
+        assert!(
+            (c.position() - 0.6).abs() < 1e-4,
+            "moved to the sought spot"
+        );
+    }
+
+    #[test]
+    fn seek_to_the_end_then_play_rewinds() {
+        let c = clock();
+        c.seek(1.0);
+        assert!(
+            (c.position() - 1.0).abs() < f32::EPSILON,
+            "parked at the end"
+        );
+        assert_eq!(c.status(), TransportStatus::Paused, "seek-to-end is paused");
+        // The one end-of-clip rule: Play from the end (however reached) replays.
+        c.play();
+        assert_eq!(c.status(), TransportStatus::Playing);
+        assert!(
+            (c.position() - 0.0).abs() < f32::EPSILON,
+            "play from a sought end rewinds to 0, exactly as reaching it via tick"
         );
     }
 

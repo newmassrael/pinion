@@ -106,6 +106,7 @@ members = [
     "examples/hello-timeline",
     "examples/hello-transport",
     "examples/hello-replay",
+    "examples/hello-scrubber",
     "examples/hello-snackbar",
     "examples/hello-richtext",
     "examples/hello-color-picker",

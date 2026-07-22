@@ -1,0 +1,37 @@
+[package]
+name = "hello-scrubber"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1415 Phase-B dataviz consumer — a scrub / seek bar over the R1414 TransportClock substrate. A draggable seek bar (the §5.38 SliderExternal reused as a 1-D capture, exactly the R1389 timeline scrubber) writes the clock's playhead through the new TransportClock::seek — the scrub/seek the substrate's doc-comment promises an 'animation preview scrubber' but which play/pause/stop/tick cannot express. The forcing consumer that completes the transport substrate: bridges the SliderExternal drag machinery into the clock. A play/pause toggle exercises jump-and-continue (seek keeps playing)."
+publish = false
+
+[[bin]]
+name = "hello-scrubber"
+path = "src/main.rs"
+
+[dependencies]
+# §5.28 animation driver (TransportClock + seek + register_animation_once),
+# §5.38 SliderExternal, Signal, button.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC + scene/tick + scene/intervene).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R727 §5.49 — button + slider paint SSOT (`button_scene` / `read_slider_state`).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloScrubberRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
