@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1412 §5.49 — pinion-forge codegen manifest for hello-dock-presets.
+  A single-window dock surface whose topology is a reactive Signal; the
+  preset bar swaps the whole DockTopology by deserializing a stored blob
+  through the R1412 validated DockTopology::Deserialize.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloDockPresetsRenderer"
+        backend="vello"/>

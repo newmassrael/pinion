@@ -2217,6 +2217,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-dock-presets"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-donut"
 version = "0.0.1"
 dependencies = [

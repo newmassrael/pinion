@@ -192,6 +192,7 @@ members = [
     "examples/hello-immediate-intent",
     "examples/hello-dock-panels",
     "examples/hello-dock-panels-editor",
+    "examples/hello-dock-presets",
     "examples/hello-stepper",
     "examples/hello-nav-rail",
     "examples/hello-pagination",

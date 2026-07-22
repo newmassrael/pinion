@@ -1,0 +1,29 @@
+[package]
+name = "hello-dock-presets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1412 §5.49 named dock-layout PRESET manager. A dock surface + a preset bar: apply a built-in named layout, save the current layout under a name, delete one. Presets are stored as SERIALIZED DockTopology blobs and deserialized on apply, so this is the forcing consumer of the R1412 validated DockTopology::Deserialize (a corrupt blob is rejected, not applied)."
+publish = false
+
+[[bin]]
+name = "hello-dock-presets"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# The preset store holds serialized `DockTopology` blobs; applying a preset
+# deserializes one through the R1412 validated `Deserialize` path.
+serde_json = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

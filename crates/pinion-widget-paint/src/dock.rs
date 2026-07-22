@@ -626,7 +626,7 @@ impl DockNode {
 ///    pushes a `WindowSpec` + removes the leaf from the topology
 ///    + mutates the topology Signal → reactive repaint.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DockTopology {
     /// Recursive root of the dock tree. Private field (R685.B atomic
     /// 2) — every construction path runs through [`DockTopology::try_new`]
@@ -635,7 +635,46 @@ pub struct DockTopology {
     /// mutation primitive relies on (unique panel ids, unique split
     /// ids, finite ratios) cannot be broken from outside the module.
     /// Read access via [`DockTopology::root`].
+    ///
+    /// (R1412 §5.49) `Deserialize` is a hand-written impl (below), NOT
+    /// a derive: the derive would populate `root` directly and skip the
+    /// validation gate, so a persisted / wire topology with a duplicate
+    /// panel id or non-finite ratio could reconstruct an INVALID
+    /// `DockTopology` — exactly the state the private field promises
+    /// cannot exist. The manual impl routes the deserialized tree
+    /// through [`DockTopology::try_new`], so the "cannot be broken from
+    /// outside the module" invariant holds across the serde boundary
+    /// too (a preset manager loading an untrusted layout blob is the
+    /// forcing consumer). `Serialize` stays a derive — writing the tree
+    /// out is always sound.
     root: DockNode,
+}
+
+impl<'de> serde::Deserialize<'de> for DockTopology {
+    /// Deserialize a topology, enforcing the [`DockTopology::try_new`]
+    /// invariants (unique panel / split / tabs ids, canonical `Tabs`
+    /// wells, finite split ratios). A blob that violates one is a
+    /// deserialization error, not a silently-invalid value — so a
+    /// persisted-then-reloaded or wire-received topology is as
+    /// trustworthy as one built through the constructors.
+    ///
+    /// The wire shape is identical to the derived form (`{ "root": ...
+    /// }`): a private repr mirrors the single field, then `try_new`
+    /// validates. Kept in sync with the derived [`serde::Serialize`] by
+    /// construction — the repr's one field matches the struct's one
+    /// field.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Repr {
+            root: DockNode,
+        }
+
+        let repr = Repr::deserialize(deserializer)?;
+        DockTopology::try_new(repr.root).map_err(serde::de::Error::custom)
+    }
 }
 
 /// (R685.B §5.16 §5.49) Errors [`DockTopology::try_new`] can produce
@@ -15887,5 +15926,60 @@ mod surface_tests {
             );
             assert_eq!(*count.borrow(), topology.split_count());
         });
+    }
+
+    // ── R1412 §5.49 — serde crosses the validation gate ──────────────
+    // `DockTopology` derives `Serialize` but hand-writes `Deserialize` so a
+    // persisted / wire topology is validated by `try_new`, not reconstructed
+    // raw. These tests pin that: a valid topology round-trips, and a blob that
+    // violates a `try_new` invariant is a deserialize ERROR, never a
+    // silently-invalid `DockTopology`.
+
+    #[test]
+    fn r1412_dock_topology_serde_round_trips_a_valid_topology() {
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "outer",
+            0.5,
+            DockNode::split_vertical("inner", 0.5, DockNode::leaf("a"), DockNode::leaf("b")),
+            DockNode::leaf("c"),
+        ));
+        let json = serde_json::to_string(&topo).expect("serialize");
+        let back: DockTopology = serde_json::from_str(&json).expect("deserialize a valid blob");
+        assert_eq!(topo, back, "a valid topology survives a serde round-trip");
+    }
+
+    #[test]
+    fn r1412_dock_topology_deserialize_rejects_a_duplicate_panel_id() {
+        // A raw `DockNode` tree has no validation gate (only
+        // `DockTopology::try_new` does), so two leaves can share a panel id.
+        // Wrapped in the `{ "root": ... }` wire shape, the manual
+        // `Deserialize` must REJECT it rather than build an invalid topology.
+        let raw =
+            DockNode::split_horizontal("s", 0.5, DockNode::leaf("dup"), DockNode::leaf("dup"));
+        let blob = serde_json::json!({ "root": serde_json::to_value(&raw).expect("node -> json") });
+        let result: Result<DockTopology, _> = serde_json::from_value(blob);
+        assert!(
+            result.is_err(),
+            "a duplicate panel id must be a deserialize error, not an invalid DockTopology"
+        );
+    }
+
+    #[test]
+    fn r1412_dock_topology_deserialize_rejects_a_duplicate_split_id() {
+        // Two `Split` nodes sharing an id — a distinct `try_new` invariant
+        // (`DuplicateSplitId`) — proves the whole validation walk runs on
+        // deserialize, not just the panel-id check.
+        let raw = DockNode::split_horizontal(
+            "same",
+            0.5,
+            DockNode::split_vertical("same", 0.5, DockNode::leaf("a"), DockNode::leaf("b")),
+            DockNode::leaf("c"),
+        );
+        let blob = serde_json::json!({ "root": serde_json::to_value(&raw).expect("node -> json") });
+        let result: Result<DockTopology, _> = serde_json::from_value(blob);
+        assert!(
+            result.is_err(),
+            "a duplicate split id must be a deserialize error"
+        );
     }
 }
