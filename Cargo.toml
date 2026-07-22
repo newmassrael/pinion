@@ -105,6 +105,7 @@ members = [
     "examples/hello-stat-tiles",
     "examples/hello-timeline",
     "examples/hello-transport",
+    "examples/hello-replay",
     "examples/hello-snackbar",
     "examples/hello-richtext",
     "examples/hello-color-picker",

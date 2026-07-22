@@ -1,0 +1,37 @@
+[package]
+name = "hello-replay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1414 Phase-B dataviz consumer — a capture-replay tool: a fixed recorded signal played back under the R1414 §5.28 TransportClock substrate (the play/pause/stop clock lifted from hello-transport), driving a pinion-chart LineChart that progressively reveals the recording up to the playhead over a fixed x/y frame. The 2nd consumer of the transport substrate: it shares ONLY the TransportClock with hello-transport (a growing chart reveal vs. a timeline playhead line), which is what made the clock the right thing to lift. scene/tick-deterministic."
+publish = false
+
+[[bin]]
+name = "hello-replay"
+path = "src/main.rs"
+
+[dependencies]
+# R1354 — the charting substrate (LineChart + fixed x/y domain reveal).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+# R1414 §5.28 transport substrate (TransportClock + use_transport_clock) + button.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC + scene/tick).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R727 §5.49 — button paint SSOT (`button_scene` / `read_button_state`).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloReplayRenderer` struct emitted by build.rs names `::vello::*`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

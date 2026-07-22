@@ -1,7 +1,8 @@
 //! `hello-transport` — R1413 §5.16 §5.28 §5.7: a **media transport**
 //! (play / pause / stop) over a `pinion-chart` [`Timeline`], with a **live,
 //! auto-advancing now-playhead** that the animation driver moves on its own —
-//! not a hand-scrubbed one.
+//! not a hand-scrubbed one. The playback clock was lifted to a substrate in
+//! R1414 ([`TransportClock`]); this binding is its 1st consumer.
 //!
 //! ## What this demonstrates
 //!
@@ -15,34 +16,25 @@
 //! ## The clock is an animation, not a thread
 //!
 //! The obvious shape for "advance a value over wall-clock" is a background timer
-//! thread. pinion already has the *right* substrate, though: the §5.28 animation
-//! driver. `TransportClock` is a [`Tickable`] — the same trait the theme fade,
-//! the caret blink, and the [`IndeterminateSweep`](pinion_core::widgets::progress_bar::IndeterminateSweep)
-//! implement — registered once through
-//! [`Owner::register_animation_once`](pinion_core::reactive::Owner::register_animation_once).
-//! Each frame the shell hands it the real elapsed `dt`; while `Playing` it
-//! advances the `0.0..=1.0` playhead **linearly** (a transport plays at constant
-//! speed — a spring would decelerate into the end, which is wrong), and its
-//! [`Tickable::is_at_rest`] reports `true` unless playing, so the backend
-//! requests frames only while the playhead is actually moving. No thread, no
-//! poll, no `RepaintSink` poke — the existing frame loop is the clock.
-//!
-//! Because the driver is the §5.28 one, the R724 `scene/tick` RPC frame-steps it
-//! **deterministically** (a known `dt` in, a known advance out) — so a live,
-//! wall-clock-driven transport is nonetheless CI-testable without racing real
-//! frames (the discipline `hello-progress`'s indeterminate sweep already needs).
+//! thread. pinion has the *right* substrate, though: the §5.28
+//! [`TransportClock`] is a `Tickable` on the animation driver — the theme-fade /
+//! caret-blink / `IndeterminateSweep` sibling. While playing it advances the
+//! `0.0..=1.0` playhead **linearly** (constant speed — a spring would decelerate
+//! into the end), and it reports at-rest unless playing, so the backend requests
+//! frames only while the playhead moves. No thread, no `RepaintSink` poke — the
+//! existing frame loop is the clock. Because the driver is the §5.28 one, the
+//! R724 `scene/tick` RPC frame-steps it **deterministically**, so a live
+//! wall-clock transport is CI-testable without racing real frames.
 //!
 //! ## Architecture (view registers, reducer commands)
 //!
 //! The `hello-progress` owner-scoping: the clock is resolved-or-registered in
-//! the pure `view` via `use_transport_clock` (idempotent — a re-run does not
-//! re-register), so it lives on the window owner the shell ticks and its
-//! `position` [`Signal`] auto-subscribes the paint. The three transport buttons
-//! are M3 buttons; a click is an edge command the reducer maps straight onto
-//! `TransportClock`'s `play` / `pause` / `stop` (the reducer shares the owner,
-//! exactly as `hello-live-chart`'s reducer reaches its cached producer). Play
-//! from the end rewinds first (replay); reaching the end parks the playhead at
-//! `1.0` and stops the driver.
+//! the pure `view` via [`use_transport_clock`] (idempotent), so it lives on the
+//! window owner the shell ticks and its position `Signal` auto-subscribes the
+//! paint. The three transport buttons are M3 buttons; a click is an edge command
+//! the reducer maps straight onto [`TransportClock::play`] / `pause` / `stop`
+//! (the reducer shares the owner). Play from the end rewinds first (replay);
+//! reaching the end parks the playhead at `1.0` and stops the driver.
 //!
 //! ## Verification
 //!
@@ -56,9 +48,7 @@
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, Lane, Span, Timeline};
-use pinion_core::animation::Tickable;
 use pinion_core::external::External;
-use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -67,14 +57,13 @@ use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
+use pinion_core::widgets::transport::{TransportClock, use_transport_clock};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
     ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
     read_button_state,
 };
-use std::cell::Cell;
-use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTransportRenderer, HelloTransportRendererError);
@@ -94,136 +83,18 @@ const BUTTON_TAGS: [&str; 3] = [PLAY_TAG, PAUSE_TAG, STOP_TAG];
 
 const STATUS_TAG: &str = "transport_status";
 
-/// `Owner::register_animation_once` key for the transport clock.
+/// `register_animation_once` key for the §5.28 [`TransportClock`].
 const CLOCK_KEY: &str = "transport.clock";
+
+/// Wall-clock seconds for a full playthrough — equal to the timeline's `0..12`
+/// time span, so the playhead reads as one timeline-second per wall-second.
+const DURATION_SECS: f32 = 12.0;
 
 /// Window-absolute plot region. The timeline is pinned to it (the
 /// `pinion-chart` `build` coordinate contract), and the playhead readout is
 /// resolved against the SAME rect so the visible callout and the a11y readout
 /// cannot disagree (the `hello-timeline` parity).
 const CHART_RECT: Rect = Rect::new(14, 52, WIN_W - 28, WIN_H - 120);
-
-// ─────────────────────────── the transport clock ───────────────────────────
-
-/// The three states of a media transport.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum TransportStatus {
-    /// Parked at the start (playhead `0.0`), not advancing.
-    Stopped,
-    /// Advancing the playhead with wall-clock time.
-    Playing,
-    /// Frozen at the current playhead, not advancing.
-    Paused,
-}
-
-impl TransportStatus {
-    /// The word shown in the status readout / heard by a screen reader.
-    fn label(self) -> &'static str {
-        match self {
-            TransportStatus::Stopped => "Stopped",
-            TransportStatus::Playing => "Playing",
-            TransportStatus::Paused => "Paused",
-        }
-    }
-}
-
-/// A §5.28 [`Tickable`] driving a `0.0..=1.0` playhead fraction at constant
-/// speed while playing — the [`IndeterminateSweep`](pinion_core::widgets::progress_bar::IndeterminateSweep)
-/// shape (a `Signal` for the observed value, `Cell`s for the private state), but
-/// one-shot and gated by a three-state status rather than a boolean, and *not*
-/// looping: it stops at the end.
-struct TransportClock {
-    /// Playhead fraction in `0.0..=1.0` — auto-subscribes inside the view-fn so
-    /// the paint follows the sweep.
-    position: Signal<f32>,
-    /// The transport state. A plain [`Cell`] (like the sweep's `active`): its
-    /// changes ride the re-render an intent / a `position` write already forces,
-    /// so it needs no reactivity of its own.
-    status: Cell<TransportStatus>,
-}
-
-impl TransportClock {
-    /// Wall-clock seconds for a full `0.0 -> 1.0` playthrough. Chosen to equal
-    /// the timeline's time span (`0..12`) so the playhead reads as one
-    /// timeline-second per wall-second.
-    const DURATION_SECS: f32 = 12.0;
-
-    /// A parked transport (playhead `0`, `Stopped`).
-    fn new() -> Self {
-        Self {
-            position: Signal::new(0.0),
-            status: Cell::new(TransportStatus::Stopped),
-        }
-    }
-
-    /// Current playhead fraction. Auto-subscribes in a view-fn.
-    fn position(&self) -> f32 {
-        self.position.get()
-    }
-
-    /// Current transport state.
-    fn status(&self) -> TransportStatus {
-        self.status.get()
-    }
-
-    /// Start (or resume) playback. From the end, rewinds to the start first, so
-    /// Play on a finished transport replays it.
-    fn play(&self) {
-        if self.position.get() >= 1.0 {
-            self.position.set(0.0);
-        }
-        self.status.set(TransportStatus::Playing);
-    }
-
-    /// Freeze the playhead where it is. A no-op unless playing (Stop, not Pause,
-    /// is what rewinds).
-    fn pause(&self) {
-        if self.status.get() == TransportStatus::Playing {
-            self.status.set(TransportStatus::Paused);
-        }
-    }
-
-    /// Rewind to the start and park.
-    fn stop(&self) {
-        self.status.set(TransportStatus::Stopped);
-        self.position.set(0.0);
-    }
-}
-
-impl Tickable for TransportClock {
-    fn tick(&self, dt: f32) {
-        if self.status.get() != TransportStatus::Playing {
-            return;
-        }
-        let next = (self.position.get() + dt / Self::DURATION_SECS).min(1.0);
-        self.position.set(next);
-        if next >= 1.0 {
-            // Reached the end: park the playhead there and stop advancing (so
-            // `is_at_rest` frees the frame loop). Play rewinds from here.
-            self.status.set(TransportStatus::Paused);
-        }
-    }
-
-    fn is_at_rest(&self, _epsilon: f32) -> bool {
-        // Only a playing transport needs more frames; a stopped / paused one is
-        // settled, so the backend releases the frame loop.
-        self.status.get() != TransportStatus::Playing
-    }
-}
-
-/// Resolve (or, on the first call, construct **and register**) the transport
-/// clock for the current window scope — the R727 §5.28
-/// [`Owner::register_animation_once`](pinion_core::reactive::Owner::register_animation_once)
-/// SSOT, exactly as [`use_indeterminate_sweep`](pinion_core::widgets::progress_bar::use_indeterminate_sweep).
-///
-/// # Panics
-///
-/// Panics outside an active [`Owner`] scope.
-fn use_transport_clock() -> Rc<TransportClock> {
-    Owner::current()
-        .expect("use_transport_clock requires an active Owner scope")
-        .register_animation_once(CLOCK_KEY, TransportClock::new)
-}
 
 // ───────────────────────────── the demo sequence ────────────────────────────
 
@@ -274,7 +145,7 @@ fn status_line(clock: &TransportClock) -> String {
     let now = readout.as_deref().unwrap_or("t = -");
     format!(
         "{}  |  {:.0}%  |  {now}",
-        clock.status().label(),
+        clock.status().as_str(),
         pos * 100.0
     )
 }
@@ -336,7 +207,7 @@ fn view(state: TransportState, _frame: &Frame) -> Scene {
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
 
-    let clock = use_transport_clock();
+    let clock = use_transport_clock(CLOCK_KEY, DURATION_SECS);
     let playhead = clock.position();
 
     let title = Scene::Text(
@@ -406,7 +277,7 @@ impl WidgetCore for TransportView {
     fn create_extra_externals() -> Vec<ExtraExternal> {
         // Register the clock at boot (the window owner) so it is ticking before
         // the first paint; idempotent with the view's own `use_transport_clock`.
-        let _clock = use_transport_clock();
+        let _clock = use_transport_clock(CLOCK_KEY, DURATION_SECS);
         vec![
             ExtraExternal::new(PAUSE_TAG, Box::new(ButtonExternal::new())),
             ExtraExternal::new(STOP_TAG, Box::new(ButtonExternal::new())),
@@ -441,7 +312,7 @@ impl WidgetCore for TransportView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-transport (R1413 §5.28 timeline transport + live playhead)"
+        "pinion hello-transport (R1414 §5.28 timeline transport + live playhead)"
     }
 
     fn keybinding(_key: &str) -> Option<()> {
@@ -467,9 +338,9 @@ impl WidgetCore for TransportView {
         intent: &pinion_core::Intent,
     ) -> Vec<pinion_core::command::Command> {
         match intent.tag_str() {
-            "transport_play.click" => use_transport_clock().play(),
-            "transport_pause.click" => use_transport_clock().pause(),
-            "transport_stop.click" => use_transport_clock().stop(),
+            "transport_play.click" => use_transport_clock(CLOCK_KEY, DURATION_SECS).play(),
+            "transport_pause.click" => use_transport_clock(CLOCK_KEY, DURATION_SECS).pause(),
+            "transport_stop.click" => use_transport_clock(CLOCK_KEY, DURATION_SECS).stop(),
             _ => {}
         }
         Vec::new()
@@ -483,7 +354,7 @@ impl WidgetA11y for TransportView {
     /// `scene/snapshot`.
     fn access_node(state: &TransportState, focused: Option<&str>) -> Vec<AccessNode> {
         let (postures, _focus) = state;
-        let clock = use_transport_clock();
+        let clock = use_transport_clock(CLOCK_KEY, DURATION_SECS);
         let status = status_line(&clock);
         let mut nodes = vec![
             AccessNode::new(STATUS_TAG, AriaRole::Status)
@@ -518,6 +389,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::reactive::Owner;
+    use pinion_core::widgets::transport::TransportStatus;
 
     fn idle() -> TransportState {
         ([ButtonState::Idle; 3], [false; 3])
@@ -542,10 +415,14 @@ mod tests {
         }
     }
 
-    /// Render the view once inside an owner scope seeded with the clock.
+    /// Render the view once inside an owner scope (the clock registers on it).
     fn rendered(owner: &Owner) -> Scene {
         owner.run(|| view(idle(), &Frame::new()))
     }
+
+    // The clock mechanics (play/pause/stop/tick/clamp) are the substrate's own
+    // tests in `pinion_core::widgets::transport`; these cover the binding's
+    // integration: the scene structure, the reducer wiring, and a11y.
 
     #[test]
     fn boot_is_stopped_at_zero() {
@@ -561,120 +438,10 @@ mod tests {
     }
 
     #[test]
-    fn play_then_tick_advances_the_playhead() {
-        let owner = Owner::new();
-        owner.run(|| {
-            let clock = use_transport_clock();
-            clock.play();
-            assert_eq!(clock.status(), TransportStatus::Playing);
-            assert!(!clock.is_at_rest(0.001), "a playing clock wants frames");
-            // Half the duration advances the playhead to ~50 %.
-            owner.tick_animations(TransportClock::DURATION_SECS / 2.0);
-            let pos = clock.position();
-            assert!((0.45..=0.55).contains(&pos), "half-duration ~50%: {pos}");
-        });
-    }
-
-    #[test]
-    fn pause_freezes_the_playhead_across_ticks() {
-        let owner = Owner::new();
-        owner.run(|| {
-            let clock = use_transport_clock();
-            clock.play();
-            owner.tick_animations(3.0);
-            let frozen = clock.position();
-            clock.pause();
-            assert_eq!(clock.status(), TransportStatus::Paused);
-            assert!(clock.is_at_rest(0.001), "a paused clock releases frames");
-            owner.tick_animations(3.0);
-            assert!(
-                (clock.position() - frozen).abs() < f32::EPSILON,
-                "paused playhead does not advance: {frozen} -> {}",
-                clock.position()
-            );
-        });
-    }
-
-    #[test]
-    fn play_resumes_from_the_paused_spot() {
-        let owner = Owner::new();
-        owner.run(|| {
-            let clock = use_transport_clock();
-            clock.play();
-            owner.tick_animations(3.0);
-            clock.pause();
-            let resumed_from = clock.position();
-            clock.play();
-            owner.tick_animations(3.0);
-            assert!(
-                clock.position() > resumed_from,
-                "resume advances from {resumed_from}, got {}",
-                clock.position()
-            );
-        });
-    }
-
-    #[test]
-    fn stop_rewinds_to_zero() {
-        let owner = Owner::new();
-        owner.run(|| {
-            let clock = use_transport_clock();
-            clock.play();
-            owner.tick_animations(5.0);
-            assert!(clock.position() > 0.0);
-            clock.stop();
-            assert_eq!(clock.status(), TransportStatus::Stopped);
-            assert!(
-                (clock.position() - 0.0).abs() < f32::EPSILON,
-                "stop rewinds to 0"
-            );
-        });
-    }
-
-    #[test]
-    fn reaching_the_end_clamps_and_auto_stops() {
-        let owner = Owner::new();
-        owner.run(|| {
-            let clock = use_transport_clock();
-            clock.play();
-            // A tick well past the full duration.
-            owner.tick_animations(TransportClock::DURATION_SECS * 2.0);
-            assert!(
-                (clock.position() - 1.0).abs() < f32::EPSILON,
-                "playhead clamps at 1.0"
-            );
-            assert_eq!(
-                clock.status(),
-                TransportStatus::Paused,
-                "the finished transport parks at the end"
-            );
-            assert!(clock.is_at_rest(0.001), "a finished clock releases frames");
-        });
-    }
-
-    #[test]
-    fn play_from_the_end_rewinds_first() {
-        let owner = Owner::new();
-        owner.run(|| {
-            let clock = use_transport_clock();
-            clock.play();
-            owner.tick_animations(TransportClock::DURATION_SECS * 2.0);
-            assert!((clock.position() - 1.0).abs() < f32::EPSILON);
-            // Play at the end replays from the start.
-            clock.play();
-            assert_eq!(clock.status(), TransportStatus::Playing);
-            assert!(
-                (clock.position() - 0.0).abs() < f32::EPSILON,
-                "play at the end rewinds to 0"
-            );
-        });
-    }
-
-    #[test]
     fn status_names_the_clip_under_the_playhead() {
         let owner = Owner::new();
         owner.run(|| {
-            let clock = use_transport_clock();
+            let clock = use_transport_clock(CLOCK_KEY, DURATION_SECS);
             clock.play();
             owner.tick_animations(5.0); // t ~ 5s -> video:action, audio:theme
             let status = status_line(&clock);
@@ -720,26 +487,27 @@ mod tests {
     fn reducer_play_pause_stop_drive_the_clock() {
         let owner = Owner::new();
         owner.run(|| {
-            let play = pinion_core::Intent::new_owned(
-                "transport_play.click".to_owned(),
-                pinion_core::external::IntrospectValue::Null,
+            let intent = |tag: &str| {
+                pinion_core::Intent::new_owned(
+                    tag.to_owned(),
+                    pinion_core::external::IntrospectValue::Null,
+                )
+            };
+            let _ = TransportView::update(idle(), &intent("transport_play.click"));
+            assert_eq!(
+                use_transport_clock(CLOCK_KEY, DURATION_SECS).status(),
+                TransportStatus::Playing
             );
-            let _ = TransportView::update(idle(), &play);
-            assert_eq!(use_transport_clock().status(), TransportStatus::Playing);
-
-            let pause = pinion_core::Intent::new_owned(
-                "transport_pause.click".to_owned(),
-                pinion_core::external::IntrospectValue::Null,
+            let _ = TransportView::update(idle(), &intent("transport_pause.click"));
+            assert_eq!(
+                use_transport_clock(CLOCK_KEY, DURATION_SECS).status(),
+                TransportStatus::Paused
             );
-            let _ = TransportView::update(idle(), &pause);
-            assert_eq!(use_transport_clock().status(), TransportStatus::Paused);
-
-            let stop = pinion_core::Intent::new_owned(
-                "transport_stop.click".to_owned(),
-                pinion_core::external::IntrospectValue::Null,
+            let _ = TransportView::update(idle(), &intent("transport_stop.click"));
+            assert_eq!(
+                use_transport_clock(CLOCK_KEY, DURATION_SECS).status(),
+                TransportStatus::Stopped
             );
-            let _ = TransportView::update(idle(), &stop);
-            assert_eq!(use_transport_clock().status(), TransportStatus::Stopped);
         });
     }
 
