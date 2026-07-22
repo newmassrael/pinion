@@ -1,0 +1,38 @@
+[package]
+name = "hello-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1413 Phase-B dataviz consumer — a media transport (play/pause/stop) over a pinion-chart Timeline with a live auto-advancing now-playhead. The playhead is a §5.28 Tickable (TransportClock) registered via Owner::register_animation_once — the theme-fade / caret-blink / IndeterminateSweep substrate — advancing the 0..1 fraction linearly while playing, so the existing frame loop is the clock (no thread, no RepaintSink poke). The R724 scene/tick RPC frame-steps it deterministically, so the wall-clock transport is CI-testable without racing real frames. Timeline's 2nd consumer; dashboard-substrate gap #4."
+publish = false
+
+[[bin]]
+name = "hello-transport"
+path = "src/main.rs"
+
+[dependencies]
+# R1389 — the charting substrate (Timeline + playhead + playhead_readout).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+# §5.28 animation driver (Tickable + register_animation_once) + Signal + button.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC + scene/tick).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R727 §5.49 — button paint SSOT (`button_scene` / `read_button_state`).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloTransportRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
