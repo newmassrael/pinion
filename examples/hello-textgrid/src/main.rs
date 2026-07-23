@@ -85,6 +85,17 @@
 //! reports the cursor's `cursor_color` (the resolved hex, or `null` when unset)
 //! — `tools/demos/r1424_textgrid_cursor_color.py` asserts it.
 //!
+//! R1425 adds a twelfth grid, **`htg_cursor_blink`**, carrying the DECSCUSR
+//! blink-vs-steady **mode** ([`GridCursor::with_blink`]): a visible **block**
+//! cursor whose `blink` mode is `true` — the blinking DECSCUSR variant a
+//! modal editor drives in insert mode (`CSI 1 SP q`). `htg_cursor`'s bar (no
+//! blink) is the steady default arm, so the two grids witness both DECSCUSR
+//! blink states. The mode is a first-class fact distinct from `visible`
+//! (DECTCEM), so `scene/snapshot` reports `blink` apart from show/hide (§2 #7)
+//! — `tools/demos/r1425_textgrid_cursor_blink.py` asserts it. The mode is data
+//! this round; the render-time blink phase is the deferred renderer-owned
+//! slice (as the R993 Vello paint followed the R975 cursor data model).
+//!
 //! **Glyph paint** (R991 §5.41 §2 #6) renders these grids on the Vello
 //! backend: each cell's palette-resolved background fills its rect and the
 //! grapheme cluster paints in the resolved foreground, with `reverse`
@@ -563,6 +574,49 @@ fn cursor_color_buffer() -> GridBuffer {
         )
 }
 
+/// Tag of the R1425 DECSCUSR blink-mode grid, and its placement + extent.
+const CURSOR_BLINK_TAG: &str = "htg_cursor_blink";
+/// In the same free strip as the cursor-colour grid, just to its right
+/// (that grid spans x=400..464), so the two cursor-axis grids sit together.
+const CURSOR_BLINK_POS: (u32, u32) = (480, 840);
+/// `8 × 2` cells at the `8×16` baseline metric → `64 × 32` px.
+const CURSOR_BLINK_COLS: u16 = 8;
+const CURSOR_BLINK_ROWS: u16 = 2;
+const CURSOR_BLINK_SIZE: (u32, u32) = (64, 32);
+/// Where the blinking block cursor sits: on the prompt input glyph (col 2,
+/// row 1), matching the cursor-colour grid so the two are directly comparable.
+const CURSOR_BLINK_AT: (u16, u16) = (2, 1);
+
+/// Build the R1425 DECSCUSR blink-mode projection: a two-row prompt buffer
+/// whose visible **block** cursor carries the DECSCUSR blinking mode
+/// ([`GridCursor::with_blink`]). A real producer reports whether its
+/// emulator's cursor is a blinking DECSCUSR variant (`CSI 1 SP q` / the
+/// insert-mode blinking cursor `vim` drives) as the effective cursor's mode;
+/// here it is set explicitly so `scene/snapshot` reports `blink: true` as a
+/// first-class fact (§2 #7) — distinct from `visible` (DECTCEM), which stays
+/// `true`. The blink mode is data this round; the render-time phase animation
+/// is the deferred renderer-owned slice (as the R993 Vello paint followed the
+/// R975 cursor data model). Its sibling `htg_cursor` (a bar, no blink) is the
+/// steady default arm, so the two grids witness both DECSCUSR blink states.
+fn cursor_blink_buffer() -> GridBuffer {
+    let default = |c: char| TermCell::new(c.to_string(), TermColor::Default, TermColor::Default);
+    GridBuffer::new(CURSOR_BLINK_COLS, CURSOR_BLINK_ROWS)
+        // Row 0 — the mode label (exactly 8 glyphs), so the cursor on row 1 is
+        // provably not the home row.
+        .with_row(0, "[blinks]".chars().map(default))
+        // Row 1 — the prompt; the blinking block cursor sits on the input glyph.
+        .with_row(1, "$ x".chars().map(default))
+        .with_cursor(
+            GridCursor::new(
+                CURSOR_BLINK_AT.0,
+                CURSOR_BLINK_AT.1,
+                CursorShape::Block,
+                true,
+            )
+            .with_blink(true),
+        )
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -655,6 +709,12 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         CURSOR_COLOR_POS,
         CURSOR_COLOR_SIZE,
     );
+    let cursor_blink = celled_grid(
+        CURSOR_BLINK_TAG,
+        cursor_blink_buffer(),
+        CURSOR_BLINK_POS,
+        CURSOR_BLINK_SIZE,
+    );
 
     Scene::Container(
         ContainerNode::new(vec![
@@ -681,6 +741,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             underline,
             hyperlink,
             cursor_color,
+            cursor_blink,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -854,6 +915,7 @@ mod tests {
         assert!(scene.contains_tag(UNDERLINE_TAG));
         assert!(scene.contains_tag(HYPERLINK_TAG));
         assert!(scene.contains_tag(CURSOR_COLOR_TAG));
+        assert!(scene.contains_tag(CURSOR_BLINK_TAG));
     }
 
     #[test]
@@ -873,6 +935,27 @@ mod tests {
         assert_eq!(b.cell(2, 1).unwrap().cluster, "x");
         // Its sibling htg_cursor carries NO cursor colour (the None default).
         assert_eq!(cursor_buffer().cursor().cursor_color, None);
+    }
+
+    #[test]
+    fn cursor_blink_buffer_carries_a_blinking_block_cursor() {
+        // R1425 — the DECSCUSR blink-mode grid: a visible block cursor at the
+        // prompt input glyph, carrying the blinking mode. `blink` is the mode
+        // (a first-class fact), orthogonal to `visible` (DECTCEM).
+        let b = cursor_blink_buffer();
+        assert_eq!((b.cols(), b.rows()), (CURSOR_BLINK_COLS, CURSOR_BLINK_ROWS));
+        let cur = b.cursor();
+        assert_eq!((cur.col, cur.row), CURSOR_BLINK_AT);
+        assert_eq!(cur.shape, CursorShape::Block);
+        assert!(cur.visible, "the cursor is shown (DECTCEM)");
+        assert!(
+            cur.blink,
+            "and it is a blinking DECSCUSR variant (the mode)"
+        );
+        // The cursor sits on the input glyph 'x' (row 1, col 2).
+        assert_eq!(b.cell(2, 1).unwrap().cluster, "x");
+        // Its sibling htg_cursor is the steady default arm (blink false).
+        assert!(!cursor_buffer().cursor().blink);
     }
 
     #[test]

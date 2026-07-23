@@ -427,6 +427,15 @@ pub struct GridCursorSnapshot {
     /// a [`TermColorSnapshot`] `kind` / `index` / `rgb` triple. An AI client
     /// reads the cursor colour as data (§2 #7) without OCR.
     pub cursor_color: Option<String>,
+    /// R1425 §5.41 — the DECSCUSR blink-vs-steady **mode**: `true` when the
+    /// producer's cursor is a blinking DECSCUSR variant, `false` when steady.
+    /// This is the mode (authoritative DECSCUSR state), a first-class fact
+    /// distinct from the render-time blink phase and from `visible` (DECTCEM
+    /// show/hide) — an AI client reads whether the cursor is a *blinking-type*
+    /// cursor as data (§2 #7), never by watching a pixel flicker, and reads it
+    /// apart from `visible` so "app hid the cursor" and "blink off-phase" stay
+    /// distinguishable. Mirrors [`GridCursor::blink`](pinion_core::term_grid::GridCursor::blink).
+    pub blink: bool,
 }
 
 /// `External` payload of [`SnapshotNode::External`] (R51.198 added
@@ -750,7 +759,9 @@ fn term_color_snapshot(
 /// visibility pass through verbatim. R1424 — the explicit OSC-12
 /// [`cursor_color`](pinion_core::term_grid::GridCursor::cursor_color) is
 /// rendered to its hex literal (`None` when the producer set none); it is
-/// an absolute colour, so no [`Palette`] resolution applies.
+/// an absolute colour, so no [`Palette`] resolution applies. R1425 — the
+/// DECSCUSR [`blink`](pinion_core::term_grid::GridCursor::blink) mode passes
+/// through verbatim (a mode, not the render-time phase).
 fn grid_cursor_snapshot(cursor: GridCursor) -> GridCursorSnapshot {
     let shape = match cursor.shape {
         CursorShape::Block => "block",
@@ -763,6 +774,7 @@ fn grid_cursor_snapshot(cursor: GridCursor) -> GridCursorSnapshot {
         shape,
         visible: cursor.visible,
         cursor_color: cursor.cursor_color.map(pinion_core::Color::to_hex),
+        blink: cursor.blink,
     }
 }
 
@@ -987,6 +999,46 @@ mod tests {
                 // R1424 — no OSC-12 colour set, so the cursor reports None (the
                 // backward-compatible cell-derived render).
                 assert_eq!(snap.cursor.cursor_color, None);
+                // R1425 — the cursor is a steady DECSCUSR variant by default.
+                assert!(!snap.cursor.blink);
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_grid_snapshot_reports_blink_mode_apart_from_visible() {
+        // R1425 §5.41 — the DECSCUSR blink-vs-steady mode is reported as a
+        // first-class fact, distinct from `visible` (DECTCEM): a blinking
+        // cursor that is currently shown reports blink=true AND visible=true,
+        // so a client reads the mode without inferring it from a pixel flicker
+        // and reads it apart from show/hide (§2 #7).
+        use pinion_core::{CursorShape, GridBuffer, GridCursor};
+        // A visible, blinking block cursor.
+        let buf = GridBuffer::new(8, 2)
+            .with_cursor(GridCursor::new(2, 1, CursorShape::Block, true).with_blink(true));
+        let mut node =
+            pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT).with_cells(buf);
+        node.rect = Rect::new(0, 0, 64, 32);
+        match snapshot(&Scene::TextGrid(node), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                assert!(snap.cursor.blink, "blinking mode reported");
+                assert!(snap.cursor.visible, "and it is currently shown (DECTCEM)");
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+        // A hidden cursor can still carry the blinking mode — the two facts
+        // are independent (a producer folding blink phase into `visible` would
+        // lose this distinction; pinion keeps the mode pure).
+        let hidden = GridBuffer::new(8, 2)
+            .with_cursor(GridCursor::new(0, 0, CursorShape::Bar, false).with_blink(true));
+        let mut hnode = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
+            .with_cells(hidden);
+        hnode.rect = Rect::new(0, 0, 64, 32);
+        match snapshot(&Scene::TextGrid(hnode), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                assert!(snap.cursor.blink, "blinking mode survives DECTCEM hide");
+                assert!(!snap.cursor.visible, "the cursor is hidden");
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }

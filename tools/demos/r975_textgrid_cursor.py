@@ -45,14 +45,16 @@ from rpc_verify import (
 WIN = (680, 840)
 CURSOR_TAG = "htg_cursor"
 
-# The default a grid carries when its producer has not set a cursor:
-# hidden, home, block, no explicit OSC-12 colour (R1424 added `cursor_color`).
+# The default a grid carries when its producer has not set a cursor: hidden,
+# home, block, no explicit OSC-12 colour (R1424 added `cursor_color`), steady
+# (R1425 added `blink`).
 DEFAULT_CURSOR = {
     "col": 0,
     "row": 0,
     "shape": "block",
     "visible": False,
     "cursor_color": None,
+    "blink": False,
 }
 
 

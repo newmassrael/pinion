@@ -3943,12 +3943,16 @@ fn text_grid_snapshot_fields(obj: &mut serde_json::Map<String, Value>, snap: &Te
 }
 
 /// R975 §5.41 — wire form for a [`GridCursorSnapshot`]: `{col, row, shape,
-/// visible, cursor_color}`. `shape` is the wire string `"block"` / `"bar"`
-/// / `"underline"`; a client tests `(col, row)` against the grid's `(cols,
-/// rows)` to know whether the cursor is in bounds. R1424 — `cursor_color`
-/// is the OSC-12 hex literal (`"#rrggbb"`) or `null` when the producer set
-/// none; the key is always present (mirroring the `underline_color`
-/// convention) so a client reads the cursor colour as data.
+/// visible, cursor_color, blink}`. `shape` is the wire string `"block"` /
+/// `"bar"` / `"underline"`; a client tests `(col, row)` against the grid's
+/// `(cols, rows)` to know whether the cursor is in bounds. R1424 —
+/// `cursor_color` is the OSC-12 hex literal (`"#rrggbb"`) or `null` when the
+/// producer set none; the key is always present (mirroring the
+/// `underline_color` convention) so a client reads the cursor colour as
+/// data. R1425 — `blink` is the DECSCUSR blink-vs-steady mode (`true` for a
+/// blinking-type cursor), a first-class fact distinct from `visible`
+/// (DECTCEM show/hide) so a client reads whether the cursor blinks without
+/// watching a flicker (§2 #7).
 fn grid_cursor_to_json(cursor: &GridCursorSnapshot) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("col".to_string(), Value::Number(cursor.col.into()));
@@ -3962,6 +3966,7 @@ fn grid_cursor_to_json(cursor: &GridCursorSnapshot) -> Value {
             .as_deref()
             .map_or(Value::Null, |hex| Value::String(hex.to_string())),
     );
+    obj.insert("blink".to_string(), Value::Bool(cursor.blink));
     Value::Object(obj)
 }
 

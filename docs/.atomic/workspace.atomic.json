@@ -28822,6 +28822,56 @@
         "Process: R1416 / R1423 shipped terminal-drain §2 #6 parity gaps because their local gates never ran pinion-tui — the [[ignored-integration-tests-fall-through-ci]] class; the pinion-tui r1364_5 parity test is the standing net and is green again."
       ]
     },
+    "R1425": {
+      "decision_summary": "R1425 §5.41: add the DECSCUSR blink-vs-steady mode to the cell-native TextGrid cursor — GridCursor::blink: bool (+ with_blink), the flag the CursorShape rustdoc named 'a separate concern not folded into the shape' and the GridCursor forward-compat hedge foreshadowed. blink is the DECSCUSR mode (blinking vs steady variant) the producer reports (R969), a first-class fact distinct from visible (DECTCEM show/hide) and from the render-time blink phase (R974.1 dual-fact). The phase is a paint-time renderer concern owned by the last renderer in the chain — the way every real terminal keeps the blink timer in the widget, not the PTY app — and is NEVER folded into visible, because folding it would conflate 'app hid the cursor' with 'blink off-phase' so a projection consumer or scene/snapshot could no longer read the two apart (§2 #7). Reported as data on both the GridCursor and the RPC snapshot; a two-reviewer independent design audit (architecture + terminal-correctness lenses) settled the data model against a phase-in-visible alternative. The paint-time phase animation is the deferred renderer-owned slice, following the axis build discipline (the R993 Vello paint followed the R975 cursor data model), mirroring the CaretBlink primitive pinion already ships for its own carets.",
+      "changes_bullets": [
+        "pinion-core: GridCursor gains blink: bool (#[serde(default)]) + a with_blink builder; new() defaults it false (steady) — the DECSCUSR blink-vs-steady mode the CursorShape / GridCursor rustdocs foreshadowed. The mode (authoritative DECSCUSR state, producer-reported per R969) is orthogonal to shape and to visible, which stays pure DECTCEM; the render-time phase is never folded into visible.",
+        "pinion-rpc: GridCursorSnapshot.blink: bool + grid_cursor_to_json emits blink (always present) so an AI client reads whether the cursor is a blinking-type cursor as data (§2 #7), apart from visible (DECTCEM show/hide).",
+        "hello-textgrid: a twelfth grid htg_cursor_blink — a visible block cursor in the blinking mode (blink=true, visible=true), the DECSCUSR blinking variant a modal editor drives; htg_cursor (a bar, blink=false) is the steady default arm, so the two grids witness both DECSCUSR blink states.",
+        "rustdoc: the CursorShape blink-vs-steady note and the GridCursor forward-compat hedge now point at the landed R1425 blink field — both foreshadowed refinements (R1424 cursor_color, R1425 blink) have now landed."
+      ],
+      "verification_bullets": [
+        "pinion-core: 2 tests — new()/default leave blink false and with_blink sets it (other fields incl. visible / cursor_color intact); the #[serde(default)] field deserializes a pre-R1425 payload to false and round-trips a blinking cursor. core 2661 green.",
+        "pinion-rpc: 1 test — a blinking visible cursor reports blink=true AND visible=true (read apart), and the blinking mode survives a DECTCEM hide (blink=true, visible=false); the R975 default-cursor test now also asserts blink=false. rpc 923 green.",
+        "hello-textgrid: 1 test — the blinking block cursor grid + the steady htg_cursor sibling. example 18 green.",
+        "r1425_textgrid_cursor_blink.py: 39 verifications PASS over RPC — the block cursor reports blink=true / visible=true (read apart), the sibling bar reports blink=false while also visible, every scaffold grid reports the steady default, R1424 OSC-12 colour is intact and additive; r975 / r977 / r1400-r1402 cursor regressions PASS.",
+        "clippy -D pedantic clean; cargo fmt --all --check clean; cargo doc --document-private-items clean (RUSTDOCFLAGS=-D warnings); mnemosyne T1=0."
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.35",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "The render-time blink PHASE animation is the deferred renderer-owned slice (last-renderer rule: pinion for its Vello window / painted TUI cell, reusing the CaretBlink half-period + focus-gating; a host-terminal native-cursor TUI arm via crossterm SetCursorStyle is deferred because it cannot recolour the native cursor and would regress R1424 TUI OSC-12 inverted-cell). It follows the R993-after-R975 axis discipline; this round lands the mode as data.",
+        "SGR-5 cell-text blink in the Vello backend (CellAttrs::blink) stays a separate remaining Vello slice (the TUI gets it free from the host terminal) — a different axis from the DECSCUSR cursor blink landed here.",
+        "A two-reviewer independent design audit (architecture + terminal-correctness lenses) settled the data model: blink is the mode, visible stays pure DECTCEM, the phase is never folded into visible (else \"app hid the cursor\" and \"blink off-phase\" become indistinguishable to a consumer or scene/snapshot)."
+      ],
+      "publishable_decision_summary": "R1425 §5.41: add the DECSCUSR blink-vs-steady mode to the cell-native TextGrid cursor — GridCursor::blink: bool (+ with_blink), the flag the CursorShape rustdoc named 'a separate concern not folded into the shape' and the GridCursor forward-compat hedge foreshadowed. blink is the DECSCUSR mode (blinking vs steady variant) the producer reports (R969), a first-class fact distinct from visible (DECTCEM show/hide) and from the render-time blink phase (R974.1 dual-fact). The phase is a paint-time renderer concern owned by the last renderer in the chain — the way every real terminal keeps the blink timer in the widget, not the PTY app — and is NEVER folded into visible, because folding it would conflate 'app hid the cursor' with 'blink off-phase' so a projection consumer or scene/snapshot could no longer read the two apart (§2 #7). Reported as data on both the GridCursor and the RPC snapshot; a two-reviewer independent design audit (architecture + terminal-correctness lenses) settled the data model against a phase-in-visible alternative. The paint-time phase animation is the deferred renderer-owned slice, following the axis build discipline (the R993 Vello paint followed the R975 cursor data model), mirroring the CaretBlink primitive pinion already ships for its own carets.",
+      "publishable_changes_bullets": [
+        "pinion-core: GridCursor gains blink: bool (#[serde(default)]) + a with_blink builder; new() defaults it false (steady) — the DECSCUSR blink-vs-steady mode the CursorShape / GridCursor rustdocs foreshadowed. The mode (authoritative DECSCUSR state, producer-reported per R969) is orthogonal to shape and to visible, which stays pure DECTCEM; the render-time phase is never folded into visible.",
+        "pinion-rpc: GridCursorSnapshot.blink: bool + grid_cursor_to_json emits blink (always present) so an AI client reads whether the cursor is a blinking-type cursor as data (§2 #7), apart from visible (DECTCEM show/hide).",
+        "hello-textgrid: a twelfth grid htg_cursor_blink — a visible block cursor in the blinking mode (blink=true, visible=true), the DECSCUSR blinking variant a modal editor drives; htg_cursor (a bar, blink=false) is the steady default arm, so the two grids witness both DECSCUSR blink states.",
+        "rustdoc: the CursorShape blink-vs-steady note and the GridCursor forward-compat hedge now point at the landed R1425 blink field — both foreshadowed refinements (R1424 cursor_color, R1425 blink) have now landed."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core: 2 tests — new()/default leave blink false and with_blink sets it (other fields incl. visible / cursor_color intact); the #[serde(default)] field deserializes a pre-R1425 payload to false and round-trips a blinking cursor. core 2661 green.",
+        "pinion-rpc: 1 test — a blinking visible cursor reports blink=true AND visible=true (read apart), and the blinking mode survives a DECTCEM hide (blink=true, visible=false); the R975 default-cursor test now also asserts blink=false. rpc 923 green.",
+        "hello-textgrid: 1 test — the blinking block cursor grid + the steady htg_cursor sibling. example 18 green.",
+        "r1425_textgrid_cursor_blink.py: 39 verifications PASS over RPC — the block cursor reports blink=true / visible=true (read apart), the sibling bar reports blink=false while also visible, every scaffold grid reports the steady default, R1424 OSC-12 colour is intact and additive; r975 / r977 / r1400-r1402 cursor regressions PASS.",
+        "clippy -D pedantic clean; cargo fmt --all --check clean; cargo doc --document-private-items clean (RUSTDOCFLAGS=-D warnings); mnemosyne T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.35",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The render-time blink PHASE animation is the deferred renderer-owned slice (last-renderer rule: pinion for its Vello window / painted TUI cell, reusing the CaretBlink half-period + focus-gating; a host-terminal native-cursor TUI arm via crossterm SetCursorStyle is deferred because it cannot recolour the native cursor and would regress R1424 TUI OSC-12 inverted-cell). It follows the R993-after-R975 axis discipline; this round lands the mode as data.",
+        "SGR-5 cell-text blink in the Vello backend (CellAttrs::blink) stays a separate remaining Vello slice (the TUI gets it free from the host terminal) — a different axis from the DECSCUSR cursor blink landed here.",
+        "A two-reviewer independent design audit (architecture + terminal-correctness lenses) settled the data model: blink is the mode, visible stays pure DECTCEM, the phase is never folded into visible (else \"app hid the cursor\" and \"blink off-phase\" become indistinguishable to a consumer or scene/snapshot)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
@@ -81768,5 +81818,5 @@
   "parameter_deltas": {},
   "parameter_gates": {},
   "fact_counts": {},
-  "schema_version": 41
+  "schema_version": 42
 }

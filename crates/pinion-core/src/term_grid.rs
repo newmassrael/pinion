@@ -683,7 +683,7 @@ impl Default for TermCell {
 /// — DECSCUSR defines no fourth shape — so `#[non_exhaustive]` is
 /// deliberately **not** applied and callers may match exhaustively. (The
 /// DECSCUSR blink-vs-steady axis is a separate concern and is not folded
-/// into the shape.)
+/// into the shape — it lands orthogonally as [`GridCursor::blink`], R1425.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CursorShape {
     /// A filled full-cell block — the conventional terminal default.
@@ -718,9 +718,10 @@ pub enum CursorShape {
 ///
 /// `#[non_exhaustive]` per the R974.1 forward-compat hedge (matching
 /// [`TermCell`] / [`CellAttrs`]): construction routes through
-/// [`Self::new`] / [`Self::default`], so a later refinement (e.g. a
-/// DECSCUSR blink flag) lands additively. The explicit cursor colour the
-/// hedge foreshadowed is the R1424 [`cursor_color`](Self::cursor_color)
+/// [`Self::new`] / [`Self::default`], so a later refinement lands
+/// additively. Both refinements the hedge foreshadowed have now landed: the
+/// explicit cursor colour is the R1424 [`cursor_color`](Self::cursor_color)
+/// field, and the DECSCUSR blink flag is the R1425 [`blink`](Self::blink)
 /// field below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
@@ -750,6 +751,31 @@ pub struct GridCursor {
     /// deserializes to `None`.
     #[serde(default)]
     pub cursor_color: Option<Color>,
+    /// R1425 §5.41 — the DECSCUSR blink-vs-steady **mode** (`true` when the
+    /// cursor is a *blinking* variant — DECSCUSR `0`/`1`/`3`/`5` — `false`
+    /// when *steady* — `2`/`4`/`6`), the flag the [`CursorShape`] rustdoc
+    /// flagged as "a separate concern ... not folded into the shape".
+    ///
+    /// This is the *mode* the producer reports (its emulator's authoritative
+    /// DECSCUSR state, R969), not the render-time on/off phase. The two are
+    /// distinct first-class facts (R974.1 dual-fact discipline): `blink` is
+    /// the mode (it changes only when the app emits a DECSCUSR sequence),
+    /// while [`visible`](Self::visible) stays *pure DECTCEM* (does the app
+    /// want the cursor shown at all?). The time-varying blink **phase** is a
+    /// renderer concern owned by the last renderer in the chain — the way
+    /// every real terminal (xterm / vte-widget / alacritty) keeps the blink
+    /// timer in the widget, not the PTY app — and it is applied at *paint*
+    /// time, never folded back into `visible`. Folding phase into `visible`
+    /// would conflate "app hid the cursor" with "blink off-phase", so a
+    /// projection consumer (or `scene/snapshot`, §2 #7) could no longer read
+    /// the two apart; keeping `blink` a distinct mode preserves that. The
+    /// paint-time phase animation itself is the deferred slice (as the R993
+    /// Vello paint followed the R975 cursor data model), mirroring the
+    /// renderer-owned [`CaretBlink`](crate::widgets::caret_blink::CaretBlink)
+    /// primitive pinion already ships for its own carets. `#[serde(default)]`
+    /// so a pre-R1425 payload (no field) deserializes to `false` (steady).
+    #[serde(default)]
+    pub blink: bool,
 }
 
 impl GridCursor {
@@ -766,6 +792,7 @@ impl GridCursor {
             shape,
             visible,
             cursor_color: None,
+            blink: false,
         }
     }
 
@@ -777,6 +804,21 @@ impl GridCursor {
     #[must_use]
     pub const fn with_cursor_color(mut self, color: Color) -> Self {
         self.cursor_color = Some(color);
+        self
+    }
+
+    /// Return this cursor with the DECSCUSR [`blink`](Self::blink) mode set
+    /// (R1425 §5.41) — `true` for a blinking DECSCUSR variant, `false` for a
+    /// steady one. The producer chains this after [`Self::new`] when its
+    /// emulator's cursor is in a blinking DECSCUSR mode; leaving it off keeps
+    /// the `false` steady default. The mode is reported as data; the
+    /// render-time blink phase is a paint-time renderer concern and is never
+    /// folded into [`visible`](Self::visible). Additive per the
+    /// `#[non_exhaustive]` forward-compat contract, mirroring
+    /// [`CellAttrs::with_blink`] (the SGR-5 cell-blink sibling axis).
+    #[must_use]
+    pub const fn with_blink(mut self, on: bool) -> Self {
+        self.blink = on;
         self
     }
 }
@@ -1455,6 +1497,52 @@ mod tests {
         let json = serde_json::to_string(&coloured).expect("serialize");
         let back: GridCursor = serde_json::from_str(&json).expect("round-trip");
         assert_eq!(back, coloured);
+    }
+
+    #[test]
+    fn grid_cursor_new_is_steady_but_with_blink_sets_the_mode() {
+        // R1425 — `new` leaves the DECSCUSR blink mode `false` (steady); the
+        // default does too. `blink` is orthogonal to `visible` (DECTCEM) and
+        // to `shape` (the DECSCUSR shape).
+        assert!(!GridCursor::new(2, 1, CursorShape::Block, true).blink);
+        assert!(!GridCursor::default().blink);
+        // `with_blink(true)` sets the blinking mode and leaves every other
+        // field intact — `visible` stays pure DECTCEM, not phase.
+        let c = GridCursor::new(2, 1, CursorShape::Block, true).with_blink(true);
+        assert!(c.blink);
+        assert_eq!((c.col, c.row), (2, 1));
+        assert_eq!(c.shape, CursorShape::Block);
+        assert!(c.visible);
+        // A steady set is honoured (idempotent with the default).
+        assert!(
+            !GridCursor::new(0, 0, CursorShape::Bar, true)
+                .with_blink(false)
+                .blink
+        );
+        // The blink mode composes with the OSC-12 cursor colour (R1424) —
+        // the two additive fields are independent.
+        let g = GridCursor::new(0, 0, CursorShape::Bar, true)
+            .with_cursor_color(Color::rgb(0x2e, 0xcc, 0x71))
+            .with_blink(true);
+        assert!(g.blink);
+        assert_eq!(g.cursor_color, Some(Color::rgb(0x2e, 0xcc, 0x71)));
+    }
+
+    #[test]
+    fn grid_cursor_blink_serde_defaults_to_false_for_pre_r1425_payload() {
+        // R1425 — the `blink` field is `#[serde(default)]`, so a pre-R1425
+        // payload (no such key — here also a pre-R1424 one, no `cursor_color`)
+        // deserializes to `false` (steady) rather than failing.
+        let legacy = r#"{"col":2,"row":1,"shape":"Bar","visible":true}"#;
+        let cur: GridCursor = serde_json::from_str(legacy).expect("legacy cursor deserializes");
+        assert!(!cur.blink);
+        assert_eq!((cur.col, cur.row), (2, 1));
+        // A blinking cursor round-trips through serde with every field intact.
+        let blinking = GridCursor::new(3, 4, CursorShape::Block, true).with_blink(true);
+        let json = serde_json::to_string(&blinking).expect("serialize");
+        let back: GridCursor = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(back, blinking);
+        assert!(back.blink);
     }
 
     #[test]

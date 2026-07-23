@@ -54,13 +54,14 @@ BAR_TAG = "htg_cursor"
 GREEN_HEX = "#2ecc71"
 
 # The default cursor a grid carries when its producer set none: hidden, home,
-# block, no explicit OSC-12 colour.
+# block, no explicit OSC-12 colour, steady (R1425 added `blink`).
 DEFAULT_CURSOR = {
     "col": 0,
     "row": 0,
     "shape": "block",
     "visible": False,
     "cursor_color": None,
+    "blink": False,
 }
 
 
