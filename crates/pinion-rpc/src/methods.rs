@@ -153,6 +153,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/type", MethodOcc::Read),
     ("scene/waitFor", MethodOcc::Read),
     ("scene/wheel", MethodOcc::Read),
+    ("scene/window_focus", MethodOcc::Read),
     ("scene/window_move", MethodOcc::Read),
     ("scene/windows", MethodOcc::Read),
     ("text/normalize", MethodOcc::Read),
@@ -336,6 +337,7 @@ mod tests {
         // not read `Read` as "side-effect-free".
         for effecting_read in [
             "scene/window_move",   // async — move lands on reconcile
+            "scene/window_focus",  // out-of-band OS-focus gate/mirror drive
             "scene/key",           // deferred input
             "scene/wheel",         // deferred input
             "scene/resize",        // async resize

@@ -28542,6 +28542,58 @@
         "Next Qt-parity candidates for the pointer axis (build, do not defer): double-click synthesis (QApplication::doubleClickInterval / MouseButtonDblClick) — the router already times the LEFT double-click (last_press); extend it to the raw stream as a click-count on RawPointerButton. Then broader QMouseEvent parity is essentially complete for the raw sink."
       ]
     },
+    "R1419": {
+      "decision_summary": "R1419 §5.39 §5.16: add the OS-window-focus reactive paint-path read (PINION-PR73). pinion_core::window_focus_state::os_focused_window() is the peer of focus_state::focused() on the OS-focus axis — the binding-wide window IDENTITY (Option<String>, not a bool), published by pinion-shell's one set_os_focused_window funnel (both note_os_focus and the window-destruction reconcile route through it) so a paint path can dim on blur / re-arm on refocus. Also lands the missing drive peer scene/window_focus {focused} — the winit Focused simulator for the os_focused_window READ leg of scene/input_state, so an AI drives OS-focus-reactive display headlessly. hello-window-focus is the first consumer.",
+      "changes_bullets": [
+        "pinion_core::window_focus_state::os_focused_window() -> Option<String>: the paint-path reactive read of which OS window holds OS keyboard focus, the peer of focus_state::focused() on the OS-focus axis, carrying the window IDENTITY (not a bool) so a multi-window/tear-off binding compares against its own window id.",
+        "Owner gains an os_focused_window mirror field threaded tree-wide by new_child exactly like focused_tag (one shell-owned binding-wide fact); os_focused_window_signal() accessor.",
+        "pinion-shell ShellCore::set_os_focused_window funnel: both writers of os_focused_window (note_os_focus and the window-destruction reconcile) route through it, publishing the R1419 mirror alongside the existing key-dispatch gate (one SSOT, self-healing).",
+        "scene/window_focus {focused: bool} drive method (MethodOcc::Read, out-of-band like focus/set): the missing drive peer of the os_focused_window READ leg of scene/input_state, simulating a winit Focused edge for the {window} scope so an AI can exercise OS-focus-reactive display headlessly. Deferred-apply pattern survives the dispatch borrow split; R889 unknown-window gate reused.",
+        "hello-window-focus example: view reads os_focused_window() and dims the panel + re-renders a status label on OS focus/blur."
+      ],
+      "verification_bullets": [
+        "pinion-core: 7 window_focus_state unit tests (no-scope None, publish read-back, per-binding isolation, tree-shared child scope, reactive re-run on focus AND blur, equality-skip). Full suite 2657 green.",
+        "pinion-rpc: 4 scene/window_focus dispatch tests (true drives+echoes result, false blurs+null, missing focused -> -32602, no-gate reject) + catalog_matches_dispatch_match_arms + occ_is_honest cross-checks green (919).",
+        "pinion-shell: dispatch_core r1419 integration test drives note_os_focus + secondary window, asserts the paint-path mirror equals the key-dispatch gate leg and carries the window identity; 180 green.",
+        "hello-window-focus: 2 example tests (view reflects focus/blur edges, status_text spelling); binary boots + responds over RPC.",
+        "r1419_window_focus.py demo: 38 assertions PASS (discovery, boot None, focus/blur drive echoes result, reactive view re-render, idempotent re-focus, side-effect-free read, invalid-params + unknown-window rejection, real window still drives after bogus traffic).",
+        "Gates: clippy -D pedantic clean (4 crates), cargo doc --document-private-items clean, mnemosyne validate-workspace T1=0."
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "scene/window_focus drives note_os_focus's concern only (the OS-focus gate + R1419 mirror); it deliberately does NOT trigger the FocusManager save/restore or held-key clear that the winit Focused arm also performs (those are the widget-focus axis, already RPC-drivable via focus/set / focus/clear). A fuller \"simulate the whole Focused edge\" verb would need &mut self across the dispatch borrow split (early-return, not a closure) — deferred until a consumer needs the combined semantics.",
+        "Multi-window per-window reflection is proven by unit/shell tests (tree-shared identity read); the shipped example is single-window. A multi-OS-window example dimming only its blurred window is a future demo, not a gap."
+      ],
+      "publishable_decision_summary": "R1419 §5.39 §5.16: add the OS-window-focus reactive paint-path read (PINION-PR73). pinion_core::window_focus_state::os_focused_window() is the peer of focus_state::focused() on the OS-focus axis — the binding-wide window IDENTITY (Option<String>, not a bool), published by pinion-shell's one set_os_focused_window funnel (both note_os_focus and the window-destruction reconcile route through it) so a paint path can dim on blur / re-arm on refocus. Also lands the missing drive peer scene/window_focus {focused} — the winit Focused simulator for the os_focused_window READ leg of scene/input_state, so an AI drives OS-focus-reactive display headlessly. hello-window-focus is the first consumer.",
+      "publishable_changes_bullets": [
+        "pinion_core::window_focus_state::os_focused_window() -> Option<String>: the paint-path reactive read of which OS window holds OS keyboard focus, the peer of focus_state::focused() on the OS-focus axis, carrying the window IDENTITY (not a bool) so a multi-window/tear-off binding compares against its own window id.",
+        "Owner gains an os_focused_window mirror field threaded tree-wide by new_child exactly like focused_tag (one shell-owned binding-wide fact); os_focused_window_signal() accessor.",
+        "pinion-shell ShellCore::set_os_focused_window funnel: both writers of os_focused_window (note_os_focus and the window-destruction reconcile) route through it, publishing the R1419 mirror alongside the existing key-dispatch gate (one SSOT, self-healing).",
+        "scene/window_focus {focused: bool} drive method (MethodOcc::Read, out-of-band like focus/set): the missing drive peer of the os_focused_window READ leg of scene/input_state, simulating a winit Focused edge for the {window} scope so an AI can exercise OS-focus-reactive display headlessly. Deferred-apply pattern survives the dispatch borrow split; R889 unknown-window gate reused.",
+        "hello-window-focus example: view reads os_focused_window() and dims the panel + re-renders a status label on OS focus/blur."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core: 7 window_focus_state unit tests (no-scope None, publish read-back, per-binding isolation, tree-shared child scope, reactive re-run on focus AND blur, equality-skip). Full suite 2657 green.",
+        "pinion-rpc: 4 scene/window_focus dispatch tests (true drives+echoes result, false blurs+null, missing focused -> -32602, no-gate reject) + catalog_matches_dispatch_match_arms + occ_is_honest cross-checks green (919).",
+        "pinion-shell: dispatch_core r1419 integration test drives note_os_focus + secondary window, asserts the paint-path mirror equals the key-dispatch gate leg and carries the window identity; 180 green.",
+        "hello-window-focus: 2 example tests (view reflects focus/blur edges, status_text spelling); binary boots + responds over RPC.",
+        "r1419_window_focus.py demo: 38 assertions PASS (discovery, boot None, focus/blur drive echoes result, reactive view re-render, idempotent re-focus, side-effect-free read, invalid-params + unknown-window rejection, real window still drives after bogus traffic).",
+        "Gates: clippy -D pedantic clean (4 crates), cargo doc --document-private-items clean, mnemosyne validate-workspace T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scene/window_focus drives note_os_focus's concern only (the OS-focus gate + R1419 mirror); it deliberately does NOT trigger the FocusManager save/restore or held-key clear that the winit Focused arm also performs (those are the widget-focus axis, already RPC-drivable via focus/set / focus/clear). A fuller \"simulate the whole Focused edge\" verb would need &mut self across the dispatch borrow split (early-return, not a closure) — deferred until a consumer needs the combined semantics.",
+        "Multi-window per-window reflection is proven by unit/shell tests (tree-shared identity read); the shipped example is single-window. A multi-OS-window example dimming only its blurred window is a future demo, not a gap."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
@@ -81488,5 +81540,5 @@
   "parameter_deltas": {},
   "parameter_gates": {},
   "fact_counts": {},
-  "schema_version": 39
+  "schema_version": 41
 }

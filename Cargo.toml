@@ -27,6 +27,7 @@ members = [
     "crates/pinion-platform-fonts",
     "crates/pinion-chart",
     "examples/hello-button",
+    "examples/hello-window-focus",
     "examples/hello-window-chrome",
     "examples/hello-button-tui",
     "examples/hello-narrative-walk",

@@ -1,0 +1,37 @@
+[package]
+name = "hello-window-focus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1419 §5.39 §5.16 — a binding reads the OS-window-focus mirror (pinion_core::window_focus_state) on its paint path: the panel dims and a status label re-renders when the application gains or loses OS keyboard focus"
+publish = false
+
+[[bin]]
+name = "hello-window-focus"
+path = "src/main.rs"
+
+[dependencies]
+# The R1419 reactive read (`window_focus_state::os_focused_window`) +
+# the Button primary this display binding hangs its WidgetCore scaffolding
+# on (the demonstration is the OS-focus-reactive panel, not the button).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# The `HelloWindowFocusRenderer` struct emitted by `build.rs` names
+# `::vello::*` paths directly, so vello is a direct dep.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# Build-time codegen for the Vello renderer wrapper (compiles
+# `app.pinion.xml` to `$OUT_DIR/app.rs`).
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

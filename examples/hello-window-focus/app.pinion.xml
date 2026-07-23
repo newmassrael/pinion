@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1419 §5.39 §5.16 — Vello renderer for hello-window-focus. Same
+  single-source emit template as every other example (only the struct
+  name differs); `aa` omitted → Area (UI-canonical default).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloWindowFocusRenderer"
+        backend="vello"/>

@@ -485,6 +485,84 @@ fn shell_core_new_starts_in_clean_state() {
     );
 }
 
+/// R1419 §5.39 §5.16 — `note_os_focus` (the winit `Focused` edge) publishes the
+/// OS-window-focus MIRROR a binding reads on its paint path
+/// (`pinion_core::window_focus_state::os_focused_window`), and that read stays
+/// consistent with the key-dispatch gate leg (`key_dispatch_focus`). Proves the
+/// shell's `set_os_focused_window` funnel + the R1419 read seam end to end,
+/// using the same pub driving method `AppShell`'s `Focused` arm calls.
+#[test]
+fn r1419_note_os_focus_publishes_the_paint_path_mirror() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+
+    // Boot: OS focus unknown. The paint-path read is None, and it agrees with
+    // the gate leg the RPC `scene/input_state` renders.
+    assert_eq!(
+        core.root_owner()
+            .run(pinion_core::window_focus_state::os_focused_window),
+        None,
+        "boot: OS focus unknown → the paint-path mirror reads None",
+    );
+    assert_eq!(core.key_dispatch_focus().os_focused_window, None);
+
+    // A winit Focused(true) edge for the primary window: `note_os_focus` updates
+    // the gate AND publishes the R1419 mirror through `set_os_focused_window`.
+    core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, true);
+    assert_eq!(
+        core.root_owner()
+            .run(pinion_core::window_focus_state::os_focused_window)
+            .as_deref(),
+        Some(pinion_runtime::DEFAULT_WINDOW),
+        "focus publishes the OS-focused window id to the paint-path mirror",
+    );
+    assert_eq!(
+        core.key_dispatch_focus().os_focused_window.as_deref(),
+        Some(pinion_runtime::DEFAULT_WINDOW),
+        "the gate leg agrees with the mirror (one shell SSOT)",
+    );
+
+    // Blur of the focused window clears both.
+    core.note_os_focus(pinion_runtime::DEFAULT_WINDOW, false);
+    assert_eq!(
+        core.root_owner()
+            .run(pinion_core::window_focus_state::os_focused_window),
+        None,
+        "blur clears the paint-path mirror",
+    );
+    assert_eq!(core.key_dispatch_focus().os_focused_window, None);
+
+    // A SECONDARY window can hold OS focus, and the binding-wide read names it
+    // (the Option<String> IDENTITY, not a bool) — so a multi-window consumer
+    // compares the id against the window it is painting.
+    core.note_os_focus("inspector", true);
+    assert_eq!(
+        core.root_owner()
+            .run(pinion_core::window_focus_state::os_focused_window)
+            .as_deref(),
+        Some("inspector"),
+        "the mirror carries the OS-focused window identity, not a bare bool",
+    );
+
+    // A blur of a NON-focused window leaves OS focus untouched (note_os_focus
+    // clears only when the blurred window IS the focused one) — the mirror
+    // stays put, matching the gate.
+    core.note_os_focus("main", false);
+    assert_eq!(
+        core.root_owner()
+            .run(pinion_core::window_focus_state::os_focused_window)
+            .as_deref(),
+        Some("inspector"),
+        "blur of a non-focused window is a no-op on the mirror",
+    );
+    assert_eq!(
+        core.key_dispatch_focus().os_focused_window.as_deref(),
+        Some("inspector"),
+    );
+}
+
 #[test]
 fn r51_82_composite_focus_routes_to_child_invoke() {
     let _g = TEST_LOCK.lock().unwrap();

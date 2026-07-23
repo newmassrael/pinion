@@ -303,6 +303,22 @@ pub struct DispatchContext<'a> {
         reason = "the resize_request sibling above carries the same boxed-FnMut shape un-aliased; a one-field type alias for the dispatch context's reposition hook would obscure the parallel more than it clarifies"
     )]
     pub reposition_request: Option<&'a mut (dyn FnMut(&str, i32, i32) -> bool + 'a)>,
+    /// (R1419 §5.39 §5.16) The drive peer of the `os_focused_window` leg the
+    /// `scene/input_state` READ exposes: `scene/window_focus` invokes this
+    /// closure with `focused: bool` to simulate a winit `WindowEvent::Focused`
+    /// edge for the addressed `{window}` scope (baked into the closure by the
+    /// shell), driving the shell's OS-focus gate AND the R1419 paint-path
+    /// OS-focus mirror (`pinion_core::window_focus_state`), so an AI can exercise
+    /// a binding's OS-focus-reactive display (dim on blur / re-arm on refocus)
+    /// headlessly. Returns the resulting `os_focused_window` (the id now holding
+    /// OS focus, or `None` when the drive blurred the last focused window). Absent
+    /// on backends with no OS-window-focus gate (the TUI's single full-screen
+    /// surface).
+    #[allow(
+        clippy::type_complexity,
+        reason = "matches the reposition_request sibling's boxed-FnMut shape; a one-field alias would obscure the parallel"
+    )]
+    pub window_focus_request: Option<&'a mut (dyn FnMut(bool) -> Option<String> + 'a)>,
     /// (R705 §5.12 §2 #7) The named window's most recently painted
     /// scene — the exact tree that produced the pixels on screen.
     /// `scene/snapshot from: paint` serializes THIS borrow when present
@@ -1180,6 +1196,7 @@ impl<'a> DispatchContext<'a> {
             access_producer: None,
             resize_request: None,
             reposition_request: None,
+            window_focus_request: None,
             last_paint_scene: None,
             font_registry: None,
             focus_manager: None,
@@ -1252,6 +1269,21 @@ impl<'a> DispatchContext<'a> {
         request: &'a mut (dyn FnMut(&str, i32, i32) -> bool + 'a),
     ) -> Self {
         self.reposition_request = Some(request);
+        self
+    }
+
+    /// Builder: attach the OS-window-focus drive closure (R1419 §5.39 §5.16 —
+    /// the `scene/window_focus` drive peer of the `os_focused_window` leg
+    /// `scene/input_state` reads). The closure is invoked with `focused: bool`
+    /// and drives the shell's OS-focus gate + the R1419 paint-path OS-focus
+    /// mirror for the request's `{window}` scope, returning the resulting
+    /// `os_focused_window`.
+    #[must_use]
+    pub fn with_window_focus_request(
+        mut self,
+        request: &'a mut (dyn FnMut(bool) -> Option<String> + 'a),
+    ) -> Self {
+        self.window_focus_request = Some(request);
         self
     }
 
@@ -1572,6 +1604,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let mut access_producer = ctx.access_producer.take();
     let mut resize_request = ctx.resize_request.take();
     let mut reposition_request = ctx.reposition_request.take();
+    let mut window_focus_request = ctx.window_focus_request.take();
     // R51.73 §5.40 — same split-borrow pattern for the focus manager:
     // `focus/set` mutates, `focus/get` reads; both need exclusive
     // access during the route arm.
@@ -1975,6 +2008,20 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 // Async — the signal write fires reconcile + the actual OS
                 // move lands when the shell next reconciles. No OCC bump
                 // here (mirrors `scene/resize`).
+                HandlerKind::Read,
+            )
+        }
+        "scene/window_focus" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let req = window_focus_request.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_window_focus(req, request.params.as_ref()),
+                // R1419 — out-of-band OS-focus drive, like `focus/set`: it
+                // changes the OS-focus gate + mirror (a repaint lands on the
+                // next reactive frame) but bumps no scene OCC synchronously.
                 HandlerKind::Read,
             )
         }
@@ -5944,6 +5991,39 @@ fn window_move_error_to_rpc(err: WindowMoveError) -> RpcError {
         WindowMoveError::UnknownWindow => "UnknownWindow",
     };
     RpcError::invalid_params(variant)
+}
+
+/// R1419 §5.39 §5.16 — `scene/window_focus` dispatch entry: the drive peer of
+/// the `os_focused_window` READ leg of `scene/input_state`. Simulates a winit
+/// `WindowEvent::Focused` edge for the addressed `{window}` scope (baked into
+/// the closure by the shell), so an AI can exercise a binding's OS-focus-reactive
+/// display (dim on blur, re-arm on refocus) headlessly. Param: `{focused: bool}`
+/// (`true` = the window gained OS focus, `false` = it blurred). Returns
+/// `{ os_focused_window: <id|null> }` — the resulting gate/mirror state after the
+/// edge. Rejects with `-32602` on a backend with no OS-window-focus gate (the
+/// TUI, which never wires the closure).
+fn handle_scene_window_focus<F>(
+    window_focus_request: Option<&mut F>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(bool) -> Option<String> + ?Sized,
+{
+    let params = require_params(params)?;
+    let focused = match params.get("focused") {
+        None => {
+            return Err(RpcError::invalid_params(
+                "params.focused missing — expected a boolean",
+            ));
+        }
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(RpcError::invalid_params("params.focused must be a boolean")),
+    };
+    let hook = window_focus_request.ok_or_else(|| {
+        RpcError::invalid_params("this backend has no OS-window-focus gate to drive")
+    })?;
+    let os_focused = hook(focused);
+    Ok(serde_json::json!({ "os_focused_window": os_focused }))
 }
 
 fn handle_scene_cross_window_drop(

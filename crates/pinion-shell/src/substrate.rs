@@ -3281,6 +3281,37 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.clear_held_keys();
     }
 
+    /// R1419 §5.39 §5.16 — the SINGLE write path for
+    /// [`Self::os_focused_window`]. Commits `next` and publishes it to the
+    /// binding's OS-focus mirror
+    /// ([`pinion_core::window_focus_state`]),
+    /// the read a binding uses to derive display state from OS focus (a
+    /// whole-window dim on blur, a native pane focus reporter, a caret that
+    /// stops on blur).
+    ///
+    /// Both mutators of `os_focused_window` — [`Self::note_os_focus`] (the winit
+    /// `Focused` edge) and the window-destruction reconcile (a torn-down window
+    /// that still names the OS focus) — funnel through here, so the paint-path
+    /// mirror cannot drift from the shell's own `os_focused_window` SSOT the
+    /// keyboard gate ([`Self::is_key_dispatch_window`]) reads. This mirrors the
+    /// `FocusManager::commit_focus` funnel on the focused-tag axis: publishing
+    /// from the one field-owning site rather than at each winit call site means a
+    /// future call site cannot forget to publish.
+    ///
+    /// The publish is wrapped in [`Owner::run`](pinion_core::Owner::run) (the
+    /// R1006 "blocker B" discipline the viewport / focus mirrors follow): a
+    /// [`Signal::set`](pinion_core::reactive::Signal::set) synchronously re-runs
+    /// subscribed [`Effect`](pinion_core::reactive::Effect)s, and a woken Effect
+    /// that reads an owner-scoped hook must find this scope on the stack. The
+    /// publish equality-skips, so a redundant re-assert of the same window wakes
+    /// no subscriber.
+    fn set_os_focused_window(&mut self, next: Option<String>) {
+        self.os_focused_window = next;
+        let value = self.os_focused_window.clone();
+        let owner = self.core.root_owner();
+        owner.run(|| owner.os_focused_window_signal().set(value));
+    }
+
     /// R1071 PR-27 §5.39 §5.16 §5.35 — record a winit `WindowEvent::Focused`
     /// edge for `window_id`, maintaining the `Self::os_focused_window` the
     /// keyboard gate reads. Called from `AppShell`'s `Focused` arm (which
@@ -3294,11 +3325,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// clears when it is the currently-focused window that blurred, so a
     /// `focus(new)` that already landed is never clobbered by a late
     /// `blur(old)`.
+    ///
+    /// R1419 §5.16 — routes through `set_os_focused_window` so the
+    /// R1419 paint-path OS-focus mirror
+    /// ([`pinion_core::window_focus_state`]) is
+    /// published on the same edge the gate is updated on.
     pub fn note_os_focus(&mut self, window_id: &str, focused: bool) {
         if focused {
-            self.os_focused_window = Some(window_id.to_owned());
+            self.set_os_focused_window(Some(window_id.to_owned()));
         } else if self.os_focused_window.as_deref() == Some(window_id) {
-            self.os_focused_window = None;
+            self.set_os_focused_window(None);
         }
     }
 
@@ -4876,6 +4912,35 @@ impl<V: WidgetView> ShellCore<V> {
             signal.set(specs);
             true
         };
+        // R1419 §5.39 §5.16 — the `scene/window_focus` drive peer of the
+        // `os_focused_window` READ leg of `scene/input_state`. The closure runs
+        // INSIDE the borrow-split block (no `&mut self`), so — like the R684
+        // `produce_size` deferral — it only RECORDS the requested edge and
+        // returns the resulting `os_focused_window` computed from a pre-block
+        // snapshot; the real gate + R1419 mirror mutation is applied after the
+        // block through [`Self::note_os_focus`] (the one funnel), with `&mut
+        // self` restored. The target window is the request's `{window}` scope
+        // (the R889 unknown-window gate already rejected an unknown scope before
+        // the closure could run, so a recorded edge always names a known window).
+        let is_window_focus = request.method == "scene/window_focus";
+        let os_focus_target: String = window_id
+            .unwrap_or(pinion_runtime::DEFAULT_WINDOW)
+            .to_owned();
+        let os_focus_before: Option<String> = self.os_focused_window.clone();
+        let window_focus_edge: Cell<Option<bool>> = Cell::new(None);
+        let mut window_focus_request = |focused: bool| -> Option<String> {
+            window_focus_edge.set(Some(focused));
+            // Mirror `note_os_focus` semantics for the reported resulting state:
+            // a focus names the target; a blur clears only when the target IS the
+            // currently-focused window (else the OS focus is unchanged).
+            if focused {
+                Some(os_focus_target.clone())
+            } else if os_focus_before.as_deref() == Some(os_focus_target.as_str()) {
+                None
+            } else {
+                os_focus_before.clone()
+            }
+        };
         // R684 atomic 3 §5.16 §5.41 §5.49 — record the viewport the
         // produce closure ran with so the post-dispatch finalize can
         // populate the addressed window's
@@ -5127,6 +5192,12 @@ impl<V: WidgetView> ShellCore<V> {
             // that method (a harmless no-op closure otherwise), so this
             // attaches unconditionally without per-dispatch cost.
             ctx = ctx.with_reposition_request(&mut reposition_request);
+            // R1419 §5.39 §5.16 — the `scene/window_focus` OS-focus drive peer.
+            // Like `reposition_request`, the closure captures no `self` borrow
+            // (it records the edge into a `Cell` + reads a pre-block snapshot),
+            // so it attaches unconditionally without a per-dispatch cost; the
+            // real mutation lands after the block.
+            ctx = ctx.with_window_focus_request(&mut window_focus_request);
             // R1060 §5.12 §5.16 — the AppShell windowed entry pre-captured
             // the addressed window's live presented surface (only when the
             // method is `scene/screenshot`); hand it to the dispatcher so
@@ -5148,6 +5219,19 @@ impl<V: WidgetView> ShellCore<V> {
             (resp, deferred_inputs)
         };
         let (resp, deferred_inputs) = resp;
+        // R1419 §5.39 §5.16 — apply the `scene/window_focus` edge the closure
+        // recorded, now that `&mut self` is restored. `note_os_focus` updates the
+        // OS-focus gate AND publishes the R1419 paint-path mirror through the one
+        // `set_os_focused_window` funnel; the redraw refreshes any OS-focus-
+        // reactive display. The edge stays `None` unless the closure actually ran
+        // (method matched, params valid, window known), so every other dispatch —
+        // and a rejected `scene/window_focus` — applies nothing.
+        if is_window_focus {
+            if let Some(focused) = window_focus_edge.get() {
+                self.note_os_focus(&os_focus_target, focused);
+                self.request_redraw();
+            }
+        }
         // R684 atomic 3 §5.16 §5.41 §5.49 — headless-RPC floating-
         // window paint cycle. When the dispatch is scoped to a
         // specific window AND the produce closure ran (i.e. an RPC

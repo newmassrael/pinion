@@ -2083,6 +2083,81 @@ fn r888_1_set_fps_without_pacing_capability_is_unavailable() {
     assert!(inbox.is_empty(), "rejected write enqueues nothing");
 }
 
+// ---- R1419 §5.39 §5.16 — scene/window_focus (drive peer of the
+// os_focused_window READ leg of scene/input_state) ----
+
+#[test]
+fn r1419_window_focus_true_drives_the_closure_and_reports_the_result() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    // Stand in for the shell's drive closure: a `true` edge names the target
+    // window, a `false` edge blurs it — the note_os_focus semantics.
+    let mut seen: Option<bool> = None;
+    let mut drive = |focused: bool| -> Option<String> {
+        seen = Some(focused);
+        focused.then(|| "main".to_owned())
+    };
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_window_focus_request(&mut drive);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/window_focus","params":{"focused":true},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(
+        resp.result,
+        Some(serde_json::json!({ "os_focused_window": "main" })),
+        "the drive reports the resulting OS-focused window id",
+    );
+    assert_eq!(seen, Some(true), "the closure saw the focus edge");
+}
+
+#[test]
+fn r1419_window_focus_false_blurs_and_reports_null() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut drive = |focused: bool| -> Option<String> { focused.then(|| "main".to_owned()) };
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_window_focus_request(&mut drive);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/window_focus","params":{"focused":false},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(
+        resp.result,
+        Some(serde_json::json!({ "os_focused_window": Value::Null })),
+        "a blur reports os_focused_window: null",
+    );
+}
+
+#[test]
+fn r1419_window_focus_missing_focused_is_invalid_params() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut drive = |_focused: bool| -> Option<String> { None };
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_window_focus_request(&mut drive);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/window_focus","params":{},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("missing params.focused must error");
+    assert_eq!(err.code, -32602);
+}
+
+#[test]
+fn r1419_window_focus_without_gate_is_rejected() {
+    // A backend with no OS-window-focus gate (the TUI never wires the closure)
+    // rejects rather than silently dropping the drive.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/window_focus","params":{"focused":true},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("no gate → reject");
+    assert_eq!(err.code, -32602);
+}
+
 // ---- R888 §5.49 §5.28 — scene/pacing_state (READ peer of set_fps) ----
 
 #[test]

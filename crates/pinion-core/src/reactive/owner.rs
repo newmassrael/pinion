@@ -339,6 +339,42 @@ pub(crate) struct OwnerInner {
     /// same reason the pre-R1335 thread-local mirror was untracked.
     pub(crate) focused_tag: super::signal::Signal<Option<String>>,
 
+    /// R1419 §5.39 §5.16 — the binding-wide "which OS window holds the OS
+    /// keyboard focus" mirror, read via
+    /// [`window_focus_state::os_focused_window`](crate::window_focus_state::os_focused_window).
+    /// The **peer of [`Self::focused_tag`] on the OTHER focus axis**: `focused_tag`
+    /// carries the focused paint *tag* (which widget/pane inside the binding),
+    /// this carries the OS-focused window *id* (which of the binding's OS windows
+    /// the window manager has activated — or `None` when the whole application is
+    /// blurred, e.g. the user alt-tabbed away). A binding's paint path
+    /// (`WidgetCore::view` / `reconcile_frame`) can read it reactively to dim on
+    /// blur or re-arm on refocus — the OS-focus counterpart of
+    /// [`theme::system_color_scheme`](crate::theme::system_color_scheme).
+    ///
+    /// A **window IDENTITY** (`Option<String>`), not a bool — the true shape peer
+    /// of `focused_tag` and of the shell's own single `os_focused_window` field
+    /// (and the `os_focused_window` leg the R1074 `scene/input_state` RPC already
+    /// exposes). A binding with more than one OS window (a tear-off floating
+    /// window) compares the id against the window it is painting; a bool would
+    /// throw that away. The common single-OS-window binding derives the bool it
+    /// wants with `== Some(my_window_id)` or `.is_some()`.
+    ///
+    /// An **eager tree-inherited direct field**, threaded by [`Owner::new_child`]
+    /// exactly like `focused_tag` — for the same reason (the R1365.1 "who DRIVES
+    /// the slot" predicate): the SINGLE writer is `pinion-shell`'s `ShellCore`,
+    /// which holds ONE `os_focused_window` naming the OS-focused window across the
+    /// whole binding and publishes it from one funnel
+    /// (`ShellCore::set_os_focused_window`). One writer, binding-wide → the whole
+    /// owner tree shares ONE mirror, so a read from any window's scope resolves the
+    /// shell's truth. (`pinion-tui` never writes it — a single full-screen surface
+    /// has no OS-window-focus gate — so on the TUI the mirror keeps its `None`
+    /// default: "unknown", a safe, visible non-answer, not a drift.)
+    ///
+    /// Not registered for snapshot/restore (absent from `owned_signals`), like
+    /// `focused_tag`: it mirrors an OS fact the shell owns, not authoritative
+    /// binding state.
+    pub(crate) os_focused_window: super::signal::Signal<Option<String>>,
+
     /// R1364 §5.22 §5.55 — the scope this one was born under, or a dangling
     /// `Weak` for a root. Walked by [`Owner::cache_inherited`], and by nothing
     /// else.
@@ -409,20 +445,28 @@ impl Owner {
     /// an existing parent for cascade-drop.
     #[must_use]
     pub fn new() -> Self {
-        // A detached root owns a fresh focus mirror — the head of a new binding's
-        // owner tree. [`Self::new_child`] threads THIS handle down so the whole
-        // tree shares one mirror (R1335 §5.39: focus is binding-wide).
-        Self::with_focus_mirror(super::signal::Signal::new(None), Weak::new())
+        // A detached root owns fresh binding-wide mirrors — the head of a new
+        // binding's owner tree. [`Self::new_child`] threads THESE handles down so
+        // the whole tree shares one mirror each (R1335 §5.39 focused tag /
+        // R1419 §5.39 §5.16 OS-focused window: both are binding-wide facts).
+        Self::with_binding_mirrors(
+            super::signal::Signal::new(None),
+            super::signal::Signal::new(None),
+            Weak::new(),
+        )
     }
 
-    /// R1335 §5.39 — construct an owner carrying `focused_tag` as its focus
-    /// mirror. [`Self::new`] passes a fresh signal (a new binding); [`Self::new_child`]
-    /// passes the parent's handle so descendants share the binding-wide mirror.
+    /// R1335 §5.39 / R1419 §5.16 — construct an owner carrying the binding-wide
+    /// inherited mirrors: `focused_tag` (the focused paint tag) and
+    /// `os_focused_window` (the OS-focused window id). [`Self::new`] passes fresh
+    /// signals (a new binding); [`Self::new_child`] passes the parent's handles so
+    /// descendants share the same binding-wide mirrors.
     ///
     /// R1364 — `parent` is the scope to inherit provider slots from
     /// ([`Self::cache_inherited`]); `Weak::new()` for a root.
-    fn with_focus_mirror(
+    fn with_binding_mirrors(
         focused_tag: super::signal::Signal<Option<String>>,
+        os_focused_window: super::signal::Signal<Option<String>>,
         parent: Weak<OwnerInner>,
     ) -> Self {
         Self {
@@ -436,6 +480,7 @@ impl Owner {
                 owned_commands: RefCell::new(Vec::new()),
                 cache: RefCell::new(HashMap::new()),
                 focused_tag,
+                os_focused_window,
                 parent,
             }),
         }
@@ -518,6 +563,12 @@ impl Owner {
     /// also means only root owners allocate a focus `Signal`; children clone the
     /// handle.
     ///
+    /// R1419 §5.16 — the child inherits the `os_focused_window` mirror the SAME
+    /// way, for the same reason: the OS-focused window id is likewise a
+    /// binding-wide fact (one window holds OS focus at a time, `pinion-shell`
+    /// writes it once), so the whole tree shares one mirror and a per-window scope
+    /// resolves the shell's truth.
+    ///
     /// R1364 §5.22 — the child also records `parent`, which is what lets
     /// `Self::cache_inherited` resolve a binding-wide CAPABILITY (the shell's
     /// [`RepaintSink`](super::repaint::RepaintSink) /
@@ -530,8 +581,9 @@ impl Owner {
     /// kinds of thing an owner tree carries.
     #[must_use]
     pub fn new_child(parent: &Owner) -> Self {
-        let child = Self::with_focus_mirror(
+        let child = Self::with_binding_mirrors(
             parent.inner.focused_tag.clone(),
+            parent.inner.os_focused_window.clone(),
             Rc::downgrade(&parent.inner),
         );
         parent.inner.children.borrow_mut().push(child.clone());
@@ -1301,6 +1353,28 @@ impl Owner {
     #[must_use]
     pub fn focused_tag_signal(&self) -> super::signal::Signal<Option<String>> {
         self.inner.focused_tag.clone()
+    }
+
+    /// R1419 §5.39 §5.16 — the binding-wide OS-focused-window mirror, the carrier
+    /// read via
+    /// [`window_focus_state::os_focused_window`](crate::window_focus_state::os_focused_window).
+    ///
+    /// Returns a clone of this owner's `os_focused_window` handle. Like
+    /// [`Self::focused_tag_signal`] the mirror is binding-wide:
+    /// [`Self::new_child`] threads the root's handle down the whole owner tree, so
+    /// a child (secondary-window) scope hands back the SAME cell the root does.
+    /// `pinion-shell`'s `ShellCore` is the single writer (from its
+    /// `set_os_focused_window` funnel, self-wrapped in [`Self::run`] so a
+    /// subscriber woken by the write re-resolves [`Owner::current`] — the R1006
+    /// "blocker B" discipline); consumers read it with a tracked `get`, so an
+    /// OS-focus change re-runs a subscribed view fn / `Effect`.
+    ///
+    /// A tree-inherited *direct field* rather than a per-owner [`Self::cache`]
+    /// slot on purpose — see the `os_focused_window` field for the full rationale
+    /// (one shell-owned, binding-wide fact, carrying the window IDENTITY).
+    #[must_use]
+    pub fn os_focused_window_signal(&self) -> super::signal::Signal<Option<String>> {
+        self.inner.os_focused_window.clone()
     }
 
     /// R1364.5 §5.22 §5.28 — seed the owner-scoped pane-viewport registry

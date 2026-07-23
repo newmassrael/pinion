@@ -58,6 +58,7 @@ pub mod tray;
 pub mod undo;
 pub mod widget_core;
 pub mod widgets;
+pub mod window_focus_state;
 
 // R51.127 §5.41 — substrate-level test fixtures shared across
 // `pinion-runtime` + `pinion-tui` test suites. Gated behind the
