@@ -1530,6 +1530,16 @@ impl<V: WidgetView> AppShell<V> {
         // (applied next frame via `Resized`). Runs BEFORE the encode so the encode
         // uses the current size; a no-op for `Fixed` strategy + steady-state paints.
         self.apply_pending_intrinsic_resize(window_id, &paint_scene, w, h);
+        // R1426 §5.41 §5.28 — the live winit surface animates the cursor blink:
+        // read this window's clock phase (armed by
+        // `compute_paint_scene_for_window` above). `grid_cursor_blink_on` reads
+        // the phase OUTSIDE any reactive scope, so it does not fold into the
+        // scene; a steady / hidden cursor resolves to `true` (always drawn).
+        // Computed here (before the slot-borrow scope below) so the immutable
+        // `self.core` read does not overlap the `self.windows` mutable borrow.
+        // The produce / screenshot path passes the steady default instead, so a
+        // golden PNG never flakes on the wall-clock phase.
+        let cursor_blink_on = self.core.grid_cursor_blink_on(&spec_id);
         // Assigned exactly once inside the paint scope below; the
         // scope's `else { return; }` arms diverge, so the fall-through
         // path that reaches `record_frame_timing` always assigns both.
@@ -1588,6 +1598,7 @@ impl<V: WidgetView> AppShell<V> {
                 &mut slot.fragment_cache,
                 text_engine,
                 &mut slot.vello_scene,
+                cursor_blink_on,
             );
             encode_us = instant_delta_us(encode_start, Instant::now());
             // R51.109.1 §5.41 — call through the backend-agnostic
@@ -5220,6 +5231,10 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
         &mut fragment_cache,
         text_engine,
         &mut vello_scene,
+        // R1426 §5.41 — a headless PNG renders the cursor STEADY (blink phase
+        // ON): the render-time phase is wall-clock-driven, so forcing ON keeps a
+        // golden screenshot deterministic (never captures a mid-blink off-phase).
+        true,
     );
     let mut shot = match crate::HeadlessScreenshot::new() {
         Ok(s) => s,

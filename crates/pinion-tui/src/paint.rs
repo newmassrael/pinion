@@ -178,8 +178,30 @@ fn cell_to_buf_xy(x: i32, y: i32, buf_area: TuiRect) -> Option<(u16, u16)> {
 /// no offset; [`Scene::Scroll`] children compose both as the
 /// recursion descends.
 pub fn to_buffer(scene: &Scene, buf: &mut Buffer) {
+    // R1426 §5.41 — the STEADY-phase entry (`cursor_blink_on = true`): a
+    // TextGrid cursor always paints. The ~40 test call sites + any non-animating
+    // caller keep this two-arg signature; the live TUI shell calls
+    // `to_buffer_with_cursor_phase` with its per-window blink clock's phase.
+    to_buffer_with_cursor_phase(scene, buf, true);
+}
+
+/// R1426 §5.41 §5.28 — [`to_buffer`] with the render-time terminal-cursor blink
+/// PHASE threaded in. `cursor_blink_on` is `true` on the visible half of the
+/// blink and `false` on the hidden half; it gates only a
+/// [blinking-mode](pinion_core::term_grid::GridCursor::blink) cursor (a steady
+/// cursor ignores it) via the shared
+/// [`GridCursor::shown_this_phase`](pinion_core::term_grid::GridCursor::shown_this_phase)
+/// predicate — the same one the Vello backend uses, so the two never drift. On
+/// the off-phase the inverted cursor cell is simply not painted, so the plain
+/// cell shows (the terminal off-phase); the phase is never folded into the
+/// scene, so `scene/snapshot` still reports the cursor `visible`/`blink` as
+/// data (§2 #7). pinion paints the cursor as an inverted cell and keeps the
+/// host terminal's hardware cursor hidden (the R1424 OSC-12 model), so this is
+/// pinion's painted-cell projection blink, not a delegation to the host
+/// terminal's own (settings-driven) cursor blink.
+pub fn to_buffer_with_cursor_phase(scene: &Scene, buf: &mut Buffer, cursor_blink_on: bool) {
     let clip = CellClip::from_buf(buf.area);
-    to_buffer_inner(scene, buf, clip, (0, 0));
+    to_buffer_inner(scene, buf, clip, (0, 0), cursor_blink_on);
 }
 
 /// (R51.189 §5.45 R55.E.2) Cumulative-state recursive walker.
@@ -196,9 +218,15 @@ pub fn to_buffer(scene: &Scene, buf: &mut Buffer) {
 /// ([`paint_box_style`] / [`paint_text_inner`]) apply both at the
 /// `Buffer::write` call site so content paints offset into the
 /// viewport without mutating the scene tree.
-fn to_buffer_inner(scene: &Scene, buf: &mut Buffer, clip: CellClip, offset_px: (i32, i32)) {
+fn to_buffer_inner(
+    scene: &Scene,
+    buf: &mut Buffer,
+    clip: CellClip,
+    offset_px: (i32, i32),
+    cursor_blink_on: bool,
+) {
     match scene {
-        Scene::Container(c) => paint_container(c, buf, clip, offset_px),
+        Scene::Container(c) => paint_container(c, buf, clip, offset_px, cursor_blink_on),
         Scene::Text(t) => paint_text_inner(t, buf, clip, offset_px),
         Scene::Box(b) => paint_box(b, buf, clip, offset_px),
         Scene::Scroll(s) => {
@@ -234,12 +262,12 @@ fn to_buffer_inner(scene: &Scene, buf: &mut Buffer, clip: CellClip, offset_px: (
             let cx = i64::from(offset_px.0) + i64::from(s.viewport.x) - i64::from(s.offset_x);
             let cy = i64::from(offset_px.1) + i64::from(s.viewport.y) - i64::from(s.offset_y);
             let child_offset = (clamp_to_i32(cx), clamp_to_i32(cy));
-            to_buffer_inner(&s.content, buf, new_clip, child_offset);
+            to_buffer_inner(&s.content, buf, new_clip, child_offset, cursor_blink_on);
         }
         // R994 §5.41 §2 #6 — the cell-native grid's TUI sibling of the
         // Vello glyph paint (R991-R993): each grid cell maps 1:1 onto a
         // ratatui character cell.
-        Scene::TextGrid(n) => paint_text_grid_inner(n, buf, clip, offset_px),
+        Scene::TextGrid(n) => paint_text_grid_inner(n, buf, clip, offset_px, cursor_blink_on),
         // R51.115 — `Path` / `Image` still skipped (unicode-art
         // mapping carries on the substrate-incompleteness-signal
         // trigger once a binding actually needs them — every
@@ -267,10 +295,16 @@ fn to_buffer_inner(scene: &Scene, buf: &mut Buffer, clip: CellClip, offset_px: (
 /// R51.189 — `clip` + `offset_px` carry the ancestor scroll
 /// cascade state and pass straight through to children + the
 /// box-style call.
-fn paint_container(c: &ContainerNode, buf: &mut Buffer, clip: CellClip, offset_px: (i32, i32)) {
+fn paint_container(
+    c: &ContainerNode,
+    buf: &mut Buffer,
+    clip: CellClip,
+    offset_px: (i32, i32),
+    cursor_blink_on: bool,
+) {
     paint_box_style(&c.rect, &c.style, buf, clip, offset_px);
     for child in &c.children {
-        to_buffer_inner(child, buf, clip, offset_px);
+        to_buffer_inner(child, buf, clip, offset_px, cursor_blink_on);
     }
 }
 
@@ -756,6 +790,7 @@ fn paint_text_grid_inner(
     buf: &mut Buffer,
     clip: CellClip,
     offset_px: (i32, i32),
+    cursor_blink_on: bool,
 ) {
     let grid = n.cells();
     if grid.is_empty() {
@@ -805,7 +840,11 @@ fn paint_text_grid_inner(
             // wide for a wide glyph, matching the Vello span). A character
             // buffer has no sub-cell bar / underline shape — the DECSCUSR shape
             // is a hardware-cursor concern (left to a shell-level slice).
-            if cursor.visible && cursor.col == col && cursor.row == row {
+            // R1426 §5.41 — the render-time blink phase gates a blinking-mode
+            // cursor through the shared `shown_this_phase` predicate (a steady
+            // cursor ignores the phase): on the off-phase the inverted cell is
+            // not painted, so the plain cell shows — the terminal off-phase.
+            if cursor.shown_this_phase(cursor_blink_on) && cursor.col == col && cursor.row == row {
                 match cursor.cursor_color {
                     // R1424 §5.41 — an explicit OSC-12 cursor colour paints the
                     // cursor block in that colour with the glyph reading through
@@ -1654,6 +1693,82 @@ mod tests {
         assert_eq!(buf2[(1, 0)].bg, TuiColor::Rgb(0x2e, 0xcc, 0x71));
         assert_eq!(buf2[(1, 0)].fg, TuiColor::Indexed(3));
         assert!(!buf2[(1, 0)].modifier.contains(Modifier::REVERSED));
+    }
+
+    /// R1426 §5.41 §2 #6 — the render-time blink PHASE gates a blinking-mode
+    /// cursor in the TUI painter: on the off-phase the inverted cell is not
+    /// painted (the plain cell shows), while a steady cursor and every other
+    /// cell are unaffected — the pixel-equivalent proof of the cross-backend
+    /// `GridCursor::shown_this_phase` gate (the ratatui cell IS the pixel).
+    #[test]
+    fn r1426_blink_phase_gates_the_inverted_cursor_cell() {
+        use pinion_core::CellMetric;
+        use pinion_core::scene::TextGridNode;
+        use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor, TermCell, TermColor};
+
+        // A 2x1 grid: a plain glyph at (0,0), and the cursor cell 'C' at (1,0).
+        fn grid(cursor: GridCursor) -> Scene {
+            let buffer = GridBuffer::new(2, 1)
+                .with_row(
+                    0,
+                    [
+                        TermCell::new("A", TermColor::Default, TermColor::Default),
+                        TermCell::new("C", TermColor::Default, TermColor::Default),
+                    ],
+                )
+                .with_cursor(cursor);
+            let mut node = TextGridNode::new(CellMetric::DEFAULT).with_cells(buffer);
+            node.rect = Rect::new(0, 0, 16, 16);
+            Scene::TextGrid(node)
+        }
+
+        let paint = |scene: &Scene, on: bool| {
+            let mut buf = Buffer::empty(TuiRect::new(0, 0, 8, 4));
+            to_buffer_with_cursor_phase(scene, &mut buf, on);
+            buf
+        };
+
+        // A BLINKING cursor: reversed on the ON phase, plain on the OFF phase.
+        let blinking = grid(GridCursor::new(1, 0, CursorShape::Block, true).with_blink(true));
+        let on = paint(&blinking, true);
+        assert_eq!(on[(1, 0)].symbol(), "C");
+        assert!(
+            on[(1, 0)].modifier.contains(Modifier::REVERSED),
+            "blinking cursor inverts its cell on the ON phase",
+        );
+        let off = paint(&blinking, false);
+        assert_eq!(off[(1, 0)].symbol(), "C", "the cell content is unchanged");
+        assert!(
+            !off[(1, 0)].modifier.contains(Modifier::REVERSED),
+            "blinking cursor is not painted on the OFF phase — the plain cell shows",
+        );
+        // The non-cursor cell (0,0) is identical across phases — the phase gates
+        // only the cursor overlay, nothing else in the grid.
+        assert_eq!(on[(0, 0)].modifier, off[(0, 0)].modifier);
+        assert!(!off[(0, 0)].modifier.contains(Modifier::REVERSED));
+
+        // A STEADY cursor is reversed on BOTH phases (the phase never gates it).
+        let steady = grid(GridCursor::new(1, 0, CursorShape::Block, true));
+        assert!(
+            paint(&steady, true)[(1, 0)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        );
+        assert!(
+            paint(&steady, false)[(1, 0)]
+                .modifier
+                .contains(Modifier::REVERSED),
+            "a steady cursor is drawn regardless of the blink phase",
+        );
+
+        // The default two-arg `to_buffer` paints the STEADY phase (a blinking
+        // cursor is drawn — the non-animating / test entry).
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 8, 4));
+        to_buffer(&blinking, &mut buf);
+        assert!(
+            buf[(1, 0)].modifier.contains(Modifier::REVERSED),
+            "to_buffer forwards the steady ON phase, so the cursor paints",
+        );
     }
 
     /// R995 §5.41 §2 #6 — cross-backend consistency (TUI half). Drives the

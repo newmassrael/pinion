@@ -572,7 +572,12 @@ fn commit_paint<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>
 ) -> io::Result<Scene> {
     let paint_scene = core.compute_paint_scene(cols, rows);
     let mut buf = Buffer::empty(Rect::new(0, 0, cols, rows));
-    crate::paint::to_buffer(&paint_scene, &mut buf);
+    // R1426 §5.41 §5.28 — thread this frame's terminal-cursor blink phase
+    // (armed inside `compute_paint_scene` above). A blinking-mode cursor paints
+    // only on the visible half; a steady / hidden cursor is unaffected. Read
+    // here (outside the view's reactive scope) so the phase never folds into the
+    // scene the router / snapshot see.
+    crate::paint::to_buffer_with_cursor_phase(&paint_scene, &mut buf, core.grid_cursor_blink_on());
     renderer.render(&buf, TuiContext::default())?;
     Ok(paint_scene)
 }

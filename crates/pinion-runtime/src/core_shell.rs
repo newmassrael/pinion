@@ -81,6 +81,11 @@ use crate::command::CommandExecutor;
 use crate::input::{InputRouter, PanRelease, PointerId, Touch, TouchPhase};
 use crate::intent_queue::{IntentQueue, walk_scene_and_drain};
 
+/// R1426 §5.41 §5.28 — the reserved `Owner::cache` key for a window's
+/// terminal-cursor blink clock. Double-underscore-fenced so it does not collide
+/// with an application `use_caret_blink` tag; one slot per window owner.
+const GRID_CURSOR_BLINK_KEY: &str = "__grid_cursor_blink__";
+
 /// R51.122 §5.41 — backend-agnostic dispatch substrate.
 ///
 /// Generic over any [`WidgetCore`]-implementing binding. Owns the
@@ -1662,6 +1667,88 @@ impl<V: WidgetCore> CoreShell<V> {
     pub fn any_animation_active_for_window(&self, window_id: &str, epsilon: f32) -> bool {
         self.window_owner_existing(window_id)
             .is_some_and(|owner| owner.any_animation_active_local(epsilon))
+    }
+
+    /// R1426 §5.41 §5.28 — arm (or idle) the window's terminal-cursor blink
+    /// clock for this paint.
+    ///
+    /// The render-time blink PHASE (the on/off timer that makes a
+    /// [blinking-mode](pinion_core::term_grid::GridCursor::blink) cursor
+    /// alternate) is a renderer-owned, paint-time concern — every real terminal
+    /// keeps the blink timer in the widget, not in the PTY app, and pinion
+    /// mirrors that: the phase never enters the scene / snapshot (§2 #7). One
+    /// clock lives per window (registered on the window's own [`Owner`] via
+    /// [`Owner::register_animation_once`],
+    /// so [`Self::tick_animations_for_window`] advances it and the binding-wide
+    /// [`Self::any_animation_active`] cascade — the window owner is a child of
+    /// `root_owner` — arms the continuous repaint that drives it). It reuses
+    /// [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink), the same
+    /// 530 ms two-phase primitive pinion ships for its own text carets (the
+    /// grid cursor is its second consumer), run **free-running**: unlike a
+    /// caret it is never `reset`, because a terminal cursor blinks independently
+    /// of typing.
+    ///
+    /// Enabled iff `scene` carries a visible blinking cursor
+    /// ([`Scene::has_visible_blinking_grid_cursor`]) — this window's paint scene.
+    /// When it does the clock is enabled (so the window keeps painting and the
+    /// phase alternates); when it does not, an existing clock is disabled so the
+    /// window can idle (a steady or hidden cursor needs no animation). Owning
+    /// the scene predicate here keeps the "does this window need a blink clock?"
+    /// decision in one place. Idempotent per paint (the once-guard +
+    /// `set_enabled` equality-skip), so calling it every frame does not
+    /// re-register or reset — a terminal cursor free-runs, never snapping solid
+    /// on a steady-state repaint.
+    ///
+    /// Takes `&self` (the clock lives behind the window owner's interior
+    /// mutability) and resolves the window via
+    /// [`Self::window_owner_existing`] — a paint never *creates* a window scope
+    /// as a side effect. Every painted window is already registered
+    /// ([`Self::register_window`] at GUI window creation; `DEFAULT_WINDOW`
+    /// seeded at construction for the single-window / TUI path), so the lookup
+    /// resolves on every real paint; an unknown window is a no-op.
+    pub fn arm_grid_cursor_blink(&self, window_id: &str, scene: &Scene) {
+        let Some(owner) = self.window_owner_existing(window_id) else {
+            return;
+        };
+        if scene.has_visible_blinking_grid_cursor() {
+            owner
+                .register_animation_once(
+                    GRID_CURSOR_BLINK_KEY,
+                    pinion_core::widgets::caret_blink::CaretBlink::new,
+                )
+                .set_enabled(true);
+        } else if let Some(clock) = owner
+            .cache_get_by_str::<pinion_core::widgets::caret_blink::CaretBlink>(
+                GRID_CURSOR_BLINK_KEY,
+            )
+        {
+            clock.set_enabled(false);
+        }
+    }
+
+    /// R1426 §5.41 §5.28 — read the window's render-time cursor blink phase for
+    /// this frame: `true` when a blinking cursor should paint (its visible
+    /// half), `false` on the hidden half. Steady cursors ignore it (they always
+    /// paint) — the gate is applied per cursor by
+    /// [`GridCursor::shown_this_phase`](pinion_core::term_grid::GridCursor::shown_this_phase).
+    ///
+    /// `!enabled || visible` makes a disabled clock (no blinking cursor on
+    /// screen) — and a never-armed window (no clock) — resolve to STEADY
+    /// (`true`, always drawn); only an enabled clock in its off-phase returns
+    /// `false`. Read by the live backends (the winit paint, the TUI commit)
+    /// **outside any reactive scope**, so the `visible` [`Signal`] read does not
+    /// subscribe — the phase never folds into the scene. Headless / produce /
+    /// test paint paths do NOT call this: they pass the steady default directly
+    /// so a golden screenshot never flakes on the wall-clock phase.
+    #[must_use]
+    pub fn grid_cursor_blink_on(&self, window_id: &str) -> bool {
+        self.window_owner_existing(window_id)
+            .and_then(|o| {
+                o.cache_get_by_str::<pinion_core::widgets::caret_blink::CaretBlink>(
+                    GRID_CURSOR_BLINK_KEY,
+                )
+            })
+            .is_none_or(|clock| !clock.enabled() || clock.visible())
     }
 
     /// R51.122 §5.41 — hand a freshly-painted scene to the
@@ -3552,6 +3639,91 @@ mod tests {
             observed.get(),
             baseline + 2,
             "application Effect must re-run on each tick_animations bump",
+        );
+    }
+
+    #[test]
+    fn r1426_arm_grid_cursor_blink_drives_the_phase_and_gate() {
+        // R1426 §5.41 §5.28 — the per-window terminal-cursor blink clock: arming
+        // enables it (so the window keeps painting), ticks flip the render-time
+        // phase, `grid_cursor_blink_on` reports the phase gate, and disarming
+        // idles it. This is the substrate half of the axis; the paint gate
+        // itself is `GridCursor::shown_this_phase` (pinion-core).
+        use pinion_core::CellMetric;
+        use pinion_core::scene::TextGridNode;
+        use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor};
+        use pinion_core::widgets::caret_blink::CaretBlink;
+        let core: CoreShell<TestButton> = CoreShell::new();
+
+        // A paint scene with a visible blinking cursor (the arming condition),
+        // and one with only a steady cursor (never arms).
+        let scene_with = |blink: bool| {
+            let cells = GridBuffer::new(2, 1)
+                .with_cursor(GridCursor::new(1, 0, CursorShape::Block, true).with_blink(blink));
+            Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT).with_cells(cells))
+        };
+        let blinking = scene_with(true);
+        let steady = scene_with(false);
+
+        // Never armed → STEADY (a window with no blinking cursor, and an unknown
+        // window, both resolve to "always draw").
+        assert!(
+            core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "unarmed window is steady"
+        );
+        assert!(
+            core.grid_cursor_blink_on("ghost"),
+            "unknown window is steady"
+        );
+
+        // Arm (a visible blinking cursor is on screen): the clock enables and the
+        // cursor starts on its ON phase (the canonical "cursor appears solid").
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking);
+        assert!(
+            core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "armed cursor starts ON"
+        );
+        assert!(
+            core.any_animation_active_for_window(DEFAULT_WINDOW, pinion_core::DEFAULT_REST_EPSILON),
+            "an armed blink clock is never at rest, so the window keeps painting",
+        );
+
+        // A half-period tick flips the phase to hidden; another flips it back.
+        core.tick_animations_for_window(DEFAULT_WINDOW, CaretBlink::PERIOD_SECS);
+        assert!(
+            !core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "one half-period later the blinking cursor is on the OFF phase",
+        );
+        core.tick_animations_for_window(DEFAULT_WINDOW, CaretBlink::PERIOD_SECS);
+        assert!(
+            core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "the phase flips back ON"
+        );
+
+        // Re-arming is idempotent — it must NOT reset the phase (equality skip),
+        // so a mid-phase steady-state paint does not snap the cursor solid.
+        core.tick_animations_for_window(DEFAULT_WINDOW, CaretBlink::PERIOD_SECS);
+        assert!(
+            !core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "OFF phase after a third flip"
+        );
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking);
+        assert!(
+            !core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "re-arming does not reset the phase (a terminal cursor free-runs)",
+        );
+
+        // A scene with only a STEADY cursor disarms the clock → STEADY gate again
+        // and the window can idle (the clock reports at-rest).
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &steady);
+        assert!(
+            core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "a disarmed window is steady — a disabled clock never hides the cursor",
+        );
+        assert!(
+            !core
+                .any_animation_active_for_window(DEFAULT_WINDOW, pinion_core::DEFAULT_REST_EPSILON),
+            "a disarmed blink clock is at rest, so the window idles",
         );
     }
 

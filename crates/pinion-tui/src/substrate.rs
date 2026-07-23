@@ -314,6 +314,20 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         self.core.any_animation_active(epsilon)
     }
 
+    /// R1426 §5.41 §5.28 — the render-time terminal-cursor blink phase for this
+    /// frame: `true` when a blinking cursor should paint (its visible half),
+    /// `false` on the hidden half; steady / hidden cursors resolve to `true`.
+    /// The surface passes it to [`crate::paint::to_buffer_with_cursor_phase`].
+    /// Delegates to
+    /// [`CoreShell::grid_cursor_blink_on`](pinion_runtime::CoreShell::grid_cursor_blink_on)
+    /// for the single `DEFAULT_WINDOW`; read outside any reactive scope so the
+    /// phase never folds into the scene (§2 #7).
+    #[must_use]
+    pub fn grid_cursor_blink_on(&self) -> bool {
+        self.core
+            .grid_cursor_blink_on(pinion_runtime::DEFAULT_WINDOW)
+    }
+
     /// Build the binding's paint scene from the current cached
     /// state. Pure sync per §6.3 R51.27 `dry_run`: identical
     /// `(state, frame, owner_state, cols, rows)` always yields the same
@@ -418,6 +432,17 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             scene = run_view();
             let _ = self.run_layout(&mut scene, cols, rows);
         }
+        // R1426 §5.41 §5.28 — arm the terminal-cursor blink clock from the
+        // freshly-produced scene, mirroring the Vello sibling's arm in
+        // `compute_paint_scene_internal`. The TUI is single-window
+        // (`DEFAULT_WINDOW`) and has no OS-focus signal, so the blink is
+        // free-running whenever a blinking cursor is shown (matching
+        // xterm-when-enabled); `any_animation_active` in the run loop then polls
+        // + commits repaints that advance the phase (via `tick_animations`
+        // above). The phase is read back at paint by `commit_paint` and never
+        // folded into the scene (§2 #7).
+        self.core
+            .arm_grid_cursor_blink(pinion_runtime::DEFAULT_WINDOW, &scene);
         scene
     }
 

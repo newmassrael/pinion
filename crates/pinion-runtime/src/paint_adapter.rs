@@ -257,7 +257,11 @@ fn to_vello_inner<F>(
         // R991 §5.41 §2 #6 — cell-native terminal grid glyph paint (the
         // deferred half of the §5.41 axis: R972–R978 shipped the data
         // model, this arm rasterises it).
-        Scene::TextGrid(n) => paint_text_grid(out, n, text_cache, transform),
+        // R1426 §5.41 — the uncached reference / test walker always paints the
+        // cursor STEADY (`cursor_blink_on = true`): it is the stateless
+        // reference path (production uses the cached walker), so it carries no
+        // per-window blink clock and never animates the phase.
+        Scene::TextGrid(n) => paint_text_grid(out, n, text_cache, transform, true),
         // External / Effect: no-op (no rasterizable contribution here).
         _ => {}
     }
@@ -599,6 +603,11 @@ pub fn to_vello_cached<F>(
 {
     // R1072 §5.37 — the engine-free cached walk: forwards `None`, so `Scene::Text`
     // paints via parley exactly as before (byte-identical to the pre-R1072 body).
+    // R1426 §5.41 — forwards the STEADY blink phase (`cursor_blink_on = true`): this
+    // thin wrapper is the ~30-call-site test / non-animating entry, so a TextGrid
+    // cursor always paints (a blinking-mode cursor renders on its visible phase).
+    // The live winit surface calls `to_vello_cached_with_text_engine` directly with
+    // the per-window clock's phase; only that path animates.
     to_vello_cached_with_text_engine(
         scene,
         fill_hook,
@@ -607,6 +616,7 @@ pub fn to_vello_cached<F>(
         fragment_cache,
         None,
         out,
+        true,
     );
 }
 
@@ -631,6 +641,17 @@ pub fn to_vello_cached<F>(
 /// WIRE BOTH ARMS OR NEITHER: pair this with the measure override
 /// [`compute_layout_with_text_measure`](crate::layout::compute_layout_with_text_measure)
 /// using the SAME engine (see that fn's contract).
+///
+/// R1426 §5.41 §5.28 — `cursor_blink_on` is the render-time terminal-cursor
+/// blink PHASE for this frame (a per-window free-running clock, driven live by
+/// the shell): `true` on the visible half, `false` on the hidden half. It gates
+/// only a `TextGrid` cursor in the blinking DECSCUSR mode
+/// ([`GridCursor::shown_this_phase`](pinion_core::term_grid::GridCursor::shown_this_phase));
+/// a steady cursor ignores it. It is a paint-time argument — the phase is never
+/// stored in the scene, so `scene/snapshot` stays stable (§2 #7). The live
+/// winit paint passes the clock's phase; headless / produce / test callers pass
+/// the steady default (`true`) so a cursor renders deterministically in its ON
+/// phase (no wall-clock flake in a golden screenshot).
 #[allow(clippy::too_many_arguments)]
 pub fn to_vello_cached_with_text_engine<F>(
     scene: &Scene,
@@ -640,6 +661,7 @@ pub fn to_vello_cached_with_text_engine<F>(
     fragment_cache: &mut FragmentCache,
     engine: Option<&SelfHostedTextEngine>,
     out: &mut VelloScene,
+    cursor_blink_on: bool,
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
@@ -653,6 +675,7 @@ pub fn to_vello_cached_with_text_engine<F>(
         engine,
         out,
         Affine::IDENTITY,
+        cursor_blink_on,
     );
     fragment_cache.end_paint();
 }
@@ -696,6 +719,7 @@ fn to_vello_cached_inner<F>(
     engine: Option<&SelfHostedTextEngine>,
     out: &mut VelloScene,
     transform: Affine,
+    cursor_blink_on: bool,
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
@@ -728,6 +752,7 @@ fn to_vello_cached_inner<F>(
                 engine,
                 &mut sub,
                 Affine::IDENTITY,
+                cursor_blink_on,
             );
         }
         out.append(&sub, None);
@@ -771,6 +796,7 @@ fn to_vello_cached_inner<F>(
                     engine,
                     &mut sub,
                     transform,
+                    cursor_blink_on,
                 );
             }
         }
@@ -803,6 +829,7 @@ fn to_vello_cached_inner<F>(
                 engine,
                 &mut sub,
                 child_transform,
+                cursor_blink_on,
             );
             sub.pop_layer();
         }
@@ -817,7 +844,7 @@ fn to_vello_cached_inner<F>(
         // R991 §5.41 §2 #6 — TextGrid glyph paint into the fresh sub-scene
         // (uncacheable per `Scene::is_cacheable_for_paint`, so it is always
         // re-encoded; mirrors the External/ImmediateMode treatment).
-        Scene::TextGrid(n) => paint_text_grid(&mut sub, n, text_cache, transform),
+        Scene::TextGrid(n) => paint_text_grid(&mut sub, n, text_cache, transform, cursor_blink_on),
         // External / Effect: no-op (matches to_vello_inner's `_ => {}` arm).
         _ => {}
     }
@@ -2149,6 +2176,7 @@ fn paint_text_grid(
     n: &TextGridNode,
     cache: &mut LayoutCache,
     transform: Affine,
+    cursor_blink_on: bool,
 ) {
     let grid = n.cells();
     let palette = n.palette();
@@ -2311,7 +2339,16 @@ fn paint_text_grid(
     // Cursor overlay (R993) — drawn after the cells so it sits on top, inside
     // the same clip layer. Split into its own pass (the cursor's effective-
     // colour + per-shape geometry is a concern distinct from the cell grid).
-    paint_grid_cursor(out, grid, metric, palette, cache, &style, origin);
+    paint_grid_cursor(
+        out,
+        grid,
+        metric,
+        palette,
+        cache,
+        &style,
+        origin,
+        cursor_blink_on,
+    );
     out.pop_layer();
 }
 
@@ -2326,6 +2363,17 @@ fn paint_text_grid(
 /// The producer reports the effective cursor (R975); only a visible cursor
 /// whose cell falls within the buffer paints — an out-of-buffer position is a
 /// transient resize artefact and is skipped.
+///
+/// R1426 §5.41 — `cursor_blink_on` is the render-time blink phase: a cursor in
+/// the blinking DECSCUSR mode ([`GridCursor::blink`](pinion_core::term_grid::GridCursor::blink))
+/// paints only when the phase is on; a steady cursor ignores it. Gated through
+/// the shared [`GridCursor::shown_this_phase`](pinion_core::term_grid::GridCursor::shown_this_phase)
+/// predicate (the same one the pinion-tui painter uses) so the two backends
+/// can never drift. The phase is never folded into `visible`: skipping the
+/// overlay on the off-phase restores the plain cell (the normal glyph the cell
+/// pass already painted reads through) for every shape — the real terminal
+/// off-phase — while `scene/snapshot` still reports `visible`/`blink` as data.
+#[allow(clippy::too_many_arguments)]
 fn paint_grid_cursor(
     out: &mut VelloScene,
     grid: &GridBuffer,
@@ -2334,9 +2382,13 @@ fn paint_grid_cursor(
     cache: &mut LayoutCache,
     style: &TextStyle,
     origin: Affine,
+    cursor_blink_on: bool,
 ) {
     let cursor = grid.cursor();
-    if !(cursor.visible && cursor.col < grid.cols() && cursor.row < grid.rows()) {
+    if !(cursor.shown_this_phase(cursor_blink_on)
+        && cursor.col < grid.cols()
+        && cursor.row < grid.rows())
+    {
         return;
     }
     let cell_w = f64::from(metric.cell_w());
@@ -3806,6 +3858,7 @@ mod tests {
             &mut FragmentCache::new(),
             None,
             &mut none_cached,
+            true,
         );
         let mut plain_cached = VelloScene::new();
         to_vello_cached(
@@ -3832,6 +3885,7 @@ mod tests {
             &mut FragmentCache::new(),
             Some(&engine),
             &mut self_hosted,
+            true,
         );
         let shaped = pinion_text_font::shape_paragraph_with_fallback(&[engine.font()], "Hi", 16.0);
         let rendered = pinion_text_font::render_paragraph_atlased(&[engine.font()], &shaped, 16.0)
@@ -3882,6 +3936,7 @@ mod tests {
             &mut fragment_cache,
             Some(&engine),
             &mut frame1,
+            true,
         );
         assert_eq!(fragment_cache.misses(), 1, "first paint is a miss");
         assert_eq!(fragment_cache.hits(), 0);
@@ -3896,6 +3951,7 @@ mod tests {
             &mut fragment_cache,
             Some(&engine),
             &mut frame2,
+            true,
         );
         assert_eq!(
             fragment_cache.hits(),

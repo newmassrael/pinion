@@ -1191,6 +1191,19 @@ impl<V: WidgetView> ShellCore<V> {
             .is_some_and(|s| s.redraw_requested)
     }
 
+    /// R1426 §5.41 §5.28 — the window's render-time terminal-cursor blink phase
+    /// for this frame: `true` when a blinking cursor should paint (its visible
+    /// half), `false` on the hidden half; steady / hidden cursors resolve to
+    /// `true`. The winit surface reads it after `compute_paint_scene_for_window`
+    /// (which armed the clock) and threads it into the Vello paint. Delegates to
+    /// [`CoreShell::grid_cursor_blink_on`](pinion_runtime::CoreShell::grid_cursor_blink_on);
+    /// read here, outside the view's reactive scope, so the phase never folds
+    /// into the scene (§2 #7).
+    #[must_use]
+    pub fn grid_cursor_blink_on(&self, window_id: &str) -> bool {
+        self.core.grid_cursor_blink_on(window_id)
+    }
+
     /// R681 §2 #4 atomic 2 §5.16 §5.28 — per-window last paint
     /// [`Instant`]. The substrate's
     /// `Self::compute_paint_scene_internal` writes this slot every
@@ -3921,6 +3934,11 @@ impl<V: WidgetView> ShellCore<V> {
                 self.request_redraw_for_window(window_key);
             }
         }
+        // R1426 §5.41 §5.28 — arm this window's terminal-cursor blink clock from
+        // the paint scene (see `CoreShell::arm_grid_cursor_blink`); the
+        // `any_animation_active` gate below then advances the phase. This live fn
+        // only, never the pure mirror — a dry_run paint arms no clock.
+        self.core.arm_grid_cursor_blink(window_key, &paint_scene);
         // R51.147 §5.28 — keep painting while any animation registered
         // on the binding is still moving. `request_redraw` is
         // idempotent inside winit; the redraw flag is drained once per

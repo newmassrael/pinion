@@ -685,6 +685,8 @@ fn self_hosted_cached_arm_reaches_pixels() {
         &mut fragment_cache,
         Some(&engine),
         &mut vello,
+        // R1426 §5.41 — steady blink phase (no TextGrid cursor in this scene).
+        true,
     );
 
     let buf_w = BOX_W + 2 * MARGIN;

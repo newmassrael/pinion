@@ -821,6 +821,34 @@ impl GridCursor {
         self.blink = on;
         self
     }
+
+    /// R1426 §5.41 — the single gate deciding whether the cursor overlay is
+    /// drawn on a given render frame, shared verbatim by both backends (the
+    /// Vello [`paint_grid_cursor`](../../pinion_runtime/index.html) overlay and
+    /// the pinion-tui inverted-cell painter) so the two can never drift — the
+    /// one-seam discipline for a cross-backend predicate.
+    ///
+    /// `blink_on` is the render-time blink **phase** the last renderer in the
+    /// chain owns (a per-window free-running clock — pinion's
+    /// [`CaretBlink`](crate::widgets::caret_blink::CaretBlink), reused): `true`
+    /// on the visible half of the blink, `false` on the hidden half. It is a
+    /// paint-time argument, NOT a field — the phase is never folded into
+    /// [`visible`](Self::visible) (DECTCEM) or reported in the scene / snapshot,
+    /// so a projection consumer reading the scene as data still sees "app wants
+    /// the cursor shown" ([`visible`](Self::visible)) and "the cursor is a
+    /// blinking-type cursor" ([`blink`](Self::blink)) as two stable first-class
+    /// facts (§2 #7), while only the pixels alternate.
+    ///
+    /// The rule: an unset / hidden ([`visible`](Self::visible) `== false`)
+    /// cursor is never drawn (DECTCEM dominates); a **steady**
+    /// ([`blink`](Self::blink) `== false`) cursor is always drawn when visible,
+    /// independent of the phase; a **blinking** cursor is drawn only on the
+    /// visible phase (`blink_on == true`). Bounds / hit-position checks are a
+    /// separate concern the caller keeps.
+    #[must_use]
+    pub const fn shown_this_phase(&self, blink_on: bool) -> bool {
+        self.visible && (!self.blink || blink_on)
+    }
 }
 
 /// Which of a terminal's two screen buffers a projection represents
@@ -1526,6 +1554,40 @@ mod tests {
             .with_blink(true);
         assert!(g.blink);
         assert_eq!(g.cursor_color, Some(Color::rgb(0x2e, 0xcc, 0x71)));
+    }
+
+    #[test]
+    fn r1426_shown_this_phase_gates_only_a_blinking_cursor_on_the_phase() {
+        // R1426 — the cross-backend draw gate. A STEADY (blink=false) visible
+        // cursor is always drawn, independent of the render-time phase.
+        let steady = GridCursor::new(2, 1, CursorShape::Block, true);
+        assert!(
+            steady.shown_this_phase(true),
+            "steady drawn on the on-phase"
+        );
+        assert!(
+            steady.shown_this_phase(false),
+            "steady drawn on the off-phase too — phase does not gate a steady cursor",
+        );
+        // A BLINKING visible cursor is drawn only on the visible phase.
+        let blinking = GridCursor::new(2, 1, CursorShape::Block, true).with_blink(true);
+        assert!(
+            blinking.shown_this_phase(true),
+            "blinking drawn on the on-phase"
+        );
+        assert!(
+            !blinking.shown_this_phase(false),
+            "blinking hidden on the off-phase — the phase gates it",
+        );
+        // DECTCEM hide dominates: a hidden cursor is never drawn, on either
+        // phase and in either mode — `visible` is checked apart from `blink`.
+        let hidden_blink = GridCursor::new(2, 1, CursorShape::Block, false).with_blink(true);
+        assert!(!hidden_blink.shown_this_phase(true));
+        assert!(!hidden_blink.shown_this_phase(false));
+        assert!(!GridCursor::new(2, 1, CursorShape::Bar, false).shown_this_phase(true));
+        // The default cursor (hidden, steady) is never drawn.
+        assert!(!GridCursor::default().shown_this_phase(true));
+        assert!(!GridCursor::default().shown_this_phase(false));
     }
 
     #[test]

@@ -710,6 +710,45 @@ impl Scene {
         }
     }
 
+    /// R1426 §5.41 §5.28 — does this tree contain a [`TextGrid`](Self::TextGrid)
+    /// whose cursor is both shown
+    /// ([`GridCursor::visible`](crate::term_grid::GridCursor::visible)) and in
+    /// the blinking DECSCUSR mode
+    /// ([`GridCursor::blink`](crate::term_grid::GridCursor::blink), R1425)?
+    ///
+    /// The shell reads this once per paint (a cheap read-only walk, mirroring
+    /// [`Self::is_cacheable_for_paint`]) to decide whether to arm the
+    /// per-window blink clock: a window showing at least one blinking cursor
+    /// keeps requesting frames so the render-time phase alternates; a window
+    /// with none (only steady or hidden cursors) lets the surface idle. Because
+    /// [`Self::TextGrid`] is uncacheable, the grid subtree is re-walked every
+    /// frame, so this stays correct without a cache-invalidation hook — an
+    /// invariant to preserve if `TextGrid` ever gains a paint cache. The
+    /// render-time phase itself is never stored here (or anywhere in the scene)
+    /// — only the mode drives arming; the phase is a paint-time argument
+    /// ([`GridCursor::shown_this_phase`](crate::term_grid::GridCursor::shown_this_phase)).
+    #[must_use]
+    pub fn has_visible_blinking_grid_cursor(&self) -> bool {
+        match self {
+            Scene::TextGrid(n) => {
+                let cursor = n.cells().cursor();
+                cursor.visible && cursor.blink
+            }
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .any(Self::has_visible_blinking_grid_cursor),
+            Scene::Scroll(s) => s.content.has_visible_blinking_grid_cursor(),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::External(_)
+            | Scene::ImmediateModeNode(_) => false,
+        }
+    }
+
     /// R668 §5.16 — tight content bounding box, in logical-pixel
     /// (x+w, y+h) terms, of every visible primitive in this tree.
     ///
@@ -6057,6 +6096,59 @@ mod tests {
         // And cacheable when the inner is cacheable.
         let scroll_pure = Scene::Scroll(ScrollNode::new(rect_a(), box_a()));
         assert!(scroll_pure.is_cacheable_for_paint());
+    }
+
+    #[test]
+    fn r1426_has_visible_blinking_grid_cursor_detects_the_arming_condition() {
+        use crate::term_grid::{CursorShape, GridCursor};
+
+        fn grid_with_cursor(cursor: GridCursor) -> Scene {
+            let cells = GridBuffer::new(4, 2).with_cursor(cursor);
+            Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT).with_cells(cells))
+        }
+
+        // A visible blinking cursor is the arming condition.
+        let blinking =
+            grid_with_cursor(GridCursor::new(2, 1, CursorShape::Block, true).with_blink(true));
+        assert!(blinking.has_visible_blinking_grid_cursor());
+
+        // A visible STEADY cursor does NOT arm (nothing animates).
+        let steady = grid_with_cursor(GridCursor::new(2, 1, CursorShape::Block, true));
+        assert!(!steady.has_visible_blinking_grid_cursor());
+
+        // A HIDDEN blinking cursor does NOT arm — `visible` (DECTCEM) gates the
+        // arming apart from the mode, so a hidden cursor never keeps the window
+        // painting no matter its blink mode.
+        let hidden_blink =
+            grid_with_cursor(GridCursor::new(2, 1, CursorShape::Block, false).with_blink(true));
+        assert!(!hidden_blink.has_visible_blinking_grid_cursor());
+
+        // A grid with the default (hidden) cursor, and a non-grid tree, do not
+        // arm.
+        assert!(
+            !Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT))
+                .has_visible_blinking_grid_cursor()
+        );
+        assert!(!box_a().has_visible_blinking_grid_cursor());
+
+        // The walk recurses: a Container / Scroll wrapping a blinking-cursor
+        // grid arms, mirroring `is_cacheable_for_paint`'s recursion.
+        let nested = Scene::Container(ContainerNode::new(vec![
+            box_a(),
+            grid_with_cursor(GridCursor::new(0, 0, CursorShape::Bar, true).with_blink(true)),
+        ]));
+        assert!(nested.has_visible_blinking_grid_cursor());
+        let scrolled = Scene::Scroll(ScrollNode::new(
+            rect_a(),
+            grid_with_cursor(GridCursor::new(1, 1, CursorShape::Block, true).with_blink(true)),
+        ));
+        assert!(scrolled.has_visible_blinking_grid_cursor());
+        // ...but a Container of only steady/hidden cursors does not.
+        let nested_steady = Scene::Container(ContainerNode::new(vec![
+            box_a(),
+            grid_with_cursor(GridCursor::new(0, 0, CursorShape::Bar, true)),
+        ]));
+        assert!(!nested_steady.has_visible_blinking_grid_cursor());
     }
 
     #[test]
