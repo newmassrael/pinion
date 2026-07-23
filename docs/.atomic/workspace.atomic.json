@@ -28634,6 +28634,44 @@
         "none — R1420 clears the R1419 deferral (scene/window_focus is now a full winit Focused-edge simulation, not gate/mirror only). The single-window shipped example still demonstrates the reactive read; multi-window per-window reflection remains proven by the dispatch_core shell test, and a multi-OS-window dimming demo stays an optional future demo (capability is complete, not deferred)."
       ]
     },
+    "R1421": {
+      "decision_summary": "R1421 §5.39 §5.16: ship hello-window-focus-multi — two OS windows each dimming ONLY on its own blur, the concrete proof that the R1419 paint-path OS-focus read is a window IDENTITY (os_focused_window() == Some(window_id)) not a binding-wide bool. Each view_for_window reads the one binding-wide mirror and compares against its own id; a demo drives scene/window_focus per window and reads each window's paint separately, showing the roles swap on one mirror. Closes the R1419 'multi-window demo is future' note ([[qt-parity-over-yagni]] — Qt apps dim per-window).",
+      "changes_bullets": [
+        "New example hello-window-focus-multi: TWO OS windows (main + inspector) sharing one binding, each view_for_window reads the binding-wide os_focused_window() mirror and compares it against ITS OWN window id (== Some(window_id)) — so each window dims only when its own window is blurred.",
+        "This is the concrete demonstration of the R1419 design-review call: the paint-path OS-focus read is a window IDENTITY (Option<String>), not a binding-wide bool — a bool read could not tell two windows apart. Manual WidgetView (windows() + view_for_window), since the #[widget] macro has no multi-window override.",
+        "Demo r1419_window_focus_multi.py: 34 assertions PASS — focus main → only inspector dims; focus inspector → the roles swap on the same mirror; whole-app blur → both dim; the gate leg agrees with each window's painted label; unknown-window drive rejected. Reads each window's paint via snapshot(window=\"…\")."
+      ],
+      "verification_bullets": [
+        "hello-window-focus-multi: 2 unit tests (per-window dimming swaps as OS focus moves main<->inspector<->none; main carries the Button primary, inspector is display-only). green.",
+        "r1419_window_focus_multi.py: 34 assertions PASS over RPC (per-window identity dimming, gate/label agreement, blur-both, unknown-window rejection).",
+        "clippy -D pedantic clean; cargo doc --document-private-items clean; mnemosyne T1=0."
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "none — this closes the \"multi-window per-window reflection is a future demo\" note from R1419: it is now a shipped, RPC-verified example, not just a shell-test-proven capability."
+      ],
+      "publishable_decision_summary": "R1421 §5.39 §5.16: ship hello-window-focus-multi — two OS windows each dimming ONLY on its own blur, the concrete proof that the R1419 paint-path OS-focus read is a window IDENTITY (os_focused_window() == Some(window_id)) not a binding-wide bool. Each view_for_window reads the one binding-wide mirror and compares against its own id; a demo drives scene/window_focus per window and reads each window's paint separately, showing the roles swap on one mirror. Closes the R1419 'multi-window demo is future' note ([[qt-parity-over-yagni]] — Qt apps dim per-window).",
+      "publishable_changes_bullets": [
+        "New example hello-window-focus-multi: TWO OS windows (main + inspector) sharing one binding, each view_for_window reads the binding-wide os_focused_window() mirror and compares it against ITS OWN window id (== Some(window_id)) — so each window dims only when its own window is blurred.",
+        "This is the concrete demonstration of the R1419 design-review call: the paint-path OS-focus read is a window IDENTITY (Option<String>), not a binding-wide bool — a bool read could not tell two windows apart. Manual WidgetView (windows() + view_for_window), since the #[widget] macro has no multi-window override.",
+        "Demo r1419_window_focus_multi.py: 34 assertions PASS — focus main → only inspector dims; focus inspector → the roles swap on the same mirror; whole-app blur → both dim; the gate leg agrees with each window's painted label; unknown-window drive rejected. Reads each window's paint via snapshot(window=\"…\")."
+      ],
+      "publishable_verification_bullets": [
+        "hello-window-focus-multi: 2 unit tests (per-window dimming swaps as OS focus moves main<->inspector<->none; main carries the Button primary, inspector is display-only). green.",
+        "r1419_window_focus_multi.py: 34 assertions PASS over RPC (per-window identity dimming, gate/label agreement, blur-both, unknown-window rejection).",
+        "clippy -D pedantic clean; cargo doc --document-private-items clean; mnemosyne T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none — this closes the \"multi-window per-window reflection is a future demo\" note from R1419: it is now a shipped, RPC-verified example, not just a shell-test-proven capability."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

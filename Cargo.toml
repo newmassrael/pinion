@@ -28,6 +28,7 @@ members = [
     "crates/pinion-chart",
     "examples/hello-button",
     "examples/hello-window-focus",
+    "examples/hello-window-focus-multi",
     "examples/hello-window-chrome",
     "examples/hello-button-tui",
     "examples/hello-narrative-walk",
