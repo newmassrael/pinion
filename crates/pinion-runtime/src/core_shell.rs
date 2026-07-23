@@ -2529,6 +2529,23 @@ impl<V: WidgetCore> CoreShell<V> {
         router.deliver_raw_pointer_button(pid, button, edge, modifiers, scene)
     }
 
+    /// R1423 §5.35 — set the pointer PRESSURE for `pid` on `window_id`'s router
+    /// (W3C `PointerEvent.pressure`), the `scene/pointer_pressure` RPC seam. The
+    /// value is stored and delivered to the pointer's current move-target at
+    /// once (a driven pen pressing in place), and rides every subsequent
+    /// `pointer_move` — the AI-first source that makes a pressure-reactive
+    /// surface exercisable headless, no tablet required (§2 #2).
+    pub fn set_pointer_pressure_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        pressure: f32,
+    ) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        router.set_pointer_pressure(pid, pressure, scene);
+    }
+
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's
     /// `CursorLeft`). Drops the cursor + rolls back any in-flight
     /// `Hover`.
@@ -2677,6 +2694,13 @@ impl<V: WidgetCore> CoreShell<V> {
         let pid = PointerId::touch(touch.id);
         let Self { scene, routers, .. } = self;
         let router = router_for(routers, window_id);
+        // R1423 §5.35 — record the contact FORCE (W3C `PointerEvent.pressure`)
+        // BEFORE the accompanying `cursor_moved`, so the forwarded `pointer_move`
+        // carries the new pressure to a pressure-aware surface. `None` (a
+        // touchscreen without force) leaves the stored pressure unchanged.
+        if let Some(force) = touch.force {
+            router.note_pointer_pressure(pid, force);
+        }
         match touch.phase {
             TouchPhase::Started => {
                 router.cursor_moved(pid, touch.x, touch.y, scene);
@@ -3132,6 +3156,7 @@ mod tests {
             phase: TouchPhase::Started,
             x: 8.0,
             y: 8.0,
+            force: None,
         });
         assert_eq!(*core.cached_state(), ButtonState::Pressed);
 
@@ -3140,6 +3165,7 @@ mod tests {
             phase: TouchPhase::Ended,
             x: 8.0,
             y: 8.0,
+            force: None,
         });
         // After `pointer_up` then `cursor_left`: Pressed → Hover →
         // Idle. The tail's `state_change` carries only the final
@@ -3166,6 +3192,7 @@ mod tests {
             phase: TouchPhase::Started,
             x: 8.0,
             y: 8.0,
+            force: None,
         });
         assert_eq!(*core.cached_state(), ButtonState::Pressed);
 
@@ -3174,6 +3201,7 @@ mod tests {
             phase: TouchPhase::Cancelled,
             x: 8.0,
             y: 8.0,
+            force: None,
         });
         assert_eq!(
             t.state_change.expect("Pressed → Idle on cancel").after,

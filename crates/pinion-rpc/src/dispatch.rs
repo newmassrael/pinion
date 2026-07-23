@@ -874,6 +874,14 @@ pub enum DeferredInput {
         button: PointerButton,
         edge: PointerEdge,
     },
+    /// R1423 §5.35 §5.15 — `scene/pointer_pressure` injection: set the pointer's
+    /// PRESSURE (W3C `PointerEvent.pressure` / Qt `QTabletEvent::pressure()`),
+    /// normalised `0.0..=1.0`. Positionless like [`Self::SetModifiers`] — it sets
+    /// an out-of-band per-pointer state that rides subsequent moves and is
+    /// delivered to the surface under the pointer at once. The AI-first source
+    /// for a pressure-reactive surface (an ink brush, a DCC viewport), so a
+    /// tablet is not required to exercise force headless (§2 #2).
+    PointerPressure { value: f32 },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -1770,6 +1778,17 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 HandlerKind::Mutate,
             )
         }
+        "scene/pointer_pressure" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pointer_pressure(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
         "scene/hover" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -2484,6 +2503,34 @@ where
         .ok_or_else(|| RpcError::invalid_params(POINTER_EDGE_VOCAB_ERR))?;
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
     inbox.push(DeferredInput::PointerButton { x, y, button, edge });
+    Ok(Value::Null)
+}
+
+/// R1423 §5.35 §5.15 — `scene/pointer_pressure` handler: set the pointer's
+/// PRESSURE (W3C `PointerEvent.pressure` / Qt `QTabletEvent::pressure()`),
+/// normalised `0.0..=1.0`. Positionless (out-of-band, like `scene/modifiers`):
+/// the value rides subsequent moves and is delivered to the surface under the
+/// pointer at once. Required param `value` (a number); out-of-range is clamped
+/// at the router, a non-number is rejected so a typo surfaces at the call.
+fn handle_scene_pointer_pressure(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    let value = params
+        .get("value")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.value must be a number (0.0..=1.0)"))?;
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a pressure 0.0..=1.0 loses no meaningful precision as f32"
+    )]
+    inbox.push(DeferredInput::PointerPressure {
+        value: value as f32,
+    });
     Ok(Value::Null)
 }
 

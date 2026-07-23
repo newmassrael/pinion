@@ -217,6 +217,13 @@ pub struct Touch {
     pub y: f64,
     /// Phase of the touch lifecycle.
     pub phase: TouchPhase,
+    /// R1423 §5.35 — the contact FORCE, normalised `0.0..=1.0`, the W3C
+    /// `PointerEvent.pressure` / Qt `QTabletEvent::pressure()` source (winit
+    /// `Touch::force`, already normalised at the shell boundary). `None` when the
+    /// platform reports no force (a plain touchscreen without pressure, or a
+    /// synthesised touch); the router then leaves the pointer's pressure
+    /// unchanged rather than forcing it to zero.
+    pub force: Option<f32>,
 }
 
 /// R51.108 §5.41 — abstract modifier-key state. Defined in
@@ -423,6 +430,14 @@ pub struct InputRouter {
     /// discipline). Keyed by the button too so a left double-click and a right
     /// double-click count independently, the Qt per-button rule.
     raw_click_marks: HashMap<(PointerId, PointerButton), RawClickMark>,
+    /// R1423 §5.35 — the current pointer PRESSURE per pointer (W3C
+    /// `PointerEvent.pressure` / Qt `QTabletEvent::pressure()`), normalised
+    /// `0.0..=1.0`. Set from the platform pen / touch force
+    /// ([`Touch::force`]) or the `scene/pointer_pressure` RPC, and forwarded to a
+    /// pressure-aware [`External`](pinion_core::external::External) alongside each
+    /// `pointer_move` (pressure travels WITH position, the W3C `pointermove`
+    /// model). Absent → `0.0` (no force reported), so a plain mouse forwards zero.
+    pressures: HashMap<PointerId, f32>,
 }
 
 /// R1418 §5.35 — one pointer's implicit grab on a raw multi-button sink: the
@@ -972,9 +987,9 @@ impl InputRouter {
             // position to correlate its button edges against, even off its
             // rect) and suppress hover re-resolution — the same pin the
             // capture-lock and DnD paths get.
-            self.forward_pointer_move(state_scene, &tag, x, y);
+            self.forward_pointer_move(state_scene, &tag, id, x, y);
         } else if let Some(tag) = self.captured_targets.get(&id).cloned() {
-            self.forward_pointer_move(state_scene, &tag, x, y);
+            self.forward_pointer_move(state_scene, &tag, id, x, y);
         } else if !pan_live {
             self.refresh_hover(id, state_scene);
             // R1405 §5.35 — a hover target that opted into hover-move (a
@@ -985,7 +1000,7 @@ impl InputRouter {
             // where `refresh_hover` early-returns with no Enter to piggyback on.
             if self.hover_wants_move.get(&id).copied().unwrap_or(false) {
                 if let Some(tag) = self.hover_targets.get(&id).cloned() {
-                    self.forward_pointer_move(state_scene, &tag, x, y);
+                    self.forward_pointer_move(state_scene, &tag, id, x, y);
                 }
             }
         }
@@ -1375,7 +1390,7 @@ impl InputRouter {
                 // forward the value would not update unless the user
                 // also dragged the cursor at least one pixel.
                 if let Some(&(x, y)) = self.cursors.get(&id) {
-                    self.forward_pointer_move(state_scene, &tag, x, y);
+                    self.forward_pointer_move(state_scene, &tag, id, x, y);
                 }
             }
 
@@ -2143,6 +2158,7 @@ impl InputRouter {
         &self,
         state_scene: &mut Scene,
         target_tag: &str,
+        id: PointerId,
         cursor_x: f64,
         cursor_y: f64,
     ) {
@@ -2159,6 +2175,51 @@ impl InputRouter {
             return;
         };
         external.handle.pointer_move(x_rel, y_rel);
+        // R1423 §5.35 — pressure travels WITH the move (W3C `pointermove`): forward
+        // the pointer's current force to a pressure-aware surface. Absent → 0.0
+        // (a plain mouse reports no pressure).
+        external
+            .handle
+            .pointer_pressure(self.pressures.get(&id).copied().unwrap_or(0.0));
+    }
+
+    /// R1423 §5.35 — store `id`'s PRESSURE (W3C `PointerEvent.pressure` / Qt
+    /// `QTabletEvent::pressure()`), clamped to `0.0..=1.0`, WITHOUT delivering it.
+    /// The pen / touch bridge calls this before the accompanying
+    /// [`cursor_moved`](Self::cursor_moved), whose forwarded `pointer_move`
+    /// carries the new pressure to the surface (pressure travels with position).
+    pub fn note_pointer_pressure(&mut self, id: PointerId, pressure: f32) {
+        self.pressures.insert(id, pressure.clamp(0.0, 1.0));
+    }
+
+    /// R1423 §5.35 — store `id`'s pressure AND deliver it to the pointer's
+    /// current move-target immediately, so a standalone pressure change (a pen
+    /// pressing harder in place with no cursor move — the `scene/pointer_pressure`
+    /// RPC path) reaches the surface at once, not only on the next move. The
+    /// target is resolved the same way [`cursor_moved`](Self::cursor_moved)
+    /// forwards a move: an implicit raw grab, else a capture lock, else the hover
+    /// target when it opted into hover-move. The stored value also rides every
+    /// subsequent `pointer_move`.
+    pub fn set_pointer_pressure(&mut self, id: PointerId, pressure: f32, state_scene: &mut Scene) {
+        self.note_pointer_pressure(id, pressure);
+        let clamped = self.pressures.get(&id).copied().unwrap_or(0.0);
+        let target = self
+            .raw_grab_tag(id)
+            .or_else(|| self.captured_targets.get(&id).cloned())
+            .or_else(|| {
+                self.hover_wants_move
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(false)
+                    .then(|| self.hover_targets.get(&id).cloned())
+                    .flatten()
+            });
+        if let Some(tag) = target {
+            let (primary, _) = split_subindex(&tag);
+            if let Some(external) = find_external_by_tag(state_scene, primary) {
+                external.handle.pointer_pressure(clamped);
+            }
+        }
     }
 
     /// R742 §5.51 — drive an in-flight drag for `id`: resolve the drop
@@ -3903,6 +3964,90 @@ mod tests {
             downs,
             vec![1, 2, 1],
             "press ordinals cycle 1 → 2 → 1, never a rolling triple",
+        );
+    }
+
+    /// R1423 — a minimal pressure-recording sink: opts into hover-move (so the
+    /// router forwards `pointer_move` and the R1423 pressure to it on a plain
+    /// hover) and logs every `pointer_pressure` call.
+    struct PressureSink {
+        pressures: Arc<Mutex<Vec<f32>>>,
+    }
+
+    impl std::fmt::Debug for PressureSink {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("PressureSink").finish()
+        }
+    }
+
+    impl pinion_core::external::External for PressureSink {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn wants_hover_move(&self) -> bool {
+            true
+        }
+        fn pointer_pressure(&mut self, pressure: f32) {
+            self.pressures
+                .lock()
+                .expect("mutex poisoned")
+                .push(pressure);
+        }
+    }
+
+    fn state_with_pressure_sink() -> (Scene, Arc<Mutex<Vec<f32>>>) {
+        let pressures = Arc::new(Mutex::new(Vec::new()));
+        let sink = PressureSink {
+            pressures: Arc::clone(&pressures),
+        };
+        let scene = Scene::External(ExternalNode::new(Box::new(sink)).with_tag("main_slider"));
+        (scene, pressures)
+    }
+
+    #[test]
+    fn r1423_pressure_rides_a_forwarded_hover_move() {
+        // R1423 — a noted pressure rides the next forwarded `pointer_move` (the
+        // W3C `pointermove` model: pressure travels with position).
+        let mut router = InputRouter::new();
+        let (mut state, pressures) = state_with_pressure_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.note_pointer_pressure(PointerId::MOUSE, 0.5);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // enter the sink
+        router.cursor_moved(PointerId::MOUSE, 101.0, 100.0, &mut state); // move within it
+        assert!(
+            pressures
+                .lock()
+                .expect("mutex poisoned")
+                .iter()
+                .any(|p| (*p - 0.5).abs() < 1e-6),
+            "the noted pressure rode a forwarded move, got {:?}",
+            pressures.lock().expect("mutex poisoned")
+        );
+    }
+
+    #[test]
+    fn r1423_set_pressure_delivers_immediately_and_clamps() {
+        // R1423 — `set_pointer_pressure` (the RPC path) delivers to the hover
+        // target at once — no move required (a pen pressing harder in place) —
+        // and clamps out-of-range input.
+        let mut router = InputRouter::new();
+        let (mut state, pressures) = state_with_pressure_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // hover the sink
+        pressures.lock().expect("mutex poisoned").clear(); // drop the move-forwarded 0.0
+        router.set_pointer_pressure(PointerId::MOUSE, 5.0, &mut state); // out of range
+        assert_eq!(
+            pressures.lock().expect("mutex poisoned").as_slice(),
+            &[1.0],
+            "a standalone pressure change delivers immediately, clamped to 1.0",
         );
     }
 

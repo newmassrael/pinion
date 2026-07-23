@@ -1672,6 +1672,51 @@ fn r1416_scene_pointer_button_requires_button_and_state() {
 }
 
 #[test]
+fn r1423_scene_pointer_pressure_enqueues_the_value() {
+    // A numeric `value` enqueues one positionless PointerPressure (out-of-band,
+    // like scene/modifiers); the router clamps and delivers it.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/pointer_pressure","params":{"value":0.6},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::PointerPressure { value } = inbox[0] else {
+        panic!("expected PointerPressure, got {:?}", inbox[0]);
+    };
+    assert!((value - 0.6).abs() < 1e-4, "value decoded, got {value}");
+}
+
+#[test]
+fn r1423_scene_pointer_pressure_requires_a_numeric_value() {
+    // A missing or non-numeric `value` rejects with invalid_params and enqueues
+    // nothing, so a typo surfaces at the call site.
+    for params in ["{}", r#"{"value":"hard"}"#, r#"{"value":true}"#] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/pointer_pressure","params":{params},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        let err = resp.error.expect("must reject");
+        assert_eq!(err.code, -32602, "invalid_params for {params}");
+        assert!(
+            inbox.is_empty(),
+            "rejected request enqueues nothing: {params}"
+        );
+    }
+}
+
+#[test]
 fn r887_scene_click_explicit_left_button_enqueues_click() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();

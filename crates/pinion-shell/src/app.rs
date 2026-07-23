@@ -3885,6 +3885,15 @@ fn winit_touch_to_pinion(touch: winit::event::Touch, scale: f64) -> pinion_runti
     // R1027 §5.16 §5.35 — touch location is physical; map to logical so
     // it shares the router's coordinate space (mirrors `CursorMoved`).
     let (x, y) = winit_pointer_to_logical(touch.location, scale);
+    // R1423 §5.35 — the pen / touch FORCE (W3C `PointerEvent.pressure` source),
+    // normalised to `0.0..=1.0`; `None` on a platform that reports no force.
+    // `Force::normalized` folds the iOS `Calibrated` / `Normalized` variants into
+    // one 0..1 scale.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a normalised pen force 0.0..=1.0 loses no meaningful precision as f32"
+    )]
+    let force = touch.force.map(|f| f.normalized() as f32);
     pinion_runtime::Touch {
         id: touch.id,
         x,
@@ -3895,6 +3904,7 @@ fn winit_touch_to_pinion(touch: winit::event::Touch, scale: f64) -> pinion_runti
             winit::event::TouchPhase::Ended => pinion_runtime::TouchPhase::Ended,
             winit::event::TouchPhase::Cancelled => pinion_runtime::TouchPhase::Cancelled,
         },
+        force,
     }
 }
 

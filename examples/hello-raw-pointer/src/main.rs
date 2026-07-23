@@ -47,11 +47,13 @@
 //! The sink exposes the raw stream as introspectable state a snapshot cannot
 //! phrase as one field: `report_count`, `last` (`button:edge:mods`),
 //! `last_button` / `last_edge` / `last_mods`, `last_x` / `last_y` (the position
-//! stamped at the last edge), `x_frac` / `y_frac` (the live hover position), and
-//! `log` (the full `;`-joined sequence). Every button edge is driven no-pixel
-//! via the new `scene/pointer_button` RPC method — the single-edge peer the
-//! press-pair `scene/click` never expressed. See
-//! `tools/demos/r1416_raw_pointer.py`.
+//! stamped at the last edge), `x_frac` / `y_frac` (the live hover position),
+//! `pressure` (R1423 — the live W3C `PointerEvent.pressure`, driving the ink
+//! mark's diameter), and `log` (the full `;`-joined sequence). Every button edge
+//! is driven no-pixel via the `scene/pointer_button` RPC method — the
+//! single-edge peer the press-pair `scene/click` never expressed — and the
+//! pressure via `scene/pointer_pressure` (R1423). See
+//! `tools/demos/r1416_raw_pointer.py` and `tools/demos/r1423_pressure.py`.
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
@@ -82,6 +84,15 @@ const PANE_TAG: &str = "pane";
 
 /// The human-readable report line at the window's foot.
 const READOUT_TAG: &str = "raw.readout";
+
+/// R1423 — the pressure-reactive ink mark's paint tag. A snapshot reads its rect
+/// to confirm the mark grows with pressure (W3C `PointerEvent.pressure`).
+const INK_TAG: &str = "ink.dot";
+
+/// R1423 — the ink mark's diameter at zero-and-a-hair pressure (px) and the span
+/// it grows across to full force, so `diameter = MIN + pressure * RANGE`.
+const DOT_MIN_PX: f32 = 6.0;
+const DOT_RANGE_PX: f32 = 44.0;
 
 const TITLE_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 13;
@@ -131,6 +142,8 @@ struct SinkState {
     last: Option<ButtonReport>,
     x_frac: Option<f32>,
     y_frac: Option<f32>,
+    /// R1423 — the live pointer pressure (W3C `PointerEvent.pressure`), `0.0..=1.0`.
+    pressure: f32,
 }
 
 /// The idle prompt / live report line — the SSOT both the status text and the
@@ -151,7 +164,14 @@ fn readout_text(state: &SinkState) -> String {
             } else {
                 String::new()
             };
-            format!("#{} {}{}{}", state.count, r.label(), clicks, pos)
+            // R1423 — surface the live pointer pressure (W3C
+            // `PointerEvent.pressure`) so a pen / driven force reads as data.
+            let force = if state.pressure > 0.0 {
+                format!(" · pressure {:.2}", state.pressure)
+            } else {
+                String::new()
+            };
+            format!("#{} {}{}{}{}", state.count, r.label(), clicks, pos, force)
         }
     }
 }
@@ -211,11 +231,56 @@ fn view(state: SinkState, _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(18, WIN_H - 26)),
     );
 
+    // R1423 — the pressure-reactive ink mark: a filled dot at the live cursor
+    // whose diameter scales with the pointer pressure (W3C `PointerEvent.pressure`)
+    // — the DCC ink-brush vignette. Present only when a force is applied over a
+    // known position, so a plain hover (pressure 0) leaves no mark.
+    let ink_dot = ink_dot_scene(&state, theme.resolve(ColorRole::Accent));
+
+    let mut children = vec![pane_body];
+    if let Some(dot) = ink_dot {
+        children.push(dot);
+    }
+    children.extend([pane_surface, title, status]);
+
     Scene::Container(
-        ContainerNode::new(vec![pane_body, pane_surface, title, status])
+        ContainerNode::new(children)
             .with_style(BoxStyle::filled(surface))
             .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
     )
+}
+
+/// R1423 — build the pressure-reactive ink mark, or `None` when there is no force
+/// or no known position. A filled, fully-rounded dot centred on the live cursor;
+/// `diameter = DOT_MIN_PX + pressure * DOT_RANGE_PX`, so the mark visibly grows
+/// with force.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "the diameter and cursor pixel are small non-negative values; the fractional part is not meaningful for a paint rect"
+)]
+fn ink_dot_scene(state: &SinkState, ink: pinion_core::style::Color) -> Option<Scene> {
+    let (fx, fy) = match (state.x_frac, state.y_frac) {
+        (Some(fx), Some(fy)) if state.pressure > 0.0 => (fx.clamp(0.0, 1.0), fy.clamp(0.0, 1.0)),
+        _ => return None,
+    };
+    let size = (DOT_MIN_PX + state.pressure.clamp(0.0, 1.0) * DOT_RANGE_PX) as u32;
+    let half = size / 2;
+    let cx = PANE_RECT.x + (fx * PANE_RECT.w as f32) as u32;
+    let cy = PANE_RECT.y + (fy * PANE_RECT.h as f32) as u32;
+    Some(Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::filled(ink).with_corner_radius(half),
+        )
+        .with_tag(INK_TAG)
+        .with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(cx.saturating_sub(half), cy.saturating_sub(half))
+                .with_size(Size::px(size, size)),
+        ),
+    ))
 }
 
 /// Read the sink digest from the primary [`RawPointerSink`] in the state scene.
@@ -236,6 +301,7 @@ fn read_sink(scene: &Scene) -> SinkState {
         last,
         x_frac: query_frac(intro, "x_frac"),
         y_frac: query_frac(intro, "y_frac"),
+        pressure: query_frac(intro, "pressure").unwrap_or(0.0),
     }
 }
 
@@ -299,6 +365,10 @@ struct RawPointerSink {
     /// pane — stamped onto each report so a button edge carries WHERE it fired.
     x_frac: Option<f32>,
     y_frac: Option<f32>,
+    /// R1423 — the live pointer PRESSURE (W3C `PointerEvent.pressure`), `0.0..=1.0`,
+    /// from [`External::pointer_pressure`]. Drives the ink mark's diameter, so a
+    /// pen / driven force paints a bigger dot — a pressure-aware surface.
+    pressure: f32,
 }
 
 impl RawPointerSink {
@@ -340,6 +410,14 @@ impl External for RawPointerSink {
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         self.x_frac = Some(x_rel.clamp(0.0, 1.0));
         self.y_frac = Some(y_rel.clamp(0.0, 1.0));
+    }
+
+    /// R1423 — record the live pointer pressure (W3C `PointerEvent.pressure`).
+    /// The router forwards it alongside each move AND on a standalone
+    /// `scene/pointer_pressure` change, so the ink mark reacts to a pen / driven
+    /// force. A pressure-aware surface — the seam under test.
+    fn pointer_pressure(&mut self, pressure: f32) {
+        self.pressure = pressure.clamp(0.0, 1.0);
     }
 
     /// Record one raw button edge with the modifiers held at that edge and the
@@ -389,6 +467,9 @@ impl ExternalIntrospect for RawPointerSink {
                     // The live hover position fraction (Null off the pane).
                     SchemaField::new("x_frac", "float"),
                     SchemaField::new("y_frac", "float"),
+                    // R1423 — the live pointer pressure (W3C `PointerEvent.pressure`),
+                    // 0.0..=1.0; drives the ink mark's diameter.
+                    SchemaField::new("pressure", "float"),
                     // The full ";"-joined report sequence (empty string if none).
                     SchemaField::new("log", "string"),
                     // The router pointer boundary (Leave / Cancel clear the live
@@ -441,6 +522,7 @@ impl ExternalIntrospect for RawPointerSink {
                 self.y_frac
                     .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
             ),
+            "pressure" => Some(IntrospectValue::Float(self.pressure.into())),
             "log" => Some(IntrospectValue::Text(
                 self.reports
                     .iter()
@@ -457,7 +539,7 @@ impl ExternalIntrospect for RawPointerSink {
             // Every field is a read-only projection of the input log.
             "report_count" | "last" | "last_button" | "last_edge" | "last_mods"
             | "last_buttons" | "last_clicks" | "last_x" | "last_y" | "x_frac" | "y_frac"
-            | "log" => Err(InterveneError::ReadOnly),
+            | "pressure" | "log" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -692,6 +774,7 @@ mod tests {
             last: sink.last().copied(),
             x_frac: Some(0.5),
             y_frac: Some(0.5),
+            pressure: 0.0,
         };
         assert!(
             readout_text(&state).contains("×2"),
@@ -717,10 +800,106 @@ mod tests {
             last: sink.last().copied(),
             x_frac: Some(0.5),
             y_frac: Some(0.5),
+            pressure: 0.0,
         };
         assert!(
             !readout_text(&state).contains('×'),
             "a single click is not badged, got {:?}",
+            readout_text(&state)
+        );
+    }
+
+    #[test]
+    fn pressure_is_stored_and_exposed() {
+        // R1423 — the router forwards the W3C pressure via `pointer_pressure`;
+        // the sink stores it, clamps to 0..1, and exposes `pressure`.
+        let mut sink = RawPointerSink::new();
+        sink.pointer_pressure(0.6);
+        assert_eq!(
+            sink.query("pressure"),
+            Some(IntrospectValue::Float(0.6_f32.into())),
+            "the live pressure is exposed"
+        );
+        sink.pointer_pressure(5.0); // out of range → clamped
+        assert_eq!(
+            sink.query("pressure"),
+            Some(IntrospectValue::Float(1.0_f32.into())),
+            "pressure clamps to 1.0"
+        );
+        assert_eq!(
+            sink.intervene("pressure", IntrospectValue::Null),
+            Err(InterveneError::ReadOnly),
+            "pressure is a read-only projection of the input stream"
+        );
+    }
+
+    /// The ink dot's pixel width from the rendered view, or `None` when the
+    /// pressure mark is absent.
+    fn ink_dot_width(state: SinkState) -> Option<u32> {
+        let scene = rendered(state);
+        match find(&scene, INK_TAG) {
+            Some(Scene::Box(b)) => match b.layout.size.width {
+                pinion_core::style::SizeValue::Px(w) => Some(w),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_ink_dot_appears_only_under_pressure_and_grows_with_it() {
+        // R1423 — a pressure-reactive ink mark: absent at zero force, present and
+        // wider as pressure rises (the DCC ink-brush vignette).
+        let base = SinkState {
+            x_frac: Some(0.5),
+            y_frac: Some(0.5),
+            ..SinkState::default()
+        };
+        assert_eq!(
+            ink_dot_width(SinkState {
+                pressure: 0.0,
+                ..base
+            }),
+            None,
+            "no ink mark at zero pressure — a plain hover leaves no mark"
+        );
+        let light = ink_dot_width(SinkState {
+            pressure: 0.2,
+            ..base
+        })
+        .expect("a mark under light pressure");
+        let heavy = ink_dot_width(SinkState {
+            pressure: 0.9,
+            ..base
+        })
+        .expect("a mark under heavy pressure");
+        assert!(
+            heavy > light,
+            "the mark grows with pressure: heavy {heavy} must exceed light {light}"
+        );
+    }
+
+    #[test]
+    fn the_readout_surfaces_the_live_pressure() {
+        // R1423 — the readout names the live pressure so a pen force reads as data.
+        let mut sink = RawPointerSink::new();
+        sink.pointer_move(0.4, 0.4);
+        edge(
+            &mut sink,
+            PointerButton::Left,
+            PointerEdge::Down,
+            Modifiers::empty(),
+        );
+        let state = SinkState {
+            count: 1,
+            last: sink.last().copied(),
+            x_frac: Some(0.4),
+            y_frac: Some(0.4),
+            pressure: 0.75,
+        };
+        assert!(
+            readout_text(&state).contains("pressure 0.75"),
+            "the readout names the pressure, got {:?}",
             readout_text(&state)
         );
     }
@@ -866,6 +1045,7 @@ mod tests {
             last: sink.last().copied(),
             x_frac: Some(0.3),
             y_frac: Some(0.4),
+            pressure: 0.0,
         };
         let scene = rendered(state);
         let Some(Scene::Text(t)) = find(&scene, READOUT_TAG) else {

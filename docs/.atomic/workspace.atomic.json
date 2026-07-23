@@ -28714,6 +28714,54 @@
         "none — the raw double-click was the last unimplemented QMouseEvent verb on the R1416/R1418 raw-pointer line; the send-wire DoubleClick and the raw click_count now share one threshold vocabulary. The router's per-button double-click mark persisting across the sink clear is Qt-correct (not a debt); the demo primes each double via arm_double."
       ]
     },
+    "R1423": {
+      "decision_summary": "R1423 §5.35 §5.15: add pointer PRESSURE to the raw pointer surface — the W3C PointerEvent.pressure / Qt QTabletEvent::pressure() axis a mouse lacks but a pen / touch has, the one QMouseEvent-adjacent verb the R1416/R1418/R1422 raw sink still missed. External::pointer_pressure forwards a normalised 0..1 force alongside each pointer_move (pressure travels with position, the W3C pointermove model) and on a standalone change; the router holds it per-pointer (set from the platform pen force winit Touch::force, or the scene/pointer_pressure RPC — positionless / out-of-band like scene/modifiers, delivered to the surface at once). hello-raw-pointer paints a pressure-reactive ink dot (diameter = 6 + pressure*44 px), the DCC ink-brush vignette, fully drivable and introspectable headless (§2 #2, no tablet required).",
+      "changes_bullets": [
+        "pinion-core: External::pointer_pressure(f32) hook — the W3C PointerEvent.pressure / Qt QTabletEvent::pressure() peer, forwarded alongside pointer_move (pressure travels with position); default no-op, a mouse reports 0.",
+        "pinion-runtime: Touch gains force: Option<f32> (winit Touch::force source); InputRouter holds a per-pointer pressure, forwards it in forward_pointer_move (id param added), and splits note_pointer_pressure (store, for the pen bridge) vs set_pointer_pressure (store + immediate deliver to the move-target, for the RPC path).",
+        "pinion-rpc: scene/pointer_pressure {value} — a positionless out-of-band DeferredInput::PointerPressure (the scene/modifiers shape); a non-numeric value rejects, the router clamps.",
+        "pinion-shell: the winit Touch boundary reads force (Force::normalized); the deferred-input drain routes PointerPressure through CoreShell::set_pointer_pressure_for_window.",
+        "hello-raw-pointer: reads pressure (pointer_pressure hook, `pressure` introspect + readout) and paints a pressure-reactive ink dot whose diameter scales with force (6 + pressure*44 px) — the DCC ink-brush vignette."
+      ],
+      "verification_bullets": [
+        "pinion-runtime: 2 router tests (a noted pressure rides a forwarded hover move; set_pointer_pressure delivers immediately and clamps out-of-range input). runtime 437 green.",
+        "pinion-rpc: 2 dispatch tests (a numeric value enqueues PointerPressure; a missing / non-numeric value rejects with invalid_params, enqueuing nothing). rpc 921 green.",
+        "hello-raw-pointer: 3 unit tests (pressure stored / exposed / clamped and read-only; the ink dot appears only under force and grows with it; the readout names the pressure). example 15 green; core 2657 / shell 180 green.",
+        "r1423_pressure.py: 37 verifications PASS over RPC — a driven force delivers and paints the ink mark, the mark scales with force / vanishes at zero / clamps at 1.0 / rides a move / drops off-pane; the wire rejects a bad value.",
+        "clippy -D pedantic clean; cargo fmt --all --check clean; cargo doc --document-private-items clean; mnemosyne T1=0."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "The native pen / touch force source (winit Touch::force) is wired but hardware-gated: a tablet / touchscreen exercises it natively, while the AI-first scene/pointer_pressure path is fully verified headless (§2 #2) — the standard hardware carry, like the Mac / Win native surfaces.",
+        "Tilt / altitude (Qt QTabletEvent xTilt / yTilt) is a distinct follow-up axis, gated on winit exposing only Force::Calibrated::altitude_angle (partial, no azimuth); pressure is the single high-value force axis this round."
+      ],
+      "publishable_decision_summary": "R1423 §5.35 §5.15: add pointer PRESSURE to the raw pointer surface — the W3C PointerEvent.pressure / Qt QTabletEvent::pressure() axis a mouse lacks but a pen / touch has, the one QMouseEvent-adjacent verb the R1416/R1418/R1422 raw sink still missed. External::pointer_pressure forwards a normalised 0..1 force alongside each pointer_move (pressure travels with position, the W3C pointermove model) and on a standalone change; the router holds it per-pointer (set from the platform pen force winit Touch::force, or the scene/pointer_pressure RPC — positionless / out-of-band like scene/modifiers, delivered to the surface at once). hello-raw-pointer paints a pressure-reactive ink dot (diameter = 6 + pressure*44 px), the DCC ink-brush vignette, fully drivable and introspectable headless (§2 #2, no tablet required).",
+      "publishable_changes_bullets": [
+        "pinion-core: External::pointer_pressure(f32) hook — the W3C PointerEvent.pressure / Qt QTabletEvent::pressure() peer, forwarded alongside pointer_move (pressure travels with position); default no-op, a mouse reports 0.",
+        "pinion-runtime: Touch gains force: Option<f32> (winit Touch::force source); InputRouter holds a per-pointer pressure, forwards it in forward_pointer_move (id param added), and splits note_pointer_pressure (store, for the pen bridge) vs set_pointer_pressure (store + immediate deliver to the move-target, for the RPC path).",
+        "pinion-rpc: scene/pointer_pressure {value} — a positionless out-of-band DeferredInput::PointerPressure (the scene/modifiers shape); a non-numeric value rejects, the router clamps.",
+        "pinion-shell: the winit Touch boundary reads force (Force::normalized); the deferred-input drain routes PointerPressure through CoreShell::set_pointer_pressure_for_window.",
+        "hello-raw-pointer: reads pressure (pointer_pressure hook, `pressure` introspect + readout) and paints a pressure-reactive ink dot whose diameter scales with force (6 + pressure*44 px) — the DCC ink-brush vignette."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime: 2 router tests (a noted pressure rides a forwarded hover move; set_pointer_pressure delivers immediately and clamps out-of-range input). runtime 437 green.",
+        "pinion-rpc: 2 dispatch tests (a numeric value enqueues PointerPressure; a missing / non-numeric value rejects with invalid_params, enqueuing nothing). rpc 921 green.",
+        "hello-raw-pointer: 3 unit tests (pressure stored / exposed / clamped and read-only; the ink dot appears only under force and grows with it; the readout names the pressure). example 15 green; core 2657 / shell 180 green.",
+        "r1423_pressure.py: 37 verifications PASS over RPC — a driven force delivers and paints the ink mark, the mark scales with force / vanishes at zero / clamps at 1.0 / rides a move / drops off-pane; the wire rejects a bad value.",
+        "clippy -D pedantic clean; cargo fmt --all --check clean; cargo doc --document-private-items clean; mnemosyne T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The native pen / touch force source (winit Touch::force) is wired but hardware-gated: a tablet / touchscreen exercises it natively, while the AI-first scene/pointer_pressure path is fully verified headless (§2 #2) — the standard hardware carry, like the Mac / Win native surfaces.",
+        "Tilt / altitude (Qt QTabletEvent xTilt / yTilt) is a distinct follow-up axis, gated on winit exposing only Force::Calibrated::altitude_angle (partial, no azimuth); pressure is the single high-value force axis this round."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

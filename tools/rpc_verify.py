@@ -695,6 +695,18 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         params["state"] = state
         self.request("scene/pointer_button", params)
 
+    def pointer_pressure(self, value: float) -> None:
+        """`scene/pointer_pressure` typed wrapper (R1423 §5.35 §5.15).
+
+        Set the pointer PRESSURE (W3C `PointerEvent.pressure` / Qt
+        `QTabletEvent::pressure()`), normalised `0.0..=1.0`. Positionless
+        (out-of-band, like `modifiers()`): the value is delivered to the surface
+        under the pointer at once and rides subsequent moves. The AI-first source
+        for a pressure-reactive surface (an ink brush, a DCC viewport), so a
+        tablet is not required to exercise force headless.
+        """
+        self.request("scene/pointer_pressure", {"value": float(value)})
+
     def hover(
         self,
         at: Optional[tuple[float, float]] = None,

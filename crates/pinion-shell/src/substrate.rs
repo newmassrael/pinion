@@ -2800,6 +2800,18 @@ impl<V: WidgetView> ShellCore<V> {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.pointer_button_for_window(window_id, button, edge);
                 }
+                // R1423 §5.35 §5.15 — `scene/pointer_pressure`: set the pointer's
+                // W3C `PointerEvent.pressure` on the addressed window's router.
+                // Positionless (out-of-band, like `scene/modifiers`) — the router
+                // delivers it to the surface under the pointer at once and rides
+                // subsequent moves. The AI-first source for a pressure-reactive
+                // surface (a tablet is not required, §2 #2).
+                DeferredInput::PointerPressure { value } => {
+                    self.core
+                        .set_pointer_pressure_for_window(window_id, PointerId::MOUSE, value);
+                    self.revision.bump();
+                    self.request_redraw_for_window(window_id);
+                }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate
                 // exercise the W3C UIEvent `detail:2` convention the

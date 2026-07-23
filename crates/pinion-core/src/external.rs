@@ -1291,6 +1291,26 @@ pub trait External: core::fmt::Debug {
     /// the cursor X).
     fn pointer_move(&mut self, _x_rel: f32, _y_rel: f32) {}
 
+    /// R1423 §5.35 §5.15 — the current pointer PRESSURE for this widget, the W3C
+    /// `PointerEvent.pressure` / Qt `QTabletEvent::pressure()` peer: a normalised
+    /// `0.0..=1.0` force, `0.0` when no pressure is reported (a plain mouse, or a
+    /// lifted pen). Forwarded alongside each [`pointer_move`](Self::pointer_move)
+    /// (pressure travels WITH position, the W3C `pointermove` model) AND on a
+    /// standalone pressure change (a pen pressing harder in place), so a
+    /// pressure-aware surface — an ink brush whose width tracks force, a DCC
+    /// viewport, a velocity-sensitive control — reads the live force without a
+    /// separate device query.
+    ///
+    /// The native source is the platform pen / touch force (winit
+    /// `Touch::force`, normalised); the AI-first source is the `scene/pointer_pressure`
+    /// RPC (§2 #2), so the value is drivable and introspectable headless — a
+    /// tablet is not required to exercise a pressure-reactive widget.
+    ///
+    /// Default no-op; only a widget that reacts to force overrides. A mouse
+    /// reports `0.0` (Qt gives a mouse no `QTabletEvent` either — pressure is a
+    /// pen/touch axis, not a synthesised mouse-button level).
+    fn pointer_pressure(&mut self, _pressure: f32) {}
+
     /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
     /// forwarding leg the pointer hooks left open). The framework's
     /// [`InputRouter`](crate#) offers a wheel event to the `External`
