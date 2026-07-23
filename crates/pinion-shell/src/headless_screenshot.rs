@@ -1846,6 +1846,99 @@ mod tests {
         );
     }
 
+    /// R1424 §5.41 — deterministic guard for the explicit OSC-12 cursor colour
+    /// ([`GridCursor::with_cursor_color`]). A block cursor over a blank cell
+    /// fills that cell in the *cursor colour*: the default (no colour) fills in
+    /// the cell foreground (white), while an explicit green cursor fills green —
+    /// the paint honours the absolute OSC-12 colour, not the cell ink. Probed
+    /// on the green channel (high for green, low for the white default) so the
+    /// assertion is font-independent, mirroring the R993 shape.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1424_text_grid_paints_explicit_cursor_color() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 16;
+        const CH: u32 = 24;
+        const W: u32 = CW;
+        const H: u32 = CH;
+
+        let white = TermColor::Rgb(Color::rgb(0xff, 0xff, 0xff));
+        let black = TermColor::Rgb(Color::rgb(0x00, 0x00, 0x00));
+        let green = Color::rgb(0x2e, 0xcc, 0x71); // r=46, g=204, b=113
+        let metric = CellMetric::new(CW, CH).expect("non-zero");
+
+        // A 1x1 blank cell; the block cursor sits on it. `color` = the explicit
+        // OSC-12 cursor colour (None keeps the cell-foreground default).
+        let buf = |color: Option<Color>| -> GridBuffer {
+            let mut cursor = GridCursor::new(0, 0, CursorShape::Block, true);
+            if let Some(c) = color {
+                cursor = cursor.with_cursor_color(c);
+            }
+            GridBuffer::new(1, 1)
+                .with_row(0, [TermCell::new(" ", white, black)])
+                .with_cursor(cursor)
+        };
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let mut render = |buffer: GridBuffer| -> Vec<u8> {
+            let mut node = TextGridNode::new(metric).with_cells(buffer);
+            node.rect = Rect::new(0, 0, W, H);
+            let scene = Scene::TextGrid(node);
+            let mut text_cache = LayoutCache::new();
+            let mut cache = FragmentCache::new();
+            let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+            let mut vello = VelloScene::new();
+            to_vello_cached(
+                &scene,
+                &|_| None,
+                &mut text_cache,
+                &mut image_cache,
+                &mut cache,
+                &mut vello,
+            );
+            shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK)
+                .expect("render")
+        };
+
+        // (r, g, b) channel at the cell centre.
+        let chan = |img: &[u8], c: u32| -> i64 {
+            let (x, y) = (CW / 2, CH / 2);
+            i64::from(img[((y * W + x) * 4 + c) as usize])
+        };
+
+        // Default (no explicit colour): the block fills in the cell foreground
+        // (white) — every channel high.
+        let default_fill = render(buf(None));
+        assert!(
+            chan(&default_fill, 0) > 200 && chan(&default_fill, 1) > 200,
+            "default block cursor fills the cell in the cell foreground (white)"
+        );
+
+        // Explicit green: the block fills GREEN — the green channel dominates
+        // and the red channel drops well below the white default, proving the
+        // OSC-12 colour (not the cell ink) drives the fill.
+        let green_fill = render(buf(Some(green)));
+        assert!(
+            chan(&green_fill, 1) > 150,
+            "explicit-colour block cursor fills green (green channel high), got g={}",
+            chan(&green_fill, 1),
+        );
+        assert!(
+            chan(&green_fill, 0) < 110,
+            "explicit green fill has a low red channel (not the white default), got r={}",
+            chan(&green_fill, 0),
+        );
+    }
+
     /// R995 §5.41 §2 #6 — cross-backend consistency (Vello half). Renders the
     /// **same** shared [`text_grid_consistency_buffer`] the TUI half drives and
     /// asserts each cell's *visible-ink* presence agrees with the model

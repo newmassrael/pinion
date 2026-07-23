@@ -419,6 +419,14 @@ pub struct GridCursorSnapshot {
     pub row: u16,
     pub shape: &'static str,
     pub visible: bool,
+    /// R1424 §5.41 — the explicit OSC-12 cursor colour as a resolved hex
+    /// literal (`"#rrggbb"`), or `None` when the producer set none (the
+    /// cursor takes the cell foreground). Absolute per the
+    /// [`GridCursor::cursor_color`](pinion_core::term_grid::GridCursor::cursor_color)
+    /// contract — no palette semantics — so it is a single hex string, not
+    /// a [`TermColorSnapshot`] `kind` / `index` / `rgb` triple. An AI client
+    /// reads the cursor colour as data (§2 #7) without OCR.
+    pub cursor_color: Option<String>,
 }
 
 /// `External` payload of [`SnapshotNode::External`] (R51.198 added
@@ -739,7 +747,10 @@ fn term_color_snapshot(
 /// R975 §5.41 — capture a grid's [`GridCursor`] as a snapshot: the cursor
 /// [`shape`](pinion_core::CursorShape) becomes its wire-string
 /// discriminator (mirroring [`TermColorSnapshot`]'s `kind`); position and
-/// visibility pass through verbatim.
+/// visibility pass through verbatim. R1424 — the explicit OSC-12
+/// [`cursor_color`](pinion_core::term_grid::GridCursor::cursor_color) is
+/// rendered to its hex literal (`None` when the producer set none); it is
+/// an absolute colour, so no [`Palette`] resolution applies.
 fn grid_cursor_snapshot(cursor: GridCursor) -> GridCursorSnapshot {
     let shape = match cursor.shape {
         CursorShape::Block => "block",
@@ -751,6 +762,7 @@ fn grid_cursor_snapshot(cursor: GridCursor) -> GridCursorSnapshot {
         row: cursor.row,
         shape,
         visible: cursor.visible,
+        cursor_color: cursor.cursor_color.map(pinion_core::Color::to_hex),
     }
 }
 
@@ -972,6 +984,31 @@ mod tests {
                 // rides on — bounded by buffer_cols/buffer_rows (the
                 // projection), not the layout-derived cols/rows winsize.
                 assert!(snap.cursor.col < snap.buffer_cols && snap.cursor.row < snap.buffer_rows);
+                // R1424 — no OSC-12 colour set, so the cursor reports None (the
+                // backward-compatible cell-derived render).
+                assert_eq!(snap.cursor.cursor_color, None);
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_grid_snapshot_reports_explicit_cursor_color_as_hex() {
+        // R1424 §5.41 — an explicit OSC-12 cursor colour is reported as its
+        // resolved hex literal (absolute, no palette semantics), so an AI
+        // client reads the cursor colour as data (§2 #7).
+        use pinion_core::style::Color;
+        use pinion_core::{CursorShape, GridBuffer, GridCursor};
+        let green = Color::rgb(0x2e, 0xcc, 0x71);
+        let buf = GridBuffer::new(8, 2)
+            .with_cursor(GridCursor::new(2, 1, CursorShape::Block, true).with_cursor_color(green));
+        let mut node =
+            pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT).with_cells(buf);
+        node.rect = Rect::new(0, 0, 64, 32);
+        match snapshot(&Scene::TextGrid(node), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                assert_eq!(snap.cursor.shape, "block");
+                assert_eq!(snap.cursor.cursor_color.as_deref(), Some("#2ecc71"));
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }

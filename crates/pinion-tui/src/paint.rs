@@ -800,12 +800,30 @@ fn paint_text_grid_inner(
                 continue;
             };
             let mut modifier = cell_attrs_to_modifier(cell.attrs);
+            let (mut fg, mut bg) = (cell.fg, cell.bg);
             // The cursor inverts its cell (the reversed head renders two columns
             // wide for a wide glyph, matching the Vello span). A character
             // buffer has no sub-cell bar / underline shape — the DECSCUSR shape
             // is a hardware-cursor concern (left to a shell-level slice).
             if cursor.visible && cursor.col == col && cursor.row == row {
-                modifier ^= Modifier::REVERSED;
+                match cursor.cursor_color {
+                    // R1424 §5.41 — an explicit OSC-12 cursor colour paints the
+                    // cursor block in that colour with the glyph reading through
+                    // in the cell's effective background, matching the Vello
+                    // adapter's block cursor. The cell's own SGR-7 reverse is
+                    // resolved here (into `eff_bg`) rather than left to the
+                    // REVERSED modifier, so the explicit colours land verbatim.
+                    Some(cc) => {
+                        let eff_bg = if cell.attrs.reverse { cell.fg } else { cell.bg };
+                        bg = TermColor::Rgb(cc);
+                        fg = eff_bg;
+                        modifier.remove(Modifier::REVERSED);
+                    }
+                    // The universally-available reverse-block cursor (no explicit
+                    // colour): toggle REVERSED so an already-reversed cell still
+                    // reads distinct.
+                    None => modifier ^= Modifier::REVERSED,
+                }
             }
             // A blank cell still carries its colours; render it as a space.
             let symbol = if cell.cluster.is_empty() {
@@ -814,8 +832,8 @@ fn paint_text_grid_inner(
                 cell.cluster.as_ref()
             };
             let mut style = Style::default()
-                .fg(term_color_to_tui(cell.fg))
-                .bg(term_color_to_tui(cell.bg))
+                .fg(term_color_to_tui(fg))
+                .bg(term_color_to_tui(bg))
                 .add_modifier(modifier);
             // R1399 — an explicit SGR-58 underline colour rides on the
             // ratatui `Style` (0.29 `underline_color`); the SGR-59 default
@@ -1567,6 +1585,75 @@ mod tests {
         // so the cell reverses (the cursor inverts its cell in a buffer).
         assert_eq!(buf[(2, 1)].symbol(), "C");
         assert!(buf[(2, 1)].modifier.contains(Modifier::REVERSED));
+    }
+
+    /// R1424 §5.41 §2 #6 — an explicit OSC-12 cursor colour on the TUI arm.
+    /// A `GridCursor::with_cursor_color` cursor paints its cell block in that
+    /// colour (`bg`) with the glyph reading through in the cell's effective
+    /// background (`fg`), NOT the plain reverse-block toggle — matching the
+    /// Vello adapter's coloured block cursor. The cell's own SGR-7 reverse is
+    /// resolved into the effective background rather than left to `REVERSED`.
+    #[test]
+    fn r1424_text_grid_paints_explicit_cursor_color() {
+        use pinion_core::CellMetric;
+        use pinion_core::scene::TextGridNode;
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor, TermCell, TermColor};
+
+        let green = Color::rgb(0x2e, 0xcc, 0x71);
+        // Cell (0,0): plain fg=indexed 1 / bg=indexed 0, under a green cursor.
+        // Cell (1,0): SGR-7 reverse fg=indexed 3 / bg=indexed 5, under a green
+        //             cursor — the effective background is the reversed one.
+        let buffer = GridBuffer::new(2, 1)
+            .with_row(
+                0,
+                [
+                    TermCell::new("X", TermColor::Indexed(1), TermColor::Indexed(0)),
+                    TermCell::new("Y", TermColor::Indexed(3), TermColor::Indexed(5))
+                        .with_attrs(CellAttrs::empty().with_reverse(true)),
+                ],
+            )
+            .with_cursor(GridCursor::new(0, 0, CursorShape::Block, true).with_cursor_color(green));
+        let mut node = TextGridNode::new(CellMetric::DEFAULT).with_cells(buffer);
+        node.rect = Rect::new(0, 0, 16, 16);
+        let scene = Scene::TextGrid(node);
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 8, 4));
+        to_buffer(&scene, &mut buf);
+
+        // (0,0) — the cursor block is the OSC-12 green; the glyph reads through
+        // in the cell's (non-reversed) background (indexed 0). REVERSED is
+        // cleared — the coloured cursor is not a plain inversion.
+        assert_eq!(buf[(0, 0)].symbol(), "X");
+        assert_eq!(buf[(0, 0)].bg, TuiColor::Rgb(0x2e, 0xcc, 0x71));
+        assert_eq!(buf[(0, 0)].fg, TuiColor::Indexed(0));
+        assert!(!buf[(0, 0)].modifier.contains(Modifier::REVERSED));
+
+        // A green cursor lands its dims on the whole grid, but (1,0) has no
+        // cursor, so it renders normally (SGR-7 REVERSED, its own colours).
+        // Move the cursor there to prove the effective-bg resolution honours
+        // the cell's own reverse.
+        let buffer2 = GridBuffer::new(2, 1)
+            .with_row(
+                0,
+                [
+                    TermCell::new("X", TermColor::Indexed(1), TermColor::Indexed(0)),
+                    TermCell::new("Y", TermColor::Indexed(3), TermColor::Indexed(5))
+                        .with_attrs(CellAttrs::empty().with_reverse(true)),
+                ],
+            )
+            .with_cursor(GridCursor::new(1, 0, CursorShape::Block, true).with_cursor_color(green));
+        let mut node2 = TextGridNode::new(CellMetric::DEFAULT).with_cells(buffer2);
+        node2.rect = Rect::new(0, 0, 16, 16);
+        let scene2 = Scene::TextGrid(node2);
+        let mut buf2 = Buffer::empty(TuiRect::new(0, 0, 8, 4));
+        to_buffer(&scene2, &mut buf2);
+        // (1,0) — cursor block still green; the effective background of a
+        // reversed cell is its foreground (indexed 3), so the glyph reads
+        // through in indexed 3. REVERSED cleared (the reverse is resolved).
+        assert_eq!(buf2[(1, 0)].symbol(), "Y");
+        assert_eq!(buf2[(1, 0)].bg, TuiColor::Rgb(0x2e, 0xcc, 0x71));
+        assert_eq!(buf2[(1, 0)].fg, TuiColor::Indexed(3));
+        assert!(!buf2[(1, 0)].modifier.contains(Modifier::REVERSED));
     }
 
     /// R995 §5.41 §2 #6 — cross-backend consistency (TUI half). Drives the

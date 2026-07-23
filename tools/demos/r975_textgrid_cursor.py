@@ -46,8 +46,14 @@ WIN = (680, 840)
 CURSOR_TAG = "htg_cursor"
 
 # The default a grid carries when its producer has not set a cursor:
-# hidden, home, block.
-DEFAULT_CURSOR = {"col": 0, "row": 0, "shape": "block", "visible": False}
+# hidden, home, block, no explicit OSC-12 colour (R1424 added `cursor_color`).
+DEFAULT_CURSOR = {
+    "col": 0,
+    "row": 0,
+    "shape": "block",
+    "visible": False,
+    "cursor_color": None,
+}
 
 
 def assert_default_cursor(grid: dict, tag: str) -> None:
@@ -84,6 +90,9 @@ def body() -> None:
         assert_eq(cur["row"], 1, "cursor row = prompt line")
         assert_eq(cur["shape"], "bar", "cursor shape = bar (insertion beam)")
         assert_eq(cur["visible"], True, "cursor is visible")
+        # R1424 — htg_cursor sets no OSC-12 colour, so the cursor reports the
+        # None default (the backward-compatible cell-foreground render).
+        assert_eq(cur["cursor_color"], None, "bar cursor carries no explicit colour")
         # In bounds: derived from the two first-class facts, not a flag.
         assert cur["col"] < grid["cols"] and cur["row"] < grid["rows"], "cursor in bounds"
         # Genuinely non-default on every axis (shape and visibility differ

@@ -76,6 +76,15 @@
 //! round-trip and the same-id grouping. The click-to-open interaction is the
 //! next slice (a hex-dump-style oracle round).
 //!
+//! R1424 adds an eleventh grid, **`htg_cursor_color`**, carrying an explicit
+//! OSC-12 cursor colour ([`GridCursor::with_cursor_color`]): a visible **block**
+//! cursor painted an insert-mode green — the forcing case a modal editor
+//! (`vim` / `kakoune`) drives to repaint the cursor per mode. `htg_cursor`'s bar
+//! (no colour) is the `None` default the backward-compatible cell-foreground
+//! render still covers, so the two grids witness both arms. `scene/snapshot`
+//! reports the cursor's `cursor_color` (the resolved hex, or `null` when unset)
+//! — `tools/demos/r1424_textgrid_cursor_color.py` asserts it.
+//!
 //! **Glyph paint** (R991 §5.41 §2 #6) renders these grids on the Vello
 //! backend: each cell's palette-resolved background fills its rect and the
 //! grapheme cluster paints in the resolved foreground, with `reverse`
@@ -512,6 +521,48 @@ fn hyperlink_buffer() -> GridBuffer {
         .with_row(2, run("main.rs:12", file))
 }
 
+/// Tag of the R1424 explicit-cursor-colour grid, and its placement + extent.
+const CURSOR_COLOR_TAG: &str = "htg_cursor_color";
+/// In the free strip below the damage grid (which ends at y=832), at x=400.
+const CURSOR_COLOR_POS: (u32, u32) = (400, 840);
+/// `8 × 2` cells at the `8×16` baseline metric → `64 × 32` px.
+const CURSOR_COLOR_COLS: u16 = 8;
+const CURSOR_COLOR_ROWS: u16 = 2;
+const CURSOR_COLOR_SIZE: (u32, u32) = (64, 32);
+/// The OSC-12 cursor colour the grid sets — an insert-mode green, the
+/// forcing case (a modal editor paints the cursor green in insert mode).
+const CURSOR_COLOR_RGB: Color = Color::rgb(0x2e, 0xcc, 0x71);
+/// Where the coloured block cursor sits: on the prompt input glyph (col 2,
+/// row 1), so the block redraws the glyph inverse under the explicit colour.
+const CURSOR_COLOR_AT: (u16, u16) = (2, 1);
+
+/// Build the R1424 explicit-cursor-colour projection: a two-row prompt buffer
+/// whose visible **block** cursor carries an explicit OSC-12 cursor colour
+/// ([`GridCursor::with_cursor_color`]). A real producer tracks the OSC-12
+/// cursor-colour state (a modal editor repaints the cursor per mode) and folds
+/// it into the effective cursor it hands pinion; here the colour is set
+/// explicitly so the painter fills the cursor in it and `scene/snapshot`
+/// reports it as data. Its sibling `htg_cursor` (a bar, no colour) is the
+/// `None` default the backward-compatible cell-foreground render still covers.
+fn cursor_color_buffer() -> GridBuffer {
+    let default = |c: char| TermCell::new(c.to_string(), TermColor::Default, TermColor::Default);
+    GridBuffer::new(CURSOR_COLOR_COLS, CURSOR_COLOR_ROWS)
+        // Row 0 — the mode label (exactly 8 glyphs), so the cursor on row 1 is
+        // provably not the home row.
+        .with_row(0, "[insert]".chars().map(default))
+        // Row 1 — the prompt; the green block cursor sits on the input glyph.
+        .with_row(1, "$ x".chars().map(default))
+        .with_cursor(
+            GridCursor::new(
+                CURSOR_COLOR_AT.0,
+                CURSOR_COLOR_AT.1,
+                CursorShape::Block,
+                true,
+            )
+            .with_cursor_color(CURSOR_COLOR_RGB),
+        )
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -598,6 +649,12 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         HYPERLINK_POS,
         HYPERLINK_SIZE,
     );
+    let cursor_color = celled_grid(
+        CURSOR_COLOR_TAG,
+        cursor_color_buffer(),
+        CURSOR_COLOR_POS,
+        CURSOR_COLOR_SIZE,
+    );
 
     Scene::Container(
         ContainerNode::new(vec![
@@ -623,6 +680,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             damage,
             underline,
             hyperlink,
+            cursor_color,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -795,6 +853,26 @@ mod tests {
         assert!(scene.contains_tag(DAMAGE_TAG));
         assert!(scene.contains_tag(UNDERLINE_TAG));
         assert!(scene.contains_tag(HYPERLINK_TAG));
+        assert!(scene.contains_tag(CURSOR_COLOR_TAG));
+    }
+
+    #[test]
+    fn cursor_color_buffer_carries_a_green_block_cursor() {
+        // R1424 — the explicit-cursor-colour grid: a visible block cursor at
+        // the prompt input glyph, carrying the OSC-12 green as an absolute
+        // colour (no palette semantics).
+        let b = cursor_color_buffer();
+        assert_eq!((b.cols(), b.rows()), (CURSOR_COLOR_COLS, CURSOR_COLOR_ROWS));
+        let cur = b.cursor();
+        assert_eq!((cur.col, cur.row), CURSOR_COLOR_AT);
+        assert_eq!(cur.shape, CursorShape::Block);
+        assert!(cur.visible);
+        assert_eq!(cur.cursor_color, Some(CURSOR_COLOR_RGB));
+        // The cursor sits on the input glyph 'x' (row 1, col 2); the block
+        // redraws it inverse under the green.
+        assert_eq!(b.cell(2, 1).unwrap().cluster, "x");
+        // Its sibling htg_cursor carries NO cursor colour (the None default).
+        assert_eq!(cursor_buffer().cursor().cursor_color, None);
     }
 
     #[test]

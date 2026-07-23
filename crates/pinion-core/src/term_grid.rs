@@ -717,9 +717,11 @@ pub enum CursorShape {
 /// in-bounds flag is stored.
 ///
 /// `#[non_exhaustive]` per the R974.1 forward-compat hedge (matching
-/// [`TermCell`] / [`CellAttrs`]): later refinements add fields (e.g. a
-/// blink flag or an explicit cursor colour), and construction routes
-/// through [`Self::new`] / [`Self::default`], so the hedge is free.
+/// [`TermCell`] / [`CellAttrs`]): construction routes through
+/// [`Self::new`] / [`Self::default`], so a later refinement (e.g. a
+/// DECSCUSR blink flag) lands additively. The explicit cursor colour the
+/// hedge foreshadowed is the R1424 [`cursor_color`](Self::cursor_color)
+/// field below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct GridCursor {
@@ -733,12 +735,29 @@ pub struct GridCursor {
     /// a freshly-constructed [`GridBuffer`] carries: a projection reports
     /// no visible cursor until its producer asks for one.
     pub visible: bool,
+    /// R1424 §5.41 — the explicit cursor colour OSC 12 sets (`OSC 12 ;
+    /// spec`), or `None` when the producer sets none. A real emulator
+    /// tracks the OSC-12 cursor-colour state (modal editors like `vim` /
+    /// `kakoune` repaint the cursor per mode) and folds it into the
+    /// effective cursor it hands pinion. `None` — the [`Self::new`]
+    /// default — keeps the backward-compatible render (the cursor takes
+    /// the cell's effective foreground); `Some(color)` paints the cursor
+    /// in that absolute colour. It is a *direct* [`Color`], not a
+    /// [`TermColor`]: OSC 12 sets an absolute colour, never a
+    /// palette-indexed / theme-default reference (a palette swap does not
+    /// restain it), so — unlike a cell's fg/bg — no [`Palette`] resolution
+    /// applies. `#[serde(default)]` so a pre-R1424 payload (no field)
+    /// deserializes to `None`.
+    #[serde(default)]
+    pub cursor_color: Option<Color>,
 }
 
 impl GridCursor {
     /// A cursor at `(col, row)` drawn as `shape`, shown iff `visible` —
     /// the producer assembles this from its emulator's effective cursor
-    /// state each frame.
+    /// state each frame. The [`cursor_color`](Self::cursor_color) starts
+    /// `None` (the cell-derived default render); chain
+    /// [`Self::with_cursor_color`] to set the OSC-12 colour.
     #[must_use]
     pub const fn new(col: u16, row: u16, shape: CursorShape, visible: bool) -> Self {
         Self {
@@ -746,7 +765,19 @@ impl GridCursor {
             row,
             shape,
             visible,
+            cursor_color: None,
         }
+    }
+
+    /// Return this cursor with an explicit render [`cursor_color`](Self::cursor_color)
+    /// — the colour OSC 12 sets (R1424 §5.41). The producer chains this
+    /// after [`Self::new`] when its emulator has an OSC-12 cursor colour;
+    /// leaving it off keeps the `None` cell-derived default. Additive per
+    /// the `#[non_exhaustive]` forward-compat contract.
+    #[must_use]
+    pub const fn with_cursor_color(mut self, color: Color) -> Self {
+        self.cursor_color = Some(color);
+        self
     }
 }
 
@@ -1387,6 +1418,43 @@ mod tests {
         let h = GridCursor::new(1, 2, CursorShape::Underline, false);
         assert_eq!(h.shape, CursorShape::Underline);
         assert!(!h.visible);
+    }
+
+    #[test]
+    fn grid_cursor_new_has_no_cursor_color_but_with_sets_it() {
+        // R1424 — `new` leaves the OSC-12 cursor colour unset (the
+        // backward-compatible cell-derived render); the default does too.
+        assert_eq!(
+            GridCursor::new(2, 1, CursorShape::Block, true).cursor_color,
+            None
+        );
+        assert_eq!(GridCursor::default().cursor_color, None);
+        // `with_cursor_color` sets the explicit absolute colour and leaves
+        // every other field intact.
+        let green = Color::rgb(0x2e, 0xcc, 0x71);
+        let c = GridCursor::new(2, 1, CursorShape::Block, true).with_cursor_color(green);
+        assert_eq!(c.cursor_color, Some(green));
+        assert_eq!((c.col, c.row), (2, 1));
+        assert_eq!(c.shape, CursorShape::Block);
+        assert!(c.visible);
+    }
+
+    #[test]
+    fn grid_cursor_color_serde_defaults_to_none_for_pre_r1424_payload() {
+        // R1424 — the `cursor_color` field is `#[serde(default)]`, so a
+        // pre-R1424 payload (no such key) deserializes to `None` rather than
+        // failing — the cursor rides on a persisted / wire `GridBuffer`.
+        let legacy = r#"{"col":2,"row":1,"shape":"Bar","visible":true}"#;
+        let cur: GridCursor = serde_json::from_str(legacy).expect("legacy cursor deserializes");
+        assert_eq!(cur.cursor_color, None);
+        assert_eq!((cur.col, cur.row), (2, 1));
+        assert_eq!(cur.shape, CursorShape::Bar);
+        // A cursor carrying an explicit colour round-trips through serde.
+        let coloured = GridCursor::new(0, 0, CursorShape::Block, true)
+            .with_cursor_color(Color::rgb(0x2e, 0xcc, 0x71));
+        let json = serde_json::to_string(&coloured).expect("serialize");
+        let back: GridCursor = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(back, coloured);
     }
 
     #[test]

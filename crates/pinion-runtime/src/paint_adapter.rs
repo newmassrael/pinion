@@ -2343,14 +2343,22 @@ fn paint_grid_cursor(
     let cell_h = f64::from(metric.cell_h());
     let (cx, cy) = metric.cell_to_px(cursor.col, cursor.row);
     let cur_cell = grid.cell(cursor.col, cursor.row);
-    // The cursor colour is the cell's effective (reverse-honoured) foreground —
-    // its ink colour — at full intensity (no dim: the cursor is a prominent UI
-    // accent, not faint text). A dedicated cursor colour is a deferred
-    // `GridCursor` field (R975 forward-compat note). An absent cell (resize)
-    // falls back to the palette default fg / bg.
+    // The cursor's default ink is the cell's effective (reverse-honoured)
+    // foreground — its ink colour — at full intensity (no dim: the cursor is a
+    // prominent UI accent, not faint text). An absent cell (resize) falls back
+    // to the palette default fg / bg. `bg_term` is the effective background the
+    // block cursor redraws the glyph in so the character reads through.
     let (fg_term, bg_term) =
         cur_cell.map_or((TermColor::Default, TermColor::Default), effective_terms);
-    let cursor_color = to_peniko(palette.resolve(fg_term, ColorTarget::Foreground));
+    // R1424 §5.41 — an explicit OSC-12 cursor colour ([`GridCursor::cursor_color`])
+    // overrides the cell-derived ink; `None` keeps the effective-foreground
+    // default, so a producer that sets no cursor colour renders exactly as
+    // before. The OSC-12 colour is an absolute `Color` (no palette resolution).
+    let cursor_color = to_peniko(
+        cursor
+            .cursor_color
+            .unwrap_or_else(|| palette.resolve(fg_term, ColorTarget::Foreground)),
+    );
     // A block / underline cursor on a wide head spans both of its columns,
     // matching the glyph (and the TUI, where the reversed head renders two
     // columns wide). The bar stays a single leading-edge beam.

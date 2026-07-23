@@ -28762,6 +28762,66 @@
         "Tilt / altitude (Qt QTabletEvent xTilt / yTilt) is a distinct follow-up axis, gated on winit exposing only Force::Calibrated::altitude_angle (partial, no azimuth); pressure is the single high-value force axis this round."
       ]
     },
+    "R1424": {
+      "decision_summary": "R1424 §5.41: add an explicit OSC-12 cursor colour to the cell-native TextGrid — GridCursor::cursor_color: Option<Color> (+ with_cursor_color), the field the R975 GridCursor rustdoc foreshadowed. sprag (PINION-PR74) tracks the OSC-12 cursor-colour state and answers OSC 12 ; ? but could not RENDER the cursor in that colour: GridCursor, the only type the projection describes the cursor with, carried no colour field. None (the default) keeps the backward-compatible cell-foreground render; Some(color) paints the cursor in that absolute colour (no palette semantics — OSC 12 is not a theme reference). Honoured on BOTH backends (§2 #6): the Vello block / bar / underline fill and the ratatui reverse-block (a coloured block sets the cell bg to the colour and reads the glyph through the effective background). scene/snapshot reports cursor_color as a hex literal (null when unset) so an AI client reads it as data (§2 #7). Inline debt: the raw-pointer campaign (R1416 PointerButton, R1423 PointerPressure) left the terminal drain at the wildcard for both variants — a §2 #6 parity gap r1364_5_deferred_input_parity caught (their local gates never ran pinion-tui); both are now wired through the shared InputRouter seams.",
+      "changes_bullets": [
+        "pinion-core: GridCursor gains cursor_color: Option<Color> (#[serde(default)]) + a with_cursor_color builder; new() defaults it None — the explicit OSC-12 cursor colour the R975 GridCursor rustdoc foreshadowed. Absolute (a direct Color), not a TermColor palette reference: OSC 12 sets an absolute colour a palette swap does not restain.",
+        "pinion-runtime: paint_grid_cursor fills the Vello block / bar / underline cursor in cursor_color when Some (else the cell effective foreground, unchanged); the block still redraws the glyph through the cell background so the character reads through.",
+        "pinion-tui: the ratatui cursor honours cursor_color — a coloured cursor sets the cell bg to that colour and the fg to the cell's effective background (glyph reads through), the cell's own SGR-7 reverse resolved in place rather than via REVERSED; None keeps the universal reverse-block toggle (§2 #6).",
+        "pinion-rpc: GridCursorSnapshot.cursor_color (Option<String> hex) + grid_cursor_to_json emits cursor_color (always present, null when unset — the underline_color convention) so an AI client reads the cursor colour as data (§2 #7).",
+        "pinion-tui inline debt: wire DeferredInput::PointerButton (R1416) and PointerPressure (R1423) into drain_deferred_inputs — the §2 #6 parity gaps r1364_5_deferred_input_parity caught (R1416 / R1423 local gates never ran pinion-tui). PointerButton factored to a pointer_button helper (raw-sink seam + standard per-button arc); PointerPressure to the router pressure seam.",
+        "hello-textgrid: an eleventh grid htg_cursor_color — a visible green block cursor (the insert-mode OSC-12 forcing case a modal editor drives); htg_cursor (a bar, no colour) is the None default arm, so the two grids witness both arms."
+      ],
+      "verification_bullets": [
+        "pinion-core: 2 tests — new() / default leave cursor_color None and with_cursor_color sets it (other fields intact); the #[serde(default)] field deserializes a pre-R1424 payload to None and round-trips a coloured cursor. core 2659 green.",
+        "pinion-runtime: paint_grid_cursor honours cursor_color additively (None = the pre-R1424 effective-fg render); runtime 536 green.",
+        "pinion-tui: 3 tests — a coloured cursor paints bg = colour / fg = effective-bg / no REVERSED (incl. a reversed cell whose effective bg is its fg); the two new drain arms drive Hover (PointerButton left down/up) and request a repaint (PointerPressure). r1364_5_deferred_input_parity now green (both raw variants named). tui 135 green.",
+        "pinion-rpc: 2 tests — a bar cursor with no colour reports cursor_color None; an explicit green reports \"#2ecc71\". rpc 922 green.",
+        "pinion-shell: r1424_text_grid_paints_explicit_cursor_color GPU guard — the block fills green (green channel high, red channel low vs the white cell-fg default), verified under lavapipe.",
+        "hello-textgrid: 1 test — the green block cursor at the input glyph + the sibling htg_cursor None arm. example 17 green.",
+        "r1424_textgrid_cursor_color.py: 33 verifications PASS over RPC — the block cursor reports \"#2ecc71\", the sibling bar reports null, every scaffold grid reports the None default; the r975 / r977 cursor regressions PASS.",
+        "clippy -D pedantic clean; cargo fmt --all --check clean; cargo doc --document-private-items clean; mnemosyne T1=0."
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.35",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "The TUI coloured cursor is a character-cell approximation of the Vello block (bg = colour, glyph read through in the effective background); the DECSCUSR sub-cell SHAPE stays a Vello-only concern (the documented R1.6 residue), unchanged this round.",
+        "Native pen / touch pressure force stays hardware-gated (the R1423 carry); the newly-wired terminal PointerPressure arm is exercised through the AI-first scene/pointer_pressure path (§2 #2), like the Vello sibling.",
+        "Process: R1416 / R1423 shipped terminal-drain §2 #6 parity gaps because their local gates never ran pinion-tui — the [[ignored-integration-tests-fall-through-ci]] class; the pinion-tui r1364_5 parity test is the standing net and is green again."
+      ],
+      "publishable_decision_summary": "R1424 §5.41: add an explicit OSC-12 cursor colour to the cell-native TextGrid — GridCursor::cursor_color: Option<Color> (+ with_cursor_color), the field the R975 GridCursor rustdoc foreshadowed. sprag (PINION-PR74) tracks the OSC-12 cursor-colour state and answers OSC 12 ; ? but could not RENDER the cursor in that colour: GridCursor, the only type the projection describes the cursor with, carried no colour field. None (the default) keeps the backward-compatible cell-foreground render; Some(color) paints the cursor in that absolute colour (no palette semantics — OSC 12 is not a theme reference). Honoured on BOTH backends (§2 #6): the Vello block / bar / underline fill and the ratatui reverse-block (a coloured block sets the cell bg to the colour and reads the glyph through the effective background). scene/snapshot reports cursor_color as a hex literal (null when unset) so an AI client reads it as data (§2 #7). Inline debt: the raw-pointer campaign (R1416 PointerButton, R1423 PointerPressure) left the terminal drain at the wildcard for both variants — a §2 #6 parity gap r1364_5_deferred_input_parity caught (their local gates never ran pinion-tui); both are now wired through the shared InputRouter seams.",
+      "publishable_changes_bullets": [
+        "pinion-core: GridCursor gains cursor_color: Option<Color> (#[serde(default)]) + a with_cursor_color builder; new() defaults it None — the explicit OSC-12 cursor colour the R975 GridCursor rustdoc foreshadowed. Absolute (a direct Color), not a TermColor palette reference: OSC 12 sets an absolute colour a palette swap does not restain.",
+        "pinion-runtime: paint_grid_cursor fills the Vello block / bar / underline cursor in cursor_color when Some (else the cell effective foreground, unchanged); the block still redraws the glyph through the cell background so the character reads through.",
+        "pinion-tui: the ratatui cursor honours cursor_color — a coloured cursor sets the cell bg to that colour and the fg to the cell's effective background (glyph reads through), the cell's own SGR-7 reverse resolved in place rather than via REVERSED; None keeps the universal reverse-block toggle (§2 #6).",
+        "pinion-rpc: GridCursorSnapshot.cursor_color (Option<String> hex) + grid_cursor_to_json emits cursor_color (always present, null when unset — the underline_color convention) so an AI client reads the cursor colour as data (§2 #7).",
+        "pinion-tui inline debt: wire DeferredInput::PointerButton (R1416) and PointerPressure (R1423) into drain_deferred_inputs — the §2 #6 parity gaps r1364_5_deferred_input_parity caught (R1416 / R1423 local gates never ran pinion-tui). PointerButton factored to a pointer_button helper (raw-sink seam + standard per-button arc); PointerPressure to the router pressure seam.",
+        "hello-textgrid: an eleventh grid htg_cursor_color — a visible green block cursor (the insert-mode OSC-12 forcing case a modal editor drives); htg_cursor (a bar, no colour) is the None default arm, so the two grids witness both arms."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core: 2 tests — new() / default leave cursor_color None and with_cursor_color sets it (other fields intact); the #[serde(default)] field deserializes a pre-R1424 payload to None and round-trips a coloured cursor. core 2659 green.",
+        "pinion-runtime: paint_grid_cursor honours cursor_color additively (None = the pre-R1424 effective-fg render); runtime 536 green.",
+        "pinion-tui: 3 tests — a coloured cursor paints bg = colour / fg = effective-bg / no REVERSED (incl. a reversed cell whose effective bg is its fg); the two new drain arms drive Hover (PointerButton left down/up) and request a repaint (PointerPressure). r1364_5_deferred_input_parity now green (both raw variants named). tui 135 green.",
+        "pinion-rpc: 2 tests — a bar cursor with no colour reports cursor_color None; an explicit green reports \"#2ecc71\". rpc 922 green.",
+        "pinion-shell: r1424_text_grid_paints_explicit_cursor_color GPU guard — the block fills green (green channel high, red channel low vs the white cell-fg default), verified under lavapipe.",
+        "hello-textgrid: 1 test — the green block cursor at the input glyph + the sibling htg_cursor None arm. example 17 green.",
+        "r1424_textgrid_cursor_color.py: 33 verifications PASS over RPC — the block cursor reports \"#2ecc71\", the sibling bar reports null, every scaffold grid reports the None default; the r975 / r977 cursor regressions PASS.",
+        "clippy -D pedantic clean; cargo fmt --all --check clean; cargo doc --document-private-items clean; mnemosyne T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.35",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The TUI coloured cursor is a character-cell approximation of the Vello block (bg = colour, glyph read through in the effective background); the DECSCUSR sub-cell SHAPE stays a Vello-only concern (the documented R1.6 residue), unchanged this round.",
+        "Native pen / touch pressure force stays hardware-gated (the R1423 carry); the newly-wired terminal PointerPressure arm is exercised through the AI-first scene/pointer_pressure path (§2 #2), like the Vello sibling.",
+        "Process: R1416 / R1423 shipped terminal-drain §2 #6 parity gaps because their local gates never ran pinion-tui — the [[ignored-integration-tests-fall-through-ci]] class; the pinion-tui r1364_5 parity test is the standing net and is green again."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

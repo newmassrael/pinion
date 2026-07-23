@@ -621,6 +621,48 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         }
     }
 
+    /// R1424 §5.35 §5.15 §2 #2 §2 #6 — one raw pointer button EDGE (left /
+    /// middle / right × down / up) at `(x, y)`: the `scene/pointer_button`
+    /// drain (an R1416 gap on this backend). Mirrors the Vello
+    /// `pointer_button_for_window`: seed the cursor, then offer the raw edge
+    /// to a raw sink through the shared [`InputRouter`](pinion_runtime::InputRouter)
+    /// seam ([`CoreShell::raw_pointer_button_for_window`](pinion_runtime::CoreShell::raw_pointer_button_for_window),
+    /// a method both backends reach). A consumed raw edge suppresses the
+    /// per-button default (returning the router's repaint signal); otherwise
+    /// the standard arc runs — left = press/release, middle = pan open/close,
+    /// right = context-menu press-edge one-shot (no release half). The TUI
+    /// carries no modifier chords yet (§2 #6 divergence carry, the
+    /// [`cursor_moved`](Self::cursor_moved) note). Returns `true` on visible
+    /// state change (R51.124 §5.41).
+    pub fn pointer_button(
+        &mut self,
+        x: f64,
+        y: f64,
+        button: pinion_core::PointerButton,
+        edge: pinion_core::PointerEdge,
+    ) -> bool {
+        use pinion_core::{PointerButton, PointerEdge};
+        let mut changed = self.cursor_moved(x, y);
+        if self.core.raw_pointer_button_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            button,
+            edge,
+            pinion_core::Modifiers::default(),
+        ) {
+            return true;
+        }
+        match (button, edge) {
+            (PointerButton::Left, PointerEdge::Down) => changed |= self.pointer_down(),
+            (PointerButton::Left, PointerEdge::Up) => changed |= self.pointer_up(),
+            (PointerButton::Middle, PointerEdge::Down) => self.middle_pressed(),
+            (PointerButton::Middle, PointerEdge::Up) => changed |= self.middle_released(),
+            (PointerButton::Right, PointerEdge::Down) => changed |= self.secondary_click(),
+            (PointerButton::Right, PointerEdge::Up) => {}
+        }
+        changed
+    }
+
     /// R882 §5.39 — held-key edge funnel, forwarding to the substrate
     /// cache ([`CoreShell::note_key_state`](pinion_runtime::CoreShell::note_key_state)).
     /// The TUI's only producer is the `scene/key state:"down"/"up"`
@@ -842,6 +884,42 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                     pinion_core::QUIT_SINK
                         .resolve(self.root_owner())
                         .request_quit();
+                }
+                // R1424 §5.35 §5.15 §2 #6 — `scene/pointer_pressure` on the
+                // terminal backend. R1423 added the variant, wired the SHARED
+                // dispatcher + Vello drain, and left this drain at the wildcard
+                // — the same §2 #6 break the `Quit` arm above records, caught by
+                // `r1364_5_deferred_input_parity`. A terminal has no hardware
+                // pen, but the RPC surface is the AI-first out-of-band source
+                // (§2 #2): the pressure rides the SAME `InputRouter` this backend
+                // already routes cursor moves / buttons through, so an AI client
+                // driving a pressure-reactive `External` sees the identical
+                // delivery on both backends. Forwarded through the one router
+                // seam (`set_pointer_pressure_for_window`) the Vello sibling
+                // uses; a repaint is requested so the reactive surface lands the
+                // change on the next terminal frame.
+                pinion_rpc::DeferredInput::PointerPressure { value } => {
+                    self.core.set_pointer_pressure_for_window(
+                        pinion_runtime::DEFAULT_WINDOW,
+                        PointerId::MOUSE,
+                        value,
+                    );
+                    state_changed = true;
+                }
+                // R1424 §5.35 §5.15 §2 #2 §2 #6 — `scene/pointer_button`: one raw
+                // button EDGE (left / middle / right × down / up). R1416 added
+                // the variant + Vello drain and left this backend at the wildcard
+                // — the same parity gap `r1364_5_deferred_input_parity` records.
+                // Mirrors the Vello `pointer_button_for_window`: seed the cursor,
+                // then offer the raw edge to a raw sink through the shared
+                // `InputRouter` seam (`raw_pointer_button_for_window`, a CoreShell
+                // method both backends reach); if a raw sink consumes it the
+                // per-button default is suppressed, otherwise the standard arc
+                // runs (left = press/release, middle = pan open/close, right =
+                // context-menu press-edge one-shot). The TUI carries no modifier
+                // chords yet (§2 #6 divergence carry, the `cursor_moved` note).
+                pinion_rpc::DeferredInput::PointerButton { x, y, button, edge } => {
+                    state_changed |= self.pointer_button(x, y, button, edge);
                 }
                 // `DeferredInput` is `non_exhaustive`, so an out-of-crate match
                 // is FORCED to carry this wildcard and the compiler cannot flag
@@ -2228,6 +2306,41 @@ mod tests {
         let inputs = vec![pinion_rpc::DeferredInput::DoubleClick { x: 8.0, y: 8.0 }];
         assert!(core.drain_deferred_inputs(&inputs));
         assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    #[test]
+    fn r1424_drain_pointer_button_left_edges_drive_hover() {
+        // R1424 §2 #6 — the raw `scene/pointer_button` variant (an R1416 gap
+        // on this backend) drives the same activation as `Click` when no raw
+        // sink consumes it: a left DOWN then a left UP at the button rect lands
+        // the substrate in Hover (the SCXML `Pressed → Hover` release arc), the
+        // Vello `pointer_button_for_window` fall-through arc mirrored (§2 #6).
+        let mut core = primed_button_core();
+        let at = |edge| pinion_rpc::DeferredInput::PointerButton {
+            x: 8.0,
+            y: 8.0,
+            button: pinion_core::PointerButton::Left,
+            edge,
+        };
+        let inputs = vec![
+            at(pinion_core::PointerEdge::Down),
+            at(pinion_core::PointerEdge::Up),
+        ];
+        assert!(core.drain_deferred_inputs(&inputs));
+        assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    #[test]
+    fn r1424_drain_pointer_pressure_requests_repaint() {
+        // R1424 §2 #6 — the `scene/pointer_pressure` variant (an R1423 gap on
+        // this backend) forwards to the shared `InputRouter` pressure seam and
+        // reports a repaint so a pressure-reactive `External` lands the change
+        // on the next terminal frame. TestButtonView carries no pressure state;
+        // the drain returning `true` is the repaint request (the router took
+        // the value) — the no-crash + §2 #6 wire-parity contract.
+        let mut core = primed_button_core();
+        let inputs = vec![pinion_rpc::DeferredInput::PointerPressure { value: 0.5 }];
+        assert!(core.drain_deferred_inputs(&inputs));
     }
 
     #[test]
