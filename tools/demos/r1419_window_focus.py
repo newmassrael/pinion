@@ -21,7 +21,7 @@ PEER of the `os_focused_window` READ: `scene/window_focus {focused: bool}`
 simulates a `WindowEvent::Focused` edge for the addressed `{window}` scope, so
 an AI can drive the OS-focus-reactive display without a window manager.
 
-Verification scope (≥ 30 assertions, counted exactly = 38):
+Verification scope (≥ 30 assertions, counted exactly = 42):
 
   (A) rpc/methods discovery — scene/window_focus is a routed read method. (2)
   (B) boot: OS focus unknown — input_state gate leg null, the view's status
@@ -37,6 +37,8 @@ Verification scope (≥ 30 assertions, counted exactly = 38):
   (I) unknown-window scope rejection — the R889 gate rejects
       {window:"bogus"} before the drive, with data naming the id.          (6)
   (J) after the bogus traffic the real window still drives normally.       (2)
+  (K) R1420 full-edge: a driven blur replays window_blurred, clearing a
+      held-key chord (not just the gate/mirror) — no stranded chord.        (4)
 """
 
 from __future__ import annotations
@@ -205,6 +207,23 @@ def body() -> None:
         assert_eq(_os_focused(tf), None, "main still blurs normally")            # 37
         assert_eq(_status_label(tf), "OS focus: (blurred)",
                   "the view still tracks OS focus after rejected traffic")       # 38
+
+        # ── (K) R1420: the blur drive replays the FULL winit Focused arm ─
+        # A driven blur must do more than clear the gate/mirror: like a real OS
+        # blur (and Qt window deactivation) it settles held state, so a chord
+        # held across an alt-tab cannot strand. Arm a held key, drive a blur,
+        # and observe the held-key cache cleared (window_blurred, not just
+        # note_os_focus).
+        _drive(tf, True)
+        assert_eq(_os_focused(tf), MAIN, "re-focus for the full-edge check")     # 39
+        tf.key(at=(10.0, 12.0), name="Space", state="down")
+        assert_eq(_input_state(tf)["held_keys"], ["Space"],
+                  "a chord is held while focused")                               # 40
+        _drive(tf, False)
+        assert_eq(_input_state(tf)["held_keys"], [],
+                  "the blur drive replays window_blurred — the held chord is "
+                  "cleared, not stranded (full OS-focus-edge fidelity)")         # 41
+        assert_eq(_os_focused(tf), None, "and the gate/mirror blurred too")      # 42
 
 
 if __name__ == "__main__":

@@ -5219,16 +5219,29 @@ impl<V: WidgetView> ShellCore<V> {
             (resp, deferred_inputs)
         };
         let (resp, deferred_inputs) = resp;
-        // R1419 §5.39 §5.16 — apply the `scene/window_focus` edge the closure
-        // recorded, now that `&mut self` is restored. `note_os_focus` updates the
-        // OS-focus gate AND publishes the R1419 paint-path mirror through the one
-        // `set_os_focused_window` funnel; the redraw refreshes any OS-focus-
-        // reactive display. The edge stays `None` unless the closure actually ran
-        // (method matched, params valid, window known), so every other dispatch —
-        // and a rejected `scene/window_focus` — applies nothing.
+        // R1419 §5.39 §5.16 / R1420 — apply the `scene/window_focus` edge the
+        // closure recorded, now that `&mut self` is restored. This replays the
+        // shell's OWN winit `WindowEvent::Focused` arm BYTE-FOR-BYTE
+        // (`AppShell::window_event`): `note_os_focus` (gate + the R1419 paint-path
+        // mirror through the one `set_os_focused_window` funnel), then
+        // `window_focused` / `window_blurred` — so the drive is a FULL
+        // OS-focus-edge simulation, not a gate-only stub: a blur snapshots the
+        // focused widget for restore AND clears the held-key chord cache (the
+        // browser missed-keyup convention, so a chord held across an alt-tab
+        // cannot strand), and a refocus restores the saved widget. R1420 removed
+        // the earlier deferral of this half — Qt's window deactivation likewise
+        // remembers focus and settles held state, so parity demands it. The edge
+        // stays `None` unless the closure actually ran (method matched, params
+        // valid, window known), so every other dispatch — and a rejected
+        // `scene/window_focus` — applies nothing.
         if is_window_focus {
             if let Some(focused) = window_focus_edge.get() {
                 self.note_os_focus(&os_focus_target, focused);
+                if focused {
+                    self.window_focused();
+                } else {
+                    self.window_blurred();
+                }
                 self.request_redraw();
             }
         }

@@ -303,17 +303,17 @@ pub struct DispatchContext<'a> {
         reason = "the resize_request sibling above carries the same boxed-FnMut shape un-aliased; a one-field type alias for the dispatch context's reposition hook would obscure the parallel more than it clarifies"
     )]
     pub reposition_request: Option<&'a mut (dyn FnMut(&str, i32, i32) -> bool + 'a)>,
-    /// (R1419 §5.39 §5.16) The drive peer of the `os_focused_window` leg the
-    /// `scene/input_state` READ exposes: `scene/window_focus` invokes this
-    /// closure with `focused: bool` to simulate a winit `WindowEvent::Focused`
-    /// edge for the addressed `{window}` scope (baked into the closure by the
-    /// shell), driving the shell's OS-focus gate AND the R1419 paint-path
-    /// OS-focus mirror (`pinion_core::window_focus_state`), so an AI can exercise
-    /// a binding's OS-focus-reactive display (dim on blur / re-arm on refocus)
-    /// headlessly. Returns the resulting `os_focused_window` (the id now holding
-    /// OS focus, or `None` when the drive blurred the last focused window). Absent
-    /// on backends with no OS-window-focus gate (the TUI's single full-screen
-    /// surface).
+    /// (R1419 §5.39 §5.16 / R1420) The drive peer of the `os_focused_window` leg
+    /// the `scene/input_state` READ exposes: `scene/window_focus` invokes this
+    /// closure with `focused: bool` to record a winit `WindowEvent::Focused` edge
+    /// for the addressed `{window}` scope (baked into the closure by the shell),
+    /// driving the shell's OS-focus gate AND the R1419 paint-path OS-focus mirror
+    /// (`pinion_core::window_focus_state`); the shell then replays the REST of its
+    /// winit `Focused` arm (focus save/restore + held-key-chord clear) so the
+    /// simulated edge is a full OS blur/refocus (R1420). Returns the resulting
+    /// `os_focused_window` (the id now holding OS focus, or `None` when the drive
+    /// blurred the last focused window). Absent on backends with no
+    /// OS-window-focus gate (the TUI's single full-screen surface).
     #[allow(
         clippy::type_complexity,
         reason = "matches the reposition_request sibling's boxed-FnMut shape; a one-field alias would obscure the parallel"
@@ -5993,15 +5993,21 @@ fn window_move_error_to_rpc(err: WindowMoveError) -> RpcError {
     RpcError::invalid_params(variant)
 }
 
-/// R1419 §5.39 §5.16 — `scene/window_focus` dispatch entry: the drive peer of
-/// the `os_focused_window` READ leg of `scene/input_state`. Simulates a winit
-/// `WindowEvent::Focused` edge for the addressed `{window}` scope (baked into
-/// the closure by the shell), so an AI can exercise a binding's OS-focus-reactive
-/// display (dim on blur, re-arm on refocus) headlessly. Param: `{focused: bool}`
-/// (`true` = the window gained OS focus, `false` = it blurred). Returns
+/// R1419 §5.39 §5.16 / R1420 — `scene/window_focus` dispatch entry: the drive
+/// peer of the `os_focused_window` READ leg of `scene/input_state`. Simulates a
+/// FULL winit `WindowEvent::Focused` edge for the addressed `{window}` scope
+/// (baked into the closure by the shell), so an AI can exercise a binding's
+/// OS-focus-reactive display headlessly. Param: `{focused: bool}` (`true` = the
+/// window gained OS focus, `false` = it blurred). Returns
 /// `{ os_focused_window: <id|null> }` — the resulting gate/mirror state after the
-/// edge. Rejects with `-32602` on a backend with no OS-window-focus gate (the
-/// TUI, which never wires the closure).
+/// edge.
+///
+/// The shell replays its own winit `Focused` arm in full (R1420): the gate + the
+/// R1419 paint-path mirror, THEN the focus save/restore and held-key-chord clear
+/// a real OS blur/refocus performs — so a driven blur dims the panel AND settles
+/// held state AND remembers the focused widget for the driven refocus, matching a
+/// physical alt-tab (and Qt's window deactivation). Rejects with `-32602` on a
+/// backend with no OS-window-focus gate (the TUI, which never wires the closure).
 fn handle_scene_window_focus<F>(
     window_focus_request: Option<&mut F>,
     params: Option<&Value>,
