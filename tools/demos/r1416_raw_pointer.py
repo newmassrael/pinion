@@ -130,16 +130,19 @@ def body() -> None:
         tf.invoke(f"{EXT}/clear", None)
         wait_query(tf, f"{EXT}/report_count", 0, desc="log cleared for the modifier phase")
 
+        # Every press is balanced by a release so the R1418 implicit grab lifts
+        # between probes (a held button would grab the pointer — Qt discipline).
         tf.modifiers(shift=True)
         tf.pointer_button("right", "down", at=CENTER)
         wait_query(tf, f"{EXT}/last", "right:down:s", desc="the right PRESS carries Shift")
         assert_eq(tf.query(f"{EXT}/last_mods"), "s", "last_mods reads the Shift token")
+        tf.pointer_button("right", "up", at=CENTER)  # release (grab lifts)
 
         tf.modifiers(shift=True, ctrl=True)
         tf.pointer_button("left", "down", at=CENTER)
         wait_query(tf, f"{EXT}/last", "left:down:sc", desc="Shift+Ctrl on the left PRESS")
 
-        tf.modifiers()  # release — mirrors the key-up
+        tf.modifiers()  # release the modifiers — mirrors the key-up
         tf.pointer_button("left", "up", at=CENTER)
         wait_query(tf, f"{EXT}/last", "left:up:", desc="the release after clearing carries no mods")
 
@@ -151,9 +154,14 @@ def body() -> None:
         wait_query(tf, f"{EXT}/report_count", 1, desc="a positioned press is recorded")
         assert_near(tf.query(f"{EXT}/last_x"), 0.25, "the report stamps the press x")
         assert_near(tf.query(f"{EXT}/last_y"), 0.75, "the report stamps the press y")
+        # Release the button so the implicit grab (R1418) lifts — otherwise the
+        # held press would grab the pointer and the hover section below could not
+        # leave the pane (which is exactly the grab's job while a button is down).
+        tf.pointer_button("left", "up", at=pane_at(0.25, 0.75))
+        wait_query(tf, f"{EXT}/report_count", 2, desc="the release lifts the grab")
 
         # --- the live hover position tracks (wants_hover_move), and leaving the
-        #     pane clears it while the recorded log survives. ---
+        #     pane clears it while the recorded log survives (no button held). ---
         tf.hover(at=pane_at(0.6, 0.4))
         wait_snap(
             tf,
@@ -166,7 +174,7 @@ def body() -> None:
         assert_near(tf.query(f"{EXT}/y_frac"), 0.4, "live hover y")
         tf.hover(at=(360.0, 12.0))  # off the pane (above it)
         wait_query(tf, f"{EXT}/x_frac", None, desc="leaving the pane clears the live position")
-        assert_eq(tf.query(f"{EXT}/report_count"), 1, "the recorded log survives a leave")
+        assert_eq(tf.query(f"{EXT}/report_count"), 2, "the recorded log survives a leave")
 
         # --- the unified seam: the SAME raw stream is reached by a GUI
         #     scene/click and by scene/drag, not only scene/pointer_button —
@@ -183,16 +191,46 @@ def body() -> None:
             "scene/click delivers the same raw down+up as pointer_button",
         )
 
-        # scene/click {right} → the raw sink gets the press-edge one-shot.
+        # scene/click {right} → the raw sink gets the press-edge one-shot (the
+        # GUI context-menu arc has no release half), so balance it with an
+        # explicit right-up to lift the grab the press opened.
         tf.click(at=CENTER, button="right")
         wait_query(tf, f"{EXT}/report_count", 3, desc="a GUI right-click reaches the raw stream")
         assert_eq(tf.query(f"{EXT}/last"), "right:down:", "the right GUI click is a raw press edge")
+        tf.pointer_button("right", "up", at=CENTER)  # balance the press-only right-click
+        wait_query(tf, f"{EXT}/report_count", 4, desc="release lifts the right grab")
 
         # scene/drag {middle, from == to} → the raw sink gets middle down+up.
         tf.drag(from_at=CENTER, to_at=CENTER, button="middle", steps=0)
-        wait_query(tf, f"{EXT}/report_count", 5, desc="a middle drag reaches the raw stream")
+        wait_query(tf, f"{EXT}/report_count", 6, desc="a middle drag reaches the raw stream")
         assert "middle:down:" in tf.query(f"{EXT}/log"), "the middle drag press edge is raw"
         assert "middle:up:" in tf.query(f"{EXT}/log"), "the middle drag release edge is raw"
+
+        # --- R1418 IMPLICIT GRAB (Qt grabMouse): a press over the pane grabs, so
+        #     a release that lands OUTSIDE the pane still pairs on the sink — no
+        #     stuck button, the failure PR-72 named. ---
+        tf.invoke(f"{EXT}/clear", None)
+        wait_query(tf, f"{EXT}/report_count", 0, desc="log cleared for the grab phase")
+        tf.pointer_button("left", "down", at=CENTER)
+        wait_query(tf, f"{EXT}/report_count", 1, desc="a press over the pane opens the grab")
+        # Release far off the pane rect (above-left of x=16, y=48).
+        tf.pointer_button("left", "up", at=(5.0, 5.0))
+        wait_query(tf, f"{EXT}/last", "left:up:", desc="the release paired on the sink off the pane")
+        assert_eq(tf.query(f"{EXT}/report_count"), 2, "both edges recorded — no stuck button")
+
+        # --- R1418 HELD-BUTTON SET (Qt QMouseEvent::buttons()): a chord reports
+        #     which buttons are down, not only the one that changed. ---
+        tf.invoke(f"{EXT}/clear", None)
+        wait_query(tf, f"{EXT}/report_count", 0, desc="log cleared for the chord phase")
+        tf.pointer_button("left", "down", at=CENTER)
+        wait_query(tf, f"{EXT}/last_buttons", "l", desc="left down -> held {left}")
+        tf.pointer_button("right", "down", at=CENTER)
+        wait_query(tf, f"{EXT}/last_buttons", "lr", desc="right down while left held -> {left,right}")
+        assert_eq(tf.query(f"{EXT}/last_button"), "right", "the single changed button is right")
+        tf.pointer_button("left", "up", at=CENTER)
+        wait_query(tf, f"{EXT}/last_buttons", "r", desc="left up -> held {right}")
+        tf.pointer_button("right", "up", at=CENTER)
+        wait_query(tf, f"{EXT}/last_buttons", "", desc="right up -> nothing held")
 
         # --- the wire contract: scene/pointer_button rejects a bad button /
         #     a missing edge (the vocabulary surfaces the typo at the call). ---

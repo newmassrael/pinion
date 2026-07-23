@@ -86,7 +86,9 @@ use pinion_core::external::{
     CaptureNormalize, DOCK_PANEL_DRAG_KIND, DragPayload, DragUpdate, DropPoint, IntrospectValue,
     OUTER_DOCK_MARGIN, OUTER_DOCK_ZONE_TAG,
 };
-use pinion_core::input::{PointerButton, PointerEdge, PointerWireEvent, RawPointerButton};
+use pinion_core::input::{
+    PointerButton, PointerButtons, PointerEdge, PointerWireEvent, RawPointerButton,
+};
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 use pinion_core::widgets::scroll::ScrollState;
 
@@ -392,6 +394,39 @@ pub struct InputRouter {
     /// shell-composed `over_window`); knowing its OWN id is a different, local
     /// fact.
     window_id: Option<String>,
+    /// R1418 §5.35 §5.15 — per-pointer IMPLICIT GRAB for a raw multi-button
+    /// sink (a widget that opts into
+    /// [`External::wants_raw_pointer_buttons`](pinion_core::external::External::wants_raw_pointer_buttons)).
+    ///
+    /// A raw sink bypasses [`pointer_down`](Self::pointer_down) — the shell
+    /// routes its button edges straight through
+    /// [`deliver_raw_pointer_button`](Self::deliver_raw_pointer_button) — so it
+    /// never populates `captured_targets` and would otherwise lose the release
+    /// of a press-drag that strays off its rect (the raw edges would resolve to
+    /// whatever widget the cursor left onto, and the sink would see a DOWN with
+    /// no matching UP — a "stuck button" for an SGR mouse consumer). This is
+    /// the framework's implicit mouse grab (Qt `grabMouse` / Win32 `SetCapture`
+    /// / DOM implicit pointer capture): on a raw sink's first button press the
+    /// router pins that tag, routing EVERY later button edge AND
+    /// [`cursor_moved`](Self::cursor_moved) position to it regardless of the
+    /// cursor location, and releases only when the LAST held button lifts
+    /// (`held` reaches 0). Keyed by [`PointerId`] so two touch streams stay
+    /// independent, mirroring `captured_targets`.
+    raw_grabs: HashMap<PointerId, RawGrab>,
+}
+
+/// R1418 §5.35 — one pointer's implicit grab on a raw multi-button sink: the
+/// grabbed tag plus the SET of buttons currently held on it (the Qt
+/// `QMouseEvent::buttons()` state, tracked here so it doubles as the grab's
+/// lifetime). The grab lives from the first button press (the set goes empty →
+/// non-empty) until the last release (the set empties again), so a multi-button
+/// chord (press left, press right, release left, release right) keeps the grab
+/// through the whole span — the Qt implicit-grab discipline (grab holds until
+/// every button is up).
+#[derive(Debug)]
+struct RawGrab {
+    tag: String,
+    buttons: PointerButtons,
 }
 
 /// R881.1 §5.35 — one pointer's wheel remainder: the scroll container
@@ -796,15 +831,17 @@ impl InputRouter {
     }
 
     /// R881.1 §5.35 — whether an in-flight gesture owns `id`'s hover:
-    /// capture lock (R51.34), a `DnD` drag session (R742), or a live
-    /// middle pan (R881). While true, every hover-refresh producer
-    /// must leave the pinned hover untouched — the three gesture
-    /// classes share ONE predicate so no producer can drift to a
-    /// subset (the R873 one-gate discipline applied to hover).
+    /// capture lock (R51.34), a `DnD` drag session (R742), a live
+    /// middle pan (R881), or an R1418 raw-sink implicit grab. While
+    /// true, every hover-refresh producer must leave the pinned hover
+    /// untouched — the gesture classes share ONE predicate so no
+    /// producer can drift to a subset (the R873 one-gate discipline
+    /// applied to hover).
     fn gesture_pins_hover(&self, id: PointerId) -> bool {
         self.captured_targets.contains_key(&id)
             || self.drag_sessions.contains_key(&id)
             || self.pan_live(id)
+            || self.raw_grabs.contains_key(&id)
     }
 
     /// R876 §5.49 §5.51 — advance the press-to-drag tracker for `id` against
@@ -905,6 +942,13 @@ impl InputRouter {
             // the source. Takes precedence over capture/free so the
             // source's hover stays pinned (no spurious mid-drag leave).
             self.update_drag(id, x, y, state_scene);
+        } else if let Some(tag) = self.raw_grab_tag(id) {
+            // R1418 §5.35 — a raw sink holds an implicit grab: forward every
+            // move to it regardless of the cursor location (so it keeps a fresh
+            // position to correlate its button edges against, even off its
+            // rect) and suppress hover re-resolution — the same pin the
+            // capture-lock and DnD paths get.
+            self.forward_pointer_move(state_scene, &tag, x, y);
         } else if let Some(tag) = self.captured_targets.get(&id).cloned() {
             self.forward_pointer_move(state_scene, &tag, x, y);
         } else if !pan_live {
@@ -1565,25 +1609,37 @@ impl InputRouter {
     }
 
     /// R1416 §5.35 §5.15 — route a raw mouse-button edge to a widget that owns
-    /// the multi-button pointer stream. Resolves the target for `id` — its
-    /// captured target if a capture lock is held, else its current hover target
-    /// — and, if that widget opted in via
-    /// [`External::wants_raw_pointer_buttons`](pinion_core::external::External::wants_raw_pointer_buttons),
-    /// delivers the [`RawPointerButton`] and returns `true` (so the shell
-    /// suppresses the GUI default for it). Returns `false` when the target is
-    /// not a raw sink, so the shell runs the standard per-button arc (left =
-    /// focus, middle = paste, right = context menu) unchanged — the
-    /// non-capture invariant.
+    /// the multi-button pointer stream, returning `true` when a raw sink
+    /// consumed it (so the shell suppresses the GUI default for that button).
+    /// `false` when the target is not a raw sink, so the shell runs the standard
+    /// per-button arc (left = focus, middle = paste, right = context menu)
+    /// unchanged — the non-capture invariant.
     ///
-    /// Stateless w.r.t. the left-button capture machinery: a raw sink resolves
-    /// each edge through the hover target it already tracks (the cursor is
-    /// seeded before every edge — a native `CursorMoved` precedes `MouseInput`,
-    /// and the RPC `scene/pointer_button` drain seeds it first), correlating
-    /// POSITION via [`External::pointer_move`](pinion_core::External::pointer_move)
-    /// (which it opts into with `wants_hover_move` / `wants_pointer_capture`).
-    /// The captured-target
-    /// fallback keeps a raw sink that ALSO holds a left-drag capture receiving
-    /// its middle / right edges while the cursor strays off its rect.
+    /// R1418 §5.35 — IMPLICIT GRAB (Qt `grabMouse` / DOM implicit pointer
+    /// capture). A raw sink bypasses [`pointer_down`](Self::pointer_down), so it
+    /// never engages `captured_targets`; this method supplies the equivalent
+    /// press-to-release grab itself:
+    ///
+    /// * **While a grab is held** (`raw_grabs[id]`), the edge goes to the
+    ///   GRABBED tag regardless of the cursor location, and the held-button
+    ///   count tracks the edge (a press raises it, a release lowers it). The
+    ///   grab releases when the last button lifts (`held` → 0), after which
+    ///   `refresh_hover` re-settles against the cursor.
+    ///   This is what pairs a press-drag-release that strayed off the sink's
+    ///   rect — without it an SGR mouse consumer would see a stuck button (the
+    ///   §5.15 forcing case). A stale grab (the tag reconciled away) is dropped
+    ///   and the edge falls through to a fresh resolve.
+    /// * **With no grab**, the target is the captured tag (a raw sink that also
+    ///   holds a left-drag capture) else the hover target under the cursor. If
+    ///   that is a raw sink the edge is delivered, and a PRESS opens a fresh
+    ///   grab (`held` = 1); a lone release (a button pressed elsewhere, lifted
+    ///   over the sink) delivers without opening one.
+    ///
+    /// POSITION rides the separate [`pointer_move`](pinion_core::external::External::pointer_move)
+    /// channel — a raw sink opts into `wants_hover_move`, and while grabbed
+    /// [`cursor_moved`](Self::cursor_moved) forwards each move to the grabbed
+    /// tag (suppressing hover churn), so the sink keeps a fresh position to
+    /// correlate the button edge against even off its rect.
     pub fn deliver_raw_pointer_button(
         &mut self,
         id: PointerId,
@@ -1592,6 +1648,42 @@ impl InputRouter {
         modifiers: Modifiers,
         state_scene: &mut Scene,
     ) -> bool {
+        // The held-button SET after this edge (Qt `buttons()` semantics: a press
+        // adds, a release removes) — the grab holds the running set, so it is
+        // computed relative to whatever was held before.
+        let apply = |held: PointerButtons| match edge {
+            PointerEdge::Down => held.with(button),
+            PointerEdge::Up => held.without(button),
+        };
+        // An active grab pins the target regardless of the cursor location.
+        if let Some(grab) = self.raw_grabs.get(&id) {
+            let tag = grab.tag.clone();
+            let buttons = apply(grab.buttons);
+            let event = RawPointerButton {
+                button,
+                edge,
+                modifiers,
+                buttons,
+            };
+            if dispatch_raw_button(state_scene, &tag, event) {
+                if buttons.is_empty() {
+                    // Last button lifted — release the grab and re-settle hover.
+                    self.raw_grabs.remove(&id);
+                    self.refresh_hover(id, state_scene);
+                } else if let Some(grab) = self.raw_grabs.get_mut(&id) {
+                    // Still held — carry the updated set forward.
+                    grab.buttons = buttons;
+                }
+                return true;
+            }
+            // The grabbed tag no longer resolves to a raw sink (the scene
+            // reconciled it away mid-gesture) — drop the stale grab and let the
+            // edge resolve fresh below rather than swallow it silently.
+            self.raw_grabs.remove(&id);
+        }
+        // No grab: resolve the target the same way hover / capture does. The
+        // held set starts empty (nothing was tracked), so a fresh press reports
+        // just its button and a lone release reports the empty set.
         let Some(target) = self
             .captured_targets
             .get(&id)
@@ -1600,15 +1692,37 @@ impl InputRouter {
         else {
             return false;
         };
-        dispatch_raw_button(
-            state_scene,
-            &target,
-            RawPointerButton {
-                button,
-                edge,
-                modifiers,
-            },
-        )
+        let buttons = apply(PointerButtons::empty());
+        let event = RawPointerButton {
+            button,
+            edge,
+            modifiers,
+            buttons,
+        };
+        if !dispatch_raw_button(state_scene, &target, event) {
+            return false;
+        }
+        // A press on a fresh raw sink opens its implicit grab (seeded with the
+        // held set); a lone release (no matching press held) delivers without
+        // opening one.
+        if edge == PointerEdge::Down {
+            self.raw_grabs.insert(
+                id,
+                RawGrab {
+                    tag: target,
+                    buttons,
+                },
+            );
+        }
+        true
+    }
+
+    /// R1418 §5.35 — is `id` currently holding an implicit raw grab? The
+    /// [`cursor_moved`](Self::cursor_moved) fast-path reads this to forward the
+    /// move to the grabbed sink (and suppress hover churn) before the ordinary
+    /// hover / capture resolution.
+    fn raw_grab_tag(&self, id: PointerId) -> Option<String> {
+        self.raw_grabs.get(&id).map(|g| g.tag.clone())
     }
 
     /// (R51.186 §5.45 R55.C.2) Mouse wheel input dispatch.
@@ -1886,7 +2000,12 @@ impl InputRouter {
         // discipline). Pan deltas already applied stay applied — a pan
         // is incremental scrolling, not a journaled transaction.
         self.pan_gestures.remove(&id);
-        if self.captured_targets.remove(&id).is_some() {
+        // R1418 §5.35 — a cancelled gesture also revokes a raw sink's implicit
+        // grab: the abort is "never happened", so the grab must not outlive it
+        // and strand a held-button count (the sink saw its `PointerCancel` via
+        // the send wire above and reset its own edge state).
+        let had_raw_grab = self.raw_grabs.remove(&id).is_some();
+        if self.captured_targets.remove(&id).is_some() || had_raw_grab {
             self.refresh_hover(id, state_scene);
         }
     }
@@ -3157,16 +3276,20 @@ mod tests {
     /// `PointerUp` send stream for the raw one.
     struct RawButtonExternal {
         log: Arc<Mutex<Vec<String>>>,
+        moves: MoveLog,
     }
 
     impl RawButtonExternal {
-        fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+        fn new() -> (Self, Arc<Mutex<Vec<String>>>, MoveLog) {
             let log = Arc::new(Mutex::new(Vec::new()));
+            let moves = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {
                     log: Arc::clone(&log),
+                    moves: Arc::clone(&moves),
                 },
                 log,
+                moves,
             )
         }
     }
@@ -3197,26 +3320,35 @@ mod tests {
             true
         }
         fn raw_pointer_button(&mut self, event: RawPointerButton) {
+            // `button:edge:mods:buttons` — the last segment is the R1418 held
+            // set (Qt `buttons()`), so a chord test reads the set progression.
             self.log.lock().expect("mutex poisoned").push(format!(
-                "{}:{}:{}",
+                "{}:{}:{}:{}",
                 event.button.as_wire_name(),
                 event.edge.as_wire_name(),
                 event.modifiers.as_wire_token(),
+                event.buttons.as_wire_token(),
             ));
+        }
+        fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+            self.moves
+                .lock()
+                .expect("mutex poisoned")
+                .push((x_rel, y_rel));
         }
     }
 
     /// A raw sink tagged `main_slider` so it reuses [`paint_with_slider`].
-    fn state_with_raw_sink() -> (Scene, Arc<Mutex<Vec<String>>>) {
-        let (sink, log) = RawButtonExternal::new();
+    fn state_with_raw_sink() -> (Scene, Arc<Mutex<Vec<String>>>, MoveLog) {
+        let (sink, log, moves) = RawButtonExternal::new();
         let scene = Scene::External(ExternalNode::new(Box::new(sink)).with_tag("main_slider"));
-        (scene, log)
+        (scene, log, moves)
     }
 
     #[test]
     fn r1416_raw_sink_receives_all_three_buttons_both_edges_with_modifiers() {
         let mut router = InputRouter::new();
-        let (mut state, log) = state_with_raw_sink();
+        let (mut state, log, _moves) = state_with_raw_sink();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         // Cursor over the pane so it is the hover target the raw edges resolve to.
@@ -3244,12 +3376,12 @@ mod tests {
         assert_eq!(
             read(&log),
             vec![
-                "left:down:".to_string(),
-                "left:up:".into(),
-                "middle:down:s".into(),
-                "middle:up:s".into(),
-                "right:down:".into(),
-                "right:up:".into(),
+                "left:down::l".to_string(),
+                "left:up::".into(),
+                "middle:down:s:m".into(),
+                "middle:up:s:".into(),
+                "right:down::r".into(),
+                "right:up::".into(),
             ],
         );
     }
@@ -3278,7 +3410,7 @@ mod tests {
         // Cursor over the untagged background — no hover / capture target — so a
         // raw button edge resolves to nothing and is not consumed.
         let mut router = InputRouter::new();
-        let (mut state, log) = state_with_raw_sink();
+        let (mut state, log, _moves) = state_with_raw_sink();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(PointerId::MOUSE, 5.0, 5.0, &mut state); // off the pane
@@ -3299,7 +3431,7 @@ mod tests {
         // cursor strays off its rect — the captured-target fallback, so a
         // press-drag-release beyond the pane still pairs on the same widget.
         let mut router = InputRouter::new();
-        let (mut state, log) = state_with_raw_sink();
+        let (mut state, log, _moves) = state_with_raw_sink();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
@@ -3316,7 +3448,148 @@ mod tests {
             Modifiers::empty(),
             &mut state,
         ));
-        assert_eq!(read(&log), vec!["left:up:".to_string()]);
+        assert_eq!(read(&log), vec!["left:up::".to_string()]);
+    }
+
+    #[test]
+    fn r1418_implicit_grab_pairs_a_release_that_strayed_off_the_sink() {
+        // The R1418 implicit grab: a press opens a grab, so the matching release
+        // pairs on the SAME sink even after the cursor strayed off its rect and
+        // over the untagged background — the fix for the "stuck button" an SGR
+        // mouse consumer would otherwise see. The off-rect move is forwarded to
+        // the grabbed sink too (a fresh position to correlate the edge against).
+        let mut router = InputRouter::new();
+        let (mut state, log, moves) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // over the sink
+        assert!(router.deliver_raw_pointer_button(
+            PointerId::MOUSE,
+            PointerButton::Right,
+            PointerEdge::Down,
+            Modifiers::empty(),
+            &mut state,
+        ));
+        // Stray far off the sink rect, over the background. Without the grab the
+        // release below would resolve to no hover target and be LOST; the move
+        // would not reach the sink either.
+        router.cursor_moved(PointerId::MOUSE, 5.0, 5.0, &mut state);
+        assert!(
+            !read_moves(&moves).is_empty(),
+            "the off-rect move is forwarded to the grabbed sink"
+        );
+        assert!(router.deliver_raw_pointer_button(
+            PointerId::MOUSE,
+            PointerButton::Right,
+            PointerEdge::Up,
+            Modifiers::empty(),
+            &mut state,
+        ));
+        assert_eq!(
+            read(&log),
+            vec!["right:down::r".to_string(), "right:up::".into()],
+            "the release paired on the sink despite the cursor being off it"
+        );
+        // The last button lifted, so the grab released: a fresh edge over the
+        // background now resolves to no raw sink.
+        assert!(!router.deliver_raw_pointer_button(
+            PointerId::MOUSE,
+            PointerButton::Left,
+            PointerEdge::Down,
+            Modifiers::empty(),
+            &mut state,
+        ));
+    }
+
+    #[test]
+    fn r1418_grab_holds_across_a_multi_button_chord() {
+        // The grab releases only when the LAST held button lifts — a press
+        // left, press right, release left, release right chord keeps the grab
+        // (and its target) through the whole span, the Qt implicit-grab rule.
+        let mut router = InputRouter::new();
+        let (mut state, log, _moves) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        let press = |r: &mut InputRouter, b, e, s: &mut Scene| {
+            r.deliver_raw_pointer_button(PointerId::MOUSE, b, e, Modifiers::empty(), s)
+        };
+        assert!(press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Down,
+            &mut state
+        ));
+        router.cursor_moved(PointerId::MOUSE, 5.0, 5.0, &mut state); // off the sink
+        assert!(press(
+            &mut router,
+            PointerButton::Right,
+            PointerEdge::Down,
+            &mut state
+        ));
+        assert!(press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Up,
+            &mut state
+        ));
+        // Left lifted but right still held: the grab persists, so this edge
+        // still reaches the sink.
+        assert!(press(
+            &mut router,
+            PointerButton::Right,
+            PointerEdge::Up,
+            &mut state
+        ));
+        // The 4th segment is the R1418 held set (Qt `buttons()`): it grows to
+        // `{left, right}` = "lr" at the right press, then shrinks as each lifts —
+        // the state a single changed `button` cannot express.
+        assert_eq!(
+            read(&log),
+            vec![
+                "left:down::l".to_string(),
+                "right:down::lr".into(),
+                "left:up::r".into(),
+                "right:up::".into(),
+            ],
+        );
+        // Now every button is up: the grab released.
+        assert!(!press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Down,
+            &mut state
+        ));
+    }
+
+    #[test]
+    fn r1418_a_lone_release_does_not_open_a_grab() {
+        // A release with no matching held press (a button pressed elsewhere,
+        // lifted over the sink) delivers but must NOT open a grab — else a
+        // subsequent stray would wrongly stay pinned to the sink.
+        let mut router = InputRouter::new();
+        let (mut state, log, _moves) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        assert!(router.deliver_raw_pointer_button(
+            PointerId::MOUSE,
+            PointerButton::Left,
+            PointerEdge::Up,
+            Modifiers::empty(),
+            &mut state,
+        ));
+        assert_eq!(read(&log), vec!["left:up::".to_string()]);
+        // No grab was opened, so a fresh edge over the background is not routed
+        // back to the sink.
+        router.cursor_moved(PointerId::MOUSE, 5.0, 5.0, &mut state);
+        assert!(!router.deliver_raw_pointer_button(
+            PointerId::MOUSE,
+            PointerButton::Left,
+            PointerEdge::Down,
+            Modifiers::empty(),
+            &mut state,
+        ));
     }
 
     /// Build a paint scene with one tagged button container of fixed

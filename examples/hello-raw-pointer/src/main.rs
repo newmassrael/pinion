@@ -62,7 +62,8 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode, capture_surface
 use pinion_core::style::{Border, BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{
-    Frame, Modifiers, PointerButton, PointerEdge, RawPointerButton, Scene, WidgetCore,
+    Frame, Modifiers, PointerButton, PointerButtons, PointerEdge, RawPointerButton, Scene,
+    WidgetCore,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 
@@ -97,6 +98,8 @@ struct ButtonReport {
     button: PointerButton,
     edge: PointerEdge,
     modifiers: Modifiers,
+    /// R1418 — the full set of buttons held after this edge (Qt `buttons()`).
+    buttons: PointerButtons,
     x_frac: Option<f32>,
     y_frac: Option<f32>,
 }
@@ -238,10 +241,15 @@ fn read_last_report(intro: &dyn ExternalIntrospect) -> Option<ButtonReport> {
         Some(IntrospectValue::Text(s)) => Modifiers::from_wire_token(&s).unwrap_or_default(),
         _ => Modifiers::empty(),
     };
+    let buttons = match intro.query("last_buttons") {
+        Some(IntrospectValue::Text(s)) => PointerButtons::from_wire_token(&s).unwrap_or_default(),
+        _ => PointerButtons::empty(),
+    };
     Some(ButtonReport {
         button,
         edge,
         modifiers,
+        buttons,
         x_frac: query_frac(intro, "last_x"),
         y_frac: query_frac(intro, "last_y"),
     })
@@ -323,6 +331,7 @@ impl External for RawPointerSink {
             button: event.button,
             edge: event.edge,
             modifiers: event.modifiers,
+            buttons: event.buttons,
             x_frac: self.x_frac,
             y_frac: self.y_frac,
         });
@@ -349,6 +358,9 @@ impl ExternalIntrospect for RawPointerSink {
                     SchemaField::new("last_button", "string"),
                     SchemaField::new("last_edge", "string"),
                     SchemaField::new("last_mods", "string"),
+                    // R1418 — the held-button set after the last edge, the Qt
+                    // `buttons()` peer, as an `lmr` wire token (e.g. "lr").
+                    SchemaField::new("last_buttons", "string"),
                     // The position fraction stamped at the last edge (Null off-pane).
                     SchemaField::new("last_x", "float"),
                     SchemaField::new("last_y", "float"),
@@ -385,6 +397,9 @@ impl ExternalIntrospect for RawPointerSink {
             "last_mods" => Some(last.map_or(IntrospectValue::Null, |r| {
                 IntrospectValue::Text(r.modifiers.as_wire_token())
             })),
+            "last_buttons" => Some(last.map_or(IntrospectValue::Null, |r| {
+                IntrospectValue::Text(r.buttons.as_wire_token())
+            })),
             "last_x" => Some(
                 last.and_then(|r| r.x_frac)
                     .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
@@ -415,8 +430,10 @@ impl ExternalIntrospect for RawPointerSink {
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             // Every field is a read-only projection of the input log.
-            "report_count" | "last" | "last_button" | "last_edge" | "last_mods" | "last_x"
-            | "last_y" | "x_frac" | "y_frac" | "log" => Err(InterveneError::ReadOnly),
+            "report_count" | "last" | "last_button" | "last_edge" | "last_mods"
+            | "last_buttons" | "last_x" | "last_y" | "x_frac" | "y_frac" | "log" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -554,10 +571,17 @@ mod tests {
         edge: PointerEdge,
         modifiers: Modifiers,
     ) {
+        // Single-edge helper (no chord): a press holds its button, a release
+        // holds nothing — the Qt `buttons()` state the router would compute.
+        let buttons = match edge {
+            PointerEdge::Down => PointerButtons::empty().with(button),
+            PointerEdge::Up => PointerButtons::empty(),
+        };
         sink.raw_pointer_button(RawPointerButton {
             button,
             edge,
             modifiers,
+            buttons,
         });
     }
 
@@ -592,6 +616,27 @@ mod tests {
         assert!(
             !sink.wants_pointer_capture(),
             "does NOT capture — the pane resolves each edge via hover"
+        );
+    }
+
+    #[test]
+    fn the_held_button_set_is_recorded_and_exposed() {
+        // R1418 — the sink stores and exposes the Qt `buttons()` held set the
+        // router hands it (here a {left, right} chord), so an AI client reads
+        // WHICH buttons are down, not only the one that changed.
+        let mut sink = RawPointerSink::new();
+        sink.raw_pointer_button(RawPointerButton {
+            button: PointerButton::Right,
+            edge: PointerEdge::Down,
+            modifiers: Modifiers::empty(),
+            buttons: PointerButtons::empty()
+                .with(PointerButton::Left)
+                .with(PointerButton::Right),
+        });
+        assert_eq!(
+            sink.query("last_buttons"),
+            Some(IntrospectValue::Text("lr".to_owned())),
+            "the held set is exposed as an lmr wire token"
         );
     }
 

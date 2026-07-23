@@ -703,6 +703,102 @@ impl PointerEdge {
     }
 }
 
+/// R1418 §5.35 §5.15 — the set of mouse buttons currently held, the pinion peer
+/// of Qt `QMouseEvent::buttons()` and the DOM `MouseEvent.buttons` bitmask.
+///
+/// Carried on [`RawPointerButton`] so a raw sink reads WHICH buttons are down at
+/// each edge, not only the single [`button`](RawPointerButton::button) that just
+/// changed — a chord (press left, then right) reports `{left, right}` on the
+/// right-down edge, and the state an xterm SGR motion report or a Qt
+/// drag-with-buttons gesture needs. Following the DOM / Qt convention, the set
+/// reflects the state **after** the transition: a press INCLUDES the pressed
+/// button, a release EXCLUDES the released one.
+///
+/// A `u8` bitmask over the three [`PointerButton`]s (no external `bitflags`
+/// dependency, and `unsafe_code` is forbidden workspace-wide), exposed through
+/// set operations so callers never touch the raw bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct PointerButtons(u8);
+
+impl PointerButtons {
+    const fn bit(button: PointerButton) -> u8 {
+        match button {
+            PointerButton::Left => 1 << 0,
+            PointerButton::Middle => 1 << 1,
+            PointerButton::Right => 1 << 2,
+        }
+    }
+
+    /// No buttons held.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    /// `true` when no button is held.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// `true` when `button` is in the held set.
+    #[must_use]
+    pub const fn contains(self, button: PointerButton) -> bool {
+        self.0 & Self::bit(button) != 0
+    }
+
+    /// The set with `button` added (a press).
+    #[must_use]
+    pub const fn with(self, button: PointerButton) -> Self {
+        Self(self.0 | Self::bit(button))
+    }
+
+    /// The set with `button` removed (a release).
+    #[must_use]
+    pub const fn without(self, button: PointerButton) -> Self {
+        Self(self.0 & !Self::bit(button))
+    }
+
+    /// The compact wire token for the held set — the `lmr` letters in canonical
+    /// order (`{left, right}` → `"lr"`), the [`Modifiers::as_wire_token`] pattern
+    /// applied to the button axis. Empty set yields `""`. Used by an
+    /// introspection surface so an AI client reads the held buttons as data.
+    /// Inverse of [`from_wire_token`](Self::from_wire_token).
+    #[must_use]
+    pub fn as_wire_token(self) -> String {
+        let mut token = String::new();
+        if self.contains(PointerButton::Left) {
+            token.push('l');
+        }
+        if self.contains(PointerButton::Middle) {
+            token.push('m');
+        }
+        if self.contains(PointerButton::Right) {
+            token.push('r');
+        }
+        token
+    }
+
+    /// Decode a held-set wire token (any order of the `lmr` letters) back into
+    /// [`PointerButtons`]; `None` on any letter outside `lmr` so a malformed
+    /// token is rejected rather than silently dropped. Inverse of
+    /// [`as_wire_token`](Self::as_wire_token) — the R773 encode↔decode SSOT
+    /// discipline applied to the held-button axis.
+    #[must_use]
+    pub fn from_wire_token(token: &str) -> Option<Self> {
+        let mut set = Self::empty();
+        for ch in token.chars() {
+            set = match ch {
+                'l' => set.with(PointerButton::Left),
+                'm' => set.with(PointerButton::Middle),
+                'r' => set.with(PointerButton::Right),
+                _ => return None,
+            };
+        }
+        Some(set)
+    }
+}
+
 /// R1416 §5.35 §5.15 — one raw mouse-button edge delivered to an
 /// [`External`](crate::external::External) that owns the multi-button pointer
 /// stream (opts in via
@@ -725,18 +821,27 @@ impl PointerEdge {
 /// `dispatch_send_mods`), so a raw sink reads a consistent modifier state on
 /// down and up — the shape a terminal mouse report or a marquee gesture needs.
 ///
+/// **[`buttons`](Self::buttons) carries the full held set** (R1418), the Qt
+/// `QMouseEvent::buttons()` peer, so a chord or a motion-with-buttons is
+/// expressible: `button` names the ONE that changed, `buttons` names ALL held
+/// after the change.
+///
 /// Not `#[non_exhaustive]`: the router (pinion-runtime) constructs it with a
 /// struct literal across the crate boundary, the
 /// [`DragUpdate`](crate::external::DragUpdate) / [`DropPoint`](crate::external::DropPoint)
 /// cross-crate-carrier precedent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RawPointerButton {
-    /// Which mouse button transitioned.
+    /// Which mouse button transitioned (the Qt `QMouseEvent::button()` peer).
     pub button: PointerButton,
     /// Whether the button was pressed or released.
     pub edge: PointerEdge,
     /// The keyboard modifiers held at this edge.
     pub modifiers: Modifiers,
+    /// The full set of buttons held AFTER this edge (the Qt
+    /// `QMouseEvent::buttons()` / DOM `MouseEvent.buttons` peer): a press
+    /// includes the pressed button, a release excludes the released one.
+    pub buttons: PointerButtons,
 }
 
 /// The keyboard-side activation token: the `send`-payload event name a focused
@@ -1809,6 +1914,31 @@ mod drag_calibration_tests {
             !cal.traveled_beyond(100.0, 4.0),
             "teardown resets the discriminator"
         );
+    }
+
+    #[test]
+    fn r1418_pointer_buttons_set_ops_and_wire_round_trip() {
+        use super::{PointerButton, PointerButtons};
+        let empty = PointerButtons::empty();
+        assert!(empty.is_empty());
+        assert_eq!(empty.as_wire_token(), "");
+        // A chord: press left, then right → held {left, right}.
+        let chord = empty.with(PointerButton::Left).with(PointerButton::Right);
+        assert!(chord.contains(PointerButton::Left));
+        assert!(chord.contains(PointerButton::Right));
+        assert!(!chord.contains(PointerButton::Middle));
+        assert!(!chord.is_empty());
+        // Canonical `lmr` order regardless of insertion order.
+        assert_eq!(chord.as_wire_token(), "lr");
+        // Release left → {right}.
+        assert_eq!(chord.without(PointerButton::Left).as_wire_token(), "r");
+        // Decode is the inverse of encode; a bad letter rejects.
+        for token in ["", "l", "m", "r", "lm", "lr", "mr", "lmr"] {
+            let set = PointerButtons::from_wire_token(token).expect("valid token");
+            assert_eq!(set.as_wire_token(), token, "round-trip {token:?}");
+        }
+        assert_eq!(PointerButtons::from_wire_token("x"), None);
+        assert_eq!(PointerButtons::from_wire_token("ls"), None);
     }
 
     #[test]
