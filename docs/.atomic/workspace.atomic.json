@@ -28672,6 +28672,48 @@
         "none — this closes the \"multi-window per-window reflection is a future demo\" note from R1419: it is now a shipped, RPC-verified example, not just a shell-test-proven capability."
       ]
     },
+    "R1422": {
+      "decision_summary": "R1422 §5.35 §5.15: synthesise a double-click on the raw multi-button pointer stream — the Qt MouseButtonDblClick / DOM MouseEvent.detail verb the R1416/R1418 raw sink (External::wants_raw_pointer_buttons) still lacked. RawPointerButton gains click_count: the router's deliver_raw_pointer_button reports 2 on a press that repeats the same button at the same spot within the double-click window (else 1), echoes that count onto the matching release, and caps at 2 (no rolling triple). The per-(pointer,button) raw_click_marks tracker is keyed by button (the Qt per-button rule) and REUSES the DOUBLE_CLICK_TIME_MS + DOUBLE_CLICK_DIST_PX thresholds of the send-wire DoubleClick path so the two double-click rules cannot drift. Synthesis lives in the one deliver_raw_pointer_button seam both native winit MouseInput and scene/pointer_button cross; hello-raw-pointer exposes it as last_clicks + a x2 readout badge.",
+      "changes_bullets": [
+        "pinion-core: RawPointerButton gains click_count: u8 (the Qt MouseButtonDblClick / DOM MouseEvent.detail peer); PointerButton derives Hash so it keys the router's per-button raw double-click tracker.",
+        "pinion-runtime: deliver_raw_pointer_button synthesises click_count via raw_click_for + commit_raw_click_mark over a per-(pointer,button) raw_click_marks map; a press reports 2 on a same-button same-spot repeat inside the window (else 1), a release echoes the press count, capped at 2 (no rolling triple); the mark commits only on delivery so a non-sink edge cannot poison the next real press.",
+        "raw_click_marks reuses DOUBLE_CLICK_TIME_MS + DOUBLE_CLICK_DIST_PX (the send-wire DoubleClick thresholds) so the two double-click rules cannot drift (one vocabulary).",
+        "hello-raw-pointer: records and exposes click_count as last_clicks (read-only int) and badges a synthesised double as a x2 readout; the double is drivable over the wire via scene/double_click, already routed through the raw seam at R1416."
+      ],
+      "verification_bullets": [
+        "pinion-runtime: 4 new router tests — a same-spot second press is 2 and its release echoes 2; a strayed second press stays 1; per-button independence (a left double leaves a right press 1); a third press resets to 1 (no rolling triple). runtime 534 green.",
+        "pinion-core 2657 green; hello-raw-pointer 12 unit tests green (last_clicks exposure + x2 badge; a single click is not badged).",
+        "r1422_double_click.py: 36 verifications PASS over RPC — a deterministic double via scene/double_click reads last_clicks == 2 plus a x2 readout badge; the fresh-button, no-triple, and strayed-press negatives read 1; arm_double plants a position-mismatched mark so each double is deterministic (the router double-click cycle persists across the sink clear, as Qt's does).",
+        "clippy -D pedantic clean; cargo doc --document-private-items clean; mnemosyne T1=0."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "none — the raw double-click was the last unimplemented QMouseEvent verb on the R1416/R1418 raw-pointer line; the send-wire DoubleClick and the raw click_count now share one threshold vocabulary. The router's per-button double-click mark persisting across the sink clear is Qt-correct (not a debt); the demo primes each double via arm_double."
+      ],
+      "publishable_decision_summary": "R1422 §5.35 §5.15: synthesise a double-click on the raw multi-button pointer stream — the Qt MouseButtonDblClick / DOM MouseEvent.detail verb the R1416/R1418 raw sink (External::wants_raw_pointer_buttons) still lacked. RawPointerButton gains click_count: the router's deliver_raw_pointer_button reports 2 on a press that repeats the same button at the same spot within the double-click window (else 1), echoes that count onto the matching release, and caps at 2 (no rolling triple). The per-(pointer,button) raw_click_marks tracker is keyed by button (the Qt per-button rule) and REUSES the DOUBLE_CLICK_TIME_MS + DOUBLE_CLICK_DIST_PX thresholds of the send-wire DoubleClick path so the two double-click rules cannot drift. Synthesis lives in the one deliver_raw_pointer_button seam both native winit MouseInput and scene/pointer_button cross; hello-raw-pointer exposes it as last_clicks + a x2 readout badge.",
+      "publishable_changes_bullets": [
+        "pinion-core: RawPointerButton gains click_count: u8 (the Qt MouseButtonDblClick / DOM MouseEvent.detail peer); PointerButton derives Hash so it keys the router's per-button raw double-click tracker.",
+        "pinion-runtime: deliver_raw_pointer_button synthesises click_count via raw_click_for + commit_raw_click_mark over a per-(pointer,button) raw_click_marks map; a press reports 2 on a same-button same-spot repeat inside the window (else 1), a release echoes the press count, capped at 2 (no rolling triple); the mark commits only on delivery so a non-sink edge cannot poison the next real press.",
+        "raw_click_marks reuses DOUBLE_CLICK_TIME_MS + DOUBLE_CLICK_DIST_PX (the send-wire DoubleClick thresholds) so the two double-click rules cannot drift (one vocabulary).",
+        "hello-raw-pointer: records and exposes click_count as last_clicks (read-only int) and badges a synthesised double as a x2 readout; the double is drivable over the wire via scene/double_click, already routed through the raw seam at R1416."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime: 4 new router tests — a same-spot second press is 2 and its release echoes 2; a strayed second press stays 1; per-button independence (a left double leaves a right press 1); a third press resets to 1 (no rolling triple). runtime 534 green.",
+        "pinion-core 2657 green; hello-raw-pointer 12 unit tests green (last_clicks exposure + x2 badge; a single click is not badged).",
+        "r1422_double_click.py: 36 verifications PASS over RPC — a deterministic double via scene/double_click reads last_clicks == 2 plus a x2 readout badge; the fresh-button, no-triple, and strayed-press negatives read 1; arm_double plants a position-mismatched mark so each double is deterministic (the router double-click cycle persists across the sink clear, as Qt's does).",
+        "clippy -D pedantic clean; cargo doc --document-private-items clean; mnemosyne T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none — the raw double-click was the last unimplemented QMouseEvent verb on the R1416/R1418 raw-pointer line; the send-wire DoubleClick and the raw click_count now share one threshold vocabulary. The router's per-button double-click mark persisting across the sink clear is Qt-correct (not a debt); the demo primes each double via arm_double."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

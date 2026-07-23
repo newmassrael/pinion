@@ -627,7 +627,9 @@ impl PointerWireEvent {
 /// Not `#[non_exhaustive]`: a closed three-button mouse set, matching the
 /// [`PointerWireEvent`] / `DragButton` / `ClickButton` precedent (a future
 /// `Back` / `Forward` is a deliberate spec expansion, not a silent wildcard).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// `Hash` (R1422): keyed in the router's per-(pointer, button) raw double-click
+// tracker, so a left double-click and a right double-click count independently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PointerButton {
     /// The primary button (`"left"`) — focus / select / activate by default.
     Left,
@@ -826,6 +828,13 @@ impl PointerButtons {
 /// expressible: `button` names the ONE that changed, `buttons` names ALL held
 /// after the change.
 ///
+/// **[`click_count`](Self::click_count) carries the consecutive-click ordinal**
+/// (R1422), the Qt `MouseButtonDblClick` / DOM `MouseEvent.detail` peer: the
+/// router synthesises `2` on a press that repeats the same button on the same
+/// spot within the double-click window, and echoes that count onto the matching
+/// release, so a raw sink reads a double-click without re-implementing the
+/// timing itself. See [`click_count`](Self::click_count) for the exact rule.
+///
 /// Not `#[non_exhaustive]`: the router (pinion-runtime) constructs it with a
 /// struct literal across the crate boundary, the
 /// [`DragUpdate`](crate::external::DragUpdate) / [`DropPoint`](crate::external::DropPoint)
@@ -842,6 +851,18 @@ pub struct RawPointerButton {
     /// `QMouseEvent::buttons()` / DOM `MouseEvent.buttons` peer): a press
     /// includes the pressed button, a release excludes the released one.
     pub buttons: PointerButtons,
+    /// R1422 §5.35 — the consecutive-click ordinal of `button` at this edge, the
+    /// Qt `MouseButtonDblClick` / DOM `MouseEvent.detail` peer. `1` on a first
+    /// press (Qt `MouseButtonPress`); `2` on a second press of the SAME button,
+    /// at the same spot (within the framework double-click time + distance
+    /// window shared with the `DoubleClick` send-wire path so the two rules
+    /// cannot drift), i.e. the Qt `MouseButtonDblClick`. It caps at `2` — pinion
+    /// stops at binary single/double, matching the send-wire `DoubleClick` (no
+    /// rolling triple-click). A release ([`PointerEdge::Up`]) echoes the count of
+    /// the press it releases, so a press/release pair reads one consistent
+    /// ordinal (the DOM `detail` model, which Qt drops on release). A lone
+    /// release with no matching tracked press reports `1`.
+    pub click_count: u8,
 }
 
 /// The keyboard-side activation token: the `send`-payload event name a focused

@@ -413,6 +413,16 @@ pub struct InputRouter {
     /// (`held` reaches 0). Keyed by [`PointerId`] so two touch streams stay
     /// independent, mirroring `captured_targets`.
     raw_grabs: HashMap<PointerId, RawGrab>,
+    /// R1422 §5.35 — per-(pointer, button) last-press mark for the RAW stream's
+    /// double-click synthesis ([`RawPointerButton::click_count`](pinion_core::input::RawPointerButton::click_count),
+    /// the Qt `MouseButtonDblClick` peer). Distinct from `last_press` (the
+    /// send-wire, target-tag-keyed W3C `dblclick` path) because a raw sink owns
+    /// the whole stream — there is no per-target equality to gate on — but it
+    /// SHARES the [`DOUBLE_CLICK_TIME_MS`] + [`DOUBLE_CLICK_DIST_PX`] thresholds
+    /// so the two double-click rules cannot drift (the `r47`-class one-vocabulary
+    /// discipline). Keyed by the button too so a left double-click and a right
+    /// double-click count independently, the Qt per-button rule.
+    raw_click_marks: HashMap<(PointerId, PointerButton), RawClickMark>,
 }
 
 /// R1418 §5.35 — one pointer's implicit grab on a raw multi-button sink: the
@@ -427,6 +437,20 @@ pub struct InputRouter {
 struct RawGrab {
     tag: String,
     buttons: PointerButtons,
+}
+
+/// R1422 §5.35 — one button's last-press mark on the RAW stream, the state the
+/// double-click synthesiser compares the next press against. `at` + `(x, y)` are
+/// the press instant and cursor position (the time + distance thresholds), and
+/// `count` is the ordinal that press reported (`1` or `2`) — kept so a press
+/// that already reached `2` starts the next cycle fresh (no rolling triple), and
+/// so the matching release can echo the press's count.
+#[derive(Debug, Clone, Copy)]
+struct RawClickMark {
+    at: Instant,
+    x: f64,
+    y: f64,
+    count: u8,
 }
 
 /// R881.1 §5.35 — one pointer's wheel remainder: the scroll container
@@ -1648,6 +1672,12 @@ impl InputRouter {
         modifiers: Modifiers,
         state_scene: &mut Scene,
     ) -> bool {
+        // R1422 — synthesise the click-count (Qt `MouseButtonDblClick`) for this
+        // edge. On a press it is derived from the prior mark; `pending_mark` is
+        // COMMITTED only once the edge is actually delivered (below), so a press
+        // that resolves to no raw sink cannot poison the next real press's
+        // double-click window.
+        let (click_count, pending_mark) = self.raw_click_for(id, button, edge);
         // The held-button SET after this edge (Qt `buttons()` semantics: a press
         // adds, a release removes) — the grab holds the running set, so it is
         // computed relative to whatever was held before.
@@ -1664,8 +1694,10 @@ impl InputRouter {
                 edge,
                 modifiers,
                 buttons,
+                click_count,
             };
             if dispatch_raw_button(state_scene, &tag, event) {
+                self.commit_raw_click_mark(id, button, pending_mark);
                 if buttons.is_empty() {
                     // Last button lifted — release the grab and re-settle hover.
                     self.raw_grabs.remove(&id);
@@ -1698,10 +1730,12 @@ impl InputRouter {
             edge,
             modifiers,
             buttons,
+            click_count,
         };
         if !dispatch_raw_button(state_scene, &target, event) {
             return false;
         }
+        self.commit_raw_click_mark(id, button, pending_mark);
         // A press on a fresh raw sink opens its implicit grab (seeded with the
         // held set); a lone release (no matching press held) delivers without
         // opening one.
@@ -1715,6 +1749,84 @@ impl InputRouter {
             );
         }
         true
+    }
+
+    /// R1422 §5.35 — the RAW stream's double-click synthesiser: compute the
+    /// [`RawPointerButton::click_count`](pinion_core::input::RawPointerButton::click_count)
+    /// for one edge, plus the mark to commit if that edge is delivered.
+    ///
+    /// * A **press** ([`PointerEdge::Down`]) reports `2` when it repeats the same
+    ///   button as the prior press within [`DOUBLE_CLICK_TIME_MS`] and under
+    ///   [`DOUBLE_CLICK_DIST_PX`] per axis of the prior press (the Qt
+    ///   `MouseButtonDblClick`), else `1`. It caps there — a press that already
+    ///   reported `2` starts the next cycle fresh (`prev.count == 1` guard), the
+    ///   send-wire `DoubleClick`'s "no rolling triple-click" rule. The returned
+    ///   mark carries the reported count so the release can echo it. With no
+    ///   tracked cursor (a press before any move seeded a position) the double
+    ///   cannot be confirmed, so it is a fresh single with no mark.
+    /// * A **release** ([`PointerEdge::Up`]) echoes the count of the press it
+    ///   releases (the DOM `MouseEvent.detail` model — a consistent press/release
+    ///   pair), or `1` when no tracked press matches; it never mutates the mark.
+    ///
+    /// Reads `self.cursors` (the same live position the send-wire `pointer_down`
+    /// double-click reads) and the shared thresholds, so the raw and send-wire
+    /// double-click rules stay one vocabulary.
+    fn raw_click_for(
+        &self,
+        id: PointerId,
+        button: PointerButton,
+        edge: PointerEdge,
+    ) -> (u8, Option<RawClickMark>) {
+        match edge {
+            PointerEdge::Up => (
+                self.raw_click_marks
+                    .get(&(id, button))
+                    .map_or(1, |m| m.count),
+                None,
+            ),
+            PointerEdge::Down => {
+                let now = Instant::now();
+                let Some(&(cx, cy)) = self.cursors.get(&id) else {
+                    return (1, None);
+                };
+                let count = match self.raw_click_marks.get(&(id, button)) {
+                    Some(prev)
+                        if prev.count == 1
+                            && now.duration_since(prev.at).as_millis() < DOUBLE_CLICK_TIME_MS
+                            && (prev.x - cx).abs() < DOUBLE_CLICK_DIST_PX
+                            && (prev.y - cy).abs() < DOUBLE_CLICK_DIST_PX =>
+                    {
+                        2
+                    }
+                    _ => 1,
+                };
+                (
+                    count,
+                    Some(RawClickMark {
+                        at: now,
+                        x: cx,
+                        y: cy,
+                        count,
+                    }),
+                )
+            }
+        }
+    }
+
+    /// R1422 §5.35 — store the double-click mark a delivered
+    /// [`deliver_raw_pointer_button`](Self::deliver_raw_pointer_button) press
+    /// computed. Called only after a successful dispatch, so an edge that reached
+    /// no raw sink leaves the mark untouched; a `None` mark (a release, or a
+    /// press with no tracked cursor) is a no-op.
+    fn commit_raw_click_mark(
+        &mut self,
+        id: PointerId,
+        button: PointerButton,
+        mark: Option<RawClickMark>,
+    ) {
+        if let Some(mark) = mark {
+            self.raw_click_marks.insert((id, button), mark);
+        }
     }
 
     /// R1418 §5.35 — is `id` currently holding an implicit raw grab? The
@@ -3320,14 +3432,17 @@ mod tests {
             true
         }
         fn raw_pointer_button(&mut self, event: RawPointerButton) {
-            // `button:edge:mods:buttons` — the last segment is the R1418 held
-            // set (Qt `buttons()`), so a chord test reads the set progression.
+            // `button:edge:mods:buttons:clicks` — the 4th segment is the R1418
+            // held set (Qt `buttons()`), the 5th is the R1422 click-count (Qt
+            // `MouseButtonDblClick` = `2`), so a chord test reads the set
+            // progression and a double-click test reads the synthesised count.
             self.log.lock().expect("mutex poisoned").push(format!(
-                "{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}",
                 event.button.as_wire_name(),
                 event.edge.as_wire_name(),
                 event.modifiers.as_wire_token(),
                 event.buttons.as_wire_token(),
+                event.click_count,
             ));
         }
         fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
@@ -3376,12 +3491,14 @@ mod tests {
         assert_eq!(
             read(&log),
             vec![
-                "left:down::l".to_string(),
-                "left:up::".into(),
-                "middle:down:s:m".into(),
-                "middle:up:s:".into(),
-                "right:down::r".into(),
-                "right:up::".into(),
+                // Each is a single press/release of a distinct button, so the
+                // R1422 click-count (5th segment) is 1 throughout.
+                "left:down::l:1".to_string(),
+                "left:up:::1".into(),
+                "middle:down:s:m:1".into(),
+                "middle:up:s::1".into(),
+                "right:down::r:1".into(),
+                "right:up:::1".into(),
             ],
         );
     }
@@ -3448,7 +3565,7 @@ mod tests {
             Modifiers::empty(),
             &mut state,
         ));
-        assert_eq!(read(&log), vec!["left:up::".to_string()]);
+        assert_eq!(read(&log), vec!["left:up:::1".to_string()]);
     }
 
     #[test]
@@ -3487,7 +3604,7 @@ mod tests {
         ));
         assert_eq!(
             read(&log),
-            vec!["right:down::r".to_string(), "right:up::".into()],
+            vec!["right:down::r:1".to_string(), "right:up:::1".into()],
             "the release paired on the sink despite the cursor being off it"
         );
         // The last button lifted, so the grab released: a fresh edge over the
@@ -3543,14 +3660,15 @@ mod tests {
         ));
         // The 4th segment is the R1418 held set (Qt `buttons()`): it grows to
         // `{left, right}` = "lr" at the right press, then shrinks as each lifts —
-        // the state a single changed `button` cannot express.
+        // the state a single changed `button` cannot express. The 5th is the
+        // R1422 click-count: every edge here is a distinct-button single, so 1.
         assert_eq!(
             read(&log),
             vec![
-                "left:down::l".to_string(),
-                "right:down::lr".into(),
-                "left:up::r".into(),
-                "right:up::".into(),
+                "left:down::l:1".to_string(),
+                "right:down::lr:1".into(),
+                "left:up::r:1".into(),
+                "right:up:::1".into(),
             ],
         );
         // Now every button is up: the grab released.
@@ -3579,7 +3697,7 @@ mod tests {
             Modifiers::empty(),
             &mut state,
         ));
-        assert_eq!(read(&log), vec!["left:up::".to_string()]);
+        assert_eq!(read(&log), vec!["left:up:::1".to_string()]);
         // No grab was opened, so a fresh edge over the background is not routed
         // back to the sink.
         router.cursor_moved(PointerId::MOUSE, 5.0, 5.0, &mut state);
@@ -3590,6 +3708,202 @@ mod tests {
             Modifiers::empty(),
             &mut state,
         ));
+    }
+
+    /// Press one button and read back the raw sink log — a shared helper for the
+    /// R1422 double-click tests. The cursor must already sit over the sink.
+    fn raw_press(
+        router: &mut InputRouter,
+        button: PointerButton,
+        edge: PointerEdge,
+        state: &mut Scene,
+    ) {
+        assert!(
+            router.deliver_raw_pointer_button(
+                PointerId::MOUSE,
+                button,
+                edge,
+                Modifiers::empty(),
+                state
+            ),
+            "the raw sink must consume {button:?} {edge:?}"
+        );
+    }
+
+    #[test]
+    fn r1422_a_second_press_on_the_same_spot_synthesises_a_double_click() {
+        // Two presses of the same button, at the same spot, back-to-back (well
+        // inside DOUBLE_CLICK_TIME_MS) → the router synthesises click_count = 2
+        // on the SECOND press (the Qt `MouseButtonDblClick`), and the matching
+        // release echoes that 2 (the DOM `detail` model). The first press/release
+        // stay 1.
+        let mut router = InputRouter::new();
+        let (mut state, log, _moves) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Down,
+            &mut state,
+        );
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Up,
+            &mut state,
+        );
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Down,
+            &mut state,
+        );
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Up,
+            &mut state,
+        );
+        assert_eq!(
+            read(&log),
+            vec![
+                "left:down::l:1".to_string(),
+                "left:up:::1".into(),
+                "left:down::l:2".into(),
+                "left:up:::2".into(),
+            ],
+            "the second press is a double-click; its release echoes the 2",
+        );
+    }
+
+    #[test]
+    fn r1422_a_moved_second_press_is_not_a_double_click() {
+        // The second press strays beyond DOUBLE_CLICK_DIST_PX (10 px on x vs the
+        // 5 px window) → NOT a double: click_count stays 1, the intentional-drag
+        // tolerance shared with the send-wire `DoubleClick` path.
+        let mut router = InputRouter::new();
+        let (mut state, log, _moves) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Down,
+            &mut state,
+        );
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Up,
+            &mut state,
+        );
+        router.cursor_moved(PointerId::MOUSE, 110.0, 100.0, &mut state); // strayed 10 px
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Down,
+            &mut state,
+        );
+        assert_eq!(
+            read(&log),
+            vec![
+                "left:down::l:1".to_string(),
+                "left:up:::1".into(),
+                "left:down::l:1".into(),
+            ],
+            "a press that strayed past the tolerance is a fresh single click",
+        );
+    }
+
+    #[test]
+    fn r1422_a_double_click_is_independent_per_button() {
+        // A left double-click must not make a following RIGHT press read as a
+        // double — the tracker keys on the button, the Qt per-button rule.
+        let mut router = InputRouter::new();
+        let (mut state, log, _moves) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Down,
+            &mut state,
+        );
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Up,
+            &mut state,
+        );
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Down,
+            &mut state,
+        ); // left double
+        raw_press(
+            &mut router,
+            PointerButton::Left,
+            PointerEdge::Up,
+            &mut state,
+        );
+        raw_press(
+            &mut router,
+            PointerButton::Right,
+            PointerEdge::Down,
+            &mut state,
+        ); // fresh button
+        assert_eq!(
+            read(&log),
+            vec![
+                "left:down::l:1".to_string(),
+                "left:up:::1".into(),
+                "left:down::l:2".into(),
+                "left:up:::2".into(),
+                "right:down::r:1".into(),
+            ],
+            "the right press is a fresh single despite the left double-click",
+        );
+    }
+
+    #[test]
+    fn r1422_a_third_press_starts_a_fresh_cycle_no_rolling_triple() {
+        // A third back-to-back press does NOT read as 3 (or stay 2): once a press
+        // reaches 2 the cycle resets, so the third is 1 — the send-wire
+        // `DoubleClick`'s "no rolling triple-click" rule on the raw axis.
+        let mut router = InputRouter::new();
+        let (mut state, log, _moves) = state_with_raw_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        for _ in 0..3 {
+            raw_press(
+                &mut router,
+                PointerButton::Left,
+                PointerEdge::Down,
+                &mut state,
+            );
+            raw_press(
+                &mut router,
+                PointerButton::Left,
+                PointerEdge::Up,
+                &mut state,
+            );
+        }
+        let downs: Vec<u8> = read(&log)
+            .iter()
+            .filter(|s| s.contains(":down:"))
+            .map(|s| s.rsplit(':').next().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(
+            downs,
+            vec![1, 2, 1],
+            "press ordinals cycle 1 → 2 → 1, never a rolling triple",
+        );
     }
 
     /// Build a paint scene with one tagged button container of fixed

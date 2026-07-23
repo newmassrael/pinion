@@ -100,13 +100,18 @@ struct ButtonReport {
     modifiers: Modifiers,
     /// R1418 — the full set of buttons held after this edge (Qt `buttons()`).
     buttons: PointerButtons,
+    /// R1422 — the consecutive-click ordinal (Qt `MouseButtonDblClick` = 2), the
+    /// router-synthesised double-click count carried on the raw edge.
+    click_count: u8,
     x_frac: Option<f32>,
     y_frac: Option<f32>,
 }
 
 impl ButtonReport {
     /// The compact `"<button>:<edge>:<mods>"` label — the same shape the router
-    /// unit tests assert, so the wire and the tests read one vocabulary.
+    /// unit tests assert, so the wire and the tests read one vocabulary. The
+    /// R1422 click-count rides its own `last_clicks` field (like R1418's
+    /// `last_buttons`), so the label stays the stable three-segment identity.
     fn label(&self) -> String {
         format!(
             "{}:{}:{}",
@@ -138,7 +143,15 @@ fn readout_text(state: &SinkState) -> String {
                 (Some(x), Some(y)) => format!(" @ ({x:.2}, {y:.2})"),
                 _ => String::new(),
             };
-            format!("#{} {}{}", state.count, r.label(), pos)
+            // R1422 — surface a synthesised double-click (Qt `MouseButtonDblClick`)
+            // as a "×N" badge so the double is visible in the readout, not only in
+            // the introspect field.
+            let clicks = if r.click_count >= 2 {
+                format!(" ×{}", r.click_count)
+            } else {
+                String::new()
+            };
+            format!("#{} {}{}{}", state.count, r.label(), clicks, pos)
         }
     }
 }
@@ -245,11 +258,16 @@ fn read_last_report(intro: &dyn ExternalIntrospect) -> Option<ButtonReport> {
         Some(IntrospectValue::Text(s)) => PointerButtons::from_wire_token(&s).unwrap_or_default(),
         _ => PointerButtons::empty(),
     };
+    let click_count = match intro.query("last_clicks") {
+        Some(IntrospectValue::Int(n)) => u8::try_from(n).unwrap_or(1),
+        _ => 1,
+    };
     Some(ButtonReport {
         button,
         edge,
         modifiers,
         buttons,
+        click_count,
         x_frac: query_frac(intro, "last_x"),
         y_frac: query_frac(intro, "last_y"),
     })
@@ -332,6 +350,7 @@ impl External for RawPointerSink {
             edge: event.edge,
             modifiers: event.modifiers,
             buttons: event.buttons,
+            click_count: event.click_count,
             x_frac: self.x_frac,
             y_frac: self.y_frac,
         });
@@ -361,6 +380,9 @@ impl ExternalIntrospect for RawPointerSink {
                     // R1418 — the held-button set after the last edge, the Qt
                     // `buttons()` peer, as an `lmr` wire token (e.g. "lr").
                     SchemaField::new("last_buttons", "string"),
+                    // R1422 — the consecutive-click ordinal of the last edge, the
+                    // Qt `MouseButtonDblClick` peer (2 = a synthesised double).
+                    SchemaField::new("last_clicks", "int"),
                     // The position fraction stamped at the last edge (Null off-pane).
                     SchemaField::new("last_x", "float"),
                     SchemaField::new("last_y", "float"),
@@ -400,6 +422,9 @@ impl ExternalIntrospect for RawPointerSink {
             "last_buttons" => Some(last.map_or(IntrospectValue::Null, |r| {
                 IntrospectValue::Text(r.buttons.as_wire_token())
             })),
+            "last_clicks" => Some(last.map_or(IntrospectValue::Null, |r| {
+                IntrospectValue::Int(i64::from(r.click_count))
+            })),
             "last_x" => Some(
                 last.and_then(|r| r.x_frac)
                     .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
@@ -431,9 +456,8 @@ impl ExternalIntrospect for RawPointerSink {
         match path {
             // Every field is a read-only projection of the input log.
             "report_count" | "last" | "last_button" | "last_edge" | "last_mods"
-            | "last_buttons" | "last_x" | "last_y" | "x_frac" | "y_frac" | "log" => {
-                Err(InterveneError::ReadOnly)
-            }
+            | "last_buttons" | "last_clicks" | "last_x" | "last_y" | "x_frac" | "y_frac"
+            | "log" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -582,6 +606,9 @@ mod tests {
             edge,
             modifiers,
             buttons,
+            // Single edges in this helper — the router would synthesise the count;
+            // the manual helper reports a plain first click.
+            click_count: 1,
         });
     }
 
@@ -632,11 +659,69 @@ mod tests {
             buttons: PointerButtons::empty()
                 .with(PointerButton::Left)
                 .with(PointerButton::Right),
+            click_count: 1,
         });
         assert_eq!(
             sink.query("last_buttons"),
             Some(IntrospectValue::Text("lr".to_owned())),
             "the held set is exposed as an lmr wire token"
+        );
+    }
+
+    #[test]
+    fn the_double_click_count_is_exposed_and_badged() {
+        // R1422 — the router synthesises click_count = 2 on a double-click; the
+        // sink exposes it as `last_clicks` and the readout badges it "×2" so the
+        // double is visible as data AND on screen.
+        let mut sink = RawPointerSink::new();
+        sink.pointer_move(0.5, 0.5);
+        sink.raw_pointer_button(RawPointerButton {
+            button: PointerButton::Left,
+            edge: PointerEdge::Down,
+            modifiers: Modifiers::empty(),
+            buttons: PointerButtons::empty().with(PointerButton::Left),
+            click_count: 2,
+        });
+        assert_eq!(
+            sink.query("last_clicks"),
+            Some(IntrospectValue::Int(2)),
+            "the double-click count is exposed as `last_clicks`"
+        );
+        let state = SinkState {
+            count: 2,
+            last: sink.last().copied(),
+            x_frac: Some(0.5),
+            y_frac: Some(0.5),
+        };
+        assert!(
+            readout_text(&state).contains("×2"),
+            "the readout badges the double-click, got {:?}",
+            readout_text(&state)
+        );
+    }
+
+    #[test]
+    fn a_single_click_is_not_badged() {
+        // A plain first click (click_count = 1) carries no "×N" badge.
+        let mut sink = RawPointerSink::new();
+        sink.pointer_move(0.5, 0.5);
+        edge(
+            &mut sink,
+            PointerButton::Left,
+            PointerEdge::Down,
+            Modifiers::empty(),
+        );
+        assert_eq!(sink.query("last_clicks"), Some(IntrospectValue::Int(1)));
+        let state = SinkState {
+            count: 1,
+            last: sink.last().copied(),
+            x_frac: Some(0.5),
+            y_frac: Some(0.5),
+        };
+        assert!(
+            !readout_text(&state).contains('×'),
+            "a single click is not badged, got {:?}",
+            readout_text(&state)
         );
     }
 
@@ -749,6 +834,8 @@ mod tests {
             "last",
             "last_button",
             "last_mods",
+            "last_buttons",
+            "last_clicks",
             "x_frac",
             "log",
         ] {
