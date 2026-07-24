@@ -723,6 +723,38 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             {"tilt_x": float(tilt_x), "tilt_y": float(tilt_y)},
         )
 
+    def pointer_twist(self, twist: float) -> None:
+        """`scene/pointer_twist` typed wrapper (R1430 §5.35 §5.15).
+
+        Set the pointer TWIST (W3C `PointerEvent.twist` / Qt
+        `QTabletEvent::rotation()`), the barrel rotation in degrees, wrapped to
+        `0.0..=360.0` at the router. Positionless (out-of-band), delivered to the
+        surface under the pointer at once; winit exposes no barrel axis, so the
+        RPC is the sole driver.
+        """
+        self.request("scene/pointer_twist", {"twist": float(twist)})
+
+    def pointer_tangential_pressure(self, tangential: float) -> None:
+        """`scene/pointer_tangential_pressure` typed wrapper (R1430 §5.35 §5.15).
+
+        Set the airbrush finger-wheel position (W3C
+        `PointerEvent.tangentialPressure` / Qt
+        `QTabletEvent::tangentialPressure()`), clamped to `-1.0..=1.0` at the
+        router. Positionless, out-of-band.
+        """
+        self.request(
+            "scene/pointer_tangential_pressure", {"tangential": float(tangential)}
+        )
+
+    def pointer_height(self, height: float) -> None:
+        """`scene/pointer_height` typed wrapper (R1430 §5.35 §5.15).
+
+        Set the pointer HEIGHT (Qt `QTabletEvent::z()`), the hover distance above
+        the surface, floored at `0.0` at the router. Positionless, out-of-band;
+        no W3C peer.
+        """
+        self.request("scene/pointer_height", {"height": float(height)})
+
     def hover(
         self,
         at: Optional[tuple[float, float]] = None,

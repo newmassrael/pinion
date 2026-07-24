@@ -2725,6 +2725,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// lookup uses (the R1123.1 rule — never re-derive identity from the
     /// `DEFAULT_WINDOW` fallback string, which collapses "unscoped primary"
     /// with "a window literally named main").
+    /// R1430 §5.35 — the shared tail of every pointer-AXIS drain arm (pressure /
+    /// tilt / twist / tangential / height): bump the revision so a reactive
+    /// surface re-reads, and request a repaint so the change lands on the next
+    /// frame. One helper so the five arms cannot drift on the bump/repaint pair.
+    fn after_pointer_axis_change(&mut self, window_id: &str) {
+        self.revision.bump();
+        self.request_redraw_for_window(window_id);
+    }
+
     // R1026 — rustfmt's reflow pushed this 1 line over the workspace
     // too_many_lines (100) ceiling it was kept just under; the body is a flat
     // per-input dispatch, not bloat. Extraction is deferred to the owner.
@@ -2826,24 +2835,18 @@ impl<V: WidgetView> ShellCore<V> {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.pointer_button_for_window(window_id, button, edge);
                 }
-                // R1423 §5.35 §5.15 — `scene/pointer_pressure`: set the pointer's
-                // W3C `PointerEvent.pressure` on the addressed window's router.
-                // Positionless (out-of-band, like `scene/modifiers`) — the router
-                // delivers it to the surface under the pointer at once and rides
-                // subsequent moves. The AI-first source for a pressure-reactive
-                // surface (a tablet is not required, §2 #2).
+                // R1423 / R1429 / R1430 §5.35 §5.15 — the Qt `QTabletEvent` scalar
+                // axes (pressure / tilt / twist / tangential / height): set the
+                // axis on the addressed window's router, then bump + repaint via
+                // the shared `after_pointer_axis_change`. Each is positionless
+                // (out-of-band) — the router delivers it to the surface under the
+                // pointer at once and it rides subsequent moves. The AI-first
+                // source for a tablet-reactive surface, no device required (§2 #2).
                 DeferredInput::PointerPressure { value } => {
                     self.core
                         .set_pointer_pressure_for_window(window_id, PointerId::MOUSE, value);
-                    self.revision.bump();
-                    self.request_redraw_for_window(window_id);
+                    self.after_pointer_axis_change(window_id);
                 }
-                // R1429 §5.35 §5.15 — `scene/pointer_tilt`: set the pointer's W3C
-                // `PointerEvent.tiltX/tiltY` (Qt `xTilt/yTilt`) on the addressed
-                // window's router. Positionless (out-of-band, like
-                // `scene/pointer_pressure`) — the router delivers it to the surface
-                // under the pointer at once and rides subsequent moves. The
-                // AI-first source for a tilt-reactive surface (§2 #2).
                 DeferredInput::PointerTilt { tilt_x, tilt_y } => {
                     self.core.set_pointer_tilt_for_window(
                         window_id,
@@ -2851,8 +2854,25 @@ impl<V: WidgetView> ShellCore<V> {
                         tilt_x,
                         tilt_y,
                     );
-                    self.revision.bump();
-                    self.request_redraw_for_window(window_id);
+                    self.after_pointer_axis_change(window_id);
+                }
+                DeferredInput::PointerTwist { twist } => {
+                    self.core
+                        .set_pointer_twist_for_window(window_id, PointerId::MOUSE, twist);
+                    self.after_pointer_axis_change(window_id);
+                }
+                DeferredInput::PointerTangentialPressure { tangential } => {
+                    self.core.set_pointer_tangential_pressure_for_window(
+                        window_id,
+                        PointerId::MOUSE,
+                        tangential,
+                    );
+                    self.after_pointer_axis_change(window_id);
+                }
+                DeferredInput::PointerHeight { height } => {
+                    self.core
+                        .set_pointer_height_for_window(window_id, PointerId::MOUSE, height);
+                    self.after_pointer_axis_change(window_id);
                 }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate

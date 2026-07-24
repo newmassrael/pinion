@@ -1335,6 +1335,43 @@ pub trait External: core::fmt::Debug {
     /// Default no-op; only a widget that reacts to lean overrides.
     fn pointer_tilt(&mut self, _tilt_x: f32, _tilt_y: f32) {}
 
+    /// R1430 §5.35 §5.15 — the current pointer TWIST for this widget, the W3C
+    /// `PointerEvent.twist` / Qt `QTabletEvent::rotation()` peer: the barrel
+    /// rotation of an art pen about its own axis, in DEGREES clockwise,
+    /// normalised `0.0..=360.0` (`0.0` = a plain pen / mouse, which has no barrel
+    /// to turn). Forwarded WITH position like the tilt / pressure axes, so a
+    /// twist-aware surface — a calligraphic nib whose broad edge follows the
+    /// barrel, a pattern brush whose stamp rotates — reads the live angle.
+    ///
+    /// The sole driver is the `scene/pointer_twist` RPC (§2 #2): winit 0.30
+    /// exposes no barrel-rotation axis, so the value is drivable / introspectable
+    /// headless, no art pen required. Default no-op.
+    fn pointer_twist(&mut self, _twist: f32) {}
+
+    /// R1430 §5.35 §5.15 — the current pointer TANGENTIAL PRESSURE for this
+    /// widget, the W3C `PointerEvent.tangentialPressure` / Qt
+    /// `QTabletEvent::tangentialPressure()` peer: the airbrush finger-wheel
+    /// position, normalised `-1.0..=1.0` (`0.0` = the wheel's neutral rest, and
+    /// what a plain pen / mouse reports — it has no wheel). Forwarded WITH
+    /// position like the other axes, so an airbrush-aware surface reads the live
+    /// wheel without a device query.
+    ///
+    /// The sole driver is the `scene/pointer_tangential_pressure` RPC (§2 #2):
+    /// winit 0.30 exposes no finger-wheel axis. Default no-op.
+    fn pointer_tangential_pressure(&mut self, _tangential: f32) {}
+
+    /// R1430 §5.35 §5.15 — the current pointer HEIGHT for this widget, the Qt
+    /// `QTabletEvent::z()` peer: the pen's distance ABOVE the tablet surface
+    /// while it hovers, `0.0` at contact and rising as the pen lifts (device
+    /// units, non-negative — there is no W3C `PointerEvent` equivalent, so this
+    /// is the Qt-parity axis). Forwarded WITH position like the other axes, so a
+    /// hover-height-aware surface — a preview that fades as the pen lifts, a
+    /// depth-cued brush cursor — reads the live distance.
+    ///
+    /// The sole driver is the `scene/pointer_height` RPC (§2 #2): winit 0.30
+    /// exposes no hover-distance axis. Default no-op.
+    fn pointer_height(&mut self, _height: f32) {}
+
     /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
     /// forwarding leg the pointer hooks left open). The framework's
     /// [`InputRouter`](crate#) offers a wheel event to the `External`

@@ -2661,6 +2661,40 @@ impl<V: WidgetCore> CoreShell<V> {
         router.set_pointer_tilt(pid, tilt_x, tilt_y, scene);
     }
 
+    /// R1430 §5.35 — set the pointer TWIST for `pid` on `window_id`'s router (W3C
+    /// `PointerEvent.twist` / Qt `QTabletEvent::rotation()`), the
+    /// `scene/pointer_twist` RPC seam — the AI-first source for a barrel-rotation
+    /// surface, exercisable headless with no art pen (§2 #2).
+    pub fn set_pointer_twist_for_window(&mut self, window_id: &str, pid: PointerId, twist: f32) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        router.set_pointer_twist(pid, twist, scene);
+    }
+
+    /// R1430 §5.35 — set the pointer TANGENTIAL PRESSURE for `pid` on
+    /// `window_id`'s router (W3C `PointerEvent.tangentialPressure` / Qt
+    /// `QTabletEvent::tangentialPressure()`), the
+    /// `scene/pointer_tangential_pressure` RPC seam (§2 #2).
+    pub fn set_pointer_tangential_pressure_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        tangential: f32,
+    ) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        router.set_pointer_tangential_pressure(pid, tangential, scene);
+    }
+
+    /// R1430 §5.35 — set the pointer HEIGHT for `pid` on `window_id`'s router (Qt
+    /// `QTabletEvent::z()` hover distance), the `scene/pointer_height` RPC seam
+    /// (§2 #2).
+    pub fn set_pointer_height_for_window(&mut self, window_id: &str, pid: PointerId, height: f32) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        router.set_pointer_height(pid, height, scene);
+    }
+
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's
     /// `CursorLeft`). Drops the cursor + rolls back any in-flight
     /// `Hover`.

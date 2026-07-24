@@ -29094,6 +29094,60 @@
         "TUI tilt is delivered through the shared router seam but has no hardware pen source (single OS window / no tablet), identical to R1423 pressure — the value is drivable/introspectable headless, which is the point."
       ]
     },
+    "R1430": {
+      "decision_summary": "R1430 §5.35 §5.15 §5.49: complete the Qt QTabletEvent SCALAR axis set on the raw pointer surface — twist (W3C PointerEvent.twist / Qt rotation(), the barrel rotation), tangential pressure (W3C tangentialPressure / Qt tangentialPressure(), the airbrush finger wheel), and hover height (Qt z(), no W3C peer) — on top of R1423 pressure + R1429 tilt. Each is a positionless out-of-band axis driven by its own scene/pointer_* RPC (§2 #2, the AI-first primary path); winit 0.30 exposes NONE of them, so the RPC is the sole driver and every axis is exercisable headless with no tablet. Because pressure + tilt made pointer-axis storage a 2nd+ consumer, this round LIFTS the shared plumbing rather than copy-pasting a fifth time (three-site-internal-duplication-substrate-lift): the router's two per-axis HashMaps become ONE PointerAxisValues bundle forwarded WHOLE (forward_to) on every move, and the R1423/R1429 target-resolution copies fold into resolve_axis_target + deliver_axes. The External keeps per-axis hooks and the RPC keeps per-axis methods (self-describing for AI clients); only the internal duplication is removed. Both backends deliver the 3 new axes through the one set_pointer_*_for_window seam (§2 #6 parity), the TUI via a try_drain_pointer_axis dispatcher that routes all five axes off the main match. hello-raw-pointer paints each: twist orbits an orientation dot around the pen tip, tangential fills a finger-wheel bar, height shrinks the pen-tip marker; the r1430_tablet_axes.py demo drives all three over the wire. This answers the user's qt-parity-over-yagni directive to reach beyond Qt with nothing deferred: the scalar axes are done, leaving only the discrete pointerType classifier (R1431).",
+      "changes_bullets": [
+        "pinion-core: 3 new External hooks — pointer_twist / pointer_tangential_pressure / pointer_height (W3C twist/tangentialPressure + Qt z()), default no-op, forwarded WITH position like pressure/tilt.",
+        "pinion-runtime: PointerAxisValues bundle replaces the pressures+tilts maps (one map, forwarded WHOLE via forward_to); resolve_axis_target + deliver_axes fold the R1423/R1429 target-resolution copies; note/set for the 3 axes (twist wraps 0..360, tangential clamps -1..1, height floors 0).",
+        "pinion-rpc: 3 DeferredInput variants + handlers (shared require_axis_value) + scene/pointer_twist / _tangential_pressure / _height (Mutate, sorted) + 2 dispatch tests.",
+        "pinion-shell + pinion-tui: both drains deliver the 3 axes through the one router seam (§2#6); shell after_pointer_axis_change helper; TUI try_drain_pointer_axis dispatches all 5 axes off the main match.",
+        "examples/hello-raw-pointer: twist orbits the orientation dot, tangential fills the finger-wheel bar, height shrinks the pen-tip; 3 introspect fields + readout; tools/demos/r1430_tablet_axes.py."
+      ],
+      "verification_bullets": [
+        "pinion-runtime 540 / pinion-core 2663 green AFTER the bundle lift — the R1423 pressure + R1429 tilt tests are unchanged (public API stable; forward_to delivers the whole bundle, so per-axis sinks still record exactly their own axis).",
+        "pinion-rpc 928: r1430_scene_pointer_scalar_axes_enqueue_their_variants + require_a_numeric_value; catalog_matches_dispatch_match_arms + catalog_is_sorted_and_unique_by_name green with the 3 new methods.",
+        "pinion-tui 136: r1364_5_deferred_input_parity green — try_drain_pointer_axis names all five DeferredInput::Pointer* variants (§2#6). pinion-shell 159 green.",
+        "hello-raw-pointer 23 unit tests: twist/tangential/height store-clamp-read + orbit circles the tip + tang bar fills + tip shrinks with height + readout badges.",
+        "r1430_tablet_axes.py PASS over RPC: twist orbits + wraps 450->90, tangential fills/empties/clamps, height shrinks the tip + floors, the three axes are independent + ride a move, each rejects a missing/non-numeric value; siblings r1416/r1422/r1423/r1429 PASS on the shared binary.",
+        "clippy -D pedantic clean (PointerAxisValues bundle + require_axis_value + try_drain_pointer_axis dispatcher all hold too_many_lines; f32::midpoint + cast_precision_loss fixes); fmt; cargo doc --workspace --document-private-items clean; validate-workspace T1=0."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.15",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "QTabletEvent scalar-axis parity is now complete: pressure (R1423) + tilt (R1429) + twist + tangential + height (R1430). The one remaining QTabletEvent member is pointerType (Pen/Eraser/Mouse/Touch), a DISCRETE classifier (not a scalar axis, different plumbing) — that is R1431, the last piece to answer \"beyond Qt with nothing deferred\".",
+        "winit 0.30 exposes none of the tablet axes; scene/pointer_* is the sole driver (§2#2 AI-first). A future winit tablet API / platform bridge populates PointerAxisValues in ONE place — the note_pointer_* seams the bundle now centralises.",
+        "The pointer-axis storage/forward/target-resolution is lifted (PointerAxisValues + forward_to + resolve_axis_target + deliver_axes). A further generic (one scene/pointer_axis method or one External hook carrying an enum) is NOT warranted: per-axis RPC methods + External hooks keep the surface self-describing for AI clients, and the internal duplication is already folded."
+      ],
+      "publishable_decision_summary": "R1430 §5.35 §5.15 §5.49: complete the Qt QTabletEvent SCALAR axis set on the raw pointer surface — twist (W3C PointerEvent.twist / Qt rotation(), the barrel rotation), tangential pressure (W3C tangentialPressure / Qt tangentialPressure(), the airbrush finger wheel), and hover height (Qt z(), no W3C peer) — on top of R1423 pressure + R1429 tilt. Each is a positionless out-of-band axis driven by its own scene/pointer_* RPC (§2 #2, the AI-first primary path); winit 0.30 exposes NONE of them, so the RPC is the sole driver and every axis is exercisable headless with no tablet. Because pressure + tilt made pointer-axis storage a 2nd+ consumer, this round LIFTS the shared plumbing rather than copy-pasting a fifth time (three-site-internal-duplication-substrate-lift): the router's two per-axis HashMaps become ONE PointerAxisValues bundle forwarded WHOLE (forward_to) on every move, and the R1423/R1429 target-resolution copies fold into resolve_axis_target + deliver_axes. The External keeps per-axis hooks and the RPC keeps per-axis methods (self-describing for AI clients); only the internal duplication is removed. Both backends deliver the 3 new axes through the one set_pointer_*_for_window seam (§2 #6 parity), the TUI via a try_drain_pointer_axis dispatcher that routes all five axes off the main match. hello-raw-pointer paints each: twist orbits an orientation dot around the pen tip, tangential fills a finger-wheel bar, height shrinks the pen-tip marker; the r1430_tablet_axes.py demo drives all three over the wire. This answers the user's qt-parity-over-yagni directive to reach beyond Qt with nothing deferred: the scalar axes are done, leaving only the discrete pointerType classifier (R1431).",
+      "publishable_changes_bullets": [
+        "pinion-core: 3 new External hooks — pointer_twist / pointer_tangential_pressure / pointer_height (W3C twist/tangentialPressure + Qt z()), default no-op, forwarded WITH position like pressure/tilt.",
+        "pinion-runtime: PointerAxisValues bundle replaces the pressures+tilts maps (one map, forwarded WHOLE via forward_to); resolve_axis_target + deliver_axes fold the R1423/R1429 target-resolution copies; note/set for the 3 axes (twist wraps 0..360, tangential clamps -1..1, height floors 0).",
+        "pinion-rpc: 3 DeferredInput variants + handlers (shared require_axis_value) + scene/pointer_twist / _tangential_pressure / _height (Mutate, sorted) + 2 dispatch tests.",
+        "pinion-shell + pinion-tui: both drains deliver the 3 axes through the one router seam (§2#6); shell after_pointer_axis_change helper; TUI try_drain_pointer_axis dispatches all 5 axes off the main match.",
+        "examples/hello-raw-pointer: twist orbits the orientation dot, tangential fills the finger-wheel bar, height shrinks the pen-tip; 3 introspect fields + readout; tools/demos/r1430_tablet_axes.py."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime 540 / pinion-core 2663 green AFTER the bundle lift — the R1423 pressure + R1429 tilt tests are unchanged (public API stable; forward_to delivers the whole bundle, so per-axis sinks still record exactly their own axis).",
+        "pinion-rpc 928: r1430_scene_pointer_scalar_axes_enqueue_their_variants + require_a_numeric_value; catalog_matches_dispatch_match_arms + catalog_is_sorted_and_unique_by_name green with the 3 new methods.",
+        "pinion-tui 136: r1364_5_deferred_input_parity green — try_drain_pointer_axis names all five DeferredInput::Pointer* variants (§2#6). pinion-shell 159 green.",
+        "hello-raw-pointer 23 unit tests: twist/tangential/height store-clamp-read + orbit circles the tip + tang bar fills + tip shrinks with height + readout badges.",
+        "r1430_tablet_axes.py PASS over RPC: twist orbits + wraps 450->90, tangential fills/empties/clamps, height shrinks the tip + floors, the three axes are independent + ride a move, each rejects a missing/non-numeric value; siblings r1416/r1422/r1423/r1429 PASS on the shared binary.",
+        "clippy -D pedantic clean (PointerAxisValues bundle + require_axis_value + try_drain_pointer_axis dispatcher all hold too_many_lines; f32::midpoint + cast_precision_loss fixes); fmt; cargo doc --workspace --document-private-items clean; validate-workspace T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.15",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "QTabletEvent scalar-axis parity is now complete: pressure (R1423) + tilt (R1429) + twist + tangential + height (R1430). The one remaining QTabletEvent member is pointerType (Pen/Eraser/Mouse/Touch), a DISCRETE classifier (not a scalar axis, different plumbing) — that is R1431, the last piece to answer \"beyond Qt with nothing deferred\".",
+        "winit 0.30 exposes none of the tablet axes; scene/pointer_* is the sole driver (§2#2 AI-first). A future winit tablet API / platform bridge populates PointerAxisValues in ONE place — the note_pointer_* seams the bundle now centralises.",
+        "The pointer-axis storage/forward/target-resolution is lifted (PointerAxisValues + forward_to + resolve_axis_target + deliver_axes). A further generic (one scene/pointer_axis method or one External hook carrying an enum) is NOT warranted: per-axis RPC methods + External hooks keep the surface self-describing for AI clients, and the internal duplication is already folded."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

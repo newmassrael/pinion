@@ -257,6 +257,44 @@ pub use pinion_core::input::Modifiers;
 /// state [`ExternalNode`]. No application-level hit-test code is
 /// needed — adding a new widget cannot reintroduce the R47-class bug
 /// because the routing primitive is framework-owned.
+/// R1430 §5.35 — the non-positional pointer axis bundle: the Qt `QTabletEvent` /
+/// W3C `PointerEvent` scalar axes a surface reads alongside the cursor position.
+/// One value struct so the router stores one map, forwards one bundle, and adds
+/// a new axis as a field — not a parallel `HashMap` + a fifth copy of the
+/// note/set/forward plumbing (the R1423 pressure + R1429 tilt duplication this
+/// lift resolves). All-zero default is a plain mouse: no force, no lean, no
+/// barrel, wheel at rest, in contact.
+#[derive(Debug, Clone, Copy, Default)]
+struct PointerAxisValues {
+    /// W3C `pressure` / Qt `pressure()`, `0.0..=1.0`.
+    pressure: f32,
+    /// W3C `tiltX` / Qt `xTilt()`, degrees `-90.0..=90.0`.
+    tilt_x: f32,
+    /// W3C `tiltY` / Qt `yTilt()`, degrees `-90.0..=90.0`.
+    tilt_y: f32,
+    /// W3C `twist` / Qt `rotation()`, degrees `0.0..=360.0` (wrapped).
+    twist: f32,
+    /// W3C `tangentialPressure` / Qt `tangentialPressure()`, `-1.0..=1.0`.
+    tangential: f32,
+    /// Qt `z()` — hover height above the surface, `>= 0.0` (no W3C peer).
+    height: f32,
+}
+
+impl PointerAxisValues {
+    /// Forward every axis in the bundle to `handle` — the SINGLE delivery site
+    /// both a forwarded `pointer_move` and a standalone `set_pointer_<axis>` call
+    /// through, so a new axis is wired in one place and a surface can never see a
+    /// half-updated bundle. Each hook defaults to a no-op, so a surface that
+    /// reacts to only one axis pays nothing for the rest.
+    fn forward_to(self, handle: &mut dyn pinion_core::external::External) {
+        handle.pointer_pressure(self.pressure);
+        handle.pointer_tilt(self.tilt_x, self.tilt_y);
+        handle.pointer_twist(self.twist);
+        handle.pointer_tangential_pressure(self.tangential);
+        handle.pointer_height(self.height);
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct InputRouter {
     /// Last-rendered paint scene (post-layout). `None` until the
@@ -430,22 +468,17 @@ pub struct InputRouter {
     /// discipline). Keyed by the button too so a left double-click and a right
     /// double-click count independently, the Qt per-button rule.
     raw_click_marks: HashMap<(PointerId, PointerButton), RawClickMark>,
-    /// R1423 §5.35 — the current pointer PRESSURE per pointer (W3C
-    /// `PointerEvent.pressure` / Qt `QTabletEvent::pressure()`), normalised
-    /// `0.0..=1.0`. Set from the platform pen / touch force
-    /// ([`Touch::force`]) or the `scene/pointer_pressure` RPC, and forwarded to a
-    /// pressure-aware [`External`](pinion_core::external::External) alongside each
-    /// `pointer_move` (pressure travels WITH position, the W3C `pointermove`
-    /// model). Absent → `0.0` (no force reported), so a plain mouse forwards zero.
-    pressures: HashMap<PointerId, f32>,
-    /// R1429 §5.35 — the current pointer TILT `(tilt_x, tilt_y)` per pointer (W3C
-    /// `PointerEvent.tiltX/tiltY` / Qt `QTabletEvent::xTilt/yTilt`), in degrees,
-    /// each axis clamped to `-90.0..=90.0`. Set from the `scene/pointer_tilt` RPC
-    /// (winit 0.30 exposes no tilt source) and forwarded to a tilt-aware
-    /// [`External`](pinion_core::external::External) alongside each `pointer_move`
-    /// (tilt travels WITH position). Absent → `(0.0, 0.0)` (no lean), so a plain
-    /// mouse forwards a perpendicular tilt.
-    tilts: HashMap<PointerId, (f32, f32)>,
+    /// R1430 §5.35 — the current non-positional pointer AXES per pointer (the Qt
+    /// `QTabletEvent` / W3C `PointerEvent` scalar axis set: pressure, tilt,
+    /// twist, tangential pressure, hover height). Set from the `scene/pointer_*`
+    /// RPCs (and, for pressure, the platform `Touch::force`), and forwarded WHOLE
+    /// to a surface alongside each `pointer_move` (every axis travels WITH
+    /// position, the W3C `pointermove` model). Absent → [`PointerAxisValues`]
+    /// default (all zero), so a plain mouse forwards a neutral bundle. One map,
+    /// not one-per-axis, so a new axis is a struct field, not a new `HashMap`
+    /// (R1423 pressure + R1429 tilt were the first two consumers; R1430 lifts the
+    /// storage + forward + target-resolution the copies shared).
+    axes: HashMap<PointerId, PointerAxisValues>,
 }
 
 /// R1418 §5.35 — one pointer's implicit grab on a raw multi-button sink: the
@@ -2183,49 +2216,24 @@ impl InputRouter {
             return;
         };
         external.handle.pointer_move(x_rel, y_rel);
-        // R1423 §5.35 — pressure travels WITH the move (W3C `pointermove`): forward
-        // the pointer's current force to a pressure-aware surface. Absent → 0.0
-        // (a plain mouse reports no pressure).
-        external
-            .handle
-            .pointer_pressure(self.pressures.get(&id).copied().unwrap_or(0.0));
-        // R1429 §5.35 — tilt travels WITH the move (W3C `pointermove`): forward
-        // the pointer's current lean to a tilt-aware surface. Absent → (0.0, 0.0)
-        // (a plain mouse reports no tilt).
-        let (tilt_x, tilt_y) = self.tilts.get(&id).copied().unwrap_or((0.0, 0.0));
-        external.handle.pointer_tilt(tilt_x, tilt_y);
+        // R1430 §5.35 — every non-positional axis (pressure / tilt / twist /
+        // tangential / height) travels WITH the move (the W3C `pointermove`
+        // model), forwarded as ONE bundle so a new axis is a struct field, not a
+        // fresh forward line. Absent → the all-zero default (a plain mouse).
+        self.axes
+            .get(&id)
+            .copied()
+            .unwrap_or_default()
+            .forward_to(&mut *external.handle);
     }
 
-    /// R1429 §5.35 — store `id`'s TILT (W3C `PointerEvent.tiltX/tiltY` / Qt
-    /// `QTabletEvent::xTilt/yTilt`), each axis clamped to `-90.0..=90.0` degrees,
-    /// WITHOUT delivering it. Mirrors [`note_pointer_pressure`](Self::note_pointer_pressure):
-    /// a future pen bridge calls this before the accompanying
-    /// [`cursor_moved`](Self::cursor_moved), whose forwarded `pointer_move`
-    /// carries the new tilt to the surface (tilt travels with position).
-    pub fn note_pointer_tilt(&mut self, id: PointerId, tilt_x: f32, tilt_y: f32) {
-        self.tilts
-            .insert(id, (tilt_x.clamp(-90.0, 90.0), tilt_y.clamp(-90.0, 90.0)));
-    }
-
-    /// R1429 §5.35 — store `id`'s tilt AND deliver it to the pointer's current
-    /// move-target immediately, so a standalone tilt change (a pen leaning in
-    /// place with no cursor move — the `scene/pointer_tilt` RPC path) reaches the
-    /// surface at once, not only on the next move. The target is resolved exactly
-    /// as [`set_pointer_pressure`](Self::set_pointer_pressure) resolves it: an
-    /// implicit raw grab, else a capture lock, else the hover target when it opted
-    /// into hover-move. The stored value also rides every subsequent
-    /// `pointer_move`.
-    pub fn set_pointer_tilt(
-        &mut self,
-        id: PointerId,
-        tilt_x: f32,
-        tilt_y: f32,
-        state_scene: &mut Scene,
-    ) {
-        self.note_pointer_tilt(id, tilt_x, tilt_y);
-        let (clamped_x, clamped_y) = self.tilts.get(&id).copied().unwrap_or((0.0, 0.0));
-        let target = self
-            .raw_grab_tag(id)
+    /// R1430 §5.35 — the (sub-)tag a standalone axis change delivers to: an
+    /// implicit raw grab, else a capture lock, else the hover target when it
+    /// opted into hover-move — the SAME order [`cursor_moved`](Self::cursor_moved)
+    /// forwards a move through. Shared by every `set_pointer_<axis>` so the
+    /// resolution cannot drift per axis (the R1423/R1429 copies this lift folds).
+    fn resolve_axis_target(&self, id: PointerId) -> Option<String> {
+        self.raw_grab_tag(id)
             .or_else(|| self.captured_targets.get(&id).cloned())
             .or_else(|| {
                 self.hover_wants_move
@@ -2234,12 +2242,20 @@ impl InputRouter {
                     .unwrap_or(false)
                     .then(|| self.hover_targets.get(&id).cloned())
                     .flatten()
-            });
-        if let Some(tag) = target {
-            let (primary, _) = split_subindex(&tag);
-            if let Some(external) = find_external_by_tag(state_scene, primary) {
-                external.handle.pointer_tilt(clamped_x, clamped_y);
-            }
+            })
+    }
+
+    /// R1430 §5.35 — deliver `id`'s current axis bundle to its resolved target at
+    /// once (the standalone-change path every `set_pointer_<axis>` shares). A
+    /// no-op when nothing under the pointer reads it.
+    fn deliver_axes(&self, id: PointerId, state_scene: &mut Scene) {
+        let Some(tag) = self.resolve_axis_target(id) else {
+            return;
+        };
+        let (primary, _) = split_subindex(&tag);
+        let axes = self.axes.get(&id).copied().unwrap_or_default();
+        if let Some(external) = find_external_by_tag(state_scene, primary) {
+            axes.forward_to(&mut *external.handle);
         }
     }
 
@@ -2249,37 +2265,88 @@ impl InputRouter {
     /// [`cursor_moved`](Self::cursor_moved), whose forwarded `pointer_move`
     /// carries the new pressure to the surface (pressure travels with position).
     pub fn note_pointer_pressure(&mut self, id: PointerId, pressure: f32) {
-        self.pressures.insert(id, pressure.clamp(0.0, 1.0));
+        self.axes.entry(id).or_default().pressure = pressure.clamp(0.0, 1.0);
     }
 
-    /// R1423 §5.35 — store `id`'s pressure AND deliver it to the pointer's
-    /// current move-target immediately, so a standalone pressure change (a pen
-    /// pressing harder in place with no cursor move — the `scene/pointer_pressure`
-    /// RPC path) reaches the surface at once, not only on the next move. The
-    /// target is resolved the same way [`cursor_moved`](Self::cursor_moved)
-    /// forwards a move: an implicit raw grab, else a capture lock, else the hover
-    /// target when it opted into hover-move. The stored value also rides every
+    /// R1423 §5.35 — store `id`'s pressure AND deliver the axis bundle to the
+    /// pointer's current move-target immediately (a pen pressing harder in place,
+    /// the `scene/pointer_pressure` RPC path), so the change reaches the surface
+    /// at once, not only on the next move. The stored value also rides every
     /// subsequent `pointer_move`.
     pub fn set_pointer_pressure(&mut self, id: PointerId, pressure: f32, state_scene: &mut Scene) {
         self.note_pointer_pressure(id, pressure);
-        let clamped = self.pressures.get(&id).copied().unwrap_or(0.0);
-        let target = self
-            .raw_grab_tag(id)
-            .or_else(|| self.captured_targets.get(&id).cloned())
-            .or_else(|| {
-                self.hover_wants_move
-                    .get(&id)
-                    .copied()
-                    .unwrap_or(false)
-                    .then(|| self.hover_targets.get(&id).cloned())
-                    .flatten()
-            });
-        if let Some(tag) = target {
-            let (primary, _) = split_subindex(&tag);
-            if let Some(external) = find_external_by_tag(state_scene, primary) {
-                external.handle.pointer_pressure(clamped);
-            }
-        }
+        self.deliver_axes(id, state_scene);
+    }
+
+    /// R1429 §5.35 — store `id`'s TILT (W3C `PointerEvent.tiltX/tiltY` / Qt
+    /// `QTabletEvent::xTilt/yTilt`), each axis clamped to `-90.0..=90.0` degrees,
+    /// WITHOUT delivering it. Mirrors
+    /// [`note_pointer_pressure`](Self::note_pointer_pressure).
+    pub fn note_pointer_tilt(&mut self, id: PointerId, tilt_x: f32, tilt_y: f32) {
+        let axes = self.axes.entry(id).or_default();
+        axes.tilt_x = tilt_x.clamp(-90.0, 90.0);
+        axes.tilt_y = tilt_y.clamp(-90.0, 90.0);
+    }
+
+    /// R1429 §5.35 — store `id`'s tilt AND deliver the bundle at once (a pen
+    /// leaning in place, the `scene/pointer_tilt` RPC path).
+    pub fn set_pointer_tilt(
+        &mut self,
+        id: PointerId,
+        tilt_x: f32,
+        tilt_y: f32,
+        state_scene: &mut Scene,
+    ) {
+        self.note_pointer_tilt(id, tilt_x, tilt_y);
+        self.deliver_axes(id, state_scene);
+    }
+
+    /// R1430 §5.35 — store `id`'s TWIST (W3C `PointerEvent.twist` / Qt
+    /// `QTabletEvent::rotation()`), the barrel rotation in degrees, WRAPPED to
+    /// `0.0..=360.0` (an angle folds rather than clamps), WITHOUT delivering it.
+    pub fn note_pointer_twist(&mut self, id: PointerId, twist: f32) {
+        self.axes.entry(id).or_default().twist = twist.rem_euclid(360.0);
+    }
+
+    /// R1430 §5.35 — store `id`'s twist AND deliver the bundle at once (a pen
+    /// barrel turning in place, the `scene/pointer_twist` RPC path).
+    pub fn set_pointer_twist(&mut self, id: PointerId, twist: f32, state_scene: &mut Scene) {
+        self.note_pointer_twist(id, twist);
+        self.deliver_axes(id, state_scene);
+    }
+
+    /// R1430 §5.35 — store `id`'s TANGENTIAL PRESSURE (W3C
+    /// `PointerEvent.tangentialPressure` / Qt `QTabletEvent::tangentialPressure()`),
+    /// the airbrush finger-wheel position clamped to `-1.0..=1.0`, WITHOUT
+    /// delivering it.
+    pub fn note_pointer_tangential_pressure(&mut self, id: PointerId, tangential: f32) {
+        self.axes.entry(id).or_default().tangential = tangential.clamp(-1.0, 1.0);
+    }
+
+    /// R1430 §5.35 — store `id`'s tangential pressure AND deliver the bundle at
+    /// once (the `scene/pointer_tangential_pressure` RPC path).
+    pub fn set_pointer_tangential_pressure(
+        &mut self,
+        id: PointerId,
+        tangential: f32,
+        state_scene: &mut Scene,
+    ) {
+        self.note_pointer_tangential_pressure(id, tangential);
+        self.deliver_axes(id, state_scene);
+    }
+
+    /// R1430 §5.35 — store `id`'s HEIGHT (Qt `QTabletEvent::z()`), the hover
+    /// distance above the surface floored at `0.0` (a distance is non-negative;
+    /// no W3C peer), WITHOUT delivering it.
+    pub fn note_pointer_height(&mut self, id: PointerId, height: f32) {
+        self.axes.entry(id).or_default().height = height.max(0.0);
+    }
+
+    /// R1430 §5.35 — store `id`'s height AND deliver the bundle at once (the
+    /// `scene/pointer_height` RPC path).
+    pub fn set_pointer_height(&mut self, id: PointerId, height: f32, state_scene: &mut Scene) {
+        self.note_pointer_height(id, height);
+        self.deliver_axes(id, state_scene);
     }
 
     /// R742 §5.51 — drive an in-flight drag for `id`: resolve the drop

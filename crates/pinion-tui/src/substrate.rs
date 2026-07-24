@@ -785,6 +785,13 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     pub fn drain_deferred_inputs(&mut self, inputs: &[pinion_rpc::DeferredInput]) -> bool {
         let mut state_changed = false;
         for input in inputs {
+            // R1430 §5.35 §2 #6 — the Qt QTabletEvent scalar axes route through
+            // one dispatcher so this per-input match stays flat as the axis set
+            // grows; see `try_drain_pointer_axis`.
+            if let Some(changed) = self.try_drain_pointer_axis(input) {
+                state_changed |= changed;
+                continue;
+            }
             match *input {
                 pinion_rpc::DeferredInput::Wheel { x, y, delta } => {
                     state_changed |= self.cursor_moved(x, y);
@@ -914,29 +921,6 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                         .resolve(self.root_owner())
                         .request_quit();
                 }
-                // R1424 §5.35 §5.15 §2 #6 — `scene/pointer_pressure` on the
-                // terminal backend. R1423 added the variant, wired the SHARED
-                // dispatcher + Vello drain, and left this drain at the wildcard
-                // — the same §2 #6 break the `Quit` arm above records, caught by
-                // `r1364_5_deferred_input_parity`. A terminal has no hardware
-                // pen, but the RPC surface is the AI-first out-of-band source
-                // (§2 #2): the pressure rides the SAME `InputRouter` this backend
-                // already routes cursor moves / buttons through, so an AI client
-                // driving a pressure-reactive `External` sees the identical
-                // delivery on both backends. Forwarded through the one router
-                // seam (`set_pointer_pressure_for_window`) the Vello sibling
-                // uses; a repaint is requested so the reactive surface lands the
-                // change on the next terminal frame.
-                pinion_rpc::DeferredInput::PointerPressure { value } => {
-                    state_changed |= self.drain_pointer_pressure(value);
-                }
-                // R1429 §5.35 §5.15 §2 #2 §2 #6 — `scene/pointer_tilt`: the pen
-                // LEAN axis (W3C `PointerEvent.tiltX/tiltY`), the exact peer of the
-                // `PointerPressure` arm above — same out-of-band AI-first delivery
-                // through the one shared router seam, same §2 #6 parity.
-                pinion_rpc::DeferredInput::PointerTilt { tilt_x, tilt_y } => {
-                    state_changed |= self.drain_pointer_tilt(tilt_x, tilt_y);
-                }
                 // R1424 §5.35 §5.15 §2 #2 §2 #6 — `scene/pointer_button`: one raw
                 // button EDGE (left / middle / right × down / up). R1416 added
                 // the variant + Vello drain and left this backend at the wildcard
@@ -965,12 +949,40 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         state_changed
     }
 
+    /// R1430 §5.35 §5.15 §2 #2 §2 #6 — dispatch the Qt `QTabletEvent` scalar axes
+    /// (pressure / tilt / twist / tangential / height) off the main per-input
+    /// match: `Some(changed)` when `input` is one of them, `None` otherwise (the
+    /// caller falls through to the general match). A terminal has no hardware pen,
+    /// but each axis is the AI-first out-of-band source (§2 #2): the value rides
+    /// the SAME `InputRouter` the Vello sibling drives (`set_pointer_*_for_window`),
+    /// so a tablet-reactive `External` sees identical delivery on both backends —
+    /// the §2 #6 parity `r1364_5_deferred_input_parity` enforces (it greps this
+    /// file for every `DeferredInput::Pointer*` variant, all named here).
+    fn try_drain_pointer_axis(&mut self, input: &pinion_rpc::DeferredInput) -> Option<bool> {
+        let changed = match *input {
+            pinion_rpc::DeferredInput::PointerPressure { value } => {
+                self.drain_pointer_pressure(value)
+            }
+            pinion_rpc::DeferredInput::PointerTilt { tilt_x, tilt_y } => {
+                self.drain_pointer_tilt(tilt_x, tilt_y)
+            }
+            pinion_rpc::DeferredInput::PointerTwist { twist } => self.drain_pointer_twist(twist),
+            pinion_rpc::DeferredInput::PointerTangentialPressure { tangential } => {
+                self.drain_pointer_tangential_pressure(tangential)
+            }
+            pinion_rpc::DeferredInput::PointerHeight { height } => {
+                self.drain_pointer_height(height)
+            }
+            _ => return None,
+        };
+        Some(changed)
+    }
+
     /// R1429 §5.35 §2 #2 §2 #6 — deliver a driven pointer PRESSURE (W3C
     /// `PointerEvent.pressure`) to the terminal backend's router, the
-    /// `scene/pointer_pressure` out-of-band drain (see the arm's comment for the
-    /// §2 #6 rationale). Split out of [`Self::drain_deferred_inputs`] so its arm
-    /// reads like every sibling arm — a named call, not an inline seam. Always
-    /// returns `true`: a reactive surface may have changed, so the frame repaints.
+    /// `scene/pointer_pressure` out-of-band drain. Named (not inlined) so the
+    /// dispatcher above stays flat. Always returns `true`: a reactive surface may
+    /// have changed, so the frame repaints.
     fn drain_pointer_pressure(&mut self, value: f32) -> bool {
         self.core.set_pointer_pressure_for_window(
             pinion_runtime::DEFAULT_WINDOW,
@@ -990,6 +1002,45 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             PointerId::MOUSE,
             tilt_x,
             tilt_y,
+        );
+        true
+    }
+
+    /// R1430 §5.35 §2 #2 §2 #6 — the twist peer of
+    /// [`Self::drain_pointer_pressure`]: deliver a driven pointer TWIST (W3C
+    /// `PointerEvent.twist` / Qt `QTabletEvent::rotation()`) to the terminal
+    /// backend's router. Always returns `true` (repaint).
+    fn drain_pointer_twist(&mut self, twist: f32) -> bool {
+        self.core.set_pointer_twist_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            twist,
+        );
+        true
+    }
+
+    /// R1430 §5.35 §2 #2 §2 #6 — the tangential-pressure peer of
+    /// [`Self::drain_pointer_pressure`]: deliver a driven airbrush finger-wheel
+    /// value (Qt `QTabletEvent::tangentialPressure()`) to the terminal backend's
+    /// router. Always returns `true`.
+    fn drain_pointer_tangential_pressure(&mut self, tangential: f32) -> bool {
+        self.core.set_pointer_tangential_pressure_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            tangential,
+        );
+        true
+    }
+
+    /// R1430 §5.35 §2 #2 §2 #6 — the height peer of
+    /// [`Self::drain_pointer_pressure`]: deliver a driven pointer HEIGHT (Qt
+    /// `QTabletEvent::z()`) to the terminal backend's router. Always returns
+    /// `true`.
+    fn drain_pointer_height(&mut self, height: f32) -> bool {
+        self.core.set_pointer_height_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            height,
         );
         true
     }

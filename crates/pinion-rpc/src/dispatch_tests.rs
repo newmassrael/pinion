@@ -1847,6 +1847,67 @@ fn r1429_scene_pointer_tilt_requires_numeric_axes() {
 }
 
 #[test]
+fn r1430_scene_pointer_scalar_axes_enqueue_their_variants() {
+    // The remaining Qt QTabletEvent scalar axes each enqueue one positionless
+    // variant carrying the decoded value (the router does the range folding).
+    for (method, key, sent) in [
+        ("scene/pointer_twist", "twist", 90.0_f64),
+        ("scene/pointer_tangential_pressure", "tangential", -0.5),
+        ("scene/pointer_height", "height", 3.0),
+    ] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"{method}","params":{{"{key}":{sent}}},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_none(), "{method}: {:?}", resp.error);
+        assert_eq!(inbox.len(), 1, "{method} enqueues one input");
+        #[allow(clippy::cast_possible_truncation)]
+        let decoded = match inbox[0] {
+            DeferredInput::PointerTwist { twist } => f64::from(twist),
+            DeferredInput::PointerTangentialPressure { tangential } => f64::from(tangential),
+            DeferredInput::PointerHeight { height } => f64::from(height),
+            ref other => panic!("{method} enqueued the wrong variant: {other:?}"),
+        };
+        assert!(
+            (decoded - sent).abs() < 1e-4,
+            "{method} decoded {decoded}, sent {sent}"
+        );
+    }
+}
+
+#[test]
+fn r1430_scene_pointer_scalar_axes_require_a_numeric_value() {
+    // A missing / non-numeric value on any of the three rejects and enqueues
+    // nothing, so a typo surfaces at the call site.
+    for (method, key) in [
+        ("scene/pointer_twist", "twist"),
+        ("scene/pointer_tangential_pressure", "tangential"),
+        ("scene/pointer_height", "height"),
+    ] {
+        for params in ["{}".to_owned(), format!(r#"{{"{key}":"x"}}"#)] {
+            let mut scene = counted_scene(0);
+            let previews = PreviewLedger::default();
+            let revision = SceneRevision::default();
+            let mut inbox: Vec<DeferredInput> = Vec::new();
+            let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+                .with_deferred_inputs(&mut inbox);
+            let req =
+                format!(r#"{{"jsonrpc":"2.0","method":"{method}","params":{params},"id":1}}"#);
+            let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+            let err = resp.error.expect("must reject");
+            assert_eq!(err.code, -32602, "invalid_params for {method} {params}");
+            assert!(inbox.is_empty(), "{method} {params} enqueues nothing");
+        }
+    }
+}
+
+#[test]
 fn r887_scene_click_explicit_left_button_enqueues_click() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();

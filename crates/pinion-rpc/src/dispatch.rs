@@ -891,6 +891,23 @@ pub enum DeferredInput {
     /// a DCC viewport), so a tablet is not required to exercise lean headless
     /// (§2 #2); winit 0.30 exposes no tilt axis, making the RPC the sole driver.
     PointerTilt { tilt_x: f32, tilt_y: f32 },
+    /// R1430 §5.35 §5.15 — `scene/pointer_twist` injection: set the pointer's
+    /// TWIST (W3C `PointerEvent.twist` / Qt `QTabletEvent::rotation()`), the
+    /// barrel rotation in degrees `0.0..=360.0` (wrapped at the router).
+    /// Positionless like [`Self::PointerPressure`]; the AI-first source for a
+    /// barrel-rotation surface (§2 #2), winit exposing no such axis.
+    PointerTwist { twist: f32 },
+    /// R1430 §5.35 §5.15 — `scene/pointer_tangential_pressure` injection: set the
+    /// pointer's TANGENTIAL PRESSURE (W3C `PointerEvent.tangentialPressure` / Qt
+    /// `QTabletEvent::tangentialPressure()`), the airbrush finger-wheel position
+    /// `-1.0..=1.0` (clamped at the router). Positionless; the AI-first airbrush
+    /// source (§2 #2).
+    PointerTangentialPressure { tangential: f32 },
+    /// R1430 §5.35 §5.15 — `scene/pointer_height` injection: set the pointer's
+    /// HEIGHT (Qt `QTabletEvent::z()`), the hover distance above the surface
+    /// `>= 0.0` (floored at the router). Positionless; the AI-first hover-height
+    /// source (§2 #2), no W3C peer.
+    PointerHeight { height: f32 },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -1809,6 +1826,39 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 HandlerKind::Mutate,
             )
         }
+        "scene/pointer_twist" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pointer_twist(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/pointer_tangential_pressure" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pointer_tangential_pressure(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/pointer_height" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pointer_height(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
         "scene/hover" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -2589,6 +2639,69 @@ fn handle_scene_pointer_tilt(
         tilt_x: tilt_x as f32,
         tilt_y: tilt_y as f32,
     });
+    Ok(Value::Null)
+}
+
+/// R1430 §5.35 — extract one required numeric axis param as `f32`, rejecting a
+/// missing / non-number with `invalid_params` (a typo surfaces at the call). The
+/// shared front half of every single-value scalar-axis handler (twist /
+/// tangential / height), so the extract + cast + reject cannot drift per axis.
+fn require_axis_value(params: &Value, key: &str, hint: &str) -> Result<f32, RpcError> {
+    let value = params.get(key).and_then(Value::as_f64).ok_or_else(|| {
+        RpcError::invalid_params(format!("params.{key} must be a number ({hint})"))
+    })?;
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a pointer axis value loses no meaningful precision as f32"
+    )]
+    Ok(value as f32)
+}
+
+/// R1430 §5.35 §5.15 — `scene/pointer_twist` handler: set the pointer's TWIST
+/// (W3C `PointerEvent.twist` / Qt `QTabletEvent::rotation()`), degrees; the
+/// router wraps to `0.0..=360.0`. Positionless, out-of-band like pressure.
+fn handle_scene_pointer_twist(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let twist = require_axis_value(require_params(params)?, "twist", "degrees, 0.0..=360.0")?;
+    inbox.push(DeferredInput::PointerTwist { twist });
+    Ok(Value::Null)
+}
+
+/// R1430 §5.35 §5.15 — `scene/pointer_tangential_pressure` handler: set the
+/// pointer's TANGENTIAL PRESSURE (W3C `PointerEvent.tangentialPressure` / Qt
+/// `QTabletEvent::tangentialPressure()`); the router clamps to `-1.0..=1.0`.
+fn handle_scene_pointer_tangential_pressure(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let tangential = require_axis_value(
+        require_params(params)?,
+        "tangential",
+        "a number, -1.0..=1.0",
+    )?;
+    inbox.push(DeferredInput::PointerTangentialPressure { tangential });
+    Ok(Value::Null)
+}
+
+/// R1430 §5.35 §5.15 — `scene/pointer_height` handler: set the pointer's HEIGHT
+/// (Qt `QTabletEvent::z()` hover distance); the router floors at `0.0`.
+fn handle_scene_pointer_height(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let height = require_axis_value(require_params(params)?, "height", "a number, >= 0.0")?;
+    inbox.push(DeferredInput::PointerHeight { height });
     Ok(Value::Null)
 }
 

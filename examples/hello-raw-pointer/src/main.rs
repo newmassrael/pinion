@@ -107,6 +107,27 @@ const TIP_TAG: &str = "tilt.tip";
 const TIP_SIZE_PX: u32 = 10;
 const TILT_SPAN_PX: f32 = 40.0;
 
+/// R1430 — the orientation dot ORBITS the pen tip at the twist angle (W3C
+/// `PointerEvent.twist`, clockwise from straight-up), so barrel rotation reads on
+/// screen: `centre = tip + ORBIT_RADIUS_PX * (sin twist, -cos twist)`.
+const ORBIT_TAG: &str = "twist.orbit";
+const ORBIT_SIZE_PX: u32 = 6;
+const ORBIT_RADIUS_PX: f32 = 22.0;
+
+/// R1430 — the finger-wheel bar: a horizontal fill whose width tracks the
+/// tangential pressure (W3C `PointerEvent.tangentialPressure`),
+/// `width = (tangential + 1) / 2 * TANG_BAR_W`, so the wheel reads on screen.
+const TANG_TAG: &str = "tang.bar";
+const TANG_BAR_X: u32 = 18;
+const TANG_BAR_Y: u32 = WIN_H - 44;
+const TANG_BAR_H: u32 = 6;
+const TANG_BAR_W: f32 = 120.0;
+
+/// R1430 — the pen-tip marker SHRINKS as the pen lifts (Qt `QTabletEvent::z()`):
+/// full size at contact, down to `TIP_MIN_SCALE` at `HEIGHT_FULL_PX` and beyond.
+const HEIGHT_FULL_PX: f32 = 30.0;
+const TIP_MIN_SCALE: f32 = 0.35;
+
 const TITLE_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 13;
 
@@ -161,6 +182,15 @@ struct SinkState {
     /// each axis `-90.0..=90.0`. Leans the pen-tip marker off the cursor.
     tilt_x: f32,
     tilt_y: f32,
+    /// R1430 — the live pointer twist (W3C `PointerEvent.twist`), degrees
+    /// `0.0..=360.0`; orbits the orientation dot around the pen tip.
+    twist: f32,
+    /// R1430 — the live tangential pressure (W3C `PointerEvent.tangentialPressure`),
+    /// `-1.0..=1.0`; fills the finger-wheel bar.
+    tangential: f32,
+    /// R1430 — the live hover height (Qt `QTabletEvent::z()`), `>= 0.0`; shrinks
+    /// the pen-tip marker as the pen lifts.
+    height: f32,
 }
 
 /// The idle prompt / live report line — the SSOT both the status text and the
@@ -199,14 +229,34 @@ fn readout_text(state: &SinkState) -> String {
             } else {
                 String::new()
             };
+            // R1430 — surface the remaining Qt QTabletEvent scalar axes (twist /
+            // tangential / height), each only when off its neutral rest.
+            let barrel = if state.twist.abs() > 0.0 {
+                format!(" · twist {:.0}\u{b0}", state.twist)
+            } else {
+                String::new()
+            };
+            let wheel = if state.tangential.abs() > 0.0 {
+                format!(" · tang {:+.2}", state.tangential)
+            } else {
+                String::new()
+            };
+            let lift = if state.height > 0.0 {
+                format!(" · z {:.1}", state.height)
+            } else {
+                String::new()
+            };
             format!(
-                "#{} {}{}{}{}{}",
+                "#{} {}{}{}{}{}{}{}{}",
                 state.count,
                 r.label(),
                 clicks,
                 pos,
                 force,
-                lean
+                lean,
+                barrel,
+                wheel,
+                lift
             )
         }
     }
@@ -274,9 +324,13 @@ fn view(state: SinkState, _frame: &Frame) -> Scene {
     let ink_dot = ink_dot_scene(&state, theme.resolve(ColorRole::Accent));
 
     // R1429 — the pen-tip marker: leans off the live cursor in the tilt direction
-    // (W3C `PointerEvent.tiltX/tiltY`). Present on any hover over the pane,
-    // independent of the pressure ink mark — a hovering pen leans with no force.
+    // (W3C `PointerEvent.tiltX/tiltY`) and shrinks with hover height (R1430).
+    // Present on any hover over the pane, independent of the pressure ink mark.
     let tilt_tip = tilt_tip_scene(&state, theme.resolve(ColorRole::OnSurface));
+    // R1430 — the twist orientation dot orbits the tip at the barrel angle.
+    let twist_orbit = twist_orbit_scene(&state, theme.resolve(ColorRole::Accent));
+    // R1430 — the finger-wheel bar tracks the tangential pressure (always shown).
+    let tang_bar = tang_bar_scene(&state, theme.resolve(ColorRole::Accent));
 
     let mut children = vec![pane_body];
     if let Some(dot) = ink_dot {
@@ -286,7 +340,10 @@ fn view(state: SinkState, _frame: &Frame) -> Scene {
     if let Some(tip) = tilt_tip {
         children.push(tip);
     }
-    children.extend([pane_surface, title, status]);
+    if let Some(orbit) = twist_orbit {
+        children.push(orbit);
+    }
+    children.extend([tang_bar, pane_surface, title, status]);
 
     Scene::Container(
         ContainerNode::new(children)
@@ -328,20 +385,16 @@ fn ink_dot_scene(state: &SinkState, ink: pinion_core::style::Color) -> Option<Sc
     ))
 }
 
-/// R1429 — build the tilt indicator, or `None` when there is no known position.
-/// A small marker at the live cursor, offset in the pen's lean direction:
-/// `offset = (tilt / 90) * TILT_SPAN_PX` px along each axis. At zero tilt it sits
-/// exactly on the cursor; a pen leaning right (`tilt_x > 0`) / down (`tilt_y > 0`)
-/// shifts it right / down — the pen-tip vignette, the W3C `tiltX/tiltY` sign.
-/// Present on any hover over the pane (a hovering pen leans with no force),
-/// independent of the pressure ink mark.
+/// R1429/R1430 — the pen-tip marker's CENTRE in window pixels, or `None` when
+/// there is no known position. The cursor offset in the pen's lean direction:
+/// `offset = (tilt / 90) * TILT_SPAN_PX` px along each axis (positive `tilt_x`
+/// leans right, positive `tilt_y` down — the W3C sign). The SSOT the tip marker
+/// and the R1430 twist orbit both build from, so they cannot drift.
 #[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
     clippy::cast_precision_loss,
-    reason = "the marker centre is a small non-negative pixel; the fractional part is not meaningful for a paint rect"
+    reason = "the pane rect is a few-hundred-pixel extent; f32 carries it exactly"
 )]
-fn tilt_tip_scene(state: &SinkState, color: pinion_core::style::Color) -> Option<Scene> {
+fn tip_center(state: &SinkState) -> Option<(f32, f32)> {
     let (fx, fy) = match (state.x_frac, state.y_frac) {
         (Some(fx), Some(fy)) => (fx.clamp(0.0, 1.0), fy.clamp(0.0, 1.0)),
         _ => return None,
@@ -350,21 +403,96 @@ fn tilt_tip_scene(state: &SinkState, color: pinion_core::style::Color) -> Option
     let cy = PANE_RECT.y as f32 + fy * PANE_RECT.h as f32;
     let dx = (state.tilt_x.clamp(-90.0, 90.0) / 90.0) * TILT_SPAN_PX;
     let dy = (state.tilt_y.clamp(-90.0, 90.0) / 90.0) * TILT_SPAN_PX;
-    let tip_x = (cx + dx).max(0.0) as u32;
-    let tip_y = (cy + dy).max(0.0) as u32;
-    let half = TIP_SIZE_PX / 2;
-    Some(Scene::Box(
+    Some((cx + dx, cy + dy))
+}
+
+/// A filled, fully-rounded dot of `size` px centred on `(cx, cy)` in window
+/// pixels, tagged `tag` — the shared builder for the R1429 tip marker and the
+/// R1430 twist orbit dot.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the centre and size are small non-negative pixels; the fraction is not meaningful for a paint rect"
+)]
+fn dot_scene(
+    tag: &'static str,
+    cx: f32,
+    cy: f32,
+    size: u32,
+    color: pinion_core::style::Color,
+) -> Scene {
+    let half = size / 2;
+    let x = (cx.max(0.0) as u32).saturating_sub(half);
+    let y = (cy.max(0.0) as u32).saturating_sub(half);
+    Scene::Box(
         BoxNode::new(
             Rect::default(),
             BoxStyle::filled(color).with_corner_radius(half),
         )
-        .with_tag(TIP_TAG)
+        .with_tag(tag)
         .with_layout(
             LayoutStyle::new()
-                .with_absolute_position(tip_x.saturating_sub(half), tip_y.saturating_sub(half))
-                .with_size(Size::px(TIP_SIZE_PX, TIP_SIZE_PX)),
+                .with_absolute_position(x, y)
+                .with_size(Size::px(size, size)),
         ),
-    ))
+    )
+}
+
+/// R1429/R1430 — build the tilt indicator, or `None` with no known position. The
+/// marker sits at [`tip_center`] and SHRINKS as the pen lifts (Qt
+/// `QTabletEvent::z()`): full size in contact, down to `TIP_MIN_SCALE` at
+/// `HEIGHT_FULL_PX`. Present on any hover over the pane, independent of pressure.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "the tip size is a small non-negative pixel value"
+)]
+fn tilt_tip_scene(state: &SinkState, color: pinion_core::style::Color) -> Option<Scene> {
+    let (cx, cy) = tip_center(state)?;
+    let lift = (state.height.max(0.0) / HEIGHT_FULL_PX).min(1.0);
+    let scale = 1.0 - lift * (1.0 - TIP_MIN_SCALE);
+    let size = ((TIP_SIZE_PX as f32) * scale).round().max(3.0) as u32;
+    Some(dot_scene(TIP_TAG, cx, cy, size, color))
+}
+
+/// R1430 — build the twist orientation dot, or `None` with no known position. It
+/// ORBITS the pen tip at the barrel angle (W3C `PointerEvent.twist`), clockwise
+/// from straight-up: `centre = tip + ORBIT_RADIUS_PX * (sin twist, -cos twist)`.
+/// So twist 0 = above the tip, 90 = right, 180 = below, 270 = left.
+fn twist_orbit_scene(state: &SinkState, color: pinion_core::style::Color) -> Option<Scene> {
+    let (tx, ty) = tip_center(state)?;
+    let rad = state.twist.rem_euclid(360.0).to_radians();
+    let ox = tx + ORBIT_RADIUS_PX * rad.sin();
+    let oy = ty - ORBIT_RADIUS_PX * rad.cos();
+    Some(dot_scene(ORBIT_TAG, ox, oy, ORBIT_SIZE_PX, color))
+}
+
+/// R1430 — build the finger-wheel bar: a horizontal fill whose width tracks the
+/// tangential pressure (W3C `PointerEvent.tangentialPressure`),
+/// `width = (tangential + 1) / 2 * TANG_BAR_W`. Always present (the wheel has a
+/// neutral rest at 0, a half-full bar), so it reads as a live gauge.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the bar width is a small non-negative pixel value"
+)]
+fn tang_bar_scene(state: &SinkState, color: pinion_core::style::Color) -> Scene {
+    let frac = state
+        .tangential
+        .clamp(-1.0, 1.0)
+        .midpoint(1.0)
+        .clamp(0.0, 1.0);
+    let width = (TANG_BAR_W * frac).round().max(1.0) as u32;
+    Scene::Box(
+        BoxNode::new(Rect::default(), BoxStyle::filled(color))
+            .with_tag(TANG_TAG)
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(TANG_BAR_X, TANG_BAR_Y)
+                    .with_size(Size::px(width, TANG_BAR_H)),
+            ),
+    )
 }
 
 /// Read the sink digest from the primary [`RawPointerSink`] in the state scene.
@@ -388,6 +516,9 @@ fn read_sink(scene: &Scene) -> SinkState {
         pressure: query_frac(intro, "pressure").unwrap_or(0.0),
         tilt_x: query_frac(intro, "tilt_x").unwrap_or(0.0),
         tilt_y: query_frac(intro, "tilt_y").unwrap_or(0.0),
+        twist: query_frac(intro, "twist").unwrap_or(0.0),
+        tangential: query_frac(intro, "tangential").unwrap_or(0.0),
+        height: query_frac(intro, "height").unwrap_or(0.0),
     }
 }
 
@@ -460,6 +591,12 @@ struct RawPointerSink {
     /// so a pen's angle reads on screen — a tilt-aware surface.
     tilt_x: f32,
     tilt_y: f32,
+    /// R1430 — the remaining Qt `QTabletEvent` scalar axes: twist (barrel
+    /// rotation, orbits the orientation dot), tangential pressure (airbrush
+    /// wheel, fills the bar), and hover height (Qt `z()`, shrinks the tip).
+    twist: f32,
+    tangential: f32,
+    height: f32,
 }
 
 impl RawPointerSink {
@@ -520,6 +657,26 @@ impl External for RawPointerSink {
         self.tilt_y = tilt_y.clamp(-90.0, 90.0);
     }
 
+    /// R1430 — record the live pointer twist (W3C `PointerEvent.twist`), wrapped
+    /// to `0.0..=360.0` (an angle). Orbits the orientation dot — a twist-aware
+    /// surface.
+    fn pointer_twist(&mut self, twist: f32) {
+        self.twist = twist.rem_euclid(360.0);
+    }
+
+    /// R1430 — record the live tangential pressure (W3C
+    /// `PointerEvent.tangentialPressure`), clamped to `-1.0..=1.0`. Fills the
+    /// finger-wheel bar — an airbrush-aware surface.
+    fn pointer_tangential_pressure(&mut self, tangential: f32) {
+        self.tangential = tangential.clamp(-1.0, 1.0);
+    }
+
+    /// R1430 — record the live hover height (Qt `QTabletEvent::z()`), floored at
+    /// `0.0`. Shrinks the pen-tip marker — a hover-height-aware surface.
+    fn pointer_height(&mut self, height: f32) {
+        self.height = height.max(0.0);
+    }
+
     /// Record one raw button edge with the modifiers held at that edge and the
     /// live position stamped in. This is the seam under test.
     fn raw_pointer_button(&mut self, event: RawPointerButton) {
@@ -574,6 +731,11 @@ impl ExternalIntrospect for RawPointerSink {
                     // in degrees -90..=90; leans the pen-tip marker off the cursor.
                     SchemaField::new("tilt_x", "float"),
                     SchemaField::new("tilt_y", "float"),
+                    // R1430 — the remaining Qt QTabletEvent scalar axes: twist
+                    // (0..=360 deg), tangential (-1..=1), height (Qt z(), >= 0).
+                    SchemaField::new("twist", "float"),
+                    SchemaField::new("tangential", "float"),
+                    SchemaField::new("height", "float"),
                     // The full ";"-joined report sequence (empty string if none).
                     SchemaField::new("log", "string"),
                     // The router pointer boundary (Leave / Cancel clear the live
@@ -629,6 +791,9 @@ impl ExternalIntrospect for RawPointerSink {
             "pressure" => Some(IntrospectValue::Float(self.pressure.into())),
             "tilt_x" => Some(IntrospectValue::Float(self.tilt_x.into())),
             "tilt_y" => Some(IntrospectValue::Float(self.tilt_y.into())),
+            "twist" => Some(IntrospectValue::Float(self.twist.into())),
+            "tangential" => Some(IntrospectValue::Float(self.tangential.into())),
+            "height" => Some(IntrospectValue::Float(self.height.into())),
             "log" => Some(IntrospectValue::Text(
                 self.reports
                     .iter()
@@ -645,7 +810,9 @@ impl ExternalIntrospect for RawPointerSink {
             // Every field is a read-only projection of the input log.
             "report_count" | "last" | "last_button" | "last_edge" | "last_mods"
             | "last_buttons" | "last_clicks" | "last_x" | "last_y" | "x_frac" | "y_frac"
-            | "pressure" | "tilt_x" | "tilt_y" | "log" => Err(InterveneError::ReadOnly),
+            | "pressure" | "tilt_x" | "tilt_y" | "twist" | "tangential" | "height" | "log" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -883,6 +1050,9 @@ mod tests {
             pressure: 0.0,
             tilt_x: 0.0,
             tilt_y: 0.0,
+            twist: 0.0,
+            tangential: 0.0,
+            height: 0.0,
         };
         assert!(
             readout_text(&state).contains("×2"),
@@ -911,6 +1081,9 @@ mod tests {
             pressure: 0.0,
             tilt_x: 0.0,
             tilt_y: 0.0,
+            twist: 0.0,
+            tangential: 0.0,
+            height: 0.0,
         };
         assert!(
             !readout_text(&state).contains('×'),
@@ -1008,6 +1181,9 @@ mod tests {
             pressure: 0.75,
             tilt_x: 0.0,
             tilt_y: 0.0,
+            twist: 0.0,
+            tangential: 0.0,
+            height: 0.0,
         };
         assert!(
             readout_text(&state).contains("pressure 0.75"),
@@ -1125,6 +1301,9 @@ mod tests {
             pressure: 0.0,
             tilt_x: 30.0,
             tilt_y: -20.0,
+            twist: 0.0,
+            tangential: 0.0,
+            height: 0.0,
         };
         assert!(
             readout_text(&leaning).contains("tilt (30\u{b0}, -20\u{b0})"),
@@ -1141,6 +1320,161 @@ mod tests {
             "an upright pen shows no tilt badge, got {:?}",
             readout_text(&upright)
         );
+    }
+
+    #[test]
+    fn r1430_scalar_axes_store_clamped_and_exposed() {
+        // R1430 — twist WRAPS to 0..360 (an angle), tangential CLAMPS to -1..1,
+        // height FLOORS at 0, and each is a read-only projection of the stream.
+        let mut sink = RawPointerSink::new();
+        sink.pointer_twist(400.0); // 400 -> 40 (wrapped)
+        sink.pointer_tangential_pressure(2.0); // 2 -> 1 (clamped)
+        sink.pointer_height(-5.0); // -5 -> 0 (floored)
+        assert_eq!(
+            sink.query("twist"),
+            Some(IntrospectValue::Float(40.0_f32.into())),
+            "twist wraps into 0..360"
+        );
+        assert_eq!(
+            sink.query("tangential"),
+            Some(IntrospectValue::Float(1.0_f32.into())),
+            "tangential clamps to 1.0"
+        );
+        assert_eq!(
+            sink.query("height"),
+            Some(IntrospectValue::Float(0.0_f32.into())),
+            "height floors at 0.0"
+        );
+        for path in ["twist", "tangential", "height"] {
+            assert_eq!(
+                sink.intervene(path, IntrospectValue::Null),
+                Err(InterveneError::ReadOnly),
+                "{path} is a read-only projection of the input stream"
+            );
+        }
+    }
+
+    /// The `w` of the tangential fill bar from the rendered view.
+    fn tang_bar_width(state: SinkState) -> u32 {
+        let scene = rendered(state);
+        match find(&scene, TANG_TAG) {
+            Some(Scene::Box(b)) => match b.layout.size.width {
+                pinion_core::style::SizeValue::Px(w) => w,
+                _ => 0,
+            },
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn r1430_the_tang_bar_fills_with_tangential_pressure() {
+        // R1430 — the finger-wheel bar is half-full at rest (tangential 0), empty
+        // toward -1, and full toward +1 (the airbrush wheel gauge).
+        let base = SinkState {
+            x_frac: Some(0.5),
+            y_frac: Some(0.5),
+            ..SinkState::default()
+        };
+        let rest = tang_bar_width(base);
+        let low = tang_bar_width(SinkState {
+            tangential: -1.0,
+            ..base
+        });
+        let high = tang_bar_width(SinkState {
+            tangential: 1.0,
+            ..base
+        });
+        assert!(
+            low < rest,
+            "negative tangential empties the bar: {low} < {rest}"
+        );
+        assert!(
+            high > rest,
+            "positive tangential fills the bar: {high} > {rest}"
+        );
+    }
+
+    #[test]
+    fn r1430_the_twist_orbit_circles_the_pen_tip() {
+        // R1430 — the orientation dot orbits the tip: twist 0 sits ABOVE the tip,
+        // twist 90 to its RIGHT (clockwise), so barrel rotation reads on screen.
+        let base = SinkState {
+            x_frac: Some(0.5),
+            y_frac: Some(0.5),
+            ..SinkState::default()
+        };
+        let (tx, ty) = tip_pos(base).expect("a tip on hover");
+        let orbit_pos = |twist: f32| -> (u32, u32) {
+            let scene = rendered(SinkState { twist, ..base });
+            match find(&scene, ORBIT_TAG) {
+                Some(Scene::Box(b)) => b.layout.absolute_position.expect("orbit position"),
+                _ => panic!("no orbit dot"),
+            }
+        };
+        let (_ux, uy) = orbit_pos(0.0);
+        assert!(uy < ty, "twist 0 orbits above the tip: {uy} < {ty}");
+        let (rx, ry) = orbit_pos(90.0);
+        assert!(rx > tx, "twist 90 orbits right of the tip: {rx} > {tx}");
+        assert!(ry > uy, "twist 90 sits lower than twist 0 (clockwise)");
+    }
+
+    #[test]
+    fn r1430_the_pen_tip_shrinks_as_the_pen_lifts() {
+        // R1430 — the tip marker shrinks with hover height (Qt z()): largest in
+        // contact, smaller as the pen lifts off the surface.
+        let base = SinkState {
+            x_frac: Some(0.5),
+            y_frac: Some(0.5),
+            ..SinkState::default()
+        };
+        let tip_size = |height: f32| -> u32 {
+            let scene = rendered(SinkState { height, ..base });
+            match find(&scene, TIP_TAG) {
+                Some(Scene::Box(b)) => match b.layout.size.width {
+                    pinion_core::style::SizeValue::Px(w) => w,
+                    _ => 0,
+                },
+                _ => 0,
+            }
+        };
+        let contact = tip_size(0.0);
+        let lifted = tip_size(HEIGHT_FULL_PX);
+        assert!(
+            lifted < contact,
+            "a lifted pen paints a smaller tip: {lifted} < {contact}"
+        );
+    }
+
+    #[test]
+    fn r1430_the_readout_surfaces_the_scalar_axes() {
+        // R1430 — the readout names twist / tangential / height when off rest.
+        let mut sink = RawPointerSink::new();
+        sink.pointer_move(0.4, 0.4);
+        edge(
+            &mut sink,
+            PointerButton::Left,
+            PointerEdge::Down,
+            Modifiers::empty(),
+        );
+        let state = SinkState {
+            count: 1,
+            last: sink.last().copied(),
+            x_frac: Some(0.4),
+            y_frac: Some(0.4),
+            pressure: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
+            twist: 45.0,
+            tangential: -0.5,
+            height: 2.0,
+        };
+        let text = readout_text(&state);
+        assert!(text.contains("twist 45\u{b0}"), "names twist, got {text:?}");
+        assert!(
+            text.contains("tang -0.50"),
+            "names tangential, got {text:?}"
+        );
+        assert!(text.contains("z 2.0"), "names height, got {text:?}");
     }
 
     #[test]
@@ -1287,6 +1621,9 @@ mod tests {
             pressure: 0.0,
             tilt_x: 0.0,
             tilt_y: 0.0,
+            twist: 0.0,
+            tangential: 0.0,
+            height: 0.0,
         };
         let scene = rendered(state);
         let Some(Scene::Text(t)) = find(&scene, READOUT_TAG) else {
