@@ -29148,6 +29148,60 @@
         "The pointer-axis storage/forward/target-resolution is lifted (PointerAxisValues + forward_to + resolve_axis_target + deliver_axes). A further generic (one scene/pointer_axis method or one External hook carrying an enum) is NOT warranted: per-axis RPC methods + External hooks keep the surface self-describing for AI clients, and the internal duplication is already folded."
       ]
     },
+    "R1431": {
+      "decision_summary": "R1431 §5.35 §5.15 §5.49: add pointerType — the DEVICE that produced the pointer stream (W3C PointerEvent.pointerType / Qt QTabletEvent::pointerType()) — as the last member of Qt QTabletEvent, COMPLETING the tablet-event parity begun with pressure (R1423), tilt (R1429), and twist/tangential/height (R1430). PointerKind is a closed enum Mouse/Pen/Eraser/Touch (wire mouse/pen/eraser/touch, Default Mouse) in pinion-core; the Eraser variant keeps the stylus eraser end distinct — a Qt distinction W3C folds into pen — so an eraser-aware surface flips a paint canvas to erase without a device query. Unlike the five scalar axes, pointerType is a discrete classifier, but it rides the SAME PointerAxisValues bundle (a 6th field forwarded by forward_to) and the SAME set_pointer_*_for_window / try_drain_pointer_axis seams, so it needed no new plumbing — the R1430 lift already generalised the storage/forward/target-resolution. The RPC is scene/pointer_type {type: string}, which decodes via PointerKind::from_wire_name and rejects an unknown/missing/non-string device so a typo surfaces at the call. winit does not classify the device, so the RPC is the sole driver (§2 #2): a headless AI client presents as a pen or eraser with no tablet. hello-raw-pointer colours the pen-tip marker by device (accent pen / error-tone eraser / muted touch / on-surface mouse) and badges the readout; the pointer_type introspect field exposes it (§2 #7). This answers the user's qt-parity-over-yagni directive in full: the QTabletEvent surface is now implemented beyond Qt (every axis RPC-drivable + introspectable headless) with nothing deferred; the only unmodelled members are device-identity metadata (uniqueId / pointingDevice registry), not per-event axes a widget reacts to.",
+      "changes_bullets": [
+        "pinion-core: PointerKind enum (Mouse/Pen/Eraser/Touch, wire mouse/pen/eraser/touch, Default Mouse) + External::pointer_kind hook; the Eraser variant keeps the stylus eraser end distinct (Qt folds it W3C does not).",
+        "pinion-runtime: PointerAxisValues gains a kind field forwarded by forward_to; note_pointer_kind/set_pointer_kind + set_pointer_kind_for_window — the 6th member of the pointer-axis bundle.",
+        "pinion-rpc: DeferredInput::PointerKind + handle_scene_pointer_type (string type param, unknown/missing/non-string rejected) + scene/pointer_type (Mutate, sorted) + a dispatch test.",
+        "pinion-shell + pinion-tui: both drains deliver the device through the one set_pointer_kind_for_window seam (§2#6); TUI via the try_drain_pointer_axis dispatcher (now all six axes).",
+        "examples/hello-raw-pointer: the pen-tip marker is COLOURED by device (accent pen / error eraser / muted touch / on-surface mouse) + a readout badge; pointer_type introspect field; tools/demos/r1431_pointer_type.py. QTabletEvent parity is now COMPLETE."
+      ],
+      "verification_bullets": [
+        "pinion-rpc: r1431_scene_pointer_type_enqueues_the_kind — \"eraser\" decodes to PointerKind::Eraser; unknown (\"stylus\") / missing / non-string all reject invalid_params and enqueue nothing. catalog_matches_dispatch_match_arms + sorted-catalog green with scene/pointer_type.",
+        "pinion-tui: r1364_5_deferred_input_parity green — try_drain_pointer_axis now names all six DeferredInput::Pointer* variants (§2#6). pinion-shell green.",
+        "pinion-core + pinion-runtime green after adding the kind field to the bundle (public API stable; forward_to delivers the whole bundle, so per-axis sinks are unchanged).",
+        "hello-raw-pointer 24 unit tests: pointer_kind stores/reads pointer_type + read-only + tip colour differs per device (pen != eraser != mouse) + readout badges a non-mouse device.",
+        "r1431_pointer_type.py PASS over RPC: the device tracks mouse/pen/eraser/touch through the introspect field AND the readout badge, rides a move, and rejects an unknown/missing/non-string device; siblings r1416/r1422/r1423/r1429/r1430 PASS on the shared binary.",
+        "clippy -D pedantic clean; fmt; cargo doc --workspace --document-private-items clean; validate-workspace T1=0."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.15",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "Qt QTabletEvent parity is now COMPLETE: pressure (R1423) + tilt (R1429) + twist + tangentialPressure + z/height (R1430) + pointerType (R1431). This closes the user's qt-parity-over-yagni directive on the tablet-event surface — beyond Qt with nothing deferred, each axis RPC-drivable + §2#7 introspectable headless.",
+        "winit 0.30 classifies no pointer device; scene/pointer_type is the sole driver (§2#2). A future winit tablet API / platform bridge populates PointerAxisValues (kind + the five scalars) in one place — the note_pointer_* seams.",
+        "QTabletEvent members NOT modelled (deliberate, out of the paint/introspection scope): uniqueId (device identity, not an event axis a widget reacts to) and deviceType/pointingDevice registry. If a real consumer needs the pen's unique id (multi-pen canvases), that is its own axis; no speculative build."
+      ],
+      "publishable_decision_summary": "R1431 §5.35 §5.15 §5.49: add pointerType — the DEVICE that produced the pointer stream (W3C PointerEvent.pointerType / Qt QTabletEvent::pointerType()) — as the last member of Qt QTabletEvent, COMPLETING the tablet-event parity begun with pressure (R1423), tilt (R1429), and twist/tangential/height (R1430). PointerKind is a closed enum Mouse/Pen/Eraser/Touch (wire mouse/pen/eraser/touch, Default Mouse) in pinion-core; the Eraser variant keeps the stylus eraser end distinct — a Qt distinction W3C folds into pen — so an eraser-aware surface flips a paint canvas to erase without a device query. Unlike the five scalar axes, pointerType is a discrete classifier, but it rides the SAME PointerAxisValues bundle (a 6th field forwarded by forward_to) and the SAME set_pointer_*_for_window / try_drain_pointer_axis seams, so it needed no new plumbing — the R1430 lift already generalised the storage/forward/target-resolution. The RPC is scene/pointer_type {type: string}, which decodes via PointerKind::from_wire_name and rejects an unknown/missing/non-string device so a typo surfaces at the call. winit does not classify the device, so the RPC is the sole driver (§2 #2): a headless AI client presents as a pen or eraser with no tablet. hello-raw-pointer colours the pen-tip marker by device (accent pen / error-tone eraser / muted touch / on-surface mouse) and badges the readout; the pointer_type introspect field exposes it (§2 #7). This answers the user's qt-parity-over-yagni directive in full: the QTabletEvent surface is now implemented beyond Qt (every axis RPC-drivable + introspectable headless) with nothing deferred; the only unmodelled members are device-identity metadata (uniqueId / pointingDevice registry), not per-event axes a widget reacts to.",
+      "publishable_changes_bullets": [
+        "pinion-core: PointerKind enum (Mouse/Pen/Eraser/Touch, wire mouse/pen/eraser/touch, Default Mouse) + External::pointer_kind hook; the Eraser variant keeps the stylus eraser end distinct (Qt folds it W3C does not).",
+        "pinion-runtime: PointerAxisValues gains a kind field forwarded by forward_to; note_pointer_kind/set_pointer_kind + set_pointer_kind_for_window — the 6th member of the pointer-axis bundle.",
+        "pinion-rpc: DeferredInput::PointerKind + handle_scene_pointer_type (string type param, unknown/missing/non-string rejected) + scene/pointer_type (Mutate, sorted) + a dispatch test.",
+        "pinion-shell + pinion-tui: both drains deliver the device through the one set_pointer_kind_for_window seam (§2#6); TUI via the try_drain_pointer_axis dispatcher (now all six axes).",
+        "examples/hello-raw-pointer: the pen-tip marker is COLOURED by device (accent pen / error eraser / muted touch / on-surface mouse) + a readout badge; pointer_type introspect field; tools/demos/r1431_pointer_type.py. QTabletEvent parity is now COMPLETE."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-rpc: r1431_scene_pointer_type_enqueues_the_kind — \"eraser\" decodes to PointerKind::Eraser; unknown (\"stylus\") / missing / non-string all reject invalid_params and enqueue nothing. catalog_matches_dispatch_match_arms + sorted-catalog green with scene/pointer_type.",
+        "pinion-tui: r1364_5_deferred_input_parity green — try_drain_pointer_axis now names all six DeferredInput::Pointer* variants (§2#6). pinion-shell green.",
+        "pinion-core + pinion-runtime green after adding the kind field to the bundle (public API stable; forward_to delivers the whole bundle, so per-axis sinks are unchanged).",
+        "hello-raw-pointer 24 unit tests: pointer_kind stores/reads pointer_type + read-only + tip colour differs per device (pen != eraser != mouse) + readout badges a non-mouse device.",
+        "r1431_pointer_type.py PASS over RPC: the device tracks mouse/pen/eraser/touch through the introspect field AND the readout badge, rides a move, and rejects an unknown/missing/non-string device; siblings r1416/r1422/r1423/r1429/r1430 PASS on the shared binary.",
+        "clippy -D pedantic clean; fmt; cargo doc --workspace --document-private-items clean; validate-workspace T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.15",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Qt QTabletEvent parity is now COMPLETE: pressure (R1423) + tilt (R1429) + twist + tangentialPressure + z/height (R1430) + pointerType (R1431). This closes the user's qt-parity-over-yagni directive on the tablet-event surface — beyond Qt with nothing deferred, each axis RPC-drivable + §2#7 introspectable headless.",
+        "winit 0.30 classifies no pointer device; scene/pointer_type is the sole driver (§2#2). A future winit tablet API / platform bridge populates PointerAxisValues (kind + the five scalars) in one place — the note_pointer_* seams.",
+        "QTabletEvent members NOT modelled (deliberate, out of the paint/introspection scope): uniqueId (device identity, not an event axis a widget reacts to) and deviceType/pointingDevice registry. If a real consumer needs the pen's unique id (multi-pen canvases), that is its own axis; no speculative build."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

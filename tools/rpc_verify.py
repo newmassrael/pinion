@@ -755,6 +755,16 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """
         self.request("scene/pointer_height", {"height": float(height)})
 
+    def pointer_type(self, kind: str) -> None:
+        """`scene/pointer_type` typed wrapper (R1431 §5.35 §5.15).
+
+        Set the pointer DEVICE kind (W3C `PointerEvent.pointerType` / Qt
+        `QTabletEvent::pointerType()`): one of ``"mouse"`` / ``"pen"`` /
+        ``"eraser"`` / ``"touch"``. Positionless, out-of-band; lets a headless
+        client present as a pen or eraser with no device.
+        """
+        self.request("scene/pointer_type", {"type": kind})
+
     def hover(
         self,
         at: Optional[tuple[float, float]] = None,

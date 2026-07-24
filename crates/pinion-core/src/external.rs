@@ -30,7 +30,7 @@ use std::borrow::Cow;
 use std::rc::Rc;
 
 use crate::Event;
-use crate::input::{Modifiers, RawPointerButton};
+use crate::input::{Modifiers, PointerKind, RawPointerButton};
 use crate::intent::Intent;
 
 /// Render backends an `External` may declare support for (§5.15 item 1).
@@ -1371,6 +1371,19 @@ pub trait External: core::fmt::Debug {
     /// The sole driver is the `scene/pointer_height` RPC (§2 #2): winit 0.30
     /// exposes no hover-distance axis. Default no-op.
     fn pointer_height(&mut self, _height: f32) {}
+
+    /// R1431 §5.35 §5.15 — the DEVICE that produced the current pointer stream
+    /// for this widget, the W3C `PointerEvent.pointerType` / Qt
+    /// `QTabletEvent::pointerType()` peer: [`PointerKind::Mouse`] / `Pen` /
+    /// `Eraser` / `Touch`. `Mouse` is the default — what a plain pointer reports.
+    /// The `Eraser` variant is the stylus's eraser end (a Qt distinction W3C folds
+    /// into `"pen"`), so an eraser-aware surface — a paint canvas that flips to
+    /// erase when the pen is inverted — reads the device without a query.
+    /// Forwarded WITH position like the scalar axes.
+    ///
+    /// The sole driver is the `scene/pointer_type` RPC (§2 #2): winit 0.30 does
+    /// not classify the pointer device. Default no-op.
+    fn pointer_kind(&mut self, _kind: PointerKind) {}
 
     /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
     /// forwarding leg the pointer hooks left open). The framework's

@@ -2695,6 +2695,21 @@ impl<V: WidgetCore> CoreShell<V> {
         router.set_pointer_height(pid, height, scene);
     }
 
+    /// R1431 §5.35 — set the pointer device KIND for `pid` on `window_id`'s
+    /// router (W3C `PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()`),
+    /// the `scene/pointer_type` RPC seam — the AI-first source that lets a
+    /// headless client present as a pen / eraser / touch, no device (§2 #2).
+    pub fn set_pointer_kind_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        kind: pinion_core::PointerKind,
+    ) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        router.set_pointer_kind(pid, kind, scene);
+    }
+
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's
     /// `CursorLeft`). Drops the cursor + rolls back any in-flight
     /// `Hover`.

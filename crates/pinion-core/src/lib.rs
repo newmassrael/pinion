@@ -88,7 +88,7 @@ pub use frame::Frame;
 pub use input::{
     CompositionEvent, DRAG_CLICK_THRESHOLD_PX, DragCalibration, DragLatch, HeldKeys,
     InputStateSnapshot, KeyDispatchFocus, Modifiers, PointerButton, PointerButtons, PointerEdge,
-    RawPointerButton, SelectionChord, edit_field_keymap, forward_key_to_field,
+    PointerKind, RawPointerButton, SelectionChord, edit_field_keymap, forward_key_to_field,
 };
 pub use intent::{Intent, IntentTag};
 pub use reactive::{

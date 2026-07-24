@@ -67,8 +67,8 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode, capture_surface
 use pinion_core::style::{Border, BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{
-    Frame, Modifiers, PointerButton, PointerButtons, PointerEdge, RawPointerButton, Scene,
-    WidgetCore,
+    Frame, Modifiers, PointerButton, PointerButtons, PointerEdge, PointerKind, RawPointerButton,
+    Scene, WidgetCore,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 
@@ -191,6 +191,9 @@ struct SinkState {
     /// R1430 — the live hover height (Qt `QTabletEvent::z()`), `>= 0.0`; shrinks
     /// the pen-tip marker as the pen lifts.
     height: f32,
+    /// R1431 — the producing device (W3C `PointerEvent.pointerType`); colours the
+    /// pen-tip marker (mouse / pen / eraser / touch).
+    kind: PointerKind,
 }
 
 /// The idle prompt / live report line — the SSOT both the status text and the
@@ -246,8 +249,15 @@ fn readout_text(state: &SinkState) -> String {
             } else {
                 String::new()
             };
+            // R1431 — name the producing device (W3C `pointerType`) when it is not
+            // the default mouse, so a stylus / eraser reads as data.
+            let device = if state.kind == PointerKind::Mouse {
+                String::new()
+            } else {
+                format!(" · {}", state.kind.as_wire_name())
+            };
             format!(
-                "#{} {}{}{}{}{}{}{}{}",
+                "#{} {}{}{}{}{}{}{}{}{}",
                 state.count,
                 r.label(),
                 clicks,
@@ -256,10 +266,25 @@ fn readout_text(state: &SinkState) -> String {
                 lean,
                 barrel,
                 wheel,
-                lift
+                lift,
+                device
             )
         }
     }
+}
+
+/// R1431 — the pen-tip marker colour for the producing device (W3C
+/// `pointerType`): the accent for a pen, the error tone for an eraser (the DCC
+/// "flip to erase" signal), a muted tone for a mouse, and the on-surface
+/// foreground for touch — so the device reads at a glance, not only in the
+/// readout.
+fn tip_color(kind: PointerKind, theme: &pinion_core::theme::Theme) -> pinion_core::style::Color {
+    theme.resolve(match kind {
+        PointerKind::Mouse => ColorRole::OnSurface,
+        PointerKind::Pen => ColorRole::Accent,
+        PointerKind::Eraser => ColorRole::Error,
+        PointerKind::Touch => ColorRole::OnSurfaceMuted,
+    })
 }
 
 /// view-fn (§6.3): pure sync mapping of the sink digest to a scene.
@@ -324,9 +349,9 @@ fn view(state: SinkState, _frame: &Frame) -> Scene {
     let ink_dot = ink_dot_scene(&state, theme.resolve(ColorRole::Accent));
 
     // R1429 — the pen-tip marker: leans off the live cursor in the tilt direction
-    // (W3C `PointerEvent.tiltX/tiltY`) and shrinks with hover height (R1430).
-    // Present on any hover over the pane, independent of the pressure ink mark.
-    let tilt_tip = tilt_tip_scene(&state, theme.resolve(ColorRole::OnSurface));
+    // (W3C `PointerEvent.tiltX/tiltY`), shrinks with hover height (R1430), and is
+    // coloured by the producing device (R1431). Present on any hover over the pane.
+    let tilt_tip = tilt_tip_scene(&state, tip_color(state.kind, &theme));
     // R1430 — the twist orientation dot orbits the tip at the barrel angle.
     let twist_orbit = twist_orbit_scene(&state, theme.resolve(ColorRole::Accent));
     // R1430 — the finger-wheel bar tracks the tangential pressure (always shown).
@@ -519,6 +544,12 @@ fn read_sink(scene: &Scene) -> SinkState {
         twist: query_frac(intro, "twist").unwrap_or(0.0),
         tangential: query_frac(intro, "tangential").unwrap_or(0.0),
         height: query_frac(intro, "height").unwrap_or(0.0),
+        kind: match intro.query("pointer_type") {
+            Some(IntrospectValue::Text(s)) => {
+                PointerKind::from_wire_name(&s).unwrap_or(PointerKind::Mouse)
+            }
+            _ => PointerKind::Mouse,
+        },
     }
 }
 
@@ -597,6 +628,9 @@ struct RawPointerSink {
     twist: f32,
     tangential: f32,
     height: f32,
+    /// R1431 — the producing device (W3C `pointerType`), colouring the pen-tip
+    /// marker; a stylus flipping to its eraser end reads without a device query.
+    kind: PointerKind,
 }
 
 impl RawPointerSink {
@@ -677,6 +711,12 @@ impl External for RawPointerSink {
         self.height = height.max(0.0);
     }
 
+    /// R1431 — record the producing device (W3C `pointerType`). Colours the
+    /// pen-tip marker — a device-aware surface (an eraser flips the canvas).
+    fn pointer_kind(&mut self, kind: PointerKind) {
+        self.kind = kind;
+    }
+
     /// Record one raw button edge with the modifiers held at that edge and the
     /// live position stamped in. This is the seam under test.
     fn raw_pointer_button(&mut self, event: RawPointerButton) {
@@ -736,6 +776,9 @@ impl ExternalIntrospect for RawPointerSink {
                     SchemaField::new("twist", "float"),
                     SchemaField::new("tangential", "float"),
                     SchemaField::new("height", "float"),
+                    // R1431 — the producing device (W3C pointerType): one of
+                    // mouse / pen / eraser / touch.
+                    SchemaField::new("pointer_type", "string"),
                     // The full ";"-joined report sequence (empty string if none).
                     SchemaField::new("log", "string"),
                     // The router pointer boundary (Leave / Cancel clear the live
@@ -794,6 +837,7 @@ impl ExternalIntrospect for RawPointerSink {
             "twist" => Some(IntrospectValue::Float(self.twist.into())),
             "tangential" => Some(IntrospectValue::Float(self.tangential.into())),
             "height" => Some(IntrospectValue::Float(self.height.into())),
+            "pointer_type" => Some(IntrospectValue::Text(self.kind.as_wire_name().to_owned())),
             "log" => Some(IntrospectValue::Text(
                 self.reports
                     .iter()
@@ -810,9 +854,8 @@ impl ExternalIntrospect for RawPointerSink {
             // Every field is a read-only projection of the input log.
             "report_count" | "last" | "last_button" | "last_edge" | "last_mods"
             | "last_buttons" | "last_clicks" | "last_x" | "last_y" | "x_frac" | "y_frac"
-            | "pressure" | "tilt_x" | "tilt_y" | "twist" | "tangential" | "height" | "log" => {
-                Err(InterveneError::ReadOnly)
-            }
+            | "pressure" | "tilt_x" | "tilt_y" | "twist" | "tangential" | "height"
+            | "pointer_type" | "log" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -1053,6 +1096,7 @@ mod tests {
             twist: 0.0,
             tangential: 0.0,
             height: 0.0,
+            kind: PointerKind::Mouse,
         };
         assert!(
             readout_text(&state).contains("×2"),
@@ -1084,6 +1128,7 @@ mod tests {
             twist: 0.0,
             tangential: 0.0,
             height: 0.0,
+            kind: PointerKind::Mouse,
         };
         assert!(
             !readout_text(&state).contains('×'),
@@ -1184,6 +1229,7 @@ mod tests {
             twist: 0.0,
             tangential: 0.0,
             height: 0.0,
+            kind: PointerKind::Mouse,
         };
         assert!(
             readout_text(&state).contains("pressure 0.75"),
@@ -1304,6 +1350,7 @@ mod tests {
             twist: 0.0,
             tangential: 0.0,
             height: 0.0,
+            kind: PointerKind::Mouse,
         };
         assert!(
             readout_text(&leaning).contains("tilt (30\u{b0}, -20\u{b0})"),
@@ -1467,6 +1514,7 @@ mod tests {
             twist: 45.0,
             tangential: -0.5,
             height: 2.0,
+            kind: PointerKind::Mouse,
         };
         let text = readout_text(&state);
         assert!(text.contains("twist 45\u{b0}"), "names twist, got {text:?}");
@@ -1475,6 +1523,73 @@ mod tests {
             "names tangential, got {text:?}"
         );
         assert!(text.contains("z 2.0"), "names height, got {text:?}");
+    }
+
+    #[test]
+    fn r1431_pointer_kind_stores_reads_colours_and_badges() {
+        // R1431 — the device kind stores, exposes as `pointer_type`, is read-only,
+        // colours the tip distinctly per device, and badges the readout.
+        let mut sink = RawPointerSink::new();
+        assert_eq!(
+            sink.query("pointer_type"),
+            Some(IntrospectValue::Text("mouse".to_owned())),
+            "the default device is a mouse"
+        );
+        sink.pointer_kind(PointerKind::Eraser);
+        assert_eq!(
+            sink.query("pointer_type"),
+            Some(IntrospectValue::Text("eraser".to_owned())),
+            "the eraser device is exposed"
+        );
+        assert_eq!(
+            sink.intervene("pointer_type", IntrospectValue::Null),
+            Err(InterveneError::ReadOnly),
+            "pointer_type is a read-only projection of the input stream"
+        );
+
+        // The tip colour distinguishes the devices (pen != eraser != mouse).
+        let owner = Owner::new();
+        let (pen, eraser, mouse) = owner.run(|| {
+            let t = use_theme(THEME_TAG).theme_animated();
+            (
+                tip_color(PointerKind::Pen, &t),
+                tip_color(PointerKind::Eraser, &t),
+                tip_color(PointerKind::Mouse, &t),
+            )
+        });
+        assert_ne!(pen, eraser, "a pen and an eraser paint different tips");
+        assert_ne!(pen, mouse, "a pen and a mouse paint different tips");
+
+        // The readout badges a non-mouse device, but not a plain mouse.
+        sink.pointer_move(0.4, 0.4);
+        edge(
+            &mut sink,
+            PointerButton::Left,
+            PointerEdge::Down,
+            Modifiers::empty(),
+        );
+        let pen_state = SinkState {
+            count: 1,
+            last: sink.last().copied(),
+            x_frac: Some(0.4),
+            y_frac: Some(0.4),
+            kind: PointerKind::Pen,
+            ..SinkState::default()
+        };
+        assert!(
+            readout_text(&pen_state).contains("\u{b7} pen"),
+            "the readout badges the pen, got {:?}",
+            readout_text(&pen_state)
+        );
+        let mouse_state = SinkState {
+            kind: PointerKind::Mouse,
+            ..pen_state
+        };
+        assert!(
+            !readout_text(&mouse_state).contains("mouse"),
+            "a plain mouse is not badged, got {:?}",
+            readout_text(&mouse_state)
+        );
     }
 
     #[test]
@@ -1624,6 +1739,7 @@ mod tests {
             twist: 0.0,
             tangential: 0.0,
             height: 0.0,
+            kind: PointerKind::Mouse,
         };
         let scene = rendered(state);
         let Some(Scene::Text(t)) = find(&scene, READOUT_TAG) else {

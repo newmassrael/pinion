@@ -682,6 +682,57 @@ impl PointerButton {
     }
 }
 
+/// R1431 §5.35 — the device that produced a pointer event, the W3C
+/// `PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()` peer. `Pen` and
+/// `Eraser` distinguish the two ends of a stylus (the DCC "flip to erase"
+/// gesture, a Qt distinction that W3C folds into `"pen"`); `Mouse` and `Touch`
+/// are the non-tablet devices. Not `#[non_exhaustive]`: a closed set matching
+/// [`PointerButton`]'s precedent.
+///
+/// The wire vocabulary is the W3C set plus `"eraser"`: `"mouse"` / `"pen"` /
+/// `"eraser"` / `"touch"`. `Mouse` is the default — what a plain pointer reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PointerKind {
+    /// A mouse or trackpad (`"mouse"`) — the default device.
+    #[default]
+    Mouse,
+    /// A stylus tip (`"pen"`) — the W3C `"pen"` type.
+    Pen,
+    /// A stylus's ERASER end (`"eraser"`) — the Qt `Eraser` pointer type, which
+    /// W3C folds into `"pen"`; kept distinct so an eraser-aware surface flips to
+    /// erase without a device query.
+    Eraser,
+    /// A finger / touch contact (`"touch"`).
+    Touch,
+}
+
+impl PointerKind {
+    /// Canonical lower-case wire name. Inverse of [`from_wire_name`](Self::from_wire_name).
+    #[must_use]
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            PointerKind::Mouse => "mouse",
+            PointerKind::Pen => "pen",
+            PointerKind::Eraser => "eraser",
+            PointerKind::Touch => "touch",
+        }
+    }
+
+    /// Decode a wire pointer-type name; `None` for anything outside the
+    /// vocabulary so a typo surfaces at the call site. Inverse of
+    /// [`as_wire_name`](Self::as_wire_name).
+    #[must_use]
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "mouse" => Some(PointerKind::Mouse),
+            "pen" => Some(PointerKind::Pen),
+            "eraser" => Some(PointerKind::Eraser),
+            "touch" => Some(PointerKind::Touch),
+            _ => None,
+        }
+    }
+}
+
 /// R1416 §5.35 — a raw pointer-button transition: the press or the release
 /// edge. The winit `ElementState::Pressed` / `Released` mirror, named in core
 /// so the [`External`](crate::external::External) trait and the RPC

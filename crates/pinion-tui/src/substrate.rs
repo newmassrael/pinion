@@ -973,6 +973,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             pinion_rpc::DeferredInput::PointerHeight { height } => {
                 self.drain_pointer_height(height)
             }
+            pinion_rpc::DeferredInput::PointerKind { kind } => self.drain_pointer_kind(kind),
             _ => return None,
         };
         Some(changed)
@@ -1041,6 +1042,19 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             pinion_runtime::DEFAULT_WINDOW,
             PointerId::MOUSE,
             height,
+        );
+        true
+    }
+
+    /// R1431 §5.35 §2 #2 §2 #6 — the device-kind peer of
+    /// [`Self::drain_pointer_pressure`]: deliver a driven pointer KIND (W3C
+    /// `PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()`) to the
+    /// terminal backend's router. Always returns `true`.
+    fn drain_pointer_kind(&mut self, kind: pinion_core::PointerKind) -> bool {
+        self.core.set_pointer_kind_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            kind,
         );
         true
     }

@@ -2874,6 +2874,14 @@ impl<V: WidgetView> ShellCore<V> {
                         .set_pointer_height_for_window(window_id, PointerId::MOUSE, height);
                     self.after_pointer_axis_change(window_id);
                 }
+                // R1431 §5.35 §5.15 — `scene/pointer_type`: the producing device
+                // (mouse / pen / eraser / touch), the W3C `pointerType` peer,
+                // forwarded through the same one router seam as the scalar axes.
+                DeferredInput::PointerKind { kind } => {
+                    self.core
+                        .set_pointer_kind_for_window(window_id, PointerId::MOUSE, kind);
+                    self.after_pointer_axis_change(window_id);
+                }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate
                 // exercise the W3C UIEvent `detail:2` convention the

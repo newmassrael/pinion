@@ -1908,6 +1908,50 @@ fn r1430_scene_pointer_scalar_axes_require_a_numeric_value() {
 }
 
 #[test]
+fn r1431_scene_pointer_type_enqueues_the_kind() {
+    // A wire kind ("eraser") decodes to the PointerKind variant; an unknown /
+    // missing / non-string rejects so a typo surfaces at the call.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/pointer_type","params":{"type":"eraser"},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    assert!(
+        matches!(
+            inbox[0],
+            DeferredInput::PointerKind {
+                kind: pinion_core::PointerKind::Eraser
+            }
+        ),
+        "eraser decoded, got {:?}",
+        inbox[0]
+    );
+
+    for params in ["{}", r#"{"type":"stylus"}"#, r#"{"type":3}"#] {
+        let mut scene = counted_scene(0);
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/pointer_type","params":{params},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert_eq!(
+            resp.error.expect("must reject").code,
+            -32602,
+            "for {params}"
+        );
+        assert!(inbox.is_empty(), "rejected enqueues nothing: {params}");
+    }
+}
+
+#[test]
 fn r887_scene_click_explicit_left_button_enqueues_click() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();

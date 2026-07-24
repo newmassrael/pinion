@@ -278,6 +278,9 @@ struct PointerAxisValues {
     tangential: f32,
     /// Qt `z()` — hover height above the surface, `>= 0.0` (no W3C peer).
     height: f32,
+    /// W3C `pointerType` / Qt `pointerType()` — the producing device
+    /// (`Mouse` default / `Pen` / `Eraser` / `Touch`).
+    kind: pinion_core::PointerKind,
 }
 
 impl PointerAxisValues {
@@ -292,6 +295,7 @@ impl PointerAxisValues {
         handle.pointer_twist(self.twist);
         handle.pointer_tangential_pressure(self.tangential);
         handle.pointer_height(self.height);
+        handle.pointer_kind(self.kind);
     }
 }
 
@@ -2346,6 +2350,24 @@ impl InputRouter {
     /// `scene/pointer_height` RPC path).
     pub fn set_pointer_height(&mut self, id: PointerId, height: f32, state_scene: &mut Scene) {
         self.note_pointer_height(id, height);
+        self.deliver_axes(id, state_scene);
+    }
+
+    /// R1431 §5.35 — store `id`'s device KIND (W3C `PointerEvent.pointerType` /
+    /// Qt `QTabletEvent::pointerType()`) WITHOUT delivering it.
+    pub fn note_pointer_kind(&mut self, id: PointerId, kind: pinion_core::PointerKind) {
+        self.axes.entry(id).or_default().kind = kind;
+    }
+
+    /// R1431 §5.35 — store `id`'s device kind AND deliver the bundle at once (the
+    /// `scene/pointer_type` RPC path — a stylus flipping to its eraser end).
+    pub fn set_pointer_kind(
+        &mut self,
+        id: PointerId,
+        kind: pinion_core::PointerKind,
+        state_scene: &mut Scene,
+    ) {
+        self.note_pointer_kind(id, kind);
         self.deliver_axes(id, state_scene);
     }
 

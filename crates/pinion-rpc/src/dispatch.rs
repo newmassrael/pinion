@@ -28,7 +28,7 @@
 use pinion_a11y::{AccessFocus, AccessNode};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
-use pinion_core::input::{PointerButton, PointerEdge};
+use pinion_core::input::{PointerButton, PointerEdge, PointerKind};
 use pinion_core::intent::Intent;
 use pinion_core::style::{Border, BoxStyle, Color};
 use pinion_core::{Owner, Scene, SceneRevision};
@@ -908,6 +908,12 @@ pub enum DeferredInput {
     /// `>= 0.0` (floored at the router). Positionless; the AI-first hover-height
     /// source (§2 #2), no W3C peer.
     PointerHeight { height: f32 },
+    /// R1431 §5.35 §5.15 — `scene/pointer_type` injection: set the pointer's
+    /// device KIND (W3C `PointerEvent.pointerType` / Qt
+    /// `QTabletEvent::pointerType()`) — `mouse` / `pen` / `eraser` / `touch`.
+    /// Positionless; the AI-first source that lets a headless client present as a
+    /// pen / eraser (§2 #2), winit not classifying the device.
+    PointerKind { kind: PointerKind },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -1859,6 +1865,17 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 HandlerKind::Mutate,
             )
         }
+        "scene/pointer_type" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pointer_type(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
         "scene/hover" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -2702,6 +2719,30 @@ fn handle_scene_pointer_height(
     };
     let height = require_axis_value(require_params(params)?, "height", "a number, >= 0.0")?;
     inbox.push(DeferredInput::PointerHeight { height });
+    Ok(Value::Null)
+}
+
+/// R1431 §5.35 §5.15 — `scene/pointer_type` handler: set the pointer's device
+/// KIND (W3C `PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()`).
+/// Required param `type` — a string in the vocabulary `mouse` / `pen` / `eraser`
+/// / `touch`; anything else rejects so a typo surfaces at the call.
+fn handle_scene_pointer_type(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let name = require_params(params)?
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.type must be a string"))?;
+    let kind = PointerKind::from_wire_name(name).ok_or_else(|| {
+        RpcError::invalid_params(format!(
+            "params.type must be one of mouse / pen / eraser / touch, got {name:?}"
+        ))
+    })?;
+    inbox.push(DeferredInput::PointerKind { kind });
     Ok(Value::Null)
 }
 
