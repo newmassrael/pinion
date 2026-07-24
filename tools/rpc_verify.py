@@ -707,6 +707,22 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """
         self.request("scene/pointer_pressure", {"value": float(value)})
 
+    def pointer_tilt(self, tilt_x: float, tilt_y: float) -> None:
+        """`scene/pointer_tilt` typed wrapper (R1429 §5.35 §5.15).
+
+        Set the pointer TILT (W3C `PointerEvent.tiltX/tiltY` / Qt
+        `QTabletEvent::xTilt/yTilt`), each axis in degrees `-90.0..=90.0`.
+        Positionless (out-of-band, like `pointer_pressure()`): the value is
+        delivered to the surface under the pointer at once and rides subsequent
+        moves. The AI-first source for a tilt-reactive surface (a calligraphy
+        nib, a DCC viewport); winit exposes no tilt axis, so the RPC is the sole
+        driver, and a tablet is not required to exercise lean headless.
+        """
+        self.request(
+            "scene/pointer_tilt",
+            {"tilt_x": float(tilt_x), "tilt_y": float(tilt_y)},
+        )
+
     def hover(
         self,
         at: Optional[tuple[float, float]] = None,

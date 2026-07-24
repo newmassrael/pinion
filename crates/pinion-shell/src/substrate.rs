@@ -2838,6 +2838,22 @@ impl<V: WidgetView> ShellCore<V> {
                     self.revision.bump();
                     self.request_redraw_for_window(window_id);
                 }
+                // R1429 §5.35 §5.15 — `scene/pointer_tilt`: set the pointer's W3C
+                // `PointerEvent.tiltX/tiltY` (Qt `xTilt/yTilt`) on the addressed
+                // window's router. Positionless (out-of-band, like
+                // `scene/pointer_pressure`) — the router delivers it to the surface
+                // under the pointer at once and rides subsequent moves. The
+                // AI-first source for a tilt-reactive surface (§2 #2).
+                DeferredInput::PointerTilt { tilt_x, tilt_y } => {
+                    self.core.set_pointer_tilt_for_window(
+                        window_id,
+                        PointerId::MOUSE,
+                        tilt_x,
+                        tilt_y,
+                    );
+                    self.revision.bump();
+                    self.request_redraw_for_window(window_id);
+                }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate
                 // exercise the W3C UIEvent `detail:2` convention the

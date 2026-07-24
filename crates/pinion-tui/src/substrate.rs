@@ -928,12 +928,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 // uses; a repaint is requested so the reactive surface lands the
                 // change on the next terminal frame.
                 pinion_rpc::DeferredInput::PointerPressure { value } => {
-                    self.core.set_pointer_pressure_for_window(
-                        pinion_runtime::DEFAULT_WINDOW,
-                        PointerId::MOUSE,
-                        value,
-                    );
-                    state_changed = true;
+                    state_changed |= self.drain_pointer_pressure(value);
+                }
+                // R1429 §5.35 §5.15 §2 #2 §2 #6 — `scene/pointer_tilt`: the pen
+                // LEAN axis (W3C `PointerEvent.tiltX/tiltY`), the exact peer of the
+                // `PointerPressure` arm above — same out-of-band AI-first delivery
+                // through the one shared router seam, same §2 #6 parity.
+                pinion_rpc::DeferredInput::PointerTilt { tilt_x, tilt_y } => {
+                    state_changed |= self.drain_pointer_tilt(tilt_x, tilt_y);
                 }
                 // R1424 §5.35 §5.15 §2 #2 §2 #6 — `scene/pointer_button`: one raw
                 // button EDGE (left / middle / right × down / up). R1416 added
@@ -961,6 +963,35 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             }
         }
         state_changed
+    }
+
+    /// R1429 §5.35 §2 #2 §2 #6 — deliver a driven pointer PRESSURE (W3C
+    /// `PointerEvent.pressure`) to the terminal backend's router, the
+    /// `scene/pointer_pressure` out-of-band drain (see the arm's comment for the
+    /// §2 #6 rationale). Split out of [`Self::drain_deferred_inputs`] so its arm
+    /// reads like every sibling arm — a named call, not an inline seam. Always
+    /// returns `true`: a reactive surface may have changed, so the frame repaints.
+    fn drain_pointer_pressure(&mut self, value: f32) -> bool {
+        self.core.set_pointer_pressure_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            value,
+        );
+        true
+    }
+
+    /// R1429 §5.35 §2 #2 §2 #6 — the tilt peer of
+    /// [`Self::drain_pointer_pressure`]: deliver a driven pointer TILT (W3C
+    /// `PointerEvent.tiltX/tiltY`) to the terminal backend's router, the
+    /// `scene/pointer_tilt` out-of-band drain. Always returns `true` (repaint).
+    fn drain_pointer_tilt(&mut self, tilt_x: f32, tilt_y: f32) -> bool {
+        self.core.set_pointer_tilt_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            tilt_x,
+            tilt_y,
+        );
+        true
     }
 
     /// R51.124 §5.41 — TUI-side post-dispatch bookkeeping for a

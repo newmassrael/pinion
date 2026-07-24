@@ -49,11 +49,14 @@
 //! `last_button` / `last_edge` / `last_mods`, `last_x` / `last_y` (the position
 //! stamped at the last edge), `x_frac` / `y_frac` (the live hover position),
 //! `pressure` (R1423 — the live W3C `PointerEvent.pressure`, driving the ink
-//! mark's diameter), and `log` (the full `;`-joined sequence). Every button edge
-//! is driven no-pixel via the `scene/pointer_button` RPC method — the
-//! single-edge peer the press-pair `scene/click` never expressed — and the
-//! pressure via `scene/pointer_pressure` (R1423). See
-//! `tools/demos/r1416_raw_pointer.py` and `tools/demos/r1423_pressure.py`.
+//! mark's diameter), `tilt_x` / `tilt_y` (R1429 — the live W3C
+//! `PointerEvent.tiltX/tiltY`, leaning the pen-tip marker off the cursor), and
+//! `log` (the full `;`-joined sequence). Every button edge is driven no-pixel
+//! via the `scene/pointer_button` RPC method — the single-edge peer the
+//! press-pair `scene/click` never expressed — the pressure via
+//! `scene/pointer_pressure` (R1423), and the tilt via `scene/pointer_tilt`
+//! (R1429). See `tools/demos/r1416_raw_pointer.py`,
+//! `tools/demos/r1423_pressure.py`, and `tools/demos/r1429_tilt.py`.
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
@@ -93,6 +96,16 @@ const INK_TAG: &str = "ink.dot";
 /// it grows across to full force, so `diameter = MIN + pressure * RANGE`.
 const DOT_MIN_PX: f32 = 6.0;
 const DOT_RANGE_PX: f32 = 44.0;
+
+/// R1429 — the tilt indicator's paint tag. A snapshot reads its rect to confirm
+/// the pen-tip marker leans off the cursor in the pen's tilt direction.
+const TIP_TAG: &str = "tilt.tip";
+
+/// R1429 — the tilt marker's size (px) and the max pixel offset from the cursor
+/// at full ±90° lean, so `offset = (tilt / 90) * TILT_SPAN_PX` px along each axis
+/// (positive `tilt_x` leans right, positive `tilt_y` leans down — the W3C sign).
+const TIP_SIZE_PX: u32 = 10;
+const TILT_SPAN_PX: f32 = 40.0;
 
 const TITLE_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 13;
@@ -144,6 +157,10 @@ struct SinkState {
     y_frac: Option<f32>,
     /// R1423 — the live pointer pressure (W3C `PointerEvent.pressure`), `0.0..=1.0`.
     pressure: f32,
+    /// R1429 — the live pointer tilt (W3C `PointerEvent.tiltX/tiltY`), in degrees,
+    /// each axis `-90.0..=90.0`. Leans the pen-tip marker off the cursor.
+    tilt_x: f32,
+    tilt_y: f32,
 }
 
 /// The idle prompt / live report line — the SSOT both the status text and the
@@ -171,7 +188,26 @@ fn readout_text(state: &SinkState) -> String {
             } else {
                 String::new()
             };
-            format!("#{} {}{}{}{}", state.count, r.label(), clicks, pos, force)
+            // R1429 — surface the live pointer tilt (W3C `PointerEvent.tiltX/tiltY`)
+            // so a pen's lean reads as data. Present only when the pen is off the
+            // perpendicular (a mouse / upright pen reports no tilt).
+            let lean = if state.tilt_x.abs() > 0.0 || state.tilt_y.abs() > 0.0 {
+                format!(
+                    " · tilt ({:.0}\u{b0}, {:.0}\u{b0})",
+                    state.tilt_x, state.tilt_y
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "#{} {}{}{}{}{}",
+                state.count,
+                r.label(),
+                clicks,
+                pos,
+                force,
+                lean
+            )
         }
     }
 }
@@ -237,9 +273,18 @@ fn view(state: SinkState, _frame: &Frame) -> Scene {
     // known position, so a plain hover (pressure 0) leaves no mark.
     let ink_dot = ink_dot_scene(&state, theme.resolve(ColorRole::Accent));
 
+    // R1429 — the pen-tip marker: leans off the live cursor in the tilt direction
+    // (W3C `PointerEvent.tiltX/tiltY`). Present on any hover over the pane,
+    // independent of the pressure ink mark — a hovering pen leans with no force.
+    let tilt_tip = tilt_tip_scene(&state, theme.resolve(ColorRole::OnSurface));
+
     let mut children = vec![pane_body];
     if let Some(dot) = ink_dot {
         children.push(dot);
+    }
+    // The tip rides ON TOP of the ink mark so the lean stays visible under force.
+    if let Some(tip) = tilt_tip {
+        children.push(tip);
     }
     children.extend([pane_surface, title, status]);
 
@@ -283,6 +328,45 @@ fn ink_dot_scene(state: &SinkState, ink: pinion_core::style::Color) -> Option<Sc
     ))
 }
 
+/// R1429 — build the tilt indicator, or `None` when there is no known position.
+/// A small marker at the live cursor, offset in the pen's lean direction:
+/// `offset = (tilt / 90) * TILT_SPAN_PX` px along each axis. At zero tilt it sits
+/// exactly on the cursor; a pen leaning right (`tilt_x > 0`) / down (`tilt_y > 0`)
+/// shifts it right / down — the pen-tip vignette, the W3C `tiltX/tiltY` sign.
+/// Present on any hover over the pane (a hovering pen leans with no force),
+/// independent of the pressure ink mark.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "the marker centre is a small non-negative pixel; the fractional part is not meaningful for a paint rect"
+)]
+fn tilt_tip_scene(state: &SinkState, color: pinion_core::style::Color) -> Option<Scene> {
+    let (fx, fy) = match (state.x_frac, state.y_frac) {
+        (Some(fx), Some(fy)) => (fx.clamp(0.0, 1.0), fy.clamp(0.0, 1.0)),
+        _ => return None,
+    };
+    let cx = PANE_RECT.x as f32 + fx * PANE_RECT.w as f32;
+    let cy = PANE_RECT.y as f32 + fy * PANE_RECT.h as f32;
+    let dx = (state.tilt_x.clamp(-90.0, 90.0) / 90.0) * TILT_SPAN_PX;
+    let dy = (state.tilt_y.clamp(-90.0, 90.0) / 90.0) * TILT_SPAN_PX;
+    let tip_x = (cx + dx).max(0.0) as u32;
+    let tip_y = (cy + dy).max(0.0) as u32;
+    let half = TIP_SIZE_PX / 2;
+    Some(Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::filled(color).with_corner_radius(half),
+        )
+        .with_tag(TIP_TAG)
+        .with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(tip_x.saturating_sub(half), tip_y.saturating_sub(half))
+                .with_size(Size::px(TIP_SIZE_PX, TIP_SIZE_PX)),
+        ),
+    ))
+}
+
 /// Read the sink digest from the primary [`RawPointerSink`] in the state scene.
 fn read_sink(scene: &Scene) -> SinkState {
     let Some(intro) = scene
@@ -302,6 +386,8 @@ fn read_sink(scene: &Scene) -> SinkState {
         x_frac: query_frac(intro, "x_frac"),
         y_frac: query_frac(intro, "y_frac"),
         pressure: query_frac(intro, "pressure").unwrap_or(0.0),
+        tilt_x: query_frac(intro, "tilt_x").unwrap_or(0.0),
+        tilt_y: query_frac(intro, "tilt_y").unwrap_or(0.0),
     }
 }
 
@@ -369,6 +455,11 @@ struct RawPointerSink {
     /// from [`External::pointer_pressure`]. Drives the ink mark's diameter, so a
     /// pen / driven force paints a bigger dot — a pressure-aware surface.
     pressure: f32,
+    /// R1429 — the live pointer TILT (W3C `PointerEvent.tiltX/tiltY`), in degrees,
+    /// from [`External::pointer_tilt`]. Leans the pen-tip marker off the cursor,
+    /// so a pen's angle reads on screen — a tilt-aware surface.
+    tilt_x: f32,
+    tilt_y: f32,
 }
 
 impl RawPointerSink {
@@ -418,6 +509,15 @@ impl External for RawPointerSink {
     /// force. A pressure-aware surface — the seam under test.
     fn pointer_pressure(&mut self, pressure: f32) {
         self.pressure = pressure.clamp(0.0, 1.0);
+    }
+
+    /// R1429 — record the live pointer tilt (W3C `PointerEvent.tiltX/tiltY`). The
+    /// router forwards it alongside each move AND on a standalone
+    /// `scene/pointer_tilt` change, so the pen-tip marker leans with the pen's
+    /// angle. A tilt-aware surface — the seam under test.
+    fn pointer_tilt(&mut self, tilt_x: f32, tilt_y: f32) {
+        self.tilt_x = tilt_x.clamp(-90.0, 90.0);
+        self.tilt_y = tilt_y.clamp(-90.0, 90.0);
     }
 
     /// Record one raw button edge with the modifiers held at that edge and the
@@ -470,6 +570,10 @@ impl ExternalIntrospect for RawPointerSink {
                     // R1423 — the live pointer pressure (W3C `PointerEvent.pressure`),
                     // 0.0..=1.0; drives the ink mark's diameter.
                     SchemaField::new("pressure", "float"),
+                    // R1429 — the live pointer tilt (W3C `PointerEvent.tiltX/tiltY`),
+                    // in degrees -90..=90; leans the pen-tip marker off the cursor.
+                    SchemaField::new("tilt_x", "float"),
+                    SchemaField::new("tilt_y", "float"),
                     // The full ";"-joined report sequence (empty string if none).
                     SchemaField::new("log", "string"),
                     // The router pointer boundary (Leave / Cancel clear the live
@@ -523,6 +627,8 @@ impl ExternalIntrospect for RawPointerSink {
                     .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
             ),
             "pressure" => Some(IntrospectValue::Float(self.pressure.into())),
+            "tilt_x" => Some(IntrospectValue::Float(self.tilt_x.into())),
+            "tilt_y" => Some(IntrospectValue::Float(self.tilt_y.into())),
             "log" => Some(IntrospectValue::Text(
                 self.reports
                     .iter()
@@ -539,7 +645,7 @@ impl ExternalIntrospect for RawPointerSink {
             // Every field is a read-only projection of the input log.
             "report_count" | "last" | "last_button" | "last_edge" | "last_mods"
             | "last_buttons" | "last_clicks" | "last_x" | "last_y" | "x_frac" | "y_frac"
-            | "pressure" | "log" => Err(InterveneError::ReadOnly),
+            | "pressure" | "tilt_x" | "tilt_y" | "log" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -775,6 +881,8 @@ mod tests {
             x_frac: Some(0.5),
             y_frac: Some(0.5),
             pressure: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
         };
         assert!(
             readout_text(&state).contains("×2"),
@@ -801,6 +909,8 @@ mod tests {
             x_frac: Some(0.5),
             y_frac: Some(0.5),
             pressure: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
         };
         assert!(
             !readout_text(&state).contains('×'),
@@ -896,11 +1006,140 @@ mod tests {
             x_frac: Some(0.4),
             y_frac: Some(0.4),
             pressure: 0.75,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
         };
         assert!(
             readout_text(&state).contains("pressure 0.75"),
             "the readout names the pressure, got {:?}",
             readout_text(&state)
+        );
+    }
+
+    #[test]
+    fn tilt_is_stored_clamped_and_exposed() {
+        // R1429 — the router forwards the W3C tilt via `pointer_tilt`; the sink
+        // stores both axes, clamps each to -90..=90 degrees, and exposes them.
+        let mut sink = RawPointerSink::new();
+        sink.pointer_tilt(30.0, -45.0);
+        assert_eq!(
+            sink.query("tilt_x"),
+            Some(IntrospectValue::Float(30.0_f32.into())),
+            "the live tilt_x is exposed"
+        );
+        assert_eq!(
+            sink.query("tilt_y"),
+            Some(IntrospectValue::Float((-45.0_f32).into())),
+            "the live tilt_y is exposed"
+        );
+        sink.pointer_tilt(120.0, -120.0); // out of range → clamped to the axis limits
+        assert_eq!(
+            sink.query("tilt_x"),
+            Some(IntrospectValue::Float(90.0_f32.into())),
+            "tilt_x clamps to +90"
+        );
+        assert_eq!(
+            sink.query("tilt_y"),
+            Some(IntrospectValue::Float((-90.0_f32).into())),
+            "tilt_y clamps to -90"
+        );
+        for path in ["tilt_x", "tilt_y"] {
+            assert_eq!(
+                sink.intervene(path, IntrospectValue::Null),
+                Err(InterveneError::ReadOnly),
+                "{path} is a read-only projection of the input stream"
+            );
+        }
+    }
+
+    /// The tilt tip marker's absolute `(x, y)` position from the rendered view,
+    /// or `None` when the marker is absent (no known cursor position).
+    fn tip_pos(state: SinkState) -> Option<(u32, u32)> {
+        let scene = rendered(state);
+        match find(&scene, TIP_TAG) {
+            Some(Scene::Box(b)) => b.layout.absolute_position,
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_tilt_tip_leans_off_the_cursor_and_needs_a_position() {
+        // R1429 — the pen-tip marker sits ON the cursor at zero tilt, leans right
+        // as tilt_x rises and down as tilt_y rises (the W3C tiltX/tiltY sign), and
+        // is absent with no known position (the pen off the pane).
+        let base = SinkState {
+            x_frac: Some(0.5),
+            y_frac: Some(0.5),
+            ..SinkState::default()
+        };
+        let (x0, y0) = tip_pos(base).expect("a tip on hover, even at zero tilt");
+        let (xr, yr) = tip_pos(SinkState {
+            tilt_x: 60.0,
+            ..base
+        })
+        .expect("a tip under rightward tilt");
+        assert!(xr > x0, "tilt_x>0 leans the tip right: {xr} > {x0}");
+        assert_eq!(yr, y0, "a pure tilt_x does not move the tip vertically");
+        let (xd, yd) = tip_pos(SinkState {
+            tilt_y: 60.0,
+            ..base
+        })
+        .expect("a tip under downward tilt");
+        assert!(yd > y0, "tilt_y>0 leans the tip down: {yd} > {y0}");
+        assert_eq!(xd, x0, "a pure tilt_y does not move the tip horizontally");
+        // A negative tilt_x leans the tip the other way (left of centre).
+        let (xl, _) = tip_pos(SinkState {
+            tilt_x: -60.0,
+            ..base
+        })
+        .expect("a tip under leftward tilt");
+        assert!(xl < x0, "tilt_x<0 leans the tip left: {xl} < {x0}");
+        // No known position → no marker (a pen lifted off the pane).
+        assert_eq!(
+            tip_pos(SinkState {
+                tilt_x: 60.0,
+                ..SinkState::default()
+            }),
+            None,
+            "no tip without a cursor position"
+        );
+    }
+
+    #[test]
+    fn the_readout_surfaces_the_live_tilt() {
+        // R1429 — the readout names the live tilt so a pen's lean reads as data,
+        // and only when the pen is off the perpendicular.
+        let mut sink = RawPointerSink::new();
+        sink.pointer_move(0.4, 0.4);
+        edge(
+            &mut sink,
+            PointerButton::Left,
+            PointerEdge::Down,
+            Modifiers::empty(),
+        );
+        let leaning = SinkState {
+            count: 1,
+            last: sink.last().copied(),
+            x_frac: Some(0.4),
+            y_frac: Some(0.4),
+            pressure: 0.0,
+            tilt_x: 30.0,
+            tilt_y: -20.0,
+        };
+        assert!(
+            readout_text(&leaning).contains("tilt (30\u{b0}, -20\u{b0})"),
+            "the readout names the tilt, got {:?}",
+            readout_text(&leaning)
+        );
+        let upright = SinkState {
+            tilt_x: 0.0,
+            tilt_y: 0.0,
+            ..leaning
+        };
+        assert!(
+            !readout_text(&upright).contains("tilt"),
+            "an upright pen shows no tilt badge, got {:?}",
+            readout_text(&upright)
         );
     }
 
@@ -1046,6 +1285,8 @@ mod tests {
             x_frac: Some(0.3),
             y_frac: Some(0.4),
             pressure: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
         };
         let scene = rendered(state);
         let Some(Scene::Text(t)) = find(&scene, READOUT_TAG) else {

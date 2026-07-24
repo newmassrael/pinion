@@ -2643,6 +2643,24 @@ impl<V: WidgetCore> CoreShell<V> {
         router.set_pointer_pressure(pid, pressure, scene);
     }
 
+    /// R1429 §5.35 — set the pointer TILT for `pid` on `window_id`'s router (W3C
+    /// `PointerEvent.tiltX/tiltY` / Qt `QTabletEvent::xTilt/yTilt`), the
+    /// `scene/pointer_tilt` RPC seam. The value is stored and delivered to the
+    /// pointer's current move-target at once (a driven pen leaning in place), and
+    /// rides every subsequent `pointer_move` — the AI-first source that makes a
+    /// tilt-reactive surface exercisable headless, no tablet required (§2 #2).
+    pub fn set_pointer_tilt_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        tilt_x: f32,
+        tilt_y: f32,
+    ) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        router.set_pointer_tilt(pid, tilt_x, tilt_y, scene);
+    }
+
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's
     /// `CursorLeft`). Drops the cursor + rolls back any in-flight
     /// `Hover`.

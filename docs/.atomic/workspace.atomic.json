@@ -29040,6 +29040,60 @@
         "The GridCursor Vello paint walk still threads two bare cursor flags (cursor_blink_on R1426 + cursor_focused R1427); untouched this round (no paint changed — focused is a serialize-time read-side derivation). A third paint flag would still justify the deferred CursorPaintFlags struct."
       ]
     },
+    "R1429": {
+      "decision_summary": "R1429 §5.35 §5.15 §5.49: a pen-TILT axis on the raw pointer surface, the lean peer of R1423's pressure. External::pointer_tilt(tilt_x, tilt_y) carries the W3C PointerEvent.tiltX/tiltY (Qt QTabletEvent::xTilt/yTilt) in degrees, each axis -90..=90, forwarded WITH position (the W3C pointermove model) and on a standalone change, so a tilt-aware surface — a calligraphy nib, a DCC viewport — reads the live lean. winit 0.30 exposes no tablet-tilt axis (only altitude_angle folded into Touch::force), so scene/pointer_tilt is the SOLE driver: the §2 #2 AI-first path, drivable and introspectable headless with no tablet, exactly the pinion stance where RPC is the primary path. Both backends deliver it through the ONE set_pointer_tilt_for_window router seam, so the terminal drain names the variant and the §2 #6 parity (r1364_5_deferred_input_parity) holds; the pressure/tilt drain arms were lifted to named helpers (drain_pointer_pressure/drain_pointer_tilt) so they read like every sibling arm and drain_deferred_inputs stays under too_many_lines. hello-raw-pointer paints a pen-tip marker that leans off the live cursor by (tilt/90)*40 px with the W3C sign (tilt_x>0 right, tilt_y>0 down) and exposes tilt_x/tilt_y introspect fields the r1429_tilt.py demo drives and reads over RPC. Chosen under the qt-parity-over-yagni directive: Qt has QTabletEvent tilt, so it is built even without a present consumer — the northern-star self-hosted DCC editor is the consumer.",
+      "changes_bullets": [
+        "pinion-core: External::pointer_tilt(tilt_x, tilt_y) — the W3C tiltX/tiltY / Qt xTilt/yTilt pen-lean axis (degrees, -90..=90), default no-op, forwarded WITH position like R1423 pressure.",
+        "pinion-runtime: InputRouter.tilts + note_pointer_tilt/set_pointer_tilt (per-axis clamp, immediate delivery to the hover/grab/capture target); forward_pointer_move rides tilt; set_pointer_tilt_for_window seam.",
+        "pinion-rpc: DeferredInput::PointerTilt{tilt_x,tilt_y} + scene/pointer_tilt handler (both axes required, non-number rejected) + RPC_METHODS entry (Mutate), sorted; two dispatch tests.",
+        "pinion-shell + pinion-tui: both drains deliver tilt through the one set_pointer_tilt_for_window router seam — §2 #6 parity (the terminal drain names the variant, satisfying r1364_5).",
+        "examples/hello-raw-pointer: a pen-tip marker leans off the cursor by (tilt/90)*40 px (W3C sign); tilt_x/tilt_y introspect fields + readout badge; tools/demos/r1429_tilt.py."
+      ],
+      "verification_bullets": [
+        "pinion-rpc: r1429_scene_pointer_tilt_enqueues_the_axes decodes tilt_x/tilt_y; requires_numeric_axes rejects 5 bad shapes (missing either axis / non-number) with invalid_params and enqueues nothing. rpc green.",
+        "pinion-runtime: r1429_tilt_rides_a_forwarded_hover_move (a noted tilt rides the next move); set_tilt_delivers_immediately_and_clamps_each_axis (120/-120 -> 90/-90 delivered without a move). runtime 540 green.",
+        "pinion-tui: r1364_5_every_deferred_input_variant_is_answered_by_the_terminal_drain green — the new PointerTilt variant is named by the terminal drain (§2 #6). tui 136 green; shell 159 green.",
+        "examples: hello-raw-pointer 18 unit tests green (tilt stored/clamped/read-only, tip leans right/down/left and needs a position, readout badges the lean); the shared-binary siblings r1416/r1422/r1423 still green.",
+        "r1429_tilt.py PASS over RPC: the tip leans by (tilt/90)*40 px with the W3C sign, returns to the cursor at zero, clamps 120->90, rides a move, vanishes off-pane, rejects a missing/non-numeric axis, recovers.",
+        "clippy -D pedantic clean (workspace subset --all-targets): the pressure/tilt drain arms delegate to named helpers so drain_deferred_inputs holds under too_many_lines; a TiltLog type alias holds type_complexity. fmt clean; cargo doc --workspace --document-private-items clean; validate-workspace T1=0."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.15",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "winit 0.30 exposes no tablet-tilt axis (only altitude_angle folded into Touch::force), so scene/pointer_tilt is the SOLE driver — the §2 #2 AI-first path. A future winit tablet API / platform bridge would populate it natively, exactly where R1423 pressure reads Touch::force; note_pointer_tilt is the store-without-deliver seam that bridge would call.",
+        "Remaining raw-pointer QTabletEvent gaps for later out-of-band typed axes (R1423 pressure / R1429 tilt precedent): barrel rotation (QTabletEvent::rotation), tangential pressure, z/height, and pointerType (mouse/pen/touch, partly derivable from the Touch-vs-CursorMoved split today).",
+        "TUI tilt is delivered through the shared router seam but has no hardware pen source (single OS window / no tablet), identical to R1423 pressure — the value is drivable/introspectable headless, which is the point."
+      ],
+      "publishable_decision_summary": "R1429 §5.35 §5.15 §5.49: a pen-TILT axis on the raw pointer surface, the lean peer of R1423's pressure. External::pointer_tilt(tilt_x, tilt_y) carries the W3C PointerEvent.tiltX/tiltY (Qt QTabletEvent::xTilt/yTilt) in degrees, each axis -90..=90, forwarded WITH position (the W3C pointermove model) and on a standalone change, so a tilt-aware surface — a calligraphy nib, a DCC viewport — reads the live lean. winit 0.30 exposes no tablet-tilt axis (only altitude_angle folded into Touch::force), so scene/pointer_tilt is the SOLE driver: the §2 #2 AI-first path, drivable and introspectable headless with no tablet, exactly the pinion stance where RPC is the primary path. Both backends deliver it through the ONE set_pointer_tilt_for_window router seam, so the terminal drain names the variant and the §2 #6 parity (r1364_5_deferred_input_parity) holds; the pressure/tilt drain arms were lifted to named helpers (drain_pointer_pressure/drain_pointer_tilt) so they read like every sibling arm and drain_deferred_inputs stays under too_many_lines. hello-raw-pointer paints a pen-tip marker that leans off the live cursor by (tilt/90)*40 px with the W3C sign (tilt_x>0 right, tilt_y>0 down) and exposes tilt_x/tilt_y introspect fields the r1429_tilt.py demo drives and reads over RPC. Chosen under the qt-parity-over-yagni directive: Qt has QTabletEvent tilt, so it is built even without a present consumer — the northern-star self-hosted DCC editor is the consumer.",
+      "publishable_changes_bullets": [
+        "pinion-core: External::pointer_tilt(tilt_x, tilt_y) — the W3C tiltX/tiltY / Qt xTilt/yTilt pen-lean axis (degrees, -90..=90), default no-op, forwarded WITH position like R1423 pressure.",
+        "pinion-runtime: InputRouter.tilts + note_pointer_tilt/set_pointer_tilt (per-axis clamp, immediate delivery to the hover/grab/capture target); forward_pointer_move rides tilt; set_pointer_tilt_for_window seam.",
+        "pinion-rpc: DeferredInput::PointerTilt{tilt_x,tilt_y} + scene/pointer_tilt handler (both axes required, non-number rejected) + RPC_METHODS entry (Mutate), sorted; two dispatch tests.",
+        "pinion-shell + pinion-tui: both drains deliver tilt through the one set_pointer_tilt_for_window router seam — §2 #6 parity (the terminal drain names the variant, satisfying r1364_5).",
+        "examples/hello-raw-pointer: a pen-tip marker leans off the cursor by (tilt/90)*40 px (W3C sign); tilt_x/tilt_y introspect fields + readout badge; tools/demos/r1429_tilt.py."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-rpc: r1429_scene_pointer_tilt_enqueues_the_axes decodes tilt_x/tilt_y; requires_numeric_axes rejects 5 bad shapes (missing either axis / non-number) with invalid_params and enqueues nothing. rpc green.",
+        "pinion-runtime: r1429_tilt_rides_a_forwarded_hover_move (a noted tilt rides the next move); set_tilt_delivers_immediately_and_clamps_each_axis (120/-120 -> 90/-90 delivered without a move). runtime 540 green.",
+        "pinion-tui: r1364_5_every_deferred_input_variant_is_answered_by_the_terminal_drain green — the new PointerTilt variant is named by the terminal drain (§2 #6). tui 136 green; shell 159 green.",
+        "examples: hello-raw-pointer 18 unit tests green (tilt stored/clamped/read-only, tip leans right/down/left and needs a position, readout badges the lean); the shared-binary siblings r1416/r1422/r1423 still green.",
+        "r1429_tilt.py PASS over RPC: the tip leans by (tilt/90)*40 px with the W3C sign, returns to the cursor at zero, clamps 120->90, rides a move, vanishes off-pane, rejects a missing/non-numeric axis, recovers.",
+        "clippy -D pedantic clean (workspace subset --all-targets): the pressure/tilt drain arms delegate to named helpers so drain_deferred_inputs holds under too_many_lines; a TiltLog type alias holds type_complexity. fmt clean; cargo doc --workspace --document-private-items clean; validate-workspace T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.15",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "winit 0.30 exposes no tablet-tilt axis (only altitude_angle folded into Touch::force), so scene/pointer_tilt is the SOLE driver — the §2 #2 AI-first path. A future winit tablet API / platform bridge would populate it natively, exactly where R1423 pressure reads Touch::force; note_pointer_tilt is the store-without-deliver seam that bridge would call.",
+        "Remaining raw-pointer QTabletEvent gaps for later out-of-band typed axes (R1423 pressure / R1429 tilt precedent): barrel rotation (QTabletEvent::rotation), tangential pressure, z/height, and pointerType (mouse/pen/touch, partly derivable from the Touch-vs-CursorMoved split today).",
+        "TUI tilt is delivered through the shared router seam but has no hardware pen source (single OS window / no tablet), identical to R1423 pressure — the value is drivable/introspectable headless, which is the point."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

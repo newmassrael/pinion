@@ -1796,6 +1796,57 @@ fn r1423_scene_pointer_pressure_requires_a_numeric_value() {
 }
 
 #[test]
+fn r1429_scene_pointer_tilt_enqueues_the_axes() {
+    // Numeric `tilt_x` / `tilt_y` enqueue one positionless PointerTilt
+    // (out-of-band, like scene/pointer_pressure); the router clamps and delivers.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/pointer_tilt","params":{"tilt_x":30.0,"tilt_y":-45.0},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::PointerTilt { tilt_x, tilt_y } = inbox[0] else {
+        panic!("expected PointerTilt, got {:?}", inbox[0]);
+    };
+    assert!((tilt_x - 30.0).abs() < 1e-4, "tilt_x decoded, got {tilt_x}");
+    assert!((tilt_y + 45.0).abs() < 1e-4, "tilt_y decoded, got {tilt_y}");
+}
+
+#[test]
+fn r1429_scene_pointer_tilt_requires_numeric_axes() {
+    // A missing or non-numeric axis rejects with invalid_params and enqueues
+    // nothing, so a typo surfaces at the call site. Both axes are required.
+    for params in [
+        "{}",
+        r#"{"tilt_x":10.0}"#,
+        r#"{"tilt_y":10.0}"#,
+        r#"{"tilt_x":"left","tilt_y":0.0}"#,
+        r#"{"tilt_x":0.0,"tilt_y":true}"#,
+    ] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/pointer_tilt","params":{params},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        let err = resp.error.expect("must reject");
+        assert_eq!(err.code, -32602, "invalid_params for {params}");
+        assert!(
+            inbox.is_empty(),
+            "rejected request enqueues nothing: {params}"
+        );
+    }
+}
+
+#[test]
 fn r887_scene_click_explicit_left_button_enqueues_click() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();

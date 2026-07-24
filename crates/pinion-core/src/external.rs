@@ -1311,6 +1311,30 @@ pub trait External: core::fmt::Debug {
     /// pen/touch axis, not a synthesised mouse-button level).
     fn pointer_pressure(&mut self, _pressure: f32) {}
 
+    /// R1429 §5.35 §5.15 — the current pointer TILT for this widget, the W3C
+    /// `PointerEvent.tiltX` / `tiltY` / Qt `QTabletEvent::xTilt()` / `yTilt()`
+    /// peer: the pen's lean off the surface normal, in DEGREES, each axis
+    /// `-90.0..=90.0`. `tilt_x` is the lean in the device X-Z plane (positive =
+    /// the pen top tilts toward +X / screen right); `tilt_y` in the Y-Z plane
+    /// (positive = the pen top tilts toward +Y / screen bottom). `(0.0, 0.0)` is
+    /// a pen held perpendicular, and what a plain mouse reports (a mouse has no
+    /// tilt, exactly as it has no pressure). Forwarded alongside each
+    /// [`pointer_move`](Self::pointer_move) (tilt travels WITH position, the W3C
+    /// `pointermove` model) AND on a standalone tilt change (a pen leaning in
+    /// place), so a tilt-aware surface — a calligraphy nib whose stroke shape
+    /// follows the lean, a DCC viewport — reads the live angle without a separate
+    /// device query.
+    ///
+    /// winit 0.30 exposes no tablet-tilt axis, so the sole driver is the
+    /// `scene/pointer_tilt` RPC (§2 #2, the AI-first primary path): the value is
+    /// drivable and introspectable headless, no tablet required. A future winit
+    /// tablet API, or a platform bridge, would populate it natively — the same
+    /// place [`pointer_pressure`](Self::pointer_pressure) reads winit
+    /// `Touch::force` today.
+    ///
+    /// Default no-op; only a widget that reacts to lean overrides.
+    fn pointer_tilt(&mut self, _tilt_x: f32, _tilt_y: f32) {}
+
     /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
     /// forwarding leg the pointer hooks left open). The framework's
     /// [`InputRouter`](crate#) offers a wheel event to the `External`

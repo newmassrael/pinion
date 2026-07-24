@@ -882,6 +882,15 @@ pub enum DeferredInput {
     /// for a pressure-reactive surface (an ink brush, a DCC viewport), so a
     /// tablet is not required to exercise force headless (§2 #2).
     PointerPressure { value: f32 },
+    /// R1429 §5.35 §5.15 — `scene/pointer_tilt` injection: set the pointer's
+    /// TILT (W3C `PointerEvent.tiltX/tiltY` / Qt `QTabletEvent::xTilt/yTilt`),
+    /// each axis in degrees `-90.0..=90.0`. Positionless like
+    /// [`Self::PointerPressure`] — an out-of-band per-pointer state that rides
+    /// subsequent moves and is delivered to the surface under the pointer at
+    /// once. The AI-first source for a tilt-reactive surface (a calligraphy nib,
+    /// a DCC viewport), so a tablet is not required to exercise lean headless
+    /// (§2 #2); winit 0.30 exposes no tilt axis, making the RPC the sole driver.
+    PointerTilt { tilt_x: f32, tilt_y: f32 },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -1789,6 +1798,17 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 HandlerKind::Mutate,
             )
         }
+        "scene/pointer_tilt" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pointer_tilt(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
         "scene/hover" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -2530,6 +2550,44 @@ fn handle_scene_pointer_pressure(
     )]
     inbox.push(DeferredInput::PointerPressure {
         value: value as f32,
+    });
+    Ok(Value::Null)
+}
+
+/// R1429 §5.35 §5.15 — `scene/pointer_tilt` handler: set the pointer's TILT
+/// (W3C `PointerEvent.tiltX/tiltY` / Qt `QTabletEvent::xTilt/yTilt`), each axis
+/// in degrees. Positionless (out-of-band, like `scene/pointer_pressure`): the
+/// value rides subsequent moves and is delivered to the surface under the
+/// pointer at once. Required params `tilt_x` and `tilt_y` (both numbers);
+/// out-of-range is clamped at the router, a non-number is rejected so a typo
+/// surfaces at the call.
+fn handle_scene_pointer_tilt(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    let tilt_x = params
+        .get("tilt_x")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tilt_x must be a number (degrees, -90.0..=90.0)")
+        })?;
+    let tilt_y = params
+        .get("tilt_y")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tilt_y must be a number (degrees, -90.0..=90.0)")
+        })?;
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a tilt in degrees -90.0..=90.0 loses no meaningful precision as f32"
+    )]
+    inbox.push(DeferredInput::PointerTilt {
+        tilt_x: tilt_x as f32,
+        tilt_y: tilt_y as f32,
     });
     Ok(Value::Null)
 }

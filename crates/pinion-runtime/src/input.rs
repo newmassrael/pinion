@@ -438,6 +438,14 @@ pub struct InputRouter {
     /// `pointer_move` (pressure travels WITH position, the W3C `pointermove`
     /// model). Absent → `0.0` (no force reported), so a plain mouse forwards zero.
     pressures: HashMap<PointerId, f32>,
+    /// R1429 §5.35 — the current pointer TILT `(tilt_x, tilt_y)` per pointer (W3C
+    /// `PointerEvent.tiltX/tiltY` / Qt `QTabletEvent::xTilt/yTilt`), in degrees,
+    /// each axis clamped to `-90.0..=90.0`. Set from the `scene/pointer_tilt` RPC
+    /// (winit 0.30 exposes no tilt source) and forwarded to a tilt-aware
+    /// [`External`](pinion_core::external::External) alongside each `pointer_move`
+    /// (tilt travels WITH position). Absent → `(0.0, 0.0)` (no lean), so a plain
+    /// mouse forwards a perpendicular tilt.
+    tilts: HashMap<PointerId, (f32, f32)>,
 }
 
 /// R1418 §5.35 — one pointer's implicit grab on a raw multi-button sink: the
@@ -2181,6 +2189,58 @@ impl InputRouter {
         external
             .handle
             .pointer_pressure(self.pressures.get(&id).copied().unwrap_or(0.0));
+        // R1429 §5.35 — tilt travels WITH the move (W3C `pointermove`): forward
+        // the pointer's current lean to a tilt-aware surface. Absent → (0.0, 0.0)
+        // (a plain mouse reports no tilt).
+        let (tilt_x, tilt_y) = self.tilts.get(&id).copied().unwrap_or((0.0, 0.0));
+        external.handle.pointer_tilt(tilt_x, tilt_y);
+    }
+
+    /// R1429 §5.35 — store `id`'s TILT (W3C `PointerEvent.tiltX/tiltY` / Qt
+    /// `QTabletEvent::xTilt/yTilt`), each axis clamped to `-90.0..=90.0` degrees,
+    /// WITHOUT delivering it. Mirrors [`note_pointer_pressure`](Self::note_pointer_pressure):
+    /// a future pen bridge calls this before the accompanying
+    /// [`cursor_moved`](Self::cursor_moved), whose forwarded `pointer_move`
+    /// carries the new tilt to the surface (tilt travels with position).
+    pub fn note_pointer_tilt(&mut self, id: PointerId, tilt_x: f32, tilt_y: f32) {
+        self.tilts
+            .insert(id, (tilt_x.clamp(-90.0, 90.0), tilt_y.clamp(-90.0, 90.0)));
+    }
+
+    /// R1429 §5.35 — store `id`'s tilt AND deliver it to the pointer's current
+    /// move-target immediately, so a standalone tilt change (a pen leaning in
+    /// place with no cursor move — the `scene/pointer_tilt` RPC path) reaches the
+    /// surface at once, not only on the next move. The target is resolved exactly
+    /// as [`set_pointer_pressure`](Self::set_pointer_pressure) resolves it: an
+    /// implicit raw grab, else a capture lock, else the hover target when it opted
+    /// into hover-move. The stored value also rides every subsequent
+    /// `pointer_move`.
+    pub fn set_pointer_tilt(
+        &mut self,
+        id: PointerId,
+        tilt_x: f32,
+        tilt_y: f32,
+        state_scene: &mut Scene,
+    ) {
+        self.note_pointer_tilt(id, tilt_x, tilt_y);
+        let (clamped_x, clamped_y) = self.tilts.get(&id).copied().unwrap_or((0.0, 0.0));
+        let target = self
+            .raw_grab_tag(id)
+            .or_else(|| self.captured_targets.get(&id).cloned())
+            .or_else(|| {
+                self.hover_wants_move
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(false)
+                    .then(|| self.hover_targets.get(&id).cloned())
+                    .flatten()
+            });
+        if let Some(tag) = target {
+            let (primary, _) = split_subindex(&tag);
+            if let Some(external) = find_external_by_tag(state_scene, primary) {
+                external.handle.pointer_tilt(clamped_x, clamped_y);
+            }
+        }
     }
 
     /// R1423 §5.35 — store `id`'s PRESSURE (W3C `PointerEvent.pressure` / Qt
@@ -4048,6 +4108,95 @@ mod tests {
             pressures.lock().expect("mutex poisoned").as_slice(),
             &[1.0],
             "a standalone pressure change delivers immediately, clamped to 1.0",
+        );
+    }
+
+    /// R1429 — shared `(tilt_x, tilt_y)` log the [`TiltSink`] appends to and the
+    /// test reads. Aliased so the sink field and the fixture signature stay under
+    /// clippy's `type_complexity` bar.
+    type TiltLog = Arc<Mutex<Vec<(f32, f32)>>>;
+
+    /// R1429 — a minimal tilt-recording sink: opts into hover-move (so the router
+    /// forwards `pointer_move` and the R1429 tilt to it on a plain hover) and logs
+    /// every `pointer_tilt` call as a `(tilt_x, tilt_y)` pair.
+    struct TiltSink {
+        tilts: TiltLog,
+    }
+
+    impl std::fmt::Debug for TiltSink {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("TiltSink").finish()
+        }
+    }
+
+    impl pinion_core::external::External for TiltSink {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn wants_hover_move(&self) -> bool {
+            true
+        }
+        fn pointer_tilt(&mut self, tilt_x: f32, tilt_y: f32) {
+            self.tilts
+                .lock()
+                .expect("mutex poisoned")
+                .push((tilt_x, tilt_y));
+        }
+    }
+
+    fn state_with_tilt_sink() -> (Scene, TiltLog) {
+        let tilts = Arc::new(Mutex::new(Vec::new()));
+        let sink = TiltSink {
+            tilts: Arc::clone(&tilts),
+        };
+        let scene = Scene::External(ExternalNode::new(Box::new(sink)).with_tag("main_slider"));
+        (scene, tilts)
+    }
+
+    #[test]
+    fn r1429_tilt_rides_a_forwarded_hover_move() {
+        // R1429 — a noted tilt rides the next forwarded `pointer_move` (the W3C
+        // `pointermove` model: tilt travels with position).
+        let mut router = InputRouter::new();
+        let (mut state, tilts) = state_with_tilt_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.note_pointer_tilt(PointerId::MOUSE, 30.0, -45.0);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // enter the sink
+        router.cursor_moved(PointerId::MOUSE, 101.0, 100.0, &mut state); // move within it
+        assert!(
+            tilts
+                .lock()
+                .expect("mutex poisoned")
+                .iter()
+                .any(|(x, y)| (*x - 30.0).abs() < 1e-6 && (*y + 45.0).abs() < 1e-6),
+            "the noted tilt rode a forwarded move, got {:?}",
+            tilts.lock().expect("mutex poisoned")
+        );
+    }
+
+    #[test]
+    fn r1429_set_tilt_delivers_immediately_and_clamps_each_axis() {
+        // R1429 — `set_pointer_tilt` (the RPC path) delivers to the hover target
+        // at once — no move required (a pen leaning in place) — and clamps each
+        // axis to -90..=90 independently.
+        let mut router = InputRouter::new();
+        let (mut state, tilts) = state_with_tilt_sink();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // hover the sink
+        tilts.lock().expect("mutex poisoned").clear(); // drop the move-forwarded (0,0)
+        router.set_pointer_tilt(PointerId::MOUSE, 120.0, -120.0, &mut state); // both out of range
+        assert_eq!(
+            tilts.lock().expect("mutex poisoned").as_slice(),
+            &[(90.0, -90.0)],
+            "a standalone tilt change delivers immediately, each axis clamped",
         );
     }
 
