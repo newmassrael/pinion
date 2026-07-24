@@ -733,6 +733,63 @@ impl PointerKind {
     }
 }
 
+/// R1432 §5.35 — the lifecycle phase of a continuous native gesture (a
+/// trackpad pinch / rotate), the winit `TouchPhase` / Qt
+/// `QNativeGestureEvent` `Qt::NativeGestureType` phase peer. A gesture is not a
+/// single event but an arc: it `Begin`s when the fingers land, streams
+/// `Update`s as they move, and `End`s when they lift — or `Cancel`s if the
+/// platform aborts the recognition. A magnification-aware surface accumulates
+/// the per-`Update` delta between `Begin` and `End`, and discards the
+/// accumulator on `Cancel` (the fingers lifted without committing), so it needs
+/// the phase to bracket the interaction rather than treat each delta in
+/// isolation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum GesturePhase {
+    /// The gesture started — the fingers landed (`"begin"`). winit
+    /// `TouchPhase::Started` / Qt `Qt::GestureStarted`.
+    #[default]
+    Begin,
+    /// The gesture is updating — the fingers moved and a fresh delta arrived
+    /// (`"update"`). winit `TouchPhase::Moved` / Qt `Qt::GestureUpdated`. This
+    /// is the phase that carries the meaningful magnification / rotation change.
+    Update,
+    /// The gesture finished — the fingers lifted (`"end"`). winit
+    /// `TouchPhase::Ended` / Qt `Qt::GestureFinished`.
+    End,
+    /// The gesture was cancelled — the platform aborted recognition without a
+    /// clean finish (`"cancel"`). winit `TouchPhase::Cancelled` / Qt
+    /// `Qt::GestureCanceled`. A surface accumulating a preview drops it rather
+    /// than committing.
+    Cancel,
+}
+
+impl GesturePhase {
+    /// Canonical lower-case wire name. Inverse of [`from_wire_name`](Self::from_wire_name).
+    #[must_use]
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            GesturePhase::Begin => "begin",
+            GesturePhase::Update => "update",
+            GesturePhase::End => "end",
+            GesturePhase::Cancel => "cancel",
+        }
+    }
+
+    /// Decode a wire gesture-phase name; `None` for anything outside the
+    /// vocabulary so a typo surfaces at the call site. Inverse of
+    /// [`as_wire_name`](Self::as_wire_name).
+    #[must_use]
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "begin" => Some(GesturePhase::Begin),
+            "update" => Some(GesturePhase::Update),
+            "end" => Some(GesturePhase::End),
+            "cancel" => Some(GesturePhase::Cancel),
+            _ => None,
+        }
+    }
+}
+
 /// R1416 §5.35 — a raw pointer-button transition: the press or the release
 /// edge. The winit `ElementState::Pressed` / `Released` mirror, named in core
 /// so the [`External`](crate::external::External) trait and the RPC
@@ -2075,5 +2132,33 @@ mod drag_calibration_tests {
             got.focused,
             "the focused window's per-window verdict is true"
         );
+    }
+
+    #[test]
+    fn r1432_gesture_phase_wire_round_trips_and_rejects_typos() {
+        use super::GesturePhase;
+        // Every phase encodes and decodes to itself — the RPC decode
+        // (`from_wire_name`) and the introspect encode (`as_wire_name`) share
+        // one vocabulary, so a `scene/pinch_gesture {phase}` and the field it
+        // surfaces can never drift.
+        for phase in [
+            GesturePhase::Begin,
+            GesturePhase::Update,
+            GesturePhase::End,
+            GesturePhase::Cancel,
+        ] {
+            assert_eq!(
+                GesturePhase::from_wire_name(phase.as_wire_name()),
+                Some(phase)
+            );
+        }
+        assert_eq!(GesturePhase::Begin.as_wire_name(), "begin");
+        assert_eq!(GesturePhase::Cancel.as_wire_name(), "cancel");
+        // A typo / out-of-vocabulary name decodes to `None` so it surfaces at
+        // the call site as an `invalid_params`, never a silent default.
+        assert_eq!(GesturePhase::from_wire_name("started"), None);
+        assert_eq!(GesturePhase::from_wire_name(""), None);
+        // The default is `Begin` — a gesture arc's first phase.
+        assert_eq!(GesturePhase::default(), GesturePhase::Begin);
     }
 }

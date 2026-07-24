@@ -86,7 +86,7 @@ pub use file_dialog::{
 };
 pub use frame::Frame;
 pub use input::{
-    CompositionEvent, DRAG_CLICK_THRESHOLD_PX, DragCalibration, DragLatch, HeldKeys,
+    CompositionEvent, DRAG_CLICK_THRESHOLD_PX, DragCalibration, DragLatch, GesturePhase, HeldKeys,
     InputStateSnapshot, KeyDispatchFocus, Modifiers, PointerButton, PointerButtons, PointerEdge,
     PointerKind, RawPointerButton, SelectionChord, edit_field_keymap, forward_key_to_field,
 };

@@ -2981,6 +2981,49 @@ impl<V: WidgetCore> CoreShell<V> {
         (self.tail(), dispatched)
     }
 
+    /// R1432 §5.35 §5.15 — per-window native PINCH (magnify) gesture dispatch,
+    /// the Qt `QNativeGestureEvent` `ZoomNativeGesture` peer: offer the
+    /// incremental `magnification` + lifecycle `phase` to the
+    /// [`External`](pinion_core::external::External) under the cursor, carrying
+    /// the held `modifiers` (the shell's `ModifiersChanged` cache) like
+    /// [`Self::wheel_with_modifiers_for_window`]. Unlike the wheel there is NO
+    /// `WidgetCore::apply_wheel` GUI-side pre-hook and NO `Scene::Scroll`
+    /// fallback — a native gesture reaches only the hovered widget (Qt's
+    /// contract), so the one router leg is the whole dispatch. The borrow split
+    /// mirrors the wheel path (the External offer needs both the router and the
+    /// state scene). Returns `(DispatchTail, consumed)`.
+    pub fn pinch_gesture_with_modifiers_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        magnification: f64,
+        phase: pinion_core::GesturePhase,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        let consumed = router.pinch_gesture(pid, magnification, phase, modifiers, scene);
+        (self.tail(), consumed)
+    }
+
+    /// R1432 §5.35 — [`DEFAULT_WINDOW`] convenience over
+    /// [`Self::pinch_gesture_with_modifiers_for_window`].
+    pub fn pinch_gesture(
+        &mut self,
+        pid: PointerId,
+        magnification: f64,
+        phase: pinion_core::GesturePhase,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        self.pinch_gesture_with_modifiers_for_window(
+            DEFAULT_WINDOW,
+            pid,
+            magnification,
+            phase,
+            modifiers,
+        )
+    }
+
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch.
     ///
     /// Forwards a W3C `KeyboardEvent.key` string into

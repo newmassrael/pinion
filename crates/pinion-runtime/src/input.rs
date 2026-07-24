@@ -87,7 +87,7 @@ use pinion_core::external::{
     OUTER_DOCK_MARGIN, OUTER_DOCK_ZONE_TAG,
 };
 use pinion_core::input::{
-    PointerButton, PointerButtons, PointerEdge, PointerWireEvent, RawPointerButton,
+    GesturePhase, PointerButton, PointerButtons, PointerEdge, PointerWireEvent, RawPointerButton,
 };
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 use pinion_core::widgets::scroll::ScrollState;
@@ -2030,6 +2030,49 @@ impl InputRouter {
         dispatched
     }
 
+    /// R1432 §5.35 §5.15 — offer a native PINCH (magnify) gesture to the
+    /// [`External`](pinion_core::external::External) under this pointer's
+    /// cursor. Mirrors the External-offer leg of
+    /// [`wheel_with_modifiers`](Self::wheel_with_modifiers): resolve the hover
+    /// target under the stored cursor, normalise the cursor over the widget's
+    /// capture rect (the SAME basis a `wheel` / `pointer_move` reads), and
+    /// forward the incremental `magnification` + `phase`. There is deliberately
+    /// NO `Scene::Scroll` fallback — a native gesture has no default scroll
+    /// action, so Qt delivers `QNativeGestureEvent` only to the widget under the
+    /// cursor. Returns `true` if that widget consumed it.
+    ///
+    /// No-op (`false`) under the same router-state guards
+    /// [`wheel_with_modifiers`](Self::wheel_with_modifiers) checks: no stored
+    /// cursor for `id`, no retained paint scene, or no hover target covering the
+    /// cursor.
+    pub fn pinch_gesture(
+        &mut self,
+        id: PointerId,
+        magnification: f64,
+        phase: GesturePhase,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> bool {
+        let Some(&(x, y)) = self.cursors.get(&id) else {
+            return false;
+        };
+        let Some(paint) = self.last_paint_scene.as_ref() else {
+            return false;
+        };
+        let Some(target_tag) = self.hover_targets.get(&id).cloned() else {
+            return false;
+        };
+        offer_pinch_to_external(
+            paint,
+            state_scene,
+            &target_tag,
+            (x, y),
+            magnification,
+            phase,
+            modifiers,
+        )
+    }
+
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll input dispatch.
     ///
     /// Routes a W3C `KeyboardEvent.key` string into the deepest
@@ -3304,6 +3347,36 @@ fn offer_wheel_to_external(
     external
         .handle
         .wheel(x_rel, y_rel, delta.0, delta.1, modifiers)
+}
+
+/// R1432 §5.35 — the External-offer leg for a native PINCH gesture, the
+/// [`offer_wheel_to_external`] sibling minus the wheel's `Scene::Scroll`
+/// fallback (a native gesture has no default scroll action). Resolve the widget
+/// under `cursor`, normalise the cursor over its capture rect via the shared
+/// [`capture_rel_coords`] (the SAME basis `pointer_move` / `wheel` use), and
+/// forward the incremental `magnification` + `phase`. Returns the widget's
+/// consume verdict; `false` when nothing tagged covers the cursor.
+fn offer_pinch_to_external(
+    paint: &Scene,
+    state_scene: &mut Scene,
+    target_tag: &str,
+    cursor: (f64, f64),
+    magnification: f64,
+    phase: GesturePhase,
+    modifiers: Modifiers,
+) -> bool {
+    let (primary, _) = split_subindex(target_tag);
+    let Some(external) = find_external_by_tag(state_scene, primary) else {
+        return false;
+    };
+    let Some((x_rel, y_rel)) =
+        capture_rel_coords(paint, external, primary, target_tag, cursor.0, cursor.1)
+    else {
+        return false;
+    };
+    external
+        .handle
+        .pinch_gesture(x_rel, y_rel, magnification, phase, modifiers)
 }
 
 fn capture_rel_coords(
@@ -6515,6 +6588,141 @@ mod tests {
         assert!(
             recorded[0].4.control_key(),
             "ctrl modifier must reach the External"
+        );
+    }
+
+    // ─── R1432 §5.35 §5.15 native pinch-gesture offer tests ────────
+
+    /// One recorded [`External::pinch_gesture`] call:
+    /// `(x_rel, y_rel, magnification, phase, modifiers)`.
+    type PinchCall = (f32, f32, f64, GesturePhase, Modifiers);
+
+    /// Records every [`External::pinch_gesture`] call; consumes (returns `true`)
+    /// iff `consume` is set.
+    struct PinchExternal {
+        calls: Arc<Mutex<Vec<PinchCall>>>,
+        consume: bool,
+    }
+
+    impl PinchExternal {
+        fn new(consume: bool) -> (Self, Arc<Mutex<Vec<PinchCall>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: Arc::clone(&calls),
+                    consume,
+                },
+                calls,
+            )
+        }
+    }
+
+    impl std::fmt::Debug for PinchExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("PinchExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for PinchExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn pinch_gesture(
+            &mut self,
+            x_rel: f32,
+            y_rel: f32,
+            magnification: f64,
+            phase: GesturePhase,
+            modifiers: Modifiers,
+        ) -> bool {
+            self.calls.lock().expect("mutex poisoned").push((
+                x_rel,
+                y_rel,
+                magnification,
+                phase,
+                modifiers,
+            ));
+            self.consume
+        }
+    }
+
+    #[test]
+    fn r1432_pinch_gesture_offered_to_hovered_external() {
+        // The External the cursor hovers receives the pinch: coordinates
+        // normalised over its rect (cursor (100, 90) over rect 80..120 → rel
+        // (0.5, 0.25)), the incremental magnification + phase + modifiers
+        // forwarded verbatim, and the consume verdict returned.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = PinchExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::empty()
+        };
+        assert!(router.pinch_gesture(
+            PointerId::MOUSE,
+            0.25,
+            GesturePhase::Update,
+            ctrl,
+            &mut state_scene,
+        ));
+        // A native gesture never touches the scroll fallback (there is none).
+        assert_eq!(scroll.offset(), (0, 0), "pinch must not scroll");
+        let recorded = calls.lock().expect("mutex poisoned").clone();
+        assert_eq!(recorded.len(), 1);
+        let (x_rel, y_rel, magnification, phase, mods) = recorded[0];
+        assert!((x_rel - 0.5).abs() < 1e-6, "x_rel {x_rel}");
+        assert!((y_rel - 0.25).abs() < 1e-6, "y_rel {y_rel}");
+        assert!(
+            (magnification - 0.25).abs() < 1e-9,
+            "magnification {magnification}"
+        );
+        assert_eq!(phase, GesturePhase::Update);
+        assert!(mods.control_key(), "ctrl modifier must reach the External");
+    }
+
+    #[test]
+    fn r1432_pinch_gesture_off_target_is_noop() {
+        // With the cursor over no tagged widget (10, 10 is outside the 80..120
+        // button, and Scroll content is path-transparent), the pinch resolves
+        // no target and is a clean no-op — false, nothing recorded.
+        let scroll = Rc::new(ScrollState::new());
+        let (ext, calls) = PinchExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(scroll, None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state_scene);
+        assert!(
+            !router.pinch_gesture(
+                PointerId::MOUSE,
+                0.5,
+                GesturePhase::Begin,
+                Modifiers::empty(),
+                &mut state_scene,
+            ),
+            "no hovered target → no consume"
+        );
+        assert!(
+            calls.lock().expect("mutex poisoned").is_empty(),
+            "no target → no offer"
         );
     }
 

@@ -2702,6 +2702,34 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
     }
 
+    /// R1432 §5.35 §5.15 — native PINCH (magnify) gesture into the addressed
+    /// window, the wheel wrapper's sibling: carry the held `self.modifiers`
+    /// (the `ModifiersChanged` cache) into the runtime
+    /// `ShellCore::pinch_gesture_with_modifiers_for_window` and request a repaint
+    /// when the hovered widget consumed it. The one place
+    /// both the native winit `PinchGesture` arm and the `scene/pinch_gesture`
+    /// RPC replay funnel through, so the modifier read + repaint gate are stated
+    /// once.
+    pub fn pinch_gesture_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        magnification: f64,
+        phase: pinion_core::GesturePhase,
+    ) {
+        let (tail, consumed) = self.core.pinch_gesture_with_modifiers_for_window(
+            window_id,
+            pid,
+            magnification,
+            phase,
+            self.modifiers,
+        );
+        if consumed {
+            self.request_redraw();
+        }
+        self.handle_tail(&tail);
+    }
+
     /// R51.195 §5.49 §5.45 — drain the deferred-input inbox `dispatch`
     /// populated. Each entry replays the input through the same
     /// `cursor_moved` / `wheel` entry points the winit and TUI
@@ -2881,6 +2909,29 @@ impl<V: WidgetView> ShellCore<V> {
                     self.core
                         .set_pointer_kind_for_window(window_id, PointerId::MOUSE, kind);
                     self.after_pointer_axis_change(window_id);
+                }
+                // R1432 §5.35 §5.15 — `scene/pinch_gesture`: a native pinch
+                // (magnify) gesture at (x, y). Seed the cursor first (so the
+                // hovered target is fresh before the offer — a native
+                // `CursorMoved` precedes `PinchGesture` the same way), then
+                // offer the incremental magnification + phase through the ONE
+                // `pinch_gesture_for_window` seam the native winit path also
+                // reaches, so an RPC-injected pinch is indistinguishable from a
+                // trackpad one (§2 #6). Held modifiers ride the R763 out-of-band
+                // `scene/modifiers` cache, read inside the seam.
+                DeferredInput::PinchGesture {
+                    x,
+                    y,
+                    magnification,
+                    phase,
+                } => {
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.pinch_gesture_for_window(
+                        window_id,
+                        PointerId::MOUSE,
+                        magnification,
+                        phase,
+                    );
                 }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate

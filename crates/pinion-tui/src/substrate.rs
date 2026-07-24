@@ -797,6 +797,17 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                     state_changed |= self.cursor_moved(x, y);
                     state_changed |= self.wheel(delta);
                 }
+                // R1432 §5.35 §5.15 §2 #2 §2 #6 — `scene/pinch_gesture`: a native
+                // pinch (magnify) gesture, delivered through `drain_pinch_gesture`
+                // (lifted off this match to keep it under the line ceiling).
+                pinion_rpc::DeferredInput::PinchGesture {
+                    x,
+                    y,
+                    magnification,
+                    phase,
+                } => {
+                    state_changed |= self.drain_pinch_gesture(x, y, magnification, phase);
+                }
                 pinion_rpc::DeferredInput::Click { x, y } => {
                     state_changed |= self.cursor_moved(x, y);
                     state_changed |= self.pointer_down();
@@ -991,6 +1002,34 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             value,
         );
         true
+    }
+
+    /// R1432 §5.35 §5.15 §2 #2 §2 #6 — deliver a driven native PINCH gesture to
+    /// the terminal backend's router, the `scene/pinch_gesture` out-of-band
+    /// drain. A terminal has no trackpad, but the AI-first RPC source (§2 #2)
+    /// rides the SAME `InputRouter` the Vello sibling drives, so a pinch-reactive
+    /// `External` (a zoomable viewport) sees identical delivery on both backends.
+    /// Seed the cursor, then offer the incremental magnification + `phase` to the
+    /// widget under it via the runtime `ShellCore::pinch_gesture`.
+    /// The TUI carries no modifier chords yet (the §2 #6 divergence carry the
+    /// `cursor_moved` note records), so empty modifiers — the same simplification
+    /// [`Self::wheel`] makes. Returns `true` when the frame may need a repaint.
+    fn drain_pinch_gesture(
+        &mut self,
+        x: f64,
+        y: f64,
+        magnification: f64,
+        phase: pinion_core::GesturePhase,
+    ) -> bool {
+        let mut changed = self.cursor_moved(x, y);
+        let (tail, consumed) = self.core.pinch_gesture(
+            PointerId::MOUSE,
+            magnification,
+            phase,
+            pinion_core::Modifiers::empty(),
+        );
+        changed |= self.handle_tail(&tail) || consumed;
+        changed
     }
 
     /// R1429 §5.35 §2 #2 §2 #6 — the tilt peer of

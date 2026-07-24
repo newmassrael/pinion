@@ -1027,6 +1027,39 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params["path"] = path
         self.request("scene/wheel", params)
 
+    def pinch_gesture(
+        self,
+        magnification: float,
+        phase: str,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+    ) -> None:
+        """`scene/pinch_gesture` typed wrapper (R1432 §5.35 §5.15).
+
+        Drive a native PINCH (magnify) gesture — the Qt `QNativeGestureEvent`
+        `ZoomNativeGesture` peer — at the cursor target. Supply exactly one of
+        `at = (x, y)` or `path = "<tag>"` (the widget under the cursor receives
+        the offer). `magnification` is the INCREMENTAL scale delta (positive
+        zooms in, negative out); `phase` brackets the arc, one of ``"begin"`` /
+        ``"update"`` / ``"end"`` / ``"cancel"``. The shell drains the inbox
+        after this returns, applying `cursor_moved` then the pinch offer. winit
+        exposes no trackpad headless, so this RPC is the sole driver (§2 #2);
+        follow up with `query(...)` / `snapshot(...)` to observe the zoom.
+        """
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        params: dict[str, Any] = {
+            "magnification": float(magnification),
+            "phase": phase,
+        }
+        if at is not None:
+            params["at"] = {"x": float(at[0]), "y": float(at[1])}
+        else:
+            assert path is not None
+            params["path"] = path
+        self.request("scene/pinch_gesture", params)
+
     def scroll(
         self,
         path: str,

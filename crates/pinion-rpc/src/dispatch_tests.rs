@@ -2973,6 +2973,72 @@ fn scene_wheel_enqueues_pixels_delta_into_inbox() {
 }
 
 #[test]
+fn r1432_scene_pinch_gesture_enqueues_magnification_and_phase() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/pinch_gesture","params":{"at":{"x":120.0,"y":90.0},"magnification":0.25,"phase":"update"},"id":300}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::PinchGesture {
+        x,
+        y,
+        magnification,
+        phase,
+    } = inbox[0]
+    else {
+        panic!("expected PinchGesture variant, got {:?}", inbox[0]);
+    };
+    assert!((x - 120.0).abs() < f64::EPSILON);
+    assert!((y - 90.0).abs() < f64::EPSILON);
+    assert!((magnification - 0.25).abs() < f64::EPSILON);
+    assert_eq!(phase, pinion_core::GesturePhase::Update);
+}
+
+#[test]
+fn r1432_scene_pinch_gesture_rejects_bad_phase_and_missing_fields() {
+    // Every malformed shape rejects invalid_params (-32602) and enqueues
+    // nothing, so a typo surfaces at the call instead of a silent default.
+    for (params, why) in [
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"magnification":0.1,"phase":"started"}"#,
+            "unknown phase",
+        ),
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"magnification":0.1,"phase":42}"#,
+            "non-string phase",
+        ),
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"phase":"begin"}"#,
+            "missing magnification",
+        ),
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"magnification":0.1}"#,
+            "missing phase",
+        ),
+    ] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/pinch_gesture","params":{params},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_some(), "{why} should reject");
+        assert_eq!(resp.error.unwrap().code, -32602, "{why}");
+        assert!(inbox.is_empty(), "{why}: nothing enqueued");
+    }
+}
+
+#[test]
 fn scene_wheel_without_inbox_is_unavailable() {
     let mut scene = counted_scene(0);
     let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":0.0,"y":0.0},"delta":{"lines":{"dx":0.0,"dy":1.0}}},"id":202}"#;

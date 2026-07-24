@@ -3331,6 +3331,22 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 self.core
                     .wheel_for_window(spec_id, PointerId::MOUSE, pinion_delta);
             }
+            // R1432 §5.35 §5.15 — winit `PinchGesture` (macOS / iOS trackpad
+            // magnify). Like `MouseWheel` it carries no position — the gesture
+            // applies to the surface under the last cursor position the router
+            // remembers — so this arm converts the winit `TouchPhase` to the
+            // pinion-native `GesturePhase` and forwards the incremental `delta`
+            // (positive = zoom in). On non-Apple platforms the variant never
+            // fires; the `scene/pinch_gesture` RPC is the sole driver there
+            // (§2 #2).
+            WindowEvent::PinchGesture { delta, phase, .. } => {
+                self.core.pinch_gesture_for_window(
+                    spec_id,
+                    PointerId::MOUSE,
+                    delta,
+                    winit_pinch_phase_to_pinion(phase),
+                );
+            }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
             // R51.108 §5.41 — convert at the winit boundary so the
@@ -3987,6 +4003,19 @@ fn winit_wheel_to_pinion(delta: MouseScrollDelta, scale: f64) -> WheelDelta {
                 dy: -(ly as f32),
             }
         }
+    }
+}
+
+/// R1432 §5.35 — convert a winit `TouchPhase` (which brackets a native
+/// gesture's lifecycle) to the pinion-native
+/// [`GesturePhase`](pinion_core::GesturePhase). The four variants map 1:1:
+/// `Started -> Begin`, `Moved -> Update`, `Ended -> End`, `Cancelled -> Cancel`.
+fn winit_pinch_phase_to_pinion(phase: winit::event::TouchPhase) -> pinion_core::GesturePhase {
+    match phase {
+        winit::event::TouchPhase::Started => pinion_core::GesturePhase::Begin,
+        winit::event::TouchPhase::Moved => pinion_core::GesturePhase::Update,
+        winit::event::TouchPhase::Ended => pinion_core::GesturePhase::End,
+        winit::event::TouchPhase::Cancelled => pinion_core::GesturePhase::Cancel,
     }
 }
 

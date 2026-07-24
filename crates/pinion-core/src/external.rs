@@ -30,7 +30,7 @@ use std::borrow::Cow;
 use std::rc::Rc;
 
 use crate::Event;
-use crate::input::{Modifiers, PointerKind, RawPointerButton};
+use crate::input::{GesturePhase, Modifiers, PointerKind, RawPointerButton};
 use crate::intent::Intent;
 
 /// Render backends an `External` may declare support for (§5.15 item 1).
@@ -1384,6 +1384,49 @@ pub trait External: core::fmt::Debug {
     /// The sole driver is the `scene/pointer_type` RPC (§2 #2): winit 0.30 does
     /// not classify the pointer device. Default no-op.
     fn pointer_kind(&mut self, _kind: PointerKind) {}
+
+    /// R1432 §5.35 §5.15 — a native PINCH (magnify) gesture over this widget,
+    /// the Qt `QNativeGestureEvent` `ZoomNativeGesture` / macOS `magnify:` /
+    /// W3C wheel-with-`Ctrl` peer: a two-finger trackpad pinch a viewport reads
+    /// to zoom without a wheel or a button chord.
+    ///
+    /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect the
+    ///   [`wheel`](Self::wheel) / [`pointer_move`](Self::pointer_move) hooks use
+    ///   (a pinch has no position of its own; it targets whatever the cursor
+    ///   hovers, so a zoom anchored at the cursor and a drag share one basis).
+    /// * `magnification` — the INCREMENTAL scale delta for this event (winit's
+    ///   `PinchGesture::delta` / the macOS `magnification`): positive zooms in,
+    ///   negative zooms out, `0.0` at rest. It is a per-event increment, not an
+    ///   absolute factor, so a surface accumulates it across the
+    ///   [`Begin`](GesturePhase::Begin)`..`[`End`](GesturePhase::End) arc
+    ///   (each event does `scale *= 1.0 + magnification`) and drops the
+    ///   accumulator on [`Cancel`](GesturePhase::Cancel).
+    /// * `phase` — the gesture lifecycle ([`GesturePhase`]) bracketing the arc.
+    /// * `modifiers` — the held keyboard modifiers (the same out-of-band cache
+    ///   the wheel reads), so a `Shift`-constrained or `Alt`-fine zoom is one
+    ///   hook.
+    ///
+    /// Return `true` to consume the gesture, `false` (default) to decline — the
+    /// same consume contract as [`wheel`](Self::wheel), though a pinch has no
+    /// `Scene::Scroll` default action to fall through to (Qt delivers a native
+    /// gesture only to the widget under the cursor, with no scroll fallback), so
+    /// declining is simply a no-op.
+    ///
+    /// The native source is the platform trackpad (winit
+    /// `WindowEvent::PinchGesture`, macOS / iOS only); the AI-first source is
+    /// the `scene/pinch_gesture` RPC (§2 #2), so a zoom-reactive viewport is
+    /// drivable and introspectable headless with no trackpad. Default no-op;
+    /// only a widget that zooms overrides.
+    fn pinch_gesture(
+        &mut self,
+        _x_rel: f32,
+        _y_rel: f32,
+        _magnification: f64,
+        _phase: GesturePhase,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
+        false
+    }
 
     /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
     /// forwarding leg the pointer hooks left open). The framework's

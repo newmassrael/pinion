@@ -127,6 +127,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/locate_region", MethodOcc::Read),
     ("scene/modifiers", MethodOcc::Mutate),
     ("scene/pacing_state", MethodOcc::Read),
+    ("scene/pinch_gesture", MethodOcc::Read),
     ("scene/pointer_button", MethodOcc::Mutate),
     ("scene/pointer_height", MethodOcc::Mutate),
     ("scene/pointer_leave", MethodOcc::Mutate),
@@ -346,6 +347,7 @@ mod tests {
             "scene/window_focus",  // out-of-band OS-focus gate/mirror drive
             "scene/key",           // deferred input
             "scene/wheel",         // deferred input
+            "scene/pinch_gesture", // deferred input
             "scene/resize",        // async resize
             "focus/set",           // focus is out of OCC scope
             "scene/apply_preview", // self-bumping

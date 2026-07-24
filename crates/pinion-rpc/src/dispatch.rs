@@ -28,7 +28,7 @@
 use pinion_a11y::{AccessFocus, AccessNode};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
-use pinion_core::input::{PointerButton, PointerEdge, PointerKind};
+use pinion_core::input::{GesturePhase, PointerButton, PointerEdge, PointerKind};
 use pinion_core::intent::Intent;
 use pinion_core::style::{Border, BoxStyle, Color};
 use pinion_core::{Owner, Scene, SceneRevision};
@@ -914,6 +914,22 @@ pub enum DeferredInput {
     /// Positionless; the AI-first source that lets a headless client present as a
     /// pen / eraser (§2 #2), winit not classifying the device.
     PointerKind { kind: PointerKind },
+    /// R1432 §5.35 §5.15 — `scene/pinch_gesture` injection: a native PINCH
+    /// (magnify) gesture at `(x, y)`. The embedder applies `cursor_moved(x, y)`
+    /// then offers the incremental `magnification` + lifecycle `phase` to the
+    /// widget under the cursor — the same arc a native winit
+    /// `WindowEvent::PinchGesture` takes. Position-BEARING (like [`Self::Wheel`],
+    /// not the positionless pointer axes): a native gesture targets whatever the
+    /// cursor hovers, so the AI names the viewport by the cursor. Held modifiers
+    /// ride the R763 out-of-band [`Self::SetModifiers`] cache, read inside the
+    /// seam like the wheel path. The AI-first source for a zoom-reactive
+    /// viewport (§2 #2), so no trackpad is required to exercise a pinch headless.
+    PinchGesture {
+        x: f64,
+        y: f64,
+        magnification: f64,
+        phase: GesturePhase,
+    },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -2254,6 +2270,27 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
                 handle_scene_wheel(inbox, producer, last_paint_scene, request.params.as_ref()),
+                HandlerKind::Read,
+            )
+        }
+        "scene/pinch_gesture" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pinch_gesture(
+                    inbox,
+                    producer,
+                    last_paint_scene,
+                    request.params.as_ref(),
+                ),
                 HandlerKind::Read,
             )
         }
@@ -3916,6 +3953,55 @@ where
     // coordinate or a tag lookup via the paint scene.
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
     inbox.push(DeferredInput::Wheel { x, y, delta });
+    Ok(Value::Null)
+}
+
+/// R1432 §5.35 §5.15 — `scene/pinch_gesture` typed dispatcher.
+///
+/// Params: `{at: {x, y}} | {path: "<tag>"}` (the cursor the gesture targets) +
+/// `{magnification: f64, phase: "begin" | "update" | "end" | "cancel"}`.
+///
+/// Enqueues a single [`DeferredInput::PinchGesture`]; the embedder drains it
+/// after `dispatch` returns and applies `cursor_moved(x, y)` then the pinch
+/// offer, so the [`InputRouter`](pinion_runtime::InputRouter) hands it to the
+/// widget under the cursor exactly as a native trackpad pinch would. Returns
+/// `null` on success; a `magnification` that is not a number, or a `phase`
+/// outside the vocabulary / missing / non-string, rejects `invalid_params` so a
+/// typo surfaces at the call. The AI-first source for a zoom-reactive viewport
+/// (§2 #2) — no trackpad required, the value drivable + introspectable headless.
+fn handle_scene_pinch_gesture<F>(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    let magnification = params
+        .get("magnification")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.magnification must be a number"))?;
+    let phase_name = params
+        .get("phase")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.phase must be a string"))?;
+    let phase = GesturePhase::from_wire_name(phase_name).ok_or_else(|| {
+        RpcError::invalid_params(format!(
+            "params.phase must be one of begin / update / end / cancel, got {phase_name:?}"
+        ))
+    })?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
+    inbox.push(DeferredInput::PinchGesture {
+        x,
+        y,
+        magnification,
+        phase,
+    });
     Ok(Value::Null)
 }
 
