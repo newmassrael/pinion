@@ -3332,20 +3332,14 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     .wheel_for_window(spec_id, PointerId::MOUSE, pinion_delta);
             }
             // R1432 §5.35 §5.15 — winit `PinchGesture` (macOS / iOS trackpad
-            // magnify). Like `MouseWheel` it carries no position — the gesture
-            // applies to the surface under the last cursor position the router
-            // remembers — so this arm converts the winit `TouchPhase` to the
-            // pinion-native `GesturePhase` and forwards the incremental `delta`
-            // (positive = zoom in). On non-Apple platforms the variant never
-            // fires; the `scene/pinch_gesture` RPC is the sole driver there
-            // (§2 #2).
+            // magnify); forwarded through `forward_pinch_gesture`.
             WindowEvent::PinchGesture { delta, phase, .. } => {
-                self.core.pinch_gesture_for_window(
-                    spec_id,
-                    PointerId::MOUSE,
-                    delta,
-                    winit_pinch_phase_to_pinion(phase),
-                );
+                forward_pinch_gesture(&mut self.core, spec_id, delta, phase);
+            }
+            // R1433 §5.35 §5.15 — winit `RotationGesture` (macOS / iOS trackpad
+            // twist), the pinch sibling; forwarded through `forward_rotation_gesture`.
+            WindowEvent::RotationGesture { delta, phase, .. } => {
+                forward_rotation_gesture(&mut self.core, spec_id, delta, phase);
             }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
@@ -4010,13 +4004,59 @@ fn winit_wheel_to_pinion(delta: MouseScrollDelta, scale: f64) -> WheelDelta {
 /// gesture's lifecycle) to the pinion-native
 /// [`GesturePhase`](pinion_core::GesturePhase). The four variants map 1:1:
 /// `Started -> Begin`, `Moved -> Update`, `Ended -> End`, `Cancelled -> Cancel`.
-fn winit_pinch_phase_to_pinion(phase: winit::event::TouchPhase) -> pinion_core::GesturePhase {
+/// Shared by every native-gesture arm (R1432 pinch, R1433 rotation) — the phase
+/// bracket is the gesture-agnostic half, so the name is too.
+fn winit_gesture_phase_to_pinion(phase: winit::event::TouchPhase) -> pinion_core::GesturePhase {
     match phase {
         winit::event::TouchPhase::Started => pinion_core::GesturePhase::Begin,
         winit::event::TouchPhase::Moved => pinion_core::GesturePhase::Update,
         winit::event::TouchPhase::Ended => pinion_core::GesturePhase::End,
         winit::event::TouchPhase::Cancelled => pinion_core::GesturePhase::Cancel,
     }
+}
+
+/// R1432 §5.35 §5.15 — forward a winit `PinchGesture` (macOS / iOS trackpad
+/// magnify) into the addressed window's `ShellCore` seam. Lifted off
+/// `window_event`'s dispatch match so that giant function stays under the line
+/// ceiling (extract, not `#[allow]`); a free fn over `&mut core` (not `&mut
+/// self`) so it borrows the disjoint field the live `spec_id` borrow leaves
+/// alone. Like `MouseWheel` a pinch carries no position — it applies to the
+/// surface under the last cursor position the router remembers — so this just
+/// forwards the incremental `delta` (positive = zoom in) with the converted
+/// phase. On non-Apple platforms the variant never fires; the
+/// `scene/pinch_gesture` RPC is the sole driver there (§2 #2).
+fn forward_pinch_gesture<V: WidgetView>(
+    core: &mut ShellCore<V>,
+    spec_id: &str,
+    delta: f64,
+    phase: winit::event::TouchPhase,
+) {
+    core.pinch_gesture_for_window(
+        spec_id,
+        PointerId::MOUSE,
+        delta,
+        winit_gesture_phase_to_pinion(phase),
+    );
+}
+
+/// R1433 §5.35 §5.15 — forward a winit `RotationGesture` (macOS / iOS trackpad
+/// twist), the [`forward_pinch_gesture`] sibling with rotation in place of
+/// scale. Forwards the incremental `delta` in degrees (positive =
+/// counter-clockwise, winit's convention) with the converted phase. On non-Apple
+/// platforms the variant never fires; the `scene/rotation_gesture` RPC is the
+/// sole driver there (§2 #2).
+fn forward_rotation_gesture<V: WidgetView>(
+    core: &mut ShellCore<V>,
+    spec_id: &str,
+    delta: f32,
+    phase: winit::event::TouchPhase,
+) {
+    core.rotation_gesture_for_window(
+        spec_id,
+        PointerId::MOUSE,
+        f64::from(delta),
+        winit_gesture_phase_to_pinion(phase),
+    );
 }
 
 /// R51.108 §5.41 — convert a `winit::keyboard::ModifiersState` to the

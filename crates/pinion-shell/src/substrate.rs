@@ -2730,6 +2730,33 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
     }
 
+    /// R1433 §5.35 §5.15 — native ROTATION gesture into the addressed window, the
+    /// [`Self::pinch_gesture_for_window`] sibling with `rotation` (degrees) in
+    /// place of `magnification`: carry the held `self.modifiers` into the runtime
+    /// `ShellCore::rotation_gesture_with_modifiers_for_window` and request a
+    /// repaint when the hovered widget consumed it. The one place both the native
+    /// winit `RotationGesture` arm and the `scene/rotation_gesture` RPC replay
+    /// funnel through, so the modifier read + repaint gate are stated once.
+    pub fn rotation_gesture_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        rotation: f64,
+        phase: pinion_core::GesturePhase,
+    ) {
+        let (tail, consumed) = self.core.rotation_gesture_with_modifiers_for_window(
+            window_id,
+            pid,
+            rotation,
+            phase,
+            self.modifiers,
+        );
+        if consumed {
+            self.request_redraw();
+        }
+        self.handle_tail(&tail);
+    }
+
     /// R51.195 §5.49 §5.45 — drain the deferred-input inbox `dispatch`
     /// populated. Each entry replays the input through the same
     /// `cursor_moved` / `wheel` entry points the winit and TUI
@@ -2932,6 +2959,23 @@ impl<V: WidgetView> ShellCore<V> {
                         magnification,
                         phase,
                     );
+                }
+                // R1433 §5.35 §5.15 — `scene/rotation_gesture`: a native rotation
+                // gesture at (x, y), the pinch sibling. Seed the cursor first (a
+                // native `CursorMoved` precedes `RotationGesture` the same way),
+                // then offer the incremental rotation + phase through the ONE
+                // `rotation_gesture_for_window` seam the native winit path also
+                // reaches, so an RPC-injected rotation is indistinguishable from a
+                // trackpad one (§2 #6). Held modifiers ride the R763 out-of-band
+                // `scene/modifiers` cache, read inside the seam.
+                DeferredInput::RotationGesture {
+                    x,
+                    y,
+                    rotation,
+                    phase,
+                } => {
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.rotation_gesture_for_window(window_id, PointerId::MOUSE, rotation, phase);
                 }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate

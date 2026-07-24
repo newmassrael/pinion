@@ -1428,6 +1428,53 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R1433 §5.35 §5.15 — native two-finger ROTATION gesture, the
+    /// [`pinch_gesture`](Self::pinch_gesture) sibling with rotation in place of
+    /// scale. The Qt `QNativeGestureEvent` `RotateNativeGesture` / macOS
+    /// `rotateWithEvent:` peer: a trackpad twist an editor reads to rotate a
+    /// canvas / gizmo without a modifier chord.
+    ///
+    /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect the
+    ///   [`pinch_gesture`](Self::pinch_gesture) / [`wheel`](Self::wheel) hooks
+    ///   use (a rotation has no position of its own; it targets whatever the
+    ///   cursor hovers, so a twist anchored at the cursor and a drag share one
+    ///   basis).
+    /// * `rotation` — the INCREMENTAL rotation delta for this event, in
+    ///   **degrees** (winit's `RotationGesture::delta` / the macOS
+    ///   `rotation` / Qt's `RotateNativeGesture` value, all degrees): winit's
+    ///   sign convention is positive = **counter-clockwise**, negative =
+    ///   clockwise, `0.0` at rest. It is a per-event increment, not an absolute
+    ///   angle, so a surface accumulates it across the
+    ///   [`Begin`](GesturePhase::Begin)`..`[`End`](GesturePhase::End) arc
+    ///   (each event does `angle += rotation`) and drops the accumulator on
+    ///   [`Cancel`](GesturePhase::Cancel).
+    /// * `phase` — the gesture lifecycle ([`GesturePhase`]) bracketing the arc.
+    /// * `modifiers` — the held keyboard modifiers (the same out-of-band cache
+    ///   the pinch / wheel read), so a `Shift`-snap-to-15° or `Alt`-fine twist
+    ///   is one hook.
+    ///
+    /// Return `true` to consume the gesture, `false` (default) to decline — the
+    /// same consume contract as [`pinch_gesture`](Self::pinch_gesture), and like
+    /// a pinch a rotation has no default action to fall through to (Qt delivers
+    /// a native gesture only to the widget under the cursor, with no fallback),
+    /// so declining is simply a no-op.
+    ///
+    /// The native source is the platform trackpad (winit
+    /// `WindowEvent::RotationGesture`, macOS / iOS only); the AI-first source is
+    /// the `scene/rotation_gesture` RPC (§2 #2), so a rotation-reactive gizmo is
+    /// drivable and introspectable headless with no trackpad. Default no-op;
+    /// only a widget that rotates overrides.
+    fn rotation_gesture(
+        &mut self,
+        _x_rel: f32,
+        _y_rel: f32,
+        _rotation: f64,
+        _phase: GesturePhase,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
+        false
+    }
+
     /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
     /// forwarding leg the pointer hooks left open). The framework's
     /// [`InputRouter`](crate#) offers a wheel event to the `External`

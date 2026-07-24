@@ -203,6 +203,7 @@ members = [
     "examples/hello-nav-rail",
     "examples/hello-pagination",
     "examples/hello-pinch-zoom",
+    "examples/hello-rotate-gesture",
 ]
 exclude = ["vendor/sce"]
 

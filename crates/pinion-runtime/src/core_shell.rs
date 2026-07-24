@@ -3024,6 +3024,47 @@ impl<V: WidgetCore> CoreShell<V> {
         )
     }
 
+    /// R1433 §5.35 — native ROTATION gesture into the addressed window, the
+    /// [`Self::pinch_gesture_with_modifiers_for_window`] sibling with `rotation`
+    /// (degrees) in place of `magnification`: the Qt `QNativeGestureEvent`
+    /// `RotateNativeGesture` peer. Offer the incremental `rotation` + lifecycle
+    /// `phase` to the [`External`](pinion_core::external::External) under the
+    /// cursor, carrying the held `modifiers`. Like the pinch there is NO
+    /// `WidgetCore::apply_wheel` GUI-side pre-hook and NO `Scene::Scroll`
+    /// fallback — a native gesture reaches only the hovered widget, so the one
+    /// router leg is the whole dispatch. Returns `(DispatchTail, consumed)`.
+    pub fn rotation_gesture_with_modifiers_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        rotation: f64,
+        phase: pinion_core::GesturePhase,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        let consumed = router.rotation_gesture(pid, rotation, phase, modifiers, scene);
+        (self.tail(), consumed)
+    }
+
+    /// R1433 §5.35 — [`DEFAULT_WINDOW`] convenience over
+    /// [`Self::rotation_gesture_with_modifiers_for_window`].
+    pub fn rotation_gesture(
+        &mut self,
+        pid: PointerId,
+        rotation: f64,
+        phase: pinion_core::GesturePhase,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        self.rotation_gesture_with_modifiers_for_window(
+            DEFAULT_WINDOW,
+            pid,
+            rotation,
+            phase,
+            modifiers,
+        )
+    }
+
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch.
     ///
     /// Forwards a W3C `KeyboardEvent.key` string into

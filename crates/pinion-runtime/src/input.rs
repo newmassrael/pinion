@@ -2073,6 +2073,44 @@ impl InputRouter {
         )
     }
 
+    /// R1433 §5.35 §5.15 — offer a native ROTATION gesture to the widget under
+    /// pointer `id`'s cursor, the [`pinch_gesture`](Self::pinch_gesture) sibling
+    /// with `rotation` (degrees) in place of `magnification`. Same
+    /// offer-to-hovered-only delivery — NO `Scene::Scroll` fallback, a native
+    /// gesture reaches only the widget under the cursor (Qt's contract). Returns
+    /// `true` if that widget consumed it.
+    ///
+    /// No-op (`false`) under the same router-state guards
+    /// [`pinch_gesture`](Self::pinch_gesture) checks: no stored cursor for `id`,
+    /// no retained paint scene, or no hover target covering the cursor.
+    pub fn rotation_gesture(
+        &mut self,
+        id: PointerId,
+        rotation: f64,
+        phase: GesturePhase,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> bool {
+        let Some(&(x, y)) = self.cursors.get(&id) else {
+            return false;
+        };
+        let Some(paint) = self.last_paint_scene.as_ref() else {
+            return false;
+        };
+        let Some(target_tag) = self.hover_targets.get(&id).cloned() else {
+            return false;
+        };
+        offer_rotation_to_external(
+            paint,
+            state_scene,
+            &target_tag,
+            (x, y),
+            rotation,
+            phase,
+            modifiers,
+        )
+    }
+
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll input dispatch.
     ///
     /// Routes a W3C `KeyboardEvent.key` string into the deepest
@@ -3320,20 +3358,26 @@ fn dispatch_wheel_two_stage(
     (true, frac)
 }
 
-/// R877 / R881 §5.35 §5.49 — the wheel-vocabulary `External` offer,
-/// stage 1 of [`dispatch_wheel_two_stage`]. Resolves the (possibly
-/// composite) `target_tag`'s primary `External` in the state scene,
-/// normalises the cursor over the widget's [`CaptureNormalize`] basis,
-/// and offers the pixel delta + modifiers to
-/// [`External::wheel`](pinion_core::external::External::wheel).
-/// `true` = consumed (no scroll fallback may run).
-fn offer_wheel_to_external(
+/// R1433 §5.35 — the shared "offer an event to the widget under the cursor"
+/// scaffold behind [`offer_wheel_to_external`] / [`offer_pinch_to_external`] /
+/// [`offer_rotation_to_external`]. Resolve the (possibly composite)
+/// `target_tag`'s primary `External` in the state scene, normalise `cursor` over
+/// the widget's [`CaptureNormalize`] basis via the shared [`capture_rel_coords`]
+/// (the SAME basis `pointer_move` uses), and hand the widget-relative
+/// `(x_rel, y_rel)` to `offer` — whose closure applies the event-specific
+/// payload and calls the matching `External` hook. Returns the widget's consume
+/// verdict; `false` when nothing tagged covers the cursor.
+///
+/// Lifted at R1433 when the third native-input offer (rotation) would have been
+/// a third verbatim copy of this resolve-and-normalise boilerplate: the
+/// three-site internal-duplication substrate lift, the per-gesture payload left
+/// in each caller's closure so the scaffold has one home.
+fn offer_to_hovered_external(
     paint: &Scene,
     state_scene: &mut Scene,
     target_tag: &str,
     cursor: (f64, f64),
-    delta: (f32, f32),
-    modifiers: Modifiers,
+    offer: impl FnOnce(&mut dyn pinion_core::external::External, f32, f32) -> bool,
 ) -> bool {
     let (primary, _) = split_subindex(target_tag);
     let Some(external) = find_external_by_tag(state_scene, primary) else {
@@ -3344,18 +3388,33 @@ fn offer_wheel_to_external(
     else {
         return false;
     };
-    external
-        .handle
-        .wheel(x_rel, y_rel, delta.0, delta.1, modifiers)
+    offer(external.handle.as_mut(), x_rel, y_rel)
+}
+
+/// R877 / R881 §5.35 §5.49 — the wheel-vocabulary `External` offer, stage 1 of
+/// [`dispatch_wheel_two_stage`]. Offers the pixel delta + modifiers to
+/// [`External::wheel`](pinion_core::external::External::wheel) on the widget
+/// under the cursor via [`offer_to_hovered_external`]. `true` = consumed (no
+/// scroll fallback may run).
+fn offer_wheel_to_external(
+    paint: &Scene,
+    state_scene: &mut Scene,
+    target_tag: &str,
+    cursor: (f64, f64),
+    delta: (f32, f32),
+    modifiers: Modifiers,
+) -> bool {
+    offer_to_hovered_external(paint, state_scene, target_tag, cursor, |h, x_rel, y_rel| {
+        h.wheel(x_rel, y_rel, delta.0, delta.1, modifiers)
+    })
 }
 
 /// R1432 §5.35 — the External-offer leg for a native PINCH gesture, the
 /// [`offer_wheel_to_external`] sibling minus the wheel's `Scene::Scroll`
-/// fallback (a native gesture has no default scroll action). Resolve the widget
-/// under `cursor`, normalise the cursor over its capture rect via the shared
-/// [`capture_rel_coords`] (the SAME basis `pointer_move` / `wheel` use), and
-/// forward the incremental `magnification` + `phase`. Returns the widget's
-/// consume verdict; `false` when nothing tagged covers the cursor.
+/// fallback (a native gesture has no default scroll action). Forwards the
+/// incremental `magnification` + `phase` to the widget under `cursor` via the
+/// shared [`offer_to_hovered_external`]. Returns the widget's consume verdict;
+/// `false` when nothing tagged covers the cursor.
 fn offer_pinch_to_external(
     paint: &Scene,
     state_scene: &mut Scene,
@@ -3365,18 +3424,29 @@ fn offer_pinch_to_external(
     phase: GesturePhase,
     modifiers: Modifiers,
 ) -> bool {
-    let (primary, _) = split_subindex(target_tag);
-    let Some(external) = find_external_by_tag(state_scene, primary) else {
-        return false;
-    };
-    let Some((x_rel, y_rel)) =
-        capture_rel_coords(paint, external, primary, target_tag, cursor.0, cursor.1)
-    else {
-        return false;
-    };
-    external
-        .handle
-        .pinch_gesture(x_rel, y_rel, magnification, phase, modifiers)
+    offer_to_hovered_external(paint, state_scene, target_tag, cursor, |h, x_rel, y_rel| {
+        h.pinch_gesture(x_rel, y_rel, magnification, phase, modifiers)
+    })
+}
+
+/// R1433 §5.35 — the External-offer leg for a native ROTATION gesture, the
+/// [`offer_pinch_to_external`] sibling with rotation (degrees) in place of scale
+/// (both share [`offer_to_hovered_external`], minus any scroll fallback).
+/// Forwards the incremental `rotation` + `phase` to the widget under `cursor`.
+/// Returns the widget's consume verdict; `false` when nothing tagged covers the
+/// cursor.
+fn offer_rotation_to_external(
+    paint: &Scene,
+    state_scene: &mut Scene,
+    target_tag: &str,
+    cursor: (f64, f64),
+    rotation: f64,
+    phase: GesturePhase,
+    modifiers: Modifiers,
+) -> bool {
+    offer_to_hovered_external(paint, state_scene, target_tag, cursor, |h, x_rel, y_rel| {
+        h.rotation_gesture(x_rel, y_rel, rotation, phase, modifiers)
+    })
 }
 
 fn capture_rel_coords(
@@ -6714,6 +6784,135 @@ mod tests {
             !router.pinch_gesture(
                 PointerId::MOUSE,
                 0.5,
+                GesturePhase::Begin,
+                Modifiers::empty(),
+                &mut state_scene,
+            ),
+            "no hovered target → no consume"
+        );
+        assert!(
+            calls.lock().expect("mutex poisoned").is_empty(),
+            "no target → no offer"
+        );
+    }
+
+    // ─── R1433 §5.35 §5.15 native rotation-gesture offer tests ─────
+
+    /// One recorded [`External::rotation_gesture`] call:
+    /// `(x_rel, y_rel, rotation, phase, modifiers)`.
+    type RotationCall = (f32, f32, f64, GesturePhase, Modifiers);
+
+    /// Records every [`External::rotation_gesture`] call; consumes (returns
+    /// `true`) iff `consume` is set. The [`PinchExternal`] rotation peer.
+    struct RotationExternal {
+        calls: Arc<Mutex<Vec<RotationCall>>>,
+        consume: bool,
+    }
+
+    impl RotationExternal {
+        fn new(consume: bool) -> (Self, Arc<Mutex<Vec<RotationCall>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: Arc::clone(&calls),
+                    consume,
+                },
+                calls,
+            )
+        }
+    }
+
+    impl std::fmt::Debug for RotationExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("RotationExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for RotationExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn rotation_gesture(
+            &mut self,
+            x_rel: f32,
+            y_rel: f32,
+            rotation: f64,
+            phase: GesturePhase,
+            modifiers: Modifiers,
+        ) -> bool {
+            self.calls
+                .lock()
+                .expect("mutex poisoned")
+                .push((x_rel, y_rel, rotation, phase, modifiers));
+            self.consume
+        }
+    }
+
+    #[test]
+    fn r1433_rotation_gesture_offered_to_hovered_external() {
+        // The External the cursor hovers receives the rotation: coordinates
+        // normalised over its rect (cursor (100, 90) over rect 80..120 → rel
+        // (0.5, 0.25)), the incremental rotation (degrees) + phase + modifiers
+        // forwarded verbatim, and the consume verdict returned.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = RotationExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::empty()
+        };
+        assert!(router.rotation_gesture(
+            PointerId::MOUSE,
+            15.0,
+            GesturePhase::Update,
+            shift,
+            &mut state_scene,
+        ));
+        // A native gesture never touches the scroll fallback (there is none).
+        assert_eq!(scroll.offset(), (0, 0), "rotation must not scroll");
+        let recorded = calls.lock().expect("mutex poisoned").clone();
+        assert_eq!(recorded.len(), 1);
+        let (x_rel, y_rel, rotation, phase, mods) = recorded[0];
+        assert!((x_rel - 0.5).abs() < 1e-6, "x_rel {x_rel}");
+        assert!((y_rel - 0.25).abs() < 1e-6, "y_rel {y_rel}");
+        assert!((rotation - 15.0).abs() < 1e-9, "rotation {rotation}");
+        assert_eq!(phase, GesturePhase::Update);
+        assert!(mods.shift_key(), "shift modifier must reach the External");
+    }
+
+    #[test]
+    fn r1433_rotation_gesture_off_target_is_noop() {
+        // With the cursor over no tagged widget (10, 10 is outside the 80..120
+        // button), the rotation resolves no target and is a clean no-op — false,
+        // nothing recorded.
+        let scroll = Rc::new(ScrollState::new());
+        let (ext, calls) = RotationExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(scroll, None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state_scene);
+        assert!(
+            !router.rotation_gesture(
+                PointerId::MOUSE,
+                30.0,
                 GesturePhase::Begin,
                 Modifiers::empty(),
                 &mut state_scene,

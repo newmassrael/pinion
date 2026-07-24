@@ -1060,6 +1060,40 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params["path"] = path
         self.request("scene/pinch_gesture", params)
 
+    def rotation_gesture(
+        self,
+        rotation: float,
+        phase: str,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+    ) -> None:
+        """`scene/rotation_gesture` typed wrapper (R1433 §5.35 §5.15).
+
+        Drive a native ROTATION gesture — the Qt `QNativeGestureEvent`
+        `RotateNativeGesture` peer, the `pinch_gesture` sibling — at the cursor
+        target. Supply exactly one of `at = (x, y)` or `path = "<tag>"` (the
+        widget under the cursor receives the offer). `rotation` is the
+        INCREMENTAL delta in DEGREES (positive rotates counter-clockwise,
+        winit's convention); `phase` brackets the arc, one of ``"begin"`` /
+        ``"update"`` / ``"end"`` / ``"cancel"``. The shell drains the inbox after
+        this returns, applying `cursor_moved` then the rotation offer. winit
+        exposes no trackpad headless, so this RPC is the sole driver (§2 #2);
+        follow up with `query(...)` / `snapshot(...)` to observe the rotation.
+        """
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        params: dict[str, Any] = {
+            "rotation": float(rotation),
+            "phase": phase,
+        }
+        if at is not None:
+            params["at"] = {"x": float(at[0]), "y": float(at[1])}
+        else:
+            assert path is not None
+            params["path"] = path
+        self.request("scene/rotation_gesture", params)
+
     def scroll(
         self,
         path: str,

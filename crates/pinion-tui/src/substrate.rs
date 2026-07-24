@@ -792,21 +792,17 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 state_changed |= changed;
                 continue;
             }
+            // R1433 §5.35 §2 #6 — the native trackpad gestures (pinch / rotation)
+            // route through one dispatcher so this per-input match stays flat as
+            // the gesture set grows; see `try_drain_native_gesture`.
+            if let Some(changed) = self.try_drain_native_gesture(input) {
+                state_changed |= changed;
+                continue;
+            }
             match *input {
                 pinion_rpc::DeferredInput::Wheel { x, y, delta } => {
                     state_changed |= self.cursor_moved(x, y);
                     state_changed |= self.wheel(delta);
-                }
-                // R1432 §5.35 §5.15 §2 #2 §2 #6 — `scene/pinch_gesture`: a native
-                // pinch (magnify) gesture, delivered through `drain_pinch_gesture`
-                // (lifted off this match to keep it under the line ceiling).
-                pinion_rpc::DeferredInput::PinchGesture {
-                    x,
-                    y,
-                    magnification,
-                    phase,
-                } => {
-                    state_changed |= self.drain_pinch_gesture(x, y, magnification, phase);
                 }
                 pinion_rpc::DeferredInput::Click { x, y } => {
                     state_changed |= self.cursor_moved(x, y);
@@ -990,6 +986,34 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         Some(changed)
     }
 
+    /// R1433 §5.35 §5.15 §2 #2 §2 #6 — dispatch the native trackpad gestures
+    /// (Qt `QNativeGestureEvent`: pinch / rotation) off the main per-input match:
+    /// `Some(changed)` when `input` is one of them, `None` otherwise (the caller
+    /// falls through to the general match). A terminal has no trackpad, but each
+    /// gesture is the AI-first out-of-band source (§2 #2): the value rides the
+    /// SAME `InputRouter` the Vello sibling drives, so a gesture-reactive
+    /// `External` sees identical delivery on both backends — the §2 #6 parity
+    /// `r1364_5_deferred_input_parity` enforces (it greps this file for every
+    /// `DeferredInput::*Gesture` variant, all named here).
+    fn try_drain_native_gesture(&mut self, input: &pinion_rpc::DeferredInput) -> Option<bool> {
+        let changed = match *input {
+            pinion_rpc::DeferredInput::PinchGesture {
+                x,
+                y,
+                magnification,
+                phase,
+            } => self.drain_pinch_gesture(x, y, magnification, phase),
+            pinion_rpc::DeferredInput::RotationGesture {
+                x,
+                y,
+                rotation,
+                phase,
+            } => self.drain_rotation_gesture(x, y, rotation, phase),
+            _ => return None,
+        };
+        Some(changed)
+    }
+
     /// R1429 §5.35 §2 #2 §2 #6 — deliver a driven pointer PRESSURE (W3C
     /// `PointerEvent.pressure`) to the terminal backend's router, the
     /// `scene/pointer_pressure` out-of-band drain. Named (not inlined) so the
@@ -1025,6 +1049,35 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let (tail, consumed) = self.core.pinch_gesture(
             PointerId::MOUSE,
             magnification,
+            phase,
+            pinion_core::Modifiers::empty(),
+        );
+        changed |= self.handle_tail(&tail) || consumed;
+        changed
+    }
+
+    /// R1433 §5.35 §5.15 §2 #2 §2 #6 — the rotation peer of
+    /// [`Self::drain_pinch_gesture`]: deliver a driven native ROTATION gesture to
+    /// the terminal backend's router, the `scene/rotation_gesture` out-of-band
+    /// drain. A terminal has no trackpad, but the AI-first RPC source (§2 #2)
+    /// rides the SAME `InputRouter` the Vello sibling drives, so a
+    /// rotation-reactive `External` (a rotatable gizmo) sees identical delivery on
+    /// both backends. Seed the cursor, then offer the incremental rotation
+    /// (degrees) + `phase` to the widget under it via the runtime
+    /// `ShellCore::rotation_gesture`. The TUI carries no modifier chords yet (the
+    /// §2 #6 divergence carry `Self::drain_pinch_gesture` records), so empty
+    /// modifiers. Returns `true` when the frame may need a repaint.
+    fn drain_rotation_gesture(
+        &mut self,
+        x: f64,
+        y: f64,
+        rotation: f64,
+        phase: pinion_core::GesturePhase,
+    ) -> bool {
+        let mut changed = self.cursor_moved(x, y);
+        let (tail, consumed) = self.core.rotation_gesture(
+            PointerId::MOUSE,
+            rotation,
             phase,
             pinion_core::Modifiers::empty(),
         );
