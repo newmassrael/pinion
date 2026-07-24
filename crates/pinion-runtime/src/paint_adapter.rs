@@ -260,8 +260,18 @@ fn to_vello_inner<F>(
         // R1426 §5.41 — the uncached reference / test walker always paints the
         // cursor STEADY (`cursor_blink_on = true`): it is the stateless
         // reference path (production uses the cached walker), so it carries no
-        // per-window blink clock and never animates the phase.
-        Scene::TextGrid(n) => paint_text_grid(out, n, text_cache, transform, true),
+        // per-window blink clock and never animates the phase. R1427 — it is
+        // likewise always FOCUSED (`cursor_focused = true`): OS focus is a live
+        // per-window shell fact, so this stateless path draws the filled cursor.
+        Scene::TextGrid(n) => {
+            paint_text_grid(
+                out,
+                n,
+                text_cache,
+                transform,
+                CursorPaintFlags::STEADY_FOCUSED,
+            );
+        }
         // External / Effect: no-op (no rasterizable contribution here).
         _ => {}
     }
@@ -586,6 +596,29 @@ impl FragmentCache {
 /// begin/end themselves; this is the single-call API for the shell's
 /// per-window paint cycle.
 ///
+/// The two paint-time terminal-cursor flags, threaded together through the
+/// Vello walk so the pair cannot be swapped or drift apart: `blink_on` is the
+/// R1426 blink PHASE (true on the visible half) and `focused` is the R1427
+/// OS-focus state (true = filled, false = the unfocused hollow box). Bundling
+/// them keeps [`to_vello_cached_inner`]'s recursion a single trailing argument;
+/// the public entries keep the two bools and build this internally.
+#[derive(Clone, Copy)]
+struct CursorPaintFlags {
+    blink_on: bool,
+    focused: bool,
+}
+
+impl CursorPaintFlags {
+    /// The deterministic default the uncached reference / headless / produce
+    /// entries force: a steady ON phase on a focused window (a filled cursor),
+    /// so a golden screenshot never flakes on the wall-clock phase or a live
+    /// OS-focus fact those stateless paths do not carry.
+    const STEADY_FOCUSED: Self = Self {
+        blink_on: true,
+        focused: true,
+    };
+}
+
 /// `fill_hook` is honoured for [`Scene::Box`] leaves (matching
 /// [`to_vello`]'s contract). For the cache to remain correct, the
 /// hook MUST be structurally derived (a function of the
@@ -608,6 +641,9 @@ pub fn to_vello_cached<F>(
     // cursor always paints (a blinking-mode cursor renders on its visible phase).
     // The live winit surface calls `to_vello_cached_with_text_engine` directly with
     // the per-window clock's phase; only that path animates.
+    // R1427 §5.41 — likewise forwards the FOCUSED default (`cursor_focused = true`):
+    // this stateless entry has no per-window OS-focus fact, so the cursor renders
+    // filled (the live winit surface passes the window's real focus).
     to_vello_cached_with_text_engine(
         scene,
         fill_hook,
@@ -616,6 +652,7 @@ pub fn to_vello_cached<F>(
         fragment_cache,
         None,
         out,
+        true,
         true,
     );
 }
@@ -652,6 +689,16 @@ pub fn to_vello_cached<F>(
 /// winit paint passes the clock's phase; headless / produce / test callers pass
 /// the steady default (`true`) so a cursor renders deterministically in its ON
 /// phase (no wall-clock flake in a golden screenshot).
+///
+/// R1427 §5.41 §5.39 — `cursor_focused` is whether the window being painted holds
+/// the OS keyboard focus (the shell's `is_key_dispatch_window`, fails OPEN when
+/// focus is unknown). `false` draws a visible cursor as a HOLLOW outline box
+/// (overriding shape) — the universal unfocused-terminal indicator; `true` is the
+/// filled render. Like `cursor_blink_on` it is a paint-time argument never stored
+/// in the scene (§2 #7 — OS focus is already data via `scene/input_state`). The
+/// live winit surface passes the window's focus; headless / produce / test callers
+/// pass the focused default (`true`) so a golden screenshot renders the filled
+/// cursor deterministically.
 #[allow(clippy::too_many_arguments)]
 pub fn to_vello_cached_with_text_engine<F>(
     scene: &Scene,
@@ -662,6 +709,7 @@ pub fn to_vello_cached_with_text_engine<F>(
     engine: Option<&SelfHostedTextEngine>,
     out: &mut VelloScene,
     cursor_blink_on: bool,
+    cursor_focused: bool,
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
@@ -675,7 +723,10 @@ pub fn to_vello_cached_with_text_engine<F>(
         engine,
         out,
         Affine::IDENTITY,
-        cursor_blink_on,
+        CursorPaintFlags {
+            blink_on: cursor_blink_on,
+            focused: cursor_focused,
+        },
     );
     fragment_cache.end_paint();
 }
@@ -719,7 +770,7 @@ fn to_vello_cached_inner<F>(
     engine: Option<&SelfHostedTextEngine>,
     out: &mut VelloScene,
     transform: Affine,
-    cursor_blink_on: bool,
+    cursor: CursorPaintFlags,
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
@@ -752,7 +803,7 @@ fn to_vello_cached_inner<F>(
                 engine,
                 &mut sub,
                 Affine::IDENTITY,
-                cursor_blink_on,
+                cursor,
             );
         }
         out.append(&sub, None);
@@ -796,7 +847,7 @@ fn to_vello_cached_inner<F>(
                     engine,
                     &mut sub,
                     transform,
-                    cursor_blink_on,
+                    cursor,
                 );
             }
         }
@@ -829,7 +880,7 @@ fn to_vello_cached_inner<F>(
                 engine,
                 &mut sub,
                 child_transform,
-                cursor_blink_on,
+                cursor,
             );
             sub.pop_layer();
         }
@@ -844,7 +895,7 @@ fn to_vello_cached_inner<F>(
         // R991 §5.41 §2 #6 — TextGrid glyph paint into the fresh sub-scene
         // (uncacheable per `Scene::is_cacheable_for_paint`, so it is always
         // re-encoded; mirrors the External/ImmediateMode treatment).
-        Scene::TextGrid(n) => paint_text_grid(&mut sub, n, text_cache, transform, cursor_blink_on),
+        Scene::TextGrid(n) => paint_text_grid(&mut sub, n, text_cache, transform, cursor),
         // External / Effect: no-op (matches to_vello_inner's `_ => {}` arm).
         _ => {}
     }
@@ -2176,7 +2227,7 @@ fn paint_text_grid(
     n: &TextGridNode,
     cache: &mut LayoutCache,
     transform: Affine,
-    cursor_blink_on: bool,
+    cursor: CursorPaintFlags,
 ) {
     let grid = n.cells();
     let palette = n.palette();
@@ -2339,16 +2390,7 @@ fn paint_text_grid(
     // Cursor overlay (R993) — drawn after the cells so it sits on top, inside
     // the same clip layer. Split into its own pass (the cursor's effective-
     // colour + per-shape geometry is a concern distinct from the cell grid).
-    paint_grid_cursor(
-        out,
-        grid,
-        metric,
-        palette,
-        cache,
-        &style,
-        origin,
-        cursor_blink_on,
-    );
+    paint_grid_cursor(out, grid, metric, palette, cache, &style, origin, cursor);
     out.pop_layer();
 }
 
@@ -2364,7 +2406,14 @@ fn paint_text_grid(
 /// whose cell falls within the buffer paints — an out-of-buffer position is a
 /// transient resize artefact and is skipped.
 ///
-/// R1426 §5.41 — `cursor_blink_on` is the render-time blink phase: a cursor in
+/// R1427 §5.41 §5.39 — `flags.focused` gates the fill-vs-hollow render (checked
+/// only AFTER [`GridCursor::shown_this_phase`](pinion_core::term_grid::GridCursor::shown_this_phase),
+/// so a hidden / off-phase cursor is never resurrected): `false` (the window
+/// lacks OS focus) draws a HOLLOW outline box overriding the shape; `true` draws
+/// the filled block / bar / underline. Focus-hollow is a function of focus, not
+/// blink — a steady cursor goes hollow too.
+///
+/// R1426 §5.41 — `flags.blink_on` is the render-time blink phase: a cursor in
 /// the blinking DECSCUSR mode ([`GridCursor::blink`](pinion_core::term_grid::GridCursor::blink))
 /// paints only when the phase is on; a steady cursor ignores it. Gated through
 /// the shared [`GridCursor::shown_this_phase`](pinion_core::term_grid::GridCursor::shown_this_phase)
@@ -2382,10 +2431,10 @@ fn paint_grid_cursor(
     cache: &mut LayoutCache,
     style: &TextStyle,
     origin: Affine,
-    cursor_blink_on: bool,
+    flags: CursorPaintFlags,
 ) {
     let cursor = grid.cursor();
-    if !(cursor.shown_this_phase(cursor_blink_on)
+    if !(cursor.shown_this_phase(flags.blink_on)
         && cursor.col < grid.cols()
         && cursor.row < grid.rows())
     {
@@ -2419,6 +2468,24 @@ fn paint_grid_cursor(
     } else {
         cell_w
     };
+    // R1427 §5.41 §5.39 — an unfocused window draws its cursor as a HOLLOW
+    // outline box, overriding the shape (block / bar / underline all become the
+    // outline), the universal focus indicator every real terminal uses (xterm
+    // open-box, VTE unfilled rect, alacritty `HollowBlock`, kitty
+    // `cursor_shape_unfocused=hollow`, Windows Terminal, iTerm2). It is a
+    // function of *focus*, not blink, so a steady cursor goes hollow too; the
+    // stop-blink gate (`grid_cursor_blink_on` steady-on when unfocused) means a
+    // blinking cursor resolves here to a steady hollow box. The glyph reads
+    // normally underneath (no inverse redraw — only the outline is drawn). The
+    // outline spans both columns on a wide head (`span_w`) and is inset by half
+    // the stroke so it stays inside the cell and never bleeds into a neighbour.
+    if !flags.focused {
+        let sw = (cell_w / 8.0).max(1.0);
+        let half = sw / 2.0;
+        let rect = KurboRect::new(cx + half, cy + half, cx + span_w - half, cy + cell_h - half);
+        out.stroke(&Stroke::new(sw), origin, cursor_color, None, &rect);
+        return;
+    }
     match cursor.shape {
         CursorShape::Block => {
             // Inverse block: fill the cursor span in the cursor colour, then
@@ -3859,6 +3926,7 @@ mod tests {
             None,
             &mut none_cached,
             true,
+            true,
         );
         let mut plain_cached = VelloScene::new();
         to_vello_cached(
@@ -3885,6 +3953,7 @@ mod tests {
             &mut FragmentCache::new(),
             Some(&engine),
             &mut self_hosted,
+            true,
             true,
         );
         let shaped = pinion_text_font::shape_paragraph_with_fallback(&[engine.font()], "Hi", 16.0);
@@ -3937,6 +4006,7 @@ mod tests {
             Some(&engine),
             &mut frame1,
             true,
+            true,
         );
         assert_eq!(fragment_cache.misses(), 1, "first paint is a miss");
         assert_eq!(fragment_cache.hits(), 0);
@@ -3951,6 +4021,7 @@ mod tests {
             &mut fragment_cache,
             Some(&engine),
             &mut frame2,
+            true,
             true,
         );
         assert_eq!(

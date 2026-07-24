@@ -441,8 +441,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // + commits repaints that advance the phase (via `tick_animations`
         // above). The phase is read back at paint by `commit_paint` and never
         // folded into the scene (§2 #7).
+        // R1427 §5.41 §5.39 — the TUI has no OS-window-focus concept (it does not
+        // track host-terminal focus), so it arms with `focused = true` and keeps
+        // its pre-R1427 filled, free-running cursor unchanged (the hollow-on-blur
+        // render is GUI-only, like multi-window).
         self.core
-            .arm_grid_cursor_blink(pinion_runtime::DEFAULT_WINDOW, &scene);
+            .arm_grid_cursor_blink(pinion_runtime::DEFAULT_WINDOW, &scene, true);
         scene
     }
 

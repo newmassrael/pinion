@@ -1939,6 +1939,98 @@ mod tests {
         );
     }
 
+    /// R1427 §5.41 §5.39 — an UNFOCUSED window draws its terminal cursor as a
+    /// HOLLOW outline box (interior = the cell background, border = the cursor
+    /// colour), versus the FOCUSED filled block. Proven in pixels: the same
+    /// block cursor rendered with `cursor_focused = true` fills its interior in
+    /// the cursor colour, while `cursor_focused = false` leaves the interior the
+    /// cell background and paints only the outline stroke. Focus-hollow overrides
+    /// the shape and is a function of focus, not blink (this cursor is steady).
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1427_unfocused_text_grid_cursor_is_hollow() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached_with_text_engine};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 16;
+        const CH: u32 = 24;
+        const W: u32 = CW;
+        const H: u32 = CH;
+
+        let white = TermColor::Rgb(Color::rgb(0xff, 0xff, 0xff));
+        let black = TermColor::Rgb(Color::rgb(0x00, 0x00, 0x00));
+        let metric = CellMetric::new(CW, CH).expect("non-zero");
+
+        // A single blank (space) cell so the cursor colour is the only ink; the
+        // effective cursor colour is the cell foreground (white) on black.
+        let buf = || -> GridBuffer {
+            GridBuffer::new(1, 1)
+                .with_row(0, [TermCell::new(" ", white, black)])
+                .with_cursor(GridCursor::new(0, 0, CursorShape::Block, true))
+        };
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let mut render = |focused: bool| -> Vec<u8> {
+            let mut node = TextGridNode::new(metric).with_cells(buf());
+            node.rect = Rect::new(0, 0, W, H);
+            let scene = Scene::TextGrid(node);
+            let mut text_cache = LayoutCache::new();
+            let mut cache = FragmentCache::new();
+            let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+            let mut vello = VelloScene::new();
+            to_vello_cached_with_text_engine(
+                &scene,
+                &|_| None,
+                &mut text_cache,
+                &mut image_cache,
+                &mut cache,
+                None,
+                &mut vello,
+                true, // cursor_blink_on: steady (this cursor never blinks)
+                focused,
+            );
+            shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK)
+                .expect("render")
+        };
+
+        // (r, g, b) channel at pixel (x, y).
+        let chan = |img: &[u8], x: u32, y: u32, c: u32| -> i64 {
+            i64::from(img[((y * W + x) * 4 + c) as usize])
+        };
+
+        // Focused: the block FILLS — the cell interior (centre) is the cursor
+        // colour (white), every channel high.
+        let filled = render(true);
+        assert!(
+            chan(&filled, CW / 2, CH / 2, 0) > 200 && chan(&filled, CW / 2, CH / 2, 1) > 200,
+            "focused block cursor fills its interior (white), got r={} g={}",
+            chan(&filled, CW / 2, CH / 2, 0),
+            chan(&filled, CW / 2, CH / 2, 1),
+        );
+
+        // Unfocused: HOLLOW — the interior (centre) is the cell background (black,
+        // NOT the filled cursor colour)...
+        let hollow = render(false);
+        assert!(
+            chan(&hollow, CW / 2, CH / 2, 0) < 60,
+            "unfocused cursor interior is HOLLOW (cell background, not filled), got r={}",
+            chan(&hollow, CW / 2, CH / 2, 0),
+        );
+        // ...while the outline stroke is present at the cell's top edge (white).
+        assert!(
+            chan(&hollow, CW / 2, 1, 0) > 150,
+            "the hollow box paints a visible outline stroke at the top edge, got r={}",
+            chan(&hollow, CW / 2, 1, 0),
+        );
+    }
+
     /// R995 §5.41 §2 #6 — cross-backend consistency (Vello half). Renders the
     /// **same** shared [`text_grid_consistency_buffer`] the TUI half drives and
     /// asserts each cell's *visible-ink* presence agrees with the model

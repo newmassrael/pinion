@@ -1706,11 +1706,21 @@ impl<V: WidgetCore> CoreShell<V> {
     /// ([`Self::register_window`] at GUI window creation; `DEFAULT_WINDOW`
     /// seeded at construction for the single-window / TUI path), so the lookup
     /// resolves on every real paint; an unknown window is a no-op.
-    pub fn arm_grid_cursor_blink(&self, window_id: &str, scene: &Scene) {
+    ///
+    /// R1427 §5.41 §5.39 — `focused` is whether this window holds the OS keyboard
+    /// focus (the caller passes its fails-open `is_key_dispatch_window` verdict).
+    /// The clock enables ONLY when the window is focused AND carries a visible
+    /// blinking cursor; an unfocused window disables its clock so the cursor
+    /// stops blinking (real terminals freeze the cursor on blur) and — the clock
+    /// disabled — [`Self::grid_cursor_blink_on`] returns the steady ON phase, so
+    /// the unfocused cursor renders steady (and, via `cursor_focused`, hollow).
+    /// The focus verdict is decided at the CALL SITE, so the TUI path passes
+    /// `true` and keeps its pre-R1427 filled-blinking behaviour unchanged.
+    pub fn arm_grid_cursor_blink(&self, window_id: &str, scene: &Scene, focused: bool) {
         let Some(owner) = self.window_owner_existing(window_id) else {
             return;
         };
-        if scene.has_visible_blinking_grid_cursor() {
+        if focused && scene.has_visible_blinking_grid_cursor() {
             owner
                 .register_animation_once(
                     GRID_CURSOR_BLINK_KEY,
@@ -3678,7 +3688,7 @@ mod tests {
 
         // Arm (a visible blinking cursor is on screen): the clock enables and the
         // cursor starts on its ON phase (the canonical "cursor appears solid").
-        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking);
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking, true);
         assert!(
             core.grid_cursor_blink_on(DEFAULT_WINDOW),
             "armed cursor starts ON"
@@ -3707,7 +3717,7 @@ mod tests {
             !core.grid_cursor_blink_on(DEFAULT_WINDOW),
             "OFF phase after a third flip"
         );
-        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking);
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking, true);
         assert!(
             !core.grid_cursor_blink_on(DEFAULT_WINDOW),
             "re-arming does not reset the phase (a terminal cursor free-runs)",
@@ -3715,7 +3725,7 @@ mod tests {
 
         // A scene with only a STEADY cursor disarms the clock → STEADY gate again
         // and the window can idle (the clock reports at-rest).
-        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &steady);
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &steady, true);
         assert!(
             core.grid_cursor_blink_on(DEFAULT_WINDOW),
             "a disarmed window is steady — a disabled clock never hides the cursor",
@@ -3724,6 +3734,63 @@ mod tests {
             !core
                 .any_animation_active_for_window(DEFAULT_WINDOW, pinion_core::DEFAULT_REST_EPSILON),
             "a disarmed blink clock is at rest, so the window idles",
+        );
+    }
+
+    #[test]
+    fn r1427_unfocused_window_stops_the_cursor_blink() {
+        // R1427 §5.41 §5.39 — an unfocused window (arm `focused = false`) never
+        // enables its blink clock, so a blinking cursor renders STEADY (the gate
+        // reports the always-ON phase) and the window idles; refocusing re-arms
+        // and the phase animates again. Real terminals freeze the cursor on blur.
+        use pinion_core::CellMetric;
+        use pinion_core::scene::TextGridNode;
+        use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor};
+        use pinion_core::widgets::caret_blink::CaretBlink;
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let blinking = || {
+            let cells = GridBuffer::new(2, 1)
+                .with_cursor(GridCursor::new(1, 0, CursorShape::Block, true).with_blink(true));
+            Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT).with_cells(cells))
+        };
+
+        // Unfocused + a visible blinking cursor: the clock does NOT enable, so the
+        // gate is steady-ON and the window is at rest (no wasted ~2Hz wakeup on a
+        // window the user is not looking at).
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking(), false);
+        assert!(
+            core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "an unfocused blinking cursor is steady-ON (no blink)",
+        );
+        assert!(
+            !core
+                .any_animation_active_for_window(DEFAULT_WINDOW, pinion_core::DEFAULT_REST_EPSILON),
+            "an unfocused window arms no clock, so it idles (releases the frame loop)",
+        );
+
+        // Refocus: the clock enables and the phase animates once more — a
+        // half-period tick flips it to the OFF phase.
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking(), true);
+        assert!(
+            core.any_animation_active_for_window(DEFAULT_WINDOW, pinion_core::DEFAULT_REST_EPSILON),
+            "refocusing re-arms the clock",
+        );
+        core.tick_animations_for_window(DEFAULT_WINDOW, CaretBlink::PERIOD_SECS);
+        assert!(
+            !core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "the refocused cursor blinks again (OFF a half-period later)",
+        );
+
+        // Blur again: the existing clock is disabled → steady-ON, window idles.
+        core.arm_grid_cursor_blink(DEFAULT_WINDOW, &blinking(), false);
+        assert!(
+            core.grid_cursor_blink_on(DEFAULT_WINDOW),
+            "blur freezes the cursor steady-ON again",
+        );
+        assert!(
+            !core
+                .any_animation_active_for_window(DEFAULT_WINDOW, pinion_core::DEFAULT_REST_EPSILON),
+            "and the window idles once more",
         );
     }
 

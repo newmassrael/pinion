@@ -23,12 +23,23 @@
 //! Multi-window scaffolding is the manual `WidgetView::windows()` +
 //! `view_for_window` path (hello-multi-window's shape), since the `#[widget]`
 //! macro has no multi-window override.
+//!
+//! R1427 §5.41 §5.39 — each window also carries a small terminal grid with a
+//! visible BLINKING block cursor ([`CURSOR_GRID_TAG`]). The shell renders the
+//! cursor filled and blinking on the OS-focused window, and as a steady HOLLOW
+//! outline box on the unfocused one — the universal unfocused-terminal indicator
+//! — driven purely by the per-window `cursor_focused` paint flag, so the VIEW is
+//! identical in both windows. `tools/demos/r1427_cursor_focus.py` proves the
+//! blink MODE is unchanged by focus (§2 #7 — OS focus is separate data via
+//! `scene/input_state`, never folded into the cursor).
 
+use pinion_core::CellMetric;
 use pinion_core::external::IntrospectValue;
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::term_grid::{CursorShape, GridBuffer, GridCursor, TermCell, TermColor};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene, WidgetCore};
@@ -54,6 +65,32 @@ const STATUS_TAG: &str = "os_focus_status";
 
 const MAIN: &str = "main";
 const INSPECTOR: &str = "inspector";
+
+/// The per-window terminal-cursor grid tag (R1427). Both windows paint it; the
+/// RPC demo reads each window's copy to prove the blink MODE is unchanged by
+/// focus (§2 #7 — focus is separate data via `scene/input_state`).
+const CURSOR_GRID_TAG: &str = "focus_cursor_grid";
+
+/// R1427 §5.41 §5.39 — a small terminal-cursor grid carrying a visible BLINKING
+/// block cursor. The render (filled + blinking on the focused window, HOLLOW +
+/// steady on the unfocused one) is driven entirely by the shell's per-window
+/// `cursor_focused` paint flag — the view is identical in both windows, so this
+/// example demonstrates the focus-gated cursor beside the R1419 per-window
+/// dimming without the view reading focus for the cursor at all. The cursor mode
+/// (`blink: true`) is the same in both windows; only the paint differs.
+fn cursor_grid() -> Scene {
+    let cell = |c: char| TermCell::new(c.to_string(), TermColor::Default, TermColor::Default);
+    let cells = GridBuffer::new(6, 1)
+        .with_row(0, "$ vim".chars().map(cell))
+        // A visible blinking block cursor on the input column (col 5).
+        .with_cursor(GridCursor::new(5, 0, CursorShape::Block, true).with_blink(true));
+    Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(CURSOR_GRID_TAG)
+            .with_cells(cells)
+            .with_layout(LayoutStyle::new().with_size(Size::px(48, 16))),
+    )
+}
 
 /// The label a window paints from the OS-focus read, keyed to WHETHER THIS
 /// window holds OS focus. Free fn so the demo + tests share one spelling.
@@ -96,7 +133,10 @@ fn view_window(window_id: &str, state: ButtonState) -> Scene {
         .with_tag(STATUS_TAG),
     );
 
-    let mut children = vec![status];
+    // R1427 §5.41 §5.39 — both windows carry the blinking terminal cursor; the
+    // shell renders it filled + blinking on the focused window and hollow +
+    // steady on the unfocused one, purely from the per-window OS-focus fact.
+    let mut children = vec![status, cursor_grid()];
     // The main window carries the focusable Button primary (the binding's one
     // routable surface); the inspector window is display-only.
     if window_id == MAIN {
@@ -284,5 +324,40 @@ mod tests {
             !insp_scene.contains_tag(MAIN_BTN_TAG),
             "the inspector window is display-only",
         );
+    }
+
+    #[test]
+    fn both_windows_carry_the_same_blinking_cursor_regardless_of_focus() {
+        // R1427 — the terminal cursor's MODE (blinking block) is identical in
+        // both windows and independent of OS focus: the focus-driven hollow /
+        // stop-blink is a paint concern, never scene data (§2 #7). So the view
+        // is byte-identical whether or not the window holds focus.
+        use pinion_core::scene::Scene as S;
+        fn grid_cursor(scene: &S) -> Option<GridCursor> {
+            match scene {
+                S::TextGrid(n) if n.tag.as_deref() == Some(CURSOR_GRID_TAG) => {
+                    Some(n.cells().cursor())
+                }
+                S::Container(c) => c.children.iter().find_map(grid_cursor),
+                _ => None,
+            }
+        }
+        let owner = pinion_core::Owner::new();
+        // Focus main: BOTH windows still carry the blinking block cursor mode.
+        owner.os_focused_window_signal().set(Some(MAIN.to_owned()));
+        let main_cur = grid_cursor(&owner.run(|| view_window(MAIN, ButtonState::Idle)))
+            .expect("main carries the cursor grid");
+        let insp_cur = grid_cursor(&owner.run(|| view_window(INSPECTOR, ButtonState::Idle)))
+            .expect("inspector carries the cursor grid");
+        assert!(
+            main_cur.blink && main_cur.visible,
+            "focused window: blinking mode"
+        );
+        assert!(
+            insp_cur.blink && insp_cur.visible,
+            "unfocused window carries the SAME blinking mode — focus is not scene data",
+        );
+        assert_eq!(main_cur, insp_cur, "the cursor data is focus-independent");
+        assert_eq!(main_cur.shape, CursorShape::Block);
     }
 }

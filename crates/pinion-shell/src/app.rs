@@ -1540,6 +1540,15 @@ impl<V: WidgetView> AppShell<V> {
         // The produce / screenshot path passes the steady default instead, so a
         // golden PNG never flakes on the wall-clock phase.
         let cursor_blink_on = self.core.grid_cursor_blink_on(&spec_id);
+        // R1427 §5.41 §5.39 — whether THIS window holds the OS keyboard focus,
+        // via the same fails-open predicate the key-dispatch gate uses
+        // (`is_key_dispatch_window`: unknown focus → `true`). An unfocused
+        // window renders its cursor HOLLOW (paint-time, never scene data — OS
+        // focus is already introspectable via `scene/input_state`). Read here
+        // (before the slot borrow) alongside `cursor_blink_on`, and it is the
+        // SAME fact the blink-arm gates on, so the two can never disagree (no
+        // blinking-hollow contradiction).
+        let cursor_focused = self.core.is_key_dispatch_window(&spec_id);
         // Assigned exactly once inside the paint scope below; the
         // scope's `else { return; }` arms diverge, so the fall-through
         // path that reaches `record_frame_timing` always assigns both.
@@ -1599,6 +1608,7 @@ impl<V: WidgetView> AppShell<V> {
                 text_engine,
                 &mut slot.vello_scene,
                 cursor_blink_on,
+                cursor_focused,
             );
             encode_us = instant_delta_us(encode_start, Instant::now());
             // R51.109.1 §5.41 — call through the backend-agnostic
@@ -3354,6 +3364,13 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 } else {
                     self.core.window_blurred();
                 }
+                // R1427 §5.41 §5.39 — a focus edge changes the terminal cursor's
+                // render (filled+blinking <-> hollow+steady) with NO other event,
+                // and an unfocused window intentionally idles its blink clock, so
+                // nothing else would schedule the frame. Request a repaint on BOTH
+                // edges so the enable/disable + fill/hollow transition lands on the
+                // very next frame instead of latching until an unrelated event.
+                self.core.request_redraw_for_window(spec_id);
             }
             WindowEvent::KeyboardInput {
                 event,
@@ -5234,6 +5251,10 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
         // R1426 §5.41 — a headless PNG renders the cursor STEADY (blink phase
         // ON): the render-time phase is wall-clock-driven, so forcing ON keeps a
         // golden screenshot deterministic (never captures a mid-blink off-phase).
+        true,
+        // R1427 §5.41 §5.39 — and FOCUSED (filled, not the unfocused hollow box):
+        // a headless capture has no live OS-focus fact, so the deterministic
+        // golden shows the filled cursor.
         true,
     );
     let mut shot = match crate::HeadlessScreenshot::new() {

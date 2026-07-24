@@ -1204,6 +1204,19 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.grid_cursor_blink_on(window_id)
     }
 
+    /// R1427 §5.41 §5.39 — arm this window's terminal-cursor blink clock from its
+    /// paint scene, gated on OS focus. Forwards to
+    /// [`CoreShell::arm_grid_cursor_blink`](pinion_runtime::CoreShell::arm_grid_cursor_blink)
+    /// with this window's fails-open [`Self::is_key_dispatch_window`] focus
+    /// verdict — the SAME predicate the hollow-render `cursor_focused` flag reads,
+    /// so an unfocused window stops blinking and renders hollow consistently (the
+    /// two facts can never disagree). Owning the focus read here keeps the paint
+    /// loop's arm call a single line.
+    pub fn arm_grid_cursor_blink(&self, window_id: &str, scene: &Scene) {
+        let focused = self.is_key_dispatch_window(window_id);
+        self.core.arm_grid_cursor_blink(window_id, scene, focused);
+    }
+
     /// R681 §2 #4 atomic 2 §5.16 §5.28 — per-window last paint
     /// [`Instant`]. The substrate's
     /// `Self::compute_paint_scene_internal` writes this slot every
@@ -3935,10 +3948,11 @@ impl<V: WidgetView> ShellCore<V> {
             }
         }
         // R1426 §5.41 §5.28 — arm this window's terminal-cursor blink clock from
-        // the paint scene (see `CoreShell::arm_grid_cursor_blink`); the
-        // `any_animation_active` gate below then advances the phase. This live fn
-        // only, never the pure mirror — a dry_run paint arms no clock.
-        self.core.arm_grid_cursor_blink(window_key, &paint_scene);
+        // the paint scene; the `any_animation_active` gate below then advances the
+        // phase. This live fn only, never the pure mirror — a dry_run paint arms
+        // no clock. R1427 — the wrapper gates the arm on OS focus (unfocused =
+        // stop-blink), reading the SAME fails-open predicate as `cursor_focused`.
+        self.arm_grid_cursor_blink(window_key, &paint_scene);
         // R51.147 §5.28 — keep painting while any animation registered
         // on the binding is still moving. `request_redraw` is
         // idempotent inside winit; the redraw flag is drained once per
