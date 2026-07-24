@@ -4787,6 +4787,9 @@ mod tests {
         let kd = pinion_core::KeyDispatchFocus {
             os_focused_window: Some(crate::DEFAULT_WINDOW.to_owned()),
             key_press_owners: vec![("Space".to_owned(), crate::DEFAULT_WINDOW.to_owned())],
+            // R1428 — the per-window verdict is derived by the shell (not this
+            // core home); the snapshot passes whatever the shell supplied.
+            focused: true,
         };
         let snap2 = core
             .input_state_snapshot(crate::DEFAULT_WINDOW, None, Some(kd.clone()))

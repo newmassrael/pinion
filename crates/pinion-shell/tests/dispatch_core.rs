@@ -4983,6 +4983,87 @@ mod multi_window_key_dispatch_gate {
     }
 
     #[test]
+    fn r1428_key_dispatch_focus_for_window_derives_the_per_window_verdict() {
+        // R1428 §5.39 §5.16 §5.41. The per-window PROJECTION of the gate:
+        // `focused` is the fails-open `is_key_dispatch_window` verdict for a
+        // dispatch's `{window}` scope — the SAME predicate the R1427
+        // terminal-cursor render gates on. This proves an AI reads a window's
+        // filled(true)/hollow(false) cursor state from one `scene/input_state`
+        // call, per window, instead of comparing `os_focused_window` to its id.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core = ShellCore::<TestView>::new();
+
+        // (1) Boot: no window OS-focused → the gate FAILS OPEN, so EVERY
+        //     window's per-window verdict is `true` (cursor filled), R1427.
+        let boot_main = core.key_dispatch_focus_for_window("main");
+        assert_eq!(boot_main.os_focused_window, None, "no OS focus at boot");
+        assert!(
+            boot_main.focused,
+            "unknown focus fails open → filled cursor"
+        );
+        assert!(
+            core.key_dispatch_focus_for_window("inspector").focused,
+            "every window fails open before any focus event",
+        );
+
+        // (2) main takes OS focus → ONLY main reads filled; inspector reads
+        //     hollow — per-window IDENTITY (a binding-wide bool could not).
+        core.note_os_focus("main", true);
+        let m = core.key_dispatch_focus_for_window("main");
+        assert_eq!(m.os_focused_window.as_deref(), Some("main"));
+        assert!(m.focused, "the focused window reads filled");
+        assert!(
+            !core.key_dispatch_focus_for_window("inspector").focused,
+            "★ the other window reads hollow — the R1427 render bit, per window",
+        );
+        // The SSOT is one value; only the projected verdict differs (no drift).
+        assert_eq!(
+            core.key_dispatch_focus_for_window("main").os_focused_window,
+            core.key_dispatch_focus_for_window("inspector")
+                .os_focused_window,
+            "both projections carry the identical raw os_focused_window",
+        );
+
+        // (3) focus moves to inspector → the roles swap on the same SSOT.
+        core.note_os_focus("inspector", true);
+        assert!(
+            !core.key_dispatch_focus_for_window("main").focused,
+            "main now reads hollow",
+        );
+        assert!(
+            core.key_dispatch_focus_for_window("inspector").focused,
+            "inspector now reads filled",
+        );
+
+        // (4) blur the focused window → focus is `None` → BOTH fail open.
+        core.note_os_focus("inspector", false);
+        assert!(
+            core.key_dispatch_focus_for_window("main").focused,
+            "app blur fails open → main filled",
+        );
+        assert!(
+            core.key_dispatch_focus_for_window("inspector").focused,
+            "app blur fails open → inspector filled too",
+        );
+
+        // The derived verdict is EXACTLY `is_key_dispatch_window` — one
+        // predicate shared with the cursor paint, so introspection cannot
+        // drift from the render.
+        core.note_os_focus("main", true);
+        assert_eq!(
+            core.key_dispatch_focus_for_window("inspector").focused,
+            core.is_key_dispatch_window("inspector"),
+            "focused mirrors the gate predicate the R1427 cursor paint reads",
+        );
+        assert_eq!(
+            core.key_dispatch_focus_for_window("main").focused,
+            core.is_key_dispatch_window("main"),
+            "and matches for the focused window as well",
+        );
+    }
+
+    #[test]
     fn rpc_scene_key_routes_through_the_unified_gate() {
         // R1075. The RPC `scene/key` drain now shares `admit_key_press` with the
         // live winit arm — no RPC bypass. A `Down` edge pins the press owner

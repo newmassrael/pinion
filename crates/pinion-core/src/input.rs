@@ -250,6 +250,24 @@ pub struct KeyDispatchFocus {
     /// by key** for a deterministic snapshot. Mirrors the shell's
     /// `key_press_owner`.
     pub key_press_owners: Vec<(String, String)>,
+    /// R1428 §5.39 §5.16 §5.41 — the **fails-open focus verdict for the
+    /// dispatch-scoped window** (the request's `{window: "<id>"}` scope),
+    /// derived at snapshot time from [`Self::os_focused_window`], never
+    /// stored: `true` when this window holds OS focus OR when no window's
+    /// focus is known (the gate fails open). It is the SAME predicate the
+    /// GUI shell gates key admission on (`is_key_dispatch_window`) AND the
+    /// R1427 terminal-cursor render on, so an AI reads the exact bit that
+    /// predicts the cursor's filled-vs-hollow state (`true` → filled,
+    /// `false` → hollow) in ONE `scene/input_state {window}` call —
+    /// instead of correlating a snapshot with a client-side compare of
+    /// [`Self::os_focused_window`] against a hard-coded window id.
+    ///
+    /// Distinct from [`Self::os_focused_window`] (the global "who is
+    /// focused") — `focused` is that fact PROJECTED onto this dispatch's
+    /// window through the fails-open gate. On the single-OS-window backend
+    /// (the TUI) the whole axis is `None` (this field is unreachable), so
+    /// hollow-on-blur stays GUI-only exactly like R1427.
+    pub focused: bool,
 }
 
 /// R880.1 — the multi-select pointer-chord policy, decoded ONCE for every
@@ -1975,6 +1993,9 @@ mod drag_calibration_tests {
         let kd = super::KeyDispatchFocus::default();
         assert_eq!(kd.os_focused_window, None, "no window holds OS focus");
         assert!(kd.key_press_owners.is_empty(), "no key is held / owned");
+        // R1428 — the default per-window verdict is unfocused; the shell
+        // derives the real value from `is_key_dispatch_window(wid)`.
+        assert!(!kd.focused, "default per-window verdict is unfocused");
     }
 
     #[test]
@@ -1987,6 +2008,9 @@ mod drag_calibration_tests {
                 ("Enter".to_owned(), "pane-1".to_owned()),
                 ("Space".to_owned(), "main".to_owned()),
             ],
+            // R1428 — this dispatch is scoped to "pane-1", which holds
+            // focus, so the derived per-window verdict is `true`.
+            focused: true,
         };
         let snap = super::InputStateSnapshot {
             key_dispatch: Some(kd.clone()),
@@ -1996,5 +2020,9 @@ mod drag_calibration_tests {
         let got = snap.key_dispatch.unwrap();
         assert_eq!(got.os_focused_window.as_deref(), Some("pane-1"));
         assert_eq!(got.key_press_owners.len(), 2);
+        assert!(
+            got.focused,
+            "the focused window's per-window verdict is true"
+        );
     }
 }

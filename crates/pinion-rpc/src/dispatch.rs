@@ -5356,6 +5356,13 @@ fn handle_scene_input_state(
         serde_json::json!({
             "os_focused_window": kd.os_focused_window,
             "key_press_owners": owners,
+            // R1428 §5.39 §5.16 §5.41 — the derived per-window focus verdict:
+            // `true` when the dispatch-scoped `{window}` holds OS focus OR when
+            // focus is unknown (the gate fails open). Predicts the R1427
+            // terminal-cursor render (true → filled, false → hollow) so an AI
+            // reads it in this one call instead of comparing `os_focused_window`
+            // to its own window id.
+            "focused": kd.focused,
         })
     });
     Ok(serde_json::json!({

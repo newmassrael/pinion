@@ -1329,7 +1329,7 @@ impl<V: WidgetView> ShellCore<V> {
             input_state: self.core.input_state_snapshot(
                 wid,
                 Some(self.modifiers),
-                Some(self.key_dispatch_focus()),
+                Some(self.key_dispatch_focus_for_window(wid)),
             ),
             pacing_state: self.core.is_window_known(wid).then(|| {
                 match self.target_fps_for_window(wid) {
@@ -3269,6 +3269,28 @@ impl<V: WidgetView> ShellCore<V> {
         pinion_core::KeyDispatchFocus {
             os_focused_window: self.os_focused_window.clone(),
             key_press_owners,
+            // The bare (global) builder cannot know a dispatch scope, so the
+            // per-window verdict defaults unfocused here; the per-window
+            // projection ([`Self::key_dispatch_focus_for_window`]) fills it.
+            focused: false,
+        }
+    }
+
+    /// R1428 §5.39 §5.16 §5.41 — [`Self::key_dispatch_focus`] PROJECTED onto a
+    /// dispatch's `{window}` scope: the global gate state plus the per-window
+    /// [`pinion_core::KeyDispatchFocus::focused`] verdict, derived from the SAME
+    /// fails-open predicate ([`Self::is_key_dispatch_window`]) that gates key
+    /// admission and the R1427 terminal-cursor render. `scene/input_state` reads
+    /// this so an AI observes the exact bit predicting the cursor's
+    /// filled-vs-hollow state in one call, rather than comparing
+    /// [`pinion_core::KeyDispatchFocus::os_focused_window`] against a hard-coded
+    /// id. Threaded through `window_scoped_rpc_reads` (which already owns the
+    /// resolved `wid`); the bare builder stays for the global-fact callers.
+    #[must_use]
+    pub fn key_dispatch_focus_for_window(&self, window_id: &str) -> pinion_core::KeyDispatchFocus {
+        pinion_core::KeyDispatchFocus {
+            focused: self.is_key_dispatch_window(window_id),
+            ..self.key_dispatch_focus()
         }
     }
 

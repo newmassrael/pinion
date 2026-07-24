@@ -112,8 +112,10 @@ def body() -> None:
 
         # ── (B) boot: OS focus unknown ───────────────────────────────
         boot = _input_state(tf)
+        # R1428 — the gate object also carries the derived per-window `focused`
+        # verdict beside the raw os_focused_window / key_press_owners legs.
         assert_eq(sorted(boot["key_dispatch"].keys()),
-                  ["key_press_owners", "os_focused_window"],
+                  ["focused", "key_press_owners", "os_focused_window"],
                   "the key-dispatch gate carries the os_focused_window leg")       # 3
         assert_eq(_os_focused(tf), None, "boot: no OS window holds focus")         # 4
         assert_eq(_status_label(tf), "OS focus: (blurred)",

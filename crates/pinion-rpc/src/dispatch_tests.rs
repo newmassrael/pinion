@@ -489,6 +489,8 @@ fn r1074_scene_input_state_surfaces_the_key_dispatch_gate() {
                 ("Enter".to_owned(), "pane-1".to_owned()),
                 ("Space".to_owned(), "main".to_owned()),
             ],
+            // R1428 — this dispatch is scoped to the focused pane.
+            focused: true,
         }),
         ..Default::default()
     };
@@ -511,6 +513,83 @@ fn r1074_scene_input_state_surfaces_the_key_dispatch_gate() {
     assert_eq!(
         kd["key_press_owners"]["Space"], "main",
         "Space's owner is independent of the focused window",
+    );
+    // R1428 §5.39 §5.16 §5.41 — the derived per-window verdict rides the same
+    // object as a bare bool (the dispatch was scoped to the focused window).
+    assert_eq!(
+        kd["focused"], true,
+        "the per-window focus verdict is observable beside the global fact",
+    );
+}
+
+// R1428 §5.39 §5.16 §5.41 — scene/input_state's derived per-window `focused`.
+#[test]
+fn r1428_scene_input_state_focused_is_a_derived_per_window_verdict() {
+    // The shell derives `focused` per dispatch scope from the fails-open
+    // `is_key_dispatch_window` predicate — the SAME bit that gates the R1427
+    // terminal-cursor render. The wire carries it as a bare bool so an AI reads
+    // "is this window filled (true) or hollow (false)?" without a client-side
+    // compare of `os_focused_window` to its own id.
+    let mut scene = counted_scene(7);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+
+    // (1) An unfocused dispatch scope: focus is on "pane-1", the AI queried a
+    //     different window's input state → focused = false (cursor hollow).
+    let unfocused = pinion_core::InputStateSnapshot {
+        key_dispatch: Some(pinion_core::KeyDispatchFocus {
+            os_focused_window: Some("pane-1".to_owned()),
+            key_press_owners: vec![],
+            focused: false,
+        }),
+        ..Default::default()
+    };
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_input_state(unfocused);
+    let resp = dispatch(
+        &mut ctx,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v: serde_json::Value = serde_json::from_str(&resp).expect("valid response json");
+    let kd = &v["result"]["key_dispatch"];
+    assert!(kd["focused"].is_boolean(), "focused is always a bare bool");
+    assert_eq!(
+        kd["focused"], false,
+        "another window holds focus → this scope reads unfocused (hollow cursor)",
+    );
+    assert_eq!(
+        kd["os_focused_window"], "pane-1",
+        "the raw SSOT stays beside the derived verdict (no drift, both exposed)",
+    );
+
+    // (2) The fails-open case: no window holds OS focus (`None`) → the gate
+    //     admits keys AND the R1427 cursor renders filled, so `focused = true`
+    //     even though `os_focused_window` is null.
+    let fail_open = pinion_core::InputStateSnapshot {
+        key_dispatch: Some(pinion_core::KeyDispatchFocus {
+            os_focused_window: None,
+            key_press_owners: vec![],
+            focused: true,
+        }),
+        ..Default::default()
+    };
+    let mut ctx2 =
+        DispatchContext::new(&mut scene, &previews, &revision).with_input_state(fail_open);
+    let resp2 = dispatch(
+        &mut ctx2,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v2: serde_json::Value = serde_json::from_str(&resp2).expect("valid response json");
+    let kd2 = &v2["result"]["key_dispatch"];
+    assert!(
+        kd2["os_focused_window"].is_null(),
+        "no window holds OS focus",
+    );
+    assert_eq!(
+        kd2["focused"], true,
+        "fails open: unknown focus renders a filled cursor, so focused = true",
     );
 }
 

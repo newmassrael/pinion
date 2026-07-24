@@ -85,9 +85,11 @@ def body() -> None:
         # object (a single-OS-window TUI would surface `null`).
         assert r0["key_dispatch"] is not None, \
             "boot: GUI backend surfaces the key-dispatch axis"
+        # R1428 — a third leg joins the two gate legs: the derived per-window
+        # `focused` verdict (the fails-open is_key_dispatch_window bit).
         assert_eq(sorted(r0["key_dispatch"].keys()),
-                  ["key_press_owners", "os_focused_window"],
-                  "key_dispatch carries exactly the two gate legs")
+                  ["focused", "key_press_owners", "os_focused_window"],
+                  "key_dispatch carries the two gate legs + the derived verdict")
         assert_eq(r0["key_dispatch"]["key_press_owners"], {},
                   "boot: no key held → no press owner pinned")
 
@@ -149,9 +151,10 @@ def body() -> None:
         # ── (J) R1074: the multi-window key-dispatch gate axis ──────
         kd = r6["key_dispatch"]
         assert kd is not None, "GUI backend surfaces the key-dispatch axis"
+        # R1428 — + the derived per-window `focused` verdict.
         assert_eq(sorted(kd.keys()),
-                  ["key_press_owners", "os_focused_window"],
-                  "key_dispatch carries exactly the two gate legs")
+                  ["focused", "key_press_owners", "os_focused_window"],
+                  "key_dispatch carries the two gate legs + the derived verdict")
         assert isinstance(kd["key_press_owners"], dict), \
             "key_press_owners is a key->window map"
         assert (kd["os_focused_window"] is None
