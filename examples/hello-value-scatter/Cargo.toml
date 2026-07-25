@@ -1,0 +1,30 @@
+[package]
+name = "hello-value-scatter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1438 §5.35 — value-encoded colour on a scatter chart: a point's third channel drives its mark colour through pinion_chart::ColorScale, and the legend becomes a COLOUR BAR whose gradient stops report the encoding (so a diverging ramp over an asymmetric domain seats its neutral where the map actually puts it, not at the bar midpoint). Every claim is queryable over RPC as hex + offsets."
+publish = false
+
+[[bin]]
+name = "hello-value-scatter"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1436 — the diverging ColorScale + the WCAG contrast helpers under test.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

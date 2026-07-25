@@ -188,6 +188,7 @@ members = [
     "examples/hello-property-grid",
     "examples/hello-data-grid",
     "examples/hello-deviation-grid",
+    "examples/hello-value-scatter",
     "examples/hello-node-editor",
     "examples/hello-slider-discrete",
     "examples/hello-slider-labeled",

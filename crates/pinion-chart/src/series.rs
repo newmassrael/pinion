@@ -4,20 +4,39 @@
 
 use pinion_core::style::Color;
 
-/// A single `(x, y)` sample in data space.
+/// A single `(x, y)` sample in data space, optionally carrying a third
+/// magnitude channel for value-encoded colour.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DataPoint {
     /// Independent-axis value (time, index, bucket centre, ...).
     pub x: f64,
     /// Dependent-axis value (the measured quantity).
     pub y: f64,
+    /// R1438 — the optional THIRD channel a value-encoded colour scale reads
+    /// (`ScatterChart::color_by`): a magnitude that is neither axis, e.g. an
+    /// error rate over a latency/throughput plane. `None` (the default, and
+    /// what [`Self::new`] builds) means "no third channel", and a chart
+    /// colouring by value leaves such a point on its series colour.
+    ///
+    /// Carrying the magnitude ON the point rather than in a parallel
+    /// index-keyed side table (the Qt `QXYSeries::setPointConfiguration`
+    /// shape) makes misalignment unrepresentable: there is no second array to
+    /// fall out of step with this one.
+    pub value: Option<f64>,
 }
 
 impl DataPoint {
-    /// Construct a data point.
+    /// Construct a data point with no third channel.
     #[must_use]
     pub const fn new(x: f64, y: f64) -> Self {
-        Self { x, y }
+        Self { x, y, value: None }
+    }
+
+    /// R1438 — attach the magnitude a value-encoded colour scale reads.
+    #[must_use]
+    pub const fn with_value(mut self, value: f64) -> Self {
+        self.value = Some(value);
+        self
     }
 }
 
@@ -132,6 +151,33 @@ fn bounds_of<'a>(
 #[must_use]
 pub fn data_bounds(series: &[Series]) -> Option<Bounds> {
     bounds_of(series, None)
+}
+
+/// R1438 — the `(min, max)` of the third channel across ALL `series`, or
+/// `None` when not one point carries a finite [`DataPoint::value`]. This is
+/// the auto colour-domain a value-encoded chart maps against, and it measures
+/// every series for the same reason [`data_bounds`] does: hiding a series must
+/// not silently re-colour the rest.
+///
+/// A single distinct value yields a degenerate `(v, v)` span; the colour scale
+/// itself is total over such a domain (it maps to the low end) rather than
+/// dividing by zero here.
+#[must_use]
+pub fn value_bounds(series: &[Series]) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    let mut seen = false;
+    for v in series
+        .iter()
+        .flat_map(|s| s.points.iter())
+        .filter_map(|p| p.value)
+        .filter(|v| v.is_finite())
+    {
+        seen = true;
+        lo = lo.min(v);
+        hi = hi.max(v);
+    }
+    seen.then_some((lo, hi))
 }
 
 /// The data bounds across only the VISIBLE series (R1381) — the auto-domain a

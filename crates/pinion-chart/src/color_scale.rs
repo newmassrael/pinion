@@ -233,6 +233,62 @@ impl ColorScale {
         };
         self.sample(t)
     }
+
+    /// R1438 — the ramp as `(domain_fraction, colour)` pairs, i.e. where each
+    /// of this scale's stops sits ALONG THE DOMAIN under the given encoding.
+    /// This is what a colour bar must be built from, because for a diverging
+    /// encoding it is not the same thing as the scale's own even spacing.
+    ///
+    /// `neutral = None` is the sequential case: stop `k` of `n` sits at
+    /// `k / (n - 1)`, matching [`Self::map`] exactly (both are linear in `t`,
+    /// and colour is piecewise-linear between stops, so a gradient with these
+    /// offsets reproduces the mapping rather than approximating it).
+    ///
+    /// `neutral = Some(v)` is the diverging case: the centre stop moves to
+    /// `v`'s fraction of `low..=high` and each wing's stops spread over their
+    /// own side, mirroring [`Self::map_diverging`]'s independent normalisation.
+    /// On an asymmetric domain the centre is therefore NOT at 0.5 — which is
+    /// precisely the fact a bar built from even spacing would hide.
+    ///
+    /// A degenerate domain collapses every stop onto `0.0`, agreeing with the
+    /// maps' "nothing to rank" behaviour.
+    #[must_use]
+    pub fn stop_offsets(&self, domain: (f64, f64), neutral: Option<f64>) -> Vec<(f32, Color)> {
+        let (low, high) = domain;
+        let stops = self.stops();
+        if stops.is_empty() {
+            return Vec::new();
+        }
+        let degenerate = high <= low || high.is_nan() || low.is_nan();
+        let last = stops.len().saturating_sub(1);
+        stops
+            .iter()
+            .enumerate()
+            .map(|(k, &color)| {
+                if degenerate || last == 0 {
+                    return (0.0, color);
+                }
+                let even = f64::from(u32::try_from(k).unwrap_or(u32::MAX))
+                    / f64::from(u32::try_from(last).unwrap_or(u32::MAX));
+                let fraction = match neutral {
+                    None => even,
+                    Some(neutral) => {
+                        let centre = ((neutral - low) / (high - low)).clamp(0.0, 1.0);
+                        if even <= 0.5 {
+                            centre * (even / 0.5)
+                        } else {
+                            centre + (1.0 - centre) * ((even - 0.5) / 0.5)
+                        }
+                    }
+                };
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "a 0.0..=1.0 offset loses no meaningful precision as f32"
+                )]
+                (fraction as f32, color)
+            })
+            .collect()
+    }
 }
 
 /// A colour's WCAG relative luminance, `0.0..=1.0`.
@@ -286,6 +342,9 @@ mod tests {
 
     const BLACK: Color = Color::rgb(0, 0, 0);
     const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);
+    /// A mid stop distinct from both ends, so a three-stop ramp's centre is
+    /// identifiable by colour alone (R1438's offset tests compare stops).
+    const GREY: Color = Color::rgb(0x80, 0x80, 0x80);
 
     fn close(a: f32, b: f32, eps: f32) -> bool {
         (a - b).abs() <= eps
@@ -444,5 +503,87 @@ mod tests {
                 contrast_ratio(bg, ink)
             );
         }
+    }
+
+    /// R1438 — a SEQUENTIAL ramp's stops are evenly spaced, and the spacing
+    /// agrees with `map`: the colour at a stop's offset IS that stop.
+    #[test]
+    fn r1438_sequential_stop_offsets_are_even_and_agree_with_map() {
+        let scale = ColorScale::sequential(vec![BLACK, GREY, WHITE]);
+        let offsets = scale.stop_offsets((0.0, 10.0), None);
+        assert_eq!(offsets.len(), 3);
+        assert!((offsets[0].0 - 0.0).abs() < 1e-6);
+        assert!((offsets[1].0 - 0.5).abs() < 1e-6);
+        assert!((offsets[2].0 - 1.0).abs() < 1e-6);
+        // The bar and the map are one encoding: the value at each offset's
+        // fraction of the domain is painted that offset's colour.
+        for &(offset, color) in &offsets {
+            let value = 0.0 + f64::from(offset) * 10.0;
+            assert_eq!(scale.map(value, 0.0, 10.0), color, "offset {offset}");
+        }
+    }
+
+    /// ★ R1438 — a DIVERGING ramp over an ASYMMETRIC domain moves its centre
+    /// stop to the neutral's fraction, and the wings spread over their own
+    /// widths. This is the number a bar built from even spacing gets wrong.
+    #[test]
+    fn r1438_diverging_stop_offsets_follow_the_neutral_not_the_midpoint() {
+        let scale = ColorScale::diverging(BLACK, GREY, WHITE);
+        // -2 ..= +8 about 0: the low wing is a fifth of the domain.
+        let offsets = scale.stop_offsets((-2.0, 8.0), Some(0.0));
+        assert!((offsets[0].0 - 0.0).abs() < 1e-6, "low end anchors at 0");
+        assert!(
+            (offsets[1].0 - 0.2).abs() < 1e-6,
+            "the neutral sits at ITS fraction (0.2), not 0.5 — got {}",
+            offsets[1].0
+        );
+        assert!((offsets[2].0 - 1.0).abs() < 1e-6, "high end anchors at 1");
+        // Counterfactual: the sequential placement of the same scale over the
+        // same domain does NOT agree, so the assertion above discriminates.
+        let even = scale.stop_offsets((-2.0, 8.0), None);
+        assert!((even[1].0 - 0.5).abs() < 1e-6);
+
+        // And it agrees with the map it describes.
+        for &(offset, color) in &offsets {
+            let value = -2.0 + f64::from(offset) * 10.0;
+            assert_eq!(
+                scale.map_diverging(value, -2.0, 0.0, 8.0),
+                color,
+                "offset {offset}"
+            );
+        }
+    }
+
+    /// A symmetric domain is the case where the two placements COINCIDE — the
+    /// boundary that shows the diverging arm is not just "always different".
+    #[test]
+    fn r1438_a_symmetric_domain_puts_the_neutral_at_the_midpoint() {
+        let scale = ColorScale::diverging(BLACK, GREY, WHITE);
+        let offsets = scale.stop_offsets((-5.0, 5.0), Some(0.0));
+        assert!((offsets[1].0 - 0.5).abs() < 1e-6);
+    }
+
+    /// Degenerate inputs collapse rather than dividing by zero or panicking,
+    /// matching the maps' own "nothing to rank" behaviour.
+    #[test]
+    fn r1438_stop_offsets_are_total() {
+        let scale = ColorScale::diverging(BLACK, GREY, WHITE);
+        for domain in [(5.0, 5.0), (8.0, 2.0), (f64::NAN, 1.0)] {
+            let offsets = scale.stop_offsets(domain, Some(0.0));
+            assert_eq!(offsets.len(), 3);
+            assert!(offsets.iter().all(|&(o, _)| (o - 0.0).abs() < 1e-6));
+        }
+        // A neutral outside the domain clamps instead of running off the bar.
+        let clamped = scale.stop_offsets((0.0, 10.0), Some(50.0));
+        assert!((clamped[1].0 - 1.0).abs() < 1e-6);
+        assert!(
+            ColorScale::sequential(Vec::new())
+                .stop_offsets((0.0, 1.0), None)
+                .is_empty()
+        );
+        assert_eq!(
+            ColorScale::sequential(vec![BLACK]).stop_offsets((0.0, 1.0), None),
+            vec![(0.0, BLACK)]
+        );
     }
 }

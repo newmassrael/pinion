@@ -45,13 +45,14 @@ use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, PathNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
 
+use crate::color_scale::ColorScale;
 use crate::draw::{
-    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, fill_parent, label_node,
-    marker_node, stroke_path, to_f32, to_u32,
+    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, color_bar, fill_parent,
+    label_node, marker_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{CartesianPlot, Rescale, axis_ticks, resolve_focus};
-use crate::series::{DataPoint, Series, in_domain};
+use crate::series::{DataPoint, Series, in_domain, value_bounds};
 use crate::style::ChartStyle;
 use crate::ticks::{format_axis_tick, tick_step};
 
@@ -66,7 +67,55 @@ pub struct ScatterChart {
     inspect: Option<f32>,
     select_x_range: Option<(f64, f64)>,
     legend_tags: Option<Vec<String>>,
+    color_by: Option<ColorBy>,
+    color_domain: Option<(f64, f64)>,
     tag_prefix: String,
+}
+
+/// R1438 — how a [`ScatterChart`] turns a point's third channel
+/// ([`DataPoint::value`](crate::DataPoint::value)) into its mark colour.
+///
+/// The two arms are not a style toggle: they select which of the colour
+/// scale's two total maps runs, and a diverging encoding additionally carries
+/// the anchor the data considers neutral (a target, a baseline, zero) — a
+/// number that belongs to the DATA, not to the palette, which is why it rides
+/// here rather than on [`ColorScale`].
+#[derive(Debug, Clone)]
+enum ColorBy {
+    /// Rank magnitude across the domain — [`ColorScale::map`].
+    Sequential(ColorScale),
+    /// Rank signed deviation from `neutral`, each side normalised on its own
+    /// width — [`ColorScale::map_diverging`].
+    Diverging { scale: ColorScale, neutral: f64 },
+}
+
+impl ColorBy {
+    /// The mark colour for `value` over `domain`.
+    fn resolve(&self, value: f64, domain: (f64, f64)) -> Color {
+        match self {
+            Self::Sequential(scale) => scale.map(value, domain.0, domain.1),
+            Self::Diverging { scale, neutral } => {
+                scale.map_diverging(value, domain.0, *neutral, domain.1)
+            }
+        }
+    }
+
+    /// The bar's `(fraction, colour)` ramp over `domain` — the encoding's own
+    /// stop placement, so the legend cannot disagree with the marks.
+    fn bar_stops(&self, domain: (f64, f64)) -> Vec<(f32, Color)> {
+        match self {
+            Self::Sequential(scale) => scale.stop_offsets(domain, None),
+            Self::Diverging { scale, neutral } => scale.stop_offsets(domain, Some(*neutral)),
+        }
+    }
+
+    /// The anchor a diverging encoding pins, for the bar's extra tick.
+    fn neutral(&self) -> Option<f64> {
+        match self {
+            Self::Sequential(_) => None,
+            Self::Diverging { neutral, .. } => Some(*neutral),
+        }
+    }
 }
 
 impl ScatterChart {
@@ -82,8 +131,58 @@ impl ScatterChart {
             inspect: None,
             select_x_range: None,
             legend_tags: None,
+            color_by: None,
+            color_domain: None,
             tag_prefix: "chart".to_string(),
         }
+    }
+
+    /// R1438 — colour every mark by its [`DataPoint::value`] third channel on a
+    /// SEQUENTIAL ramp, instead of by which series it belongs to.
+    ///
+    /// This is a different question than the categorical palette answers. A
+    /// palette says *which* — series identity, a nominal channel where the
+    /// colours must be tellable apart and rank means nothing. A colour scale
+    /// says *how much* — an ordered channel where the reader is meant to
+    /// compare two marks and conclude one is larger. Turning it on therefore
+    /// also swaps the legend: a swatch row would claim the colours name the
+    /// series, so the chart draws a colour bar over
+    /// the value domain instead.
+    ///
+    /// The domain comes from the data ([`value_bounds`]) unless pinned with
+    /// [`with_color_domain`](Self::with_color_domain). A point carrying no
+    /// value keeps its series colour — the encoding covers the points that
+    /// have the channel and does not invent a magnitude for those that do not.
+    #[must_use]
+    pub fn color_by(mut self, scale: ColorScale) -> Self {
+        self.color_by = Some(ColorBy::Sequential(scale));
+        self
+    }
+
+    /// R1438 — colour every mark by its [`DataPoint::value`] on a DIVERGING
+    /// ramp anchored at `neutral` (a target, a baseline, zero).
+    ///
+    /// The sibling of [`color_by`](Self::color_by) for signed deviation, where
+    /// the reader's first question is "which side of neutral, and how far" —
+    /// each wing normalises on its own width (R1436), so on an asymmetric
+    /// domain the neutral still lands on the ramp's centre colour instead of a
+    /// third of the way up. The colour bar seats its neutral tick at the same
+    /// fraction, so the legend reports the encoding rather than an even split.
+    #[must_use]
+    pub fn color_by_diverging(mut self, scale: ColorScale, neutral: f64) -> Self {
+        self.color_by = Some(ColorBy::Diverging { scale, neutral });
+        self
+    }
+
+    /// R1438 — pin the colour domain instead of deriving it from the data.
+    ///
+    /// Worth pinning whenever two charts must be comparable (the same colour
+    /// has to mean the same magnitude across both) or when the scale should
+    /// span a known operating range rather than the sample's own extremes.
+    #[must_use]
+    pub fn with_color_domain(mut self, lo: f64, hi: f64) -> Self {
+        self.color_domain = Some((lo, hi));
+        self
     }
 
     /// Override the categorical series palette.
@@ -243,7 +342,14 @@ impl ScatterChart {
         children.extend(rings);
         children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style, steps));
         if style.legend {
-            children.extend(self.legend(rect, style));
+            // R1438 — one colour legend, never two: a value encoding replaces
+            // the series swatch row with the colour bar, because the swatches
+            // would name a series-to-colour mapping that no longer holds.
+            if self.color_by.is_some() {
+                children.extend(self.color_bar_row(rect, style));
+            } else {
+                children.extend(self.legend(rect, style));
+            }
         }
         children.extend(tooltip);
 
@@ -257,6 +363,68 @@ impl ScatterChart {
     /// Boundaries are inclusive: a point exactly on `lo` or `hi` stays selected.
     fn is_muted(&self, px: f64) -> bool {
         matches!(self.select_x_range, Some((lo, hi)) if px < lo || px > hi)
+    }
+
+    /// R1438 — the active colour domain: pinned, else measured off the data,
+    /// else `None` when not one point carries the third channel (in which case
+    /// there is nothing to encode and the chart stays categorical).
+    fn resolved_color_domain(&self) -> Option<(f64, f64)> {
+        self.color_by.as_ref()?;
+        self.color_domain.or_else(|| value_bounds(&self.series))
+    }
+
+    /// R1438 — the value-encoded colour for `point`, or `None` when this chart
+    /// is not colouring by value, has no domain to map against, or the point
+    /// carries no finite third channel.
+    fn value_color(&self, point: DataPoint) -> Option<Color> {
+        let encoding = self.color_by.as_ref()?;
+        let domain = self.resolved_color_domain()?;
+        let value = point.value.filter(|v| v.is_finite())?;
+        Some(encoding.resolve(value, domain))
+    }
+
+    /// R1438 — the colour bar: the value-encoding legend, seated in the same
+    /// top band the categorical legend row uses. Emitted INSTEAD of that row
+    /// (see [`color_by`](Self::color_by)) — showing both would assert that
+    /// colour means series identity and magnitude at once.
+    ///
+    /// Ticks are the domain ends plus, for a diverging encoding, the neutral —
+    /// at the fraction the encoding actually places it, which on an asymmetric
+    /// domain is not the middle of the bar.
+    fn color_bar_row(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
+        let (Some(encoding), Some(domain)) = (self.color_by.as_ref(), self.resolved_color_domain())
+        else {
+            return Vec::new();
+        };
+        let stops = encoding.bar_stops(domain);
+        if stops.is_empty() {
+            return Vec::new();
+        }
+        let size = style.label_size_px.max(1);
+        let bar = Rect::new(
+            rect.x + style.margin.left,
+            rect.y + 2,
+            rect.w
+                .saturating_sub(style.margin.left + style.margin.right)
+                .max(1),
+            size.max(6),
+        );
+        let (lo, hi) = domain;
+        let mut ticks = vec![(0.0_f32, lo)];
+        if let Some(neutral) = encoding.neutral()
+            && hi > lo
+            && neutral > lo
+            && neutral < hi
+        {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "a 0.0..=1.0 domain fraction loses no meaningful precision as f32"
+            )]
+            ticks.push((((neutral - lo) / (hi - lo)) as f32, neutral));
+        }
+        ticks.push((1.0, hi));
+        let step = crate::ticks::tick_step(&ticks.iter().map(|&(_, v)| v).collect::<Vec<_>>());
+        color_bar(&stops, &ticks, bar, step, style, &self.tag_prefix)
     }
 
     fn point_marks(&self, plot: &CartesianPlot, style: &ChartStyle) -> Vec<Scene> {
@@ -279,6 +447,11 @@ impl ScatterChart {
                 {
                     continue;
                 }
+                // R1438 — value encoding wins over series identity when the
+                // point carries the third channel; a point without one keeps
+                // its series colour rather than being given an invented
+                // magnitude.
+                let color = self.value_color(*p).unwrap_or(color);
                 // Cross-filter (R1391): a point outside the active brush range is
                 // dimmed but still drawn (context), unlike the domain drop above.
                 let mark_color = if self.is_muted(p.x) {
@@ -954,6 +1127,182 @@ mod tests {
         let off = ScatterChart::new(two_series())
             .build(Rect::new(0, 0, 400, 300), &zero_margin_no_legend());
         assert_eq!(count_prefix(&off, "chart.legend."), 0);
+    }
+
+    /// R1438 — points carrying the third channel, spanning an ASYMMETRIC
+    /// deviation domain (-2 .. +8) so the diverging contract is testable.
+    fn valued_series() -> Vec<Series> {
+        vec![Series::new(
+            "probe",
+            vec![
+                DataPoint::new(0.0, 1.0).with_value(-2.0),
+                DataPoint::new(2.0, 3.0).with_value(0.0),
+                DataPoint::new(4.0, 5.0).with_value(4.0),
+                DataPoint::new(6.0, 7.0).with_value(8.0),
+            ],
+        )]
+    }
+
+    fn mark_fill(scene: &Scene, tag: &str) -> Color {
+        match find(scene, tag).expect("mark present") {
+            Scene::Path(p) => p.style.fill.expect("mark is filled"),
+            other => panic!("unexpected mark node: {other:?}"),
+        }
+    }
+
+    /// The encoding's whole point: colour ranks magnitude, so two marks from
+    /// the SAME series differ, and equal values agree across DIFFERENT series.
+    #[test]
+    fn r1438_colour_ranks_value_not_series_identity() {
+        let scene = ScatterChart::new(valued_series())
+            .color_by(ColorScale::viridis())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        let lowest = mark_fill(&scene, "chart.point.0.0");
+        let highest = mark_fill(&scene, "chart.point.0.3");
+        assert_ne!(
+            lowest, highest,
+            "same series, different value -> different colour"
+        );
+
+        // Two series, one shared value: colour must not encode which series.
+        let shared = vec![
+            Series::new("a", vec![DataPoint::new(0.0, 1.0).with_value(5.0)]),
+            Series::new("b", vec![DataPoint::new(1.0, 2.0).with_value(5.0)]),
+        ];
+        let scene = ScatterChart::new(shared)
+            .color_by(ColorScale::viridis())
+            .with_color_domain(0.0, 10.0)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(
+            mark_fill(&scene, "chart.point.0.0"),
+            mark_fill(&scene, "chart.point.1.0"),
+            "equal values -> equal colour across series"
+        );
+    }
+
+    /// A point with no third channel keeps its series colour: the encoding
+    /// covers the points that carry the channel and invents nothing for the
+    /// rest. The counter-assertion pins that a valued point in the same
+    /// series DOES move, so this is not just "the encoding did nothing".
+    #[test]
+    fn r1438_valueless_point_keeps_its_series_colour() {
+        let mixed = vec![Series::new(
+            "a",
+            vec![
+                DataPoint::new(0.0, 1.0),
+                DataPoint::new(1.0, 2.0).with_value(9.0),
+            ],
+        )];
+        let plain = ScatterChart::new(mixed.clone())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        let encoded = ScatterChart::new(mixed)
+            .color_by(ColorScale::viridis())
+            .with_color_domain(0.0, 10.0)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(
+            mark_fill(&plain, "chart.point.0.0"),
+            mark_fill(&encoded, "chart.point.0.0"),
+            "the valueless point is untouched by the encoding"
+        );
+        assert_ne!(
+            mark_fill(&plain, "chart.point.0.1"),
+            mark_fill(&encoded, "chart.point.0.1"),
+            "the valued point in the same series DID take the ramp"
+        );
+    }
+
+    /// The legend swaps rather than doubling: colour cannot mean series
+    /// identity and magnitude at the same time.
+    #[test]
+    fn r1438_colour_bar_replaces_the_swatch_row() {
+        let categorical = ScatterChart::new(valued_series())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert!(count_prefix(&categorical, "chart.legend.") > 0);
+        assert_eq!(count_prefix(&categorical, "chart.colorbar"), 0);
+
+        let encoded = ScatterChart::new(valued_series())
+            .color_by(ColorScale::viridis())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(
+            count_prefix(&encoded, "chart.legend."),
+            0,
+            "the swatch row is gone — it would claim colour names the series"
+        );
+        assert!(find(&encoded, "chart.colorbar.strip").is_some());
+        assert!(find(&encoded, "chart.colorbar.tick.0").is_some());
+
+        let off = ScatterChart::new(valued_series())
+            .color_by(ColorScale::viridis())
+            .build(Rect::new(0, 0, 400, 300), &zero_margin_no_legend());
+        assert_eq!(
+            count_prefix(&off, "chart.colorbar"),
+            0,
+            "legend=false suppresses the bar too"
+        );
+    }
+
+    /// ★ The round's load-bearing claim: on an ASYMMETRIC domain the bar's
+    /// neutral sits where the ENCODING puts it, not at the bar's midpoint —
+    /// and the ramp the bar publishes is the ramp the marks were painted with.
+    #[test]
+    fn r1438_diverging_bar_reports_the_encoding_not_an_even_split() {
+        let scale = ColorScale::blue_orange();
+        let scene = ScatterChart::new(valued_series())
+            .color_by_diverging(scale.clone(), 0.0)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+
+        // The neutral tick exists and is NOT the midpoint: 0.0 sits a fifth of
+        // the way along -2..+8, so a bar built on even spacing would be wrong.
+        let strip = find(&scene, "chart.colorbar.strip").expect("strip");
+        let Scene::Box(b) = strip else {
+            panic!("strip is a box")
+        };
+        let stops = &b.style.gradient.as_ref().expect("gradient").stops;
+        assert_eq!(stops.len(), 3, "blue_orange has three stops");
+        assert!(
+            (stops[1].offset - 0.2).abs() < 1e-3,
+            "the neutral stop sits at the neutral's fraction of the domain, \
+             not at 0.5 — got {}",
+            stops[1].offset
+        );
+
+        // The published ramp agrees with the marks: the zero-valued point is
+        // painted the centre stop's colour.
+        assert_eq!(
+            mark_fill(&scene, "chart.point.0.1"),
+            stops[1].color,
+            "the neutral mark IS the bar's neutral colour"
+        );
+
+        // Counterfactual: the sequential encoding over the same data does NOT
+        // put a stop at 0.2, so the assertion above is discriminating.
+        let sequential = ScatterChart::new(valued_series())
+            .color_by(scale)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        let Some(Scene::Box(seq)) = find(&sequential, "chart.colorbar.strip") else {
+            panic!("strip")
+        };
+        let seq_stops = &seq.style.gradient.as_ref().expect("gradient").stops;
+        assert!(
+            (seq_stops[1].offset - 0.5).abs() < 1e-3,
+            "a sequential ramp spaces its stops evenly — got {}",
+            seq_stops[1].offset
+        );
+    }
+
+    /// No third channel anywhere = nothing to encode: the chart stays
+    /// categorical rather than drawing a bar over an empty domain.
+    #[test]
+    fn r1438_colour_by_without_values_draws_no_bar() {
+        let scene = ScatterChart::new(two_series())
+            .color_by(ColorScale::viridis())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(count_prefix(&scene, "chart.colorbar"), 0);
+        assert_eq!(
+            mark_fill(&scene, "chart.point.0.0"),
+            mark_fill(&scene, "chart.point.0.1"),
+            "valueless points all keep their one series colour"
+        );
     }
 
     #[test]

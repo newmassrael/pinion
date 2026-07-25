@@ -173,7 +173,9 @@ pub use line::LineChart;
 pub use palette::CategoricalPalette;
 pub use scale::LinearScale;
 pub use scatter::ScatterChart;
-pub use series::{Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, visible_data_bounds};
+pub use series::{
+    Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, value_bounds, visible_data_bounds,
+};
 pub use sparkline::Sparkline;
 pub use style::{ChartStyle, Margin};
 pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};

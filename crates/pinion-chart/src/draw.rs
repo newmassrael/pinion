@@ -17,8 +17,8 @@ use pinion_core::scene::{
     BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode,
 };
 use pinion_core::style::{
-    AlignItems, Border, BorderPlacement, BoxStyle, Color, FlexDirection, LayoutStyle, PathStyle,
-    Size, SizeValue, Stroke, TextAlign, TextOverflow, TextStyle,
+    AlignItems, Border, BorderPlacement, BoxStyle, Color, FlexDirection, Gradient, LayoutStyle,
+    PathStyle, Size, SizeValue, Stroke, TextAlign, TextOverflow, TextStyle,
 };
 
 use crate::style::{ChartStyle, Margin};
@@ -662,6 +662,82 @@ pub(crate) fn legend_row(
         ));
     }
     out
+}
+
+/// R1438 — the COLOUR BAR: the value-encoding legend a continuous
+/// `ColorScale` needs, and the reason a swatch row cannot serve one. A
+/// categorical [`legend_row`] answers "which series is this colour"; a colour
+/// bar answers "how big is this colour", which is a *ramp* plus the domain it
+/// spans, not a list of discrete entries.
+///
+/// Emits a gradient strip at `(x, row_y, w, h)` tagged `{prefix}.colorbar.strip`,
+/// plus `{prefix}.colorbar.tick.{k}` labels beneath it: the domain ends always,
+/// and — for a diverging encoding — the neutral, seated at the position the map
+/// actually puts it.
+///
+/// **The stops are computed from the MAPPING, not copied off the scale.** For a
+/// sequential ramp the two coincide, but a diverging ramp over an asymmetric
+/// domain does not: `ColorScale::map_diverging` normalises each wing on its own
+/// width (R1436), so the neutral sits at the neutral's fraction of the domain
+/// rather than at the ramp's midpoint. Building the bar from `stop_offsets`
+/// means the legend shows the encoding the marks were painted with — a bar that
+/// merely re-spaced the scale's own stops would misreport exactly the case the
+/// diverging map exists to fix.
+///
+/// Superior to a pixel-only colour-scale widget (the Qt `QCPColorScale` shape)
+/// in the way that matters here: the strip is a real continuous
+/// [`Gradient`], so it renders as a smooth ramp,
+/// AND its stops ride in the scene as data — an introspecting client reads the
+/// offsets and colours out of `scene/snapshot` and can verify a mark's fill
+/// against the published ramp without sampling a single pixel (§2 #7).
+pub(crate) fn color_bar(
+    stops: &[(f32, Color)],
+    ticks: &[(f32, f64)],
+    rect: Rect,
+    step: f64,
+    style: &ChartStyle,
+    prefix: &str,
+) -> Vec<Scene> {
+    let mut gradient = Gradient::horizontal();
+    for &(offset, color) in stops {
+        gradient = gradient.with_stop(offset, color);
+    }
+    let fill = stops.first().map_or(style.label, |&(_, c)| c);
+    // Absolutely placed like every other chart box ([`box_node`]) — without the
+    // layout the strip lands at zero height and the bar is invisible.
+    let mut out = vec![Scene::Box(
+        BoxNode::new(rect, BoxStyle::filled(fill).with_gradient(gradient))
+            .with_tag(format!("{prefix}.colorbar.strip"))
+            .with_layout(absolute(rect)),
+    )];
+    let size = style.label_size_px.max(1);
+    let slot = 60;
+    for (k, &(offset, value)) in ticks.iter().enumerate() {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "bar geometry is display-sized; the f32 seat is exact here"
+        )]
+        let centre = rect.x as f32 + offset * rect.w as f32;
+        out.push(label_node(
+            format_axis_tick(value, step),
+            centered_label_x(centre, slot, rect_spanning(rect)),
+            rect.y + rect.h + 2,
+            slot,
+            TextAlign::Center,
+            style.label,
+            size,
+            format!("{prefix}.colorbar.tick.{k}"),
+        ));
+    }
+    out
+}
+
+/// The clamp frame for [`color_bar`] tick labels: the bar's own span widened by
+/// half a label slot at each end, so the end ticks centre on the bar ends
+/// instead of being pulled inward the way a plot-clamped label is.
+fn rect_spanning(bar: Rect) -> Rect {
+    let pad = 30;
+    Rect::new(bar.x.saturating_sub(pad), bar.y, bar.w + pad * 2, bar.h)
 }
 
 /// R1392 — the INTERACTIVE legend row: one focusable, hit-testable entry per
