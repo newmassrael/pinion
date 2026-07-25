@@ -157,11 +157,54 @@ pub fn format_tick(value: f64, decimals: usize) -> String {
 /// every sub-0.1 step into the same rounded digit.
 #[must_use]
 pub fn format_axis_tick(value: f64, step: f64) -> String {
+    format_at_decimals(value, tick_decimals(step))
+}
+
+/// Render `value` at a decimals count the caller has already chosen, switching
+/// to the compact SI form at or above 1000 exactly as [`format_axis_tick`] does.
+///
+/// The shared body of "format a chart label": [`format_axis_tick`] derives the
+/// decimals from an axis STEP, the colour bar from [`value_decimals`] over the
+/// values themselves. Only that derivation differs, so the SI cutover lives here
+/// once rather than being re-decided per caller.
+pub(crate) fn format_at_decimals(value: f64, decimals: usize) -> String {
     if value.abs() >= 1000.0 {
         format_si(value)
     } else {
-        format_tick(value, tick_decimals(step))
+        format_tick(value, decimals)
     }
+}
+
+/// Decimal places needed to print each of `values` FAITHFULLY, capped at 3.
+///
+/// [`tick_decimals`] answers a different question: given an axis whose ticks are
+/// multiples of `step`, how many decimals does a label need? That is right for a
+/// nice-numbered axis and wrong for a set of arbitrary values, because it infers
+/// the precision from the GAP rather than from the numbers. A colour bar's ticks
+/// are the domain's real endpoints and its neutral — a domain of `-3.2 ..= 9.6`
+/// has a 3.2 gap, from which `tick_decimals` concludes "whole numbers" and the
+/// low end prints as `-3`, mislabelling the ramp's own end by 0.2 (R1439 found
+/// this the moment a domain stopped landing on integers).
+///
+/// Capped at 3 because a legend label is a readout, not a data export; a domain
+/// derived from real data rarely terminates, and four decimals of a change rate
+/// would cost more width than they inform.
+pub(crate) fn value_decimals(values: &[f64]) -> usize {
+    const MAX: usize = 3;
+    (0..MAX)
+        .find(|&d| {
+            values.iter().copied().filter(|v| v.is_finite()).all(|v| {
+                let rounded = round_to(v, d);
+                (v - rounded).abs() <= 1e-9 * v.abs().max(1.0)
+            })
+        })
+        .unwrap_or(MAX)
+}
+
+/// `value` rounded to `decimals` places.
+fn round_to(value: f64, decimals: usize) -> f64 {
+    let factor = 10_f64.powi(i32::try_from(decimals).unwrap_or(0));
+    (value * factor).round() / factor
 }
 
 /// Render `value` with an SI magnitude suffix (`k` / `M` / `G`) and at
@@ -297,5 +340,46 @@ mod tests {
         assert_eq!(format_si(2000.0), "2k");
         assert_eq!(format_si(3_400_000.0), "3.4M");
         assert_eq!(format_si(2_000_000_000.0), "2G");
+    }
+
+    /// ★ R1439 — precision from the VALUES, not from the gap between them.
+    ///
+    /// The colour bar prints a domain's real endpoints, which are not multiples
+    /// of any step. Inferring decimals from the gap (what [`tick_decimals`]
+    /// does, correctly, for a nice-numbered axis) silently truncates them.
+    #[test]
+    fn r1439_value_decimals_keeps_every_value_faithful() {
+        assert_eq!(
+            value_decimals(&[-3.0, 0.0, 9.0]),
+            0,
+            "whole numbers need none"
+        );
+        assert_eq!(value_decimals(&[-3.2, 0.0, 9.6]), 1, "one tenth is enough");
+        assert_eq!(value_decimals(&[0.0, 0.25]), 2);
+        assert_eq!(value_decimals(&[0.0, 0.125]), 3);
+        assert_eq!(
+            value_decimals(&[0.0, 1.0 / 3.0]),
+            3,
+            "a non-terminating value caps at the display bound"
+        );
+        assert_eq!(
+            value_decimals(&[f64::NAN, 2.5]),
+            1,
+            "a non-finite value is skipped, not propagated"
+        );
+
+        // ★ The counterfactual: the step-derived route gets this domain wrong,
+        // which is exactly the label the demo caught printing as "-3".
+        let ends = [-3.2_f64, 0.0, 9.6];
+        assert_eq!(
+            format_axis_tick(ends[0], tick_step(&ends)),
+            "-3",
+            "the axis formatter truncates an off-step endpoint"
+        );
+        assert_eq!(
+            format_at_decimals(ends[0], value_decimals(&ends)),
+            "-3.2",
+            "the value formatter does not"
+        );
     }
 }

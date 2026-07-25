@@ -180,4 +180,4 @@ pub use sparkline::Sparkline;
 pub use style::{ChartStyle, Margin};
 pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};
 pub use timeline::{Lane, Span, Timeline};
-pub use treemap::{Tile, Treemap};
+pub use treemap::{Tile, Treemap, color_value_bounds};

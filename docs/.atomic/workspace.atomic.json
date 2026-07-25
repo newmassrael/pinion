@@ -69654,6 +69654,74 @@
         "Audit half retains pinion-gui per R294 design (frozen ledger preserved)"
       ]
     },
+    "Round 1439": {
+      "decision_summary": "R1439 — the two-variable treemap: a tile's AREA encodes one measure and its COLOUR an independent second one, with a VERTICAL colour bar whose mirrored stops report the encoding",
+      "changes_bullets": [
+        "Tile gains color_value: a SECOND independent measure, because value is already spent on AREA",
+        "Treemap::color_by / color_by_diverging / with_color_domain + color_value_bounds, mirroring R1438",
+        "draw::BarAxis — a VERTICAL bar mirrors its stops: value runs up, a vertical gradient paints down",
+        "the bar's gutter is carved from geom()'s frame, so tiles re-pack instead of being painted over",
+        "a chart too narrow for both DROPS the bar (MIN_TILED_W): the legend loses, never the data",
+        "the strip's ends inset by half a label box + draw::label_box_h, so no tick paints outside the rect",
+        "LIFT ColorBy (resolve/bar_stops/neutral/bar_ticks) scatter.rs -> color_scale.rs, 2nd chart consumer",
+        "DEBT CLEARED: treemap's hand-rolled contrast_text now calls readable_ink (R1436), its 3rd consumer",
+        "inks now PURE black/white: measured, the soft pair fails WCAG at 4.29:1 mid-ramp on both ramps",
+        "FIX ticks::value_decimals — a bar's ticks are domain ends, so precision comes from the values",
+        "consumer hello-market-map: area = weight, colour = signed change, encoding toggles over RPC"
+      ],
+      "verification_bullets": [
+        "pinion-chart 210 green (+11); market-map 6, treemap 5, value-scatter 5, heatmap/deviation green",
+        "tools/demos/r1439_market_map.py — 57 assertions over real windowed RPC, 8 phases, PASS",
+        "COUNTERFACTUAL: dropping the stop mirror fails demo phase 3 + 2 unit tests; restore = green",
+        "each containment fix counterfactual-tested SEPARATELY; a both-at-once revert did not compile",
+        "the ink change is counterfactual-tested in-crate: the soft pair measures under 4.5:1 mid-ramp",
+        "regression: r1438_value_scatter, r1382_treemap_scrub, r1436_deviation_grid all PASS",
+        "census = cargo build --workspace --all-targets exit 0; Tile has zero struct-literal sites",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "resolved_color_domain + the encoded-colour helper are 2 near-copies; lift at a 3rd chart type",
+        "the bar drops but never SHRINKS; a mid-width docked treemap may want legend_fit's middle stage",
+        "in-tile ink on a continuous ramp caps at 4.60:1; a text plate is the only way past, deferred"
+      ],
+      "publishable_decision_summary": "R1439 — the two-variable treemap: a tile's AREA encodes one measure and its COLOUR an independent second one, with a VERTICAL colour bar whose mirrored stops report the encoding",
+      "publishable_changes_bullets": [
+        "Tile gains color_value: a SECOND independent measure, because value is already spent on AREA",
+        "Treemap::color_by / color_by_diverging / with_color_domain + color_value_bounds, mirroring R1438",
+        "draw::BarAxis — a VERTICAL bar mirrors its stops: value runs up, a vertical gradient paints down",
+        "the bar's gutter is carved from geom()'s frame, so tiles re-pack instead of being painted over",
+        "a chart too narrow for both DROPS the bar (MIN_TILED_W): the legend loses, never the data",
+        "the strip's ends inset by half a label box + draw::label_box_h, so no tick paints outside the rect",
+        "LIFT ColorBy (resolve/bar_stops/neutral/bar_ticks) scatter.rs -> color_scale.rs, 2nd chart consumer",
+        "DEBT CLEARED: treemap's hand-rolled contrast_text now calls readable_ink (R1436), its 3rd consumer",
+        "inks now PURE black/white: measured, the soft pair fails WCAG at 4.29:1 mid-ramp on both ramps",
+        "FIX ticks::value_decimals — a bar's ticks are domain ends, so precision comes from the values",
+        "consumer hello-market-map: area = weight, colour = signed change, encoding toggles over RPC"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-chart 210 green (+11); market-map 6, treemap 5, value-scatter 5, heatmap/deviation green",
+        "tools/demos/r1439_market_map.py — 57 assertions over real windowed RPC, 8 phases, PASS",
+        "COUNTERFACTUAL: dropping the stop mirror fails demo phase 3 + 2 unit tests; restore = green",
+        "each containment fix counterfactual-tested SEPARATELY; a both-at-once revert did not compile",
+        "the ink change is counterfactual-tested in-crate: the soft pair measures under 4.5:1 mid-ramp",
+        "regression: r1438_value_scatter, r1382_treemap_scrub, r1436_deviation_grid all PASS",
+        "census = cargo build --workspace --all-targets exit 0; Tile has zero struct-literal sites",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "resolved_color_domain + the encoded-colour helper are 2 near-copies; lift at a 3rd chart type",
+        "the bar drops but never SHRINKS; a mid-width docked treemap may want legend_fit's middle stage",
+        "in-tile ink on a continuous ramp caps at 4.60:1; a text plate is the only way past, deferred"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

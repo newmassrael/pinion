@@ -22,7 +22,7 @@ use pinion_core::style::{
 };
 
 use crate::style::{ChartStyle, Margin};
-use crate::ticks::format_axis_tick;
+use crate::ticks::{format_at_decimals, format_axis_tick, value_decimals};
 
 /// Fixed width (px) of the inspect [`callout`] tooltip box. Wide enough for a
 /// line / scatter chart's `"{series}  {value}"` value rows; a bar chart's
@@ -162,9 +162,20 @@ pub(crate) fn label_node(
         .with_layout(
             LayoutStyle::new()
                 .with_absolute_position(x, y)
-                .with_size(Size::px(width.max(1), size + 4)),
+                .with_size(Size::px(width.max(1), label_box_h(size))),
         ),
     )
+}
+
+/// Height (px) of the box a [`label_node`] of text `size` occupies.
+///
+/// A caller that seats a label by its CENTRE (the vertical colour bar's ticks)
+/// has to know the box height, not just the glyph size, or the box overhangs by
+/// the padding — which is invisible at the top of a chart and paints outside it
+/// at the bottom. Exposed as one definition rather than re-adding the padding at
+/// the call site (R1439).
+pub(crate) const fn label_box_h(size: u32) -> u32 {
+    size + 4
 }
 
 /// A filled, rounded, tagged box — the inspect tooltip's backing plate. A
@@ -690,19 +701,87 @@ pub(crate) fn legend_row(
 /// AND its stops ride in the scene as data — an introspecting client reads the
 /// offsets and colours out of `scene/snapshot` and can verify a mark's fill
 /// against the published ramp without sampling a single pixel (§2 #7).
+/// Which way a [`color_bar`]'s VALUE axis runs (R1439).
+///
+/// Not a cosmetic rotation. A horizontal bar's value axis runs left→right,
+/// which is also the direction [`Gradient::horizontal`] paints, so a stop's
+/// domain fraction IS its gradient offset. A vertical bar's value axis runs
+/// **upward** — the thermometer convention every colour-scale legend uses, high
+/// at the top — while [`Gradient::vertical`] paints top→**down**. The two
+/// therefore disagree, and the vertical arm has to mirror the stops. Getting
+/// that wrong does not fail loudly: it silently paints an upside-down legend,
+/// telling the reader that the ramp's low colour means a high value.
+///
+/// The axis also decides where the ticks go: beneath a horizontal bar, centred
+/// on their fraction; to the right of a vertical one, centred on their row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BarAxis {
+    /// Value runs left → right; ticks sit under the strip.
+    Horizontal,
+    /// Value runs bottom → top; ticks sit to the right of the strip.
+    Vertical,
+}
+
+/// Width (px) of the centred tick-label box under a [`BarAxis::Horizontal`]
+/// bar, where a label has the whole band to itself.
+const COLOR_BAR_LABEL_SLOT: u32 = 60;
+
+/// Width (px) of the tick-label box beside a [`BarAxis::Vertical`] bar. Narrower
+/// than the horizontal slot because the box sits in a gutter carved out of the
+/// chart's own drawing area, so every px it takes is a px the marks lose — and a
+/// left-aligned domain end (`-4.2`, `1.2M`) needs far less than a centred one.
+const COLOR_BAR_VALUE_SLOT: u32 = 44;
+
+/// Gap (px) between a vertical bar's strip and its tick labels.
+const COLOR_BAR_LABEL_GAP: u32 = 4;
+
+/// Total width (px) a [`BarAxis::Vertical`] bar occupies for a `strip_w`-wide
+/// strip: the strip, the gap, and the tick-label box.
+///
+/// A chart that carves a gutter for the bar derives it from HERE rather than
+/// re-adding the same three numbers, so the reserved space and the drawn space
+/// cannot drift apart — a gutter one px short would let the outermost tick label
+/// overhang the chart, which is the class R1396 clamped for.
+pub(crate) const fn vertical_bar_width(strip_w: u32) -> u32 {
+    strip_w + COLOR_BAR_LABEL_GAP + COLOR_BAR_VALUE_SLOT
+}
+
 pub(crate) fn color_bar(
     stops: &[(f32, Color)],
     ticks: &[(f32, f64)],
     rect: Rect,
-    step: f64,
+    axis: BarAxis,
     style: &ChartStyle,
     prefix: &str,
 ) -> Vec<Scene> {
-    let mut gradient = Gradient::horizontal();
-    for &(offset, color) in stops {
-        gradient = gradient.with_stop(offset, color);
+    let mut gradient = match axis {
+        BarAxis::Horizontal => Gradient::horizontal(),
+        BarAxis::Vertical => Gradient::vertical(),
+    };
+    // A vertical bar's stops are mirrored (see [`BarAxis`]): the domain's high
+    // end is the ramp's LAST colour and must paint at the TOP, which is
+    // gradient offset 0. Reversing the iteration order as well keeps the stop
+    // list ascending in offset, the form a gradient is defined on.
+    match axis {
+        BarAxis::Horizontal => {
+            for &(offset, color) in stops {
+                gradient = gradient.with_stop(offset, color);
+            }
+        }
+        BarAxis::Vertical => {
+            for &(offset, color) in stops.iter().rev() {
+                gradient = gradient.with_stop(1.0 - offset, color);
+            }
+        }
     }
-    let fill = stops.first().map_or(style.label, |&(_, c)| c);
+    // The flat fallback fill is the colour that paints at the strip's ORIGIN
+    // under each axis, so a backend that ignores gradients (the TUI adapter)
+    // degrades to a plausible solid rather than an inverted one.
+    let origin_stop = match axis {
+        BarAxis::Horizontal => stops.first(),
+        BarAxis::Vertical => stops.last(),
+    };
+    let fill = origin_stop.map_or(style.label, |&(_, c)| c);
     // Absolutely placed like every other chart box ([`box_node`]) — without the
     // layout the strip lands at zero height and the bar is invisible.
     let mut out = vec![Scene::Box(
@@ -711,33 +790,79 @@ pub(crate) fn color_bar(
             .with_layout(absolute(rect)),
     )];
     let size = style.label_size_px.max(1);
-    let slot = 60;
+    // A bar's ticks are the domain's real endpoints, not multiples of an axis
+    // step, so their precision comes from the VALUES — see [`value_decimals`].
+    let decimals = value_decimals(&ticks.iter().map(|&(_, v)| v).collect::<Vec<_>>());
     for (k, &(offset, value)) in ticks.iter().enumerate() {
+        let tag = format!("{prefix}.colorbar.tick.{k}");
+        let text = format_at_decimals(value, decimals);
         #[allow(
             clippy::cast_precision_loss,
             reason = "bar geometry is display-sized; the f32 seat is exact here"
         )]
-        let centre = rect.x as f32 + offset * rect.w as f32;
-        out.push(label_node(
-            format_axis_tick(value, step),
-            centered_label_x(centre, slot, rect_spanning(rect)),
-            rect.y + rect.h + 2,
-            slot,
-            TextAlign::Center,
-            style.label,
-            size,
-            format!("{prefix}.colorbar.tick.{k}"),
-        ));
+        let node = match axis {
+            BarAxis::Horizontal => label_node(
+                text,
+                centered_label_x(
+                    rect.x as f32 + offset * rect.w as f32,
+                    COLOR_BAR_LABEL_SLOT,
+                    spanning_x(rect),
+                ),
+                rect.y + rect.h + 2,
+                COLOR_BAR_LABEL_SLOT,
+                TextAlign::Center,
+                style.label,
+                size,
+                tag,
+            ),
+            BarAxis::Vertical => label_node(
+                text,
+                rect.x + rect.w + COLOR_BAR_LABEL_GAP,
+                // 1 - offset: the value axis runs up, the pixel axis down.
+                // Seated by the BOX height, not the glyph size — a box centred
+                // by its glyph height overhangs by the padding, which shows up
+                // as the bottom tick painting under the chart.
+                centered_label_y(
+                    rect.y as f32 + (1.0 - offset) * rect.h as f32,
+                    label_box_h(size),
+                    spanning_y(rect, label_box_h(size)),
+                ),
+                COLOR_BAR_VALUE_SLOT,
+                TextAlign::Start,
+                style.label,
+                size,
+                tag,
+            ),
+        };
+        out.push(node);
     }
     out
 }
 
-/// The clamp frame for [`color_bar`] tick labels: the bar's own span widened by
-/// half a label slot at each end, so the end ticks centre on the bar ends
-/// instead of being pulled inward the way a plot-clamped label is.
-fn rect_spanning(bar: Rect) -> Rect {
-    let pad = 30;
+/// Top edge of a `height`-tall label box centred on `center_px`, clamped so the
+/// whole box stays inside `bounds` — the vertical twin of [`centered_label_x`],
+/// added at R1439 for the vertical colour bar's row-seated ticks.
+pub(crate) fn centered_label_y(center_px: f32, height: u32, bounds: Rect) -> u32 {
+    let max_y = (bounds.y + bounds.h).saturating_sub(height).max(bounds.y);
+    to_u32(center_px)
+        .saturating_sub(height / 2)
+        .clamp(bounds.y, max_y)
+}
+
+/// The clamp frame for a horizontal [`color_bar`]'s tick labels: the bar's own
+/// span widened by half a label slot at each end, so the end ticks centre on the
+/// bar ends instead of being pulled inward the way a plot-clamped label is.
+fn spanning_x(bar: Rect) -> Rect {
+    let pad = COLOR_BAR_LABEL_SLOT / 2;
     Rect::new(bar.x.saturating_sub(pad), bar.y, bar.w + pad * 2, bar.h)
+}
+
+/// The clamp frame for a vertical [`color_bar`]'s tick labels — the same idea
+/// on the other axis: the strip's span widened by half a label height at each
+/// end, so the end ticks centre on the strip ends rather than being pulled in.
+fn spanning_y(bar: Rect, label_h: u32) -> Rect {
+    let pad = label_h.div_ceil(2);
+    Rect::new(bar.x, bar.y.saturating_sub(pad), bar.w, bar.h + pad * 2)
 }
 
 /// R1392 — the INTERACTIVE legend row: one focusable, hit-testable entry per

@@ -291,6 +291,86 @@ impl ColorScale {
     }
 }
 
+/// Which map a chart runs its value channel through — the encoding a
+/// [`ColorScale`] is *used* as, as opposed to the ramp itself.
+///
+/// The two arms are not a style toggle: they select which of the colour scale's
+/// two total maps runs, and a diverging encoding additionally carries the anchor
+/// the data considers neutral (a target, a baseline, zero) — a number that
+/// belongs to the DATA, not to the palette, which is why it rides here rather
+/// than on [`ColorScale`].
+///
+/// Lifted here at R1439 from `scatter.rs`, where R1438 first wrote it, when the
+/// treemap became the second chart type to colour by a measure. It belongs next
+/// to [`ColorScale`] rather than in either chart: choosing between the two maps
+/// (and deriving the legend's stops and ticks from that choice) is a property of
+/// the encoding, not of what geometry the marks happen to be. Each chart keeps
+/// only what is genuinely its own — where the bar sits, and which of its data
+/// fields carries the measure.
+#[derive(Debug, Clone)]
+pub(crate) enum ColorBy {
+    /// Rank magnitude across the domain — [`ColorScale::map`].
+    Sequential(ColorScale),
+    /// Rank signed deviation from `neutral`, each side normalised on its own
+    /// width — [`ColorScale::map_diverging`].
+    Diverging { scale: ColorScale, neutral: f64 },
+}
+
+impl ColorBy {
+    /// The mark colour for `value` over `domain`.
+    pub(crate) fn resolve(&self, value: f64, domain: (f64, f64)) -> Color {
+        match self {
+            Self::Sequential(scale) => scale.map(value, domain.0, domain.1),
+            Self::Diverging { scale, neutral } => {
+                scale.map_diverging(value, domain.0, *neutral, domain.1)
+            }
+        }
+    }
+
+    /// The bar's `(fraction, colour)` ramp over `domain` — the encoding's own
+    /// stop placement, so the legend cannot disagree with the marks.
+    pub(crate) fn bar_stops(&self, domain: (f64, f64)) -> Vec<(f32, Color)> {
+        match self {
+            Self::Sequential(scale) => scale.stop_offsets(domain, None),
+            Self::Diverging { scale, neutral } => scale.stop_offsets(domain, Some(*neutral)),
+        }
+    }
+
+    /// The anchor a diverging encoding pins, for the bar's extra tick.
+    pub(crate) fn neutral(&self) -> Option<f64> {
+        match self {
+            Self::Sequential(_) => None,
+            Self::Diverging { neutral, .. } => Some(*neutral),
+        }
+    }
+
+    /// The bar's `(fraction, value)` ticks over `domain`: the domain ends
+    /// always, plus — for a diverging encoding whose neutral falls strictly
+    /// inside the domain — the neutral, at the fraction of the domain it
+    /// actually occupies.
+    ///
+    /// Shared by every chart that draws a colour bar (R1439, at the second),
+    /// because a tick that disagreed with [`Self::bar_stops`] would put the
+    /// label for the neutral somewhere other than the colour change it names.
+    pub(crate) fn bar_ticks(&self, domain: (f64, f64)) -> Vec<(f32, f64)> {
+        let (lo, hi) = domain;
+        let mut ticks = vec![(0.0_f32, lo)];
+        if let Some(neutral) = self.neutral()
+            && hi > lo
+            && neutral > lo
+            && neutral < hi
+        {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "a 0.0..=1.0 domain fraction loses no meaningful precision as f32"
+            )]
+            ticks.push((((neutral - lo) / (hi - lo)) as f32, neutral));
+        }
+        ticks.push((1.0, hi));
+        ticks
+    }
+}
+
 /// A colour's WCAG relative luminance, `0.0..=1.0`.
 ///
 /// The ITU-R BT.709 coefficients over LINEAR-light channels (the sRGB EOTF is

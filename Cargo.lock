@@ -2858,6 +2858,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-market-map"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "serde",
+ "vello",
+]
+
+[[package]]
 name = "hello-measured-list"
 version = "0.0.1"
 dependencies = [

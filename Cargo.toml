@@ -189,6 +189,7 @@ members = [
     "examples/hello-data-grid",
     "examples/hello-deviation-grid",
     "examples/hello-value-scatter",
+    "examples/hello-market-map",
     "examples/hello-node-editor",
     "examples/hello-slider-discrete",
     "examples/hello-slider-labeled",

@@ -45,10 +45,10 @@ use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, PathNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
 
-use crate::color_scale::ColorScale;
+use crate::color_scale::{ColorBy, ColorScale};
 use crate::draw::{
-    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, color_bar, fill_parent,
-    label_node, marker_node, stroke_path, to_f32, to_u32,
+    BarAxis, CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, color_bar,
+    fill_parent, label_node, marker_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{CartesianPlot, Rescale, axis_ticks, resolve_focus};
@@ -70,52 +70,6 @@ pub struct ScatterChart {
     color_by: Option<ColorBy>,
     color_domain: Option<(f64, f64)>,
     tag_prefix: String,
-}
-
-/// R1438 — how a [`ScatterChart`] turns a point's third channel
-/// ([`DataPoint::value`](crate::DataPoint::value)) into its mark colour.
-///
-/// The two arms are not a style toggle: they select which of the colour
-/// scale's two total maps runs, and a diverging encoding additionally carries
-/// the anchor the data considers neutral (a target, a baseline, zero) — a
-/// number that belongs to the DATA, not to the palette, which is why it rides
-/// here rather than on [`ColorScale`].
-#[derive(Debug, Clone)]
-enum ColorBy {
-    /// Rank magnitude across the domain — [`ColorScale::map`].
-    Sequential(ColorScale),
-    /// Rank signed deviation from `neutral`, each side normalised on its own
-    /// width — [`ColorScale::map_diverging`].
-    Diverging { scale: ColorScale, neutral: f64 },
-}
-
-impl ColorBy {
-    /// The mark colour for `value` over `domain`.
-    fn resolve(&self, value: f64, domain: (f64, f64)) -> Color {
-        match self {
-            Self::Sequential(scale) => scale.map(value, domain.0, domain.1),
-            Self::Diverging { scale, neutral } => {
-                scale.map_diverging(value, domain.0, *neutral, domain.1)
-            }
-        }
-    }
-
-    /// The bar's `(fraction, colour)` ramp over `domain` — the encoding's own
-    /// stop placement, so the legend cannot disagree with the marks.
-    fn bar_stops(&self, domain: (f64, f64)) -> Vec<(f32, Color)> {
-        match self {
-            Self::Sequential(scale) => scale.stop_offsets(domain, None),
-            Self::Diverging { scale, neutral } => scale.stop_offsets(domain, Some(*neutral)),
-        }
-    }
-
-    /// The anchor a diverging encoding pins, for the bar's extra tick.
-    fn neutral(&self) -> Option<f64> {
-        match self {
-            Self::Sequential(_) => None,
-            Self::Diverging { neutral, .. } => Some(*neutral),
-        }
-    }
 }
 
 impl ScatterChart {
@@ -390,7 +344,9 @@ impl ScatterChart {
     ///
     /// Ticks are the domain ends plus, for a diverging encoding, the neutral —
     /// at the fraction the encoding actually places it, which on an asymmetric
-    /// domain is not the middle of the bar.
+    /// domain is not the middle of the bar. The scatter has margins and a
+    /// legend band, so its bar lies HORIZONTALLY across that band; the treemap,
+    /// which has neither, stands its bar up the side instead.
     fn color_bar_row(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
         let (Some(encoding), Some(domain)) = (self.color_by.as_ref(), self.resolved_color_domain())
         else {
@@ -409,22 +365,14 @@ impl ScatterChart {
                 .max(1),
             size.max(6),
         );
-        let (lo, hi) = domain;
-        let mut ticks = vec![(0.0_f32, lo)];
-        if let Some(neutral) = encoding.neutral()
-            && hi > lo
-            && neutral > lo
-            && neutral < hi
-        {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "a 0.0..=1.0 domain fraction loses no meaningful precision as f32"
-            )]
-            ticks.push((((neutral - lo) / (hi - lo)) as f32, neutral));
-        }
-        ticks.push((1.0, hi));
-        let step = crate::ticks::tick_step(&ticks.iter().map(|&(_, v)| v).collect::<Vec<_>>());
-        color_bar(&stops, &ticks, bar, step, style, &self.tag_prefix)
+        color_bar(
+            &stops,
+            &encoding.bar_ticks(domain),
+            bar,
+            BarAxis::Horizontal,
+            style,
+            &self.tag_prefix,
+        )
     }
 
     fn point_marks(&self, plot: &CartesianPlot, style: &ChartStyle) -> Vec<Scene> {
