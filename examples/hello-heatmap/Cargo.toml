@@ -18,6 +18,9 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 # §5.16 paint-side AppShell (winit + Vello + RPC).
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1436 — the sequential ColorScale + the WCAG readable-ink helper (this demo
+# hand-rolled both before the crate carried them).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
 # §5.16 — the `HelloHeatmapRenderer` struct emitted by build.rs names
 # `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
 vello = { workspace = true }

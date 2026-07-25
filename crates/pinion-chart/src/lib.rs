@@ -150,6 +150,7 @@
 
 mod bar;
 mod brush;
+mod color_scale;
 mod donut;
 mod draw;
 mod line;
@@ -166,6 +167,7 @@ mod treemap;
 
 pub use bar::{Bar, BarChart};
 pub use brush::{Brush, BrushStripColors};
+pub use color_scale::{ColorScale, contrast_ratio, readable_ink, relative_luminance};
 pub use donut::{DonutChart, Slice};
 pub use line::LineChart;
 pub use palette::CategoricalPalette;

@@ -2138,6 +2138,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-deviation-grid"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-dialog"
 version = "0.0.1"
 dependencies = [
@@ -2619,6 +2631,7 @@ name = "hello-heatmap"
 version = "0.0.1"
 dependencies = [
  "pinion-a11y",
+ "pinion-chart",
  "pinion-core",
  "pinion-forge",
  "pinion-shell",

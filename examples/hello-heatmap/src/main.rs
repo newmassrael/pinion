@@ -40,6 +40,7 @@
 //! `tools/demos/r1408_heatmap.py`.
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+use pinion_chart::{ColorScale, readable_ink};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
@@ -125,49 +126,33 @@ fn matrix() -> [[u8; COLS]; ROWS] {
 
 // --- The colour ramp -------------------------------------------------------
 
-/// The resolved ramp endpoints + the two ink colours, from the theme.
-#[derive(Debug, Clone, Copy)]
+/// The resolved ramp + the two ink colours, from the theme.
+///
+/// R1436 — the ramp is now a [`ColorScale`], and the ink choice is
+/// [`readable_ink`]; this demo hand-rolled both (plus its own sRGB EOTF and
+/// WCAG contrast pair) before `pinion-chart` carried them. The colours are
+/// unchanged: the ramp is still the theme's `surface → accent`, because a
+/// heatmap wired into the app's chrome is a legitimate use of a two-stop
+/// sequential scale — what moved to the crate is the machinery, not the taste.
+#[derive(Debug, Clone)]
 struct Palette {
-    /// Low end of the sequential ramp (the surface — a faint floor is added so
-    /// even a `0` cell stays visible).
-    low: Color,
-    /// High end of the ramp (the accent).
-    high: Color,
+    /// The sequential ramp, `surface → accent`. A faint floor is added at the
+    /// low end (see [`cell_color`]) so even a `0` cell stays visible.
+    ramp: ColorScale,
     /// Ink on a light (low) cell.
     ink_dark: Color,
     /// Ink on a saturated (high) cell.
     ink_light: Color,
 }
 
-/// The sequential cell colour for `value`: one hue-ordered ramp `low → high`
+/// The sequential cell colour for `value`: the ramp's low → high direction
 /// (dataviz magnitude rule), with a `0.15` floor so the lowest cells are not
-/// invisible against the surface. Interpolated in linear space
-/// ([`Color::lerp`]).
-#[allow(clippy::cast_precision_loss)]
+/// invisible against the surface. The floor is this demo's aesthetic choice,
+/// which is why it lives here and not in the scale; the interpolation itself is
+/// the crate's (linear-light, via [`ColorScale::sample`]).
 fn cell_color(value: u8, p: &Palette) -> Color {
     let t = 0.15 + 0.85 * (f32::from(value) / f32::from(MAX));
-    p.low.lerp(p.high, t)
-}
-
-/// A channel's sRGB → linear value (the WCAG relative-luminance transfer).
-fn srgb_to_linear(x: u8) -> f32 {
-    let s = f32::from(x) / 255.0;
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-/// A colour's WCAG relative luminance (`[0, 1]`).
-fn rel_luminance(c: Color) -> f32 {
-    0.2126 * srgb_to_linear(c.r) + 0.7152 * srgb_to_linear(c.g) + 0.0722 * srgb_to_linear(c.b)
-}
-
-/// The WCAG contrast ratio between two colours (`1.0 ..= 21.0`).
-fn contrast_ratio(a: Color, b: Color) -> f32 {
-    let (la, lb) = (rel_luminance(a), rel_luminance(b));
-    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    p.ramp.sample(t)
 }
 
 /// The ink for a cell: whichever theme ink (`ink_dark` / `ink_light`) has the
@@ -175,16 +160,9 @@ fn contrast_ratio(a: Color, b: Color) -> f32 {
 /// assumed. A fixed light-half / dark-half threshold fails a `surface → accent`
 /// ramp whose darkest step (the accent) is only mid-luminance, so dark ink is
 /// the more legible choice across almost the whole ramp; only the top cells (a
-/// near-accent background) flip to the light ink. Deriving the choice from the
-/// background keeps the value legible at every ramp step AND in either theme —
-/// the dataviz contrast floor, computed rather than eyeballed.
+/// near-accent background) flip to the light ink.
 fn cell_ink(value: u8, p: &Palette) -> Color {
-    let bg = cell_color(value, p);
-    if contrast_ratio(bg, p.ink_dark) >= contrast_ratio(bg, p.ink_light) {
-        p.ink_dark
-    } else {
-        p.ink_light
-    }
+    readable_ink(cell_color(value, p), p.ink_dark, p.ink_light)
 }
 
 // --- The hovered cell ------------------------------------------------------
@@ -299,8 +277,7 @@ fn view(hover: Option<Hover>, _frame: &Frame) -> Scene {
     let on_surface_muted = theme.resolve(ColorRole::OnSurfaceMuted);
     let accent = theme.resolve(ColorRole::Accent);
     let palette = Palette {
-        low: surface,
-        high: accent,
+        ramp: ColorScale::sequential(vec![surface, accent]),
         ink_dark: on_surface,
         ink_light: theme.resolve(ColorRole::OnAccent),
     };
@@ -620,6 +597,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The WCAG pair the ramp assertions measure with — crate helpers now
+    // (R1436), used only by these tests.
+    use pinion_chart::{contrast_ratio, relative_luminance};
 
     fn c(n: usize) -> u16 {
         u16::try_from(n).unwrap()
@@ -679,8 +659,10 @@ mod tests {
     /// (mid-luminance) accent high end.
     fn test_palette() -> Palette {
         Palette {
-            low: Color::rgb(0xff, 0xff, 0xff),  // surface
-            high: Color::rgb(0x19, 0x76, 0xd2), // accent
+            ramp: ColorScale::sequential(vec![
+                Color::rgb(0xff, 0xff, 0xff), // surface
+                Color::rgb(0x19, 0x76, 0xd2), // accent
+            ]),
             ink_dark: Color::rgb(0x1a, 0x1a, 0x1a),
             ink_light: Color::rgb(0xff, 0xff, 0xff),
         }
@@ -694,9 +676,9 @@ mod tests {
         // per-sample luminance drop dwarfs `u8` channel quantization (a strict
         // per-unit check could false-fail on a rounding tie — zero-flake).
         let p = test_palette();
-        let mut prev = rel_luminance(cell_color(0, &p));
+        let mut prev = relative_luminance(cell_color(0, &p));
         for v in (20..=MAX).step_by(20) {
-            let cur = rel_luminance(cell_color(v, &p));
+            let cur = relative_luminance(cell_color(v, &p));
             assert!(cur < prev, "luminance falls as the value rises (by {v})");
             prev = cur;
         }
