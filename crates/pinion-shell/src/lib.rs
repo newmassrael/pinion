@@ -1362,38 +1362,54 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         false
     }
 
-    /// R770 §5.15 — OS file-drag hover hook. The shell calls this when a
-    /// file is dragged *over* the window (winit
+    /// R770 §5.15, R1437 §5.16 — OS file-drag hover hook. The shell calls
+    /// this when a file is dragged *over* `window_id` (winit
     /// `WindowEvent::HoveredFile`, or the `scene/hover_file` RPC peer),
-    /// with the dragged file's `path`. winit's file-DnD is window-scoped
-    /// — the OS reports the path but not a drop coordinate — so this is
-    /// positionless (a drop-zone widget lights up its whole-window
-    /// "release to drop" affordance). Mutate reactive state (a
+    /// with the dragged file's `path`. Mutate reactive state (a
     /// `use_*`-backed `Signal`) and return `true` to request a redraw;
     /// the default returns `false` (the binding ignores file drags).
     /// Runs inside the shell root-owner scope so `use_*` hooks resolve.
-    fn on_file_hover(_state: &<Self as WidgetCore>::State, _path: &str) -> bool {
+    ///
+    /// Window-scoped, not positioned. winit's file-DnD reports the path
+    /// but no drop coordinate, so the drop *target* is the window, never a
+    /// sub-widget — a drop-zone lights its whole-window "release to drop"
+    /// affordance rather than hit-testing. `window_id` is the
+    /// [`WindowSpec::id`] the drag is over, the same id the shell redraws
+    /// when this returns `true`, and the same lead argument
+    /// [`Self::view_for_window`] / [`Self::access_node_for_window`] take.
+    /// A multi-window binding needs it to route the drag to the window it
+    /// actually landed on; single-window bindings ignore it.
+    fn on_file_hover(_window_id: &str, _state: &<Self as WidgetCore>::State, _path: &str) -> bool {
         false
     }
 
-    /// R770 §5.15 — OS file-drag cancel hook. The shell calls this when a
-    /// drag leaves the window without dropping (winit
+    /// R770 §5.15, R1437 §5.16 — OS file-drag cancel hook. The shell calls
+    /// this when a drag leaves `window_id` without dropping (winit
     /// `WindowEvent::HoveredFileCancelled`, or `scene/hover_file_cancel`):
-    /// the drop-zone clears the affordance [`on_file_hover`](Self::on_file_hover) raised.
-    /// Positionless + path-less. Return `true` to request a redraw;
-    /// default `false`.
-    fn on_file_hover_cancel(_state: &<Self as WidgetCore>::State) -> bool {
+    /// the drop-zone clears the affordance
+    /// [`on_file_hover`](Self::on_file_hover) raised *on that window*.
+    /// Positionless + path-less — the OS reports neither on cancel. Return
+    /// `true` to request a redraw; default `false`.
+    fn on_file_hover_cancel(_window_id: &str, _state: &<Self as WidgetCore>::State) -> bool {
         false
     }
 
-    /// R770 §5.15 — OS file drop hook. The shell calls this when a file is
-    /// dropped on the window (winit `WindowEvent::DroppedFile`, or the
-    /// `scene/drop_file` RPC peer), with the dropped file's `path`. winit
-    /// delivers one event per file (a multi-file drop arrives as several
-    /// calls). Mutate reactive state (e.g. push the path onto a
+    /// R770 §5.15, R1437 §5.16 — OS file drop hook. The shell calls this
+    /// when a file is dropped on `window_id` (winit
+    /// `WindowEvent::DroppedFile`, or the `scene/drop_file` RPC peer), with
+    /// the dropped file's `path`. winit delivers one event per file (a
+    /// multi-file drop arrives as several calls, each carrying the same
+    /// `window_id`). Mutate reactive state (e.g. push the path onto a
     /// `Signal<Vec<String>>`) and return `true` to request a redraw;
     /// default `false`. Runs inside the shell root-owner scope.
-    fn on_file_drop(_state: &<Self as WidgetCore>::State, _path: &str) -> bool {
+    ///
+    /// `window_id` is what makes a drop routable in a multi-window binding:
+    /// without it a binding whose windows are peers (a torn-off panel, a
+    /// second document window) can only guess — typically by falling back
+    /// to whichever pane holds keyboard focus, which mis-aims whenever the
+    /// drop lands on an unfocused window (X11 / Wayland DND does not focus
+    /// a window before the drop).
+    fn on_file_drop(_window_id: &str, _state: &<Self as WidgetCore>::State, _path: &str) -> bool {
         false
     }
 

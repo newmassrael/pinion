@@ -2997,6 +2997,12 @@ enum FileEventKind {
 /// [`DeferredInput`] for the embedder to drain into the
 /// [`WidgetView`](pinion-shell) file hooks — the AI-first peers of a
 /// human dragging a file from the OS file manager onto the window.
+///
+/// R1437 §5.16 — window-scoped like every deferred input: the frame's
+/// `params.window` picks which window the drop is *on* (absent = the
+/// primary), and since R1437 that id reaches the binding's hook rather
+/// than only the repaint, so a multi-window binding can route the file to
+/// the window it landed on.
 fn handle_scene_file_event(
     inbox: Option<&mut Vec<DeferredInput>>,
     params: Option<&Value>,

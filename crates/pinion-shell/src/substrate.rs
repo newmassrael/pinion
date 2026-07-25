@@ -2208,37 +2208,46 @@ impl<V: WidgetView> ShellCore<V> {
     /// these): snapshot the `Copy` cached state, run the hook under
     /// `root_owner.run` (so `use_*` reactive hooks resolve, mirroring the
     /// `V::position_caret_for_point` press path), redraw if `true`.
+    ///
+    /// R1437 §5.16 — the hook receives `window_id` as an argument rather
+    /// than capturing it at the call site, so the id the binding routes on
+    /// and the id the shell repaints are the same value by construction: a
+    /// future entry point cannot hand the hook one window and redraw
+    /// another.
     fn run_file_hook(
         &mut self,
         window_id: &str,
-        hook: impl FnOnce(&<V as pinion_core::WidgetCore>::State) -> bool,
+        hook: impl FnOnce(&str, &<V as pinion_core::WidgetCore>::State) -> bool,
     ) {
         let state = *self.cached_state();
         let owner = self.root_owner().clone();
-        if owner.run(|| hook(&state)) {
+        if owner.run(|| hook(window_id, &state)) {
             self.request_redraw_for_window(window_id);
         }
     }
 
     /// R770 §5.15 — winit `HoveredFile` / `scene/hover_file` entry: a file
-    /// is dragged over `window_id`. Routes `path` to
+    /// is dragged over `window_id`. Routes `window_id` + `path` to
     /// [`WidgetView::on_file_hover`].
     pub fn file_hover_for_window(&mut self, window_id: &str, path: &str) {
-        self.run_file_hook(window_id, |state| V::on_file_hover(state, path));
+        self.run_file_hook(window_id, |wid, state| V::on_file_hover(wid, state, path));
     }
 
     /// R770 §5.15 — winit `HoveredFileCancelled` / `scene/hover_file_cancel`
     /// entry: a file drag left `window_id` without dropping. Routes to
     /// [`WidgetView::on_file_hover_cancel`].
     pub fn file_hover_cancel_for_window(&mut self, window_id: &str) {
-        self.run_file_hook(window_id, |state| V::on_file_hover_cancel(state));
+        // No closure: the cancel hook's signature IS the hook shape — it
+        // takes the window and the state and nothing else (the OS reports
+        // neither a path nor a position on cancel).
+        self.run_file_hook(window_id, V::on_file_hover_cancel);
     }
 
     /// R770 §5.15 — winit `DroppedFile` / `scene/drop_file` entry: a file
-    /// was dropped on `window_id`. Routes `path` to
+    /// was dropped on `window_id`. Routes `window_id` + `path` to
     /// [`WidgetView::on_file_drop`].
     pub fn file_drop_for_window(&mut self, window_id: &str, path: &str) {
-        self.run_file_hook(window_id, |state| V::on_file_drop(state, path));
+        self.run_file_hook(window_id, |wid, state| V::on_file_drop(wid, state, path));
     }
 
     /// R51.80 §5.35 — winit `CursorMoved` dispatch decoupled from
