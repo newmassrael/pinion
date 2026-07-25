@@ -47,6 +47,25 @@
 //! absorb), but a docked chart narrower than its legend will paint over its
 //! neighbour. Clamping them is a follow-up.
 //!
+//! # Colouring the trace by a measure (R1440)
+//!
+//! [`LineChart::color_by`] encodes each sample's [`DataPoint::value`] third
+//! channel as colour, the encoding the scatter (R1438) and treemap (R1439)
+//! already carry. This chart is where the GEOMETRY stops fitting: a point is one
+//! mark and a tile is one box, but a trace is a polyline whose colour has to
+//! change *along* it. The two marks therefore take different mechanisms, because
+//! the scene primitives do:
+//!
+//! * the LINE becomes one stroked path per segment (`chart.series.{i}.seg.{k}`),
+//!   each at the mean of its endpoints' measures — a stroke takes a flat colour,
+//!   since `PathStyle`'s gradient replaces the FILL.
+//! * the AREA keeps one path and takes a horizontal gradient whose stops sit at
+//!   the samples' own x positions — genuinely continuous, and exact rather than
+//!   approximate.
+//!
+//! Both ride in the scene as data, so §2 #7 introspection reads the encoding
+//! without a pixel. The legend becomes a colour bar, as on the other two.
+//!
 //! # Introspection
 //!
 //! Every emitted node carries a tag under the chart's `tag_prefix`
@@ -73,13 +92,14 @@ use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, Stroke, StrokeCap, TextAlign};
 
+use crate::color_scale::{ColorScale, ValueEncoding};
 use crate::draw::{
-    CalloutRow, MUTED_ALPHA, absolute, area_path, box_node, callout, fill_parent, label_node,
-    marker_node, stroke_path, to_u32,
+    CalloutRow, MUTED_ALPHA, absolute, area_path, area_path_along_x, box_node, callout,
+    fill_parent, label_node, legend_band_color_bar, marker_node, stroke_path, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{CartesianPlot, Rescale, axis_ticks};
-use crate::series::{DataPoint, Series};
+use crate::series::{DataPoint, Series, value_bounds};
 use crate::style::ChartStyle;
 use crate::ticks::{format_axis_tick, tick_step};
 
@@ -98,6 +118,7 @@ pub struct LineChart {
     rescale_to_visible: bool,
     rescale_y_to_x_window: bool,
     select_x_range: Option<(f64, f64)>,
+    color: ValueEncoding,
     tag_prefix: String,
 }
 
@@ -117,8 +138,69 @@ impl LineChart {
             rescale_to_visible: false,
             rescale_y_to_x_window: false,
             select_x_range: None,
+            color: ValueEncoding::default(),
             tag_prefix: "chart".to_string(),
         }
+    }
+
+    /// R1440 — colour the trace by each sample's [`DataPoint::value`] third
+    /// channel on a SEQUENTIAL ramp, instead of by which series it belongs to.
+    ///
+    /// The line chart's version of the encoding the scatter (R1438) and the
+    /// treemap (R1439) already carry, and the one whose GEOMETRY does not fit.
+    /// A point is one mark with one colour and a tile is one box; a trace is a
+    /// polyline whose colour would have to change *along* it. Two shapes follow,
+    /// and they are different because the scene primitives are:
+    ///
+    /// * the **line** becomes one stroked path PER SEGMENT
+    ///   (`{prefix}.series.{i}.seg.{k}`), each coloured by the mean of its two
+    ///   endpoints' values — a stroke takes a flat colour
+    ///   ([`PathStyle`](pinion_core::style::PathStyle)'s gradient replaces the
+    ///   FILL), so segment-wise is as continuous as a stroke can be. The mean,
+    ///   not the start value, because a segment spans two samples and one colour
+    ///   is necessarily a compromise; taking the start would bias every segment
+    ///   toward the left and make the trace read as a step function.
+    /// * the **area** (with [`filled`](Self::filled)) keeps its single path and
+    ///   takes a horizontal GRADIENT whose stops sit at the samples' own x
+    ///   positions — genuinely continuous, and exact rather than approximate,
+    ///   since colour is piecewise-linear between stops just as the encoding is
+    ///   between samples.
+    ///
+    /// Turning it on swaps the legend for a colour bar, as on the other two: a
+    /// swatch row would claim the colours name the series, which stops being true
+    /// the moment they mean magnitude.
+    ///
+    /// A sample carrying no value keeps the series colour, and a series with no
+    /// values at all is drawn exactly as before — one path, one colour.
+    #[must_use]
+    pub fn color_by(mut self, scale: ColorScale) -> Self {
+        self.color.sequential(scale);
+        self
+    }
+
+    /// R1440 — colour the trace by its [`DataPoint::value`] on a DIVERGING ramp
+    /// anchored at `neutral`.
+    ///
+    /// The sibling of [`color_by`](Self::color_by) for a signed measure, which is
+    /// the common case for a trace: a slope, a drift from nominal, a delta
+    /// against target. Each wing normalises on its own width (R1436), so the
+    /// neutral lands on the ramp's centre colour even on the asymmetric domain
+    /// real data almost always has.
+    #[must_use]
+    pub fn color_by_diverging(mut self, scale: ColorScale, neutral: f64) -> Self {
+        self.color.diverging(scale, neutral);
+        self
+    }
+
+    /// R1440 — pin the colour domain instead of deriving it from the data.
+    ///
+    /// Worth pinning whenever two charts must be comparable (the same colour has
+    /// to mean the same measure in both) or when the ramp should span a known
+    /// operating range rather than this sample's own extremes.
+    #[must_use]
+    pub fn with_color_domain(mut self, lo: f64, hi: f64) -> Self {
+        self.color.pin_domain(lo, hi);
+        self
     }
 
     /// Override the categorical series palette.
@@ -374,7 +456,20 @@ impl LineChart {
         children.extend(markers);
         children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style, steps));
         if style.legend {
-            children.extend(self.legend(rect, style));
+            // R1440 — one colour legend, never two: a value encoding replaces
+            // the series swatch row with the colour bar, because the swatches
+            // would name a series-to-colour mapping that no longer holds.
+            if self.color.is_set() {
+                children.extend(legend_band_color_bar(
+                    &self.color,
+                    self.resolved_color_domain(),
+                    rect,
+                    style,
+                    &self.tag_prefix,
+                ));
+            } else {
+                children.extend(self.legend(rect, style));
+            }
         }
         children.extend(tooltip);
 
@@ -443,7 +538,11 @@ impl LineChart {
                 .filter(|p| p.x.is_finite() && p.y.is_finite())
                 .copied()
                 .collect();
-            let pts: Vec<(f32, f32)> = clip_to_x_domain(&finite, x_lo, x_hi)
+            // Kept as `DataPoint`s, not just pixels: R1440's colour encoding
+            // reads each clipped sample's third channel, and a boundary crossing
+            // carries an interpolated one (see `clip_to_x_domain`).
+            let clipped = clip_to_x_domain(&finite, x_lo, x_hi);
+            let pts: Vec<(f32, f32)> = clipped
                 .iter()
                 .map(|p| (plot.x.map(p.x), plot.y.map(p.y)))
                 .collect();
@@ -455,29 +554,48 @@ impl LineChart {
             // overdrawn at full colour below, so the emphasis reads as focus.
             let muted = window.is_some();
             let width = style.series_width.max(1);
+            // R1440 — the encoded colour per clipped sample, `None` where this
+            // chart is not encoding (or the sample carries no measure), in which
+            // case both geometries fall back to the flat series colour.
+            let encoded: Vec<Option<Color>> =
+                clipped.iter().map(|p| self.value_color(*p)).collect();
+            let any_encoded = encoded.iter().any(Option::is_some);
             if self.fill_area {
                 let alpha = if muted {
                     mul_alpha(style.area_alpha, MUTED_ALPHA)
                 } else {
                     style.area_alpha
                 };
-                out.push(area_path(
-                    &pts,
-                    baseline_y,
-                    color.with_alpha(alpha),
-                    format!("{}.area.{i}", self.tag_prefix),
-                ));
+                let tag = format!("{}.area.{i}", self.tag_prefix);
+                if any_encoded {
+                    // The area spans a range of x, so its measure is encoded
+                    // CONTINUOUSLY: a gradient whose stops sit at the samples'
+                    // own x positions rather than one colour standing in for
+                    // every value under the curve.
+                    let ramp: Vec<(f32, Color)> = pts
+                        .iter()
+                        .zip(&encoded)
+                        .map(|(&(px, _), enc)| (px, enc.unwrap_or(color).with_alpha(alpha)))
+                        .collect();
+                    out.push(area_path_along_x(&pts, baseline_y, &ramp, tag));
+                } else {
+                    out.push(area_path(&pts, baseline_y, color.with_alpha(alpha), tag));
+                }
             }
             let line_color = if muted {
                 color.with_alpha(MUTED_ALPHA)
             } else {
                 color
             };
-            out.push(stroke_path(
-                &pts,
-                Stroke::new(line_color, width).with_cap(StrokeCap::Round),
-                format!("{}.series.{i}", self.tag_prefix),
-            ));
+            if any_encoded {
+                out.extend(self.encoded_segments(&pts, &encoded, line_color, width, i));
+            } else {
+                out.push(stroke_path(
+                    &pts,
+                    Stroke::new(line_color, width).with_cap(StrokeCap::Round),
+                    format!("{}.series.{i}", self.tag_prefix),
+                ));
+            }
             // The focus overdraw: the in-window sub-polyline at full colour.
             // `clip_to_x_domain` interpolates y at the `[lo, hi]` crossings, so
             // the segment meets the brush edge exactly (R1356's clip reused).
@@ -504,6 +622,56 @@ impl LineChart {
             }
         }
         out
+    }
+
+    /// R1440 — the value-encoded trace as one stroked path PER SEGMENT, tagged
+    /// `{prefix}.series.{i}.seg.{k}`.
+    ///
+    /// A stroke takes a flat colour — [`PathStyle`](pinion_core::style::PathStyle)'s
+    /// gradient replaces the FILL, not the stroke — so this is as continuous as a
+    /// polyline can be made without inventing a primitive. Each segment takes the
+    /// encoding at the MEAN of its two endpoints' measures: a segment spans two
+    /// samples, so one colour is a compromise either way, and the mean is the
+    /// symmetric choice (taking the start value would bias every segment leftward
+    /// and make a smooth trace read as a step function).
+    ///
+    /// A segment whose endpoints carry no measure falls back to `flat`, so a
+    /// partially-measured series degrades per segment rather than all-or-nothing.
+    fn encoded_segments(
+        &self,
+        pts: &[(f32, f32)],
+        encoded: &[Option<Color>],
+        flat: Color,
+        width: u32,
+        i: usize,
+    ) -> Vec<Scene> {
+        let mut out = Vec::with_capacity(pts.len().saturating_sub(1));
+        for (k, pair) in pts.windows(2).enumerate() {
+            let color = segment_color(
+                encoded.get(k).copied().flatten(),
+                encoded.get(k + 1).copied().flatten(),
+            )
+            .unwrap_or(flat);
+            out.push(stroke_path(
+                pair,
+                Stroke::new(color, width).with_cap(StrokeCap::Round),
+                format!("{}.series.{i}.seg.{k}", self.tag_prefix),
+            ));
+        }
+        out
+    }
+
+    /// R1440 — the active colour domain: pinned, else measured off the third
+    /// channel of every series, else `None` (the chart stays categorical).
+    fn resolved_color_domain(&self) -> Option<(f64, f64)> {
+        self.color.domain(|| value_bounds(&self.series))
+    }
+
+    /// R1440 — the encoded colour for one sample, or `None` when this chart is
+    /// not encoding / the sample carries no finite measure.
+    fn value_color(&self, point: DataPoint) -> Option<Color> {
+        self.color
+            .color_for(point.value, || value_bounds(&self.series))
     }
 
     /// Right-aligned y-axis labels (the shared [`crate::draw::y_tick_labels`],
@@ -801,6 +969,22 @@ fn mul_alpha(a: u8, b: u8) -> u8 {
 /// hit-test, never a clip, so the paint adapter happily rasterizes a
 /// vertex that falls outside it (R1358 rebased the commands onto the
 /// rect's origin; it did not make the rect clip them).
+/// The colour of a segment whose endpoints resolved to `a` / `b`.
+///
+/// Both present: the midpoint in LINEAR light, which is what
+/// [`Color::lerp`](pinion_core::style::Color::lerp) does and therefore agrees
+/// with how the ramp itself interpolates — averaging the two sRGB triples
+/// instead would darken every segment of a bright ramp. One present: that one,
+/// so a segment adjoining an unmeasured sample still carries the measure it has.
+/// Neither: `None`, and the caller falls back to the series colour.
+fn segment_color(a: Option<Color>, b: Option<Color>) -> Option<Color> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.lerp(b, 0.5)),
+        (Some(only), None) | (None, Some(only)) => Some(only),
+        (None, None) => None,
+    }
+}
+
 fn clip_to_x_domain(points: &[DataPoint], lo: f64, hi: f64) -> Vec<DataPoint> {
     let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
     let inside = |x: f64| x >= lo && x <= hi;
@@ -827,7 +1011,16 @@ fn clip_to_x_domain(points: &[DataPoint], lo: f64, hi: f64) -> Vec<DataPoint> {
             let span = b.x - a.x;
             if crosses && span.abs() > f64::EPSILON {
                 let t = (bound - a.x) / span;
-                crossings.push(DataPoint::new(bound, a.y + t * (b.y - a.y)));
+                // Every channel that varies along the segment interpolates on
+                // the same `t`. Dropping `value` here (as this did before R1440)
+                // left a value-encoded trace with an unmeasured sample at each
+                // boundary, so a pinned or brushed domain showed a colour
+                // discontinuity at exactly the edge the clip created.
+                let mut crossing = DataPoint::new(bound, a.y + t * (b.y - a.y));
+                if let (Some(av), Some(bv)) = (a.value, b.value) {
+                    crossing = crossing.with_value(av + t * (bv - av));
+                }
+                crossings.push(crossing);
             }
         }
         crossings.sort_by(|p, q| {
@@ -1669,5 +1862,211 @@ mod tests {
         let Some(Scene::Box(_)) = find(&scene, "chart.legend.0.swatch") else {
             panic!("static swatch is a plain box")
         };
+    }
+
+    // --- R1440: the trace's colour encodes a measure ------------------------
+
+    /// A trace whose y and third channel are INDEPENDENT: y climbs steadily
+    /// while the measure swings from negative to positive, so a colour that
+    /// tracked y would be indistinguishable from one that tracks the measure.
+    fn measured_series() -> Vec<Series> {
+        vec![Series::new(
+            "trace",
+            vec![
+                DataPoint::new(0.0, 10.0).with_value(-4.0),
+                DataPoint::new(1.0, 20.0).with_value(0.0),
+                DataPoint::new(2.0, 30.0).with_value(4.0),
+                DataPoint::new(3.0, 40.0).with_value(12.0),
+            ],
+        )]
+    }
+
+    fn ramp() -> ColorScale {
+        ColorScale::viridis()
+    }
+
+    fn stroke_of(scene: &Scene, tag: &str) -> Color {
+        match find(scene, tag) {
+            Some(Scene::Path(p)) => p.style.stroke.expect("a stroked segment").color,
+            _ => panic!("segment {tag} missing"),
+        }
+    }
+
+    /// An UNENCODED line is byte-unchanged: one polyline, no segment nodes, and
+    /// the categorical swatch row still stands.
+    #[test]
+    fn r1440_no_encoding_leaves_the_single_polyline_alone() {
+        let scene = LineChart::new(measured_series())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert!(find(&scene, "chart.series.0").is_some(), "one polyline");
+        assert_eq!(
+            count_prefix(&scene, "chart.series.0.seg."),
+            0,
+            "no segments"
+        );
+        assert!(find(&scene, "chart.colorbar.strip").is_none(), "no bar");
+        assert!(find(&scene, "chart.legend.0.swatch").is_some(), "swatches");
+    }
+
+    /// The encoded trace becomes one stroked path per SEGMENT, and the single
+    /// polyline goes away (two traces of the same line would double-strike it).
+    #[test]
+    fn r1440_an_encoded_trace_is_one_path_per_segment() {
+        let scene = LineChart::new(measured_series())
+            .color_by(ramp())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert_eq!(
+            count_prefix(&scene, "chart.series.0.seg."),
+            3,
+            "four samples make three segments"
+        );
+        assert!(
+            find(&scene, "chart.series.0").is_none(),
+            "and the flat polyline is not ALSO drawn"
+        );
+        // The legend changed kind.
+        assert!(
+            find(&scene, "chart.colorbar.strip").is_some(),
+            "a colour bar"
+        );
+        assert!(
+            find(&scene, "chart.legend.0.swatch").is_none(),
+            "no swatches while colour means magnitude"
+        );
+    }
+
+    /// ★ A segment takes the encoding at the MEAN of its endpoints, not at its
+    /// start. The two differ for every segment here, so this pins the choice.
+    #[test]
+    fn r1440_a_segment_is_coloured_by_the_mean_of_its_endpoints() {
+        let scale = ramp();
+        let (lo, hi) = (-4.0, 12.0);
+        let scene = LineChart::new(measured_series())
+            .color_by(scale.clone())
+            .with_color_domain(lo, hi)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        // Segment 0 spans -4 -> 0; its colour is the linear-light midpoint of
+        // the two endpoint colours.
+        let expected = scale.map(-4.0, lo, hi).lerp(scale.map(0.0, lo, hi), 0.5);
+        assert_eq!(stroke_of(&scene, "chart.series.0.seg.0"), expected);
+        assert_ne!(
+            stroke_of(&scene, "chart.series.0.seg.0"),
+            scale.map(-4.0, lo, hi),
+            "★ not the START value's colour — that would read as a step function"
+        );
+        // Consecutive segments differ, so the trace really varies along itself.
+        assert_ne!(
+            stroke_of(&scene, "chart.series.0.seg.0"),
+            stroke_of(&scene, "chart.series.0.seg.1"),
+        );
+    }
+
+    /// The AREA takes a real gradient whose stops sit at the samples' own x
+    /// positions within the AREA PATH's box — not at even spacing, and not
+    /// against the plot rect.
+    #[test]
+    fn r1440_the_area_encodes_continuously_as_a_gradient_along_x() {
+        let scene = LineChart::new(measured_series())
+            .filled(true)
+            .color_by(ramp())
+            .with_color_domain(-4.0, 12.0)
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        let Some(Scene::Path(area)) = find(&scene, "chart.area.0") else {
+            panic!("the area is a path")
+        };
+        let gradient = area.style.gradient.as_ref().expect("a real gradient");
+        assert_eq!(gradient.stops.len(), 4, "one stop per sample");
+        let offsets: Vec<f32> = gradient.stops.iter().map(|s| s.offset).collect();
+        assert!(
+            (offsets[0] - 0.0).abs() < 1e-3,
+            "starts at the mark's left edge"
+        );
+        // NOT exactly 1.0, and correctly so: `bbox_of` gives the path a box one
+        // px wider than the vertex span (a zero-width span still has to be
+        // paintable), so the last SAMPLE sits one px short of the box's right
+        // edge. Pin that px rather than papering over it with a loose epsilon.
+        let short_by = (1.0 - offsets[3]) * to_f32(area.rect.w);
+        assert!(
+            short_by > 0.0 && short_by <= 1.5,
+            "the last stop is within a px of the right edge, {short_by}px short \
+             (offsets {offsets:?}, box {}px)",
+            area.rect.w
+        );
+        assert!(
+            offsets.windows(2).all(|w| w[0] < w[1]),
+            "stops ascend with x: {offsets:?}"
+        );
+        // The samples are evenly spaced in x HERE, so the interior stops land on
+        // the thirds — a naive "even spacing" would agree, which is why the
+        // uneven-x case below is the one that discriminates.
+        assert!((offsets[1] - 1.0 / 3.0).abs() < 0.02, "{offsets:?}");
+    }
+
+    /// ★ Uneven x spacing separates "stops at the samples' x" from "stops evenly
+    /// spaced": the middle sample sits a TENTH along in x, so its stop must too.
+    #[test]
+    fn r1440_area_gradient_stops_follow_x_not_index() {
+        let series = vec![Series::new(
+            "uneven",
+            vec![
+                DataPoint::new(0.0, 10.0).with_value(0.0),
+                DataPoint::new(1.0, 12.0).with_value(5.0),
+                DataPoint::new(10.0, 14.0).with_value(10.0),
+            ],
+        )];
+        let scene = LineChart::new(series)
+            .filled(true)
+            .color_by(ramp())
+            .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        let Some(Scene::Path(area)) = find(&scene, "chart.area.0") else {
+            panic!("the area is a path")
+        };
+        let gradient = area.style.gradient.as_ref().expect("a real gradient");
+        let mid = gradient.stops[1].offset;
+        assert!(
+            (mid - 0.1).abs() < 0.02,
+            "★ the middle sample is a tenth along in X, so is its stop (got {mid}) \
+             — even spacing would put it at 0.5"
+        );
+    }
+
+    /// ★ A clipped boundary sample carries an INTERPOLATED measure, so a pinned
+    /// domain does not leave the trace unmeasured at its own edge.
+    #[test]
+    fn r1440_a_clipped_boundary_sample_keeps_an_interpolated_measure() {
+        // Cut the domain at x = 0.5, halfway along segment 0 (-4 -> 0), so the
+        // crossing's measure must be -2.
+        let clipped = clip_to_x_domain(
+            &[
+                DataPoint::new(0.0, 10.0).with_value(-4.0),
+                DataPoint::new(1.0, 20.0).with_value(0.0),
+            ],
+            0.5,
+            1.0,
+        );
+        assert_eq!(clipped.len(), 2, "the crossing plus the in-domain sample");
+        let crossing = clipped[0];
+        assert!((crossing.x - 0.5).abs() < 1e-9);
+        assert_eq!(
+            crossing.value,
+            Some(-2.0),
+            "★ the third channel interpolates on the same t as y"
+        );
+        assert!(
+            (crossing.y - 15.0).abs() < 1e-9,
+            "and y is unchanged by the fix"
+        );
+
+        // A segment with no measures at either end stays unmeasured — the fix
+        // interpolates, it does not invent.
+        let plain = clip_to_x_domain(
+            &[DataPoint::new(0.0, 10.0), DataPoint::new(1.0, 20.0)],
+            0.5,
+            1.0,
+        );
+        assert_eq!(
+            plain[0].value, None,
+            "no measure to interpolate, none made up"
+        );
     }
 }

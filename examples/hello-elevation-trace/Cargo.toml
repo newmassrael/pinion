@@ -1,0 +1,32 @@
+[package]
+name = "hello-elevation-trace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1440 §5.35 — a trace coloured by a second measure: the LINE becomes one stroked path per segment (a stroke takes a flat colour) while the AREA takes a horizontal gradient whose stops sit at the samples' own x positions. One encoding, two geometries, both readable as scene data over RPC."
+publish = false
+
+[[bin]]
+name = "hello-elevation-trace"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1440 — LineChart::color_by over DataPoint's third channel.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+# A `Signal<T>` payload is persistable, so the view-mode enum derives serde.
+serde = { workspace = true }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

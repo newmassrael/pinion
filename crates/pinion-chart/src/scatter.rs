@@ -45,10 +45,10 @@ use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, PathNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
 
-use crate::color_scale::{ColorBy, ColorScale};
+use crate::color_scale::{ColorScale, ValueEncoding};
 use crate::draw::{
-    BarAxis, CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, color_bar,
-    fill_parent, label_node, marker_node, stroke_path, to_f32, to_u32,
+    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, fill_parent, label_node,
+    legend_band_color_bar, marker_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{CartesianPlot, Rescale, axis_ticks, resolve_focus};
@@ -67,8 +67,7 @@ pub struct ScatterChart {
     inspect: Option<f32>,
     select_x_range: Option<(f64, f64)>,
     legend_tags: Option<Vec<String>>,
-    color_by: Option<ColorBy>,
-    color_domain: Option<(f64, f64)>,
+    color: ValueEncoding,
     tag_prefix: String,
 }
 
@@ -85,8 +84,7 @@ impl ScatterChart {
             inspect: None,
             select_x_range: None,
             legend_tags: None,
-            color_by: None,
-            color_domain: None,
+            color: ValueEncoding::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -109,7 +107,7 @@ impl ScatterChart {
     /// have the channel and does not invent a magnitude for those that do not.
     #[must_use]
     pub fn color_by(mut self, scale: ColorScale) -> Self {
-        self.color_by = Some(ColorBy::Sequential(scale));
+        self.color.sequential(scale);
         self
     }
 
@@ -124,7 +122,7 @@ impl ScatterChart {
     /// fraction, so the legend reports the encoding rather than an even split.
     #[must_use]
     pub fn color_by_diverging(mut self, scale: ColorScale, neutral: f64) -> Self {
-        self.color_by = Some(ColorBy::Diverging { scale, neutral });
+        self.color.diverging(scale, neutral);
         self
     }
 
@@ -135,7 +133,7 @@ impl ScatterChart {
     /// span a known operating range rather than the sample's own extremes.
     #[must_use]
     pub fn with_color_domain(mut self, lo: f64, hi: f64) -> Self {
-        self.color_domain = Some((lo, hi));
+        self.color.pin_domain(lo, hi);
         self
     }
 
@@ -299,7 +297,7 @@ impl ScatterChart {
             // R1438 — one colour legend, never two: a value encoding replaces
             // the series swatch row with the colour bar, because the swatches
             // would name a series-to-colour mapping that no longer holds.
-            if self.color_by.is_some() {
+            if self.color.is_set() {
                 children.extend(self.color_bar_row(rect, style));
             } else {
                 children.extend(self.legend(rect, style));
@@ -323,18 +321,15 @@ impl ScatterChart {
     /// else `None` when not one point carries the third channel (in which case
     /// there is nothing to encode and the chart stays categorical).
     fn resolved_color_domain(&self) -> Option<(f64, f64)> {
-        self.color_by.as_ref()?;
-        self.color_domain.or_else(|| value_bounds(&self.series))
+        self.color.domain(|| value_bounds(&self.series))
     }
 
     /// R1438 — the value-encoded colour for `point`, or `None` when this chart
     /// is not colouring by value, has no domain to map against, or the point
     /// carries no finite third channel.
     fn value_color(&self, point: DataPoint) -> Option<Color> {
-        let encoding = self.color_by.as_ref()?;
-        let domain = self.resolved_color_domain()?;
-        let value = point.value.filter(|v| v.is_finite())?;
-        Some(encoding.resolve(value, domain))
+        self.color
+            .color_for(point.value, || value_bounds(&self.series))
     }
 
     /// R1438 — the colour bar: the value-encoding legend, seated in the same
@@ -348,28 +343,10 @@ impl ScatterChart {
     /// legend band, so its bar lies HORIZONTALLY across that band; the treemap,
     /// which has neither, stands its bar up the side instead.
     fn color_bar_row(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
-        let (Some(encoding), Some(domain)) = (self.color_by.as_ref(), self.resolved_color_domain())
-        else {
-            return Vec::new();
-        };
-        let stops = encoding.bar_stops(domain);
-        if stops.is_empty() {
-            return Vec::new();
-        }
-        let size = style.label_size_px.max(1);
-        let bar = Rect::new(
-            rect.x + style.margin.left,
-            rect.y + 2,
-            rect.w
-                .saturating_sub(style.margin.left + style.margin.right)
-                .max(1),
-            size.max(6),
-        );
-        color_bar(
-            &stops,
-            &encoding.bar_ticks(domain),
-            bar,
-            BarAxis::Horizontal,
+        legend_band_color_bar(
+            &self.color,
+            self.resolved_color_domain(),
+            rect,
             style,
             &self.tag_prefix,
         )

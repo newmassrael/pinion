@@ -76,7 +76,7 @@ use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, TextAlign};
 
-use crate::color_scale::{ColorBy, ColorScale, readable_ink};
+use crate::color_scale::{ColorScale, ValueEncoding, readable_ink};
 use crate::draw::{
     BarAxis, CalloutRow, absolute, box_node, callout, color_bar, fill_parent, label_box_h,
     label_node, outline_box, to_f32, to_u32, vertical_bar_width,
@@ -222,8 +222,7 @@ pub struct Treemap {
     tiles: Vec<Tile>,
     palette: CategoricalPalette,
     inspect: Option<f32>,
-    color_by: Option<ColorBy>,
-    color_domain: Option<(f64, f64)>,
+    color: ValueEncoding,
     tag_prefix: String,
 }
 
@@ -236,8 +235,7 @@ impl Treemap {
             tiles,
             palette: CategoricalPalette::default(),
             inspect: None,
-            color_by: None,
-            color_domain: None,
+            color: ValueEncoding::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -267,7 +265,7 @@ impl Treemap {
     /// [`ScatterChart::color_by`]: crate::ScatterChart::color_by
     #[must_use]
     pub fn color_by(mut self, scale: ColorScale) -> Self {
-        self.color_by = Some(ColorBy::Sequential(scale));
+        self.color.sequential(scale);
         self
     }
 
@@ -284,7 +282,7 @@ impl Treemap {
     /// fraction, so the legend reports the encoding rather than an even split.
     #[must_use]
     pub fn color_by_diverging(mut self, scale: ColorScale, neutral: f64) -> Self {
-        self.color_by = Some(ColorBy::Diverging { scale, neutral });
+        self.color.diverging(scale, neutral);
         self
     }
 
@@ -295,7 +293,7 @@ impl Treemap {
     /// known operating range rather than this sample's own extremes.
     #[must_use]
     pub fn with_color_domain(mut self, lo: f64, hi: f64) -> Self {
-        self.color_domain = Some((lo, hi));
+        self.color.pin_domain(lo, hi);
         self
     }
 
@@ -416,9 +414,7 @@ impl Treemap {
     /// else `None` when no tile carries the second measure (in which case there
     /// is nothing to encode and the treemap stays categorical).
     fn resolved_color_domain(&self) -> Option<(f64, f64)> {
-        self.color_by.as_ref()?;
-        self.color_domain
-            .or_else(|| color_value_bounds(&self.tiles))
+        self.color.domain(|| color_value_bounds(&self.tiles))
     }
 
     /// The fill for the tile at ORIGINAL index `idx`.
@@ -440,10 +436,8 @@ impl Treemap {
     /// colouring by value, has no domain to map against, or the tile carries no
     /// finite second measure.
     fn encoded_color(&self, tile: &Tile) -> Option<Color> {
-        let encoding = self.color_by.as_ref()?;
-        let domain = self.resolved_color_domain()?;
-        let value = tile.color_value.filter(|v| v.is_finite())?;
-        Some(encoding.resolve(value, domain))
+        self.color
+            .color_for(tile.color_value, || color_value_bounds(&self.tiles))
     }
 
     /// R1439 — the VERTICAL colour bar: the value-encoding legend, standing in
@@ -456,12 +450,13 @@ impl Treemap {
     /// column costs the least area. That is also the orientation a reader
     /// expects of a value ramp: high at the top.
     fn color_bar_column(&self, geom: &TreemapGeom, style: &ChartStyle) -> Vec<Scene> {
-        let (Some(encoding), Some(domain)) = (self.color_by.as_ref(), self.resolved_color_domain())
-        else {
+        let Some(domain) = self.resolved_color_domain() else {
             return Vec::new();
         };
-        let stops = encoding.bar_stops(domain);
-        if stops.is_empty() || geom.bar_gutter == 0 {
+        let Some(ramp) = self.color.bar(domain) else {
+            return Vec::new();
+        };
+        if ramp.stops.is_empty() || geom.bar_gutter == 0 {
             return Vec::new();
         }
         // The strip stands in the gutter, inset from the tiles. Its ENDS are
@@ -477,8 +472,8 @@ impl Treemap {
             geom.frame.h.saturating_sub(end_inset * 2).max(1),
         );
         color_bar(
-            &stops,
-            &encoding.bar_ticks(domain),
+            &ramp.stops,
+            &ramp.ticks,
             strip,
             BarAxis::Vertical,
             style,

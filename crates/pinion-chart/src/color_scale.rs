@@ -371,6 +371,98 @@ impl ColorBy {
     }
 }
 
+/// A chart's whole value-colour encoding: which map, and over what domain.
+///
+/// Lifted at R1440, when the line chart became the THIRD chart type to colour by
+/// a measure and the two fields plus their two resolver methods would have been
+/// copied a third time (R1439's carry named this). Each chart now owns one of
+/// these and supplies only what is genuinely its own: the function that MEASURES
+/// its data's colour channel, since a series' third channel, a tile's second
+/// measure and a segment's mean live in different shapes.
+///
+/// Deliberately not public: the chart's `color_by` / `color_by_diverging` /
+/// `with_color_domain` builders are the API, and they read better at a call site
+/// than assembling an encoding value would.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ValueEncoding {
+    by: Option<ColorBy>,
+    domain: Option<(f64, f64)>,
+}
+
+impl ValueEncoding {
+    /// Encode on a SEQUENTIAL ramp.
+    pub(crate) fn sequential(&mut self, scale: ColorScale) {
+        self.by = Some(ColorBy::Sequential(scale));
+    }
+
+    /// Encode on a DIVERGING ramp anchored at `neutral`.
+    pub(crate) fn diverging(&mut self, scale: ColorScale, neutral: f64) {
+        self.by = Some(ColorBy::Diverging { scale, neutral });
+    }
+
+    /// Pin the domain instead of measuring it off the data.
+    pub(crate) fn pin_domain(&mut self, lo: f64, hi: f64) {
+        self.domain = Some((lo, hi));
+    }
+
+    /// Whether an encoding was asked for at all — the cheap check a chart makes
+    /// before deciding which legend to draw or how much room to reserve.
+    pub(crate) fn is_set(&self) -> bool {
+        self.by.is_some()
+    }
+
+    /// The active domain: pinned, else `measure()`d off the data, else `None`
+    /// when no encoding was asked for OR nothing in the data carries the
+    /// channel — in which case the chart stays categorical.
+    ///
+    /// `measure` is a closure rather than a value so a chart that is not
+    /// encoding never walks its data to find bounds it will not use.
+    pub(crate) fn domain(
+        &self,
+        measure: impl FnOnce() -> Option<(f64, f64)>,
+    ) -> Option<(f64, f64)> {
+        self.by.as_ref()?;
+        self.domain.or_else(measure)
+    }
+
+    /// The colour for `value`, or `None` when this chart is not encoding, has no
+    /// domain to map against, or the datum carries no finite measure. A datum
+    /// without the channel keeps its categorical colour: the encoding covers
+    /// what has the measure and never invents one.
+    pub(crate) fn color_for(
+        &self,
+        value: Option<f64>,
+        measure: impl FnOnce() -> Option<(f64, f64)>,
+    ) -> Option<Color> {
+        let by = self.by.as_ref()?;
+        let value = value.filter(|v| v.is_finite())?;
+        Some(by.resolve(value, self.domain(measure)?))
+    }
+
+    /// The bar's ramp and ticks over `domain` — the encoding's own placement, so
+    /// a legend cannot disagree with the marks. `None` when no encoding is set.
+    pub(crate) fn bar(&self, domain: (f64, f64)) -> Option<BarRamp> {
+        let by = self.by.as_ref()?;
+        Some(BarRamp {
+            stops: by.bar_stops(domain),
+            ticks: by.bar_ticks(domain),
+        })
+    }
+}
+
+/// Everything a colour bar needs from an encoding: where the ramp's colours sit,
+/// and which values get a label.
+///
+/// A named pair rather than a tuple because the two are both `Vec`s of `(f32, _)`
+/// and a positional destructure at the call site would be one transposition away
+/// from labelling the ramp with offsets meant for the strip.
+pub(crate) struct BarRamp {
+    /// `(fraction, colour)` — the gradient's stops.
+    pub(crate) stops: Vec<(f32, Color)>,
+    /// `(fraction, value)` — the labelled ticks.
+    pub(crate) ticks: Vec<(f32, f64)>,
+}
+
 /// A colour's WCAG relative luminance, `0.0..=1.0`.
 ///
 /// The ITU-R BT.709 coefficients over LINEAR-light channels (the sRGB EOTF is

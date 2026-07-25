@@ -69722,6 +69722,76 @@
         "in-tile ink on a continuous ramp caps at 4.60:1; a text plate is the only way past, deferred"
       ]
     },
+    "Round 1440": {
+      "decision_summary": "R1440 — one colour encoding, two geometries: a trace's line becomes one stroked path per segment while its area takes a gradient whose stops sit at the samples' own x positions",
+      "changes_bullets": [
+        "LineChart::color_by / color_by_diverging / with_color_domain — the encoding's 3rd chart type",
+        "the LINE becomes one stroked path per SEGMENT: a stroke takes a flat colour, gradient is fill-only",
+        "a segment is coloured at the MEAN of its endpoints, not its start, so a trace is not a step function",
+        "the AREA keeps one path and takes a gradient whose stops sit at the samples' own x positions",
+        "draw::area_path_along_x + area_geometry: one bbox definition, so ramp and shape cannot disagree",
+        "LIFT ValueEncoding (by + domain + resolvers) into color_scale.rs at the 3rd consumer, R1439's carry",
+        "LIFT draw::legend_band_color_bar: scatter and line seat one band rect; treemap keeps its own",
+        "FIX clip_to_x_domain dropped the value channel at a crossing; it now interpolates on the same t",
+        "BarRamp names the (stops, ticks) pair, killing a type_complexity lint at the source",
+        "consumer hello-elevation-trace: y = height, colour = signed slope, uneven x by construction"
+      ],
+      "verification_bullets": [
+        "pinion-chart 216 green (+6); hello-elevation-trace 6; market-map 6, treemap 5, value-scatter 5",
+        "tools/demos/r1440_elevation_trace.py — 42 assertions over real windowed RPC, 8 phases, PASS",
+        "COUNTERFACTUAL 1: colour a segment by its start value -> demo phase 3 + 1 unit test FAIL",
+        "COUNTERFACTUAL 2: space the area's stops evenly -> demo phase 5 (0.125 vs 0.05) + 2 units FAIL",
+        "COUNTERFACTUAL 3: drop the clip's value interpolation -> the boundary unit test FAILs",
+        "each counterfactual run SEPARATELY and kept compiling (R1439's false-green lesson)",
+        "regression: r1439, r1438, r1382, r1354, r1360, r1394, r1380 demos all PASS",
+        "census = cargo build --workspace --all-targets exit 0; unencoded charts byte-unchanged",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "the demo's even-x profile made the stop-placement check vacuous until the data was made uneven",
+        "a segment mean is a compromise; sub-dividing long segments would encode the measure more finely",
+        "resolved_color_domain stays 3 one-line delegates: the bounds function IS the per-chart difference",
+        "the CLI silently accepts bullets past its documented 100-char cap; do not rely on it to catch them"
+      ],
+      "publishable_decision_summary": "R1440 — one colour encoding, two geometries: a trace's line becomes one stroked path per segment while its area takes a gradient whose stops sit at the samples' own x positions",
+      "publishable_changes_bullets": [
+        "LineChart::color_by / color_by_diverging / with_color_domain — the encoding's 3rd chart type",
+        "the LINE becomes one stroked path per SEGMENT: a stroke takes a flat colour, gradient is fill-only",
+        "a segment is coloured at the MEAN of its endpoints, not its start, so a trace is not a step function",
+        "the AREA keeps one path and takes a gradient whose stops sit at the samples' own x positions",
+        "draw::area_path_along_x + area_geometry: one bbox definition, so ramp and shape cannot disagree",
+        "LIFT ValueEncoding (by + domain + resolvers) into color_scale.rs at the 3rd consumer, R1439's carry",
+        "LIFT draw::legend_band_color_bar: scatter and line seat one band rect; treemap keeps its own",
+        "FIX clip_to_x_domain dropped the value channel at a crossing; it now interpolates on the same t",
+        "BarRamp names the (stops, ticks) pair, killing a type_complexity lint at the source",
+        "consumer hello-elevation-trace: y = height, colour = signed slope, uneven x by construction"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-chart 216 green (+6); hello-elevation-trace 6; market-map 6, treemap 5, value-scatter 5",
+        "tools/demos/r1440_elevation_trace.py — 42 assertions over real windowed RPC, 8 phases, PASS",
+        "COUNTERFACTUAL 1: colour a segment by its start value -> demo phase 3 + 1 unit test FAIL",
+        "COUNTERFACTUAL 2: space the area's stops evenly -> demo phase 5 (0.125 vs 0.05) + 2 units FAIL",
+        "COUNTERFACTUAL 3: drop the clip's value interpolation -> the boundary unit test FAILs",
+        "each counterfactual run SEPARATELY and kept compiling (R1439's false-green lesson)",
+        "regression: r1439, r1438, r1382, r1354, r1360, r1394, r1380 demos all PASS",
+        "census = cargo build --workspace --all-targets exit 0; unencoded charts byte-unchanged",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the demo's even-x profile made the stop-placement check vacuous until the data was made uneven",
+        "a segment mean is a compromise; sub-dividing long segments would encode the measure more finely",
+        "resolved_color_domain stays 3 one-line delegates: the bounds function IS the per-chart difference",
+        "the CLI silently accepts bullets past its documented 100-char cap; do not rely on it to catch them"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -21,6 +21,7 @@ use pinion_core::style::{
     PathStyle, Size, SizeValue, Stroke, TextAlign, TextOverflow, TextStyle,
 };
 
+use crate::color_scale::ValueEncoding;
 use crate::style::{ChartStyle, Margin};
 use crate::ticks::{format_at_decimals, format_axis_tick, value_decimals};
 
@@ -67,6 +68,64 @@ pub(crate) fn stroke_path(points: &[(f32, f32)], stroke: Stroke, tag: String) ->
 
 /// A filled area path: the polyline dropped to `baseline_y` and closed.
 pub(crate) fn area_path(points: &[(f32, f32)], baseline_y: f32, fill: Color, tag: String) -> Scene {
+    let (bbox, commands) = area_geometry(points, baseline_y);
+    Scene::Path(
+        PathNode::new(bbox, commands, PathStyle::filled(fill))
+            .with_tag(tag)
+            .with_layout(absolute(bbox)),
+    )
+}
+
+/// R1440 — the same area path filled with a gradient ALONG X, given `ramp` as
+/// `(x_px, colour)` samples in plot space.
+///
+/// The area chart's answer to "colour this mark by a measure". Unlike a point or
+/// a tile, an area spans a range of x, so a single fill colour would have to pick
+/// one value out of many; a horizontal gradient encodes the measure
+/// *continuously* along the mark, which is what the data actually is.
+///
+/// The stops are placed by converting each sample's x into a fraction of THIS
+/// path's bounding box, which is why the conversion lives here rather than at the
+/// call site: a [`Gradient`]'s UV is box-relative (§5.50), and a caller computing
+/// fractions against the plot rect instead would shift every stop whenever a
+/// series does not span the full plot width. The bbox is derived by the same
+/// [`area_geometry`] the commands come from, so the ramp and the shape cannot
+/// disagree.
+///
+/// Superior to a pixel-painted heat-band in the way that matters for §2 #7: the
+/// stops ride in the scene as data, so an introspecting client reads the measure
+/// out of `scene/snapshot` at every sample x.
+pub(crate) fn area_path_along_x(
+    points: &[(f32, f32)],
+    baseline_y: f32,
+    ramp: &[(f32, Color)],
+    tag: String,
+) -> Scene {
+    let (bbox, commands) = area_geometry(points, baseline_y);
+    let span = to_f32(bbox.w).max(1.0);
+    let origin = to_f32(bbox.x);
+    let mut gradient = Gradient::horizontal();
+    for &(x_px, color) in ramp {
+        gradient = gradient.with_stop(((x_px - origin) / span).clamp(0.0, 1.0), color);
+    }
+    // The flat fallback is the first sample's colour, so a backend that ignores
+    // gradients (the TUI adapter) still shows a colour from the encoding.
+    let fill = ramp.first().map_or(Color::TRANSPARENT, |&(_, c)| c);
+    Scene::Path(
+        PathNode::new(
+            bbox,
+            commands,
+            PathStyle::filled(fill).with_gradient(gradient),
+        )
+        .with_tag(tag)
+        .with_layout(absolute(bbox)),
+    )
+}
+
+/// The bounding box and rebased commands of an area path — the ONE definition
+/// both [`area_path`] and [`area_path_along_x`] read, so a gradient placed
+/// against the bbox lands on the shape that bbox describes.
+fn area_geometry(points: &[(f32, f32)], baseline_y: f32) -> (Rect, Vec<PathCommand>) {
     // The bbox must be resolved BEFORE the commands: the baseline union can
     // move the box's origin (a baseline above every point lifts `bbox.y`), and
     // R1358 rebases the commands onto that final origin.
@@ -85,11 +144,7 @@ pub(crate) fn area_path(points: &[(f32, f32)], baseline_y: f32, fill: Color, tag
         )));
         commands.push(PathCommand::Close);
     }
-    Scene::Path(
-        PathNode::new(bbox, commands, PathStyle::filled(fill))
-            .with_tag(tag)
-            .with_layout(absolute(bbox)),
-    )
+    (bbox, commands)
 }
 
 /// R1358 — rebase plot-space points onto `bbox`'s origin so the emitted
@@ -837,6 +892,49 @@ pub(crate) fn color_bar(
         out.push(node);
     }
     out
+}
+
+/// R1440 — the whole horizontal colour bar for a chart that HAS a legend band:
+/// the band rect plus the encoding's stops and ticks, or nothing when the chart
+/// is not encoding by value.
+///
+/// The cartesian charts (scatter R1438, line R1440) put their bar across the
+/// same top band their swatch row would have used, at the same margins — so at
+/// the 3rd consumer that seating became one definition rather than each chart
+/// re-deriving the identical rect. The treemap keeps its own placement: it has no
+/// band, and its bar stands [`BarAxis::Vertical`] in a side gutter.
+pub(crate) fn legend_band_color_bar(
+    encoding: &ValueEncoding,
+    domain: Option<(f64, f64)>,
+    rect: Rect,
+    style: &ChartStyle,
+    prefix: &str,
+) -> Vec<Scene> {
+    let Some(domain) = domain else {
+        return Vec::new();
+    };
+    let Some(ramp) = encoding.bar(domain) else {
+        return Vec::new();
+    };
+    if ramp.stops.is_empty() {
+        return Vec::new();
+    }
+    let bar = Rect::new(
+        rect.x + style.margin.left,
+        rect.y + 2,
+        rect.w
+            .saturating_sub(style.margin.left + style.margin.right)
+            .max(1),
+        style.label_size_px.max(6),
+    );
+    color_bar(
+        &ramp.stops,
+        &ramp.ticks,
+        bar,
+        BarAxis::Horizontal,
+        style,
+        prefix,
+    )
 }
 
 /// Top edge of a `height`-tall label box centred on `center_px`, clamped so the
