@@ -2757,6 +2757,36 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
     }
 
+    /// R1434 §5.35 §5.15 — native PAN gesture into the addressed window, the
+    /// [`Self::pinch_gesture_for_window`] sibling with a two-dimensional
+    /// `(delta_x, delta_y)` in logical pixels in place of a single scalar: carry
+    /// the held `self.modifiers` into the runtime
+    /// `ShellCore::pan_gesture_with_modifiers_for_window` and request a repaint
+    /// when the hovered widget consumed it. The one place both the native winit
+    /// `PanGesture` arm and the `scene/pan_gesture` RPC replay funnel through, so
+    /// the modifier read + repaint gate are stated once.
+    pub fn pan_gesture_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        delta_x: f32,
+        delta_y: f32,
+        phase: pinion_core::GesturePhase,
+    ) {
+        let (tail, consumed) = self.core.pan_gesture_with_modifiers_for_window(
+            window_id,
+            pid,
+            delta_x,
+            delta_y,
+            phase,
+            self.modifiers,
+        );
+        if consumed {
+            self.request_redraw();
+        }
+        self.handle_tail(&tail);
+    }
+
     /// R51.195 §5.49 §5.45 — drain the deferred-input inbox `dispatch`
     /// populated. Each entry replays the input through the same
     /// `cursor_moved` / `wheel` entry points the winit and TUI
@@ -2976,6 +3006,30 @@ impl<V: WidgetView> ShellCore<V> {
                 } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.rotation_gesture_for_window(window_id, PointerId::MOUSE, rotation, phase);
+                }
+                // R1434 §5.35 §5.15 — `scene/pan_gesture`: a native N-finger pan
+                // at (x, y), the pinch sibling with a 2D delta. Seed the cursor
+                // first (a native `CursorMoved` precedes `PanGesture` the same
+                // way), then offer the incremental delta + phase through the ONE
+                // `pan_gesture_for_window` seam the native winit path also
+                // reaches, so an RPC-injected pan is indistinguishable from a
+                // trackpad one (§2 #6). Held modifiers ride the R763 out-of-band
+                // `scene/modifiers` cache, read inside the seam.
+                DeferredInput::PanGesture {
+                    x,
+                    y,
+                    delta_x,
+                    delta_y,
+                    phase,
+                } => {
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.pan_gesture_for_window(
+                        window_id,
+                        PointerId::MOUSE,
+                        delta_x,
+                        delta_y,
+                        phase,
+                    );
                 }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate

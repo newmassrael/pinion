@@ -792,9 +792,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 state_changed |= changed;
                 continue;
             }
-            // R1433 §5.35 §2 #6 — the native trackpad gestures (pinch / rotation)
-            // route through one dispatcher so this per-input match stays flat as
-            // the gesture set grows; see `try_drain_native_gesture`.
+            // R1433 §5.35 §2 #6 — the native trackpad gestures (pinch / rotation
+            // / pan) route through one dispatcher so this per-input match stays
+            // flat as the gesture set grows; see `try_drain_native_gesture`.
             if let Some(changed) = self.try_drain_native_gesture(input) {
                 state_changed |= changed;
                 continue;
@@ -987,7 +987,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     }
 
     /// R1433 §5.35 §5.15 §2 #2 §2 #6 — dispatch the native trackpad gestures
-    /// (Qt `QNativeGestureEvent`: pinch / rotation) off the main per-input match:
+    /// (Qt `QNativeGestureEvent`: pinch / rotation / pan) off the main per-input match:
     /// `Some(changed)` when `input` is one of them, `None` otherwise (the caller
     /// falls through to the general match). A terminal has no trackpad, but each
     /// gesture is the AI-first out-of-band source (§2 #2): the value rides the
@@ -1009,6 +1009,13 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 rotation,
                 phase,
             } => self.drain_rotation_gesture(x, y, rotation, phase),
+            pinion_rpc::DeferredInput::PanGesture {
+                x,
+                y,
+                delta_x,
+                delta_y,
+                phase,
+            } => self.drain_pan_gesture(x, y, delta_x, delta_y, phase),
             _ => return None,
         };
         Some(changed)
@@ -1078,6 +1085,38 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let (tail, consumed) = self.core.rotation_gesture(
             PointerId::MOUSE,
             rotation,
+            phase,
+            pinion_core::Modifiers::empty(),
+        );
+        changed |= self.handle_tail(&tail) || consumed;
+        changed
+    }
+
+    /// R1434 §5.35 §5.15 §2 #2 §2 #6 — the pan peer of
+    /// [`Self::drain_pinch_gesture`]: deliver a driven native PAN gesture to the
+    /// terminal backend's router, the `scene/pan_gesture` out-of-band drain, with
+    /// a two-dimensional `(delta_x, delta_y)` in logical pixels in place of a
+    /// single scalar. A terminal has no trackpad, but the AI-first RPC source
+    /// (§2 #2) rides the SAME `InputRouter` the Vello sibling drives, so a
+    /// pan-reactive `External` (a scrollable map) sees identical delivery on both
+    /// backends. Seed the cursor, then offer the incremental delta + `phase` to
+    /// the widget under it via the runtime `ShellCore::pan_gesture`. The TUI
+    /// carries no modifier chords yet (the §2 #6 divergence carry
+    /// `Self::drain_pinch_gesture` records), so empty modifiers. Returns `true`
+    /// when the frame may need a repaint.
+    fn drain_pan_gesture(
+        &mut self,
+        x: f64,
+        y: f64,
+        delta_x: f32,
+        delta_y: f32,
+        phase: pinion_core::GesturePhase,
+    ) -> bool {
+        let mut changed = self.cursor_moved(x, y);
+        let (tail, consumed) = self.core.pan_gesture(
+            PointerId::MOUSE,
+            delta_x,
+            delta_y,
             phase,
             pinion_core::Modifiers::empty(),
         );

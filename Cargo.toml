@@ -202,6 +202,7 @@ members = [
     "examples/hello-stepper",
     "examples/hello-nav-rail",
     "examples/hello-pagination",
+    "examples/hello-pan-gesture",
     "examples/hello-pinch-zoom",
     "examples/hello-rotate-gesture",
 ]

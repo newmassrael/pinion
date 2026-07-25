@@ -1,0 +1,28 @@
+[package]
+name = "hello-pan-gesture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1434 §5.35 §5.15 — a native pan gesture slides a map. A widget that overrides External::pan_gesture accumulates the incremental two-axis delta of an N-finger trackpad pan (Qt QNativeGestureEvent PanNativeGesture) across the GesturePhase Begin..End arc, clamps it to the content bounds, and discards the in-flight pan on Cancel. winit exposes PanGesture only on iOS, so the scene/pan_gesture RPC is the AI-first driver (§2 #2): a headless client slides the map with no trackpad, drivable + introspectable."
+publish = false
+
+[[bin]]
+name = "hello-pan-gesture"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

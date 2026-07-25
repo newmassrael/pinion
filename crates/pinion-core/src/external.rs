@@ -1475,6 +1475,59 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R1434 §5.35 §5.15 — native N-finger PAN gesture, the
+    /// [`pinch_gesture`](Self::pinch_gesture) /
+    /// [`rotation_gesture`](Self::rotation_gesture) sibling with a
+    /// **two-dimensional** delta in place of a single scalar. The Qt
+    /// `QNativeGestureEvent` `PanNativeGesture` / winit
+    /// `WindowEvent::PanGesture` peer: the trackpad / touch pan a map or a
+    /// canvas reads to translate its content by direct manipulation.
+    ///
+    /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect the
+    ///   [`pinch_gesture`](Self::pinch_gesture) / [`wheel`](Self::wheel) hooks
+    ///   use (a pan has no position of its own; it targets whatever the cursor
+    ///   hovers, so a pan and a drag share one coordinate basis).
+    /// * `delta_x` / `delta_y` — the INCREMENTAL pan for this event, in
+    ///   **logical pixels** (the framework converts winit's physical
+    ///   `PhysicalPosition` delta at the boundary, exactly as it does for a
+    ///   pixel wheel). The sign is the platform's raw finger movement —
+    ///   positive `delta_x` = the fingers moved right, positive `delta_y` =
+    ///   down — deliberately NOT sign-flipped the way [`wheel`](Self::wheel) is:
+    ///   a wheel is a *scroll command* (W3C: positive `dy` reveals content
+    ///   below), a native pan is *direct manipulation* (the content follows the
+    ///   fingers). A surface accumulates the deltas across the
+    ///   [`Begin`](GesturePhase::Begin)`..`[`End`](GesturePhase::End) arc
+    ///   (`offset += delta`) and drops the accumulator on
+    ///   [`Cancel`](GesturePhase::Cancel).
+    /// * `phase` — the gesture lifecycle ([`GesturePhase`]) bracketing the arc.
+    /// * `modifiers` — the held keyboard modifiers (the same out-of-band cache
+    ///   the pinch / rotation / wheel read), so a `Shift`-axis-locked or
+    ///   `Alt`-fine pan is one hook.
+    ///
+    /// Return `true` to consume the gesture, `false` (default) to decline — the
+    /// same consume contract as [`pinch_gesture`](Self::pinch_gesture); like
+    /// every native gesture a pan has no default action to fall through to (Qt
+    /// delivers it only to the widget under the cursor), so declining is simply
+    /// a no-op. Note this is the NATIVE gesture, not the framework's
+    /// drag-to-pan: a held pointer drag stays on the pointer hooks.
+    ///
+    /// The native source is the platform trackpad / touchscreen (winit
+    /// `WindowEvent::PanGesture`, iOS only); the AI-first source is the
+    /// `scene/pan_gesture` RPC (§2 #2), so a pannable viewport is drivable and
+    /// introspectable headless with no trackpad. Default no-op; only a widget
+    /// that translates its content overrides.
+    fn pan_gesture(
+        &mut self,
+        _x_rel: f32,
+        _y_rel: f32,
+        _delta_x: f32,
+        _delta_y: f32,
+        _phase: GesturePhase,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
+        false
+    }
+
     /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
     /// forwarding leg the pointer hooks left open). The framework's
     /// [`InputRouter`](crate#) offers a wheel event to the `External`

@@ -420,8 +420,8 @@ pub struct InputRouter {
     /// left chord's no-op (Figma: Space+click is inert). One map for
     /// every opening button so gesture exclusivity (one pan-class
     /// gesture per pointer, first press wins) needs no cross-map
-    /// bookkeeping. See [`PanGesture`].
-    pan_gestures: HashMap<PointerId, PanGesture>,
+    /// bookkeeping. See [`DragPan`].
+    drag_pans: HashMap<PointerId, DragPan>,
     /// R881.1 §5.35 — per-pointer wheel-side sub-pixel remainder (the
     /// stage-2 carry of [`dispatch_wheel_two_stage`]). Keyed to the
     /// scroll container it accumulated against via a [`Weak`](std::rc::Weak) handle:
@@ -543,8 +543,16 @@ enum PanButton {
 /// cursor for the pointer (then the press can never pan — there is no
 /// origin to latch against — and release degrades to the click
 /// path, the pre-R881 behaviour).
+///
+/// R1434 rename (was `PanGesture`): a held-button DRAG that pans is not a
+/// *gesture* in the native-gesture vocabulary. The name now belongs to
+/// [`External::pan_gesture`](pinion_core::external::External::pan_gesture) —
+/// the trackpad `QNativeGestureEvent` / winit `PanGesture` axis, which carries
+/// its own `GesturePhase` and never touches this drag latch. Qt draws the same
+/// line (`QPanGesture` recogniser vs `Qt::PanNativeGesture`); pinion states it
+/// in the type names so the two can never be read as one family.
 #[derive(Debug)]
-struct PanGesture {
+struct DragPan {
     /// The button that opened this gesture — release / in-flight
     /// queries match on it (R882).
     button: PanButton,
@@ -1100,8 +1108,8 @@ impl InputRouter {
         // R882.1 — a refused SAME-button press is additionally counted
         // on the owning gesture so its matching release pairs with the
         // refusal (`NoPress`) instead of consuming the live gesture —
-        // see [`PanGesture::swallowed_presses`].
-        if let Some(gesture) = self.pan_gestures.get_mut(&id) {
+        // see [`DragPan::swallowed_presses`].
+        if let Some(gesture) = self.drag_pans.get_mut(&id) {
             if gesture.button == button {
                 gesture.swallowed_presses += 1;
             }
@@ -1118,9 +1126,9 @@ impl InputRouter {
             .get(&id)
             .copied()
             .map(|origin| self.pin_pan_targets(id, origin));
-        self.pan_gestures.insert(
+        self.drag_pans.insert(
             id,
-            PanGesture {
+            DragPan {
                 button,
                 swallowed_presses: 0,
                 pan,
@@ -1179,21 +1187,26 @@ impl InputRouter {
     /// resolve there even if the Space chord lifted mid-gesture.
     #[must_use]
     pub fn left_pan_in_flight(&self, id: PointerId) -> bool {
-        self.pan_gestures
+        self.drag_pans
             .get(&id)
             .is_some_and(|g| g.button == PanButton::Left)
     }
 
-    /// R882.1 §5.35 — whether ANY pan-class gesture (either button,
+    /// R882.1 §5.35 — whether ANY drag-pan (either opening button,
     /// latched or dead-zone) owns `id`. The shell-tier press front
     /// door reads this to skip its press follow-ups (click-to-focus /
     /// caret positioning / immediate-mode forward) for a press the
     /// router is about to swallow — pre-R882.1 those follow-ups ran
     /// on the pinned (stale) hover target and stole focus during a
     /// live pan.
+    ///
+    /// R1434 rename (was `pan_gesture_in_flight`): this predicate is about the
+    /// held-button drag latch (the private `DragPan`), NOT the native
+    /// [`pan_gesture`](Self::pan_gesture) axis, which is stateless at the router
+    /// and has nothing in flight to ask about.
     #[must_use]
-    pub fn pan_gesture_in_flight(&self, id: PointerId) -> bool {
-        self.pan_gestures.contains_key(&id)
+    pub fn drag_pan_in_flight(&self, id: PointerId) -> bool {
+        self.drag_pans.contains_key(&id)
     }
 
     /// R881 / R882 §5.35 — the shared pan-channel release arm. Only a
@@ -1206,7 +1219,7 @@ impl InputRouter {
     /// drains the gesture's refusal counter and resolves `NoPress`
     /// too: only the press that opened the gesture may close it.
     fn pan_up(&mut self, id: PointerId, button: PanButton) -> PanRelease {
-        let Some(gesture) = self.pan_gestures.get_mut(&id) else {
+        let Some(gesture) = self.drag_pans.get_mut(&id) else {
             return PanRelease::NoPress;
         };
         if gesture.button != button {
@@ -1216,7 +1229,7 @@ impl InputRouter {
             gesture.swallowed_presses -= 1;
             return PanRelease::NoPress;
         }
-        match self.pan_gestures.remove(&id).map(|g| g.pan) {
+        match self.drag_pans.remove(&id).map(|g| g.pan) {
             Some(Some(pan)) if pan.latch.live() => PanRelease::Pan,
             Some(_) => PanRelease::Click,
             None => PanRelease::NoPress,
@@ -1227,7 +1240,7 @@ impl InputRouter {
     /// flight for `id` (a non-latched pan press is still a click
     /// candidate and does not pin the hover).
     fn pan_live(&self, id: PointerId) -> bool {
-        self.pan_gestures
+        self.drag_pans
             .get(&id)
             .and_then(|g| g.pan.as_ref())
             .is_some_and(|pan| pan.latch.live())
@@ -1259,9 +1272,9 @@ impl InputRouter {
         // move the gesture learns about IS its origin (so motion still
         // disambiguates pan from click — the degraded press is not
         // click-forever).
-        if self.pan_gestures.get(&id).is_some_and(|g| g.pan.is_none()) {
+        if self.drag_pans.get(&id).is_some_and(|g| g.pan.is_none()) {
             let pan = self.pin_pan_targets(id, (x, y));
-            if let Some(gesture) = self.pan_gestures.get_mut(&id) {
+            if let Some(gesture) = self.drag_pans.get_mut(&id) {
                 gesture.pan = Some(pan);
             }
             return (false, false);
@@ -1269,7 +1282,7 @@ impl InputRouter {
         // Stage 0: advance the latch + compute the delta, then release
         // the gesture borrow before touching the paint scene.
         let (dx, dy, tag, scroll, frac) = {
-            let Some(pan) = self.pan_gestures.get_mut(&id).and_then(|g| g.pan.as_mut()) else {
+            let Some(pan) = self.drag_pans.get_mut(&id).and_then(|g| g.pan.as_mut()) else {
                 return (false, false);
             };
             if !pan.latch.advance((x, y)) {
@@ -1311,7 +1324,7 @@ impl InputRouter {
                 frac,
             },
         );
-        if let Some(pan) = self.pan_gestures.get_mut(&id).and_then(|g| g.pan.as_mut()) {
+        if let Some(pan) = self.drag_pans.get_mut(&id).and_then(|g| g.pan.as_mut()) {
             pan.frac = new_frac;
         }
         (true, dispatched)
@@ -1399,9 +1412,9 @@ impl InputRouter {
         // in `pointer_up_with_modifiers` so no widget sees an Up
         // without its Down. A swallowed press on a LEFT-owned gesture
         // is counted so its release pairs with the refusal instead of
-        // consuming the gesture (see [`PanGesture::swallowed_presses`];
+        // consuming the gesture (see [`DragPan::swallowed_presses`];
         // this arc IS the left-button channel — middle has its own).
-        if let Some(gesture) = self.pan_gestures.get_mut(&id) {
+        if let Some(gesture) = self.drag_pans.get_mut(&id) {
             if gesture.button == PanButton::Left {
                 gesture.swallowed_presses += 1;
             }
@@ -1549,7 +1562,7 @@ impl InputRouter {
         // [`left_pan_up`](Self::left_pan_up) drains it on the shell
         // front-door path — each release travels exactly one of the
         // two, so the counter can neither leak nor double-drain.
-        if let Some(gesture) = self.pan_gestures.get_mut(&id) {
+        if let Some(gesture) = self.drag_pans.get_mut(&id) {
             if gesture.button == PanButton::Left && gesture.swallowed_presses > 0 {
                 gesture.swallowed_presses -= 1;
             }
@@ -2053,24 +2066,38 @@ impl InputRouter {
         modifiers: Modifiers,
         state_scene: &mut Scene,
     ) -> bool {
-        let Some(&(x, y)) = self.cursors.get(&id) else {
-            return false;
-        };
-        let Some(paint) = self.last_paint_scene.as_ref() else {
-            return false;
-        };
-        let Some(target_tag) = self.hover_targets.get(&id).cloned() else {
+        let Some((paint, target_tag, cursor)) = self.hovered_gesture_target(id) else {
             return false;
         };
         offer_pinch_to_external(
             paint,
             state_scene,
             &target_tag,
-            (x, y),
+            cursor,
             magnification,
             phase,
             modifiers,
         )
+    }
+
+    /// R1434 §5.35 — the state the three native-gesture legs
+    /// ([`pinch_gesture`](Self::pinch_gesture) /
+    /// [`rotation_gesture`](Self::rotation_gesture) /
+    /// [`pan_gesture`](Self::pan_gesture)) each need before they can offer
+    /// anything: the pointer's stored cursor, the retained paint scene, and the
+    /// hover target covering that cursor. Any one missing = the gesture is a
+    /// clean no-op, the router-state guard
+    /// [`wheel_with_modifiers`](Self::wheel_with_modifiers) states too.
+    ///
+    /// Lifted when the pan axis made this scaffold its THIRD verbatim copy — it
+    /// is mechanical wiring with no per-gesture opinion, so it belongs in one
+    /// place; what genuinely differs (the payload) stays in each caller's offer.
+    /// The [`offer_to_hovered_external`] lift did the same for the delivery half.
+    fn hovered_gesture_target(&self, id: PointerId) -> Option<(&Scene, String, (f64, f64))> {
+        let &(x, y) = self.cursors.get(&id)?;
+        let paint = self.last_paint_scene.as_ref()?;
+        let target_tag = self.hover_targets.get(&id).cloned()?;
+        Some((paint, target_tag, (x, y)))
     }
 
     /// R1433 §5.35 §5.15 — offer a native ROTATION gesture to the widget under
@@ -2091,21 +2118,56 @@ impl InputRouter {
         modifiers: Modifiers,
         state_scene: &mut Scene,
     ) -> bool {
-        let Some(&(x, y)) = self.cursors.get(&id) else {
-            return false;
-        };
-        let Some(paint) = self.last_paint_scene.as_ref() else {
-            return false;
-        };
-        let Some(target_tag) = self.hover_targets.get(&id).cloned() else {
+        let Some((paint, target_tag, cursor)) = self.hovered_gesture_target(id) else {
             return false;
         };
         offer_rotation_to_external(
             paint,
             state_scene,
             &target_tag,
-            (x, y),
+            cursor,
             rotation,
+            phase,
+            modifiers,
+        )
+    }
+
+    /// R1434 §5.35 §5.15 — offer a native PAN gesture to the widget under
+    /// pointer `id`'s cursor, the [`pinch_gesture`](Self::pinch_gesture) /
+    /// [`rotation_gesture`](Self::rotation_gesture) sibling with a
+    /// two-dimensional `(delta_x, delta_y)` in logical pixels in place of a
+    /// single scalar. Same offer-to-hovered-only delivery — NO `Scene::Scroll`
+    /// fallback: a native gesture reaches only the widget under the cursor (Qt's
+    /// contract), and unlike a wheel it is direct manipulation, so the delta is
+    /// forwarded with the platform's own sign, never flipped. Returns `true` if
+    /// that widget consumed it.
+    ///
+    /// This is the NATIVE trackpad axis, unrelated to the held-button drag latch
+    /// [`drag_pan_in_flight`](Self::drag_pan_in_flight) reports on: the two
+    /// never interact, and R1434 renamed the latch's type to `DragPan` so the
+    /// names say so.
+    ///
+    /// No-op (`false`) under the same router-state guards the sibling gestures
+    /// check: no stored cursor for `id`, no retained paint scene, or no hover
+    /// target covering the cursor.
+    pub fn pan_gesture(
+        &mut self,
+        id: PointerId,
+        delta_x: f32,
+        delta_y: f32,
+        phase: GesturePhase,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> bool {
+        let Some((paint, target_tag, cursor)) = self.hovered_gesture_target(id) else {
+            return false;
+        };
+        offer_pan_to_external(
+            paint,
+            state_scene,
+            &target_tag,
+            cursor,
+            (delta_x, delta_y),
             phase,
             modifiers,
         )
@@ -2252,7 +2314,7 @@ impl InputRouter {
         // neither pastes nor pans (the R880.1 mandatory-cancel-arm
         // discipline). Pan deltas already applied stay applied — a pan
         // is incremental scrolling, not a journaled transaction.
-        self.pan_gestures.remove(&id);
+        self.drag_pans.remove(&id);
         // R1418 §5.35 — a cancelled gesture also revokes a raw sink's implicit
         // grab: the abort is "never happened", so the grab must not outlive it
         // and strand a held-button count (the sink saw its `PointerCancel` via
@@ -3446,6 +3508,28 @@ fn offer_rotation_to_external(
 ) -> bool {
     offer_to_hovered_external(paint, state_scene, target_tag, cursor, |h, x_rel, y_rel| {
         h.rotation_gesture(x_rel, y_rel, rotation, phase, modifiers)
+    })
+}
+
+/// R1434 §5.35 — the External-offer leg for a native PAN gesture, the
+/// [`offer_pinch_to_external`] / [`offer_rotation_to_external`] sibling with a
+/// TWO-dimensional delta in place of a single scalar (all three share
+/// [`offer_to_hovered_external`] — the payload is the only difference, which is
+/// why it lives in the caller's closure). Forwards the incremental
+/// `(delta_x, delta_y)` in logical pixels + `phase` to the widget under
+/// `cursor`. Returns the widget's consume verdict; `false` when nothing tagged
+/// covers the cursor.
+fn offer_pan_to_external(
+    paint: &Scene,
+    state_scene: &mut Scene,
+    target_tag: &str,
+    cursor: (f64, f64),
+    delta: (f32, f32),
+    phase: GesturePhase,
+    modifiers: Modifiers,
+) -> bool {
+    offer_to_hovered_external(paint, state_scene, target_tag, cursor, |h, x_rel, y_rel| {
+        h.pan_gesture(x_rel, y_rel, delta.0, delta.1, phase, modifiers)
     })
 }
 
@@ -6922,6 +7006,177 @@ mod tests {
         assert!(
             calls.lock().expect("mutex poisoned").is_empty(),
             "no target → no offer"
+        );
+    }
+
+    /// R1434 — one recorded [`External::pan_gesture`] offer. TWO delta axes,
+    /// where the pinch / rotation peers carry one scalar — the payload shape the
+    /// shared `offer_to_hovered_external` had to stay agnostic of.
+    type PanCall = (f32, f32, f32, f32, GesturePhase, Modifiers);
+
+    /// Records every [`External::pan_gesture`] call; consumes (returns `true`)
+    /// iff `consume` is set. The [`PinchExternal`] pan peer.
+    struct PanExternal {
+        calls: Arc<Mutex<Vec<PanCall>>>,
+        consume: bool,
+    }
+
+    impl PanExternal {
+        fn new(consume: bool) -> (Self, Arc<Mutex<Vec<PanCall>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: Arc::clone(&calls),
+                    consume,
+                },
+                calls,
+            )
+        }
+    }
+
+    impl std::fmt::Debug for PanExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("PanExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for PanExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn pan_gesture(
+            &mut self,
+            x_rel: f32,
+            y_rel: f32,
+            delta_x: f32,
+            delta_y: f32,
+            phase: GesturePhase,
+            modifiers: Modifiers,
+        ) -> bool {
+            self.calls
+                .lock()
+                .expect("mutex poisoned")
+                .push((x_rel, y_rel, delta_x, delta_y, phase, modifiers));
+            self.consume
+        }
+    }
+
+    #[test]
+    fn r1434_pan_gesture_offered_to_hovered_external() {
+        // The External the cursor hovers receives the pan: coordinates
+        // normalised over its rect (cursor (100, 90) over rect 80..120 → rel
+        // (0.5, 0.25)), BOTH delta axes + phase + modifiers forwarded verbatim
+        // (the delta keeps the platform's sign — a pan is direct manipulation,
+        // not a sign-flipped scroll command), and the consume verdict returned.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = PanExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::empty()
+        };
+        assert!(router.pan_gesture(
+            PointerId::MOUSE,
+            12.0,
+            -7.5,
+            GesturePhase::Update,
+            shift,
+            &mut state_scene,
+        ));
+        // A native gesture never touches the scroll fallback (there is none) —
+        // the one behaviour that separates this from the wheel path.
+        assert_eq!(scroll.offset(), (0, 0), "pan must not scroll");
+        let recorded = calls.lock().expect("mutex poisoned").clone();
+        assert_eq!(recorded.len(), 1);
+        let (x_rel, y_rel, delta_x, delta_y, phase, mods) = recorded[0];
+        assert!((x_rel - 0.5).abs() < 1e-6, "x_rel {x_rel}");
+        assert!((y_rel - 0.25).abs() < 1e-6, "y_rel {y_rel}");
+        assert!((delta_x - 12.0).abs() < 1e-6, "delta_x {delta_x}");
+        assert!((delta_y + 7.5).abs() < 1e-6, "delta_y {delta_y}");
+        assert_eq!(phase, GesturePhase::Update);
+        assert!(mods.shift_key(), "shift modifier must reach the External");
+    }
+
+    #[test]
+    fn r1434_pan_gesture_off_target_is_noop() {
+        // With the cursor over no tagged widget (10, 10 is outside the 80..120
+        // button), the pan resolves no target and is a clean no-op — false,
+        // nothing recorded. The guard the three gestures now share
+        // (`hovered_gesture_target`) is what makes this uniform.
+        let scroll = Rc::new(ScrollState::new());
+        let (ext, calls) = PanExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(scroll, None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state_scene);
+        assert!(
+            !router.pan_gesture(
+                PointerId::MOUSE,
+                10.0,
+                10.0,
+                GesturePhase::Begin,
+                Modifiers::empty(),
+                &mut state_scene,
+            ),
+            "no hovered target → no consume"
+        );
+        assert!(
+            calls.lock().expect("mutex poisoned").is_empty(),
+            "no target → no offer"
+        );
+    }
+
+    #[test]
+    fn r1434_native_pan_gesture_does_not_touch_the_drag_pan_latch() {
+        // The R1434 rename's substance: the native pan axis and the held-button
+        // DRAG pan (`DragPan`, reported by `drag_pan_in_flight`) are unrelated
+        // state. A native pan mid-flight must leave the drag latch exactly as it
+        // found it — before R1434 the two shared a name, which is the confusion
+        // this asserts can never become behaviour.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, _calls) = PanExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        assert!(
+            !router.drag_pan_in_flight(PointerId::MOUSE),
+            "no press yet → no drag latch"
+        );
+        assert!(router.pan_gesture(
+            PointerId::MOUSE,
+            25.0,
+            0.0,
+            GesturePhase::Begin,
+            Modifiers::empty(),
+            &mut state_scene,
+        ));
+        assert!(
+            !router.drag_pan_in_flight(PointerId::MOUSE),
+            "a native pan gesture must not open a drag-pan latch"
         );
     }
 

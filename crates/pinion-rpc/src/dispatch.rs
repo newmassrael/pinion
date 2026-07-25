@@ -947,6 +947,25 @@ pub enum DeferredInput {
         rotation: f64,
         phase: GesturePhase,
     },
+    /// R1434 §5.35 §5.15 — `scene/pan_gesture` injection: a native N-finger PAN
+    /// gesture at `(x, y)`, the [`Self::PinchGesture`] sibling with a
+    /// TWO-dimensional `(delta_x, delta_y)` in logical pixels in place of a
+    /// single scalar. The embedder applies `cursor_moved(x, y)` then offers the
+    /// incremental delta + lifecycle `phase` to the widget under the cursor —
+    /// the same arc a native winit `WindowEvent::PanGesture` takes.
+    /// Position-BEARING (like [`Self::PinchGesture`]): a native gesture targets
+    /// whatever the cursor hovers, so the AI names the viewport by the cursor.
+    /// Held modifiers ride the R763 out-of-band [`Self::SetModifiers`] cache,
+    /// read inside the seam like the pinch path. The AI-first source for a
+    /// pannable map / canvas (§2 #2), so no trackpad is required to exercise a
+    /// pan headless.
+    PanGesture {
+        x: f64,
+        y: f64,
+        delta_x: f32,
+        delta_y: f32,
+        phase: GesturePhase,
+    },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -2324,6 +2343,27 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
                 handle_scene_rotation_gesture(
+                    inbox,
+                    producer,
+                    last_paint_scene,
+                    request.params.as_ref(),
+                ),
+                HandlerKind::Read,
+            )
+        }
+        "scene/pan_gesture" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_pan_gesture(
                     inbox,
                     producer,
                     last_paint_scene,
@@ -4024,15 +4064,7 @@ where
         .get("magnification")
         .and_then(Value::as_f64)
         .ok_or_else(|| RpcError::invalid_params("params.magnification must be a number"))?;
-    let phase_name = params
-        .get("phase")
-        .and_then(Value::as_str)
-        .ok_or_else(|| RpcError::invalid_params("params.phase must be a string"))?;
-    let phase = GesturePhase::from_wire_name(phase_name).ok_or_else(|| {
-        RpcError::invalid_params(format!(
-            "params.phase must be one of begin / update / end / cancel, got {phase_name:?}"
-        ))
-    })?;
+    let phase = parse_gesture_phase(params)?;
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
     inbox.push(DeferredInput::PinchGesture {
         x,
@@ -4075,20 +4107,90 @@ where
         .get("rotation")
         .and_then(Value::as_f64)
         .ok_or_else(|| RpcError::invalid_params("params.rotation must be a number"))?;
-    let phase_name = params
-        .get("phase")
-        .and_then(Value::as_str)
-        .ok_or_else(|| RpcError::invalid_params("params.phase must be a string"))?;
-    let phase = GesturePhase::from_wire_name(phase_name).ok_or_else(|| {
-        RpcError::invalid_params(format!(
-            "params.phase must be one of begin / update / end / cancel, got {phase_name:?}"
-        ))
-    })?;
+    let phase = parse_gesture_phase(params)?;
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
     inbox.push(DeferredInput::RotationGesture {
         x,
         y,
         rotation,
+        phase,
+    });
+    Ok(Value::Null)
+}
+
+/// R1434 §5.35 — the `phase` param every native-gesture method carries, parsed
+/// once. `scene/pinch_gesture` / `scene/rotation_gesture` / `scene/pan_gesture`
+/// share one lifecycle vocabulary (`begin` / `update` / `end` / `cancel`), so
+/// they share one decode and one rejection message: an out-of-vocabulary,
+/// missing, or non-string phase is `invalid_params`, never a silent default —
+/// the arc bracket is what makes `cancel` mean "discard", so a typo must not
+/// quietly become `begin`. Lifted when the pan axis made this its third verbatim
+/// copy; the per-gesture PAYLOAD parse stays in each handler, where its units
+/// belong.
+fn parse_gesture_phase(params: &Value) -> Result<GesturePhase, RpcError> {
+    let phase_name = params
+        .get("phase")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.phase must be a string"))?;
+    GesturePhase::from_wire_name(phase_name).ok_or_else(|| {
+        RpcError::invalid_params(format!(
+            "params.phase must be one of begin / update / end / cancel, got {phase_name:?}"
+        ))
+    })
+}
+
+/// R1434 §5.35 §5.15 — `scene/pan_gesture` typed dispatcher, the
+/// [`handle_scene_pinch_gesture`] sibling with a two-dimensional delta in place
+/// of a single scalar.
+///
+/// Params: `{at: {x, y}} | {path: "<tag>"}` (the cursor the gesture targets) +
+/// `{delta_x: f64, delta_y: f64, phase: "begin" | "update" | "end" | "cancel"}`.
+/// The two delta axes are flat named params (the `scene/pointer_tilt` shape),
+/// each rejecting on its own so a typo names the axis it broke.
+///
+/// Enqueues a single [`DeferredInput::PanGesture`]; the embedder drains it after
+/// `dispatch` returns and applies `cursor_moved(x, y)` then the pan offer, so the
+/// [`InputRouter`](pinion_runtime::InputRouter) hands it to the widget under the
+/// cursor exactly as a native trackpad pan would. Returns `null` on success; a
+/// delta axis that is not a number, or a `phase` outside the vocabulary /
+/// missing / non-string, rejects `invalid_params` so a typo surfaces at the
+/// call. The AI-first source for a pannable map / canvas (§2 #2) — no trackpad
+/// required, the offset drivable + introspectable headless.
+fn handle_scene_pan_gesture<F>(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a pan delta in logical pixels loses no meaningful precision as f32, the unit the External hook and the wheel's pixel delta both carry"
+    )]
+    let axis = |key: &str| -> Result<f32, RpcError> {
+        params
+            .get(key)
+            .and_then(Value::as_f64)
+            .map(|v| v as f32)
+            .ok_or_else(|| {
+                RpcError::invalid_params(format!("params.{key} must be a number (logical pixels)"))
+            })
+    };
+    let delta_x = axis("delta_x")?;
+    let delta_y = axis("delta_y")?;
+    let phase = parse_gesture_phase(params)?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
+    inbox.push(DeferredInput::PanGesture {
+        x,
+        y,
+        delta_x,
+        delta_y,
         phase,
     });
     Ok(Value::Null)

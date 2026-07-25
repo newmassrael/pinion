@@ -1094,6 +1094,44 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params["path"] = path
         self.request("scene/rotation_gesture", params)
 
+    def pan_gesture(
+        self,
+        delta_x: float,
+        delta_y: float,
+        phase: str,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+    ) -> None:
+        """`scene/pan_gesture` typed wrapper (R1434 §5.35 §5.15).
+
+        Drive a native N-finger PAN gesture — the Qt `QNativeGestureEvent`
+        `PanNativeGesture` peer, the `pinch_gesture` sibling with a
+        two-dimensional delta — at the cursor target. Supply exactly one of
+        `at = (x, y)` or `path = "<tag>"` (the widget under the cursor receives
+        the offer). `delta_x` / `delta_y` are the INCREMENTAL pan in LOGICAL
+        pixels, carrying the platform's own sign (a pan is direct manipulation:
+        the content follows the fingers, unlike the sign-flipped `wheel()`
+        scroll command); `phase` brackets the arc, one of ``"begin"`` /
+        ``"update"`` / ``"end"`` / ``"cancel"``. The shell drains the inbox
+        after this returns, applying `cursor_moved` then the pan offer. winit
+        exposes no trackpad headless, so this RPC is the sole driver (§2 #2);
+        follow up with `query(...)` / `snapshot(...)` to observe the slide.
+        """
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        params: dict[str, Any] = {
+            "delta_x": float(delta_x),
+            "delta_y": float(delta_y),
+            "phase": phase,
+        }
+        if at is not None:
+            params["at"] = {"x": float(at[0]), "y": float(at[1])}
+        else:
+            assert path is not None
+            params["path"] = path
+        self.request("scene/pan_gesture", params)
+
     def scroll(
         self,
         path: str,

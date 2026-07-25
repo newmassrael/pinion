@@ -2542,7 +2542,7 @@ impl<V: WidgetCore> CoreShell<V> {
             router.left_pan_down(pid);
             return None;
         }
-        if router.pan_gesture_in_flight(pid) {
+        if router.drag_pan_in_flight(pid) {
             // The routed press is swallowed (and same-button-counted)
             // inside `pointer_down`; dispatch it so the router's
             // bookkeeping runs, then report the press as consumed.
@@ -3060,6 +3060,52 @@ impl<V: WidgetCore> CoreShell<V> {
             DEFAULT_WINDOW,
             pid,
             rotation,
+            phase,
+            modifiers,
+        )
+    }
+
+    /// R1434 §5.35 — native PAN gesture into the addressed window, the
+    /// [`Self::pinch_gesture_with_modifiers_for_window`] /
+    /// [`Self::rotation_gesture_with_modifiers_for_window`] sibling with a
+    /// two-dimensional `(delta_x, delta_y)` in logical pixels in place of a
+    /// single scalar: the Qt `QNativeGestureEvent` `PanNativeGesture` peer.
+    /// Offer the incremental delta + lifecycle `phase` to the
+    /// [`External`](pinion_core::external::External) under the cursor, carrying
+    /// the held `modifiers`. Like the pinch there is NO `WidgetCore::apply_wheel`
+    /// GUI-side pre-hook and NO `Scene::Scroll` fallback — a native gesture
+    /// reaches only the hovered widget, so the one router leg is the whole
+    /// dispatch. Returns `(DispatchTail, consumed)`.
+    pub fn pan_gesture_with_modifiers_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        delta_x: f32,
+        delta_y: f32,
+        phase: pinion_core::GesturePhase,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        let consumed = router.pan_gesture(pid, delta_x, delta_y, phase, modifiers, scene);
+        (self.tail(), consumed)
+    }
+
+    /// R1434 §5.35 — [`DEFAULT_WINDOW`] convenience over
+    /// [`Self::pan_gesture_with_modifiers_for_window`].
+    pub fn pan_gesture(
+        &mut self,
+        pid: PointerId,
+        delta_x: f32,
+        delta_y: f32,
+        phase: pinion_core::GesturePhase,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        self.pan_gesture_with_modifiers_for_window(
+            DEFAULT_WINDOW,
+            pid,
+            delta_x,
+            delta_y,
             phase,
             modifiers,
         )

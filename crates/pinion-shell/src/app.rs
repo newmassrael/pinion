@@ -3246,6 +3246,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // Resumed event landing before the slot is inserted), which is the
         // pre-R1027 behaviour.
         let scale = self.windows.get(&window_id).map_or(1.0, |s| s.scale_factor);
+        // R1434 §5.35 §5.15 — the native trackpad gestures (Qt
+        // `QNativeGestureEvent`: pinch / rotation / pan) dispatch ahead of the
+        // main match through one sub-dispatcher, so this function stays under
+        // the line cap as the gesture set grows — the same shape the TUI drain's
+        // `try_drain_native_gesture` takes (§2 #6), and an extract rather than an
+        // `#[allow(too_many_lines)]`. `&event` ends its borrow before the match
+        // takes ownership below.
+        if try_forward_native_gesture(&mut self.core, spec_id, &event, scale) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => {
                 // R1170 §5.16 — per-window close seam: offer the close to the
@@ -3330,16 +3340,6 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 let pinion_delta = winit_wheel_to_pinion(delta, scale);
                 self.core
                     .wheel_for_window(spec_id, PointerId::MOUSE, pinion_delta);
-            }
-            // R1432 §5.35 §5.15 — winit `PinchGesture` (macOS / iOS trackpad
-            // magnify); forwarded through `forward_pinch_gesture`.
-            WindowEvent::PinchGesture { delta, phase, .. } => {
-                forward_pinch_gesture(&mut self.core, spec_id, delta, phase);
-            }
-            // R1433 §5.35 §5.15 — winit `RotationGesture` (macOS / iOS trackpad
-            // twist), the pinch sibling; forwarded through `forward_rotation_gesture`.
-            WindowEvent::RotationGesture { delta, phase, .. } => {
-                forward_rotation_gesture(&mut self.core, spec_id, delta, phase);
             }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
@@ -4015,6 +4015,38 @@ fn winit_gesture_phase_to_pinion(phase: winit::event::TouchPhase) -> pinion_core
     }
 }
 
+/// R1434 §5.35 §5.15 — dispatch the winit native trackpad gestures (Qt
+/// `QNativeGestureEvent`: pinch / rotation / pan) off `window_event`'s main
+/// match: `true` when `event` was one of them (the caller is done), `false`
+/// otherwise (the caller falls through to the general match). Mirrors the TUI
+/// drain's `try_drain_native_gesture` sub-dispatcher, so both backends group the
+/// gesture family the same way (§2 #6) and each backend's giant dispatcher stays
+/// under the line ceiling as the family grows — an extract, never an
+/// `#[allow(too_many_lines)]`.
+///
+/// Every gesture's payload fields are `Copy`, so matching through the reference
+/// moves nothing out of `event` and the caller keeps ownership for its match.
+fn try_forward_native_gesture<V: WidgetView>(
+    core: &mut ShellCore<V>,
+    spec_id: &str,
+    event: &WindowEvent,
+    scale: f64,
+) -> bool {
+    match *event {
+        WindowEvent::PinchGesture { delta, phase, .. } => {
+            forward_pinch_gesture(core, spec_id, delta, phase);
+        }
+        WindowEvent::RotationGesture { delta, phase, .. } => {
+            forward_rotation_gesture(core, spec_id, delta, phase);
+        }
+        WindowEvent::PanGesture { delta, phase, .. } => {
+            forward_pan_gesture(core, spec_id, delta, phase, scale);
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// R1432 §5.35 §5.15 — forward a winit `PinchGesture` (macOS / iOS trackpad
 /// magnify) into the addressed window's `ShellCore` seam. Lifted off
 /// `window_event`'s dispatch match so that giant function stays under the line
@@ -4055,6 +4087,38 @@ fn forward_rotation_gesture<V: WidgetView>(
         spec_id,
         PointerId::MOUSE,
         f64::from(delta),
+        winit_gesture_phase_to_pinion(phase),
+    );
+}
+
+/// R1434 §5.35 §5.15 — forward a winit `PanGesture` (N-finger trackpad / touch
+/// pan), the [`forward_pinch_gesture`] sibling with a 2D delta. Unlike the
+/// unitless magnification and the degrees of a rotation, a pan delta is in
+/// PIXELS, and winit reports physical ones — so this converts to logical
+/// through the shared `winit_pointer_to_logical`, exactly as the `MouseWheel`
+/// pixel path and `CursorMoved` do, and the widget's offset math stays in the
+/// one logical coordinate world the rest of the scene lives in. The sign is
+/// forwarded as the platform reports it (a pan is direct manipulation), NOT
+/// flipped the way `winit_wheel_to_pinion` flips a scroll command. On non-iOS
+/// platforms the variant never fires; the `scene/pan_gesture` RPC is the sole
+/// driver there (§2 #2).
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a logical-pixel pan delta loses no meaningful precision as f32, the unit the External hook carries"
+)]
+fn forward_pan_gesture<V: WidgetView>(
+    core: &mut ShellCore<V>,
+    spec_id: &str,
+    delta: PhysicalPosition<f32>,
+    phase: winit::event::TouchPhase,
+    scale: f64,
+) {
+    let (lx, ly) = winit_pointer_to_logical(delta.cast(), scale);
+    core.pan_gesture_for_window(
+        spec_id,
+        PointerId::MOUSE,
+        lx as f32,
+        ly as f32,
         winit_gesture_phase_to_pinion(phase),
     );
 }

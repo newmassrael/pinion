@@ -3105,6 +3105,85 @@ fn r1433_scene_rotation_gesture_rejects_bad_phase_and_missing_fields() {
 }
 
 #[test]
+fn r1434_scene_pan_gesture_enqueues_both_delta_axes_and_phase() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/pan_gesture","params":{"at":{"x":120.0,"y":90.0},"delta_x":18.0,"delta_y":-6.5,"phase":"update"},"id":302}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::PanGesture {
+        x,
+        y,
+        delta_x,
+        delta_y,
+        phase,
+    } = inbox[0]
+    else {
+        panic!("expected PanGesture variant, got {:?}", inbox[0]);
+    };
+    assert!((x - 120.0).abs() < f64::EPSILON);
+    assert!((y - 90.0).abs() < f64::EPSILON);
+    // Both axes survive independently, negatives included — a pan is 2D and its
+    // sign is the platform's, never flipped like the wheel's.
+    assert!((delta_x - 18.0).abs() < f32::EPSILON);
+    assert!((delta_y + 6.5).abs() < f32::EPSILON);
+    assert_eq!(phase, pinion_core::GesturePhase::Update);
+}
+
+#[test]
+fn r1434_scene_pan_gesture_rejects_bad_phase_and_missing_axes() {
+    // Every malformed shape rejects invalid_params (-32602) and enqueues
+    // nothing, so a typo surfaces at the call instead of a silent default. Each
+    // delta axis is required on its own — a pan with only one axis is a caller
+    // bug, not an implied zero.
+    for (params, why) in [
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"delta_x":1.0,"delta_y":1.0,"phase":"started"}"#,
+            "unknown phase",
+        ),
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"delta_x":1.0,"delta_y":1.0,"phase":42}"#,
+            "non-string phase",
+        ),
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"delta_y":1.0,"phase":"begin"}"#,
+            "missing delta_x",
+        ),
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"delta_x":1.0,"phase":"begin"}"#,
+            "missing delta_y",
+        ),
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"delta_x":"1.0","delta_y":1.0,"phase":"begin"}"#,
+            "non-numeric delta_x",
+        ),
+        (
+            r#"{"at":{"x":10.0,"y":10.0},"delta_x":1.0,"delta_y":1.0}"#,
+            "missing phase",
+        ),
+    ] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req =
+            format!(r#"{{"jsonrpc":"2.0","method":"scene/pan_gesture","params":{params},"id":1}}"#);
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_some(), "{why} should reject");
+        assert_eq!(resp.error.unwrap().code, -32602, "{why}");
+        assert!(inbox.is_empty(), "{why}: nothing enqueued");
+    }
+}
+
+#[test]
 fn scene_wheel_without_inbox_is_unavailable() {
     let mut scene = counted_scene(0);
     let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":0.0,"y":0.0},"delta":{"lines":{"dx":0.0,"dy":1.0}}},"id":202}"#;
