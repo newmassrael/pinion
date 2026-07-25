@@ -3184,6 +3184,67 @@ fn r1434_scene_pan_gesture_rejects_bad_phase_and_missing_axes() {
 }
 
 #[test]
+fn r1435_scene_smart_zoom_gesture_enqueues_the_anchor_only() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/smart_zoom_gesture","params":{"at":{"x":120.0,"y":90.0}},"id":303}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::SmartZoomGesture { x, y } = inbox[0] else {
+        panic!("expected SmartZoomGesture variant, got {:?}", inbox[0]);
+    };
+    assert!((x - 120.0).abs() < f64::EPSILON);
+    assert!((y - 90.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn r1435_scene_smart_zoom_gesture_needs_a_target_but_no_phase() {
+    // The gesture is phase-less and payload-less, so the ONLY thing that can be
+    // malformed is the target. Params missing entirely, and an `at` that is not
+    // a point, both reject -32602 and enqueue nothing.
+    for (params, why) in [
+        (r"{}", "no target at all"),
+        (r#"{"at":{"x":10.0}}"#, "at missing y"),
+        (r#"{"path":42}"#, "non-string path"),
+    ] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/smart_zoom_gesture","params":{params},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_some(), "{why} should reject");
+        assert_eq!(resp.error.unwrap().code, -32602, "{why}");
+        assert!(inbox.is_empty(), "{why}: nothing enqueued");
+    }
+    // A `phase` key is not rejected — it is simply ignored. Inventing a
+    // lifecycle to validate would advertise an arc this gesture does not have.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/smart_zoom_gesture","params":{"at":{"x":1.0,"y":2.0},"phase":"begin"},"id":2}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(
+        resp.error.is_none(),
+        "a stray phase key is ignored, not an error"
+    );
+    assert_eq!(inbox.len(), 1);
+}
+
+#[test]
 fn scene_wheel_without_inbox_is_unavailable() {
     let mut scene = counted_scene(0);
     let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":0.0,"y":0.0},"delta":{"lines":{"dx":0.0,"dy":1.0}}},"id":202}"#;

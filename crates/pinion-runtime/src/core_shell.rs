@@ -3111,6 +3111,36 @@ impl<V: WidgetCore> CoreShell<V> {
         )
     }
 
+    /// R1435 §5.35 — native SMART-ZOOM gesture into the addressed window, the
+    /// phase-less member of the gesture family (Qt `SmartZoomNativeGesture` /
+    /// winit `DoubleTapGesture`): one completed toggle delivered to the
+    /// [`External`](pinion_core::external::External) under the cursor, carrying
+    /// the held `modifiers`. No payload and no lifecycle — the cursor anchor is
+    /// what makes it "smart" (it selects the object to fit). Like its siblings
+    /// there is no GUI-side pre-hook and no `Scene::Scroll` fallback. Returns
+    /// `(DispatchTail, consumed)`.
+    pub fn smart_zoom_gesture_with_modifiers_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        let Self { scene, routers, .. } = self;
+        let router = router_for(routers, window_id);
+        let consumed = router.smart_zoom_gesture(pid, modifiers, scene);
+        (self.tail(), consumed)
+    }
+
+    /// R1435 §5.35 — [`DEFAULT_WINDOW`] convenience over
+    /// [`Self::smart_zoom_gesture_with_modifiers_for_window`].
+    pub fn smart_zoom_gesture(
+        &mut self,
+        pid: PointerId,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        self.smart_zoom_gesture_with_modifiers_for_window(DEFAULT_WINDOW, pid, modifiers)
+    }
+
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch.
     ///
     /// Forwards a W3C `KeyboardEvent.key` string into

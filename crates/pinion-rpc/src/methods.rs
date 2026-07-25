@@ -155,6 +155,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/set_theme_mode", MethodOcc::Mutate),
     ("scene/set_theme_palettes", MethodOcc::Mutate),
     ("scene/simulate", MethodOcc::Read),
+    ("scene/smart_zoom_gesture", MethodOcc::Read),
     ("scene/snapshot", MethodOcc::Read),
     ("scene/text_state", MethodOcc::Read),
     ("scene/theme_tokens", MethodOcc::Read),
@@ -345,16 +346,17 @@ mod tests {
         // `occ: Read` (deferred / async / out-of-OCC), so a consumer must
         // not read `Read` as "side-effect-free".
         for effecting_read in [
-            "scene/window_move",      // async — move lands on reconcile
-            "scene/window_focus",     // out-of-band OS-focus gate/mirror drive
-            "scene/key",              // deferred input
-            "scene/wheel",            // deferred input
-            "scene/pinch_gesture",    // deferred input
-            "scene/rotation_gesture", // deferred input
-            "scene/pan_gesture",      // deferred input
-            "scene/resize",           // async resize
-            "focus/set",              // focus is out of OCC scope
-            "scene/apply_preview",    // self-bumping
+            "scene/window_move",        // async — move lands on reconcile
+            "scene/window_focus",       // out-of-band OS-focus gate/mirror drive
+            "scene/key",                // deferred input
+            "scene/wheel",              // deferred input
+            "scene/pinch_gesture",      // deferred input
+            "scene/rotation_gesture",   // deferred input
+            "scene/pan_gesture",        // deferred input
+            "scene/smart_zoom_gesture", // deferred input
+            "scene/resize",             // async resize
+            "focus/set",                // focus is out of OCC scope
+            "scene/apply_preview",      // self-bumping
         ] {
             assert_eq!(
                 RPC_METHODS

@@ -1132,6 +1132,39 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params["path"] = path
         self.request("scene/pan_gesture", params)
 
+    def smart_zoom_gesture(
+        self,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+    ) -> None:
+        """`scene/smart_zoom_gesture` typed wrapper (R1435 §5.35 §5.15).
+
+        Drive a native SMART-ZOOM — the two-finger double tap, Qt
+        `QNativeGestureEvent` `SmartZoomNativeGesture` / winit
+        `DoubleTapGesture` — at the cursor target. Supply exactly one of
+        `at = (x, y)` or `path = "<tag>"`.
+
+        The family's PHASE-LESS member: unlike `pinch_gesture()` /
+        `rotation_gesture()` / `pan_gesture()` there is no payload and no
+        ``phase`` — the platform reports one completed toggle, so each call is
+        one committed state change with no arc to bracket. The anchor is the
+        entire payload (it selects the object to fit), which is why the target
+        is the only argument. Not to be confused with `double_click()`: that is
+        two mouse press/release cycles, this is a buttonless trackpad gesture.
+        The shell drains the inbox after this returns, applying `cursor_moved`
+        then the offer; follow up with `query(...)` / `snapshot(...)`.
+        """
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        params: dict[str, Any] = {}
+        if at is not None:
+            params["at"] = {"x": float(at[0]), "y": float(at[1])}
+        else:
+            assert path is not None
+            params["path"] = path
+        self.request("scene/smart_zoom_gesture", params)
+
     def scroll(
         self,
         path: str,

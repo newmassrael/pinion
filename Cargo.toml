@@ -204,6 +204,7 @@ members = [
     "examples/hello-pagination",
     "examples/hello-pan-gesture",
     "examples/hello-pinch-zoom",
+    "examples/hello-smart-zoom",
     "examples/hello-rotate-gesture",
 ]
 exclude = ["vendor/sce"]

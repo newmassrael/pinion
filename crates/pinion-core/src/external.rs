@@ -1528,6 +1528,49 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R1435 §5.35 §5.15 — native SMART-ZOOM gesture, the last member of the
+    /// native-gesture family and the one shaped unlike the others: the Qt
+    /// `QNativeGestureEvent` `SmartZoomNativeGesture` / macOS
+    /// `smartMagnifyWithEvent:` / winit `WindowEvent::DoubleTapGesture` peer — a
+    /// two-finger double tap that a document view reads to zoom the *object*
+    /// under the cursor to fit, and to restore when tapped again.
+    ///
+    /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect the
+    ///   [`pinch_gesture`](Self::pinch_gesture) / [`wheel`](Self::wheel) hooks
+    ///   use. This is the whole payload, and it is not incidental: the "smart"
+    ///   in smart-zoom is that the anchor SELECTS what to fit (the paragraph,
+    ///   the cell, the node under the finger), so a widget that ignores it has
+    ///   implemented a plain zoom toggle, not this gesture.
+    /// * `modifiers` — the held keyboard modifiers (the same out-of-band cache
+    ///   the other gestures read).
+    ///
+    /// **DISCRETE, not an arc**: unlike [`pinch_gesture`](Self::pinch_gesture) /
+    /// [`rotation_gesture`](Self::rotation_gesture) / [`pan_gesture`](Self::pan_gesture)
+    /// there is no [`GesturePhase`] and no incremental delta — the platform
+    /// reports one completed toggle, so there is nothing to accumulate and
+    /// nothing a `Cancel` could discard. Each call is one committed state
+    /// change; a widget toggles rather than integrates.
+    ///
+    /// Return `true` to consume the gesture, `false` (default) to decline — the
+    /// same consume contract as the sibling gestures, with no default action to
+    /// fall through to. Note this is NOT the pointer double-click (`scene/double_click`,
+    /// two press/release cycles): that is a mouse-button event with a click
+    /// count, this is a trackpad gesture with no button at all.
+    ///
+    /// The native source is the platform trackpad (winit
+    /// `WindowEvent::DoubleTapGesture`, macOS 10.8+ / iOS); the AI-first source
+    /// is the `scene/smart_zoom_gesture` RPC (§2 #2), so a fit-to-view surface is
+    /// drivable and introspectable headless with no trackpad. Default no-op;
+    /// only a widget with a zoom-to-fit notion overrides.
+    fn smart_zoom_gesture(
+        &mut self,
+        _x_rel: f32,
+        _y_rel: f32,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
+        false
+    }
+
     /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
     /// forwarding leg the pointer hooks left open). The framework's
     /// [`InputRouter`](crate#) offers a wheel event to the `External`

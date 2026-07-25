@@ -4042,6 +4042,12 @@ fn try_forward_native_gesture<V: WidgetView>(
         WindowEvent::PanGesture { delta, phase, .. } => {
             forward_pan_gesture(core, spec_id, delta, phase, scale);
         }
+        // R1435 §5.35 §5.15 — winit `DoubleTapGesture` (macOS smart-magnify /
+        // iOS), the family's phase-less member: no delta and no `TouchPhase` to
+        // convert, so the arm forwards nothing but the window.
+        WindowEvent::DoubleTapGesture { .. } => {
+            core.smart_zoom_gesture_for_window(spec_id, PointerId::MOUSE);
+        }
         _ => return false,
     }
     true

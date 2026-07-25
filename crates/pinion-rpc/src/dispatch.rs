@@ -966,6 +966,18 @@ pub enum DeferredInput {
         delta_y: f32,
         phase: GesturePhase,
     },
+    /// R1435 §5.35 §5.15 — `scene/smart_zoom_gesture` injection: a native
+    /// SMART-ZOOM (two-finger double tap) at `(x, y)`. The embedder applies
+    /// `cursor_moved(x, y)` then offers the toggle to the widget under the
+    /// cursor — the same arc a native winit `WindowEvent::DoubleTapGesture`
+    /// takes. Position-BEARING and position-ONLY: the family's other members
+    /// carry a delta and a [`GesturePhase`], this one carries neither, because
+    /// the platform reports a single completed toggle and the anchor is what
+    /// selects the object to fit. Held modifiers ride the R763 out-of-band
+    /// [`Self::SetModifiers`] cache. Not to be confused with
+    /// [`Self::DoubleClick`] — that is two mouse press/release cycles, this is a
+    /// buttonless trackpad gesture.
+    SmartZoomGesture { x: f64, y: f64 },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -2364,6 +2376,27 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
                 handle_scene_pan_gesture(
+                    inbox,
+                    producer,
+                    last_paint_scene,
+                    request.params.as_ref(),
+                ),
+                HandlerKind::Read,
+            )
+        }
+        "scene/smart_zoom_gesture" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_smart_zoom_gesture(
                     inbox,
                     producer,
                     last_paint_scene,
@@ -4193,6 +4226,42 @@ where
         delta_y,
         phase,
     });
+    Ok(Value::Null)
+}
+
+/// R1435 §5.35 §5.15 — `scene/smart_zoom_gesture` typed dispatcher, the
+/// family's phase-less member.
+///
+/// Params: `{at: {x, y}} | {path: "<tag>"}` — and nothing else. Where the pinch
+/// / rotation / pan handlers each parse a payload and a `phase`, this one has
+/// neither to parse: the platform reports a single completed toggle, and the
+/// anchor IS the payload (it selects the object to fit). A caller that passes a
+/// `phase` or a delta is simply passing an ignored key, which is the honest
+/// shape — inventing a phase to reject would advertise a lifecycle the gesture
+/// does not have.
+///
+/// Enqueues a single [`DeferredInput::SmartZoomGesture`]; the embedder drains it
+/// after `dispatch` returns and applies `cursor_moved(x, y)` then the smart-zoom
+/// offer, so the [`InputRouter`](pinion_runtime::InputRouter) hands it to the
+/// widget under the cursor exactly as a native trackpad double tap would.
+/// Returns `null` on success; a missing / malformed `at`-or-`path` rejects
+/// `invalid_params`. The AI-first source for a fit-to-view surface (§2 #2) — no
+/// trackpad required, the zoom state drivable + introspectable headless.
+fn handle_scene_smart_zoom_gesture<F>(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
+    inbox.push(DeferredInput::SmartZoomGesture { x, y });
     Ok(Value::Null)
 }
 

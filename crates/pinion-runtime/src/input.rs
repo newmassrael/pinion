@@ -2173,6 +2173,33 @@ impl InputRouter {
         )
     }
 
+    /// R1435 §5.35 §5.15 — offer a native SMART-ZOOM gesture to the widget under
+    /// pointer `id`'s cursor: the Qt `SmartZoomNativeGesture` / winit
+    /// `DoubleTapGesture` peer. The family's phase-less member — one completed
+    /// toggle, no arc to bracket and no delta to accumulate — so the cursor
+    /// anchor and the modifiers are the whole offer. Same offer-to-hovered-only
+    /// delivery as its siblings (no `Scene::Scroll` fallback). Returns `true` if
+    /// the widget consumed it.
+    ///
+    /// Distinct from the pointer double-click path (two press/release cycles
+    /// through the router's pointer-button arms): that is a button event with a
+    /// click count, this is a buttonless trackpad gesture.
+    ///
+    /// No-op (`false`) under the same router-state guards the sibling gestures
+    /// check: no stored cursor for `id`, no retained paint scene, or no hover
+    /// target covering the cursor.
+    pub fn smart_zoom_gesture(
+        &mut self,
+        id: PointerId,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> bool {
+        let Some((paint, target_tag, cursor)) = self.hovered_gesture_target(id) else {
+            return false;
+        };
+        offer_smart_zoom_to_external(paint, state_scene, &target_tag, cursor, modifiers)
+    }
+
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll input dispatch.
     ///
     /// Routes a W3C `KeyboardEvent.key` string into the deepest
@@ -3530,6 +3557,24 @@ fn offer_pan_to_external(
 ) -> bool {
     offer_to_hovered_external(paint, state_scene, target_tag, cursor, |h, x_rel, y_rel| {
         h.pan_gesture(x_rel, y_rel, delta.0, delta.1, phase, modifiers)
+    })
+}
+
+/// R1435 §5.35 — the External-offer leg for a native SMART-ZOOM gesture, the
+/// phase-less member of the family: the anchor IS the payload (it selects what
+/// to fit), so this offer forwards nothing but the resolved coordinates and the
+/// modifiers. The emptiest possible use of [`offer_to_hovered_external`] —
+/// where [`offer_pan_to_external`] proved the closure carries a two-axis
+/// payload, this proves it carries none.
+fn offer_smart_zoom_to_external(
+    paint: &Scene,
+    state_scene: &mut Scene,
+    target_tag: &str,
+    cursor: (f64, f64),
+    modifiers: Modifiers,
+) -> bool {
+    offer_to_hovered_external(paint, state_scene, target_tag, cursor, |h, x_rel, y_rel| {
+        h.smart_zoom_gesture(x_rel, y_rel, modifiers)
     })
 }
 
@@ -7177,6 +7222,118 @@ mod tests {
         assert!(
             !router.drag_pan_in_flight(PointerId::MOUSE),
             "a native pan gesture must not open a drag-pan latch"
+        );
+    }
+
+    /// R1435 — one recorded [`External::smart_zoom_gesture`] offer: the anchor
+    /// and the modifiers, and nothing else. The family's phase-less member, so
+    /// the tuple is the SHORTEST of the four — the other end of the payload
+    /// range `offer_to_hovered_external`'s closure has to span.
+    type SmartZoomCall = (f32, f32, Modifiers);
+
+    /// Records every [`External::smart_zoom_gesture`] call; consumes (returns
+    /// `true`) iff `consume` is set.
+    struct SmartZoomExternal {
+        calls: Arc<Mutex<Vec<SmartZoomCall>>>,
+        consume: bool,
+    }
+
+    impl SmartZoomExternal {
+        fn new(consume: bool) -> (Self, Arc<Mutex<Vec<SmartZoomCall>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: Arc::clone(&calls),
+                    consume,
+                },
+                calls,
+            )
+        }
+    }
+
+    impl std::fmt::Debug for SmartZoomExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("SmartZoomExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for SmartZoomExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn smart_zoom_gesture(&mut self, x_rel: f32, y_rel: f32, modifiers: Modifiers) -> bool {
+            self.calls
+                .lock()
+                .expect("mutex poisoned")
+                .push((x_rel, y_rel, modifiers));
+            self.consume
+        }
+    }
+
+    #[test]
+    fn r1435_smart_zoom_gesture_offered_to_hovered_external() {
+        // The External the cursor hovers receives the toggle with the cursor
+        // normalised over its rect (cursor (100, 90) over rect 80..120 → rel
+        // (0.5, 0.25)). The anchor is the entire payload — it is what selects
+        // the object to fit — so the assertion that matters most is that it
+        // arrives intact.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = SmartZoomExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::empty()
+        };
+        assert!(router.smart_zoom_gesture(PointerId::MOUSE, shift, &mut state_scene));
+        assert_eq!(scroll.offset(), (0, 0), "smart zoom must not scroll");
+        let recorded = calls.lock().expect("mutex poisoned").clone();
+        assert_eq!(recorded.len(), 1);
+        let (x_rel, y_rel, mods) = recorded[0];
+        assert!((x_rel - 0.5).abs() < 1e-6, "x_rel {x_rel}");
+        assert!((y_rel - 0.25).abs() < 1e-6, "y_rel {y_rel}");
+        assert!(mods.shift_key(), "shift modifier must reach the External");
+        // Each call is one completed toggle — two gestures are two offers, with
+        // nothing accumulated in between (there is no arc to accumulate over).
+        assert!(router.smart_zoom_gesture(PointerId::MOUSE, Modifiers::empty(), &mut state_scene));
+        assert_eq!(calls.lock().expect("mutex poisoned").len(), 2);
+    }
+
+    #[test]
+    fn r1435_smart_zoom_gesture_off_target_is_noop() {
+        // With the cursor over no tagged widget (10, 10 is outside the 80..120
+        // button), the gesture resolves no target and is a clean no-op — the
+        // same shared `hovered_gesture_target` guard the other three use.
+        let scroll = Rc::new(ScrollState::new());
+        let (ext, calls) = SmartZoomExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(scroll, None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state_scene);
+        assert!(
+            !router.smart_zoom_gesture(PointerId::MOUSE, Modifiers::empty(), &mut state_scene),
+            "no hovered target → no consume"
+        );
+        assert!(
+            calls.lock().expect("mutex poisoned").is_empty(),
+            "no target → no offer"
         );
     }
 

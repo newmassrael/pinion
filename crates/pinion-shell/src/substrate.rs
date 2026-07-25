@@ -2787,6 +2787,24 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
     }
 
+    /// R1435 §5.35 §5.15 — native SMART-ZOOM gesture into the addressed window,
+    /// the family's phase-less member (Qt `SmartZoomNativeGesture` / winit
+    /// `DoubleTapGesture`): carry the held `self.modifiers` into the runtime
+    /// `ShellCore::smart_zoom_gesture_with_modifiers_for_window` and request a
+    /// repaint when the hovered widget consumed it. The one place both the
+    /// native winit `DoubleTapGesture` arm and the `scene/smart_zoom_gesture` RPC
+    /// replay funnel through, so the modifier read + repaint gate are stated
+    /// once.
+    pub fn smart_zoom_gesture_for_window(&mut self, window_id: &str, pid: PointerId) {
+        let (tail, consumed) =
+            self.core
+                .smart_zoom_gesture_with_modifiers_for_window(window_id, pid, self.modifiers);
+        if consumed {
+            self.request_redraw();
+        }
+        self.handle_tail(&tail);
+    }
+
     /// R51.195 §5.49 §5.45 — drain the deferred-input inbox `dispatch`
     /// populated. Each entry replays the input through the same
     /// `cursor_moved` / `wheel` entry points the winit and TUI
@@ -3030,6 +3048,17 @@ impl<V: WidgetView> ShellCore<V> {
                         delta_y,
                         phase,
                     );
+                }
+                // R1435 §5.35 §5.15 — `scene/smart_zoom_gesture`: a native
+                // two-finger double tap at (x, y). Seed the cursor first (a
+                // native `CursorMoved` precedes `DoubleTapGesture` the same way),
+                // then offer the toggle through the ONE
+                // `smart_zoom_gesture_for_window` seam the native winit path also
+                // reaches (§2 #6). No phase and no payload to carry — the anchor
+                // the cursor just seeded IS the payload.
+                DeferredInput::SmartZoomGesture { x, y } => {
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.smart_zoom_gesture_for_window(window_id, PointerId::MOUSE);
                 }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate

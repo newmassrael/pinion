@@ -1016,6 +1016,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 delta_y,
                 phase,
             } => self.drain_pan_gesture(x, y, delta_x, delta_y, phase),
+            pinion_rpc::DeferredInput::SmartZoomGesture { x, y } => {
+                self.drain_smart_zoom_gesture(x, y)
+            }
             _ => return None,
         };
         Some(changed)
@@ -1120,6 +1123,26 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             phase,
             pinion_core::Modifiers::empty(),
         );
+        changed |= self.handle_tail(&tail) || consumed;
+        changed
+    }
+
+    /// R1435 §5.35 §5.15 §2 #2 §2 #6 — the smart-zoom peer of
+    /// [`Self::drain_pinch_gesture`]: deliver a driven native SMART-ZOOM (the
+    /// two-finger double tap) to the terminal backend's router, the
+    /// `scene/smart_zoom_gesture` out-of-band drain. The family's phase-less
+    /// member, so the cursor seed is the whole payload. A terminal has no
+    /// trackpad, but the AI-first RPC source (§2 #2) rides the SAME `InputRouter`
+    /// the Vello sibling drives, so a fit-to-view `External` (a document page)
+    /// sees identical delivery on both backends. The TUI carries no modifier
+    /// chords yet (the §2 #6 divergence carry `Self::drain_pinch_gesture`
+    /// records), so empty modifiers. Returns `true` when the frame may need a
+    /// repaint.
+    fn drain_smart_zoom_gesture(&mut self, x: f64, y: f64) -> bool {
+        let mut changed = self.cursor_moved(x, y);
+        let (tail, consumed) = self
+            .core
+            .smart_zoom_gesture(PointerId::MOUSE, pinion_core::Modifiers::empty());
         changed |= self.handle_tail(&tail) || consumed;
         changed
     }
