@@ -70266,6 +70266,106 @@
         "typing values into a GRID stays hello-data-grid's job; what R1446 added is the cells-to-series bind"
       ]
     },
+    "Round 1447": {
+      "decision_summary": "R1447 - a terminal frame stops reading the system font list: LayoutCache defers its FontContext to the first shape, so the backend that has no fonts no longer scans for them, and no longer dies on a host that has none",
+      "changes_bullets": [
+        "LayoutCache defers its FontContext to the first call that actually shapes",
+        "FontContext::new() enumerates every installed font through the platform font API",
+        "measured on this box: LayoutCache::new() 25.5 ms with 635 fonts, essentially all of it that scan",
+        "fontique caches nothing across instances - CollectionOptions.system_fonts defaults true",
+        "and each Collection::new runs a fresh FcInitLoadConfig, so every cache paid the full scan",
+        "the field report's suggested shared-collection fix would NOT have removed it",
+        "CollectionOptions.shared governs clone visibility of REGISTERED fonts, not the system scan",
+        "the waste was the smaller half; on a host with no matching fonts the scan PANICS",
+        "fontique unwraps Err(NoMatch) in backend/fontconfig.rs:685 populating its generic-family map",
+        "so eager construction made a font-less host fatal to pinion's font-less backend",
+        "measured before the fix: 51 of pinion-tui's 136 unit tests died there",
+        "and hello-button-tui exited 101 having painted nothing but the alternate-screen preamble",
+        "font_scans() reports how many times a cache enumerated system fonts - a count, not a flag",
+        "because the invariant is at most once and a boolean cannot express that",
+        "a counterfactual proved it: rebuilding the context per shape passed every flag-based assertion",
+        "the public surface is unchanged; a caller that shapes pays the same cost at the same count"
+      ],
+      "verification_bullets": [
+        "pinion-text 458 / pinion-runtime 458 / pinion-tui 137 / pinion-rpc 938 / chart 233 / widget-paint 720 green",
+        "pinion-tui: 137 of 137 pass with ZERO fonts installed, against 85 of 136 before this round",
+        "the same suite runs 0.89-0.99 s before and 0.25 s after, three runs each, with one more test",
+        "LayoutCache::new() 25.5 ms to 36 us; the first layout() absorbs it, 4.7 ms to 31.2 ms",
+        "demo r1447_font_free_tui: 34 assertion sites, PASS",
+        "hello-button-tui paints on a real pty under a zero-font fontconfig",
+        "and paints a BYTE-IDENTICAL frame under the system's 635-font config - fonts change nothing",
+        "the demo verifies its own instrument: the parley arm is required to FAIL font-less",
+        "without that, every pass would be consistent with the zero-font config quietly finding fonts",
+        "CF1 eager construction: bites in all three crates",
+        "CF2 rebuild-per-shape: did NOT bite the flag-based tests, which is why font_scans is a count",
+        "CF2 against the counter: bites, left 2 right 1",
+        "CF3 demo under eager construction: FAILS with the pre-R1447 signature, 156 bytes and exit 101",
+        "regression demos r1445_transcript and hello_chart_r1354 PASS - the parley path is unchanged",
+        "r1447_lazy_context_shapes_identically pins that a lazily built context shapes the same",
+        "fmt / clippy / cargo doc clean, T1 orphan 0"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.41",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "the fontique NoMatch panic itself is upstream and unfixed - a font-less GUI host still dies",
+        "pinion-runtime and pinion-text legitimately need fonts; only the TUI is font-free",
+        "the demo shells out to cargo test, which r681 also does - two consumers, under the lift gate",
+        "key input over a synthetic pty does not reach the crossterm reader, so the demo asserts paint only",
+        "that is a property of the pty harness, not of R1447, and was not investigated further"
+      ],
+      "publishable_decision_summary": "R1447 - a terminal frame stops reading the system font list: LayoutCache defers its FontContext to the first shape, so the backend that has no fonts no longer scans for them, and no longer dies on a host that has none",
+      "publishable_changes_bullets": [
+        "LayoutCache defers its FontContext to the first call that actually shapes",
+        "FontContext::new() enumerates every installed font through the platform font API",
+        "measured on this box: LayoutCache::new() 25.5 ms with 635 fonts, essentially all of it that scan",
+        "fontique caches nothing across instances - CollectionOptions.system_fonts defaults true",
+        "and each Collection::new runs a fresh FcInitLoadConfig, so every cache paid the full scan",
+        "the field report's suggested shared-collection fix would NOT have removed it",
+        "CollectionOptions.shared governs clone visibility of REGISTERED fonts, not the system scan",
+        "the waste was the smaller half; on a host with no matching fonts the scan PANICS",
+        "fontique unwraps Err(NoMatch) in backend/fontconfig.rs:685 populating its generic-family map",
+        "so eager construction made a font-less host fatal to pinion's font-less backend",
+        "measured before the fix: 51 of pinion-tui's 136 unit tests died there",
+        "and hello-button-tui exited 101 having painted nothing but the alternate-screen preamble",
+        "font_scans() reports how many times a cache enumerated system fonts - a count, not a flag",
+        "because the invariant is at most once and a boolean cannot express that",
+        "a counterfactual proved it: rebuilding the context per shape passed every flag-based assertion",
+        "the public surface is unchanged; a caller that shapes pays the same cost at the same count"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text 458 / pinion-runtime 458 / pinion-tui 137 / pinion-rpc 938 / chart 233 / widget-paint 720 green",
+        "pinion-tui: 137 of 137 pass with ZERO fonts installed, against 85 of 136 before this round",
+        "the same suite runs 0.89-0.99 s before and 0.25 s after, three runs each, with one more test",
+        "LayoutCache::new() 25.5 ms to 36 us; the first layout() absorbs it, 4.7 ms to 31.2 ms",
+        "demo r1447_font_free_tui: 34 assertion sites, PASS",
+        "hello-button-tui paints on a real pty under a zero-font fontconfig",
+        "and paints a BYTE-IDENTICAL frame under the system's 635-font config - fonts change nothing",
+        "the demo verifies its own instrument: the parley arm is required to FAIL font-less",
+        "without that, every pass would be consistent with the zero-font config quietly finding fonts",
+        "CF1 eager construction: bites in all three crates",
+        "CF2 rebuild-per-shape: did NOT bite the flag-based tests, which is why font_scans is a count",
+        "CF2 against the counter: bites, left 2 right 1",
+        "CF3 demo under eager construction: FAILS with the pre-R1447 signature, 156 bytes and exit 101",
+        "regression demos r1445_transcript and hello_chart_r1354 PASS - the parley path is unchanged",
+        "r1447_lazy_context_shapes_identically pins that a lazily built context shapes the same",
+        "fmt / clippy / cargo doc clean, T1 orphan 0"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.41",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the fontique NoMatch panic itself is upstream and unfixed - a font-less GUI host still dies",
+        "pinion-runtime and pinion-text legitimately need fonts; only the TUI is font-free",
+        "the demo shells out to cargo test, which r681 also does - two consumers, under the lift gate",
+        "key input over a synthetic pty does not reach the crossterm reader, so the demo asserts paint only",
+        "that is a property of the pty harness, not of R1447, and was not investigated further"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

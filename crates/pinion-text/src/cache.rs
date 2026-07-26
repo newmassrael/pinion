@@ -12,6 +12,10 @@
 //! aligns with §6.3 view-fn purity (sync, single-thread). Per-thread
 //! caches are the textbook pattern; multi-thread shaping is R47.x
 //! carry.
+//!
+//! R1447 §5.36 — the `FontContext` is built on the first *shape*, not on
+//! construction. See [`LayoutCache`] for why that distinction is load-
+//! bearing rather than a micro-optimisation.
 
 use crate::layout::Layout;
 use lru::LruCache;
@@ -101,9 +105,49 @@ struct LayoutKey {
 /// `(text, style, max_width)`. Construct via [`LayoutCache::new`]
 /// (default capacity) or [`LayoutCache::with_capacity`] for explicit
 /// sizing.
+///
+/// # R1447 §5.36 — constructing a cache reads no fonts
+///
+/// `font_cx` is built on the first call that actually shapes, not in the
+/// constructor. `FontContext::new()` enumerates **every system font**
+/// through the platform font API (fontconfig on Linux): measured at
+/// **25.5 ms on a 635-font box**, and fontique caches nothing across
+/// instances — `CollectionOptions::system_fonts` is `true` by default and
+/// each `Collection::new` runs a fresh `FcInitLoadConfig` scan.
+///
+/// That cost is not the interesting part. The load-bearing consequence is
+/// that a `LayoutCache` used by a **caller that never shapes** paid for a
+/// resource it never touched — and the §2 #6 GUI/TUI dual has exactly such
+/// a caller. `pinion_tui`'s measure arm lays every `Scene::Text` leaf out
+/// on the cell grid and never defers to parley (the terminal has no
+/// fonts), so on the TUI path the only consumer of `font_cx`
+/// (`shape`'s `ranged_builder`) is unreachable. Eagerly it still
+/// scanned; lazily it does not exist.
+///
+/// The consequence that is a *correctness* one, not a cost one: on a host
+/// with no matching fonts at all — a slim container, a CI image with no
+/// font package — `FontContext::new()` **panics** inside fontique
+/// (`backend/fontconfig.rs:685`, `config.font_sort(..).unwrap()` on
+/// `Err(NoMatch)`, reached while it populates the generic-family map). So
+/// eager construction made a font-less host fatal to the font-less
+/// backend: 51 of `pinion-tui`'s 136 unit tests died there. Deferring the
+/// build is the same root fix as the cost — both come from building what
+/// the caller will not use.
+///
+/// The laziness is invisible to the public surface: every shaping entry
+/// point builds the context on demand, so a caller that *does* shape pays
+/// the identical cost at the identical count, one construction later.
+/// [`Self::font_scans`] reports how many times it has been built, which is
+/// what pins the TUI guarantee as an assertion rather than a claim.
 pub struct LayoutCache {
     inner: LruCache<LayoutKey, Layout>,
-    font_cx: FontContext,
+    /// `None` until the first shape. See the type doc — this is the
+    /// system-font scan, deferred.
+    font_cx: Option<FontContext>,
+    /// How many times [`Self::shape`] has built `font_cx`. The invariant is
+    /// "at most once", and a count is what states that; see
+    /// [`Self::font_scans`].
+    font_scans: u32,
     layout_cx: LayoutContext<Color>,
 }
 
@@ -119,7 +163,8 @@ impl LayoutCache {
     pub fn with_capacity(capacity: NonZeroUsize) -> Self {
         Self {
             inner: LruCache::new(capacity),
-            font_cx: FontContext::new(),
+            font_cx: None,
+            font_scans: 0,
             layout_cx: LayoutContext::new(),
         }
     }
@@ -191,6 +236,28 @@ impl LayoutCache {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+
+    /// R1447 §5.36 — how many times this cache has enumerated system fonts.
+    ///
+    /// `0` until the first call that shapes, `1` forever after (see the type
+    /// doc for why the build is deferred). A *count*, not a `has_it` flag,
+    /// because the invariant this cache owes its callers is "at most once"
+    /// and a boolean cannot express that: a cache that rebuilt its
+    /// `FontContext` on every shape — paying the ~25 ms scan per cache miss
+    /// instead of per process — reads identically through a flag, and a
+    /// counterfactual confirmed that such a regression passes every
+    /// assertion a flag can carry.
+    ///
+    /// This is a diagnostic, not a control: no behavior branches on it, and
+    /// a caller cannot make shaping cheaper by consulting it. It exists so
+    /// the §2 #6 guarantee "a TUI frame reads no fonts" is an assertion over
+    /// the real layout pass rather than a claim about which branch is
+    /// reachable — and so a consumer profiling a frame can tell what its
+    /// cache actually paid.
+    #[must_use]
+    pub fn font_scans(&self) -> u32 {
+        self.font_scans
     }
 
     /// R1002 §5.41 — measure the resolved monospace cell at `font_size_px`.
@@ -280,9 +347,20 @@ impl LayoutCache {
         // the BIDI pipeline and the shape engine.
         let mirrored = pinion_text_unicode::bidi::mirror_paired_brackets(text);
         let shape_input = mirrored.as_ref();
+        // R1447 §5.36 — the one place the system-font scan happens. Every
+        // shaping entry point funnels through here, so deferring the build
+        // to this line defers it for the whole surface; a caller that never
+        // reaches `shape` never enumerates a font. `get_or_insert_with`
+        // borrows `font_cx` and `layout_cx` as disjoint fields, so the
+        // builder still takes both without a second pass over `self`.
+        let scans = &mut self.font_scans;
+        let font_cx = self.font_cx.get_or_insert_with(|| {
+            *scans += 1;
+            FontContext::new()
+        });
         let mut builder = self
             .layout_cx
-            .ranged_builder(&mut self.font_cx, shape_input, 1.0, true);
+            .ranged_builder(font_cx, shape_input, 1.0, true);
         // R47.6 §5.36 — the base style is pushed as the run default
         // (the whole-string style). R713 §5.36 — each StyleRun then
         // pushes its fully-resolved style over its UTF-8 byte range;
@@ -452,6 +530,70 @@ mod tests {
         let mut s = TextStyle::new();
         s.font_size_px = size;
         s
+    }
+
+    /// R1447 §5.36 — constructing a cache runs no system-font scan. The
+    /// discriminating half is the second assertion: without it the test
+    /// would also pass on a build where nothing ever creates a
+    /// `FontContext`, so it pins *deferral*, not *absence*.
+    #[test]
+    fn r1447_construction_builds_no_font_context() {
+        let mut cache = LayoutCache::new();
+        assert_eq!(
+            cache.font_scans(),
+            0,
+            "a fresh cache has not enumerated system fonts",
+        );
+        let _ = cache.layout("shape me", &style(16), None);
+        assert_eq!(
+            cache.font_scans(),
+            1,
+            "the first shape builds the font context",
+        );
+    }
+
+    /// R1447 §5.36 — the scan happens **once**, not once per shape.
+    ///
+    /// Three `layout` calls (two misses and a hit) must still total one
+    /// scan. This is the assertion a boolean `has_font_context` could not
+    /// make: a `shape` that rebuilt the context every call would leave the
+    /// flag `true` throughout and pass every other test here, while costing
+    /// the ~25 ms system-font enumeration on every cache miss. That exact
+    /// counterfactual was run — it passed the whole suite before this test
+    /// counted, and fails now.
+    #[test]
+    fn r1447_font_scan_runs_once_not_per_shape() {
+        let mut cache = LayoutCache::new();
+        let s = style(16);
+        let _ = cache.layout("a", &s, None);
+        let _ = cache.layout("b", &s, None);
+        let _ = cache.layout("a", &s, None);
+        assert_eq!(
+            cache.font_scans(),
+            1,
+            "one scan across two cache misses and a hit",
+        );
+        assert_eq!(cache.len(), 2, "two distinct entries, one font context");
+    }
+
+    /// R1447 §5.36 — the deferral does not reach past shaping into the
+    /// cache's other observable behavior: a shaped layout is identical to
+    /// the pre-R1447 eager-context one. Shaping the same input twice
+    /// through two caches (one already warm, one fresh) must agree, which
+    /// it cannot if the lazily-built context resolved a different face.
+    #[test]
+    fn r1447_lazy_context_shapes_identically() {
+        let s = style(16);
+        let mut warm = LayoutCache::new();
+        let _ = warm.layout("priming", &s, None);
+        let warm_width = warm.layout("Hello, world", &s, None).width();
+        let mut fresh = LayoutCache::new();
+        let fresh_width = fresh.layout("Hello, world", &s, None).width();
+        assert!(
+            (warm_width - fresh_width).abs() < f32::EPSILON,
+            "same input shapes the same whether the context was just built \
+             or already warm: warm={warm_width} fresh={fresh_width}",
+        );
     }
 
     #[test]

@@ -2769,4 +2769,72 @@ mod tests {
              (excluded from §5.37 — both arms together)"
         );
     }
+
+    /// R1447 §5.36 §5.37 — the `TextMeasure` seam decides whether a layout
+    /// pass touches fonts at all, and [`LayoutCache`] now defers the system
+    /// font scan to the first shape, so "touches fonts" is observable.
+    ///
+    /// Both arms run the same scene through the same entry point; only the
+    /// measure impl differs. An impl that answers **every** leaf (what
+    /// `pinion_tui::text_layout::CellTextLayout` is — it lays text out on the
+    /// cell grid) leaves the shaper unreached, so the cache never builds a
+    /// `FontContext`. `None` — the GUI/parley arm — builds one.
+    ///
+    /// This is the generic statement about the seam; `pinion-tui` holds the
+    /// TUI-specific half, and deliberately holds only the half that needs no
+    /// installed font.
+    #[test]
+    fn r1447_answering_measure_arm_leaves_the_font_scan_unrun() {
+        /// Answers every leaf with a fixed box — the "never defers" shape.
+        struct AlwaysMeasures;
+        impl TextMeasure for AlwaysMeasures {
+            fn measure_text(
+                &self,
+                content: &str,
+                _style: &TextStyle,
+                _runs: &[StyleRun],
+                _max_width: Option<u32>,
+                _caret_bearing: bool,
+            ) -> Option<TextBox> {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "test fixture content is a handful of chars"
+                )]
+                Some(TextBox::single_line(
+                    content.chars().count() as f32 * 8.0,
+                    16.0,
+                ))
+            }
+        }
+
+        fn scene() -> Scene {
+            let mut text = TextNode::default();
+            text.content = "text that would have to be shaped".to_owned();
+            Scene::Container(ContainerNode::new(vec![Scene::Text(text)]))
+        }
+
+        let mut answered = cache();
+        let _ = compute_layout_with_text_measure(
+            &mut scene(),
+            &mut answered,
+            320,
+            200,
+            Some(&AlwaysMeasures),
+        );
+        assert_eq!(
+            answered.font_scans(),
+            0,
+            "a measure arm that answers every leaf never reaches the shaper, \
+             so the system font scan never runs",
+        );
+
+        let mut deferred = cache();
+        let _ = compute_layout_with_text_measure(&mut scene(), &mut deferred, 320, 200, None);
+        assert_eq!(
+            deferred.font_scans(),
+            1,
+            "premise: this scene's text does reach parley with no measure arm \
+             — otherwise the assertion above is about a scene with no text",
+        );
+    }
 }

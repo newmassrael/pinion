@@ -335,6 +335,95 @@ mod tests {
 
     const GA: &str = "\u{AC00}"; // 가 — wide (2 cells)
 
+    // ---- R1447 the TUI reads no fonts ----
+
+    /// A text-heavy scene: a wrapping paragraph, a CJK run, and a styled
+    /// run. Every leaf is a `Scene::Text` that a parley measure would
+    /// shape, which is what makes the assertions below non-vacuous.
+    fn text_heavy_scene() -> pinion_core::scene::Scene {
+        use pinion_core::scene::{ContainerNode, Scene, StyleRun, TextNode};
+        use pinion_core::style::{Color, SizeValue};
+        let mut root = ContainerNode::default();
+        root.layout.size.width = SizeValue::Percent(100);
+        root.layout.size.height = SizeValue::Percent(100);
+        for content in [
+            "a paragraph long enough that the layout pass has to break it \
+             across several lines before it fits the window",
+            "\u{BB3C}\u{B54C}\u{AC00} \u{C170}\u{D55C}\u{B2E4}",
+            "styled",
+        ] {
+            let mut text = TextNode::default();
+            text.content = content.to_owned();
+            text.layout.size.width = SizeValue::Percent(100);
+            if content == "styled" {
+                text.runs.push(StyleRun::new(
+                    0,
+                    3,
+                    TextStyle::new().with_fg(Color::rgb(255, 0, 0)),
+                ));
+            }
+            root.children.push(Scene::Text(text));
+        }
+        Scene::Container(root)
+    }
+
+    /// R1447 §5.36 §5.41 — a full TUI layout pass over real text enumerates
+    /// no system fonts. §2 #6 states the TUI renders the same scene through
+    /// a cell grid; this is the runtime half of that claim, since before
+    /// R1447 the `LayoutCache` the pass borrows scanned every installed font
+    /// on construction whether or not anything shaped.
+    ///
+    /// The second half is the discriminator: it shows the pass *did* measure
+    /// real text, so "no font context" is a statement about the TUI and not
+    /// about an empty scene. The paragraph is longer than the 40-cell window,
+    /// so a pass that measured it resolves it to several rows; every leaf
+    /// ends up with a non-empty box.
+    ///
+    /// Deliberately no assertion here that the parley arm *does* build a
+    /// context — that would need a font on the host, and this crate must
+    /// stay runnable with none installed (which is half of what R1447 buys).
+    /// The arm comparison lives in `pinion_runtime::layout`, where fonts are
+    /// a legitimate premise.
+    #[test]
+    fn r1447_terminal_layout_pass_builds_no_font_context() {
+        use pinion_core::scene::Scene;
+        use pinion_runtime::LayoutCache;
+
+        let mut cache = LayoutCache::new();
+        let mut scene = text_heavy_scene();
+        let _ = super::layout_for_terminal(&mut scene, 40, 12, &mut cache);
+        assert_eq!(
+            cache.font_scans(),
+            0,
+            "the cell grid lays out every text leaf, so the TUI path never \
+             reaches parley and never enumerates a font",
+        );
+
+        let Scene::Container(root) = &scene else {
+            panic!("fixture root is a container");
+        };
+        let boxes: Vec<(u32, u32)> = root
+            .children
+            .iter()
+            .map(|child| match child {
+                Scene::Text(t) => (t.rect.w, t.rect.h),
+                other => panic!("fixture children are text leaves, got {other:?}"),
+            })
+            .collect();
+        assert!(
+            boxes.iter().all(|(w, h)| *w > 0 && *h > 0),
+            "premise: every leaf really measured — otherwise the assertion \
+             above is about a scene with nothing to shape: {boxes:?}",
+        );
+        let cell_h = super::CELL.cell_h();
+        assert!(
+            boxes[0].1 > cell_h,
+            "premise: the paragraph is wider than the 40-cell window, so a \
+             pass that measured it wrapped it past one row (row={cell_h}px): \
+             {boxes:?}",
+        );
+    }
+
     fn layout() -> CellTextLayout {
         CellTextLayout::default()
     }
