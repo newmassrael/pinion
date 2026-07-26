@@ -1,15 +1,13 @@
 //! R1441 — the pure layered-graph coordinate solver: a **proper layering** plus
 //! the **Brandes–Köpf** horizontal coordinate assignment.
 //!
-//! # Why this file exists
+//! # Why this module exists
 //!
-//! Everything here works on abstract vertices `0..n` and knows nothing about
-//! `GraphNode`, `Edge` or the editor's model — `main.rs` maps its graph onto
-//! these indices and maps the answer back. That boundary is deliberate: it is
-//! exactly the shape a crate lift would take if a second graph consumer ever
-//! appears (the layout is still example-local until then), and it lets the
-//! algorithm be tested on hand-written layerings instead of through a node
-//! editor.
+//! Everything here works on abstract vertices `0..n` and knows nothing about any
+//! caller's node type — a caller maps its graph onto these indices and maps the
+//! answer back. R1441 wrote this boundary while the code still lived inside the
+//! node editor, precisely so that a second consumer would make the crate lift a
+//! file move rather than a rewrite; R1442 was that consumer, and it was.
 //!
 //! # What R1383 left simplified, and what this fixes
 //!
@@ -51,12 +49,12 @@
 //!
 //! "Fast and Simple Horizontal Coordinate Assignment" (Brandes & Köpf, GD 2001)
 //! is written for top-to-bottom drawings: layers are rows and the coordinate it
-//! solves is x. This editor lays data flow LEFT TO RIGHT, so layers are columns
-//! and the free coordinate is **y**. The algorithm is unchanged — it only ever
-//! talks about "layers" and "the coordinate within a layer" — but every mention
-//! of *left / right* in the paper reads as *up / down* here. The code below
-//! keeps the paper's vocabulary so it can be checked against the paper, and the
-//! caller does the axis naming.
+//! solves is x. Both of this crate's consumers lay data flow LEFT TO RIGHT, so
+//! layers are columns and the free coordinate is **y**. The algorithm is
+//! unchanged — it only ever talks about "layers" and "the coordinate within a
+//! layer" — but every mention of *left / right* in the paper reads as *up /
+//! down* there. The code below keeps the paper's vocabulary so it can be checked
+//! against the paper, and the caller does the axis naming.
 //!
 //! The four passes, the type-1 conflict marking, and the median balancing are all
 //! present. Implementing only one pass would have been a new documented
@@ -72,20 +70,20 @@ use std::collections::{BTreeMap, BTreeSet};
 /// run: every edge then joins consecutive layers. [`brandes_koepf`](Self::brandes_koepf)
 /// requires that, and debug-asserts it.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Layering {
+pub struct Layering {
     /// Ordered vertices per layer. Every vertex appears exactly once.
-    pub(crate) layers: Vec<Vec<usize>>,
+    pub layers: Vec<Vec<usize>>,
     /// Each vertex's extent along the free axis (a node's height here).
-    pub(crate) size: Vec<i32>,
+    pub size: Vec<i32>,
     /// Whether a vertex is a DUMMY — a bend standing in for a long edge as it
     /// passes through a layer. Bends are the reason the paper's conflict marking
     /// exists: an inner segment (dummy → dummy) is a piece of a long edge, and
     /// keeping those straight is what the whole exercise is for.
-    pub(crate) dummy: Vec<bool>,
+    pub dummy: Vec<bool>,
     /// `(upper, lower)` vertex pairs. Indices into this vec are stable and are
     /// what the conflict set marks, so a transformed view can reorient the pairs
     /// without disturbing the marks.
-    pub(crate) edges: Vec<(usize, usize)>,
+    pub edges: Vec<(usize, usize)>,
 }
 
 /// A vertex's layer and position, derived once per algorithm run rather than
@@ -125,7 +123,8 @@ impl Layering {
     ///
     /// Vertices start in ascending index order inside each layer — a
     /// deterministic seed for [`reduce_crossings`](Self::reduce_crossings).
-    pub(crate) fn new(size: Vec<i32>, layer_of: &[usize], edges: &[(usize, usize)]) -> Self {
+    #[must_use]
+    pub fn new(size: Vec<i32>, layer_of: &[usize], edges: &[(usize, usize)]) -> Self {
         let n = size.len();
         let depth = layer_of.iter().copied().max().map_or(0, |m| m + 1);
         let mut layers = vec![Vec::new(); depth];
@@ -141,8 +140,16 @@ impl Layering {
     }
 
     /// The number of vertices, real and dummy.
-    pub(crate) fn len(&self) -> usize {
+    #[must_use]
+    pub fn len(&self) -> usize {
         self.size.len()
+    }
+
+    /// Whether the layering holds no vertices at all — the degenerate input a
+    /// caller with an empty graph hands in.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.size.is_empty()
     }
 
     /// Make the layering **proper**: every edge spanning more than one layer is
@@ -154,11 +161,18 @@ impl Layering {
     /// zero-size vertex would let the compaction stack them on one coordinate.
     ///
     /// This is what gives a long edge a SLOT in every layer it crosses, so the
-    /// crossing-reduction sweep can see it. Returns the number of bends added.
-    pub(crate) fn split_long_edges(&mut self, bend_size: i32) -> usize {
+    /// crossing-reduction sweep can see it.
+    ///
+    /// Returns, for each edge as it was indexed BEFORE the call, the bends
+    /// inserted for it in order from the upper endpoint — empty for an edge that
+    /// was already proper. R1442 publishes that instead of a bare count because
+    /// a bend is where a wire actually goes: a view that draws its edges as
+    /// polylines has to route them through the channel the layout reserved, or
+    /// the reservation buys nothing but empty space.
+    pub fn split_long_edges(&mut self, bend_size: i32) -> Vec<Vec<usize>> {
         let index = self.index();
         let original = core::mem::take(&mut self.edges);
-        let mut added = 0;
+        let mut chains: Vec<Vec<usize>> = Vec::with_capacity(original.len());
         for (upper, lower) in original {
             let (lu, lv) = (index.layer_of[upper], index.layer_of[lower]);
             // A backward or same-layer edge cannot be made proper by inserting
@@ -167,8 +181,10 @@ impl Layering {
             debug_assert!(lv > lu, "split_long_edges needs a forward layering");
             if lv <= lu + 1 {
                 self.edges.push((upper, lower));
+                chains.push(Vec::new());
                 continue;
             }
+            let mut chain = Vec::with_capacity(lv - lu - 1);
             let mut prev = upper;
             for l in (lu + 1)..lv {
                 let bend = self.size.len();
@@ -176,12 +192,13 @@ impl Layering {
                 self.dummy.push(true);
                 self.layers[l].push(bend);
                 self.edges.push((prev, bend));
+                chain.push(bend);
                 prev = bend;
-                added += 1;
             }
             self.edges.push((prev, lower));
+            chains.push(chain);
         }
-        added
+        chains
     }
 
     /// Reorder each layer by `sweeps` alternating barycenter passes — the
@@ -191,7 +208,7 @@ impl Layering {
     /// layer, compared as an exact rational so no float rounding enters; a vertex
     /// with no neighbour there keeps its slot, and ties break by index. Fully
     /// deterministic, and a fixed sweep count always terminates (ZERO-FLAKE).
-    pub(crate) fn reduce_crossings(&mut self, sweeps: usize) {
+    pub fn reduce_crossings(&mut self, sweeps: usize) {
         let depth = self.layers.len();
         if depth < 2 {
             return;
@@ -244,7 +261,8 @@ impl Layering {
     /// the wrong one for [`brandes_koepf`](Self::brandes_koepf) (which does not).
     /// Two segments between the same pair of layers cross when their endpoints
     /// are in opposite order.
-    pub(crate) fn count_crossings(&self) -> usize {
+    #[must_use]
+    pub fn count_crossings(&self) -> usize {
         let index = self.index();
         let mut total = 0;
         for l in 0..self.layers.len().saturating_sub(1) {
@@ -281,7 +299,8 @@ impl Layering {
     /// The guarantee is over inner segments — see the module docs. A caller
     /// wanting every long edge dead straight would have to give long edges
     /// priority in the ORDERING phase too, which is a different algorithm.
-    pub(crate) fn brandes_koepf(&self, gap: i32) -> Vec<i32> {
+    #[must_use]
+    pub fn brandes_koepf(&self, gap: i32) -> Vec<i32> {
         let n = self.len();
         if n == 0 {
             return Vec::new();
@@ -312,7 +331,8 @@ impl Layering {
     /// rather than take it on trust. A layering with no long edge reports
     /// `(0, 0)`, which is why the count is published beside the ratio — "all
     /// inner segments are straight" is vacuous when there are none.
-    pub(crate) fn inner_segment_straightness(&self, coords: &[i32]) -> (usize, usize) {
+    #[must_use]
+    pub fn inner_segment_straightness(&self, coords: &[i32]) -> (usize, usize) {
         let mut total = 0;
         let mut straight = 0;
         for &(u, w) in &self.edges {
@@ -324,6 +344,99 @@ impl Layering {
             }
         }
         (total, straight)
+    }
+
+    /// R1442 — order every layer by the coordinates of a PREVIOUS drawing
+    /// instead of by crossing reduction: `seed[v]` is where vertex `v` sat then,
+    /// or `None` for one that was not in it.
+    ///
+    /// Two vertices that both carry a seed therefore end up in the order the
+    /// seed records — sorting by a value that already encodes the old order
+    /// cannot invert it — which is what keeps a re-laid-out graph recognisable
+    /// (the "mental map" of Misue, Eades, Lai & Sugiyama, JVLC 1995).
+    ///
+    /// An unseeded vertex — a newly added one, and every bend, which is derived
+    /// fresh each pass — takes the mean of its keyed neighbours, so it lands
+    /// where its own edges point. Keys spread outwards until nothing more can be
+    /// resolved, so a bend in the middle of a long edge is placed between its
+    /// endpoints rather than parked at the end of a column. What is left
+    /// unreachable (an added component connected to nothing remembered) sorts
+    /// last, by index.
+    ///
+    /// This does not reduce crossings and is not trying to: see
+    /// [`count_crossings`](Self::count_crossings) for what the stability costs.
+    pub fn order_by_seed(&mut self, seed: &[Option<i32>]) {
+        let keys = self.seed_keys(seed);
+        for layer in &mut self.layers {
+            layer.sort_by(|&a, &b| keys[a].total_cmp(&keys[b]).then(a.cmp(&b)));
+        }
+    }
+
+    /// R1442 — how many remembered pairs the current order reversed: pairs that
+    /// both carry a seed and share a layer, drawn in the opposite order to the
+    /// one the seed records.
+    ///
+    /// Zero after [`order_by_seed`](Self::order_by_seed), by construction. Run
+    /// against a barycenter-ordered layering it counts what a fresh layout would
+    /// have cost the viewer, which is what makes the comparison an observation
+    /// rather than a claim. Pairs that shared a coordinate are not counted —
+    /// there was no remembered order between them to break.
+    #[must_use]
+    pub fn seed_order_changes(&self, seed: &[Option<i32>]) -> usize {
+        let key = |v: usize| seed.get(v).copied().flatten();
+        let mut changed = 0;
+        for layer in &self.layers {
+            for (i, &v) in layer.iter().enumerate() {
+                for &w in &layer[i + 1..] {
+                    if let (Some(before), Some(after)) = (key(v), key(w))
+                        && before > after
+                    {
+                        changed += 1;
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    /// The sort key of every vertex for [`order_by_seed`](Self::order_by_seed):
+    /// its own seed where it has one, otherwise the mean of the keys reachable
+    /// from it, spread one edge per round until the set stops growing.
+    ///
+    /// Each round reads the PREVIOUS round's keys, so the answer does not depend
+    /// on the order vertices are visited in.
+    fn seed_keys(&self, seed: &[Option<i32>]) -> Vec<f64> {
+        let count = self.len();
+        let index = self.index();
+        let mut key: Vec<Option<f64>> = (0..count)
+            .map(|v| seed.get(v).copied().flatten().map(f64::from))
+            .collect();
+        loop {
+            let mut next = key.clone();
+            let mut spread = false;
+            for (vertex, slot) in next.iter_mut().enumerate() {
+                if slot.is_some() {
+                    continue;
+                }
+                let mut sum = 0.0;
+                let mut count = 0.0;
+                for &(_, other) in index.preds[vertex].iter().chain(&index.succs[vertex]) {
+                    if let Some(k) = key[other] {
+                        sum += k;
+                        count += 1.0;
+                    }
+                }
+                if count > 0.0 {
+                    *slot = Some(sum / count);
+                    spread = true;
+                }
+            }
+            key = next;
+            if !spread {
+                break;
+            }
+        }
+        key.iter().map(|k| k.unwrap_or(f64::INFINITY)).collect()
     }
 
     /// Whether every edge joins consecutive layers.
@@ -636,12 +749,21 @@ mod tests {
         Layering::new(vec![40, 20, 60], &[0, 1, 2], &[(0, 1), (1, 2), (0, 2)])
     }
 
+    /// Total bends over every chain — the number `split_long_edges` returned
+    /// before R1442 made it report WHICH edge each bend belongs to.
+    fn bend_count(chains: &[Vec<usize>]) -> usize {
+        chains.iter().map(Vec::len).sum()
+    }
+
     #[test]
     fn r1441_splitting_inserts_one_bend_per_intervening_layer() {
         let mut l = long_edge_graph();
         assert_eq!(l.len(), 3);
-        let added = l.split_long_edges(8);
-        assert_eq!(added, 1, "the 0->2 edge crosses exactly one layer");
+        let chains = l.split_long_edges(8);
+        assert_eq!(bend_count(&chains), 1, "the 0->2 edge crosses one layer");
+        // ★ R1442 — and the chain names the edge it belongs to: the third edge
+        // authored is the long one, and the other two got no bend.
+        assert_eq!(chains, vec![vec![], vec![], vec![3]]);
         assert_eq!(l.len(), 4, "and the bend is a new vertex");
         assert!(l.dummy[3], "the new vertex is a dummy");
         assert!(
@@ -663,7 +785,7 @@ mod tests {
     #[test]
     fn r1441_splitting_a_proper_layering_adds_nothing() {
         let mut l = Layering::new(vec![10, 10], &[0, 1], &[(0, 1)]);
-        assert_eq!(l.split_long_edges(8), 0);
+        assert_eq!(bend_count(&l.split_long_edges(8)), 0);
         assert_eq!(l.len(), 2);
         assert_eq!(l.edges, vec![(0, 1)]);
     }
@@ -683,8 +805,8 @@ mod tests {
             &[0, 1, 2, 3],
             &[(0, 1), (1, 2), (2, 3), (0, 3)],
         );
-        let added = l.split_long_edges(8);
-        assert_eq!(added, 2, "the long edge crosses two layers");
+        let chains = l.split_long_edges(8);
+        assert_eq!(bend_count(&chains), 2, "the long edge crosses two layers");
         l.reduce_crossings(4);
         let y = l.brandes_koepf(24);
 
@@ -825,7 +947,11 @@ mod tests {
         // 0 -> 3 spans four layers (two bends); 1 -> 2 is a short edge between
         // the layers those bends occupy.
         let mut l = Layering::new(vec![20, 20, 20, 20], &[0, 1, 2, 3], &[(0, 3), (1, 2)]);
-        assert_eq!(l.split_long_edges(8), 2, "bends at layers 1 and 2");
+        assert_eq!(
+            bend_count(&l.split_long_edges(8)),
+            2,
+            "bends at layers 1 and 2"
+        );
         let bends: Vec<usize> = (0..l.len()).filter(|&v| l.dummy[v]).collect();
         let (b1, b2) = (bends[0], bends[1]);
 
@@ -856,7 +982,7 @@ mod tests {
     #[test]
     fn r1441_balancing_centres_a_symmetric_fan() {
         let mut l = Layering::new(vec![30, 30, 30], &[0, 1, 1], &[(0, 1), (0, 2)]);
-        assert_eq!(l.split_long_edges(8), 0, "nothing long here");
+        assert_eq!(bend_count(&l.split_long_edges(8)), 0, "nothing long here");
         l.reduce_crossings(4);
         let y = l.brandes_koepf(24);
         let mid = i32::midpoint(y[1], y[2]);
@@ -871,13 +997,13 @@ mod tests {
     #[test]
     fn r1441_degenerate_layerings_are_total() {
         let mut empty = Layering::default();
-        assert_eq!(empty.split_long_edges(8), 0);
+        assert!(empty.split_long_edges(8).is_empty());
         empty.reduce_crossings(4);
         assert!(empty.brandes_koepf(24).is_empty());
         assert_eq!(empty.count_crossings(), 0);
 
         let mut one = Layering::new(vec![10], &[0], &[]);
-        assert_eq!(one.split_long_edges(8), 0);
+        assert!(one.split_long_edges(8).is_empty());
         one.reduce_crossings(4);
         assert_eq!(one.brandes_koepf(24).len(), 1);
     }

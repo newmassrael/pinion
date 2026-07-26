@@ -1,0 +1,12 @@
+[package]
+name = "pinion-graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1442 Phase-B graph-layout substrate — the layered (Sugiyama) pipeline as pure arithmetic over abstract vertices: cycle breaking, longest-path layering, proper layering over bends, barycenter OR previous-drawing (mental-map) ordering, and the Brandes-Kopf coordinate solver. Zero dependencies: vertices are indices and coordinates are i32, so the same solver serves a node editor, a live topology view, and any backend that can hold a graph. Both orderings publish what they cost (crossings vs reordered pairs) rather than arguing it in prose."
+publish = false
+
+[lints]
+workspace = true

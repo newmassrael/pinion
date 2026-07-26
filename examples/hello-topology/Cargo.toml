@@ -1,0 +1,33 @@
+[package]
+name = "hello-topology"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1442 §5.38 §5.52 — a LIVE service-topology view: a graph that arrives with no coordinates, is laid out by pinion-graph, and re-lays itself out on every change. The second consumer of the layered solver, and the one that needs the other ordering: a seeded pass keeps the drawing the viewer already has (zero remembered pairs reordered) where a fresh pass minimises crossings and moves things. Both costs are queryable over RPC, so the trade is data rather than prose."
+publish = false
+
+[[bin]]
+name = "hello-topology"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1442 — the layered (Sugiyama) layout, and the seeded ordering this view is
+# the forcing consumer for.
+pinion-graph = { path = "../../crates/pinion-graph", version = "0.0.1" }
+# A `Signal<T>` payload is persistable, so the model derives serde.
+serde = { workspace = true }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

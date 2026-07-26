@@ -69862,6 +69862,80 @@
         "the LIVE auto-relaying topology view is still absent; it would be that second consumer"
       ]
     },
+    "Round 1442": {
+      "decision_summary": "R1442 — a live topology view keeps its shape: the layered solver becomes the pinion-graph crate at its second consumer, and grows an ordering seeded from the previous drawing, so a graph that changes under the viewer stays recognisable",
+      "changes_bullets": [
+        "new crate pinion-graph: the layered pipeline as pure arithmetic, zero dependencies, vertices are indices",
+        "LIFT R1441's src/layout.rs verbatim, and the cycle-break + longest-path layering follow it out of the editor",
+        "Sugiyama::run_seeded orders each layer by the PREVIOUS drawing's coordinates, not by crossing minimisation",
+        "two vertices that both carry a seed keep the order the viewer remembers — sorting by it cannot invert it",
+        "an unseeded vertex (a new one, and every bend) takes the mean of its keyed neighbours, spread one edge a round",
+        "Layout::order_changes counts remembered pairs a drawing flipped: 0 when seeded, measurable when not",
+        "the trade is published in BOTH currencies: a seeded pass never chooses an order, so crossings only get worse",
+        "Layout::route says where a long edge's bends went, so a view draws the polyline through the reserved channel",
+        "split_long_edges returns the bends PER EDGE instead of a bare count, which is what makes that route derivable",
+        "new example hello-topology: a mesh that arrives with no coordinates, re-placed on every change, both orderings live",
+        "node editor refit: layout_of + GraphIndex replace layout_pipeline and its three NodeId-keyed helpers",
+        "FIX pre-existing: FORCE_ITERS and FORCE_K carried each other's doc comments, so FORCE_K read \"layered one.\""
+      ],
+      "verification_bullets": [
+        "pinion-graph 21 + doctest green; hello-topology 10; hello-node-editor 264 (275 minus the 11 tests that moved)",
+        "tools/demos/r1442_live_topology.py — 55 assertion sites over real windowed RPC, 6 sections, PASS",
+        "the demo re-derives stability from SERVICE NAMES, so a metric agreeing only with itself would still fail",
+        "COUNTERFACTUAL 1: order a seeded pass by barycenter -> 2 unit tests + demo section C FAIL at step 1",
+        "COUNTERFACTUAL 2: drop the key propagation -> PASSED AT FIRST; both fixtures were vacuous and were rebuilt",
+        "COUNTERFACTUAL 3: report no route -> the long-wire unit test FAILs (retried: the first edit did not compile)",
+        "each counterfactual run SEPARATELY, and confirmed to compile before its result was believed",
+        "regression: r1383 auto-layout, r1390 force-layout, r1441 Brandes-Koepf, r948 align/distribute all PASS",
+        "census = cargo build --workspace --all-targets exit 0",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "impact_refs": [
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "counterfactual 2 passed until BOTH its fixtures were rebuilt — the R1441 unverified-code lesson, verbatim",
+        "a seeded pass cannot untangle a crossing the viewer already has; no re-tidy-on-demand verb exists yet",
+        "upx / ppt are now duplicated across two examples — mechanical, but 2 of the 3 copies the lift gate wants",
+        "the feed is scripted rather than a producer thread; a RepaintSink consumer would drive the same reducer"
+      ],
+      "publishable_decision_summary": "R1442 — a live topology view keeps its shape: the layered solver becomes the pinion-graph crate at its second consumer, and grows an ordering seeded from the previous drawing, so a graph that changes under the viewer stays recognisable",
+      "publishable_changes_bullets": [
+        "new crate pinion-graph: the layered pipeline as pure arithmetic, zero dependencies, vertices are indices",
+        "LIFT R1441's src/layout.rs verbatim, and the cycle-break + longest-path layering follow it out of the editor",
+        "Sugiyama::run_seeded orders each layer by the PREVIOUS drawing's coordinates, not by crossing minimisation",
+        "two vertices that both carry a seed keep the order the viewer remembers — sorting by it cannot invert it",
+        "an unseeded vertex (a new one, and every bend) takes the mean of its keyed neighbours, spread one edge a round",
+        "Layout::order_changes counts remembered pairs a drawing flipped: 0 when seeded, measurable when not",
+        "the trade is published in BOTH currencies: a seeded pass never chooses an order, so crossings only get worse",
+        "Layout::route says where a long edge's bends went, so a view draws the polyline through the reserved channel",
+        "split_long_edges returns the bends PER EDGE instead of a bare count, which is what makes that route derivable",
+        "new example hello-topology: a mesh that arrives with no coordinates, re-placed on every change, both orderings live",
+        "node editor refit: layout_of + GraphIndex replace layout_pipeline and its three NodeId-keyed helpers",
+        "FIX pre-existing: FORCE_ITERS and FORCE_K carried each other's doc comments, so FORCE_K read \"layered one.\""
+      ],
+      "publishable_verification_bullets": [
+        "pinion-graph 21 + doctest green; hello-topology 10; hello-node-editor 264 (275 minus the 11 tests that moved)",
+        "tools/demos/r1442_live_topology.py — 55 assertion sites over real windowed RPC, 6 sections, PASS",
+        "the demo re-derives stability from SERVICE NAMES, so a metric agreeing only with itself would still fail",
+        "COUNTERFACTUAL 1: order a seeded pass by barycenter -> 2 unit tests + demo section C FAIL at step 1",
+        "COUNTERFACTUAL 2: drop the key propagation -> PASSED AT FIRST; both fixtures were vacuous and were rebuilt",
+        "COUNTERFACTUAL 3: report no route -> the long-wire unit test FAILs (retried: the first edit did not compile)",
+        "each counterfactual run SEPARATELY, and confirmed to compile before its result was believed",
+        "regression: r1383 auto-layout, r1390 force-layout, r1441 Brandes-Koepf, r948 align/distribute all PASS",
+        "census = cargo build --workspace --all-targets exit 0",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "counterfactual 2 passed until BOTH its fixtures were rebuilt — the R1441 unverified-code lesson, verbatim",
+        "a seeded pass cannot untangle a crossing the viewer already has; no re-tidy-on-demand verb exists yet",
+        "upx / ppt are now duplicated across two examples — mechanical, but 2 of the 3 copies the lift gate wants",
+        "the feed is scripted rather than a producer thread; a RepaintSink consumer would drive the same reducer"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

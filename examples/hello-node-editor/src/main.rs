@@ -288,6 +288,7 @@ use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_extra};
 use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, SelectionChord, WidgetCore};
+use pinion_graph::Sugiyama;
 use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::text_field as tf_paint;
@@ -1041,18 +1042,20 @@ fn cycle_nodes(nodes: &[GraphNode], edges: &[Edge]) -> Vec<NodeId> {
 /// [`layered_layout`] pass produces; a column's pitch is [`NODE_W`] + this.
 const LAYER_GAP: i32 = 60;
 
-/// R1383 — the vertical gap between two nodes stacked in one auto-layout column.
-const LAYOUT_ROW_GAP: i32 = 24;
-
-/// R1383 — the barycenter crossing-reduction sweep count (alternating down / up).
-/// Fixed, so the layout is deterministic (ZERO-FLAKE) and always terminates.
-const LAYOUT_SWEEPS: usize = 4;
-
-/// R1441 — the free-axis extent a long edge's BEND occupies as it passes through
-/// a layer. A bend stands for a wire, so it is far smaller than a node, but not
-/// zero: two wires crossing one column must still be separable, and a zero-size
-/// vertex would let the compaction stack them on one coordinate.
-const LAYOUT_BEND_H: i32 = 12;
+/// R1442 — the layered-layout pass the `auto_layout` verb runs, tuned for this
+/// editor's cards and handed to the shared [`pinion_graph`] solver.
+///
+/// `row_gap` is the vertical clearance between two nodes stacked in one column;
+/// `bend_size` the free-axis extent a long edge's BEND occupies in a column it
+/// passes through (far smaller than a node — a bend stands for a wire — but
+/// never zero, or the compaction could stack two wires on one coordinate); and
+/// `sweeps` the barycenter crossing-reduction pass count, fixed so the layout
+/// always terminates and is deterministic (ZERO-FLAKE).
+const LAYOUT: Sugiyama = Sugiyama {
+    row_gap: 24,
+    bend_size: 12,
+    sweeps: 4,
+};
 
 /// R1441 — the edge-crossing count of a fresh layered layout of this graph: the
 /// tidiness metric [`layered_layout`] is judged by, and the reason the long-edge
@@ -1060,11 +1063,11 @@ const LAYOUT_BEND_H: i32 = 12;
 ///
 /// Crossings are a property of the ORDER alone, so this reports what the
 /// barycenter sweeps achieved over the PROPER layering — the number the split
-/// improves and [`layout::Layering::brandes_koepf`] provably cannot change.
+/// improves and the [`pinion_graph`] coordinate solver provably cannot change.
 /// Derived on demand from the current graph rather than cached at the last
 /// `auto_layout`, so it cannot go stale after an edit.
 fn layout_crossings(nodes: &[GraphNode], edges: &[Edge]) -> usize {
-    layout_pipeline(nodes, edges).map_or(0, |p| p.layering.count_crossings())
+    layout_of(nodes, edges).map_or(0, |(_, layout)| layout.crossings())
 }
 
 /// R1441 — `(inner segments, of those drawn straight)` for a fresh layout of this
@@ -1077,69 +1080,62 @@ fn layout_crossings(nodes: &[GraphNode], edges: &[Edge]) -> usize {
 /// (§2 #7) instead of asserted in prose. Both numbers ride together because
 /// "every inner segment is straight" says nothing when a graph has none.
 fn layout_inner_straightness(nodes: &[GraphNode], edges: &[Edge]) -> (usize, usize) {
-    layout_pipeline(nodes, edges).map_or((0, 0), |p| {
-        let centre = p.layering.brandes_koepf(LAYOUT_ROW_GAP);
-        p.layering.inner_segment_straightness(&centre)
-    })
+    layout_of(nodes, edges).map_or((0, 0), |(_, layout)| layout.inner_segments())
 }
 
-/// R1441 — the shared front half of the layered pipeline: cycle break, layer
-/// assignment, proper layering, crossing reduction.
+/// R1442 — the graph as the abstract vertices [`pinion_graph`] works on: index
+/// `i` is `ids[i]`, so the solver never sees a [`NodeId`] and mapping an answer
+/// back is an index lookup.
 ///
-/// Returns the id order the vertex indices follow, each node's layer and size,
-/// and the reduced [`layout::Layering`] — one definition read by both
-/// [`layered_layout`] (which goes on to solve coordinates) and
-/// [`layout_crossings`] (which only counts), so the metric can never describe a
-/// different layering than the one applied.
-fn layout_pipeline(nodes: &[GraphNode], edges: &[Edge]) -> Option<LayeredPipeline> {
+/// A self-loop, and any edge touching an absent node, is dropped here rather
+/// than in the solver, because "absent" is a fact about this editor's model.
+struct GraphIndex {
+    /// The id order the vertex indices follow — ascending, so the mapping is
+    /// stable across calls.
+    ids: Vec<NodeId>,
+    /// Each node's card height, by the same index: the extent the layout has to
+    /// keep clear along the free axis.
+    sizes: Vec<i32>,
+    /// The graph's edges as index pairs.
+    edges: Vec<(usize, usize)>,
+}
+
+/// R1442 — project the model onto [`GraphIndex`]. `None` for an empty graph,
+/// which has no layout to speak of.
+fn graph_index(nodes: &[GraphNode], edges: &[Edge]) -> Option<GraphIndex> {
     if nodes.is_empty() {
         return None;
     }
     let mut ids: Vec<NodeId> = nodes.iter().map(|n| n.id).collect();
     ids.sort_by_key(|id| id.raw());
-    let node_set: BTreeSet<NodeId> = ids.iter().copied().collect();
-
-    let succ = layout_successors(&ids, &node_set, edges);
-    let back = layout_back_edges(&ids, &succ);
-    let layer = layout_assign_layers(&ids, &succ, &back);
-
-    // Onto abstract vertices: index `i` is `ids[i]`, so the pure solver never
-    // sees a NodeId and the mapping back is an index lookup.
     let slot: BTreeMap<NodeId, usize> = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
     let height_of: BTreeMap<NodeId, i32> = nodes.iter().map(|n| (n.id, n.height())).collect();
-    let size: Vec<i32> = ids.iter().map(|id| height_of[id]).collect();
-    let layer_of: Vec<usize> = ids.iter().map(|id| layer[id]).collect();
-    let mut forward: Vec<(usize, usize)> = Vec::new();
-    for (from, kids) in &succ {
-        for &(ei, to) in kids {
-            if !back.contains(&ei) {
-                forward.push((slot[from], slot[&to]));
-            }
-        }
-    }
-
-    let mut layering = layout::Layering::new(size.clone(), &layer_of, &forward);
-    layering.split_long_edges(LAYOUT_BEND_H);
-    layering.reduce_crossings(LAYOUT_SWEEPS);
-    Some(LayeredPipeline {
+    let sizes: Vec<i32> = ids.iter().map(|id| height_of[id]).collect();
+    let mut pairs: Vec<(usize, usize)> = edges
+        .iter()
+        .filter_map(|e| Some((*slot.get(&e.from_node)?, *slot.get(&e.to_node)?)))
+        .collect();
+    // Sorted so the cycle break — which drops whichever edge of a cycle it
+    // reaches last — cannot depend on the order edges were authored in.
+    pairs.sort_unstable();
+    Some(GraphIndex {
         ids,
-        layer_of,
-        size,
-        layering,
+        sizes,
+        edges: pairs,
     })
 }
 
-/// R1441 — the front half of the layered pipeline, named rather than returned as
-/// a four-tuple so a reader (and the compiler) can tell `layer_of` from `size`.
-struct LayeredPipeline {
-    /// The id order the [`layout::Layering`]'s vertex indices follow.
-    ids: Vec<NodeId>,
-    /// Layer of each real vertex, by the same index.
-    layer_of: Vec<usize>,
-    /// Free-axis size of each real vertex, by the same index.
-    size: Vec<i32>,
-    /// The proper, crossing-reduced layering — bends included.
-    layering: layout::Layering,
+/// R1442 — one layered pass over the current graph, with the mapping that reads
+/// it back.
+///
+/// One definition serves [`layered_layout`] (which places nodes), and
+/// [`layout_crossings`] / [`layout_inner_straightness`] (which only measure), so
+/// a published metric can never describe a different layout than the applied
+/// one. Derived per call rather than cached, so an edit cannot leave it stale.
+fn layout_of(nodes: &[GraphNode], edges: &[Edge]) -> Option<(GraphIndex, pinion_graph::Layout)> {
+    let index = graph_index(nodes, edges)?;
+    let layout = LAYOUT.run(&index.sizes, &index.edges);
+    Some((index, layout))
 }
 
 /// R1383 — a **layered (Sugiyama) auto-layout** of the graph: the pure geometry
@@ -1155,27 +1151,24 @@ struct LayeredPipeline {
 /// the edges, **never** the current `x` / `y`, so identical inputs always yield
 /// an identical layout (the pass is idempotent once applied):
 ///
-/// 1. **Cycle breaking** — a forward DFS in id order classifies each edge; an
-///    edge into a node still on the DFS stack is a *back-edge*, dropped from the
-///    layering set. A data-flow graph is usually a DAG ([`graph_is_acyclic`]),
-///    but the model permits a cycle and a layered form needs an acyclic base.
+/// 1. **Cycle breaking** — an edge into a node still on the DFS stack is a
+///    *back-edge*, dropped from the layering set. A data-flow graph is usually a
+///    DAG ([`graph_is_acyclic`]), but the model permits a cycle and a layered
+///    form needs an acyclic base.
 /// 2. **Layer assignment** — longest-path layering by Kahn topological order over
 ///    the acyclic edges: a source (no acyclic in-edge) is layer 0, every other
 ///    node one past its deepest predecessor, so each acyclic edge spans ≥1 layer.
-/// 3. **Proper layering + ordering + coordinates** (R1441) — the acyclic edges
-///    become a [`layout::Layering`], long edges split over bends, reordered by
-///    [`LAYOUT_SWEEPS`] barycenter sweeps, and given a within-column coordinate
-///    by [`layout::Layering::brandes_koepf`]. Layer `l` becomes the column at
-///    `origin.x + l·(NODE_W + LAYER_GAP)`, and the solved centres are shifted so
-///    the topmost real node sits at `origin.y` (the tidied graph stays put).
+/// 3. **Proper layering + ordering + coordinates** (R1441) — long edges split
+///    over bends, reordered by [`LAYOUT`]`.sweeps` barycenter sweeps, and given
+///    a within-column coordinate by the **Brandes-Köpf** solver, so an edge runs
+///    straight wherever the ordering allows.
 ///
-/// R1441 replaced this round's two documented simplifications. A long edge
-/// spanning >1 layer IS now split over dummy bends, so the crossing-reduction
-/// sweep sees it, and the within-column coordinate comes from a
-/// **Brandes-Köpf** solver instead of naive stacking, so an edge runs straight
-/// wherever the ordering allows. Both live in [`crate::layout`], which works on
-/// abstract vertex indices — this function's remaining job is the mapping.
-/// Comment frames are annotations left where they
+/// All three phases live in [`pinion_graph`] and work on abstract vertex indices
+/// (R1442 lifted them there when the live topology view became their second
+/// consumer) — this function's remaining job is the MAPPING: layer `l` becomes
+/// the column at `origin.x + l·(NODE_W + LAYER_GAP)`, and the solved centres are
+/// shifted so the topmost real node sits at `origin.y`, keeping the tidied graph
+/// where it was. Comment frames are annotations left where they
 /// are (a full re-layout may orphan a frame from its nodes — the same
 /// nodes-only contract `align_selected` / `distribute_selected` keep).
 fn layered_layout(
@@ -1183,147 +1176,34 @@ fn layered_layout(
     edges: &[Edge],
     origin: (i32, i32),
 ) -> BTreeMap<NodeId, (i32, i32)> {
-    let Some(pipeline) = layout_pipeline(nodes, edges) else {
+    let Some((index, layout)) = layout_of(nodes, edges) else {
         return BTreeMap::new();
     };
-    let LayeredPipeline {
-        ids,
-        layer_of,
-        size,
-        layering,
-    } = pipeline;
-    let centre = layering.brandes_koepf(LAYOUT_ROW_GAP);
-
-    // The solver's coordinates are relative; anchor the topmost REAL node at
-    // `origin.y`. Bends are excluded deliberately — a bend is a wire, and
+    // The solver's coordinates are relative, and it reports the topmost leading
+    // edge over the REAL vertices — bends excluded, since a bend is a wire and
     // letting one set the anchor would drift the graph by half a wire.
-    let top = (0..ids.len())
-        .map(|i| centre[i] - size[i] / 2)
-        .min()
-        .unwrap_or(0);
-    ids.iter()
+    let top = layout.top();
+    index
+        .ids
+        .iter()
         .enumerate()
         .map(|(i, &id)| {
-            let x = origin.0 + i32::try_from(layer_of[i]).unwrap_or(0) * (NODE_W + LAYER_GAP);
-            let y = origin.1 + (centre[i] - size[i] / 2) - top;
+            let column = i32::try_from(layout.layers()[i]).unwrap_or(0);
+            let x = origin.0 + column * (NODE_W + LAYER_GAP);
+            let y = origin.1 + (layout.centres()[i] - index.sizes[i] / 2) - top;
             (id, (x, y))
         })
         .collect()
 }
 
-/// R1383 helper — id-ordered, edge-index-tagged successor lists over the present
-/// nodes ([`layered_layout`] phase 0). A self-loop and any edge touching an
-/// absent node are skipped (they cannot constrain a forward layering).
-fn layout_successors(
-    ids: &[NodeId],
-    node_set: &BTreeSet<NodeId>,
-    edges: &[Edge],
-) -> BTreeMap<NodeId, Vec<(usize, NodeId)>> {
-    let mut succ: BTreeMap<NodeId, Vec<(usize, NodeId)>> =
-        ids.iter().map(|&id| (id, Vec::new())).collect();
-    for (i, e) in edges.iter().enumerate() {
-        if e.from_node != e.to_node
-            && node_set.contains(&e.from_node)
-            && node_set.contains(&e.to_node)
-        {
-            succ.get_mut(&e.from_node)
-                .expect("from in node_set")
-                .push((i, e.to_node));
-        }
-    }
-    for v in succ.values_mut() {
-        v.sort_by_key(|&(_, to)| to.raw());
-    }
-    succ
-}
-
-/// R1383 helper — the back-edge indices ([`layered_layout`] phase 1): an
-/// iterative forward DFS in id order, where an edge into a node still on the DFS
-/// stack is a back-edge. Dropping these from layering makes any cyclic graph
-/// acyclic (the model permits a cycle — [`graph_is_acyclic`]).
-fn layout_back_edges(
-    ids: &[NodeId],
-    succ: &BTreeMap<NodeId, Vec<(usize, NodeId)>>,
-) -> BTreeSet<usize> {
-    let mut color: BTreeMap<NodeId, u8> = BTreeMap::new(); // absent=white, 1=on-stack, 2=done
-    let mut back: BTreeSet<usize> = BTreeSet::new();
-    for &root in ids {
-        if color.contains_key(&root) {
-            continue;
-        }
-        color.insert(root, 1);
-        let mut stack: Vec<(NodeId, usize)> = vec![(root, 0)];
-        while let Some(&(node, cursor)) = stack.last() {
-            let kids = &succ[&node];
-            if cursor < kids.len() {
-                let (edge_i, to) = kids[cursor];
-                stack.last_mut().expect("non-empty").1 += 1;
-                match color.get(&to) {
-                    Some(1) => {
-                        back.insert(edge_i);
-                    }
-                    Some(2) => {}
-                    _ => {
-                        color.insert(to, 1);
-                        stack.push((to, 0));
-                    }
-                }
-            } else {
-                color.insert(node, 2);
-                stack.pop();
-            }
-        }
-    }
-    back
-}
-
-/// R1383 helper — the longest-path layer of every node ([`layered_layout`] phase
-/// 2): Kahn topological order over the acyclic edges, smallest id first. A
-/// source (no acyclic in-edge) is layer 0; every other node sits one past its
-/// deepest predecessor.
-fn layout_assign_layers(
-    ids: &[NodeId],
-    succ: &BTreeMap<NodeId, Vec<(usize, NodeId)>>,
-    back: &BTreeSet<usize>,
-) -> BTreeMap<NodeId, usize> {
-    let mut indeg: BTreeMap<NodeId, usize> = ids.iter().map(|&id| (id, 0)).collect();
-    for kids in succ.values() {
-        for &(ei, to) in kids {
-            if !back.contains(&ei) {
-                *indeg.get_mut(&to).expect("to in node_set") += 1;
-            }
-        }
-    }
-    let mut layer: BTreeMap<NodeId, usize> = ids.iter().map(|&id| (id, 0)).collect();
-    let mut ready: BTreeSet<NodeId> = ids.iter().copied().filter(|id| indeg[id] == 0).collect();
-    while let Some(&u) = ready.iter().next() {
-        ready.remove(&u);
-        let layer_u = layer[&u];
-        for &(ei, v) in &succ[&u] {
-            if back.contains(&ei) {
-                continue;
-            }
-            if layer[&v] < layer_u + 1 {
-                layer.insert(v, layer_u + 1);
-            }
-            let d = indeg.get_mut(&v).expect("v in node_set");
-            *d -= 1;
-            if *d == 0 {
-                ready.insert(v);
-            }
-        }
-    }
-    layer
-}
+/// R1390 — the fixed iteration count of the force-directed relaxation. Fixed so
+/// the annealing always terminates and the layout is deterministic (ZERO-FLAKE),
+/// the [`LAYOUT`]`.sweeps` discipline carried to the spring-electrical loop.
+const FORCE_ITERS: usize = 200;
 
 /// R1390 — the ideal edge length: the natural spring rest length a connected pair
 /// settles toward, and the repulsion's length scale. One column pitch (`NODE_W`
 /// 130 + `LAYER_GAP` 60), so the organic layout spaces nodes comparably to the
-/// R1390 — the fixed iteration count of the force-directed relaxation. Fixed so
-/// the annealing always terminates and the layout is deterministic (ZERO-FLAKE),
-/// the [`LAYOUT_SWEEPS`] discipline carried to the spring-electrical loop.
-const FORCE_ITERS: usize = 200;
-
 /// layered one.
 const FORCE_K: f64 = 190.0;
 
@@ -9112,8 +8992,6 @@ impl WidgetView for NodeEditorView {
 fn main() {
     pinion_shell::run::<NodeEditorView>();
 }
-
-mod layout;
 
 #[cfg(test)]
 mod tests;

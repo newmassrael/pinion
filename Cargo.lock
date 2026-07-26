@@ -3020,6 +3020,7 @@ dependencies = [
  "pinion-a11y",
  "pinion-core",
  "pinion-forge",
+ "pinion-graph",
  "pinion-platform-storage",
  "pinion-shell",
  "pinion-widget-paint",
@@ -3711,6 +3712,19 @@ dependencies = [
  "pinion-forge",
  "pinion-shell",
  "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
+name = "hello-topology"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-graph",
+ "pinion-shell",
+ "serde",
  "vello",
 ]
 
@@ -5390,6 +5404,10 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "pinion-graph"
+version = "0.0.1"
 
 [[package]]
 name = "pinion-narrative"
