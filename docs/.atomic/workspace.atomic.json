@@ -69792,6 +69792,76 @@
         "the CLI silently accepts bullets past its documented 100-char cap; do not rely on it to catch them"
       ]
     },
+    "Round 1441": {
+      "decision_summary": "R1441 — a proper layering plus the Brandes-Koepf coordinate solver: long edges split over bends so crossings can improve, and inner segments drawn straight by a guarantee published as data",
+      "changes_bullets": [
+        "new src/layout.rs: a pure index-based layering solver that knows nothing of the graph model",
+        "split_long_edges makes the layering PROPER, so the barycenter sweep can finally see a long edge",
+        "brandes_koepf: all 4 passes + type-1 conflict marking + median balancing, transposed to a y axis",
+        "the paper's guarantee is over INNER segments only; a <3-layer span has none and gets no promise",
+        "compaction is iterative over a topological block order, not the paper's graph-deep recursion",
+        "LIFT layout_pipeline: the shared front half both the layout and the metrics read, so they agree",
+        "query layout_crossings — the tidiness metric, derived per call so an edit cannot leave it stale",
+        "query layout_inner_segments / layout_straight_inner — the BK guarantee published as data",
+        "query node.<id>.h — a card's height, the twin of frame.<id>.h; centres are where edges attach",
+        "deleted layout_neighbours + layout_reduce_crossings from main.rs, superseded by the solver"
+      ],
+      "verification_bullets": [
+        "hello-node-editor 275 green (+11 layout tests); every pre-existing R1383 layout test unchanged",
+        "tools/demos/r1441_brandes_koepf.py — 34 assertions over real windowed RPC, 6 sections, PASS",
+        "COUNTERFACTUAL 1: skip the long-edge split -> 5 unit tests + demo section D FAIL",
+        "COUNTERFACTUAL 2: drop type-1 conflict marking -> the adversarial-order unit test FAILs",
+        "COUNTERFACTUAL 3: take one pass instead of the balanced median -> the symmetric-fan test FAILs",
+        "each counterfactual run SEPARATELY and kept compiling (R1439's false-green lesson)",
+        "regression: all 35 node/graph demos PASS, r1383 auto-layout and r1390 force-layout among them",
+        "census = cargo build --workspace --all-targets exit 0",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "counterfactuals 2 and 3 both passed until a fixture was built for them; the code was unverified",
+        "Layering still has ONE consumer, so the crate lift stays gated on a second graph client",
+        "a long edge spanning exactly two layers has no inner segment and so no straightness guarantee",
+        "the LIVE auto-relaying topology view is still absent; it would be that second consumer"
+      ],
+      "publishable_decision_summary": "R1441 — a proper layering plus the Brandes-Koepf coordinate solver: long edges split over bends so crossings can improve, and inner segments drawn straight by a guarantee published as data",
+      "publishable_changes_bullets": [
+        "new src/layout.rs: a pure index-based layering solver that knows nothing of the graph model",
+        "split_long_edges makes the layering PROPER, so the barycenter sweep can finally see a long edge",
+        "brandes_koepf: all 4 passes + type-1 conflict marking + median balancing, transposed to a y axis",
+        "the paper's guarantee is over INNER segments only; a <3-layer span has none and gets no promise",
+        "compaction is iterative over a topological block order, not the paper's graph-deep recursion",
+        "LIFT layout_pipeline: the shared front half both the layout and the metrics read, so they agree",
+        "query layout_crossings — the tidiness metric, derived per call so an edit cannot leave it stale",
+        "query layout_inner_segments / layout_straight_inner — the BK guarantee published as data",
+        "query node.<id>.h — a card's height, the twin of frame.<id>.h; centres are where edges attach",
+        "deleted layout_neighbours + layout_reduce_crossings from main.rs, superseded by the solver"
+      ],
+      "publishable_verification_bullets": [
+        "hello-node-editor 275 green (+11 layout tests); every pre-existing R1383 layout test unchanged",
+        "tools/demos/r1441_brandes_koepf.py — 34 assertions over real windowed RPC, 6 sections, PASS",
+        "COUNTERFACTUAL 1: skip the long-edge split -> 5 unit tests + demo section D FAIL",
+        "COUNTERFACTUAL 2: drop type-1 conflict marking -> the adversarial-order unit test FAILs",
+        "COUNTERFACTUAL 3: take one pass instead of the balanced median -> the symmetric-fan test FAILs",
+        "each counterfactual run SEPARATELY and kept compiling (R1439's false-green lesson)",
+        "regression: all 35 node/graph demos PASS, r1383 auto-layout and r1390 force-layout among them",
+        "census = cargo build --workspace --all-targets exit 0",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "counterfactuals 2 and 3 both passed until a fixture was built for them; the code was unverified",
+        "Layering still has ONE consumer, so the crate lift stays gated on a second graph client",
+        "a long edge spanning exactly two layers has no inner segment and so no straightness guarantee",
+        "the LIVE auto-relaying topology view is still absent; it would be that second consumer"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

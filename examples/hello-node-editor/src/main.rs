@@ -48,7 +48,7 @@
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
-//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,inputs,outputs,is_reroute,op,is_source,input_types,output_types,input_default.<port>,value,resolved_input.<port>}` (R1256: `op` = rename-stable compute identity; R1257: `is_source` + authorable `value` on sources; R1260: `resolved_input.<port>` = the value that actually flows in, a debugger read) /
+//! `edge_ids` / `reroute_ids` (R1242) / `node.<id>.{title,x,y,h,inputs,outputs,is_reroute,op,is_source,input_types,output_types,input_default.<port>,value,resolved_input.<port>}` (R1256: `op` = rename-stable compute identity; R1257: `is_source` + authorable `value` on sources; R1260: `resolved_input.<port>` = the value that actually flows in, a debugger read) /
 //! `edge.<id>` / `dissolvable.<id>` / `dissolvable_ids` (R1241: dissolve
 //! eligibility) / `eval.{output,acyclic,cycle_nodes}` (R1255: terminal value +
 //! DAG check; R1260: `cycle_nodes` localises a cycle) / `selected` /
@@ -1048,6 +1048,100 @@ const LAYOUT_ROW_GAP: i32 = 24;
 /// Fixed, so the layout is deterministic (ZERO-FLAKE) and always terminates.
 const LAYOUT_SWEEPS: usize = 4;
 
+/// R1441 — the free-axis extent a long edge's BEND occupies as it passes through
+/// a layer. A bend stands for a wire, so it is far smaller than a node, but not
+/// zero: two wires crossing one column must still be separable, and a zero-size
+/// vertex would let the compaction stack them on one coordinate.
+const LAYOUT_BEND_H: i32 = 12;
+
+/// R1441 — the edge-crossing count of a fresh layered layout of this graph: the
+/// tidiness metric [`layered_layout`] is judged by, and the reason the long-edge
+/// split is separately observable from the coordinate solver.
+///
+/// Crossings are a property of the ORDER alone, so this reports what the
+/// barycenter sweeps achieved over the PROPER layering — the number the split
+/// improves and [`layout::Layering::brandes_koepf`] provably cannot change.
+/// Derived on demand from the current graph rather than cached at the last
+/// `auto_layout`, so it cannot go stale after an edit.
+fn layout_crossings(nodes: &[GraphNode], edges: &[Edge]) -> usize {
+    layout_pipeline(nodes, edges).map_or(0, |p| p.layering.count_crossings())
+}
+
+/// R1441 — `(inner segments, of those drawn straight)` for a fresh layout of this
+/// graph: **the paper's guarantee, published as data**.
+///
+/// Brandes-Köpf promises that every inner segment — a piece of a long edge with
+/// bends at both ends — lands on one coordinate. That promise is about vertices a
+/// client cannot see (a bend is not a node), so asserting it from node positions
+/// alone is impossible; publishing the count makes it checkable over the wire
+/// (§2 #7) instead of asserted in prose. Both numbers ride together because
+/// "every inner segment is straight" says nothing when a graph has none.
+fn layout_inner_straightness(nodes: &[GraphNode], edges: &[Edge]) -> (usize, usize) {
+    layout_pipeline(nodes, edges).map_or((0, 0), |p| {
+        let centre = p.layering.brandes_koepf(LAYOUT_ROW_GAP);
+        p.layering.inner_segment_straightness(&centre)
+    })
+}
+
+/// R1441 — the shared front half of the layered pipeline: cycle break, layer
+/// assignment, proper layering, crossing reduction.
+///
+/// Returns the id order the vertex indices follow, each node's layer and size,
+/// and the reduced [`layout::Layering`] — one definition read by both
+/// [`layered_layout`] (which goes on to solve coordinates) and
+/// [`layout_crossings`] (which only counts), so the metric can never describe a
+/// different layering than the one applied.
+fn layout_pipeline(nodes: &[GraphNode], edges: &[Edge]) -> Option<LayeredPipeline> {
+    if nodes.is_empty() {
+        return None;
+    }
+    let mut ids: Vec<NodeId> = nodes.iter().map(|n| n.id).collect();
+    ids.sort_by_key(|id| id.raw());
+    let node_set: BTreeSet<NodeId> = ids.iter().copied().collect();
+
+    let succ = layout_successors(&ids, &node_set, edges);
+    let back = layout_back_edges(&ids, &succ);
+    let layer = layout_assign_layers(&ids, &succ, &back);
+
+    // Onto abstract vertices: index `i` is `ids[i]`, so the pure solver never
+    // sees a NodeId and the mapping back is an index lookup.
+    let slot: BTreeMap<NodeId, usize> = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    let height_of: BTreeMap<NodeId, i32> = nodes.iter().map(|n| (n.id, n.height())).collect();
+    let size: Vec<i32> = ids.iter().map(|id| height_of[id]).collect();
+    let layer_of: Vec<usize> = ids.iter().map(|id| layer[id]).collect();
+    let mut forward: Vec<(usize, usize)> = Vec::new();
+    for (from, kids) in &succ {
+        for &(ei, to) in kids {
+            if !back.contains(&ei) {
+                forward.push((slot[from], slot[&to]));
+            }
+        }
+    }
+
+    let mut layering = layout::Layering::new(size.clone(), &layer_of, &forward);
+    layering.split_long_edges(LAYOUT_BEND_H);
+    layering.reduce_crossings(LAYOUT_SWEEPS);
+    Some(LayeredPipeline {
+        ids,
+        layer_of,
+        size,
+        layering,
+    })
+}
+
+/// R1441 — the front half of the layered pipeline, named rather than returned as
+/// a four-tuple so a reader (and the compiler) can tell `layer_of` from `size`.
+struct LayeredPipeline {
+    /// The id order the [`layout::Layering`]'s vertex indices follow.
+    ids: Vec<NodeId>,
+    /// Layer of each real vertex, by the same index.
+    layer_of: Vec<usize>,
+    /// Free-axis size of each real vertex, by the same index.
+    size: Vec<i32>,
+    /// The proper, crossing-reduced layering — bends included.
+    layering: layout::Layering,
+}
+
 /// R1383 — a **layered (Sugiyama) auto-layout** of the graph: the pure geometry
 /// the `auto_layout` verb applies. Maps every node id to a target `(x, y)` in
 /// graph units, arranging the graph into left-to-right columns so data flows
@@ -1068,17 +1162,20 @@ const LAYOUT_SWEEPS: usize = 4;
 /// 2. **Layer assignment** — longest-path layering by Kahn topological order over
 ///    the acyclic edges: a source (no acyclic in-edge) is layer 0, every other
 ///    node one past its deepest predecessor, so each acyclic edge spans ≥1 layer.
-/// 3. **Ordering + coordinates** — nodes are grouped by layer (id order), then
-///    [`LAYOUT_SWEEPS`] barycenter sweeps reorder each layer by the mean index of
-///    its neighbours in the adjacent layer (the crossing-reduction heuristic).
-///    Layer `l` becomes the column at `origin.x + l·(NODE_W + LAYER_GAP)`; within
-///    it nodes stack top-to-bottom by their own height + [`LAYOUT_ROW_GAP`], and
-///    every column is centred against the tallest so the graph is balanced.
+/// 3. **Proper layering + ordering + coordinates** (R1441) — the acyclic edges
+///    become a [`layout::Layering`], long edges split over bends, reordered by
+///    [`LAYOUT_SWEEPS`] barycenter sweeps, and given a within-column coordinate
+///    by [`layout::Layering::brandes_koepf`]. Layer `l` becomes the column at
+///    `origin.x + l·(NODE_W + LAYER_GAP)`, and the solved centres are shifted so
+///    the topmost real node sits at `origin.y` (the tidied graph stays put).
 ///
-/// A long edge spanning >1 layer is **not** split with dummy vertices (the
-/// textbook refinement for perfectly straight long wires) — the barycenter still
-/// reads its endpoints, so crossings are reduced but not provably minimised; the
-/// wire router draws the slack. Comment frames are annotations left where they
+/// R1441 replaced this round's two documented simplifications. A long edge
+/// spanning >1 layer IS now split over dummy bends, so the crossing-reduction
+/// sweep sees it, and the within-column coordinate comes from a
+/// **Brandes-Köpf** solver instead of naive stacking, so an edge runs straight
+/// wherever the ordering allows. Both live in [`crate::layout`], which works on
+/// abstract vertex indices — this function's remaining job is the mapping.
+/// Comment frames are annotations left where they
 /// are (a full re-layout may orphan a frame from its nodes — the same
 /// nodes-only contract `align_selected` / `distribute_selected` keep).
 fn layered_layout(
@@ -1086,45 +1183,32 @@ fn layered_layout(
     edges: &[Edge],
     origin: (i32, i32),
 ) -> BTreeMap<NodeId, (i32, i32)> {
-    if nodes.is_empty() {
+    let Some(pipeline) = layout_pipeline(nodes, edges) else {
         return BTreeMap::new();
-    }
-    let mut ids: Vec<NodeId> = nodes.iter().map(|n| n.id).collect();
-    ids.sort_by_key(|id| id.raw());
-    let node_set: BTreeSet<NodeId> = ids.iter().copied().collect();
-
-    let succ = layout_successors(&ids, &node_set, edges);
-    let back = layout_back_edges(&ids, &succ);
-    let layer = layout_assign_layers(&ids, &succ, &back);
-
-    // Group by layer (each column starts id-ordered, since `ids` is sorted),
-    // then crossing-reduce the vertical order within each.
-    let max_layer = layer.values().copied().max().unwrap_or(0);
-    let mut layers: Vec<Vec<NodeId>> = vec![Vec::new(); max_layer + 1];
-    for &id in &ids {
-        layers[layer[&id]].push(id);
-    }
-    let nbr = layout_neighbours(&ids, &node_set, edges);
-    layout_reduce_crossings(&mut layers, &layer, &nbr);
-
-    // Coordinates: a column per layer at `x = origin.x + layer·pitch`, nodes
-    // stacked top-to-bottom, each column centred against the tallest.
-    let height_of: BTreeMap<NodeId, i32> = nodes.iter().map(|n| (n.id, n.height())).collect();
-    let col_height = |lyr: &[NodeId]| -> i32 {
-        let stacked: i32 = lyr.iter().map(|id| height_of[id]).sum();
-        stacked + LAYOUT_ROW_GAP * i32::try_from(lyr.len().saturating_sub(1)).unwrap_or(0)
     };
-    let tallest = layers.iter().map(|l| col_height(l)).max().unwrap_or(0);
-    let mut out: BTreeMap<NodeId, (i32, i32)> = BTreeMap::new();
-    for (li, lyr) in layers.iter().enumerate() {
-        let x = origin.0 + i32::try_from(li).unwrap_or(0) * (NODE_W + LAYER_GAP);
-        let mut y = origin.1 + (tallest - col_height(lyr)) / 2;
-        for &id in lyr {
-            out.insert(id, (x, y));
-            y += height_of[&id] + LAYOUT_ROW_GAP;
-        }
-    }
-    out
+    let LayeredPipeline {
+        ids,
+        layer_of,
+        size,
+        layering,
+    } = pipeline;
+    let centre = layering.brandes_koepf(LAYOUT_ROW_GAP);
+
+    // The solver's coordinates are relative; anchor the topmost REAL node at
+    // `origin.y`. Bends are excluded deliberately — a bend is a wire, and
+    // letting one set the anchor would drift the graph by half a wire.
+    let top = (0..ids.len())
+        .map(|i| centre[i] - size[i] / 2)
+        .min()
+        .unwrap_or(0);
+    ids.iter()
+        .enumerate()
+        .map(|(i, &id)| {
+            let x = origin.0 + i32::try_from(layer_of[i]).unwrap_or(0) * (NODE_W + LAYER_GAP);
+            let y = origin.1 + (centre[i] - size[i] / 2) - top;
+            (id, (x, y))
+        })
+        .collect()
 }
 
 /// R1383 helper — id-ordered, edge-index-tagged successor lists over the present
@@ -1232,94 +1316,14 @@ fn layout_assign_layers(
     layer
 }
 
-/// R1383 helper — undirected neighbour lists ([`layered_layout`] phase 3 input):
-/// the adjacency the barycenter reads, over the present nodes (self-loops and
-/// absent-node edges skipped, as in [`layout_successors`]).
-fn layout_neighbours(
-    ids: &[NodeId],
-    node_set: &BTreeSet<NodeId>,
-    edges: &[Edge],
-) -> BTreeMap<NodeId, Vec<NodeId>> {
-    let mut nbr: BTreeMap<NodeId, Vec<NodeId>> = ids.iter().map(|&id| (id, Vec::new())).collect();
-    for e in edges {
-        if e.from_node != e.to_node
-            && node_set.contains(&e.from_node)
-            && node_set.contains(&e.to_node)
-        {
-            nbr.get_mut(&e.from_node)
-                .expect("from present")
-                .push(e.to_node);
-            nbr.get_mut(&e.to_node)
-                .expect("to present")
-                .push(e.from_node);
-        }
-    }
-    nbr
-}
-
-/// R1383 helper — reorder each layer in place by [`LAYOUT_SWEEPS`] alternating
-/// barycenter sweeps ([`layered_layout`] phase 3, crossing reduction). A node's
-/// key is the mean index of its neighbours in the adjacent layer, compared as an
-/// exact rational (`num_a·den_b` vs `num_b·den_a`); a node with no adjacent
-/// neighbour keeps its slot, and ties break by id (fully deterministic).
-fn layout_reduce_crossings(
-    layers: &mut [Vec<NodeId>],
-    layer: &BTreeMap<NodeId, usize>,
-    nbr: &BTreeMap<NodeId, Vec<NodeId>>,
-) {
-    let max_layer = layers.len().saturating_sub(1);
-    for sweep in 0..LAYOUT_SWEEPS {
-        let down = sweep % 2 == 0;
-        let order: Vec<usize> = if down {
-            (1..=max_layer).collect()
-        } else {
-            (0..max_layer).rev().collect()
-        };
-        // Current within-layer index of every node (refreshed as layers reorder).
-        let mut pos: BTreeMap<NodeId, i64> = BTreeMap::new();
-        for lyr in layers.iter() {
-            for (i, &id) in lyr.iter().enumerate() {
-                pos.insert(id, i64::try_from(i).unwrap_or(0));
-            }
-        }
-        for &l in &order {
-            let adj = if down { l - 1 } else { l + 1 };
-            let mut keyed: Vec<(i64, i64, u32, NodeId)> = layers[l]
-                .iter()
-                .enumerate()
-                .map(|(i, &id)| {
-                    let mut sum = 0i64;
-                    let mut cnt = 0i64;
-                    for &m in &nbr[&id] {
-                        if layer[&m] == adj {
-                            sum += pos[&m];
-                            cnt += 1;
-                        }
-                    }
-                    if cnt == 0 {
-                        (i64::try_from(i).unwrap_or(0), 1, id.raw(), id)
-                    } else {
-                        (sum, cnt, id.raw(), id)
-                    }
-                })
-                .collect();
-            keyed.sort_by(|a, b| (a.0 * b.1).cmp(&(b.0 * a.1)).then(a.2.cmp(&b.2)));
-            layers[l] = keyed.iter().map(|t| t.3).collect();
-            for (i, &id) in layers[l].iter().enumerate() {
-                pos.insert(id, i64::try_from(i).unwrap_or(0));
-            }
-        }
-    }
-}
-
+/// R1390 — the ideal edge length: the natural spring rest length a connected pair
+/// settles toward, and the repulsion's length scale. One column pitch (`NODE_W`
+/// 130 + `LAYER_GAP` 60), so the organic layout spaces nodes comparably to the
 /// R1390 — the fixed iteration count of the force-directed relaxation. Fixed so
 /// the annealing always terminates and the layout is deterministic (ZERO-FLAKE),
 /// the [`LAYOUT_SWEEPS`] discipline carried to the spring-electrical loop.
 const FORCE_ITERS: usize = 200;
 
-/// R1390 — the ideal edge length: the natural spring rest length a connected pair
-/// settles toward, and the repulsion's length scale. One column pitch (`NODE_W`
-/// 130 + `LAYER_GAP` 60), so the organic layout spaces nodes comparably to the
 /// layered one.
 const FORCE_K: f64 = 190.0;
 
@@ -5114,6 +5118,13 @@ impl NodeGraphExternal {
                 "title" => Some(IntrospectValue::Text(node.title.clone())),
                 "x" => Some(IntrospectValue::Int(i64::from(node.x))),
                 "y" => Some(IntrospectValue::Int(i64::from(node.y))),
+                // R1441 — the card's laid-out height, the twin of the long-standing
+                // `frame.<id>.h`. Needed to reason about a node's CENTRE, which is
+                // where an edge attaches: with cards of unequal height "these two
+                // line up" is a statement about centres, and recomputing the height
+                // from the port count outside the model would be a second, driftable
+                // definition of it.
+                "h" => Some(IntrospectValue::Int(i64::from(node.height()))),
                 "inputs" => Some(IntrospectValue::Int(int_of(node.inputs()))),
                 "outputs" => Some(IntrospectValue::Int(int_of(node.outputs()))),
                 // R1242 — the reroute discriminator (a first-class model read, not
@@ -6575,6 +6586,15 @@ impl External for NodeGraphExternal {
 const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("node_count", "int"),
     SchemaField::new("edge_count", "int"),
+    // R1441 — how many edge crossings a fresh layered layout of THIS graph would
+    // have. The tidiness metric the layout is judged by, read-only and derived,
+    // so an AI can ask "is this graph tangled?" and see `auto_layout` improve it.
+    SchemaField::new("layout_crossings", "int"),
+    // R1441 — the Brandes-Köpf guarantee as data: how many inner segments a fresh
+    // layout has, and how many of those it drew on one coordinate. A bend is not a
+    // node, so this is the only way a client can check the promise at all.
+    SchemaField::new("layout_inner_segments", "int"),
+    SchemaField::new("layout_straight_inner", "int"),
     SchemaField::new("node_ids", "string"),
     SchemaField::new("edge_ids", "string"),
     // R1242 — the reroute-knot discriminator + enumeration.
@@ -6657,6 +6677,13 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     ),
     SchemaField::parametric(
         "node.<id>.y",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R1441 — the card's laid-out height, so a client can reason about a node's
+    // CENTRE (where an edge attaches) instead of its top edge.
+    SchemaField::parametric(
+        "node.<id>.h",
         "int",
         const { &[SchemaArg::open("id", "int")] },
     ),
@@ -6822,6 +6849,16 @@ impl ExternalIntrospect for NodeGraphExternal {
         match path {
             "node_count" => Some(IntrospectValue::Int(int_of(self.node_count()))),
             "edge_count" => Some(IntrospectValue::Int(int_of(self.edges.get().len()))),
+            "layout_crossings" => Some(IntrospectValue::Int(int_of(layout_crossings(
+                &self.nodes.get(),
+                &self.edges.get(),
+            )))),
+            "layout_inner_segments" => Some(IntrospectValue::Int(int_of(
+                layout_inner_straightness(&self.nodes.get(), &self.edges.get()).0,
+            ))),
+            "layout_straight_inner" => Some(IntrospectValue::Int(int_of(
+                layout_inner_straightness(&self.nodes.get(), &self.edges.get()).1,
+            ))),
             // CSV of the *current* (possibly sparse after deletes) stable ids —
             // the enumeration handle an AI needs now that addressing is by id.
             "node_ids" => Some(IntrospectValue::Text(csv_ids(
@@ -9075,6 +9112,8 @@ impl WidgetView for NodeEditorView {
 fn main() {
     pinion_shell::run::<NodeEditorView>();
 }
+
+mod layout;
 
 #[cfg(test)]
 mod tests;
