@@ -70158,6 +70158,114 @@
         "the pin's dirty bit forces one extra view+layout re-pass per reveal, the same cost set_max already pays"
       ]
     },
+    "Round 1446": {
+      "decision_summary": "R1446 - a chart plots the field the user points it at: pinion-chart meets pinion's typed cell model through a ModelMapper, and a cell that holds no number is reported rather than plotted as a zero",
+      "changes_bullets": [
+        "pinion_chart::model - the QtCharts Q*XYModelMapper contract over pinion_core::CellValue",
+        "the charting crate and the typed cell model had never met; a chart's data was a compile-time fact",
+        "CellTable{cells,ncols} - a borrowed row-major view of the block every editable grid already holds",
+        "ModelMapper: an x Field, N y fields, a first/count record range, and an Orientation",
+        "one type with an orientation rather than Qt's two classes (QVXYModelMapper / QHXYModelMapper)",
+        "Field::At(i) / Field::Ordinal, named orientation-neutrally so a pivoted block reads the same way",
+        "Mapped{series, unreadable} - Qt reads a cell through QVariant::toReal(), which answers 0.0 for a label",
+        "so a mistyped cell or a mispointed axis plots ON the axis, indistinguishable from a measured zero",
+        "map() invents nothing: an unreadable cell contributes no point and is reported with its TABLE",
+        "coordinates and the CellKind actually there, so a consumer names the column instead of drawing a lie",
+        "the x field is read ONCE for the record range, not per series, so one bad x cell is counted once",
+        "numeric() - Int and Float only; a Bool is a flag, and a numeric string in a text column is text",
+        "LIFT (3rd-consumer self-grep): chip::selection_border - the Outline-while-unselected M3 rule",
+        "filter-chip (R753), series-toggle (R1379) and this round each spelled it; the base FILL stays local",
+        "hello-model-chart - a records readout, an x radio-chip group, a measure toggle per column, a chart",
+        "the cell block is writable over RPC (records/value.R.C), typed through CellKind::coerce"
+      ],
+      "verification_bullets": [
+        "pinion-chart 233 (17 new model tests) + 2 doctests, hello-model-chart 14, widget-paint 720 (2 new)",
+        "hello-filter-chip 8, hello-series-toggle 5 - the two refitted consumers, behaviour-preserving",
+        "tools/demos/r1446_model_chart.py PASS - 45 assertion sites, 51 assertions executed, no wall-clock waits",
+        "the demo reads the diagnosis off the tagged status text, so an agent sees what a reader sees",
+        "COUNTERFACTUAL 1: a Bool widens to 0.0/1.0 (the Qt reading) -> 2 model tests FAIL",
+        "COUNTERFACTUAL 2: an unreadable cell reads as 0.0 silently (QVariant::toReal) -> 5 model tests FAIL",
+        "COUNTERFACTUAL 3: read the x field inside the series loop -> the report-once test FAILs",
+        "COUNTERFACTUAL 4: report in mapping coordinates, not table ones -> the pivoted-report test FAILs",
+        "COUNTERFACTUAL 4's first edit did NOT COMPILE - a false negative; retried clean before believing it",
+        "COUNTERFACTUAL 5: a partial trailing row counts as a record -> the floor test FAILs",
+        "COUNTERFACTUAL 6: every x chip is its own Tab stop -> the focus-model test AND the demo FAIL",
+        "COUNTERFACTUAL 7: invert selection_border -> the 2 new chip tests AND the pre-existing R753 demo FAIL",
+        "CF7 is the lift's safety argument: an EXISTING consumer demo already covers the rule end to end",
+        "CF6 was predicted to escape the demo and did not; checking beat assuming",
+        "regression demos: r753 filter-chip, r1379 series-toggle, hello_chart_r1354 - all PASS",
+        "gates: fmt --all --check clean, clippy -D pedantic clean on 5 packages, cargo doc 0, T1 reject=0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.12",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "an interior unreadable row leaves the polyline joining its neighbours, which reads as interpolation",
+        "breaking a series at a gap needs a gap-aware Series; that does not exist and was not built here",
+        "the report is how a consumer surfaces the hole today, and the demo's status line does exactly that",
+        "toggle_group::extra_toggles skips index 0 - it assumes the first toggle is the PRIMARY external",
+        "so this binding, whose primary is a radio group, builds its toggle extras by hand",
+        "a real but narrow limit of that helper, stated rather than worked around; one consumer is not the gate",
+        "radio_composite::roving_key needs the External at the scene ROOT, so a binding with extras must",
+        "address its radio group by tag and call drive_activate itself - same substrate, a different shell",
+        "typing values into a GRID stays hello-data-grid's job; what R1446 added is the cells-to-series bind"
+      ],
+      "publishable_decision_summary": "R1446 - a chart plots the field the user points it at: pinion-chart meets pinion's typed cell model through a ModelMapper, and a cell that holds no number is reported rather than plotted as a zero",
+      "publishable_changes_bullets": [
+        "pinion_chart::model - the QtCharts Q*XYModelMapper contract over pinion_core::CellValue",
+        "the charting crate and the typed cell model had never met; a chart's data was a compile-time fact",
+        "CellTable{cells,ncols} - a borrowed row-major view of the block every editable grid already holds",
+        "ModelMapper: an x Field, N y fields, a first/count record range, and an Orientation",
+        "one type with an orientation rather than Qt's two classes (QVXYModelMapper / QHXYModelMapper)",
+        "Field::At(i) / Field::Ordinal, named orientation-neutrally so a pivoted block reads the same way",
+        "Mapped{series, unreadable} - Qt reads a cell through QVariant::toReal(), which answers 0.0 for a label",
+        "so a mistyped cell or a mispointed axis plots ON the axis, indistinguishable from a measured zero",
+        "map() invents nothing: an unreadable cell contributes no point and is reported with its TABLE",
+        "coordinates and the CellKind actually there, so a consumer names the column instead of drawing a lie",
+        "the x field is read ONCE for the record range, not per series, so one bad x cell is counted once",
+        "numeric() - Int and Float only; a Bool is a flag, and a numeric string in a text column is text",
+        "LIFT (3rd-consumer self-grep): chip::selection_border - the Outline-while-unselected M3 rule",
+        "filter-chip (R753), series-toggle (R1379) and this round each spelled it; the base FILL stays local",
+        "hello-model-chart - a records readout, an x radio-chip group, a measure toggle per column, a chart",
+        "the cell block is writable over RPC (records/value.R.C), typed through CellKind::coerce"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-chart 233 (17 new model tests) + 2 doctests, hello-model-chart 14, widget-paint 720 (2 new)",
+        "hello-filter-chip 8, hello-series-toggle 5 - the two refitted consumers, behaviour-preserving",
+        "tools/demos/r1446_model_chart.py PASS - 45 assertion sites, 51 assertions executed, no wall-clock waits",
+        "the demo reads the diagnosis off the tagged status text, so an agent sees what a reader sees",
+        "COUNTERFACTUAL 1: a Bool widens to 0.0/1.0 (the Qt reading) -> 2 model tests FAIL",
+        "COUNTERFACTUAL 2: an unreadable cell reads as 0.0 silently (QVariant::toReal) -> 5 model tests FAIL",
+        "COUNTERFACTUAL 3: read the x field inside the series loop -> the report-once test FAILs",
+        "COUNTERFACTUAL 4: report in mapping coordinates, not table ones -> the pivoted-report test FAILs",
+        "COUNTERFACTUAL 4's first edit did NOT COMPILE - a false negative; retried clean before believing it",
+        "COUNTERFACTUAL 5: a partial trailing row counts as a record -> the floor test FAILs",
+        "COUNTERFACTUAL 6: every x chip is its own Tab stop -> the focus-model test AND the demo FAIL",
+        "COUNTERFACTUAL 7: invert selection_border -> the 2 new chip tests AND the pre-existing R753 demo FAIL",
+        "CF7 is the lift's safety argument: an EXISTING consumer demo already covers the rule end to end",
+        "CF6 was predicted to escape the demo and did not; checking beat assuming",
+        "regression demos: r753 filter-chip, r1379 series-toggle, hello_chart_r1354 - all PASS",
+        "gates: fmt --all --check clean, clippy -D pedantic clean on 5 packages, cargo doc 0, T1 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.12",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "an interior unreadable row leaves the polyline joining its neighbours, which reads as interpolation",
+        "breaking a series at a gap needs a gap-aware Series; that does not exist and was not built here",
+        "the report is how a consumer surfaces the hole today, and the demo's status line does exactly that",
+        "toggle_group::extra_toggles skips index 0 - it assumes the first toggle is the PRIMARY external",
+        "so this binding, whose primary is a radio group, builds its toggle extras by hand",
+        "a real but narrow limit of that helper, stated rather than worked around; one consumer is not the gate",
+        "radio_composite::roving_key needs the External at the scene ROOT, so a binding with extras must",
+        "address its radio group by tag and call drive_activate itself - same substrate, a different shell",
+        "typing values into a GRID stays hello-data-grid's job; what R1446 added is the cells-to-series bind"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

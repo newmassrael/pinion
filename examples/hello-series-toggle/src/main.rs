@@ -25,8 +25,7 @@ use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::external::External;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
-    TextStyle,
+    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
@@ -34,7 +33,7 @@ use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::toggle_group;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::chip::{self, CHIP_HEIGHT, OUTLINE_W};
+use pinion_widget_paint::chip::{self, CHIP_HEIGHT};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSeriesToggleRenderer, HelloSeriesToggleRendererError);
@@ -233,11 +232,10 @@ fn chip(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
     } else {
         Color::rgba(0, 0, 0, 0)
     };
-    let border = if on {
-        None
-    } else {
-        Some(Border::new(theme.resolve(ColorRole::Outline), OUTLINE_W))
-    };
+    // R1446 — the M3 selected-chip-drops-its-outline rule, lifted at its 3rd
+    // consumer. The base fill above stays local: a series toggle's tonal fill
+    // deliberately differs from a filter chip's Accent.
+    let border = chip::selection_border(theme, on);
     let style = chip::chip_style(fill_base, border, state, theme);
     Scene::Container(
         ContainerNode::new(vec![swatch, label])

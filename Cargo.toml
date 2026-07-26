@@ -48,6 +48,7 @@ members = [
     "examples/hello-lazy-list",
     "examples/hello-streaming-log",
     "examples/hello-transcript",
+    "examples/hello-model-chart",
     "examples/hello-paged-stream",
     "examples/hello-live-data",
     "examples/hello-conn-lifecycle",

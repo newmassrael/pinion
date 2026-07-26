@@ -104,6 +104,18 @@
 //! its frame times into one, and R1375 lets a reader scrub it for each bin's
 //! frame count.)
 //!
+//! # Where the data comes from (R1446)
+//!
+//! Every chart above takes a `Vec<Series>` the caller built. [`ModelMapper`]
+//! adds the other source: a [`CellTable`] — pinion's row-major
+//! [`CellValue`](pinion_core::CellValue) block, what every editable grid in
+//! the tree holds — projected into series by naming which [`Field`] is x and
+//! which are y (the `QtCharts` `Q*XYModelMapper` contract). That makes *which
+//! field is plotted* a runtime choice, and makes what the user edits the thing
+//! the chart draws. Unlike Qt's `QVariant::toReal()`, a cell that holds no
+//! number is reported ([`Mapped::unreadable`]) rather than plotted as zero.
+//! `examples/hello-model-chart` is the forcing consumer.
+//!
 //! # Two entry points — pick by who places the chart
 //!
 //! * [`LineChart::build_fill(size)`](LineChart::build_fill) — **layout
@@ -154,6 +166,7 @@ mod color_scale;
 mod donut;
 mod draw;
 mod line;
+mod model;
 mod palette;
 mod plot;
 mod scale;
@@ -170,6 +183,7 @@ pub use brush::{Brush, BrushStripColors};
 pub use color_scale::{ColorScale, contrast_ratio, readable_ink, relative_luminance};
 pub use donut::{DonutChart, Slice};
 pub use line::LineChart;
+pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
 pub use palette::CategoricalPalette;
 pub use scale::LinearScale;
 pub use scatter::ScatterChart;

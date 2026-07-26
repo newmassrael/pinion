@@ -21,10 +21,13 @@
 //! joined stadium *track* of adjacent pills; filter chips are detached,
 //! M3-corner-radius (8 px) rounded rectangles separated by a gap, with an
 //! **`Outline` border while unselected** (the defining M3 filter-chip
-//! affordance) that drops away when selected. So the chip skin lives inline
-//! here (the 1st chip-paint consumer; a 2nd chip consumer — input / assist
-//! chips — would trigger a `pinion_widget_paint::chip` lift, the
-//! inline-first rule). The hover / pressed / disabled overlay routes
+//! affordance) that drops away when selected. This binding minted that skin
+//! inline as the 1st chip-paint consumer; **R756 lifted it** to
+//! [`pinion_widget_paint::chip`] when the input chip became the 2nd, and
+//! **R1446** lifted the `Outline`-while-unselected rule itself
+//! ([`chip::selection_border`]) when the model chart's field pickers became
+//! the 3rd. What is still local here is the *fill* choice and the fixed chip
+//! width. The hover / pressed / disabled overlay routes
 //! through the shared [`state_layer`](pinion_widget_paint::state_layer) SSOT (R752), not raw opacity
 //! literals.
 //!
@@ -53,7 +56,7 @@ use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::toggle_group;
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::chip::{self, CHIP_HEIGHT, OUTLINE_W};
+use pinion_widget_paint::chip::{self, CHIP_HEIGHT};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloFilterChipRenderer, HelloFilterChipRendererError);
@@ -210,13 +213,11 @@ fn chip_fill_base(theme: &Theme, on: bool) -> Color {
 }
 
 /// Unselected chips carry the M3 filter-chip `Outline` border; selected
-/// chips drop it (the tonal fill is the affordance).
+/// chips drop it (the tonal fill is the affordance). R1446 lifted the rule to
+/// [`chip::selection_border`] at its 3rd consumer — it is the spec's rule
+/// rather than this binding's taste, unlike the base *fill* beside it.
 fn chip_border(theme: &Theme, on: bool) -> Option<Border> {
-    if on {
-        None
-    } else {
-        Some(Border::new(theme.resolve(ColorRole::Outline), OUTLINE_W))
-    }
+    chip::selection_border(theme, on)
 }
 
 /// Label + check ink: `OnAccent` on a selected chip, the muted on-surface

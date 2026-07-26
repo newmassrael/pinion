@@ -21,12 +21,16 @@
 //! What is shared (this module): [`CHIP_RADIUS`] / [`CHIP_HEIGHT`] /
 //! [`INNER_GAP`] / [`OUTLINE_W`] tokens, [`chip_style`] (state-layer-tinted,
 //! rounded, optionally-bordered `BoxStyle`), [`chip_layout`] (the centered
-//! inner flex row with [`INNER_GAP`], sized + optionally padded).
+//! inner flex row with [`INNER_GAP`], sized + optionally padded), and — R1446,
+//! at its 3rd consumer — [`selection_border`], the `Outline`-while-unselected
+//! rule every on/off chip obeys.
 //!
 //! What stays per-callsite (NOT lifted): the base-fill chooser (Accent-when-on
-//! vs transparent for the filter chip; a surface-container tone for the input
-//! chip), the leading/trailing children, and the ink colour — each variant's
-//! own affordance.
+//! for the filter chip and the model chart's field pickers; a surface-container
+//! tone for the series toggle and the input chip), the leading/trailing
+//! children, the width strategy, and the ink colour — each variant's own
+//! affordance. The line between the two halves is whether a divergence would
+//! be a **bug** (shared) or a **choice** (local).
 
 use pinion_core::Color;
 use pinion_core::scene::Rect;
@@ -74,6 +78,24 @@ pub fn chip_style<S: InteractionState + Copy>(
     style
 }
 
+/// R1446 — the M3 **selection** border rule for a chip that can be on or off:
+/// an unselected chip carries the `Outline` border, a selected one drops it
+/// (the tonal fill is the affordance, and an outline over it reads as a second,
+/// competing edge).
+///
+/// Lifted at the Rule of Three: `hello-filter-chip` (R753), `hello-series-toggle`
+/// (R1379) and `hello-model-chart` (R1446) each spelled this same two-arm
+/// chooser. Unlike the base *fill* — which genuinely diverges per variant
+/// (`Accent` for a filter chip, `SurfaceContainerHigh` for a series toggle) and
+/// so stays at each callsite — the border arm is the spec's rule, not a taste:
+/// a divergence between the three would be a bug. Chips with no on/off state
+/// (the input chip's `×`) pass `None` to [`chip_style`] directly and do not
+/// call this.
+#[must_use]
+pub fn selection_border(theme: &Theme, selected: bool) -> Option<Border> {
+    (!selected).then(|| Border::new(theme.resolve(pinion_core::ColorRole::Outline), OUTLINE_W))
+}
+
 /// Shared M3 chip inner layout: a centered flex row with [`INNER_GAP`] between
 /// children, sized by `size`, with optional `padding` insets.
 ///
@@ -101,6 +123,31 @@ mod tests {
     use pinion_core::style::SizeValue;
     use pinion_core::theme::ColorRole;
     use pinion_core::widgets::button::ButtonState;
+
+    #[test]
+    fn r1446_selection_border_is_the_outline_only_while_unselected() {
+        let theme = Theme::light();
+        assert!(
+            selection_border(&theme, true).is_none(),
+            "a selected chip drops its outline — the tonal fill is the affordance"
+        );
+        let border = selection_border(&theme, false).expect("an unselected chip is outlined");
+        assert_eq!(border.width, OUTLINE_W);
+        assert_eq!(border.color, theme.resolve(ColorRole::Outline));
+    }
+
+    #[test]
+    fn r1446_selection_border_follows_the_theme_not_a_frozen_colour() {
+        // The reason this is one definition rather than three: an `Outline`
+        // that answered the light tone in a dark app would be a bug in every
+        // consumer at once, and only one of them would get reported.
+        let light = selection_border(&Theme::light(), false).expect("outlined");
+        let dark = selection_border(&Theme::dark(), false).expect("outlined");
+        assert_ne!(
+            light.color, dark.color,
+            "each theme resolves its own outline"
+        );
+    }
 
     #[test]
     fn selected_and_unselected_styles_differ_only_by_border() {

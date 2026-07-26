@@ -1,0 +1,38 @@
+[package]
+name = "hello-model-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1446 Phase-B dataviz consumer — a chart plots the field the user points it at. The forcing consumer for pinion_chart::ModelMapper (the QtCharts Q*XYModelMapper contract over pinion's typed CellValue cell model): a records table feeds a LineChart through a mapper whose x field is a radio-chip choice and whose y fields are toggle chips, so WHICH column is plotted is a runtime decision. Points the y axis at a Text column and the chart plots nothing and says why, where Qt's QVariant::toReal() would draw a flat line on zero. Cell values are writable over RPC (scene/intervene /records/value.R.C), so an agent puts data in and the chart follows."
+publish = false
+
+[[bin]]
+name = "hello-model-chart"
+path = "src/main.rs"
+
+[dependencies]
+# R1446 — the charting substrate + the ModelMapper this example forces.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R756 chip paint skin (`chip_style` / `chip_layout`) shared by both picker
+# rows, and R751 `radio_composite::drive_activate` for the x-field group.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 — the `HelloModelChartRenderer` struct emitted by build.rs names
+# `::vello::*`; `vello_renderer_impl!` also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# §5.16 build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
