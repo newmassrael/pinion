@@ -70012,6 +70012,54 @@
         "the exchange recomputes count_crossings once per sweep, quadratic in edges — fine here, unmeasured at scale"
       ]
     },
+    "Round 1444": {
+      "decision_summary": "R1444 §5.4 — bump the SCE pin 9a0a650c2 -> 201783c44 (dual-pin: submodule gitlink and both Cargo revs move together). Upstream is six commits of clippy and infrastructure work; the only one that reaches pinion is a needless_borrow fix inside a format! in the Rust codegen template, so generated code is semantically unchanged and only its template-hash moves. BEHAVIOUR-NEUTRAL for pinion. Also drops the SHA that the pin comment restated in prose, which had drifted two bumps behind, in favour of a mechanical check of the gitlink against the Cargo rev.",
+      "changes_bullets": [
+        "dual-pin moved together: vendor/sce gitlink and both Cargo revs to 201783c44",
+        "sce 769370ee4 fixes rust 1.97 clippy lints across sce-build and the codegen",
+        "the one Rust template change is a needless_borrow inside format!, so generated code is unchanged",
+        "sce fa60181cc regenerates the committed 6.2.6 trees: only template-hash and generated-at move",
+        "the other four commits are SCE-internal (doom wad mirror, mnemosyne-cli pin, pre-push toolchain, synth RFC)",
+        "the pin comment no longer restates the SHA in prose — it had drifted two bumps behind",
+        "it carries a one-line shell check of the gitlink against the Cargo rev instead"
+      ],
+      "verification_bullets": [
+        "pinion-core 2664 + pinion-forge 89 + pinion-runtime 450 tests green on the new pin",
+        "pinion has no committed SCE-generated trees, so the template-hash change produces no repo diff",
+        "Cargo.lock moved only the three SCE source lines",
+        "dual-pin equality asserted mechanically, not by eye"
+      ],
+      "impact_refs": [
+        "5.4"
+      ],
+      "carry_forward_bullets": [
+        "SCE-004 (Forge codegen serde derive) is untouched by these six commits and stays open",
+        "behaviour-neutral for pinion: no SCE API or generated-code semantics changed"
+      ],
+      "publishable_decision_summary": "R1444 §5.4 — bump the SCE pin 9a0a650c2 -> 201783c44 (dual-pin: submodule gitlink and both Cargo revs move together). Upstream is six commits of clippy and infrastructure work; the only one that reaches pinion is a needless_borrow fix inside a format! in the Rust codegen template, so generated code is semantically unchanged and only its template-hash moves. BEHAVIOUR-NEUTRAL for pinion. Also drops the SHA that the pin comment restated in prose, which had drifted two bumps behind, in favour of a mechanical check of the gitlink against the Cargo rev.",
+      "publishable_changes_bullets": [
+        "dual-pin moved together: vendor/sce gitlink and both Cargo revs to 201783c44",
+        "sce 769370ee4 fixes rust 1.97 clippy lints across sce-build and the codegen",
+        "the one Rust template change is a needless_borrow inside format!, so generated code is unchanged",
+        "sce fa60181cc regenerates the committed 6.2.6 trees: only template-hash and generated-at move",
+        "the other four commits are SCE-internal (doom wad mirror, mnemosyne-cli pin, pre-push toolchain, synth RFC)",
+        "the pin comment no longer restates the SHA in prose — it had drifted two bumps behind",
+        "it carries a one-line shell check of the gitlink against the Cargo rev instead"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 2664 + pinion-forge 89 + pinion-runtime 450 tests green on the new pin",
+        "pinion has no committed SCE-generated trees, so the template-hash change produces no repo diff",
+        "Cargo.lock moved only the three SCE source lines",
+        "dual-pin equality asserted mechanically, not by eye"
+      ],
+      "publishable_impact_refs": [
+        "5.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCE-004 (Forge codegen serde derive) is untouched by these six commits and stays open",
+        "behaviour-neutral for pinion: no SCE API or generated-code semantics changed"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

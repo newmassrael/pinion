@@ -238,9 +238,12 @@ authors = ["pinion contributors"]
 # DUAL-PIN DISCIPLINE: `rev` here MUST equal the `vendor/sce` submodule gitlink
 # SHA. Bumping SCE = move the submodule AND this rev in the SAME commit, or the
 # built SCE drifts from the vendored checkout (C++ side / canon sync still track
-# the submodule). Current pin = submodule HEAD 27051d77a.
-sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "9a0a650c2c4c4ce484dd2084deeb2ed8caffaccc", default-features = false }
-sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "9a0a650c2c4c4ce484dd2084deeb2ed8caffaccc" }
+# the submodule). The two `rev` values below are the ONLY statement of the pin —
+# an earlier version of this comment also named the SHA in prose and had drifted
+# two bumps behind, which is what a duplicated constant does. Check the pair with
+#   test "$(git -C vendor/sce rev-parse HEAD)" = "$(grep -m1 -oP 'rev = "\K[0-9a-f]{40}' Cargo.toml)"
+sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "201783c44baa5fb0ca242af7907249ad747a5a78", default-features = false }
+sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "201783c44baa5fb0ca242af7907249ad747a5a78" }
 
 # §5.7 JSON-RPC 2.0 transport realized at the pinion-rpc envelope.
 serde = { version = "1", features = ["derive"] }
