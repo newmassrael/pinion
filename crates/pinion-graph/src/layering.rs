@@ -60,6 +60,7 @@
 //! present. Implementing only one pass would have been a new documented
 //! simplification, which is the thing this round exists to remove.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A layering over vertices `0..size.len()`: which vertices sit in each layer and
@@ -201,57 +202,136 @@ impl Layering {
         chains
     }
 
-    /// Reorder each layer by `sweeps` alternating barycenter passes — the
-    /// crossing-reduction heuristic, now reading dummies too.
+    /// Reorder each layer to reduce crossings: `sweeps` alternating barycenter
+    /// passes, each followed by [`untangle`](Self::untangle), keeping the best
+    /// order any of them reached.
     ///
-    /// A vertex's key is the mean position of its neighbours in the adjacent
-    /// layer, compared as an exact rational so no float rounding enters; a vertex
-    /// with no neighbour there keeps its slot, and ties break by index. Fully
-    /// deterministic, and a fixed sweep count always terminates (ZERO-FLAKE).
+    /// This is the structure of Gansner, Koutsofios, North & Vo's `mincross`
+    /// ("A Technique for Drawing Directed Graphs", TSE 1993): the median heuristic
+    /// moves a vertex a long way on the strength of an average, the transposition
+    /// step then fixes what that average got wrong locally, and — because a
+    /// barycenter pass is a heuristic and can leave a layer worse than it found it
+    /// — the best order seen is what gets returned rather than the last one.
+    ///
+    /// Fully deterministic, and a fixed sweep count always terminates
+    /// (ZERO-FLAKE).
     pub fn reduce_crossings(&mut self, sweeps: usize) {
-        let depth = self.layers.len();
-        if depth < 2 {
+        if self.layers.len() < 2 {
             return;
         }
+        let mut best = self.layers.clone();
+        let mut fewest = self.count_crossings();
         for sweep in 0..sweeps {
-            let down = sweep % 2 == 0;
-            let order: Vec<usize> = if down {
-                (1..depth).collect()
-            } else {
-                (0..depth - 1).rev().collect()
-            };
-            let index = self.index();
-            let mut pos = index.pos.clone();
-            for l in order {
-                let mut keyed: Vec<(i64, i64, usize)> = self.layers[l]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &v)| {
-                        let adjacent = if down {
-                            &index.preds[v]
-                        } else {
-                            &index.succs[v]
-                        };
-                        let mut sum = 0i64;
-                        let mut count = 0i64;
-                        for &(_, u) in adjacent {
-                            sum += i64::try_from(pos[u]).unwrap_or(0);
-                            count += 1;
-                        }
-                        if count == 0 {
-                            (i64::try_from(i).unwrap_or(0), 1, v)
-                        } else {
-                            (sum, count, v)
-                        }
-                    })
-                    .collect();
-                keyed.sort_by(|a, b| (a.0 * b.1).cmp(&(b.0 * a.1)).then(a.2.cmp(&b.2)));
-                self.layers[l] = keyed.iter().map(|t| t.2).collect();
-                for (i, &v) in self.layers[l].iter().enumerate() {
-                    pos[v] = i;
-                }
+            self.barycenter_pass(sweep % 2 == 0);
+            self.untangle();
+            let crossings = self.count_crossings();
+            if crossings < fewest {
+                fewest = crossings;
+                best.clone_from(&self.layers);
             }
         }
+        self.layers = best;
+    }
+
+    /// One barycenter pass over every layer, reading the layer before it (`down`)
+    /// or after it.
+    ///
+    /// A vertex's key is the mean position of its neighbours in that adjacent
+    /// layer, compared as an exact rational so no float rounding enters; a vertex
+    /// with no neighbour there keeps its slot, and ties break by index.
+    fn barycenter_pass(&mut self, down: bool) {
+        let depth = self.layers.len();
+        let order: Vec<usize> = if down {
+            (1..depth).collect()
+        } else {
+            (0..depth - 1).rev().collect()
+        };
+        let index = self.index();
+        let mut pos = index.pos.clone();
+        for l in order {
+            let mut keyed: Vec<(i64, i64, usize)> = self.layers[l]
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| {
+                    let adjacent = if down {
+                        &index.preds[v]
+                    } else {
+                        &index.succs[v]
+                    };
+                    let mut sum = 0i64;
+                    let mut count = 0i64;
+                    for &(_, u) in adjacent {
+                        sum += i64::try_from(pos[u]).unwrap_or(0);
+                        count += 1;
+                    }
+                    if count == 0 {
+                        (i64::try_from(i).unwrap_or(0), 1, v)
+                    } else {
+                        (sum, count, v)
+                    }
+                })
+                .collect();
+            keyed.sort_by(|a, b| (a.0 * b.1).cmp(&(b.0 * a.1)).then(a.2.cmp(&b.2)));
+            self.layers[l] = keyed.iter().map(|t| t.2).collect();
+            for (i, &v) in self.layers[l].iter().enumerate() {
+                pos[v] = i;
+            }
+        }
+    }
+
+    /// R1443 — the paper's **transpose**: exchange vertices that are ADJACENT in a
+    /// layer, and only where the exchange strictly reduces the crossing count.
+    /// Returns how many exchanges it made.
+    ///
+    /// Every move is therefore bought by a crossing it removes, which is what
+    /// makes this the operator a *stable* layout can afford. An ordering seeded
+    /// from a previous drawing ([`order_by_seed`](Self::order_by_seed)) can never
+    /// relieve a tangle that accumulated, because it never chooses an order at
+    /// all; running this afterwards relieves exactly the tangles a local exchange
+    /// can reach and leaves everything else where the viewer last saw it. Run
+    /// after a barycenter pass instead, it is the local repair of
+    /// [`reduce_crossings`](Self::reduce_crossings).
+    ///
+    /// **Termination** is not a sweep budget but an invariant: the total crossing
+    /// count is a non-negative integer that every accepted exchange strictly
+    /// decreases, so at most that many exchanges can ever be accepted.
+    ///
+    /// Only the two exchanged vertices' own edges can change relative order — any
+    /// other pair of edges keeps both its endpoints' order — so the effect on the
+    /// global count is exactly the effect on those, which is what the local
+    /// comparison below counts.
+    pub fn untangle(&mut self) -> usize {
+        let index = self.index();
+        let mut pos = index.pos;
+        let ends = |lists: &[Vec<(usize, usize)>]| -> Vec<Vec<usize>> {
+            lists
+                .iter()
+                .map(|l| l.iter().map(|&(_, v)| v).collect())
+                .collect()
+        };
+        let (preds, succs) = (ends(&index.preds), ends(&index.succs));
+        let mut exchanges = 0;
+        loop {
+            let mut improved = false;
+            for layer in 0..self.layers.len() {
+                for i in 0..self.layers[layer].len().saturating_sub(1) {
+                    let (v, w) = (self.layers[layer][i], self.layers[layer][i + 1]);
+                    let (kept, swapped) = straddling(&preds[v], &preds[w], &pos);
+                    let (kept_below, swapped_below) = straddling(&succs[v], &succs[w], &pos);
+                    if swapped + swapped_below < kept + kept_below {
+                        self.layers[layer].swap(i, i + 1);
+                        pos[v] = i + 1;
+                        pos[w] = i;
+                        exchanges += 1;
+                        improved = true;
+                    }
+                }
+            }
+            if !improved {
+                break;
+            }
+        }
+        exchanges
     }
 
     /// The number of edge crossings between adjacent layers.
@@ -686,6 +766,31 @@ impl Layering {
     }
 }
 
+/// R1443 — how many of `left`'s edges cross one of `right`'s, as `(kept,
+/// swapped)`: the count if the two vertices stay in the order they are in, and
+/// the count if they are exchanged.
+///
+/// `left` and `right` are the neighbours, on ONE side, of two vertices adjacent
+/// in a layer. A pair of their edges crosses when the neighbours sit in the
+/// opposite order to the vertices, so exchanging the vertices turns every
+/// crossing pair into a clear one and every clear pair into a crossing — except
+/// the pairs that share a neighbour, which cross either way round and are
+/// counted in neither.
+fn straddling(left: &[usize], right: &[usize], pos: &[usize]) -> (usize, usize) {
+    let mut kept = 0;
+    let mut swapped = 0;
+    for &a in left {
+        for &b in right {
+            match pos[a].cmp(&pos[b]) {
+                Ordering::Greater => kept += 1,
+                Ordering::Less => swapped += 1,
+                Ordering::Equal => {}
+            }
+        }
+    }
+    (kept, swapped)
+}
+
 /// Combine the four candidate assignments into one: shift each to the
 /// smallest-width candidate, then take the average of the two middle values per
 /// vertex (the paper's balancing step).
@@ -732,10 +837,26 @@ fn balance(candidates: &[Vec<i32>], size: &[i32]) -> Vec<i32> {
             values.sort_unstable();
             match values.len() {
                 0 => 0,
-                len => i32::midpoint(values[(len - 1) / 2], values[len / 2]),
+                len => floor_midpoint(values[(len - 1) / 2], values[len / 2]),
             }
         })
         .collect()
+}
+
+/// R1443 — the mean of two coordinates, rounded DOWN. `i32::midpoint` rounds
+/// towards zero instead, which is a different direction on each side of the
+/// origin, and that is a defect here rather than a preference.
+///
+/// The compaction leaves consecutive vertices in a layer at least `gap` apart in
+/// every candidate, and the exact mean of two candidates inherits that (the k-th
+/// smallest of a pointwise-larger set is pointwise larger, so the sort in
+/// [`balance`] cannot lose the relation). Rounding preserves it only while the
+/// direction is the same for every vertex: round one vertex's half-unit up and
+/// its neighbour's down and the pair ends up one unit closer than the compaction
+/// placed them — an overlap the four passes had each individually avoided.
+fn floor_midpoint(lo: i32, hi: i32) -> i32 {
+    let mean = (i64::from(lo) + i64::from(hi)).div_euclid(2);
+    i32::try_from(mean).expect("the mean of two i32 coordinates fits in an i32")
 }
 
 #[cfg(test)]
@@ -1001,10 +1122,186 @@ mod tests {
         empty.reduce_crossings(4);
         assert!(empty.brandes_koepf(24).is_empty());
         assert_eq!(empty.count_crossings(), 0);
+        assert_eq!(empty.untangle(), 0);
 
         let mut one = Layering::new(vec![10], &[0], &[]);
         assert!(one.split_long_edges(8).is_empty());
         one.reduce_crossings(4);
+        assert_eq!(one.untangle(), 0, "one vertex has nobody to exchange with");
         assert_eq!(one.brandes_koepf(24).len(), 1);
+    }
+
+    /// A three-layer graph with `widths` vertices per layer and `edges` between
+    /// consecutive ones — the shape a barycenter heuristic is actually judged on,
+    /// and too tangled to reason about by eye.
+    ///
+    /// The two instances below were found by sweeping randomly-generated graphs
+    /// of this shape for the ones that separate an implementation choice from its
+    /// alternative, then frozen. A hand-written fixture kept failing to separate
+    /// them: on a graph small enough to check by hand, the alternating sweeps
+    /// repair each other and every variant agrees.
+    fn tangle(widths: [usize; 3], edges: &[(usize, usize)]) -> Layering {
+        let mut layer_of = Vec::new();
+        for (layer, &width) in widths.iter().enumerate() {
+            layer_of.extend(std::iter::repeat_n(layer, width));
+        }
+        Layering::new(vec![30; layer_of.len()], &layer_of, edges)
+    }
+
+    /// A graph the barycenter passes leave three times more tangled than the
+    /// exchange step can, and the reason [`Layering::untangle`] runs inside
+    /// [`Layering::reduce_crossings`] rather than only after a seeded order.
+    fn barycenter_stalls() -> Layering {
+        tangle(
+            [4, 5, 6],
+            &[
+                (0, 5),
+                (0, 6),
+                (0, 8),
+                (1, 5),
+                (1, 7),
+                (2, 7),
+                (3, 4),
+                (3, 8),
+                (4, 10),
+                (4, 13),
+                (4, 14),
+                (5, 10),
+                (5, 14),
+                (6, 13),
+                (8, 9),
+                (8, 11),
+                (8, 12),
+            ],
+        )
+    }
+
+    /// A graph whose LAST sweep is worse than an earlier one — the case that
+    /// makes [`Layering::reduce_crossings`] keep the best order it saw rather
+    /// than whichever the budget happened to stop on.
+    fn a_sweep_overshoots() -> Layering {
+        tangle(
+            [7, 7, 5],
+            &[
+                (0, 10),
+                (1, 13),
+                (2, 7),
+                (3, 11),
+                (3, 13),
+                (4, 7),
+                (4, 9),
+                (4, 12),
+                (5, 9),
+                (5, 11),
+                (6, 7),
+                (7, 16),
+                (8, 17),
+                (9, 14),
+                (9, 15),
+                (10, 14),
+                (10, 15),
+                (12, 14),
+                (13, 18),
+            ],
+        )
+    }
+
+    /// ★ R1443 — the exchange step earns its place in [`Layering::reduce_crossings`]:
+    /// on a graph the barycenter passes get wrong, the same passes followed by an
+    /// exchange come out strictly tidier.
+    ///
+    /// Without this the transposition would be inert inside a fresh layout, and
+    /// its only exercised caller would be the settled pass.
+    #[test]
+    fn r1443_an_exchange_beats_an_average_that_misleads() {
+        let mut swept = barycenter_stalls();
+        for sweep in 0..4 {
+            swept.barycenter_pass(sweep % 2 == 0);
+        }
+        let mut mincross = barycenter_stalls();
+        mincross.reduce_crossings(4);
+        assert!(
+            mincross.count_crossings() < swept.count_crossings(),
+            "★ barycenter alone left {} crossings, barycenter + exchange {}",
+            swept.count_crossings(),
+            mincross.count_crossings()
+        );
+    }
+
+    /// An exchange is only ever accepted when it strictly reduces the count, so
+    /// running the step again finds nothing: it stops at a local optimum rather
+    /// than oscillating between two equally good orders.
+    #[test]
+    fn r1443_the_exchange_step_settles() {
+        let mut l = barycenter_stalls();
+        let mut exchanges = 0;
+        for sweep in 0..4 {
+            l.barycenter_pass(sweep % 2 == 0);
+            let before = l.count_crossings();
+            let made = l.untangle();
+            assert!(
+                made == 0 || l.count_crossings() < before,
+                "{made} exchanges left the count at {} from {before}",
+                l.count_crossings()
+            );
+            exchanges += made;
+        }
+        assert!(exchanges > 0, "there was something to fix");
+        assert_eq!(l.untangle(), 0, "★ and a further run finds nothing left");
+    }
+
+    /// ★ R1443 — [`Layering::reduce_crossings`] returns the best order it saw,
+    /// not the last: a barycenter pass is a heuristic and is free to leave a
+    /// layering worse than it found it.
+    #[test]
+    fn r1443_a_worsening_sweep_does_not_survive() {
+        // What the last sweep happened to leave, exchange step included.
+        let mut last = a_sweep_overshoots();
+        for sweep in 0..4 {
+            last.barycenter_pass(sweep % 2 == 0);
+            last.untangle();
+        }
+        let mut kept = a_sweep_overshoots();
+        kept.reduce_crossings(4);
+        assert!(
+            kept.count_crossings() < last.count_crossings(),
+            "★ the 4th sweep ended on {} crossings, an earlier one had found {}",
+            last.count_crossings(),
+            kept.count_crossings()
+        );
+        // And the guarantee that follows: no sweep budget is ever worse than
+        // spending none at all.
+        let unswept = a_sweep_overshoots().count_crossings();
+        for sweeps in 0..8 {
+            let mut l = a_sweep_overshoots();
+            l.reduce_crossings(sweeps);
+            assert!(
+                l.count_crossings() <= unswept,
+                "{sweeps} sweeps made it worse"
+            );
+        }
+    }
+
+    /// ★ R1443 — the balancing step rounds the same way for every vertex, so the
+    /// separation the compaction established survives it on BOTH sides of the
+    /// origin. `i32::midpoint` rounds towards zero, which does not.
+    #[test]
+    fn r1443_balancing_rounds_one_way() {
+        assert_eq!(super::floor_midpoint(4, 7), 5);
+        assert_eq!(
+            super::floor_midpoint(-7, -4),
+            -6,
+            "★ down, not towards zero"
+        );
+        assert_eq!(super::floor_midpoint(-7, 4), -2);
+        assert_eq!(super::floor_midpoint(-4, 4), 0);
+        // The property the direction exists for: two coordinates a fixed
+        // distance apart stay that far apart once averaged with another pair the
+        // same distance apart, wherever they sit relative to zero.
+        for lo in -9..9 {
+            let near = super::floor_midpoint(lo, lo + 5);
+            let far = super::floor_midpoint(lo + 3, lo + 8);
+            assert_eq!(far - near, 3, "the gap survives the rounding at {lo}");
+        }
     }
 }

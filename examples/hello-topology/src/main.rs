@@ -19,18 +19,34 @@
 //!
 //! So [`pinion_graph::Sugiyama`] grew a second ordering — seed each column from
 //! the PREVIOUS drawing's coordinates instead of from crossing minimisation —
-//! and this view drives both, live:
+//! and this view drives all three, live:
 //!
 //! * `stable` — nothing the viewer has already seen is reordered; only new
 //!   services have to find a slot.
 //! * `fresh` — every relayout re-minimises crossings from scratch, the editor's
 //!   `auto_layout` on a timer.
+//! * `settled` (R1443) — the seeded order, then the exchanges that strictly
+//!   remove a crossing and no others.
 //!
-//! **Neither is free, and the demo's point is that the cost is measurable in
-//! both directions.** Stability is paid for in `crossings`; tidiness is paid for
-//! in `order_changes` — the number of remembered pairs a drawing flipped. Both
-//! are published on the introspect surface for the SAME pass, so an agent reads
-//! the trade rather than being told about it (§2 #7).
+//! **Neither of the first two is free, and the demo's point is that the cost is
+//! measurable in both directions.** Stability is paid for in `crossings`;
+//! tidiness is paid for in `order_changes` — the number of remembered pairs a
+//! drawing flipped. Both are published on the introspect surface for the SAME
+//! pass, so an agent reads the trade rather than being told about it (§2 #7).
+//!
+//! ## The tangle a stable view could not shed (R1443)
+//!
+//! R1442 shipped with a hole its own metrics made visible: a `stable` view keeps
+//! every crossing its changes introduce, for ever, and the only relief on offer
+//! was `fresh` — which throws the whole learned picture away to remove them. So
+//! there was no answer to "this has got messy, tidy it up a bit".
+//!
+//! There is now, and it is two things rather than one, because they are
+//! different in kind. `settled` is a **policy**: draw every change that way and
+//! the view never accumulates a tangle in the first place. `untangle` is a
+//! **verb**: stay stable, and relieve the tangle when the viewer asks, leaving
+//! the mode alone. Both run the same pass, and it reports its cost in the same
+//! two currencies, so the three orderings are comparable on one graph.
 //!
 //! ## Wires go where the layout put them
 //!
@@ -277,6 +293,8 @@ enum Mode {
     Stable,
     /// Re-minimise crossings from scratch.
     Fresh,
+    /// R1443 — keep it, except where an exchange strictly removes a crossing.
+    Settled,
 }
 
 impl Mode {
@@ -284,6 +302,7 @@ impl Mode {
         match name {
             "stable" => Some(Self::Stable),
             "fresh" => Some(Self::Fresh),
+            "settled" => Some(Self::Settled),
             _ => None,
         }
     }
@@ -292,6 +311,7 @@ impl Mode {
         match self {
             Self::Stable => "stable",
             Self::Fresh => "fresh",
+            Self::Settled => "settled",
         }
     }
 }
@@ -336,11 +356,13 @@ fn column_x(column: usize) -> i32 {
 }
 
 /// **The reducer.** Lay `topology` out, seeding from `previous` (the drawing the
-/// viewer currently has) when `mode` asks for stability.
+/// viewer currently has) when `mode` asks for any of the stability it offers.
 ///
 /// A first drawing has nothing to preserve, so an empty seed always takes the
 /// fresh path whatever the mode says — seeding on nothing would just be index
-/// order with the crossing reduction switched off.
+/// order with the crossing reduction switched off, and that is true of
+/// [`Mode::Settled`] too: with no remembered order there is no cheaper move than
+/// the tidiest one.
 fn relayout(topology: &Topology, previous: &BTreeMap<u32, i32>, mode: Mode) -> Drawing {
     let mut ids: Vec<u32> = topology.services.iter().map(|s| s.id).collect();
     ids.sort_unstable();
@@ -356,10 +378,10 @@ fn relayout(topology: &Topology, previous: &BTreeMap<u32, i32>, mode: Mode) -> D
 
     let seed: Vec<Option<i32>> = ids.iter().map(|id| previous.get(id).copied()).collect();
     let remembered = seed.iter().any(Option::is_some);
-    let layout = if mode == Mode::Stable && remembered {
-        LAYOUT.run_seeded(&sizes, &edges, &seed)
-    } else {
-        LAYOUT.run(&sizes, &edges)
+    let layout = match mode {
+        Mode::Stable if remembered => LAYOUT.run_seeded(&sizes, &edges, &seed),
+        Mode::Settled if remembered => LAYOUT.run_settled(&sizes, &edges, &seed),
+        _ => LAYOUT.run(&sizes, &edges),
     };
 
     let top = layout.top();
@@ -472,11 +494,33 @@ impl TopologyState {
     }
 
     /// Re-place the graph without changing it — what switching mode does, and
-    /// the cleanest way to see the two orderings differ on identical data.
+    /// the cleanest way to see the three orderings differ on identical data.
     fn replace_drawing(&self, mode: Mode) {
         let previous = self.drawing.get().centres;
         let drawing = relayout(&self.topology.get(), &previous, mode);
         self.drawing.set(drawing);
+    }
+
+    /// **R1443 — tidy the drawing the viewer has, without adopting a new
+    /// policy.** Re-place once with [`Mode::Settled`] and leave `mode` alone.
+    ///
+    /// This is the verb a stable view was missing: switching to `fresh` to
+    /// relieve a tangle also changes what every LATER change will do, and
+    /// switching back does not restore the drawing it discarded on the way. Here
+    /// the mode signal is never written, so the next `advance` behaves exactly as
+    /// it would have.
+    ///
+    /// Reports what it cost in the same two currencies the pass publishes.
+    fn untangle(&self) -> String {
+        let before = self.drawing.get().stats.crossings;
+        self.replace_drawing(Mode::Settled);
+        let after = self.drawing.get().stats;
+        let note = format!(
+            "untangled: {} -> {} crossings, {} pairs moved",
+            before, after.crossings, after.order_changes
+        );
+        self.last_event.set(note.clone());
+        note
     }
 
     /// Apply the next scripted step, or `None` at the end of the feed.
@@ -617,6 +661,8 @@ impl ExternalIntrospect for TopologyOracle {
                     // The feed and the topology verbs.
                     SchemaField::new("advance", "string"),
                     SchemaField::new("reset", "string"),
+                    // R1443 — tidy what is drawn now, leaving `mode` alone.
+                    SchemaField::new("untangle", "string"),
                     SchemaField::new("add_service", "string"),
                     SchemaField::new("remove_service", "string"),
                     SchemaField::new("connect", "string"),
@@ -780,6 +826,7 @@ impl TopologyOracle {
                 self.state()?.reset();
                 Ok(IntrospectValue::Text("reset".to_string()))
             }
+            "untangle" => Ok(IntrospectValue::Text(self.state()?.untangle())),
             "add_service" => {
                 let name = Self::text(args)?;
                 let note = format!("+ {name} appeared");
@@ -930,15 +977,19 @@ fn card_scene(name: &str, at: (i32, i32), fill: Color, ink: Color, outline: Colo
 }
 
 /// The status line: what the ordering just cost, in both currencies.
+///
+/// The ordering is named by [`Mode::name`], the same string the introspect
+/// surface publishes — a second mapping here would be free to disagree with what
+/// an agent reads back, which is the drift a view like this exists to rule out.
 fn status_text(mode: Mode, stats: Stats, event: &str) -> String {
-    let ordering = match mode {
-        Mode::Stable => "stable",
-        Mode::Fresh => "fresh",
-    };
     format!(
-        "{event} — {ordering} relayout: {} crossing(s), {} remembered pair(s) reordered, \
+        "{event} — {} relayout: {} crossing(s), {} remembered pair(s) reordered, \
          {}/{} inner segment(s) straight",
-        stats.crossings, stats.order_changes, stats.straight, stats.inner
+        mode.name(),
+        stats.crossings,
+        stats.order_changes,
+        stats.straight,
+        stats.inner
     )
 }
 

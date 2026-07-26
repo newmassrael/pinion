@@ -28,6 +28,18 @@
 //! ([`Layout::crossings`]) can only be worse than or equal to what a fresh pass
 //! would find. Both numbers are published rather than argued about, so a caller
 //! — or an AI over RPC — can see the trade it is making.
+//!
+//! # The third point on that trade
+//!
+//! Holding the order absolutely means a view that changes for long enough
+//! accumulates crossings it can never shed: the seeded pass has no way to relieve
+//! a tangle, and reaching for [`Sugiyama::run`] to relieve one throws the whole
+//! remembered picture away to do it. [`Sugiyama::run_settled`] is the middle:
+//! order by the seed, then exchange only those neighbours whose exchange strictly
+//! removes a crossing. Every move is bought by a crossing, and nothing else
+//! moves, so it reports a small [`Layout::order_changes`] instead of either
+//! extreme — the numbers are the same two, which is what makes the three passes
+//! comparable on one graph.
 
 use crate::layering::Layering;
 
@@ -68,7 +80,7 @@ impl Sugiyama {
     /// skipped: neither can constrain a forward layering.
     #[must_use]
     pub fn run(&self, sizes: &[i32], edges: &[(usize, usize)]) -> Layout {
-        self.solve(sizes, edges, None)
+        self.solve(sizes, edges, &Order::Fresh)
     }
 
     /// Lay the same graph out again, **keeping the drawing the viewer already
@@ -92,17 +104,39 @@ impl Sugiyama {
         edges: &[(usize, usize)],
         seed: &[Option<i32>],
     ) -> Layout {
-        self.solve(sizes, edges, Some(seed))
+        self.solve(sizes, edges, &Order::Seeded(seed))
     }
 
-    /// The shared pipeline: the two entry points differ only in how the ORDER
-    /// within each layer is chosen, so everything else has one definition.
-    fn solve(
+    /// Lay the same graph out again keeping the drawing the viewer has, **except
+    /// where moving something buys back a crossing**: order by `seed` exactly as
+    /// [`run_seeded`](Self::run_seeded) does, then exchange adjacent vertices for
+    /// as long as an exchange strictly reduces the crossing count.
+    ///
+    /// This is the answer to the one thing a purely seeded view cannot do. A
+    /// drawing that keeps its order through change after change also keeps every
+    /// tangle those changes introduced, and the only relief on offer was a fresh
+    /// pass, which discards the whole remembered picture to remove them. Here the
+    /// remembered picture is the starting point and each departure from it has to
+    /// pay for itself, so [`Layout::order_changes`] counts moves that a crossing
+    /// bought rather than moves a heuristic preferred.
+    ///
+    /// It is a *local* search and does not claim the minimum: an exchange has to
+    /// improve the count on its own, so a tangle that only unwinds by moving two
+    /// vertices at once survives it. [`run`](Self::run) is still what a viewer
+    /// asking for the tidiest possible drawing wants.
+    #[must_use]
+    pub fn run_settled(
         &self,
         sizes: &[i32],
         edges: &[(usize, usize)],
-        seed: Option<&[Option<i32>]>,
+        seed: &[Option<i32>],
     ) -> Layout {
+        self.solve(sizes, edges, &Order::Settled(seed))
+    }
+
+    /// The shared pipeline: the three entry points differ only in how the ORDER
+    /// within each layer is chosen, so everything else has one definition.
+    fn solve(&self, sizes: &[i32], edges: &[(usize, usize)], order: &Order) -> Layout {
         let reals = sizes.len();
         if reals == 0 {
             return Layout::empty();
@@ -113,9 +147,13 @@ impl Sugiyama {
 
         let mut layering = Layering::new(sizes.to_vec(), &layer_of, &forward);
         let chains = layering.split_long_edges(self.bend_size);
-        match seed {
-            Some(seed) => layering.order_by_seed(seed),
-            None => layering.reduce_crossings(self.sweeps),
+        match *order {
+            Order::Fresh => layering.reduce_crossings(self.sweeps),
+            Order::Seeded(seed) => layering.order_by_seed(seed),
+            Order::Settled(seed) => {
+                layering.order_by_seed(seed);
+                layering.untangle();
+            }
         }
         let centre = layering.brandes_koepf(self.row_gap);
 
@@ -140,6 +178,17 @@ impl Sugiyama {
             routes,
         }
     }
+}
+
+/// How one pass chooses the order within each layer — the only thing the three
+/// entry points disagree about.
+enum Order<'a> {
+    /// Minimise crossings from scratch.
+    Fresh,
+    /// Keep the order a previous drawing's coordinates record.
+    Seeded(&'a [Option<i32>]),
+    /// Keep it, except where an exchange strictly removes a crossing.
+    Settled(&'a [Option<i32>]),
 }
 
 /// A solved layout: which layer each vertex landed in, where it sits along the
@@ -536,6 +585,103 @@ mod tests {
             out.route(99).is_empty(),
             "and an unknown edge is not a panic"
         );
+    }
+
+    /// A graph together with the drawing a viewer is remembering of it — the
+    /// three arguments every seeded or settled pass takes.
+    type RememberedGraph = (Vec<i32>, Vec<(usize, usize)>, Vec<Option<i32>>);
+
+    /// Four sources feeding four sinks, remembered in the REVERSE of index order
+    /// so a fresh pass and a seeded one disagree about almost every pair, with
+    /// one pair of edges crossed — the single tangle a local exchange can undo.
+    fn one_tangle_in_a_remembered_drawing() -> RememberedGraph {
+        (
+            vec![30; 8],
+            // 1 and 2 feed the sinks the other one is remembered beside.
+            vec![(0, 4), (1, 6), (2, 5), (3, 7)],
+            vec![
+                Some(300),
+                Some(200),
+                Some(100),
+                Some(0),
+                Some(300),
+                Some(200),
+                Some(100),
+                Some(0),
+            ],
+        )
+    }
+
+    /// ★ R1443 — the three passes on ONE graph, in the two currencies they both
+    /// publish. A seeded pass keeps every remembered pair and keeps the tangle
+    /// with it; a fresh pass removes the tangle and rearranges the drawing to do
+    /// it; a settled pass removes the tangle by moving the one pair that was
+    /// causing it.
+    #[test]
+    fn r1443_a_settled_pass_moves_only_what_a_crossing_pays_for() {
+        let (sizes, edges, seed) = one_tangle_in_a_remembered_drawing();
+        let pass = Sugiyama::default();
+        let seeded = pass.run_seeded(&sizes, &edges, &seed);
+        let settled = pass.run_settled(&sizes, &edges, &seed);
+        let fresh = pass.run(&sizes, &edges);
+
+        assert_eq!(seeded.order_changes(&seed), 0, "stability moves nothing...");
+        assert_eq!(seeded.crossings(), 1, "...and keeps the tangle");
+
+        assert_eq!(settled.crossings(), 0, "★ the settled pass undoes it");
+        assert_eq!(
+            settled.order_changes(&seed),
+            1,
+            "★ by moving exactly the one pair that was crossed"
+        );
+
+        assert_eq!(fresh.crossings(), 0, "a fresh pass is as tidy");
+        assert!(
+            fresh.order_changes(&seed) > settled.order_changes(&seed),
+            "★ but pays far more of the drawing for it: {} pairs against {}",
+            fresh.order_changes(&seed),
+            settled.order_changes(&seed)
+        );
+    }
+
+    /// ★ And the other half of that claim: where there is no crossing to buy, a
+    /// settled pass is a seeded one — every coordinate identical, not merely the
+    /// same order.
+    ///
+    /// This is what makes the exchange step safe to leave switched on in a live
+    /// view: an untangled drawing is a fixed point of it.
+    #[test]
+    fn r1443_a_settled_pass_leaves_an_untangled_drawing_alone() {
+        // The same remembered order, with the two crossed edges uncrossed.
+        let (sizes, _, seed) = one_tangle_in_a_remembered_drawing();
+        let edges = vec![(0, 4), (1, 5), (2, 6), (3, 7)];
+        let pass = Sugiyama::default();
+        let seeded = pass.run_seeded(&sizes, &edges, &seed);
+        let settled = pass.run_settled(&sizes, &edges, &seed);
+        assert_eq!(seeded.crossings(), 0, "nothing was tangled to begin with");
+        assert_eq!(
+            settled.centres(),
+            seeded.centres(),
+            "★ so the settled pass changed nothing at all"
+        );
+        assert_eq!(settled.order_changes(&seed), 0);
+    }
+
+    /// A settled pass can never be less tidy than the seeded one it starts from —
+    /// it only ever accepts an exchange that strictly reduces the count — and a
+    /// long edge still gets its route.
+    #[test]
+    fn r1443_a_settled_pass_never_loses_ground() {
+        // 0 -> 1 -> 2 -> 3 with a long 0 -> 3, remembered backwards.
+        let sizes = vec![30; 4];
+        let edges = vec![(0, 1), (1, 2), (2, 3), (0, 3)];
+        let seed = vec![Some(90), Some(60), Some(30), Some(0)];
+        let pass = Sugiyama::default();
+        let seeded = pass.run_seeded(&sizes, &edges, &seed);
+        let settled = pass.run_settled(&sizes, &edges, &seed);
+        assert!(settled.crossings() <= seeded.crossings());
+        assert_eq!(settled.bends(), 2, "the long edge still crosses two layers");
+        assert_eq!(settled.route(3).len(), 2, "and still reports its track");
     }
 
     /// Bends are unseeded every pass (they are derived, not remembered), so a

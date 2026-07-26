@@ -69936,6 +69936,82 @@
         "the feed is scripted rather than a producer thread; a RepaintSink consumer would drive the same reducer"
       ]
     },
+    "Round 1443": {
+      "decision_summary": "R1443 — a tangled topology view tidies itself without forgetting its shape: the layered solver gains an exchange step that moves only what a crossing pays for, so a stable drawing has a middle option between keeping every tangle for ever and being redrawn from scratch",
+      "changes_bullets": [
+        "Layering::untangle — the paper's transpose (Gansner et al., TSE 1993): exchange adjacent vertices in a layer",
+        "an exchange is accepted ONLY where it strictly reduces the crossing count, so every move is bought by one",
+        "strictness is the TERMINATION argument, not a preference: an integer count each accepted exchange decreases",
+        "Sugiyama::run_settled — order by the seed, then untangle; a departure from the remembered drawing pays for itself",
+        "the two currencies R1442 published are the ones that read the new pass, so three orderings compare on one graph",
+        "reduce_crossings becomes the whole of mincross: barycenter pass, then exchange, keeping the BEST order seen",
+        "FIX pre-existing: balance rounded with i32::midpoint, which rounds towards zero, so differently each side of 0",
+        "a mixed rounding direction loses a unit of the gap the compaction placed between two vertices; floor_midpoint",
+        "hello-topology gains Mode::Settled, a policy, and an untangle verb, an action — different in kind, so both exist",
+        "the verb never writes the mode signal, so relieving a tangle does not change what the NEXT change will do",
+        "status_text names the ordering via Mode::name, the string RPC publishes, instead of a second mapping"
+      ],
+      "verification_bullets": [
+        "pinion-graph 28 tests + doctest green (was 21); hello-topology 17 (was 10); hello-node-editor 264 unchanged",
+        "tools/demos/r1443_untangle.py — 35 assertion sites over real windowed RPC, seven sections, PASS",
+        "the demo re-derives both costs from service names read over RPC, never from the order_changes it checks",
+        "COUNTERFACTUAL 1: settled without the exchange -> the unit test and demo section B both FAIL, tangle 4 -> 4",
+        "COUNTERFACTUAL 2: accept a non-improving exchange -> DIVERGES; clean build, 40s timeout, exit 124",
+        "COUNTERFACTUAL 3: round towards zero again -> the R1441 separation test FAILs at 53 against the 54 required",
+        "COUNTERFACTUAL 4: no exchange inside reduce_crossings -> the mincross test FAILs, 9 crossings against 9",
+        "COUNTERFACTUAL 5: keep the last order not the best -> the worsening-sweep test FAILs, 9 against 9",
+        "each counterfactual run separately and confirmed to compile first; CF3's first edit did not, and was redone",
+        "regression: r1383, r1390, r1441, r1442 and r948 demos all PASS after the fresh ordering changed under them",
+        "census = cargo build --workspace --all-targets exit 0",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "impact_refs": [
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "both hand-written fixtures for the exchange step were VACUOUS; the two that bite were found by search, frozen",
+        "order_changes counts the remembered VERTICAL order, wider than pairs that shared a column — they separate here",
+        "a local exchange does not claim the minimum: a tangle needing two simultaneous moves survives, and one does",
+        "the exchange recomputes count_crossings once per sweep, quadratic in edges — fine here, unmeasured at scale"
+      ],
+      "publishable_decision_summary": "R1443 — a tangled topology view tidies itself without forgetting its shape: the layered solver gains an exchange step that moves only what a crossing pays for, so a stable drawing has a middle option between keeping every tangle for ever and being redrawn from scratch",
+      "publishable_changes_bullets": [
+        "Layering::untangle — the paper's transpose (Gansner et al., TSE 1993): exchange adjacent vertices in a layer",
+        "an exchange is accepted ONLY where it strictly reduces the crossing count, so every move is bought by one",
+        "strictness is the TERMINATION argument, not a preference: an integer count each accepted exchange decreases",
+        "Sugiyama::run_settled — order by the seed, then untangle; a departure from the remembered drawing pays for itself",
+        "the two currencies R1442 published are the ones that read the new pass, so three orderings compare on one graph",
+        "reduce_crossings becomes the whole of mincross: barycenter pass, then exchange, keeping the BEST order seen",
+        "FIX pre-existing: balance rounded with i32::midpoint, which rounds towards zero, so differently each side of 0",
+        "a mixed rounding direction loses a unit of the gap the compaction placed between two vertices; floor_midpoint",
+        "hello-topology gains Mode::Settled, a policy, and an untangle verb, an action — different in kind, so both exist",
+        "the verb never writes the mode signal, so relieving a tangle does not change what the NEXT change will do",
+        "status_text names the ordering via Mode::name, the string RPC publishes, instead of a second mapping"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-graph 28 tests + doctest green (was 21); hello-topology 17 (was 10); hello-node-editor 264 unchanged",
+        "tools/demos/r1443_untangle.py — 35 assertion sites over real windowed RPC, seven sections, PASS",
+        "the demo re-derives both costs from service names read over RPC, never from the order_changes it checks",
+        "COUNTERFACTUAL 1: settled without the exchange -> the unit test and demo section B both FAIL, tangle 4 -> 4",
+        "COUNTERFACTUAL 2: accept a non-improving exchange -> DIVERGES; clean build, 40s timeout, exit 124",
+        "COUNTERFACTUAL 3: round towards zero again -> the R1441 separation test FAILs at 53 against the 54 required",
+        "COUNTERFACTUAL 4: no exchange inside reduce_crossings -> the mincross test FAILs, 9 crossings against 9",
+        "COUNTERFACTUAL 5: keep the last order not the best -> the worsening-sweep test FAILs, 9 against 9",
+        "each counterfactual run separately and confirmed to compile first; CF3's first edit did not, and was redone",
+        "regression: r1383, r1390, r1441, r1442 and r948 demos all PASS after the fresh ordering changed under them",
+        "census = cargo build --workspace --all-targets exit 0",
+        "gates: fmt --check clean, clippy -D pedantic clean (no new #[allow]), cargo doc 0, T1 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "both hand-written fixtures for the exchange step were VACUOUS; the two that bite were found by search, frozen",
+        "order_changes counts the remembered VERTICAL order, wider than pairs that shared a column — they separate here",
+        "a local exchange does not claim the minimum: a tangle needing two simultaneous moves survives, and one does",
+        "the exchange recomputes count_crossings once per sweep, quadratic in edges — fine here, unmeasured at scale"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
