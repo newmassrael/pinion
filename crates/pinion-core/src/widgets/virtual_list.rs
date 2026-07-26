@@ -395,6 +395,13 @@ pub fn at_bottom(offset_y: i32, max_y: i32) -> bool {
 /// grows, performs its domain-specific append (an in-memory `Vec` push, or a
 /// paged source's count bump + tail-page [`invalidate`](crate::reactive::ResourceCache::invalidate)),
 /// then calls this. R1005 lift on the 2nd streaming consumer.
+///
+/// R1445 — this reducer needs the extent to be **arithmetic**: `count` ×
+/// `row_pitch` is what lets it name the bound before the layout pass does. A
+/// consumer whose extent is layout-measured (wrapped prose, mixed-height
+/// widgets) has no such number and belongs to the sibling,
+/// [`ScrollState::follow_measured_tail`](crate::widgets::scroll::ScrollState::follow_measured_tail),
+/// which defers the identical grow-then-pin to the pass that measures it.
 pub fn follow_tail(
     scroll: &crate::widgets::scroll::ScrollState,
     count: usize,

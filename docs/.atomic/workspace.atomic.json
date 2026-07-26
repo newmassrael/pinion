@@ -70060,6 +70060,104 @@
         "behaviour-neutral for pinion: no SCE API or generated-code semantics changed"
       ]
     },
+    "Round 1445": {
+      "decision_summary": "R1445 — a scroll pins to the bottom the next layout pass measures: a consumer whose appended extent only the layout knows states the intent instead of inventing a bound, so no false bound is ever published to the readers of that state",
+      "changes_bullets": [
+        "ScrollState::follow_measured_tail — arm a one-shot \"take me to the tail the next layout pass measures\"",
+        "the layout-measured sibling of virtual_list::follow_tail, which needs count x row_pitch to name the bound",
+        "a consumer whose extent only taffy/parley know could not name one, and faked it: set_max(0, i32::MAX)",
+        "that fake is a bound published to every other reader of the same state, true for exactly nobody",
+        "ScrollState::apply_measured_tail_pin(axis) — consume the arming, pin along the node's DECLARED axis",
+        "the owning ScrollNode already says which axes scroll, so the tail is read off that, not re-decided",
+        "returns whether the offset MOVED, post equality-skip, matching set_max's dirty-bit convention",
+        "layout: apply_measured_tail_pins runs LAST, after both bound writers of the frame",
+        "so the pin lands on the bound the frame ended with and never needs to know which writer produced it",
+        "followers are skipped on the bounds pass's own gate: the pin rides the node that publishes the bound",
+        "LIFT (3rd-consumer self-grep): fold_scrolls — the three walks each carried the same traversal",
+        "scene/scroll_state publishes following_measured_tail, the standing arming a hidden node keeps",
+        "hello-transcript — wrapped-prose transcript; two policies (always reveal / follow only if at the tail)",
+        "neither reducer computes an extent; the arming call IS follow_tail's was_following parameter"
+      ],
+      "verification_bullets": [
+        "pinion-core 2672 (8 new scroll tests), pinion-runtime 457 (7 new layout tests), pinion-rpc 938, example 6",
+        "tools/demos/r1445_transcript.py PASS — ~25 assertion sites, ~69 assertions executed, no wall-clock waits",
+        "the demo recomputes the bound from published entry geometry and requires the published bound to equal it",
+        "that check is what an i32::MAX bound fails by two billion; it never consults the reported bound to build it",
+        "pinned tails are checked geometrically: the newest entry's ABSOLUTE bottom rests on the content padding",
+        "COUNTERFACTUAL 1: layout never applies the pin -> 4 runtime tests FAIL and the demo FAILs at the reveal",
+        "COUNTERFACTUAL 2: pin before the harvest -> the ordering test FAILs, pinned to 0 against the 20 required",
+        "COUNTERFACTUAL 3: arming never consumed -> 4 core tests FAIL and the demo FAILs on a standing arming",
+        "COUNTERFACTUAL 4: ignore the declared axis, pin both maxima -> the core axis test FAILs",
+        "COUNTERFACTUAL 5: let a follower fire the pin -> the publisher test FAILs, (0,400) against (420,400)",
+        "COUNTERFACTUAL 6: report every pin as dirty -> the two no-op-pin tests FAIL",
+        "COUNTERFACTUAL 7: restore the pre-lift short-circuit -> NOTHING failed; the claim it fixed a bug was FALSE",
+        "CF7's finding corrected in place: the doc now says the descent is a readability choice, not a bug fix",
+        "regression demos: r996 streaming-log, r1005 paged-stream, r1194 measured-list, r859 frozen-col (follower),",
+        "r774 flex-virtual-list, r934 million-row — all PASS",
+        "gates: fmt --check clean, clippy -D pedantic clean on all four crates, cargo doc 0, T1 reject=0"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.27",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "the axis branch is NOT observable through the layout pass: a single-axis scroll's cross bound is 0 there",
+        "so pin-declared-axis and pin-both-maxima agree in production; only a hand-set cross bound separates them",
+        "the runtime test that claimed otherwise was vacuous under CF4 and its comment now says what it proves",
+        "an arming made against a node no layout pass reaches stands indefinitely; that is what the wire bit reports",
+        "no consumer yet pins to anything but the tail; a measured reveal-this-element peer is unbuilt, unrequested",
+        "the pin's dirty bit forces one extra view+layout re-pass per reveal, the same cost set_max already pays"
+      ],
+      "publishable_decision_summary": "R1445 — a scroll pins to the bottom the next layout pass measures: a consumer whose appended extent only the layout knows states the intent instead of inventing a bound, so no false bound is ever published to the readers of that state",
+      "publishable_changes_bullets": [
+        "ScrollState::follow_measured_tail — arm a one-shot \"take me to the tail the next layout pass measures\"",
+        "the layout-measured sibling of virtual_list::follow_tail, which needs count x row_pitch to name the bound",
+        "a consumer whose extent only taffy/parley know could not name one, and faked it: set_max(0, i32::MAX)",
+        "that fake is a bound published to every other reader of the same state, true for exactly nobody",
+        "ScrollState::apply_measured_tail_pin(axis) — consume the arming, pin along the node's DECLARED axis",
+        "the owning ScrollNode already says which axes scroll, so the tail is read off that, not re-decided",
+        "returns whether the offset MOVED, post equality-skip, matching set_max's dirty-bit convention",
+        "layout: apply_measured_tail_pins runs LAST, after both bound writers of the frame",
+        "so the pin lands on the bound the frame ended with and never needs to know which writer produced it",
+        "followers are skipped on the bounds pass's own gate: the pin rides the node that publishes the bound",
+        "LIFT (3rd-consumer self-grep): fold_scrolls — the three walks each carried the same traversal",
+        "scene/scroll_state publishes following_measured_tail, the standing arming a hidden node keeps",
+        "hello-transcript — wrapped-prose transcript; two policies (always reveal / follow only if at the tail)",
+        "neither reducer computes an extent; the arming call IS follow_tail's was_following parameter"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 2672 (8 new scroll tests), pinion-runtime 457 (7 new layout tests), pinion-rpc 938, example 6",
+        "tools/demos/r1445_transcript.py PASS — ~25 assertion sites, ~69 assertions executed, no wall-clock waits",
+        "the demo recomputes the bound from published entry geometry and requires the published bound to equal it",
+        "that check is what an i32::MAX bound fails by two billion; it never consults the reported bound to build it",
+        "pinned tails are checked geometrically: the newest entry's ABSOLUTE bottom rests on the content padding",
+        "COUNTERFACTUAL 1: layout never applies the pin -> 4 runtime tests FAIL and the demo FAILs at the reveal",
+        "COUNTERFACTUAL 2: pin before the harvest -> the ordering test FAILs, pinned to 0 against the 20 required",
+        "COUNTERFACTUAL 3: arming never consumed -> 4 core tests FAIL and the demo FAILs on a standing arming",
+        "COUNTERFACTUAL 4: ignore the declared axis, pin both maxima -> the core axis test FAILs",
+        "COUNTERFACTUAL 5: let a follower fire the pin -> the publisher test FAILs, (0,400) against (420,400)",
+        "COUNTERFACTUAL 6: report every pin as dirty -> the two no-op-pin tests FAIL",
+        "COUNTERFACTUAL 7: restore the pre-lift short-circuit -> NOTHING failed; the claim it fixed a bug was FALSE",
+        "CF7's finding corrected in place: the doc now says the descent is a readability choice, not a bug fix",
+        "regression demos: r996 streaming-log, r1005 paged-stream, r1194 measured-list, r859 frozen-col (follower),",
+        "r774 flex-virtual-list, r934 million-row — all PASS",
+        "gates: fmt --check clean, clippy -D pedantic clean on all four crates, cargo doc 0, T1 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.27",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the axis branch is NOT observable through the layout pass: a single-axis scroll's cross bound is 0 there",
+        "so pin-declared-axis and pin-both-maxima agree in production; only a hand-set cross bound separates them",
+        "the runtime test that claimed otherwise was vacuous under CF4 and its comment now says what it proves",
+        "an arming made against a node no layout pass reaches stands indefinitely; that is what the wire bit reports",
+        "no consumer yet pins to anything but the tail; a measured reveal-this-element peer is unbuilt, unrequested",
+        "the pin's dirty bit forces one extra view+layout re-pass per reveal, the same cost set_max already pays"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -15,10 +15,32 @@
 //! bounds + clamped `scroll_to` / `scroll_by`. Smooth-scroll
 //! animation is the R55.B.2 sub-axis carry — `Animation<i32>`
 //! layers on top without breaking the surface here.
+//!
+//! ## Revealing appended content — which sibling to reach for
+//!
+//! "Content grew at the tail; take the viewport there" needs the bound
+//! *after* the growth, which [`ScrollState::scroll_to`] cannot clamp against
+//! until someone writes it. There are exactly two sources for that bound, and
+//! a consumer belongs to whichever one it can compute:
+//!
+//! | extent is | reach for | bound comes from |
+//! |---|---|---|
+//! | arithmetic (`count × row_pitch`) | [`follow_tail`](crate::widgets::virtual_list::follow_tail) | the caller, via [`max_scroll_offset`], *now* |
+//! | layout-measured (wrapped prose, mixed widgets) | [`ScrollState::follow_measured_tail`] | the layout pass, *next* |
+//!
+//! Nothing else is different — both are the same grow-then-pin idiom, both
+//! leave the "was I following?" decision ([`at_bottom`](crate::widgets::virtual_list::at_bottom))
+//! with the caller. R1445 added the second row because a consumer whose extent
+//! only taffy/parley knows had no way to name the bound, and hand-rolled
+//! `set_max(0, i32::MAX)` + `scroll_to(0, i32::MAX)` to dodge the clamp —
+//! publishing a bound that is *false for a frame* to every other reader of the
+//! same state.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::reactive::{Owner, Signal, batch};
+use crate::scene::ScrollAxis;
 
 /// R55.B §5.45 — Reactive state for one [`ScrollNode`](crate::scene::ScrollNode).
 ///
@@ -102,6 +124,19 @@ pub struct ScrollState {
     /// [`compute_visible_range`](crate::widgets::virtual_list::compute_visible_range),
     /// so a taller laid-out container materializes more rows.
     measured_h: Signal<u32>,
+    /// (R1445 §5.45 §5.27) One-shot "pin to the tail the next layout pass
+    /// measures", armed by [`Self::follow_measured_tail`] and consumed by
+    /// [`Self::apply_measured_tail_pin`].
+    ///
+    /// A [`Cell`], not a [`Signal`]: this is an *intent in flight*, not
+    /// observable state. A view that re-ran on it would re-run on a value the
+    /// layout pass clears in the same frame — and the pin's effect (the
+    /// offset) is already a Signal write every reader subscribes to. The RPC
+    /// wire publishes the bit (`scene/scroll`'s `following_measured_tail`) so
+    /// an agent can see a standing arming, which matters exactly when the
+    /// scroll node is *absent* from this frame's scene (a hidden tab): no
+    /// layout pass reaches it, so the arming stands until the node comes back.
+    pending_tail_pin: Cell<bool>,
     /// (R51.190 §5.45) Canonical input-router / introspection tag
     /// for this scroll container. Set by [`use_scroll_state`] from
     /// the `Owner::cache` key so the matching [`ScrollNode`](crate::scene::ScrollNode) can
@@ -139,6 +174,7 @@ impl ScrollState {
             max_y: Signal::new(0),
             measured_w: Signal::new(0),
             measured_h: Signal::new(0),
+            pending_tail_pin: Cell::new(false),
             tag: None,
         }
     }
@@ -362,6 +398,89 @@ impl ScrollState {
             self.offset_y.set(new_y);
         });
     }
+
+    /// R1445 §5.45 §5.27 — the **layout-measured sibling** of
+    /// [`follow_tail`](crate::widgets::virtual_list::follow_tail): arm a
+    /// one-shot "content just grew at the tail; take the viewport to whatever
+    /// bottom the next layout pass measures".
+    ///
+    /// `follow_tail` computes the post-growth bound itself, which requires the
+    /// extent to be arithmetic (`count × row_pitch`). When the extent is only
+    /// known *after* taffy/parley have run — a wrapped prose transcript, a
+    /// column of mixed widgets — the caller cannot name the bound at all, and
+    /// [`Self::scroll_to`] would clamp against the pre-growth one. This defers
+    /// the pin to the layout pass instead of asking the caller to invent a
+    /// bound: the runtime already writes the true bound every frame
+    /// (`update_scroll_state_bounds`), so the arming rides along and
+    /// [`Self::apply_measured_tail_pin`] fires immediately after it.
+    ///
+    /// **One-shot.** Consumed by the next layout pass that reaches this
+    /// state's node, whether or not the offset ends up moving. It is a
+    /// *reducer*, not a mode — call it once per append, exactly as
+    /// `follow_tail` is called once per append. Re-arming before the pass
+    /// consumed it is idempotent.
+    ///
+    /// **The policy stays with the caller.** `follow_tail` parameterizes
+    /// "should we follow?" as `was_following`; here the arming call *is* that
+    /// parameter — a `tail -f` view arms it only when
+    /// [`at_bottom`](crate::widgets::virtual_list::at_bottom) held *before*
+    /// the append, while a view whose appended line is the answer to what the
+    /// user just pressed arms it unconditionally.
+    ///
+    /// Call from a reducer / `update` / `External::invoke` — the sanctioned
+    /// places to mutate reactive state — not from a view fn.
+    pub fn follow_measured_tail(&self) {
+        self.pending_tail_pin.set(true);
+    }
+
+    /// R1445 §5.45 — whether a [`Self::follow_measured_tail`] arming is still
+    /// standing. `false` at every frame boundary for a scroll node that is in
+    /// the scene (the layout pass consumes it); `true` only between the arming
+    /// call and that pass — or indefinitely for a node no layout pass reaches
+    /// (a hidden tab), which is the case worth asking about.
+    #[must_use]
+    pub fn is_following_measured_tail(&self) -> bool {
+        self.pending_tail_pin.get()
+    }
+
+    /// R1445 §5.45 — consume a standing [`Self::follow_measured_tail`] arming
+    /// and pin the offset to the bound that is now published on this state.
+    ///
+    /// Called by the runtime layout pass (`apply_measured_tail_pins`) *after*
+    /// every bound writer of the frame has run — [`Self::set_max`] from the
+    /// laid-out content rect, and the measured-row
+    /// [`harvest`](crate::widgets::measured_rows::MeasuredRowState::harvest)
+    /// that may refine it further. That ordering is the whole guarantee: the
+    /// pin lands on whatever bound the frame *ended* with, so it never needs
+    /// to know which writer produced it.
+    ///
+    /// `axis` is the owning [`ScrollNode`](crate::scene::ScrollNode)'s
+    /// declared axis — the node already says which axes scroll, so "the tail"
+    /// is read off that declaration rather than re-decided here. The
+    /// cross-axis offset is preserved (on a single-axis scroll the cross bound
+    /// is `0` anyway, so preserving it and resetting it agree).
+    ///
+    /// Returns whether the offset actually moved (post Signal equality-skip),
+    /// mirroring [`Self::set_max`]'s dirty bit: the frame folds it into the
+    /// same-frame re-pass so the paint carries the pinned offset instead of
+    /// showing the pre-pin position for one frame. An arming that lands where
+    /// the viewport already sits is consumed but reports `false` — nothing
+    /// observable changed, so nothing needs re-running.
+    #[must_use]
+    pub fn apply_measured_tail_pin(&self, axis: ScrollAxis) -> bool {
+        if !self.pending_tail_pin.replace(false) {
+            return false;
+        }
+        let (target_x, target_y) = match axis {
+            ScrollAxis::Vertical => (self.offset_x.get(), self.max_y.get()),
+            ScrollAxis::Horizontal => (self.max_x.get(), self.offset_y.get()),
+            ScrollAxis::Both => (self.max_x.get(), self.max_y.get()),
+        };
+        let revisions_before = (self.offset_x.revision(), self.offset_y.revision());
+        self.scroll_to(target_x, target_y);
+        self.offset_x.revision() != revisions_before.0
+            || self.offset_y.revision() != revisions_before.1
+    }
 }
 
 impl Default for ScrollState {
@@ -384,6 +503,12 @@ impl Default for ScrollState {
 /// identical value through it, so the two never diverge (the layout pass then
 /// re-affirms the same number, and [`ScrollState::set_max`]'s Signal
 /// equality-skip makes that a no-op).
+///
+/// R1445 — that pre-layout path presumes the caller *can* state its content
+/// extent. A consumer whose extent is layout-measured (wrapped prose, mixed
+/// widgets) cannot, and must not fake one: arm
+/// [`ScrollState::follow_measured_tail`] and let the layout pass pin against
+/// the bound it measures.
 #[must_use]
 pub fn max_scroll_offset(content: u32, viewport: u32) -> i32 {
     i32::try_from(content.saturating_sub(viewport)).unwrap_or(i32::MAX)
@@ -709,6 +834,160 @@ mod tests {
         // this entry point.
         let s = ScrollState::with_tag("explicit_key");
         assert_eq!(s.tag(), Some("explicit_key"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1445 §5.45 §5.27 — the layout-measured tail pin. `follow_tail`
+    // (virtual_list) serves consumers whose extent is arithmetic
+    // (`count × row_pitch`); this serves the ones whose extent only
+    // taffy/parley know. Same grow-then-pin idiom — what differs is who
+    // names the bound and when, so these tests all encode the frame
+    // ORDER: the arming is made while the post-growth bound is still
+    // unknown, and resolves against whatever is written afterwards.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1445_pin_lands_on_the_bound_written_after_the_arming() {
+        // The crux. The consumer appended content whose extent it cannot
+        // compute, so it names no bound at all — it arms, and the layout
+        // pass's `set_max` (below) is the first time the true extent exists.
+        let s = ScrollState::new();
+        s.set_max(0, 100); // last frame's measured bound
+        s.scroll_to(0, 0); // reading from the top
+        s.follow_measured_tail();
+        assert_eq!(s.offset(), (0, 0), "arming alone moves nothing");
+        s.set_max(0, 260); // THIS frame's layout write, post-append
+        assert!(s.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert_eq!(
+            s.offset(),
+            (0, 260),
+            "pinned to the bound that was measured after the arming",
+        );
+    }
+
+    #[test]
+    fn r1445_pin_is_one_shot() {
+        // A reducer, not a mode: once a pass consumes the arming, later
+        // growth must leave the viewport wherever the reader put it.
+        let s = ScrollState::new();
+        s.set_max(0, 100);
+        s.follow_measured_tail();
+        assert!(s.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert_eq!(s.offset(), (0, 100));
+        s.set_max(0, 300); // content grew again, no new arming
+        assert!(
+            !s.apply_measured_tail_pin(ScrollAxis::Vertical),
+            "the arming was consumed by the first pass",
+        );
+        assert_eq!(s.offset(), (0, 100), "no re-pin without a new arming");
+    }
+
+    #[test]
+    fn r1445_arming_twice_before_a_pass_is_idempotent() {
+        // Two appends between two paints (a burst) arm twice; one pass
+        // consumes both, and the single pin lands on the final bound.
+        let s = ScrollState::new();
+        s.follow_measured_tail();
+        s.follow_measured_tail();
+        s.set_max(0, 80);
+        assert!(s.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert_eq!(s.offset(), (0, 80));
+        assert!(
+            !s.is_following_measured_tail(),
+            "one pass clears the arming however many times it was made",
+        );
+    }
+
+    #[test]
+    fn r1445_axis_declares_which_edge_is_the_tail() {
+        // The owning ScrollNode already declares which axes scroll; the pin
+        // reads the tail off that declaration instead of re-deciding, and
+        // leaves the cross axis where it was.
+        let v = ScrollState::new();
+        v.set_max(50, 200);
+        v.scroll_to(20, 0);
+        v.follow_measured_tail();
+        assert!(v.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert_eq!(v.offset(), (20, 200), "vertical tail; x preserved");
+
+        let h = ScrollState::new();
+        h.set_max(50, 200);
+        h.scroll_to(0, 30);
+        h.follow_measured_tail();
+        assert!(h.apply_measured_tail_pin(ScrollAxis::Horizontal));
+        assert_eq!(h.offset(), (50, 30), "horizontal tail; y preserved");
+
+        let b = ScrollState::new();
+        b.set_max(50, 200);
+        b.follow_measured_tail();
+        assert!(b.apply_measured_tail_pin(ScrollAxis::Both));
+        assert_eq!(b.offset(), (50, 200), "a 2-D canvas pins its far corner");
+    }
+
+    #[test]
+    fn r1445_pin_that_moves_nothing_reports_no_dirt() {
+        // Following while already at the tail is the common case (a `tail -f`
+        // view that never left the bottom). The arming is still consumed, but
+        // the frame must not be re-run for an offset that did not move — the
+        // same post-equality-skip dirty-bit contract `set_max` publishes.
+        let s = ScrollState::new();
+        s.set_max(0, 120);
+        s.scroll_to(0, 120);
+        s.follow_measured_tail();
+        assert!(!s.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert!(!s.is_following_measured_tail(), "consumed nonetheless");
+        assert_eq!(s.offset(), (0, 120));
+    }
+
+    #[test]
+    fn r1445_content_that_still_fits_pins_to_a_zero_bound() {
+        // An append that leaves the content shorter than the viewport has
+        // nowhere to go: `max` stays 0 and the pin is a no-op. The consumer
+        // does not special-case this — it arms unconditionally.
+        let s = ScrollState::new();
+        s.follow_measured_tail();
+        assert!(!s.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert_eq!(s.offset(), (0, 0));
+    }
+
+    #[test]
+    fn r1445_standing_arming_is_readable() {
+        // The read side of the write (wire-form read/write symmetry): what
+        // `scene/scroll` publishes as `following_measured_tail`.
+        let s = ScrollState::new();
+        assert!(!s.is_following_measured_tail());
+        s.follow_measured_tail();
+        assert!(
+            s.is_following_measured_tail(),
+            "standing until a pass reaches this state's node",
+        );
+        let _ = s.apply_measured_tail_pin(ScrollAxis::Vertical);
+        assert!(!s.is_following_measured_tail());
+    }
+
+    #[test]
+    fn r1445_pin_re_runs_a_subscribed_effect_once() {
+        use crate::reactive::Effect;
+        use std::cell::Cell;
+
+        // The pin writes the offset through `scroll_to`, so it inherits the
+        // atomic-batch contract: one observable change, not two per-axis ones.
+        let s = ScrollState::new();
+        s.set_max(0, 200);
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_eff = Rc::clone(&runs);
+        let s_eff = Rc::new(s);
+        let s_inside = Rc::clone(&s_eff);
+        let _eff = Effect::new(&owner, move || {
+            let _ = s_inside.offset();
+            runs_eff.set(runs_eff.get() + 1);
+        });
+        assert_eq!(runs.get(), 1, "effect runs once on create");
+        s_eff.follow_measured_tail();
+        assert_eq!(runs.get(), 1, "arming is not observable state");
+        assert!(s_eff.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert_eq!(runs.get(), 2, "the pin re-runs the subscriber once");
     }
 
     #[test]

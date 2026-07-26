@@ -133,6 +133,20 @@ pub struct ScrollStateOutcome {
     pub max: ScrollAxisPair,
     /// Per-axis "at this edge" predicates derived from `offset` / `max`.
     pub edges: ScrollEdges,
+    /// R1445 §5.45 — whether a
+    /// [`ScrollState::follow_measured_tail`](pinion_core::widgets::scroll::ScrollState::follow_measured_tail)
+    /// arming is standing: the consumer has appended content and asked to be
+    /// taken to the bottom the next layout pass measures, but no pass has
+    /// consumed it yet.
+    ///
+    /// Usually `false` — a scroll node in the painted scene has its arming
+    /// consumed within the frame it was made, so any query between frames sees
+    /// it cleared. It reads `true` for a node **no layout pass reaches** (a
+    /// hidden tab, a collapsed pane): the pin is still owed and will fire when
+    /// the node returns. That is the state an agent otherwise could not
+    /// explain, which is why the bit is on the wire rather than inferred from
+    /// `edges.at_bottom`.
+    pub following_measured_tail: bool,
 }
 
 impl ScrollStateOutcome {
@@ -149,6 +163,7 @@ impl ScrollStateOutcome {
                 at_left: ox == 0,
                 at_right: ox == mx,
             },
+            following_measured_tail: state.is_following_measured_tail(),
         }
     }
 }
@@ -349,6 +364,37 @@ mod tests {
     }
 
     #[test]
+    fn r1445_standing_tail_arming_is_on_the_wire() {
+        // R1445 §5.45 — the read side of `follow_measured_tail`. An agent that
+        // sees a scroll sitting away from its bottom with a standing arming
+        // knows a pin is owed (the node is not being laid out — a hidden tab),
+        // which no combination of `offset` / `max` / `edges` can express.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "list");
+        state.set_max(0, 480);
+        assert!(
+            !scroll_state(Some(&owner), "list")
+                .unwrap()
+                .following_measured_tail,
+            "nothing armed at rest",
+        );
+        state.follow_measured_tail();
+        let outcome = scroll_state(Some(&owner), "list").unwrap();
+        assert!(outcome.following_measured_tail, "the arming is published");
+        assert_eq!(
+            outcome.offset,
+            ScrollAxisPair { x: 0, y: 0 },
+            "and it has not moved anything yet — that is the layout pass's job",
+        );
+        // The layout pass consuming it clears the wire bit too.
+        assert!(state.apply_measured_tail_pin(pinion_core::scene::ScrollAxis::Vertical));
+        let after = scroll_state(Some(&owner), "list").unwrap();
+        assert!(!after.following_measured_tail, "consumed");
+        assert_eq!(after.offset, ScrollAxisPair { x: 0, y: 480 });
+        assert!(after.edges.at_bottom);
+    }
+
+    #[test]
     fn r602_horizontal_axis_independent_of_vertical() {
         // Set up a 2-axis scrolling state, position mid-x but at top.
         let owner = Owner::new();
@@ -521,6 +567,10 @@ mod tests {
         assert_eq!(json["offset"]["y"], 480);
         assert_eq!(json["max"]["y"], 480);
         assert_eq!(json["edges"]["at_bottom"], true);
+        // R1445 — the arming bit rides the same envelope, so the write side's
+        // "post-state" answer stays a full ScrollStateOutcome rather than a
+        // subset that quietly drifts from the read side.
+        assert_eq!(json["following_measured_tail"], false);
     }
 
     #[test]

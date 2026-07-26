@@ -468,7 +468,14 @@ fn compute_layout_inner(
     // that changes a measured height re-runs the view against the refined
     // table (the measure→settle warmup).
     let harvest_dirty = harvest_measured_rows(scene);
-    bounds_dirty || harvest_dirty
+    // R1445 §5.45 §5.27 — deferred tail pin. Runs *last* on purpose: both
+    // writers above can move `max` this frame (the content-rect bound, then the
+    // measured-row harvest's refinement), and the pin's contract is "the bound
+    // this frame ended with", so it must not be able to observe an intermediate
+    // one. Folds its own dirty bit into the same re-pass machinery — the pin
+    // moves an offset the already-built scene was laid out against.
+    let pin_dirty = apply_measured_tail_pins(scene);
+    bounds_dirty || harvest_dirty || pin_dirty
 }
 
 /// R55.G.2 §5.45 — walks the scene and lays out each `Scene::Scroll`
@@ -505,6 +512,49 @@ fn lay_out_scroll_contents(
     }
 }
 
+/// R1445 §5.45 — visit every `Scene::Scroll` in the tree, OR-folding each
+/// visit's dirty bit.
+///
+/// The traversal `update_scroll_state_bounds` / [`harvest_measured_rows`] /
+/// [`apply_measured_tail_pins`] each carried a copy of (R1445 self-grep: the
+/// tail pin was the third). Only the per-node work differed; the walk — fold
+/// the children of a Container, visit a Scroll and then descend into its
+/// content — was mechanical wiring repeated verbatim, so it lives here once.
+///
+/// Descends with `|`, not the `dirty || recurse(…)` the three copies each
+/// ended on. That is a readability choice, **not** a bug fix: a nested scroll
+/// is reached anyway, because [`lay_out_scroll_contents`] gives every scroll's
+/// content its own [`compute_layout_inner`] pass, which runs these same three
+/// walks over the sub-tree. No test in the suite distinguishes the two forms —
+/// verified by restoring `||` and re-running. It is `|` here so the traversal
+/// means what its name says for any future caller that is not already covered
+/// by that inner pass; a short-circuit would become a live bug the moment one
+/// exists, and would be silent.
+fn fold_scrolls(
+    scene: &Scene,
+    visit: &mut impl FnMut(&pinion_core::scene::ScrollNode) -> bool,
+) -> bool {
+    match scene {
+        Scene::Container(c) => {
+            let mut dirty = false;
+            for child in &c.children {
+                // `|=`-fold so the walk continues after one descendant flips
+                // the bit — every nested scroll gets its visit this pass
+                // regardless of which one moved.
+                dirty |= fold_scrolls(child, visit);
+            }
+            dirty
+        }
+        Scene::Scroll(s) => {
+            let here = visit(s);
+            // Descend into the content so nested scrolls are visited too;
+            // `|` (not `||`) so `here` never suppresses the descent.
+            here | fold_scrolls(s.content.as_ref(), visit)
+        }
+        _ => false,
+    }
+}
+
 /// R55.G.5 §5.45 — walks the scene and, for every `Scene::Scroll`
 /// with an attached `ScrollState`, writes the layout-derived max
 /// bounds (`content_size - viewport_size`, clamped to 0). Called
@@ -516,77 +566,101 @@ fn lay_out_scroll_contents(
 /// unchanged content geometry does not schedule a paint.
 #[allow(clippy::cast_possible_wrap)]
 fn update_scroll_state_bounds(scene: &Scene) -> bool {
-    match scene {
-        Scene::Container(c) => {
-            let mut dirty = false;
-            for child in &c.children {
-                // `|=`-fold so the walk continues even after one
-                // descendant flips the bit — every nested ScrollState
-                // gets its set_max call this pass regardless of which
-                // one moved.
-                dirty |= update_scroll_state_bounds(child);
-            }
-            dirty
+    fold_scrolls(scene, &mut |s| {
+        let mut dirty = false;
+        // R859 §5.45 — a linked-scroll *follower* shares its state
+        // with a primary node that owns the bounds write; the
+        // follower never publishes. Publishing from both would
+        // flip-flop the shared `measured_*` (the frozen-column grid's
+        // two vertical body scrolls share one vertical state but sit in
+        // side-by-side columns of different cross-axis *widths*) and
+        // spin a perpetual scroll-dirty re-pass. The follower still
+        // lays out its content unbounded along its axis in
+        // `lay_out_scroll_contents` (which is follower-agnostic), so
+        // the overflow clip + offset slide still apply — only the
+        // feedback is suppressed here.
+        if let Some(state) = s.state.as_ref().filter(|_| !s.follower) {
+            let content_rect = s.content.rect();
+            // Content rect is scroll-local (origin at (0, 0)),
+            // so `rect.w/h` already encode the intrinsic content
+            // size — no `+ rect.x/y` accumulation needed.
+            // R57.X.scrollbar §5.45 — `set_max` returns whether
+            // either max bound actually mutated (post-Signal
+            // equality-skip). On the very first paint of an
+            // application's lifetime every ScrollState reads back
+            // with `max == 0` so the first non-zero content-size
+            // write flips this bit; the substrate uses the
+            // accumulated bit to re-run `V::view` + this layout
+            // pass on the same frame so the scrollbar widget
+            // paints with the freshly-written max instead of a
+            // full-track thumb.
+            //
+            // R996 §5.27 — each axis bound goes through the
+            // `max_scroll_offset` SSOT (content extent − viewport,
+            // clamped i32), shared with app-side pre-layout bound
+            // writers (e.g. a streaming view that pins the viewport
+            // to a freshly-appended tail in the same frame).
+            dirty = state.set_max(
+                pinion_core::widgets::scroll::max_scroll_offset(content_rect.w, s.viewport.w),
+                pinion_core::widgets::scroll::max_scroll_offset(content_rect.h, s.viewport.h),
+            );
+            // R774 §5.27 — AutoSizer feedback. `apply` wrote the
+            // flex-computed clip-window rect into `s.viewport`
+            // above (R55.G.4 `assign_rect`), so this is the true
+            // measured extent for a flex-sized scroll container.
+            // Publishing it lets a flex-viewport virtualized list
+            // (`view_flex_virtual_list`) window against the laid-
+            // out height instead of a caller-supplied const. The
+            // dirty bit folds into the same first-paint warmup as
+            // `set_max`: the first paint windows an empty list
+            // (height 0 → no rows), this write flips the bit, and
+            // the shell re-runs `V::view` + layout on the same
+            // frame with the true height. A fixed-size scroll
+            // node's rect never moves, so this is a one-shot
+            // no-op for non-flex consumers (Signal equality-skip).
+            dirty |= state.set_measured_viewport(s.viewport.w, s.viewport.h);
         }
-        Scene::Scroll(s) => {
-            let mut dirty = false;
-            // R859 §5.45 — a linked-scroll *follower* shares its state
-            // with a primary node that owns the bounds write; the
-            // follower never publishes. Publishing from both would
-            // flip-flop the shared `measured_*` (the frozen-column grid's
-            // two vertical body scrolls share one vertical state but sit in
-            // side-by-side columns of different cross-axis *widths*) and
-            // spin a perpetual scroll-dirty re-pass. The follower still
-            // lays out its content unbounded along its axis in
-            // `lay_out_scroll_contents` (which is follower-agnostic), so
-            // the overflow clip + offset slide still apply — only the
-            // feedback is suppressed here.
-            if let Some(state) = s.state.as_ref().filter(|_| !s.follower) {
-                let content_rect = s.content.rect();
-                // Content rect is scroll-local (origin at (0, 0)),
-                // so `rect.w/h` already encode the intrinsic content
-                // size — no `+ rect.x/y` accumulation needed.
-                // R57.X.scrollbar §5.45 — `set_max` returns whether
-                // either max bound actually mutated (post-Signal
-                // equality-skip). On the very first paint of an
-                // application's lifetime every ScrollState reads back
-                // with `max == 0` so the first non-zero content-size
-                // write flips this bit; the substrate uses the
-                // accumulated bit to re-run `V::view` + this layout
-                // pass on the same frame so the scrollbar widget
-                // paints with the freshly-written max instead of a
-                // full-track thumb.
-                //
-                // R996 §5.27 — each axis bound goes through the
-                // `max_scroll_offset` SSOT (content extent − viewport,
-                // clamped i32), shared with app-side pre-layout bound
-                // writers (e.g. a streaming view that pins the viewport
-                // to a freshly-appended tail in the same frame).
-                dirty = state.set_max(
-                    pinion_core::widgets::scroll::max_scroll_offset(content_rect.w, s.viewport.w),
-                    pinion_core::widgets::scroll::max_scroll_offset(content_rect.h, s.viewport.h),
-                );
-                // R774 §5.27 — AutoSizer feedback. `apply` wrote the
-                // flex-computed clip-window rect into `s.viewport`
-                // above (R55.G.4 `assign_rect`), so this is the true
-                // measured extent for a flex-sized scroll container.
-                // Publishing it lets a flex-viewport virtualized list
-                // (`view_flex_virtual_list`) window against the laid-
-                // out height instead of a caller-supplied const. The
-                // dirty bit folds into the same first-paint warmup as
-                // `set_max`: the first paint windows an empty list
-                // (height 0 → no rows), this write flips the bit, and
-                // the shell re-runs `V::view` + layout on the same
-                // frame with the true height. A fixed-size scroll
-                // node's rect never moves, so this is a one-shot
-                // no-op for non-flex consumers (Signal equality-skip).
-                dirty |= state.set_measured_viewport(s.viewport.w, s.viewport.h);
-            }
-            // Recurse into content so nested Scrolls also update.
-            dirty || update_scroll_state_bounds(s.content.as_ref())
-        }
-        _ => false,
-    }
+        dirty
+    })
+}
+
+/// R1445 §5.45 §5.27 — walks the scene and, for every `Scene::Scroll` whose
+/// [`ScrollState`](pinion_core::widgets::scroll::ScrollState) carries a standing
+/// [`follow_measured_tail`](pinion_core::widgets::scroll::ScrollState::follow_measured_tail)
+/// arming, pins the offset to the bound this frame published.
+///
+/// The layout-measured half of the grow-then-pin idiom
+/// [`follow_tail`](pinion_core::widgets::virtual_list::follow_tail) serves
+/// arithmetically: a consumer that appends content whose extent only taffy /
+/// parley know arms the intent, and the bound it pins against is written above
+/// — so the consumer never has to state (or fake) an extent it cannot compute.
+///
+/// A separate walk rather than a branch inside
+/// [`update_scroll_state_bounds`] because the pin must observe the bound
+/// **after** every writer of this frame, including
+/// [`harvest_measured_rows`]'s refinement.
+///
+/// R859 followers are skipped, on the same gate the bounds pass uses: **the
+/// pin rides the node that publishes the bound**. A follower shares its
+/// primary's `ScrollState`, so a shared arming still fires exactly once — from
+/// the primary, with the primary's declared axis. Letting a follower fire it
+/// would make the result depend on scene order (whichever node the walk
+/// reached first would decide which axes count as "the tail"), and would pin
+/// against a bound the follower does not own. A state whose only node in this
+/// scene *is* a follower keeps its arming standing — correctly: nobody
+/// published its bound this frame either, so there is no measured tail to pin
+/// to yet. That standing state is what `scene/scroll_state`'s
+/// `following_measured_tail` reports.
+///
+/// Returns whether any pin moved an offset; a scroll with no arming is a pure
+/// no-op, so this is opt-in.
+fn apply_measured_tail_pins(scene: &Scene) -> bool {
+    fold_scrolls(scene, &mut |s| {
+        s.state
+            .as_ref()
+            .filter(|_| !s.follower)
+            .is_some_and(|state| state.apply_measured_tail_pin(s.axis))
+    })
 }
 
 /// R1194 §5.27 — walks the scene and, for every `Scene::Scroll` carrying a
@@ -603,39 +677,27 @@ fn update_scroll_state_bounds(scene: &Scene) -> bool {
 /// refined table (the two-frame measure→settle warmup, identical to the
 /// `update_scroll_state_bounds` first-paint re-pass).
 fn harvest_measured_rows(scene: &Scene) -> bool {
-    match scene {
-        Scene::Container(c) => {
-            let mut dirty = false;
-            for child in &c.children {
-                dirty |= harvest_measured_rows(child);
-            }
-            dirty
-        }
-        Scene::Scroll(s) => {
-            let mut dirty = false;
-            // A measured list wires BOTH the measured-row state (harvest target)
-            // and the scroll state (anchor + offset); `view_measured_list` always
-            // does. Fail fast (debug) on a hand-built node that wired only
-            // `measured_rows` — otherwise it would silently render on the
-            // estimate forever (R1199 audit: fail-fast principle).
-            if let Some(measured) = s.measured_rows.as_ref() {
-                debug_assert!(
-                    s.state.is_some(),
-                    "a ScrollNode with measured_rows must also carry a ScrollState \
+    fold_scrolls(scene, &mut |s| {
+        let mut dirty = false;
+        // A measured list wires BOTH the measured-row state (harvest target)
+        // and the scroll state (anchor + offset); `view_measured_list` always
+        // does. Fail fast (debug) on a hand-built node that wired only
+        // `measured_rows` — otherwise it would silently render on the
+        // estimate forever (R1199 audit: fail-fast principle).
+        if let Some(measured) = s.measured_rows.as_ref() {
+            debug_assert!(
+                s.state.is_some(),
+                "a ScrollNode with measured_rows must also carry a ScrollState \
                      (the harvest needs it for the anchor + offset)",
-                );
-                if let Some(scroll) = s.state.as_ref() {
-                    let mut rows = Vec::new();
-                    collect_measured_rows(s.content.as_ref(), &mut rows);
-                    dirty = measured.harvest(scroll, s.viewport.h, rows);
-                }
+            );
+            if let Some(scroll) = s.state.as_ref() {
+                let mut rows = Vec::new();
+                collect_measured_rows(s.content.as_ref(), &mut rows);
+                dirty = measured.harvest(scroll, s.viewport.h, rows);
             }
-            // Recurse into content so a measured list nested inside another
-            // scroll still harvests.
-            dirty || harvest_measured_rows(s.content.as_ref())
         }
-        _ => false,
-    }
+        dirty
+    })
 }
 
 /// R1194 §5.27 — collect `(row_index, laid_out_height)` for every node in a
@@ -1916,6 +1978,290 @@ mod tests {
                 panic!("inner row")
             };
             assert_eq!(row.rect, Rect::new(0, 0, 200, 40));
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // R1445 §5.45 §5.27 — the deferred tail pin, driven through the
+        // REAL pass. The consumer's whole contribution is the arming;
+        // every number below is one the layout pass produced.
+        // ─────────────────────────────────────────────────────────────
+
+        #[test]
+        fn r1445_deferred_pin_lands_on_the_bound_this_pass_measured() {
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            // 12 rows of 28 + 11 gaps of 6 = 402 content in a 164 viewport.
+            // The binding never states any of that — it arms, and the pass
+            // resolves 402 - 164 = 238.
+            let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(rows)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(6)),
+            );
+            let state = Rc::new(ScrollState::new());
+            state.follow_measured_tail();
+            let scroll =
+                ScrollNode::new(Rect::new(0, 0, 220, 164), content).with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+
+            assert_eq!(state.max(), (0, 238), "the pass measured the extent");
+            assert_eq!(state.offset(), (0, 238), "and the pin rode that bound");
+            assert!(
+                dirty,
+                "the frame must re-run: the scene was laid out against the pre-pin offset",
+            );
+            assert!(!state.is_following_measured_tail(), "one-shot, consumed");
+        }
+
+        #[test]
+        fn r1445_a_pass_with_no_arming_leaves_the_reader_where_they_are() {
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            // Same scene, no arming: a reader parked mid-document stays put
+            // across a pass that re-affirms the same bound. This is the
+            // negative control for the test above — without it, a pin that
+            // fired unconditionally would pass that one just as well.
+            let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(rows)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(6)),
+            );
+            let state = Rc::new(ScrollState::new());
+            state.set_max(0, 238);
+            state.scroll_to(0, 60);
+            let scroll =
+                ScrollNode::new(Rect::new(0, 0, 220, 164), content).with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            let mut cache = cache();
+            // The first pass is dirty for a reason of its own — it publishes
+            // the measured viewport (R774) — so the steady-state claim is
+            // made against the second.
+            let _ = compute_layout_with_scroll_dirty(&mut scene, &mut cache, 360, 320);
+            assert_eq!(state.offset(), (0, 60), "unmoved by the first pass");
+            let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache, 360, 320);
+
+            assert_eq!(state.offset(), (0, 60), "still unmoved");
+            assert!(!dirty, "steady-state frame stays clean: nothing armed it");
+        }
+
+        #[test]
+        fn r1445_pin_observes_the_harvest_refined_bound_not_the_pre_harvest_one() {
+            // Why the pin is its own walk *after* `harvest_measured_rows`
+            // rather than a branch inside `update_scroll_state_bounds`: a
+            // measured list's spacer is sized from the ESTIMATE (3 × 20 = 60,
+            // which fits the 100-tall viewport → bound 0), and only the
+            // harvest's measured total (30+40+50 = 120 → bound 20) is the
+            // truth. Pinning from the bounds pass would land at 0 — a whole
+            // viewport short of the tail the consumer asked for.
+            use pinion_core::scene::ScrollNode;
+            use pinion_core::widgets::measured_rows::{MeasuredRowState, measured_row_tag};
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            let measured = Rc::new(MeasuredRowState::new(3, 20));
+            let scroll = Rc::new(ScrollState::new());
+            let slots: Vec<Scene> = [30u32, 40, 50]
+                .iter()
+                .enumerate()
+                .map(|(i, &h)| {
+                    let row = Scene::Container(
+                        ContainerNode::new(vec![])
+                            .with_layout(LayoutStyle::new().with_size(Size::px(100, h))),
+                    );
+                    Scene::Container(
+                        ContainerNode::new(vec![row])
+                            .with_tag(measured_row_tag(None, i))
+                            .with_layout(
+                                LayoutStyle::new()
+                                    .with_absolute_position(0, 0)
+                                    .with_size(Size::width_px(200)),
+                            ),
+                    )
+                })
+                .collect();
+            // The spacer carries the pre-harvest ESTIMATE (3 × 20).
+            let sizer = Scene::Container(
+                ContainerNode::new(slots)
+                    .with_layout(LayoutStyle::new().with_size(Size::px(200, 60))),
+            );
+            let content = Scene::Container(ContainerNode::new(vec![sizer]));
+            scroll.follow_measured_tail();
+            let mut scene = Scene::Scroll(
+                ScrollNode::from_state(Rc::clone(&scroll), Rect::new(0, 0, 200, 100), content)
+                    .with_measured_rows(Rc::clone(&measured)),
+            );
+
+            compute_layout(&mut scene, &mut cache(), 200, 100);
+
+            assert_eq!(measured.total_height(), 120, "harvest measured 30+40+50");
+            assert_eq!(
+                scroll.max(),
+                (0, 20),
+                "harvest's refined bound is the last word"
+            );
+            assert_eq!(
+                scroll.offset(),
+                (0, 20),
+                "the pin rode the refined bound, not the estimate-derived 0",
+            );
+        }
+
+        #[test]
+        fn r1445_nested_scroll_arming_fires_from_the_inner_node() {
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            // The walk recurses into `Scroll.content`, so a scroll nested
+            // inside another scroll pins against its own measured bound.
+            let inner_state = Rc::new(ScrollState::new());
+            inner_state.follow_measured_tail();
+            let inner_content = Scene::Container(
+                ContainerNode::new(vec![fixed_row_w(200, 300)])
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            );
+            let inner = Scene::Scroll(
+                ScrollNode::new(Rect::new(0, 0, 200, 60), inner_content)
+                    .with_state(Rc::clone(&inner_state)),
+            );
+            let outer_content = Scene::Container(
+                ContainerNode::new(vec![inner])
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            );
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(
+                ScrollNode::new(Rect::new(0, 0, 220, 160), outer_content),
+            )]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            assert_eq!(inner_state.max(), (0, 240), "300 content - 60 viewport");
+            assert_eq!(inner_state.offset(), (0, 240), "inner pin fired");
+        }
+
+        #[test]
+        fn r1445_horizontal_scroll_pins_the_axis_that_actually_overflows() {
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            // A horizontal strip that grew to the right lands at its right-hand
+            // tail. NOTE what this does *not* prove: the layout pass clamps a
+            // single-axis scroll's cross extent to the viewport, so `max_y` is
+            // 0 here by construction and "pin x only" and "pin both maxima"
+            // agree. The axis branch is discriminated by
+            // `scroll::tests::r1445_axis_declares_which_edge_is_the_tail`
+            // (hand-set cross bound) and by the follower test below (a shared
+            // state whose publisher declares a different axis).
+            let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(120, 40)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(cells).with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+            );
+            let state = Rc::new(ScrollState::new());
+            state.follow_measured_tail();
+            let scroll = ScrollNode::new(Rect::new(0, 0, 300, 40), content)
+                .with_axis(ScrollAxis::Horizontal)
+                .with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            assert_eq!(state.max(), (420, 0), "720 content - 300 viewport");
+            assert_eq!(state.offset(), (420, 0), "pinned to the right-hand tail");
+        }
+
+        #[test]
+        fn r1445_nested_scroll_bound_is_written_by_a_single_compute_layout() {
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            // Regression guard for the `fold_scrolls` lift: one pass writes the
+            // bounds of BOTH scrolls, including on a pass where the outer's own
+            // bound moves. (Written while hunting a short-circuit bug in the
+            // pre-lift `dirty || recurse(content)` — there is none: the inner
+            // scroll is reached through `lay_out_scroll_contents`'s own
+            // `compute_layout_inner` pass. The test is kept because THAT path
+            // is what it actually pins, and nothing else pinned it.)
+            let inner_state = Rc::new(ScrollState::new());
+            let outer_state = Rc::new(ScrollState::new());
+            let inner = Scene::Scroll(
+                ScrollNode::new(
+                    Rect::new(0, 0, 200, 60),
+                    Scene::Container(ContainerNode::new(vec![fixed_row_w(200, 300)])),
+                )
+                .with_state(Rc::clone(&inner_state)),
+            );
+            // A tall sibling makes the OUTER bound move on this pass — the
+            // condition a short-circuiting descent would have been sensitive to.
+            let outer_content = Scene::Container(
+                ContainerNode::new(vec![inner, fixed_row_w(200, 400)])
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            );
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(
+                ScrollNode::new(Rect::new(0, 0, 220, 160), outer_content)
+                    .with_state(Rc::clone(&outer_state)),
+            )]));
+
+            // ONE pass — no re-pass to paper over a skipped visit.
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            assert_eq!(
+                outer_state.max(),
+                (0, 300),
+                "the outer bound moved, which is the precondition",
+            );
+            assert_eq!(
+                inner_state.max(),
+                (0, 240),
+                "the nested scroll's bound was written by that same pass",
+            );
+        }
+
+        #[test]
+        fn r1445_pin_rides_the_bound_publisher_not_whichever_node_comes_first() {
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            // R859 linked scroll: a follower shares the primary's state and
+            // publishes no bound. It must not fire the pin either — otherwise
+            // "which axes are the tail" would be decided by scene order. The
+            // fixture puts the follower FIRST and gives it a different axis
+            // from the primary, so an implementation that let either node fire
+            // lands somewhere else.
+            let state = Rc::new(ScrollState::new());
+            state.follow_measured_tail();
+
+            // Follower: vertical, listed first, publishes nothing.
+            let follower = Scene::Scroll(
+                ScrollNode::new(
+                    Rect::new(0, 0, 300, 200),
+                    Scene::Container(ContainerNode::new(vec![fixed_row_w(720, 600)])),
+                )
+                .with_axis(ScrollAxis::Vertical)
+                .with_state(Rc::clone(&state))
+                .as_follower(),
+            );
+            // Primary: a 2-D canvas — 720×600 content in a 300×200 window.
+            let primary = Scene::Scroll(
+                ScrollNode::new(
+                    Rect::new(0, 0, 300, 200),
+                    Scene::Container(ContainerNode::new(vec![fixed_row_w(720, 600)])),
+                )
+                .with_axis(ScrollAxis::Both)
+                .with_state(Rc::clone(&state)),
+            );
+            let mut scene = Scene::Container(ContainerNode::new(vec![follower, primary]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            assert_eq!(state.max(), (420, 400), "the primary published both bounds");
+            assert_eq!(
+                state.offset(),
+                (420, 400),
+                "the pin used the PUBLISHER's axis (Both), not the follower's",
+            );
         }
     }
 
