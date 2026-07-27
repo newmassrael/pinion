@@ -28,6 +28,13 @@ What this asserts:
       through the wire and the hints stay put; squeezed to the floor, a cell
       still reports the width it NEEDS, and switching back to contents gives it
       exactly that again.
+  (D) R1454 — THE MEASUREMENT IS BOUNDED. Qt's
+      `QHeaderView::resizeContentsPrecision` says how many rows a content-fitted
+      column samples, because measuring every row each frame is what makes the
+      policy expensive: a shape miss costs 18.5 us against a 118 ns cache hit,
+      and a working set past the 256-layout measurement cache re-shapes in FULL
+      every frame (5.6 ms per 300 strings — a third of a 60fps frame). Lower the
+      bound over the wire and the hints follow it exactly.
 
 Every assertion is **self-calibrating**: the expected value is derived from the
 same run, never from a font-specific constant. The rendering face is the host's
@@ -149,6 +156,37 @@ def body() -> None:
         tf.invoke("/external/set_resize_mode", "0:resize_to_contents")
         wait_until(lambda: _h(tf, "section_size.0") == before[0],
                    desc="the column fits its content again")                        # 43
+
+        # ── (D) R1454 — the measurement is bounded, and says so ───────
+        assert_eq(_h(tf, "resize_contents_precision"), 1000,
+                  "Qt's default row-sampling bound")                                # 44
+        # Capture what each column's HEADER and FIRST ROW paint at, before
+        # changing anything: those are the only two strings a precision of 1
+        # measures, so they are the expectation — derived from this run, not
+        # from a font-specific constant.
+        expected = []
+        for logical in range(NCOLS):
+            v = _visual_of(tf, logical)
+            head = _rect(tf, f"colhdr_label#{v}")["w"]
+            row0 = _rect(tf, f"colbody#0_{v}")["w"]
+            expected.append(max(head, row0) + 2 * CELL_PAD)
+
+        tf.intervene("/external/resize_contents_precision", 1)
+        wait_until(lambda: _h(tf, "content_widths") == expected,
+                   desc="one sampled row leaves only the header and row 0")         # 45
+        assert any(e < b for e, b in zip(expected, before)), (
+            "and at least one column really did narrow — otherwise the bound "
+            "would be unobservable in this dataset"
+        )                                                                            # 46
+        # Back to a bound past the row count: every row again, byte for byte.
+        tf.intervene("/external/resize_contents_precision", 10_000)
+        wait_until(lambda: _h(tf, "content_widths") == before,
+                   desc="more precision than rows is every row")                    # 47
+        assert_eq(_h(tf, "resize_contents_precision"), 10_000, "and it reads back")  # 48
+        # Zero is not a way to measure nothing: it clamps, so a content-fitted
+        # column always has content to fit.
+        tf.intervene("/external/resize_contents_precision", 0)
+        assert_eq(_h(tf, "resize_contents_precision"), 1, "zero clamps to one")     # 49
 
 
 if __name__ == "__main__":

@@ -180,10 +180,17 @@ fn grid_text(role: ColorRole, theme: &Theme) -> TextStyle {
         .with_fg(theme.resolve(role))
 }
 
-/// Every string logical column `logical` has to show — its header label and
-/// its cells.
-fn column_strings(logical: usize) -> impl Iterator<Item = &'static str> {
-    std::iter::once(HEADERS[logical]).chain((0..NROWS).map(move |r| cell_text(r, logical)))
+/// The strings logical column `logical` is measured against: its header label
+/// and the first `rows` cells.
+///
+/// R1454 — the header is always measured (Qt measures it too) and the body is
+/// **sampled**, because measuring every row of a grid each frame is what makes
+/// a content-fitted column expensive: a shape miss costs 18.5 us against a
+/// 118 ns cache hit, and a working set past the measurement cache's 256 slots
+/// re-shapes in full every frame.
+fn column_strings(logical: usize, rows: usize) -> impl Iterator<Item = &'static str> {
+    std::iter::once(HEADERS[logical])
+        .chain((0..NROWS.min(rows)).map(move |r| cell_text(r, logical)))
 }
 
 /// R1452 — the per-logical-section content size hints: the peer of Qt's
@@ -200,14 +207,19 @@ fn column_strings(logical: usize) -> impl Iterator<Item = &'static str> {
 /// proportional face the widest column is not always the one with the most
 /// characters, which a character count could never notice.
 ///
+/// R1454 — the body is sampled at the layout's
+/// [`resize_contents_precision`](ColumnLayout::resize_contents_precision)
+/// (Qt's `QHeaderView::resizeContentsPrecision`), so the per-frame working set
+/// is bounded no matter how many rows the grid has.
+///
 /// All-or-nothing: if any string cannot be measured (headless, no provider)
 /// the whole hint set is `None` and the caller publishes nothing rather than
 /// mixing a real width with a made-up one.
-fn content_hints(theme: &Theme) -> Option<Vec<u32>> {
+fn content_hints(theme: &Theme, rows: usize) -> Option<Vec<u32>> {
     let style = grid_text(ColorRole::OnSurface, theme);
     (0..NCOLS)
         .map(|l| {
-            column_strings(l)
+            column_strings(l, rows)
                 .try_fold(0, |widest, s| {
                     Some(widest.max(measured_text_extent(s, &style, None)?.width()))
                 })
@@ -807,7 +819,7 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
     // changes republishes here each frame for the same reason.
     let layout = use_column_layout(LAYOUT_KEY, || SECTION_W.to_vec());
     layout.set_available_width(Some(AVAILABLE_W));
-    if let Some(hints) = content_hints(&theme) {
+    if let Some(hints) = content_hints(&theme, layout.resize_contents_precision()) {
         layout.set_content_widths(hints);
     }
     let mut children: Vec<Scene> = Vec::with_capacity(NCOLS * (NROWS + 1) + 4);
@@ -1546,7 +1558,7 @@ mod tests {
         let owner = Owner::new();
         pinion_core::TEXT_METRICS.provide(&owner, std::rc::Rc::new(CountingMetrics));
         let hints = owner
-            .run(|| content_hints(&Theme::light()))
+            .run(|| content_hints(&Theme::light(), NROWS))
             .expect("a seeded provider measures");
 
         // Longest strings: report.pdf(10) Image/Video(5) 2.1 MB(6) a date(10)
@@ -1554,7 +1566,7 @@ mod tests {
         assert_eq!(hints, vec![94, 59, 66, 94, 59]);
         // The hint is never narrower than any string it has to show.
         for (l, hint) in hints.iter().enumerate() {
-            for s in column_strings(l) {
+            for s in column_strings(l, NROWS) {
                 let w = u32::try_from(s.chars().count()).unwrap_or(0) * 7;
                 assert!(*hint >= w + 2 * CELL_PAD, "{s:?} fits column {l}");
             }
@@ -1562,11 +1574,50 @@ mod tests {
     }
 
     #[test]
+    fn r1454_the_precision_bound_decides_how_many_rows_are_measured() {
+        // R1454 — a content-fitted column samples the body rather than reading
+        // all of it, because measuring every row each frame is what makes the
+        // policy expensive. The header is always measured (Qt measures it too).
+        let owner = Owner::new();
+        pinion_core::TEXT_METRICS.provide(&owner, std::rc::Rc::new(CountingMetrics));
+        let (all, one) = owner.run(|| {
+            (
+                content_hints(&Theme::light(), NROWS).expect("measures"),
+                content_hints(&Theme::light(), 1).expect("measures"),
+            )
+        });
+        // Type: header "Type"(4) + rows PDF Image Text Rust CSV Video. Sampling
+        // one row sees only "PDF"(3), so the header decides — 4 x 7 + padding.
+        assert_eq!(
+            all[1],
+            5 * 7 + 2 * CELL_PAD,
+            "Image/Video decide the full set"
+        );
+        assert_eq!(
+            one[1],
+            4 * 7 + 2 * CELL_PAD,
+            "one row leaves the header widest"
+        );
+        // Sampling fewer rows can only narrow a hint or leave it alone.
+        for (l, (a, o)) in all.iter().zip(&one).enumerate() {
+            assert!(o <= a, "column {l}: sampling fewer rows cannot widen it");
+        }
+        // And a precision past the row count is the whole body, not an error.
+        let plenty = owner
+            .run(|| content_hints(&Theme::light(), 10_000))
+            .expect("measures");
+        assert_eq!(plenty, all, "more precision than rows is every row");
+    }
+
+    #[test]
     fn r1453_no_provider_publishes_nothing_rather_than_a_guess() {
         // Headless, and in any harness without a shell: the binding must not
         // invent a width. All-or-nothing, so a partial measurement cannot mix a
         // real number with a made-up one.
-        assert_eq!(Owner::new().run(|| content_hints(&Theme::light())), None);
+        assert_eq!(
+            Owner::new().run(|| content_hints(&Theme::light(), NROWS)),
+            None
+        );
     }
 
     #[test]

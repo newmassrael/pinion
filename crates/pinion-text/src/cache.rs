@@ -155,6 +155,16 @@ pub struct LayoutCache {
     /// "at most once", and a count is what states that; see
     /// [`Self::font_scans`].
     font_scans: u32,
+    /// R1454 §5.36 — how many times [`Self::shape`] actually ran the shaper,
+    /// i.e. how many cache MISSES this instance has served. Reported by
+    /// [`Self::shapes`].
+    ///
+    /// A counter rather than a flag for the reason R1447 replaced its own
+    /// bool: the invariant a caller cares about is not "did it shape" but
+    /// "how many times *this frame*", and only a number can answer that. A
+    /// working set larger than the cache's capacity re-shapes on every pass,
+    /// and nothing else in the surface makes that visible.
+    shapes: u64,
     /// R1448 — set when `font_cx` is built; `NotProbed` until then.
     font_status: SystemFontStatus,
     /// R1448 — families made selectable by [`Self::register_font_data`], in
@@ -200,6 +210,7 @@ impl LayoutCache {
             inner: LruCache::new(capacity),
             font_cx: None,
             font_scans: 0,
+            shapes: 0,
             font_status: SystemFontStatus::NotProbed,
             app_families: Vec::new(),
             layout_cx: LayoutContext::new(),
@@ -295,6 +306,30 @@ impl LayoutCache {
     #[must_use]
     pub fn font_scans(&self) -> u32 {
         self.font_scans
+    }
+
+    /// R1454 §5.36 — how many times this cache has run the shaper: its cache
+    /// MISS count since construction.
+    ///
+    /// The diagnostic for the one failure mode an LRU-bounded measurement
+    /// cache has. A caller measuring a **bounded** working set sees this stop
+    /// climbing once the set is warm; a caller whose per-pass working set
+    /// exceeds [`Self::DEFAULT_CAPACITY`] sees it climb by the full set size
+    /// on every pass, because each entry evicts the one the next pass wants.
+    ///
+    /// Why that matters, measured (release, this machine, short labels):
+    /// a shape **miss costs 18.5 us** and a **hit 118 ns** — 157x. So a pass
+    /// over 300 strings that thrashes costs **5.6 ms**, a third of a 60fps
+    /// frame, *every frame*; at 1000 strings it is over budget on its own.
+    /// A cache is therefore not by itself a strategy — a per-pass working set
+    /// has to be BOUNDED, which is what Qt's
+    /// `QHeaderView::resizeContentsPrecision` bounds.
+    ///
+    /// Cheap to read (a field), so a consumer can gate a debug assertion on
+    /// it or a profiler can sample it per frame.
+    #[must_use]
+    pub fn shapes(&self) -> u64 {
+        self.shapes
     }
 
     /// R1448 §5.36 — whether this cache reached the platform font database.
@@ -492,6 +527,7 @@ impl LayoutCache {
         // reaches `shape` never enumerates a font. `get_or_insert_with`
         // borrows `font_cx` and `layout_cx` as disjoint fields, so the
         // builder still takes both without a second pass over `self`.
+        self.shapes += 1;
         let font_cx = ensure_font_context(
             &mut self.font_cx,
             &mut self.font_status,
@@ -842,6 +878,55 @@ mod tests {
         let _ = cache.layout("text", &style(16), None);
         let _ = cache.layout("text", &style(24), None);
         assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn r1454_shapes_counts_misses_and_a_warm_set_adds_none() {
+        // R1454 — the instrument the LRU's one failure mode needs. A bounded
+        // working set warms once; the second pass costs nothing.
+        let mut cache = LayoutCache::new();
+        let style = TextStyle::new().with_size_px(13);
+        let set: Vec<String> = (0..40).map(|i| format!("row-{i}")).collect();
+        for s in &set {
+            let _ = cache.layout(s, &style, None);
+        }
+        assert_eq!(cache.shapes(), 40, "one shape per distinct string");
+        for s in &set {
+            let _ = cache.layout(s, &style, None);
+        }
+        assert_eq!(cache.shapes(), 40, "a warm set adds no shapes at all");
+    }
+
+    #[test]
+    fn r1454_a_working_set_past_capacity_reshapes_every_pass() {
+        // THE CLIFF, measured rather than asserted in prose: with a working
+        // set one larger than the cache, each entry evicts the one the next
+        // pass wants, so a steady-state frame pays the FULL set every time.
+        // This is why a content-measuring consumer needs a bound on how much
+        // it measures per pass, not merely a cache.
+        let cap = NonZeroUsize::new(8).expect("8 is non-zero");
+        let mut cache = LayoutCache::with_capacity(cap);
+        let style = TextStyle::new().with_size_px(13);
+        let set: Vec<String> = (0..9).map(|i| format!("row-{i}")).collect();
+        for pass in 1..=3 {
+            for s in &set {
+                let _ = cache.layout(s, &style, None);
+            }
+            assert_eq!(
+                cache.shapes(),
+                9 * pass,
+                "pass {pass} re-shaped the whole set: nine strings, eight slots"
+            );
+        }
+        // One string fewer fits, and the very next pass is free.
+        let mut fits = LayoutCache::with_capacity(cap);
+        for s in &set[..8] {
+            let _ = fits.layout(s, &style, None);
+        }
+        for s in &set[..8] {
+            let _ = fits.layout(s, &style, None);
+        }
+        assert_eq!(fits.shapes(), 8, "eight strings in eight slots stay warm");
     }
 
     #[test]

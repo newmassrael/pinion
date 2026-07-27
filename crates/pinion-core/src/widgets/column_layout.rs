@@ -181,6 +181,10 @@ pub struct SectionPlacement {
     pub size: u32,
 }
 
+/// R1454 §5.36 — how many rows a `ResizeToContents` consumer measures by
+/// default, matching Qt's `QHeaderView::resizeContentsPrecision` default.
+pub const DEFAULT_CONTENTS_PRECISION: usize = 1000;
+
 /// R1452 §5.27 — where a section's size **comes from**: Qt's
 /// `QHeaderView::setSectionResizeMode`.
 ///
@@ -296,6 +300,15 @@ pub struct ColumnLayout {
     /// `None` until a consumer publishes its viewport, in which case a
     /// `Stretch` section falls back to its stored size rather than collapsing.
     available_width: Signal<Option<u32>>,
+    /// R1454 — how many rows a `ResizeToContents` consumer should measure.
+    ///
+    /// Reactive, and the first draft got that wrong: it was a plain `Cell` on
+    /// the reasoning that a sampling bound is "policy, not painted state". But
+    /// the bound is an INPUT to a painted result — the consumer reads it in its
+    /// view fn to decide what to measure — so a write that did not re-run the
+    /// view could not reach the hints at all. The demo caught it: the knob read
+    /// back its new value and every content width stayed put.
+    contents_precision: Signal<usize>,
 }
 
 impl ColumnLayout {
@@ -324,6 +337,7 @@ impl ColumnLayout {
             // keeps its width instead of collapsing to the floor.
             content_widths: Signal::new(content),
             available_width: Signal::new(None),
+            contents_precision: Signal::new(DEFAULT_CONTENTS_PRECISION),
         }
     }
 
@@ -429,6 +443,37 @@ impl ColumnLayout {
     #[must_use]
     pub fn content_width(&self, logical: usize) -> u32 {
         self.content_widths.get().get(logical).copied().unwrap_or(0)
+    }
+
+    /// R1454 §5.36 — how many rows a consumer should measure when it computes
+    /// a [`ResizeToContents`](SectionResizeMode::ResizeToContents) hint: Qt's
+    /// `QHeaderView::resizeContentsPrecision`, default `1000` like Qt's.
+    ///
+    /// Not a nicety — a bound the measurement demands. A shape **miss costs
+    /// 18.5 us** against a **118 ns** cache hit
+    /// ([`LayoutCache::shapes`](../../../pinion_text/struct.LayoutCache.html)
+    /// is the counter that showed it), and the measurement cache is LRU-bounded
+    /// at 256 layouts, so a consumer that measures every row of a large grid
+    /// each frame exceeds the cache, re-shapes the whole set every pass, and
+    /// pays **5.6 ms per 300 strings** — a third of a 60fps frame, forever.
+    /// Sampling a bounded prefix keeps the working set warm.
+    ///
+    /// It lives here, on the header, because that is where Qt puts it and
+    /// because it is then readable and writable as data (`query` /
+    /// `intervene`) rather than a constant buried in a binding. The *consumer*
+    /// honours it, exactly as it supplies the hints themselves — and reads it
+    /// inside its view fn, which is why it subscribes.
+    #[must_use]
+    pub fn resize_contents_precision(&self) -> usize {
+        self.contents_precision.get()
+    }
+
+    /// R1454 — set the row-sampling bound. `0` is clamped to `1`: measuring
+    /// nothing would leave a content-fitted column with no content to fit, and
+    /// silently sizing it to the floor is the kind of answer a caller cannot
+    /// tell from a bug.
+    pub fn set_resize_contents_precision(&self, rows: usize) {
+        self.contents_precision.set(rows.max(1));
     }
 
     /// R1452 — publish the per-**logical**-section content size hints (Qt's
@@ -773,6 +818,7 @@ impl ColumnLayout {
                     .collect(),
             ))),
             "content_widths" => Some(json_of(self.content_widths.get())),
+            "resize_contents_precision" => Some(int(self.resize_contents_precision())),
             "available_width" => Some(
                 self.available_width
                     .get()
@@ -884,6 +930,14 @@ impl ColumnLayout {
                     return Err(InterveneError::OutOfRange);
                 }
                 self.content_widths.set(widths);
+                Ok(())
+            }
+            // R1454 — the row-sampling bound a `ResizeToContents` consumer
+            // honours; writable so an agent can shrink it and watch the hints
+            // change without rebuilding the grid.
+            "resize_contents_precision" => {
+                let rows = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
+                self.set_resize_contents_precision(rows);
                 Ok(())
             }
             "available_width" => {
@@ -1079,7 +1133,8 @@ pub fn read_column_layout(intro: &dyn ExternalIntrospect) -> ColumnLayoutView {
 #[cfg(test)]
 mod tests {
     use super::{
-        ColumnLayout, ColumnLayoutState, SectionPlacement, SectionResizeMode, read_column_layout,
+        ColumnLayout, ColumnLayoutState, DEFAULT_CONTENTS_PRECISION, SectionPlacement,
+        SectionResizeMode, read_column_layout,
     };
     use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
     use crate::widgets::column_widths::DEFAULT_MIN_COL_WIDTH;
@@ -1770,6 +1825,66 @@ mod tests {
         };
         assert_eq!(modes[0], serde_json::Value::from("resize_to_contents"));
         assert_eq!(l.section_size(0), 210, "and the hint is what it sizes to");
+    }
+
+    #[test]
+    fn the_contents_precision_bound_is_readable_writable_and_never_zero() {
+        // R1454 — the bound the measurement demands. Qt's default, and a `0`
+        // clamped to `1`: measuring nothing would leave a content-fitted
+        // column with no content to fit, and a silent floor-sized column is
+        // the kind of answer a caller cannot tell from a bug.
+        let l = layout();
+        assert_eq!(
+            l.resize_contents_precision(),
+            DEFAULT_CONTENTS_PRECISION,
+            "Qt's default"
+        );
+        assert!(matches!(
+            l.query("resize_contents_precision"),
+            Some(IntrospectValue::Int(1000))
+        ));
+
+        l.set_resize_contents_precision(0);
+        assert_eq!(l.resize_contents_precision(), 1, "zero clamps to one");
+        l.intervene("resize_contents_precision", &IntrospectValue::Int(50))
+            .expect("writable");
+        assert_eq!(l.resize_contents_precision(), 50);
+        assert!(matches!(
+            l.intervene(
+                "resize_contents_precision",
+                &IntrospectValue::Text("many".into())
+            ),
+            Err(InterveneError::TypeMismatch)
+        ));
+        assert_eq!(
+            l.resize_contents_precision(),
+            50,
+            "the refusal changed nothing"
+        );
+        // It does not touch the saved layout — it decides what a consumer
+        // MEASURES, not what the header IS.
+        assert_eq!(l.save_state(), layout().save_state());
+        // But it is reactive, because a consumer reads it in its view fn: a
+        // write that did not re-run the view could never reach the hints.
+        // (The first draft used a plain `Cell` and the demo caught exactly
+        // that — the knob read back its new value and nothing moved.)
+        let seen = std::rc::Rc::new(std::cell::Cell::new(0_usize));
+        let owner = crate::reactive::Owner::new();
+        let probe = std::rc::Rc::clone(&seen);
+        let l2 = ColumnLayout::new(vec![100, 120]);
+        owner.run(|| probe.set(l2.resize_contents_precision()));
+        assert_eq!(seen.get(), DEFAULT_CONTENTS_PRECISION);
+        assert_eq!(
+            l2.contents_precision.revision(),
+            0,
+            "reading inside a scope subscribes without writing"
+        );
+        l2.set_resize_contents_precision(25);
+        assert_eq!(
+            l2.contents_precision.revision(),
+            1,
+            "and a write advances the revision the subscriber wakes on"
+        );
     }
 
     #[test]
