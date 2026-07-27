@@ -28,7 +28,7 @@ Atomic verification scope (>=30 assertions):
       gap leaves the order unchanged (press-without-drag never reorders).
   (D) introspection — `/external/order` + `/external/labels` round-trip;
       `/external/preview` is null at rest; unknown path + intervene (the
-      order is drag-only, no writable slot) are rejected.
+      and (R1450) `order` takes a whole permutation back) are checked.
 
   Phase 2 — PIXELS (PINION_SCREENSHOT, producer-parity headless render).
     The boot frame shows four rows in identity order, each filled with its
@@ -202,12 +202,23 @@ def body() -> None:
         except RpcError:
             raised = True
         assert raised, "unknown introspect path must be rejected"
+        # R1450 — `order` is a writable slot now (the column-header consumer
+        # needed Qt's restoreState, and the model owns the permutation check),
+        # so a real permutation lands and a non-permutation is refused.
+        before = tf.query("/external/order")
+        tf.intervene("/external/order", [3, 2, 1, 0])
+        wait_until(lambda: tf.query("/external/order") == [3, 2, 1, 0],
+                   desc="a saved order restores")
         raised = False
         try:
-            tf.intervene("/external/order", [0, 1, 2, 3])
+            tf.intervene("/external/order", [0, 0, 1, 2])
         except RpcError:
             raised = True
-        assert raised, "order has no writable slot (drag-only) — intervene rejected"
+        assert raised, "a non-permutation is refused"
+        assert_eq(tf.query("/external/order"), [3, 2, 1, 0], "and changes nothing")
+        tf.intervene("/external/order", before)
+        wait_until(lambda: tf.query("/external/order") == before,
+                   desc="restore the pre-check order")
 
     # ── Phase 2 — live pixels (boot frame, identity order) ──────────
     rects = _boot_rects()

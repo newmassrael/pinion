@@ -121,6 +121,52 @@ impl ReorderModel {
         self.order.borrow().clone()
     }
 
+    /// R1450 §5.51 — move the item at visual index `from` **to** visual index
+    /// `to`, both clamped. Qt's `QHeaderView::moveSection`: `to` is the
+    /// destination *index*, not an insertion gap, so a caller says where the
+    /// item should end up and never has to reason about the shift the removal
+    /// introduces.
+    ///
+    /// The keyboard funnel ([`invoke`](Self::invoke)'s `"move"`) and the
+    /// explicit move now share this one conversion; before R1450 the
+    /// index → gap step existed only inside the keyboard path, so an explicit
+    /// move had nowhere to land.
+    pub fn move_section(&self, from: usize, to: usize) {
+        let last = self.count.saturating_sub(1);
+        let (from, to) = (from.min(last), to.min(last));
+        if from == to {
+            return;
+        }
+        let gap = if to > from { to + 1 } else { to };
+        Self::apply_move(&mut self.order.borrow_mut(), from, gap);
+    }
+
+    /// R1450 §5.51 — replace the whole visual order. `false` (and no change)
+    /// when `next` is not a permutation of `0..count` — the invariant this
+    /// type's [`order`](Self::order) field documents, checked in the one place
+    /// that owns it rather than at each caller.
+    ///
+    /// The restore half of the layout round-trip (Qt's
+    /// `QHeaderView::restoreState`, minus the sizes and hidden flags that live
+    /// on other axes). A readable order that could not be written back would
+    /// break the read/write symmetry every other pinion wire slot keeps.
+    pub fn set_order(&self, next: &[usize]) -> bool {
+        if next.len() != self.count {
+            return false;
+        }
+        let mut seen = vec![false; self.count];
+        for &id in next {
+            match seen.get_mut(id) {
+                // A duplicate or an out-of-range id would leave the model
+                // holding something that is not a permutation.
+                Some(slot) if !*slot => *slot = true,
+                _ => return false,
+            }
+        }
+        *self.order.borrow_mut() = next.to_vec();
+        true
+    }
+
     /// The keyboard cursor / AT active descendant (visual index), if any.
     #[must_use]
     pub fn focused(&self) -> Option<usize> {
@@ -220,15 +266,16 @@ impl ReorderModel {
     }
 
     /// Reorder slots for [`ExternalIntrospect::intervene`]:
-    /// `focused_index` is the writable keyboard cursor; `order` is
-    /// read-only (it mutates only through a drag or the `move` action).
-    /// Any other path is unknown here.
+    /// `focused_index` is the writable keyboard cursor; `order` (R1450) takes
+    /// a whole permutation back in the same JSON-array shape
+    /// [`query`](Self::query) hands out. Any other path is unknown here.
     ///
     /// # Errors
     ///
     /// [`InterveneError::TypeMismatch`] when `focused_index` is not an
-    /// integer, [`InterveneError::OutOfRange`] when it is `>= count`,
-    /// [`InterveneError::ReadOnly`] for `order`, and
+    /// integer or `order` is not a JSON array of integers,
+    /// [`InterveneError::OutOfRange`] when `focused_index` is `>= count` or
+    /// `order` is not a permutation of `0..count`, and
     /// [`InterveneError::UnknownPath`] otherwise.
     pub fn intervene(&self, path: &str, value: &IntrospectValue) -> Result<(), InterveneError> {
         match path {
@@ -240,7 +287,25 @@ impl ReorderModel {
                 self.focused.set(Some(i));
                 Ok(())
             }
-            "order" => Err(InterveneError::ReadOnly),
+            // R1450 — the restore half of the layout round-trip. A malformed
+            // array is a TypeMismatch (wrong shape); a well-formed one that is
+            // not a permutation is OutOfRange (right shape, impossible value),
+            // so a client learns which of the two it got wrong.
+            "order" => {
+                let IntrospectValue::Json(serde_json::Value::Array(items)) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                let next: Option<Vec<usize>> = items
+                    .iter()
+                    .map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()))
+                    .collect();
+                let next = next.ok_or(InterveneError::TypeMismatch)?;
+                if self.set_order(&next) {
+                    Ok(())
+                } else {
+                    Err(InterveneError::OutOfRange)
+                }
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -303,6 +368,24 @@ impl ReorderModel {
                 }
                 Ok(IntrospectValue::Null)
             }
+            // R1450 — Qt `QHeaderView::moveSection(from, to)`. The wire form is
+            // the composite `"{from}:{to}"` the rest of this model already
+            // speaks for a pair, and the return is the resulting order so one
+            // round-trip both moves and reports.
+            "move_section" => {
+                let IntrospectValue::Text(payload) = args else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                let (from, to) = payload
+                    .split_once(':')
+                    .and_then(|(a, b)| Some((a.trim().parse().ok()?, b.trim().parse().ok()?)))
+                    .ok_or(InvokeError::Rejected)?;
+                if from >= self.count || to >= self.count {
+                    return Err(InvokeError::Rejected);
+                }
+                self.move_section(from, to);
+                Ok(self.query("order").unwrap_or(IntrospectValue::Null))
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -350,10 +433,7 @@ impl ReorderModel {
     fn move_focused_to(&self, target: usize) -> Option<usize> {
         let from = self.focused.get()?;
         let target = target.min(self.count.saturating_sub(1));
-        if target != from {
-            let gap = if target > from { target + 1 } else { target };
-            Self::apply_move(&mut self.order.borrow_mut(), from, gap);
-        }
+        self.move_section(from, target);
         self.focused.set(Some(target));
         Some(target)
     }
@@ -604,9 +684,11 @@ mod tests {
             m.intervene("focused_index", &IntrospectValue::Int(9)),
             Err(InterveneError::OutOfRange)
         ));
+        // R1450 — `order` became writable (Qt restoreState), so a wrong-shaped
+        // value is now a TypeMismatch rather than "you may not write this".
         assert!(matches!(
             m.intervene("order", &IntrospectValue::Int(0)),
-            Err(InterveneError::ReadOnly)
+            Err(InterveneError::TypeMismatch)
         ));
         assert!(matches!(
             m.intervene("nope", &IntrospectValue::Int(0)),
@@ -666,5 +748,98 @@ mod tests {
             })
         );
         assert!(!v.grabbed);
+    }
+
+    // ----- R1450 explicit move + order restore (Qt QHeaderView) -----
+
+    #[test]
+    fn r1450_move_section_lands_on_the_destination_index_not_a_gap() {
+        let m = ReorderModel::new(5, ReorderAxis::Horizontal);
+        // Qt's moveSection(0, 2): the item ends up AT index 2.
+        m.move_section(0, 2);
+        assert_eq!(m.order(), [1, 2, 0, 3, 4]);
+        assert_eq!(m.order()[2], 0, "the moved item is at the destination");
+        // And backwards, where no removal shift applies.
+        m.move_section(4, 1);
+        assert_eq!(m.order(), [1, 4, 2, 0, 3]);
+        assert_eq!(m.order()[1], 4);
+        // A move onto its own index is a no-op, and out of range clamps.
+        let before = m.order();
+        m.move_section(2, 2);
+        assert_eq!(m.order(), before);
+        m.move_section(9, 9);
+        assert_eq!(m.order(), before, "both ends clamp to the last index");
+    }
+
+    #[test]
+    fn r1450_the_keyboard_move_and_the_explicit_move_agree() {
+        // The keyboard funnel is defined in terms of move_section now, so the
+        // two paths cannot drift apart on the index-to-gap conversion.
+        let keyboard = ReorderModel::new(5, ReorderAxis::Horizontal);
+        keyboard.set_focused(0);
+        keyboard
+            .invoke("move", &IntrospectValue::Int(2))
+            .expect("move is a known action");
+        let explicit = ReorderModel::new(5, ReorderAxis::Horizontal);
+        explicit.move_section(0, 2);
+        assert_eq!(keyboard.order(), explicit.order());
+    }
+
+    #[test]
+    fn r1450_set_order_takes_a_permutation_and_refuses_anything_else() {
+        let m = ReorderModel::new(4, ReorderAxis::Vertical);
+        assert!(m.set_order(&[3, 1, 0, 2]));
+        assert_eq!(m.order(), [3, 1, 0, 2]);
+        let good = m.order();
+        assert!(!m.set_order(&[0, 1, 2]), "wrong length");
+        assert!(!m.set_order(&[0, 0, 1, 2]), "duplicate id");
+        assert!(!m.set_order(&[0, 1, 2, 9]), "id outside 0..count");
+        assert_eq!(m.order(), good, "a refused restore changes nothing");
+    }
+
+    #[test]
+    fn r1450_order_round_trips_through_the_wire_form() {
+        let m = ReorderModel::new(4, ReorderAxis::Horizontal);
+        m.move_section(0, 3);
+        let read = m.query("order").expect("order is queryable");
+        // Read it out, write it into a fresh model: the same order lands.
+        let fresh = ReorderModel::new(4, ReorderAxis::Horizontal);
+        fresh.intervene("order", &read).expect("order is writable");
+        assert_eq!(fresh.order(), m.order());
+        // A well-formed array that is not a permutation is OutOfRange, not
+        // TypeMismatch: the shape was right, the value was impossible.
+        assert!(matches!(
+            fresh.intervene(
+                "order",
+                &IntrospectValue::Json(serde_json::json!([0, 0, 1, 2]))
+            ),
+            Err(InterveneError::OutOfRange)
+        ));
+        assert!(matches!(
+            fresh.intervene("order", &IntrospectValue::Json(serde_json::json!(["a"]))),
+            Err(InterveneError::TypeMismatch)
+        ));
+    }
+
+    #[test]
+    fn r1450_move_section_invoke_reports_the_resulting_order() {
+        let m = ReorderModel::new(4, ReorderAxis::Horizontal);
+        let out = m
+            .invoke("move_section", &IntrospectValue::Text("0:2".into()))
+            .expect("move_section is a known action");
+        assert_eq!(out, m.query("order").expect("order is queryable"));
+        assert_eq!(m.order(), [1, 2, 0, 3]);
+        assert!(matches!(
+            m.invoke("move_section", &IntrospectValue::Text("0:9".into())),
+            Err(InvokeError::Rejected)
+        ));
+        assert!(matches!(
+            m.invoke("move_section", &IntrospectValue::Text("nope".into())),
+            Err(InvokeError::Rejected)
+        ));
+        assert!(matches!(
+            m.invoke("move_section", &IntrospectValue::Int(0)),
+            Err(InvokeError::TypeMismatch)
+        ));
     }
 }

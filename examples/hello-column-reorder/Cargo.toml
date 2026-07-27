@@ -1,0 +1,28 @@
+[package]
+name = "hello-column-reorder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1450 §5.27 §5.40 §5.51 column drag-to-reorder — Qt QHeaderView movable sections (moveSection / visualIndex / logicalIndex / restore) over the lifted ReorderModel, with the whole section permutation readable and writable as typed data instead of an opaque saveState blob"
+publish = false
+
+[[bin]]
+name = "hello-column-reorder"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+serde_json = { workspace = true }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

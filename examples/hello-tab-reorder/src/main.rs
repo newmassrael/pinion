@@ -366,8 +366,11 @@ impl ExternalIntrospect for ReorderableTabsExternal {
                 self.selected.set(i);
                 Ok(())
             }
-            // focused_index → reorder model; everything else (order) is
-            // read-only / unknown there.
+            // focused_index and (R1450) the whole `order` permutation → the
+            // reorder model; anything else is unknown there. The tab strip got
+            // order-restore for free when R1450 made the model's `order`
+            // writable for the column-header consumer — a saved session's tab
+            // order is the same round-trip.
             other => self.reorder.intervene(other, &value),
         }
     }
@@ -958,10 +961,24 @@ mod tests {
             ext.intervene("selected_id", IntrospectValue::Int(9)),
             Err(InterveneError::OutOfRange)
         ));
+        // R1450 — `order` is writable now (the model owns the permutation
+        // check), so a wrong-shaped value is a TypeMismatch, and a real
+        // permutation restores the strip: the tab order of a saved session.
         assert!(matches!(
             ext.intervene("order", IntrospectValue::Int(0)),
-            Err(InterveneError::ReadOnly)
+            Err(InterveneError::TypeMismatch)
         ));
+        ext.intervene(
+            "order",
+            IntrospectValue::Json(serde_json::json!([3, 2, 1, 0])),
+        )
+        .expect("a permutation restores the strip");
+        assert_eq!(ext.reorder.order(), [3, 2, 1, 0]);
+        assert_eq!(
+            ext.selected.get(),
+            3,
+            "selection is by id, so a restore does not move it"
+        );
     }
 
     #[test]

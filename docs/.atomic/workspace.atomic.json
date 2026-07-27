@@ -70708,6 +70708,116 @@
         "AutoComplete::Both stays unused - the three Qt modes are exclusive"
       ]
     },
+    "Round 1450": {
+      "decision_summary": "R1450 - a column moves where its header is dragged: Qt QHeaderView movable sections as the 4th consumer of the lifted ReorderModel, with the section permutation readable AND writable as typed data instead of Qt's opaque saveState blob",
+      "changes_bullets": [
+        "column ORDER was the one Qt column axis pinion did not have",
+        "width R785/6, visibility R990, sort R778, filter R783/997, frozen R859 exist",
+        "QHeaderView setSectionsMovable / moveSection / visualIndex / logicalIndex",
+        "hello-column-reorder is the 4th consumer of the R743 ReorderModel",
+        "so the drag session and the APG keyboard grab are the proven ones",
+        "the header strip is its OWN external, which is what Qt does (QHeaderView",
+        "is a separate widget) and what the substrate needs: the model classifies a",
+        "drop by the composite #<visual> subindex, and view_table's header cells are",
+        "tagged {tag}_ch{col} because their click routes to the table's own sort",
+        "ReorderModel gains move_section(from, to) = Qt moveSection: `to` is the",
+        "destination INDEX, not an insertion gap; the keyboard funnel now shares it",
+        "so the index-to-gap conversion exists once instead of only in that path",
+        "and set_order + a writable intervene(\"order\") = Qt restoreState half",
+        "the permutation check lives on the type whose field documents the invariant",
+        "hello-tab-reorder and hello-dnd inherited order-restore from that change",
+        "visual_index / logical_index are on the binding: they are the mapping every",
+        "other column axis composes with, not two readouts that happen to agree",
+        "one projection function feeds the header, the body and the a11y tree"
+      ],
+      "verification_bullets": [
+        "core 2697 (5 new reorder) / column-reorder 6 / tab-reorder 14 / dnd 10 green",
+        "fmt / clippy --all-targets / cargo doc --document-private-items all 0",
+        "demo r1450_column_reorder.py: 50 assertions PASS, no wall-clock sleeps",
+        "the drag is scene/drag - a real press-march-release, not an invoke shortcut",
+        "held mid-drag (phase=begin) publishes preview + paints the insertion line",
+        "THE ASSERTION THAT MATTERS: after the drag the BODY row-0 text is",
+        "[PDF, 2.1 MB, report.pdf, ...] - a header that moved without its data would",
+        "pass every order assertion and still be broken",
+        "all four ReorderModel consumer demos re-run green: r742 r743 r937 r1138",
+        "r743 and r742 asserted \"order has no writable slot\"; that contract changed",
+        "deliberately, so both demos and the tab-strip unit test now PROVE the new",
+        "capability (a saved order restores, a non-permutation is refused) instead",
+        "of asserting the old refusal - the demo sweep is what surfaced them"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "the visual-to-source column projection now has TWO sites: hello-column-",
+        "visibility filters (shorter list) and hello-column-reorder permutes (same",
+        "length). Two is below the lift threshold and they are not mechanically",
+        "identical; the natural 3rd-consumer lift is a QHeaderView-shaped ColumnLayout",
+        "owning order + hidden together, which is what Qt puts in one place",
+        "section sizes stay on the R785 column-width axis and are NOT permuted with",
+        "the sections here - composing width with order is the follow-up",
+        "Qt's saveState also carries sizes, hidden flags and the sort indicator;",
+        "only the order half round-trips through this wire slot",
+        "the strip is uniform-width by construction so a section rect is derivable;",
+        "a variable-width header would need the width model to feed the hit geometry"
+      ],
+      "publishable_decision_summary": "R1450 - a column moves where its header is dragged: Qt QHeaderView movable sections as the 4th consumer of the lifted ReorderModel, with the section permutation readable AND writable as typed data instead of Qt's opaque saveState blob",
+      "publishable_changes_bullets": [
+        "column ORDER was the one Qt column axis pinion did not have",
+        "width R785/6, visibility R990, sort R778, filter R783/997, frozen R859 exist",
+        "QHeaderView setSectionsMovable / moveSection / visualIndex / logicalIndex",
+        "hello-column-reorder is the 4th consumer of the R743 ReorderModel",
+        "so the drag session and the APG keyboard grab are the proven ones",
+        "the header strip is its OWN external, which is what Qt does (QHeaderView",
+        "is a separate widget) and what the substrate needs: the model classifies a",
+        "drop by the composite #<visual> subindex, and view_table's header cells are",
+        "tagged {tag}_ch{col} because their click routes to the table's own sort",
+        "ReorderModel gains move_section(from, to) = Qt moveSection: `to` is the",
+        "destination INDEX, not an insertion gap; the keyboard funnel now shares it",
+        "so the index-to-gap conversion exists once instead of only in that path",
+        "and set_order + a writable intervene(\"order\") = Qt restoreState half",
+        "the permutation check lives on the type whose field documents the invariant",
+        "hello-tab-reorder and hello-dnd inherited order-restore from that change",
+        "visual_index / logical_index are on the binding: they are the mapping every",
+        "other column axis composes with, not two readouts that happen to agree",
+        "one projection function feeds the header, the body and the a11y tree"
+      ],
+      "publishable_verification_bullets": [
+        "core 2697 (5 new reorder) / column-reorder 6 / tab-reorder 14 / dnd 10 green",
+        "fmt / clippy --all-targets / cargo doc --document-private-items all 0",
+        "demo r1450_column_reorder.py: 50 assertions PASS, no wall-clock sleeps",
+        "the drag is scene/drag - a real press-march-release, not an invoke shortcut",
+        "held mid-drag (phase=begin) publishes preview + paints the insertion line",
+        "THE ASSERTION THAT MATTERS: after the drag the BODY row-0 text is",
+        "[PDF, 2.1 MB, report.pdf, ...] - a header that moved without its data would",
+        "pass every order assertion and still be broken",
+        "all four ReorderModel consumer demos re-run green: r742 r743 r937 r1138",
+        "r743 and r742 asserted \"order has no writable slot\"; that contract changed",
+        "deliberately, so both demos and the tab-strip unit test now PROVE the new",
+        "capability (a saved order restores, a non-permutation is refused) instead",
+        "of asserting the old refusal - the demo sweep is what surfaced them"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the visual-to-source column projection now has TWO sites: hello-column-",
+        "visibility filters (shorter list) and hello-column-reorder permutes (same",
+        "length). Two is below the lift threshold and they are not mechanically",
+        "identical; the natural 3rd-consumer lift is a QHeaderView-shaped ColumnLayout",
+        "owning order + hidden together, which is what Qt puts in one place",
+        "section sizes stay on the R785 column-width axis and are NOT permuted with",
+        "the sections here - composing width with order is the follow-up",
+        "Qt's saveState also carries sizes, hidden flags and the sort indicator;",
+        "only the order half round-trips through this wire slot",
+        "the strip is uniform-width by construction so a section rect is derivable;",
+        "a variable-width header would need the width model to feed the hit geometry"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

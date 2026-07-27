@@ -37,7 +37,8 @@ Atomic verification scope (>=30 assertions):
       tab; Space grabs, Arrow reorders (cursor + selection follow), Space
       drops; Escape reverts a grab.
   (F) introspection — order / labels / selected_id / selected_visual
-      round-trip; unknown path + read-only `order` intervene are rejected;
+      round-trip; an unknown path is rejected, and (R1450) a saved `order`
+      permutation restores while a non-permutation is refused;
       `selected_id` is a writable form-default slot.
 
   Phase 2 — PIXELS (PINION_SCREENSHOT, producer-parity headless render).
@@ -246,12 +247,24 @@ def body() -> None:
         except RpcError:
             raised = True
         assert raised, "unknown introspect path must be rejected"
+        # R1450 — `order` became writable when the column-header consumer needed
+        # Qt's restoreState, and the tab strip inherited it: a saved session's
+        # tab order goes back over the wire. Selection is by id, so a restore
+        # moves the tabs and leaves the selection on the same tab.
+        tf.intervene("/external/order", [3, 2, 1, 0])
+        wait_until(lambda: tf.query("/external/order") == [3, 2, 1, 0],
+                   desc="a saved tab order restores")
+        assert_eq(selected_id(tf), 1, "selection is by id, so a restore does not move it")
         raised = False
         try:
-            tf.intervene("/external/order", [0, 1, 2, 3])
+            tf.intervene("/external/order", [0, 0, 1, 2])
         except RpcError:
             raised = True
-        assert raised, "order has no writable slot (drag-only) — intervene rejected"
+        assert raised, "a non-permutation is still refused"
+        assert_eq(tf.query("/external/order"), [3, 2, 1, 0], "and changes nothing")
+        tf.intervene("/external/order", [0, 1, 2, 3])
+        wait_until(lambda: tf.query("/external/order") == [0, 1, 2, 3],
+                   desc="restore the identity order for the pixel phase")
 
     # ── Phase 2 — live pixels (boot frame, identity order swatches) ──
     rects = _boot_rects()
