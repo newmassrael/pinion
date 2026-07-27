@@ -3644,6 +3644,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-tail-reveal"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-textarea"
 version = "0.0.1"
 dependencies = [

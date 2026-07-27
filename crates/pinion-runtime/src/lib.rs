@@ -67,7 +67,7 @@ pub use input::{
 };
 pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
 pub use layout::{
-    TextBox, TextMeasure, compute_layout, compute_layout_with_scroll_dirty,
+    SETTLE_PASS_BUDGET, TextBox, TextMeasure, compute_layout, compute_layout_with_scroll_dirty,
     compute_layout_with_text_measure,
 };
 pub use paint_cache_stats::FragmentCacheStats;

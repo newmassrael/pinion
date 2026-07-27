@@ -140,12 +140,18 @@ pub struct ScrollStateOutcome {
     /// consumed it yet.
     ///
     /// Usually `false` — a scroll node in the painted scene has its arming
-    /// consumed within the frame it was made, so any query between frames sees
-    /// it cleared. It reads `true` for a node **no layout pass reaches** (a
+    /// spent within the frame it was made, so any query between frames sees it
+    /// cleared. It reads `true` for a node **no layout pass reaches** (a
     /// hidden tab, a collapsed pane): the pin is still owed and will fire when
     /// the node returns. That is the state an agent otherwise could not
     /// explain, which is why the bit is on the wire rather than inferred from
     /// `edges.at_bottom`.
+    ///
+    /// R1458 — "within the frame", not "on the first pass". The arming
+    /// survives any pass whose pin still moved the offset, so an agent that
+    /// queries *between the passes of one frame* (a windowed list walking down
+    /// to a tail it has not measured yet) legitimately reads `true`. That is
+    /// the honest answer: the pin is still travelling.
     pub following_measured_tail: bool,
 }
 
@@ -386,10 +392,17 @@ mod tests {
             ScrollAxisPair { x: 0, y: 0 },
             "and it has not moved anything yet — that is the layout pass's job",
         );
-        // The layout pass consuming it clears the wire bit too.
+        // R1458 — the wire bit tracks the arming's real life: it stays up
+        // across the pass that moved the offset (the frame is still
+        // converging) and drops on the settled pass that spends it. An agent
+        // polling between passes reads "still following", which is true.
         assert!(state.apply_measured_tail_pin(pinion_core::scene::ScrollAxis::Vertical));
+        let mid = scroll_state(Some(&owner), "list").unwrap();
+        assert_eq!(mid.offset, ScrollAxisPair { x: 0, y: 480 });
+        assert!(mid.following_measured_tail, "moved, so not settled yet");
+        assert!(!state.apply_measured_tail_pin(pinion_core::scene::ScrollAxis::Vertical));
         let after = scroll_state(Some(&owner), "list").unwrap();
-        assert!(!after.following_measured_tail, "consumed");
+        assert!(!after.following_measured_tail, "spent");
         assert_eq!(after.offset, ScrollAxisPair { x: 0, y: 480 });
         assert!(after.edges.at_bottom);
     }

@@ -51,8 +51,8 @@ use pinion_rpc::{
 use pinion_runtime::text_engine::SelfHostedTextEngine;
 use pinion_runtime::{
     CommandExecutor, CoreShell, DispatchTail, FocusManager, FrameTiming, FrameTimingStats,
-    FrameTimingsSnapshot, IntentQueue, Modifiers, PanRelease, PointerId, TextMeasure, Touch,
-    TouchPhase, clamp_frame_dt, compute_layout_with_text_measure, rect_for_tag,
+    FrameTimingsSnapshot, IntentQueue, Modifiers, PanRelease, PointerId, SETTLE_PASS_BUDGET,
+    TextMeasure, Touch, TouchPhase, clamp_frame_dt, compute_layout_with_text_measure, rect_for_tag,
     walk_scene_and_drain_immediate,
 };
 use pinion_text::LayoutCache;
@@ -4007,21 +4007,33 @@ impl<V: WidgetView> ShellCore<V> {
         // walk is a no-op for root-registered animations, so
         // animations advance once per primary paint regardless of
         // how many secondary paints fire in the same turn.
-        // The view + its two post-layout re-passes (scroll-dirty, pane-dirty)
-        // all re-run the SAME `V::view` / `V::view_for_window` dispatch; factor
-        // it into one closure so the dispatch lives in exactly one place. The
-        // closure captures only `&self.core` (disjoint from the `&mut
-        // self.text_cache` the layout passes borrow) and is scoped to this
+        // R1458 §5.45 §5.27 — the frame runs to a FIXED POINT before it is
+        // painted. A layout pass writes state the view reads back (the scroll
+        // bound, the measured-row table, a pane's measured rect), so the scene
+        // it just laid out can already be out of date by the time it returns:
+        // the honest thing to paint is the scene of the pass that changed
+        // nothing. Pre-R1458 this was two hand-rolled single-shot re-passes
+        // (scroll-dirty, then pane-dirty) whose own dirty bits were DISCARDED —
+        // so a frame that needed a third pass was presented mid-settle, and,
+        // because the paint ends with `clear_dirty()` and the event loop is
+        // `ControlFlow::Wait`, nothing asked for the frame that would have
+        // finished it. The user saw a stale offset until the next keystroke
+        // (the tide field report's "the pin lands, but the paint that shows it
+        // never comes"). The loop below replaces both, and the budget's job is
+        // only to bound a pathological non-converging binding: exceeding it
+        // arms a catch-up redraw rather than presenting-and-forgetting.
+        //
+        // The view + every re-pass run the SAME `V::view` / `V::view_for_window`
+        // dispatch; factor it into one closure so the dispatch lives in exactly
+        // one place. The closure captures only `&self.core` (disjoint from the
+        // `&mut self.text_cache` the layout passes borrow) and is scoped to this
         // block so its `&self.core` borrow drops before the later `&mut self`
-        // paint-loop work. NOTE: only the dispatch is shared — every pass lays
-        // out via `compute_layout_with_text_measure` (R1072, threading the same
-        // engine override); the first pass reads its scroll-dirty bool return,
-        // the re-passes discard it. Folding the layout into the dispatch closure
-        // would double-lay-out the first pass.
+        // paint-loop work. Folding the layout into the dispatch closure would
+        // double-lay-out the first pass.
         // R1121 §5.16 §5.21 — borderless windows inset content below their
         // chrome strip (`Some(height)`); decorated windows are `None` (no-op).
         let chrome_h = self.chrome_inset_height(window_id);
-        let mut paint_scene = {
+        let (mut paint_scene, frame_settled) = {
             let core = &self.core;
             let run_view = || {
                 let view = core.root_owner().run(|| match window_id {
@@ -4038,78 +4050,66 @@ impl<V: WidgetView> ShellCore<V> {
             // site so both arms size + render eligible text identically.
             let text_measure = text_measure_override(self.text_engine.as_ref());
             let mut scene = run_view();
-            let scroll_dirty = compute_layout_with_text_measure(
-                &mut scene,
-                &mut self.text_cache,
-                w,
-                h,
-                text_measure,
-            );
-            // R57.X.scrollbar §5.45 — first-paint chicken-and-egg fix.
-            // The layout pass writes the post-layout
-            // [`ScrollState::set_max`] *after* `V::view` has already
-            // produced the scene. The scrollbar widget reads `max` inside
-            // `V::view` and renders thumb size as
-            // `f(viewport, viewport + max)` — on the very first paint of
-            // the application's lifetime `max == 0` resolves to "content
-            // fits viewport" and paints a full-track thumb the user sees
-            // as "scrollbar maxed out at startup". Re-running `V::view` +
-            // the layout pass once when it actually moved
-            // a bound lets the scrollbar widget pick up the freshly-
-            // written max on the same paint cycle. Idempotent on
-            // steady-state frames — Signal equality-skip floors
-            // `scroll_dirty` at `false` and the guard short-circuits.
-            if scroll_dirty {
-                scene = run_view();
-                let _ = compute_layout_with_text_measure(
+            let mut settled = false;
+            for pass in 1..=SETTLE_PASS_BUDGET {
+                // R57.X.scrollbar §5.45 — first-paint chicken-and-egg. The
+                // layout pass writes the post-layout
+                // [`ScrollState::set_max`] *after* `V::view` has already
+                // produced the scene. The scrollbar widget reads `max` inside
+                // `V::view` and renders thumb size as
+                // `f(viewport, viewport + max)` — on the very first paint of
+                // the application's lifetime `max == 0` resolves to "content
+                // fits viewport" and paints a full-track thumb the user sees
+                // as "scrollbar maxed out at startup".
+                //
+                // R1012 §5.23 §5.22 — per-pane viewport publish, folded into the
+                // same fixed point. The freshly laid-out scene carries each pane
+                // Container's measured pixel rect; publishing each registered
+                // pane tag's (w, h) lets a per-pane reflow Effect (a PTY winsize
+                // ioctl) react, and the re-run reads the post-reflow producer
+                // state on this same paint. `|`, never `||`: the publish is the
+                // point of the call, so it must run on every pass, not only when
+                // the layout happened to be clean.
+                //
+                // R1021 §5.23 §5.16 — published for EVERY painted window, NOT
+                // primary-only (unlike the R1006 `set_viewport_size` publish
+                // above, which stays `DEFAULT_WINDOW`-gated). The pane registry
+                // is `root_owner`-scoped and tag-keyed, so it is window-agnostic:
+                // each painted window publishes the rects of the tags IT draws,
+                // and a tag absent from this window's scene resolves
+                // `rect_for_tag_absolute → None` and is skipped (retains its last
+                // measured size — a foreign window's pane is never clobbered). In
+                // the dock model a pane tag is drawn in exactly one window at a
+                // time, so there is no ambiguity. This is what lets a torn-off
+                // (undock) pane reflow to its secondary window's size: that
+                // window's content fills `(w, h)` via `compute_layout`'s
+                // root-fill (the root's declared size is ignored at the top
+                // level), so the pane Container's measured rect IS the window
+                // rect — no per-window `use_viewport_size` is needed (the R1006
+                // window-size seam stays primary-gated; sprag R37 undock is the
+                // forcing consumer). The side-effect-free mirror
+                // (`compute_paint_scene_pure_internal`) never reaches this fn, so
+                // an introspection paint never publishes (the R1006 contract).
+                let dirty = compute_layout_with_text_measure(
                     &mut scene,
                     &mut self.text_cache,
                     w,
                     h,
                     text_measure,
-                );
+                ) | self.core.publish_pane_viewports(&scene);
+                if !dirty {
+                    settled = true;
+                    break;
+                }
+                // Not the last pass: re-run the view against what this pass
+                // wrote, and lay THAT out. On the last pass we keep the scene
+                // this iteration laid out — a freshly-run view with no layout
+                // behind it would paint at every rect's default.
+                if pass < SETTLE_PASS_BUDGET {
+                    scene = run_view();
+                }
             }
-            // R1012 §5.23 §5.22 — per-pane viewport publish. The freshly laid-out
-            // scene carries each pane Container's measured pixel rect; publish
-            // each registered pane tag's (w, h) so a per-pane reflow Effect (a
-            // PTY winsize ioctl) reacts. This is the post-layout sibling of the
-            // pre-view `set_viewport_size` publish above: a pane size is
-            // layout-derived (known only here, after layout), so — like the
-            // scroll-dirty bit (R774) — the publish returns a dirty bit and we
-            // re-run `view` + the layout pass once when it fires, so the re-run
-            // reads the post-reflow producer state on this same paint. Idempotent
-            // on steady-state frames (Signal equality-skip floors `pane_dirty` at
-            // `false`).
-            //
-            // R1021 §5.23 §5.16 — published for EVERY painted window, NOT
-            // primary-only (unlike the R1006 `set_viewport_size` publish above,
-            // which stays `DEFAULT_WINDOW`-gated). The pane registry is
-            // `root_owner`-scoped and tag-keyed, so it is window-agnostic: each
-            // painted window publishes the rects of the tags IT draws, and a tag
-            // absent from this window's scene resolves `rect_for_tag_absolute →
-            // None` and is skipped (retains its last measured size — a foreign
-            // window's pane is never clobbered). In the dock model a pane tag is
-            // drawn in exactly one window at a time, so there is no ambiguity. This
-            // is what lets a torn-off (undock) pane reflow to its secondary
-            // window's size: that window's content fills `(w, h)` via
-            // `compute_layout`'s root-fill (the root's declared size is ignored at
-            // the top level), so the pane Container's measured rect IS the window
-            // rect — no per-window `use_viewport_size` is needed (the R1006
-            // window-size seam stays primary-gated; sprag R37 undock is the forcing
-            // consumer). The side-effect-free mirror
-            // (`compute_paint_scene_pure_internal`) never reaches this fn, so an
-            // introspection paint never publishes (the R1006 contract, inherited).
-            if self.core.publish_pane_viewports(&scene) {
-                scene = run_view();
-                let _ = compute_layout_with_text_measure(
-                    &mut scene,
-                    &mut self.text_cache,
-                    w,
-                    h,
-                    text_measure,
-                );
-            }
-            scene
+            (scene, settled)
         };
         // (R1020 §5.39) Re-derive the keyboard focus enumeration from the
         // freshly produced paint scene — the ratified scene-derived focus
@@ -4295,6 +4295,9 @@ impl<V: WidgetView> ShellCore<V> {
         if task_pump.has_pending() {
             task_pump.poll();
             self.redraw_requested = true;
+        }
+        if !frame_settled {
+            self.report_unsettled_frame(window_key);
         }
         // R705.1 §2 #7 — this paint just consumed the current reactive
         // state (the `V::view` run above re-subscribed `root_owner` to
@@ -4639,6 +4642,36 @@ impl<V: WidgetView> ShellCore<V> {
     /// scene producer reads it back via [`Self::maximized_for_window`].
     pub fn set_maximized_for_window(&mut self, window_id: &str, maximized: bool) {
         self.window_state_mut(window_id).maximized = maximized;
+    }
+
+    /// (R1458 §5.45 §5.27) The paint's settle loop ran out of
+    /// [`SETTLE_PASS_BUDGET`] with the frame still moving, so the scene about
+    /// to be presented is not the one it was converging to. Ask for the frame
+    /// that continues it, and SAY SO.
+    ///
+    /// Without the request, the paint ends at `clear_dirty()` — which erases
+    /// the only other record that anything changed — and a `ControlFlow::Wait`
+    /// event loop then sits on the half-settled picture until the user presses
+    /// something (the symptom the tide field report measured as "the second
+    /// paint never comes"). Without the warning it would be the *same* defect
+    /// one level up: truncating a frame's settling and telling nobody.
+    ///
+    /// Reaching here means this binding's view and layout disagree about a
+    /// value each derives from the other, which no scene converges out of on
+    /// its own. The redraw keeps the app responsive; the log names the bug. A
+    /// converged frame — every steady-state frame, by Signal equality-skip —
+    /// never calls this.
+    fn report_unsettled_frame(&mut self, window_key: &str) {
+        tracing::warn!(
+            target: "pinion::shell",
+            window = window_key,
+            passes = SETTLE_PASS_BUDGET,
+            "paint scene did not settle within the pass budget: the view and \
+             the layout pass disagree about a value each derives from the \
+             other. Painting the last pass and requesting another frame",
+        );
+        self.redraw_requested = true;
+        self.request_redraw_for_window(window_key);
     }
 
     /// (R1121 §5.16 §5.21) Logical-pixel height the window content is inset by
@@ -5407,24 +5440,31 @@ impl<V: WidgetView> ShellCore<V> {
                     Some(id) => V::view_for_window(id, cached_state, &frame),
                     None => V::view(cached_state, &frame),
                 });
-                // R57.X.scrollbar §5.45 — same first-paint warmup as
-                // [`Self::compute_paint_scene`]. Idempotent on
-                // steady-state — Signal equality-skip floors the
-                // dirty bit at false.
+                // R57.X.scrollbar §5.45 / R1458 §5.45 §5.27 — same settle loop
+                // as [`Self::compute_paint_scene`], for the same reason and to
+                // the same fixed point (producer parity: an agent reading
+                // `scene/snapshot from: paint` must see the scene the window
+                // shows, not an earlier pass of it). No pane publish here — the
+                // RPC producer is the introspection mirror and never publishes
+                // (the R1006 contract). Idempotent on steady-state: Signal
+                // equality-skip floors the dirty bit at false on pass 1.
                 let text_measure = text_measure_override(text_engine_ptr.as_ref());
-                if compute_layout_with_text_measure(&mut paint, text_cache_ptr, w, h, text_measure)
-                {
-                    paint = root_owner.run(|| match producer_window_id.as_deref() {
-                        Some(id) => V::view_for_window(id, cached_state, &frame),
-                        None => V::view(cached_state, &frame),
-                    });
-                    let _ = compute_layout_with_text_measure(
+                for pass in 1..=SETTLE_PASS_BUDGET {
+                    if !compute_layout_with_text_measure(
                         &mut paint,
                         text_cache_ptr,
                         w,
                         h,
                         text_measure,
-                    );
+                    ) {
+                        break;
+                    }
+                    if pass < SETTLE_PASS_BUDGET {
+                        paint = root_owner.run(|| match producer_window_id.as_deref() {
+                            Some(id) => V::view_for_window(id, cached_state, &frame),
+                            None => V::view(cached_state, &frame),
+                        });
+                    }
                 }
                 // R705 §5.39 §2 #1/#7 — inject the focus ring as the
                 // final paint step so `scene/snapshot from: paint` (and

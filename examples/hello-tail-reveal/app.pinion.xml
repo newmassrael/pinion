@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1458 §5.45 §5.27 settle-before-paint: pinion-forge renderer manifest for
+  hello-tail-reveal. Emits `HelloTailRevealRenderer` (Vello-backed). Same
+  single-source-of-truth template as the other hello-* renderers; only the
+  struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloTailRevealRenderer"
+        backend="vello"/>

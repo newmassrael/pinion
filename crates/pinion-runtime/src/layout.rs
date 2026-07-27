@@ -184,23 +184,50 @@ pub fn compute_layout(
     let _ = compute_layout_with_scroll_dirty(scene, cache, viewport_w, viewport_h);
 }
 
+/// (R1458 §5.45 §5.27) How many view + layout passes one paint may spend
+/// reaching the fixed point [`compute_layout_with_scroll_dirty`] reports,
+/// before the caller gives up and carries the rest into the next frame.
+///
+/// Lives here rather than in either backend because both of them run the loop
+/// (`pinion-shell`'s window paint and its RPC producer, `pinion-tui`'s paint —
+/// §2 #6), and a budget that differed between them would mean a scene settled
+/// in one backend and not the other.
+///
+/// Every known settling chain is short. The scroll bound and the pane rect each
+/// converge in one re-pass (the value is layout-derived and then stable); a
+/// windowed measured list needs one more, because the pass that pins the
+/// viewport to a refined tail brings rows into the window that no earlier pass
+/// had measured. `4` clears those with a pass to spare while still bounding a
+/// binding whose view and layout disagree forever — that one is a bug in the
+/// binding, and the honest response is to paint the best frame available and
+/// keep the loop responsive, not to hang inside one paint.
+pub const SETTLE_PASS_BUDGET: u32 = 4;
+
 /// R57.X.scrollbar §5.45 — variant of [`compute_layout`] that returns
-/// whether any [`ScrollState::set_max`](pinion_core::widgets::scroll::ScrollState::set_max) write *actually* mutated a
-/// max-bound during this pass (post Signal equality-skip).
+/// whether this pass *actually* mutated state the next `V::view` would read
+/// back — a [`ScrollState::set_max`](pinion_core::widgets::scroll::ScrollState::set_max)
+/// bound, a measured-row height, a tail pin's offset (post Signal
+/// equality-skip). In one word: whether the frame has **not** settled.
 ///
 /// Used by the shell's `compute_paint_scene`
 /// substrate to detect the first-paint chicken-and-egg case where
 /// `V::view` ran with the pre-layout `max = 0` snapshot and produced
 /// a scrollbar widget rendering its track full. The shell re-runs
-/// `V::view` + `compute_layout` once when this returns `true` so the
+/// `V::view` + `compute_layout` while this returns `true` so the
 /// scrollbar widget picks up the freshly-written max on the same
 /// paint cycle — the user-visible "scrollbar fills the track on
 /// startup" defect is what motivated the substrate exposure.
 ///
+/// R1458 — *while*, not *once*: one re-pass is a fixed point only if no pass
+/// can move the bound twice, and a windowed measured list moves it on the pass
+/// after the one that scrolled new rows into view. A caller that stops after
+/// one re-pass presents a half-settled scene and — having consumed the dirty
+/// bit — leaves nothing to ask for the frame that would finish it. Callers run
+/// to [`SETTLE_PASS_BUDGET`].
+///
 /// On steady-state paints the Signal equality-skip floors this at
-/// `false`, so the substrate's re-run guard short-circuits to a
-/// single pass — zero overhead on every frame after the content size
-/// has settled.
+/// `false`, so the loop short-circuits to a single pass — zero overhead on
+/// every frame after the content size has settled.
 ///
 /// # Panics
 ///
@@ -2013,7 +2040,19 @@ mod tests {
                 dirty,
                 "the frame must re-run: the scene was laid out against the pre-pin offset",
             );
-            assert!(!state.is_following_measured_tail(), "one-shot, consumed");
+            // R1458 — the arming outlives the pass that moved the offset,
+            // because that pass's own bound may not be the last word (the
+            // windowed case). It is spent by the settled pass the `dirty` bit
+            // above already schedules; here the second pass finds the same
+            // bound, moves nothing, and clears it.
+            assert!(state.is_following_measured_tail(), "still converging");
+            let settled = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            assert!(
+                !settled,
+                "the second pass moves nothing: this frame settled"
+            );
+            assert_eq!(state.offset(), (0, 238), "and stayed at the tail");
+            assert!(!state.is_following_measured_tail(), "one-shot, spent");
         }
 
         #[test]
@@ -2261,6 +2300,117 @@ mod tests {
                 state.offset(),
                 (420, 400),
                 "the pin used the PUBLISHER's axis (Both), not the follower's",
+            );
+        }
+
+        /// R1458 — the settle loop a shell paint runs: build the view from the
+        /// current state, lay it out, and repeat while the pass reports it
+        /// moved something. `passes` is capped so a non-converging fixture
+        /// fails the assertion rather than the test runner.
+        fn settle(
+            build: impl Fn() -> Scene,
+            cache: &mut LayoutCache,
+            w: u32,
+            h: u32,
+        ) -> (usize, bool) {
+            for pass in 1..=8 {
+                let mut scene = build();
+                if !compute_layout_with_scroll_dirty(&mut scene, cache, w, h) {
+                    return (pass, true);
+                }
+            }
+            (8, false)
+        }
+
+        #[test]
+        fn r1458_pin_rides_the_bound_the_frame_settled_on() {
+            use pinion_core::widgets::measured_rows::{MeasuredRowState, measured_row_tag};
+            use pinion_core::widgets::scroll::{ScrollState, max_scroll_offset};
+            use pinion_core::widgets::virtual_list::compute_visible_range_variable;
+            use std::rc::Rc;
+
+            // A measured list whose LAST row is far taller than the estimate —
+            // the shape a transcript of wrapped prose has after an append. The
+            // harvest can only measure rows the view materialized, so the bound
+            // the FIRST pass publishes is provisional: it still counts the tail
+            // row at the estimate. A pin that consumed its arming there lands
+            // short by the whole refinement, and the arming is gone before the
+            // truth arrives.
+            const ROWS: usize = 40;
+            const EST: u32 = 20;
+            const TAIL_H: u32 = 200;
+            const VIEWPORT_H: u32 = 100;
+            let height_of = |i: usize| if i == ROWS - 1 { TAIL_H } else { EST };
+            let exact_total: u32 = (0..ROWS).map(height_of).sum();
+
+            let measured = Rc::new(MeasuredRowState::new(ROWS, EST));
+            let scroll = Rc::new(ScrollState::new());
+            scroll.follow_measured_tail();
+
+            // Mirrors `view_measured_list`: window against the measurement
+            // table, absolute-position each slot at its table top, and size the
+            // spacer to the table total.
+            let build = || {
+                let offsets = measured.offsets();
+                let window =
+                    compute_visible_range_variable(scroll.offset_y(), VIEWPORT_H, &offsets, 0);
+                let slots: Vec<Scene> = window
+                    .indices()
+                    .map(|i| {
+                        let row = Scene::Container(ContainerNode::new(vec![]).with_layout(
+                            LayoutStyle::new().with_size(Size::px(200, height_of(i))),
+                        ));
+                        Scene::Container(
+                            ContainerNode::new(vec![row])
+                                .with_tag(measured_row_tag(None, i))
+                                .with_layout(
+                                    LayoutStyle::new()
+                                        .with_absolute_position(0, offsets.row_top(i))
+                                        .with_size(Size::width_px(200)),
+                                ),
+                        )
+                    })
+                    .collect();
+                let sizer = Scene::Container(ContainerNode::new(slots).with_layout(
+                    LayoutStyle::new().with_size(Size::px(200, offsets.total_height())),
+                ));
+                Scene::Scroll(
+                    ScrollNode::from_state(
+                        Rc::clone(&scroll),
+                        Rect::new(0, 0, 200, VIEWPORT_H),
+                        Scene::Container(ContainerNode::new(vec![sizer])),
+                    )
+                    .with_measured_rows(Rc::clone(&measured)),
+                )
+            };
+
+            let (passes, converged) = settle(build, &mut cache(), 200, VIEWPORT_H);
+
+            assert!(converged, "the frame settled within the pass budget");
+            assert!(
+                passes > 1,
+                "the fixture needs a re-pass, or it proves nothing"
+            );
+            assert_eq!(
+                measured.total_height(),
+                exact_total,
+                "the settle loop walked the window down to the tail row, so \
+                 every row is measured",
+            );
+            assert_eq!(
+                scroll.max(),
+                (0, max_scroll_offset(exact_total, VIEWPORT_H)),
+                "the settled bound is the measured one",
+            );
+            assert_eq!(
+                scroll.offset(),
+                scroll.max(),
+                "the pin rode the bound the frame SETTLED on, not the \
+                 provisional one the first pass published",
+            );
+            assert!(
+                !scroll.is_following_measured_tail(),
+                "and it is spent — a settled pass consumes the arming",
             );
         }
     }

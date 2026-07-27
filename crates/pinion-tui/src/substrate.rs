@@ -58,7 +58,8 @@ use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene, SceneRevision};
 use pinion_rpc::{DeferredInput, DispatchContext, PreviewLedger, dispatch_parsed};
 use pinion_runtime::{
-    CommandExecutor, CoreShell, DispatchTail, FocusManager, LayoutCache, PointerId, clamp_frame_dt,
+    CommandExecutor, CoreShell, DispatchTail, FocusManager, LayoutCache, PointerId,
+    SETTLE_PASS_BUDGET, clamp_frame_dt,
 };
 
 use crate::WidgetViewTui;
@@ -420,17 +421,39 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
 
         // R1344 §5.41 §5.36 — the layout pass, mirroring the Vello
         // sibling's `compute_paint_scene_internal` shape.
-        let mut scene = run_view();
-        let scroll_dirty = self.run_layout(&mut scene, cols, rows);
         // R57.X.scrollbar §5.45 — the first-paint chicken-and-egg the
         // Vello sibling documents: the layout pass writes
         // `ScrollState::set_max` AFTER `V::view` already read it, so a
-        // scrollbar's first frame would paint a full-track thumb. Re-run
-        // once when the pass actually moved a bound. Idempotent on
-        // steady-state frames (Signal equality-skip floors it at false).
-        if scroll_dirty {
-            scene = run_view();
-            let _ = self.run_layout(&mut scene, cols, rows);
+        // scrollbar's first frame would paint a full-track thumb.
+        // R1458 §5.45 §5.27 §2 #6 — and one re-pass is not always enough: a
+        // pass can write state the next view reads and the next layout refines
+        // again (a windowed measured list pinned to its tail is the case that
+        // forced this). Run to the fixed point, same budget and same reason as
+        // the Vello sibling — a TUI reader must not be left looking at a
+        // half-settled offset either. The TUI has no redraw-request channel to
+        // arm when the budget runs out (see `update_paint_scene`); it commits a
+        // fresh paint after every state change, so an over-budget frame is
+        // carried by the next commit rather than by a request.
+        //
+        // No over-budget warning here, unlike the Vello sibling, and the reason
+        // is a real constraint rather than an omission: the TUI's diagnostic
+        // channel is [`Self::log_sink`] (writing to stderr instead would land
+        // raw bytes on the alternate screen — the hazard that sink exists to
+        // avoid), and writing to it needs `&mut self` while this fn is `&self`
+        // by ratified contract (`compute_paint_scene_takes_shared_borrow`
+        // pins it). A binding whose view and layout disagree forever is
+        // backend-independent, and the GUI shell — which shares this budget —
+        // is where it gets named.
+        // Idempotent on steady-state frames (Signal equality-skip floors the
+        // dirty bit at false on pass 1).
+        let mut scene = run_view();
+        for pass in 1..=SETTLE_PASS_BUDGET {
+            if !self.run_layout(&mut scene, cols, rows) {
+                break;
+            }
+            if pass < SETTLE_PASS_BUDGET {
+                scene = run_view();
+            }
         }
         // R1426 §5.41 §5.28 — arm the terminal-cursor blink clock from the
         // freshly-produced scene, mirroring the Vello sibling's arm in

@@ -414,11 +414,14 @@ impl ScrollState {
     /// (`update_scroll_state_bounds`), so the arming rides along and
     /// [`Self::apply_measured_tail_pin`] fires immediately after it.
     ///
-    /// **One-shot.** Consumed by the next layout pass that reaches this
-    /// state's node, whether or not the offset ends up moving. It is a
-    /// *reducer*, not a mode — call it once per append, exactly as
-    /// `follow_tail` is called once per append. Re-arming before the pass
-    /// consumed it is idempotent.
+    /// **One-shot.** It is a *reducer*, not a mode — call it once per append,
+    /// exactly as `follow_tail` is called once per append. Re-arming before it
+    /// is spent is idempotent. R1458 — "one-shot" is about the *arming*, not
+    /// about a single layout pass: the arming is spent by the first pass whose
+    /// pin has nothing left to move, which for a windowed list is a pass or two
+    /// after the first one reaches the node (see
+    /// [`Self::apply_measured_tail_pin`]). Once spent, a reader who scrolls
+    /// away is never pulled back.
     ///
     /// **The policy stays with the caller.** `follow_tail` parameterizes
     /// "should we follow?" as `was_following`; here the arming call *is* that
@@ -434,25 +437,31 @@ impl ScrollState {
     }
 
     /// R1445 §5.45 — whether a [`Self::follow_measured_tail`] arming is still
-    /// standing. `false` at every frame boundary for a scroll node that is in
-    /// the scene (the layout pass consumes it); `true` only between the arming
-    /// call and that pass — or indefinitely for a node no layout pass reaches
-    /// (a hidden tab), which is the case worth asking about.
+    /// standing. `false` at every *settled* frame boundary for a scroll node
+    /// that is in the scene; `true` between the arming call and the pass that
+    /// spends it — or indefinitely for a node no layout pass reaches (a hidden
+    /// tab), which is the case worth asking about.
+    ///
+    /// R1458 — "settled", not "reached". A pass that still moves the offset
+    /// leaves the arming standing (see
+    /// [`Self::apply_measured_tail_pin`]), so a frame whose bound is still
+    /// being refined reports `true` between its passes. It goes `false` on the
+    /// pass where the pin has nothing left to move.
     #[must_use]
     pub fn is_following_measured_tail(&self) -> bool {
         self.pending_tail_pin.get()
     }
 
-    /// R1445 §5.45 — consume a standing [`Self::follow_measured_tail`] arming
-    /// and pin the offset to the bound that is now published on this state.
+    /// R1445 §5.45 — apply a standing [`Self::follow_measured_tail`] arming:
+    /// pin the offset to the bound that is now published on this state.
     ///
     /// Called by the runtime layout pass (`apply_measured_tail_pins`) *after*
     /// every bound writer of the frame has run — [`Self::set_max`] from the
     /// laid-out content rect, and the measured-row
     /// [`harvest`](crate::widgets::measured_rows::MeasuredRowState::harvest)
     /// that may refine it further. That ordering is the whole guarantee: the
-    /// pin lands on whatever bound the frame *ended* with, so it never needs
-    /// to know which writer produced it.
+    /// pin lands on whatever bound *this pass* ended with, so it never needs to
+    /// know which writer produced it.
     ///
     /// `axis` is the owning [`ScrollNode`](crate::scene::ScrollNode)'s
     /// declared axis — the node already says which axes scroll, so "the tail"
@@ -460,15 +469,52 @@ impl ScrollState {
     /// cross-axis offset is preserved (on a single-axis scroll the cross bound
     /// is `0` anyway, so preserving it and resetting it agree).
     ///
+    /// # The arming is spent by a pin that moves nothing
+    ///
+    /// R1458 — one pass is not enough to know the tail. A **windowed** list
+    /// only measures the rows the view materialized, so the bound the first
+    /// pass publishes still counts the un-materialized tail at its estimate:
+    /// the pin lands short, the view re-runs at the new offset, the harvest
+    /// measures the rows that just came into the window, and only *then* is
+    /// the bound the real one. Spending the arming on the first pass froze the
+    /// viewport at that provisional bound — short by the whole refinement, with
+    /// nothing left armed to carry it the rest of the way (the defect the tide
+    /// field report measured as `543/693`).
+    ///
+    /// So the arming survives any pass whose pin still moved the offset, and is
+    /// spent by the first pass where the pin has nothing to move. That is the
+    /// same fixed point the caller is already iterating to — the returned bool
+    /// *is* the frame's "not settled yet" bit — so the arming costs no extra
+    /// pass: it clears on the pass the frame was going to run anyway. It stays
+    /// one-shot in the sense that matters (a reader who scrolls away after it
+    /// clears is never yanked back); it is simply spent on the settled bound
+    /// rather than the first one.
+    ///
     /// Returns whether the offset actually moved (post Signal equality-skip),
     /// mirroring [`Self::set_max`]'s dirty bit: the frame folds it into the
     /// same-frame re-pass so the paint carries the pinned offset instead of
     /// showing the pre-pin position for one frame. An arming that lands where
-    /// the viewport already sits is consumed but reports `false` — nothing
-    /// observable changed, so nothing needs re-running.
+    /// the viewport already sits reports `false` — nothing observable changed,
+    /// so nothing needs re-running, and there is nothing left to converge to.
+    ///
+    /// # What "re-pass" means here, and why a repaint is not it
+    ///
+    /// R1458 — that dirty bit buys a re-run of the **view fn**, not a second
+    /// trip through the renderer, and the difference is the whole reason it is
+    /// wired this way.
+    /// [`ScrollNode::from_state`](crate::scene::ScrollNode::from_state) copies
+    /// this state's offset into the node **when the view builds it**, and the
+    /// paint adapter draws the copy. So a scene that was built before the pin
+    /// landed carries the pre-pin offset in its own fields: painting it again,
+    /// however many times, reproduces the same picture. Only building the
+    /// scene again reads the new offset. A consumer who diagnoses "the pin
+    /// landed but the screen did not move" and reaches for "request one more
+    /// repaint" is reaching for the one remedy that cannot work; what the
+    /// frame owes is another view + layout pass, which is what the returned
+    /// bit asks for.
     #[must_use]
     pub fn apply_measured_tail_pin(&self, axis: ScrollAxis) -> bool {
-        if !self.pending_tail_pin.replace(false) {
+        if !self.pending_tail_pin.get() {
             return false;
         }
         let (target_x, target_y) = match axis {
@@ -478,8 +524,12 @@ impl ScrollState {
         };
         let revisions_before = (self.offset_x.revision(), self.offset_y.revision());
         self.scroll_to(target_x, target_y);
-        self.offset_x.revision() != revisions_before.0
-            || self.offset_y.revision() != revisions_before.1
+        let moved = self.offset_x.revision() != revisions_before.0
+            || self.offset_y.revision() != revisions_before.1;
+        if !moved {
+            self.pending_tail_pin.set(false);
+        }
+        moved
     }
 }
 
@@ -867,34 +917,65 @@ mod tests {
 
     #[test]
     fn r1445_pin_is_one_shot() {
-        // A reducer, not a mode: once a pass consumes the arming, later
-        // growth must leave the viewport wherever the reader put it.
+        // A reducer, not a mode: once the arming is spent, later growth must
+        // leave the viewport wherever the reader put it.
         let s = ScrollState::new();
         s.set_max(0, 100);
         s.follow_measured_tail();
         assert!(s.apply_measured_tail_pin(ScrollAxis::Vertical));
         assert_eq!(s.offset(), (0, 100));
+        // R1458 — the pass that moved the offset does NOT spend the arming;
+        // the settled pass right behind it does. Spend it the way the frame
+        // does, by running to the fixed point.
+        assert!(!s.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert!(!s.is_following_measured_tail(), "spent by the settled pass");
         s.set_max(0, 300); // content grew again, no new arming
         assert!(
             !s.apply_measured_tail_pin(ScrollAxis::Vertical),
-            "the arming was consumed by the first pass",
+            "the arming is gone: growth alone does not follow",
         );
         assert_eq!(s.offset(), (0, 100), "no re-pin without a new arming");
     }
 
     #[test]
+    fn r1458_arming_survives_a_pass_that_was_still_moving() {
+        // The R1445 defect the tide field report measured. The frame's first
+        // pass publishes a PROVISIONAL bound (a windowed list has not measured
+        // its tail rows yet); the pass that lands on it is exactly the pass
+        // whose result the next one refines. Spending the arming there froze
+        // the viewport short of the tail with nothing left armed to finish the
+        // trip.
+        let s = ScrollState::new();
+        s.set_max(0, 100); // pass 1: the estimate-derived bound
+        s.follow_measured_tail();
+        assert!(s.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert_eq!(s.offset(), (0, 100));
+        assert!(
+            s.is_following_measured_tail(),
+            "the pin moved, so the frame is still converging and the arming stands",
+        );
+        s.set_max(0, 260); // pass 2: the harvest refined it
+        assert!(s.apply_measured_tail_pin(ScrollAxis::Vertical));
+        assert_eq!(s.offset(), (0, 260), "carried the rest of the way");
+        assert!(!s.apply_measured_tail_pin(ScrollAxis::Vertical), "settled");
+        assert!(!s.is_following_measured_tail(), "and spent there");
+    }
+
+    #[test]
     fn r1445_arming_twice_before_a_pass_is_idempotent() {
-        // Two appends between two paints (a burst) arm twice; one pass
-        // consumes both, and the single pin lands on the final bound.
+        // Two appends between two paints (a burst) arm twice; the arming is one
+        // bit, so the single pin lands on the final bound and one settled pass
+        // clears it however many times it was made.
         let s = ScrollState::new();
         s.follow_measured_tail();
         s.follow_measured_tail();
         s.set_max(0, 80);
         assert!(s.apply_measured_tail_pin(ScrollAxis::Vertical));
         assert_eq!(s.offset(), (0, 80));
+        assert!(!s.apply_measured_tail_pin(ScrollAxis::Vertical));
         assert!(
             !s.is_following_measured_tail(),
-            "one pass clears the arming however many times it was made",
+            "one settled pass clears the arming however many times it was made",
         );
     }
 
@@ -922,6 +1003,43 @@ mod tests {
         b.follow_measured_tail();
         assert!(b.apply_measured_tail_pin(ScrollAxis::Both));
         assert_eq!(b.offset(), (50, 200), "a 2-D canvas pins its far corner");
+    }
+
+    #[test]
+    fn r1458_a_shrinking_bound_cannot_clamp_without_reporting_dirt() {
+        // R1458's registered debt D2 read `set_max`'s doc — the offset-clamp
+        // writes are "intentionally excluded from the dirty bit" — and
+        // concluded that a frame could therefore paint the pre-clamp offset.
+        // REFUTED, and this is the test that refutes it rather than prose:
+        // every offset writer (`scroll_to` / `scroll_by`, and the tail pin
+        // through `scroll_to`) clamps against the LIVE bound, so `offset <=
+        // max` is an invariant between calls. The clamp inside `set_max` can
+        // therefore only fire when THIS call lowered the bound past the
+        // offset — and lowering the bound is exactly what the dirty bit
+        // reports. The exclusion is real but unreachable on its own.
+        let s = ScrollState::new();
+        s.set_max(0, 500);
+        s.scroll_to(0, 400);
+        assert_eq!(s.offset(), (0, 400));
+
+        // The bound shrinks past the reader: the clamp fires AND the frame is
+        // told, because the same call moved the bound.
+        assert!(s.set_max(0, 300), "the bound moved, so the frame re-runs");
+        assert_eq!(s.offset(), (0, 300), "and the offset came with it");
+
+        // The control that makes the claim above load-bearing: re-affirming
+        // the same bound reports clean, and there is nothing left to clamp —
+        // so "clean" never hides a moved offset.
+        assert!(!s.set_max(0, 300), "a re-affirmed bound is not a change");
+        assert_eq!(s.offset(), (0, 300), "and nothing moved behind that");
+
+        // The invariant the argument rests on, stated as a check: no writer
+        // can park the offset past the bound for a later `set_max` to clamp
+        // silently.
+        s.scroll_to(0, 9_999);
+        assert_eq!(s.offset(), (0, 300), "scroll_to clamps against the bound");
+        s.scroll_by(0, 9_999);
+        assert_eq!(s.offset(), (0, 300), "so does scroll_by");
     }
 
     #[test]

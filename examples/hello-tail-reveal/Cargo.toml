@@ -1,0 +1,28 @@
+[package]
+name = "hello-tail-reveal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1458 §5.45 §5.27 reveal the newest entry of a WINDOWED transcript of wrapped prose. hello-transcript pins a plain column, whose whole extent every pass measures; here the list is virtualized, so the first pass still counts the un-materialized tail at its estimate and the bound it publishes is provisional. The binding is unchanged (append, arm follow_measured_tail, name no number) — what this example pins is that the frame runs to its fixed point before it is painted, so the reveal lands in the frame it was asked for."
+publish = false
+
+[[bin]]
+name = "hello-tail-reveal"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1458 §5.16 — the shared M3 button paint substrate + `view_measured_list`,
+# the windowed measured-list assembly this example is built on.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
