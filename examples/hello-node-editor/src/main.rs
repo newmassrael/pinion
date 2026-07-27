@@ -263,7 +263,9 @@ use pinion_a11y::{
 };
 use pinion_core::animation::Tickable;
 use pinion_core::cell_value::{CellKind, CellValue};
-use pinion_core::composite_tag::{split_send_payload, split_subindex};
+use pinion_core::composite_tag::{
+    parse_pair as parse_typed_pair, split_send_payload, split_subindex,
+};
 use pinion_core::event::LINE_HEIGHT_PX;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint, External,
@@ -2599,10 +2601,9 @@ fn parse_input_port_tag(tag: &str) -> Option<(NodeId, usize)> {
     split_node_port(split_subindex(tag).1?.strip_prefix("iport_")?)
 }
 
-/// Two comma-separated `i32`s ("dx,dy").
+/// Two comma-separated `i32`s ("dx,dy"). R1451 — the shared typed-pair codec.
 fn parse_pair_i32(s: &str) -> Option<(i32, i32)> {
-    let (a, b) = s.split_once(',')?;
-    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+    parse_typed_pair(s, ',')
 }
 
 /// Join stable ids into the CSV the `node_ids` / `edge_ids` queries return.

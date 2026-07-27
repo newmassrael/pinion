@@ -183,6 +183,31 @@ pub fn parse_send_payload<K: FromStr>(payload: &str) -> Option<(K, &str, Modifie
     Some((key, event_name, modifiers))
 }
 
+/// R1451 §5.35 — parse a **typed two-value argument payload** —
+/// `"<a><sep><b>"`, each half trimmed — into `(A, B)`.
+///
+/// The argument wire form every `invoke` that takes a *pair* speaks:
+/// `move_section` / `swap_sections` (`"<from>:<to>"`), `resize_section`
+/// (`"<logical>:<px>"`), `set_section_hidden` (`"<logical>:<bool>"`), a
+/// `byte_window` fraction span (`"<low>,<high>"`), a drag delta
+/// (`"<dx>,<dy>"`). Those had each re-derived `split_once` +
+/// `trim().parse()` inline; the separator differs by wire form (`:` for the
+/// R51.42 composite family, `,` for coordinate-ish pairs) but nothing else
+/// does, so `sep` is the one parameter and the rest is shared.
+///
+/// Distinct from [`parse_send_payload`], which decodes the *event* composite
+/// (`"<key>:<EventName>[:<mods>]"`) — a three-segment grammar with a borrowed
+/// middle slice, not a typed pair.
+///
+/// `None` when the separator is absent or either half does not parse as its
+/// requested type, so a caller maps one `None` to its own
+/// [`InvokeError::Rejected`](crate::external::InvokeError::Rejected).
+#[must_use]
+pub fn parse_pair<A: FromStr, B: FromStr>(payload: &str, sep: char) -> Option<(A, B)> {
+    let (a, b) = payload.split_once(sep)?;
+    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+}
+
 /// R777.1 §5.16 §5.40 — the **grid composite send sub-key** grammar: the
 /// `'#'`-split sub-tag a data-grid header or cell routes to its
 /// [`External`](crate::external::External) through the R51.42 funnel. A
@@ -392,12 +417,40 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        GridSendKey, GridTag, compose_send_payload, parse_send_payload, prefixed_index,
+        GridSendKey, GridTag, compose_send_payload, parse_pair, parse_send_payload, prefixed_index,
         send_activation_index, send_activation_key, split_send_payload, split_subindex,
     };
     use crate::input::Modifiers;
 
     const NONE: Modifiers = Modifiers::empty();
+
+    #[test]
+    fn parse_pair_reads_each_half_at_its_own_type() {
+        // R1451 — the two halves are parsed independently, so a pair may be
+        // heterogeneous (`set_section_hidden`'s `"<logical>:<bool>"`).
+        assert_eq!(parse_pair::<usize, usize>("2:5", ':'), Some((2, 5)));
+        assert_eq!(parse_pair::<usize, bool>("0:true", ':'), Some((0, true)));
+        assert_eq!(parse_pair::<usize, u32>("1:140", ':'), Some((1, 140)));
+        // The coordinate-ish family uses `,` — the one parameter that differs.
+        assert_eq!(parse_pair::<f32, f32>("0.25,0.75", ','), Some((0.25, 0.75)));
+        assert_eq!(parse_pair::<i32, i32>("-4,7", ','), Some((-4, 7)));
+        // Surrounding space is the caller's slack, not a rejection.
+        assert_eq!(parse_pair::<usize, usize>(" 3 : 1 ", ':'), Some((3, 1)));
+    }
+
+    #[test]
+    fn parse_pair_rejects_missing_separator_and_either_bad_half() {
+        // A missing separator, a bad left half, and a bad right half are all
+        // one `None` — every caller maps them to a single `Rejected`.
+        assert_eq!(parse_pair::<usize, usize>("25", ':'), None);
+        assert_eq!(parse_pair::<usize, usize>("x:5", ':'), None);
+        assert_eq!(parse_pair::<usize, usize>("2:y", ':'), None);
+        assert_eq!(parse_pair::<usize, usize>("2:", ':'), None);
+        // A negative value is not a `usize` — the type is the validation.
+        assert_eq!(parse_pair::<usize, usize>("-1:2", ':'), None);
+        // The wrong separator is a missing separator.
+        assert_eq!(parse_pair::<usize, usize>("2,5", ':'), None);
+    }
 
     #[test]
     fn grid_container_tag_scheme_is_pinned() {

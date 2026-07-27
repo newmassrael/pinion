@@ -47,7 +47,7 @@
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 
-use crate::composite_tag::{parse_send_payload, split_subindex};
+use crate::composite_tag::{parse_pair, parse_send_payload, split_subindex};
 use crate::external::{
     DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
 };
@@ -376,10 +376,11 @@ impl ReorderModel {
                 let IntrospectValue::Text(payload) = args else {
                     return Err(InvokeError::TypeMismatch);
                 };
-                let (from, to) = payload
-                    .split_once(':')
-                    .and_then(|(a, b)| Some((a.trim().parse().ok()?, b.trim().parse().ok()?)))
-                    .ok_or(InvokeError::Rejected)?;
+                // R1451 — the typed-pair argument codec, shared with
+                // `ColumnLayout`'s three pair invokes (the inline
+                // `split_once` this replaced was its first site).
+                let (from, to) =
+                    parse_pair::<usize, usize>(payload, ':').ok_or(InvokeError::Rejected)?;
                 if from >= self.count || to >= self.count {
                     return Err(InvokeError::Rejected);
                 }

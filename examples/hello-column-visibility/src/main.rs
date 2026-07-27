@@ -26,8 +26,18 @@
 //!   visible columns and hands the projection to [`view_table`]; the paint and
 //!   the [`grid_table_nodes`] a11y tree then carry only the visible columns
 //!   (`aria-colcount` drops as columns hide). No grid-paint change was needed —
-//!   the visual<->source column mapping lives here (a 2nd column-visibility
-//!   consumer would lift it to a substrate, per [[abstraction-needs-second-consumer]]).
+//!   the visual<->source column mapping lives here.
+//!
+//!   R1451 audited that mapping against the substrate that now exists for it,
+//!   [`ColumnLayout`](pinion_core::widgets::column_layout::ColumnLayout) (Qt's
+//!   `QHeaderView` state: order x size x visibility, keyed by logical
+//!   section), and **deliberately left this binding alone**. That model earns
+//!   its keep where the three axes compose; here the order is always identity
+//!   and the eager [`view_table`] sizes every column at the uniform
+//!   [`TableStyle::col_width`] (it takes no per-column widths at all), so
+//!   adopting it would carry two axes nothing reads in exchange for a
+//!   four-line filter. The R990 note this replaces promised the opposite lift
+//!   before the composition existed to judge it against.
 //!
 //! ## AI clients
 //!

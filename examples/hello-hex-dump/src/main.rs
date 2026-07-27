@@ -64,6 +64,7 @@
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{Brush, BrushStripColors};
+use pinion_core::composite_tag::parse_pair as parse_typed_pair;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
@@ -502,15 +503,15 @@ fn parse_index(v: &IntrospectValue) -> Option<usize> {
 }
 
 /// Parse a `"low,high"` fraction pair (the `byte_window` argument wire form).
+/// R1451 — through the shared typed-pair codec rather than a local
+/// `split_once`; the two halves only differ from `parse_cell`'s by type.
 fn parse_pair(s: &str) -> Option<(f32, f32)> {
-    let (a, b) = s.split_once(',')?;
-    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+    parse_typed_pair(s, ',')
 }
 
 /// Parse a `"col,row"` cell pair (the `byte_at_cell` argument wire form).
 fn parse_cell(s: &str) -> Option<(usize, usize)> {
-    let (a, b) = s.split_once(',')?;
-    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+    parse_typed_pair(s, ',')
 }
 
 /// A byte index (the `hex_cell` / `ascii_cell` argument) -> its `"col,row"` in
