@@ -579,6 +579,14 @@ impl<V: WidgetCore> CoreShell<V> {
             &root_owner,
             std::rc::Rc::new(pinion_text::LayoutCacheMonospaceMetrics::new()),
         );
+        // R1453 §5.36 — the same edge for ARBITRARY text (Qt's `QFontMetrics`):
+        // seeded here for the same reason and under the same rule — a view fn
+        // that measures a string it is about to paint must reach the real face,
+        // and a slot read before its seed PANICS rather than being dropped.
+        pinion_core::TEXT_METRICS.provide(
+            &root_owner,
+            std::rc::Rc::new(pinion_text::LayoutCacheTextMetrics::new()),
+        );
         // R1006 §5.23 §5.22 — seed the viewport-size Signal before the
         // factories / first `view`, so the first `use_viewport_size()` read
         // resolves the shell's signal rather than the lazy `(0, 0)` default.

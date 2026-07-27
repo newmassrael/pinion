@@ -18,6 +18,7 @@ pub mod resource;
 pub mod resource_cache;
 pub mod signal;
 pub mod simulation;
+pub mod text_metrics;
 pub mod viewport;
 
 pub use computed::Computed;
@@ -39,4 +40,7 @@ pub use resource::{
 pub use resource_cache::ResourceCache;
 pub use signal::Signal;
 pub use simulation::{SimulationGuard, is_simulating};
+pub use text_metrics::{
+    NullTextMetrics, TEXT_METRICS, TextExtent, TextMetrics, measured_text_extent,
+};
 pub use viewport::{VIEWPORT_SIZE, use_viewport_size};

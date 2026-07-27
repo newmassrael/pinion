@@ -74,9 +74,8 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
     SchemaField, ThreadOwnership,
 };
-use pinion_core::reactive::measured_monospace_cell;
+use pinion_core::reactive::measured_text_extent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::GenericFontFamily;
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -169,49 +168,52 @@ const CELL_PAD: u32 = 12;
 /// The width a `Stretch` row divides: the grid's span inside the window.
 const AVAILABLE_W: u32 = WIN_W - 2 * GRID_X;
 
-/// R1452 — the monospace face BOTH the header and the body paint in, so one
-/// measured cell answers for every string in the grid. `pinion_text` builds
-/// the very same style to measure that cell, which is what makes the content
-/// hint below exact rather than an estimate.
+/// The face the header and the body both paint in.
+///
+/// R1453 — the grid's own face again. R1452 forced it to **monospace** because
+/// the only measurement a view fn could make was a monospace cell; with
+/// [`measured_text_extent`] the hint below is measured in whatever face the
+/// cells actually use, so the constraint is gone.
 fn grid_text(role: ColorRole, theme: &Theme) -> TextStyle {
     TextStyle::new()
         .with_size_px(TEXT_PX)
-        .with_generic_family(GenericFontFamily::Monospace)
         .with_fg(theme.resolve(role))
 }
 
-/// The longest string logical column `logical` has to show, in characters —
-/// its header label or one of its cells.
-fn widest_chars(logical: usize) -> u32 {
-    let longest = std::iter::once(HEADERS[logical])
-        .chain((0..NROWS).map(|r| cell_text(r, logical)))
-        .map(|s| s.chars().count())
-        .max()
-        .unwrap_or(0);
-    u32::try_from(longest).unwrap_or(0)
+/// Every string logical column `logical` has to show — its header label and
+/// its cells.
+fn column_strings(logical: usize) -> impl Iterator<Item = &'static str> {
+    std::iter::once(HEADERS[logical]).chain((0..NROWS).map(move |r| cell_text(r, logical)))
 }
 
 /// R1452 — the per-logical-section content size hints: the peer of Qt's
 /// delegate `sizeHint`, which is where Qt gets them too (`QHeaderView` does not
 /// measure either).
 ///
-/// Measured, and an **upper bound** rather than an exact width: the cells are
-/// monospace, so the longest string needs its character count times the
-/// per-character advance — but [`CellMetric`](pinion_core::cell_metric::CellMetric)
-/// reports that advance as a whole number of pixels, so a face whose real
-/// advance is 6.5px measures 7 and the hint runs up to one pixel per character
-/// wide. That is the right direction for a size hint (the content always fits;
-/// it is never clipped) and the demo pins the band it must stay inside.
+/// R1453 — **exact**, and for any face: each string is measured in the very
+/// [`TextStyle`] the cell paints with, and the column takes the widest.
 ///
-/// Headless — no metrics provider — yields `None`, and the caller then
-/// publishes nothing rather than a made-up number.
-fn content_hints() -> Option<Vec<u32>> {
-    let cell = measured_monospace_cell(TEXT_PX)?;
-    Some(
-        (0..NCOLS)
-            .map(|l| 2 * CELL_PAD + widest_chars(l) * cell.cell_w())
-            .collect(),
-    )
+/// R1452 could only multiply a character count by a monospace cell, so the
+/// grid had to be monospace and the hint ran up to a pixel per character wide
+/// (`CellMetric` is a whole number, hence the ceiling of the real advance).
+/// Measuring the strings themselves retires both limits — and in a
+/// proportional face the widest column is not always the one with the most
+/// characters, which a character count could never notice.
+///
+/// All-or-nothing: if any string cannot be measured (headless, no provider)
+/// the whole hint set is `None` and the caller publishes nothing rather than
+/// mixing a real width with a made-up one.
+fn content_hints(theme: &Theme) -> Option<Vec<u32>> {
+    let style = grid_text(ColorRole::OnSurface, theme);
+    (0..NCOLS)
+        .map(|l| {
+            column_strings(l)
+                .try_fold(0, |widest, s| {
+                    Some(widest.max(measured_text_extent(s, &style, None)?.width()))
+                })
+                .map(|w| w + 2 * CELL_PAD)
+        })
+        .collect()
 }
 
 /// R1452 — the one-letter code the readout row shows for a section's mode,
@@ -805,7 +807,7 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
     // changes republishes here each frame for the same reason.
     let layout = use_column_layout(LAYOUT_KEY, || SECTION_W.to_vec());
     layout.set_available_width(Some(AVAILABLE_W));
-    if let Some(hints) = content_hints() {
+    if let Some(hints) = content_hints(&theme) {
         layout.set_content_widths(hints);
     }
     let mut children: Vec<Scene> = Vec::with_capacity(NCOLS * (NROWS + 1) + 4);
@@ -1517,18 +1519,54 @@ mod tests {
         assert_eq!(state.total_w(), AVAILABLE_W, "the row fills the strip");
     }
 
+    /// A stand-in shaper: width proportional to the character count, so the
+    /// test can tell "the hint picked the widest string" from "the hint picked
+    /// the first one" without depending on a real face.
+    #[derive(Debug)]
+    struct CountingMetrics;
+
+    impl pinion_core::TextMetrics for CountingMetrics {
+        fn measure(
+            &self,
+            text: &str,
+            _style: &TextStyle,
+            _max_width: Option<u32>,
+        ) -> Option<pinion_core::TextExtent> {
+            Some(pinion_core::TextExtent::new(
+                u32::try_from(text.chars().count()).unwrap_or(0) * 7,
+                13,
+            ))
+        }
+    }
+
     #[test]
-    fn r1452_the_content_hint_is_the_longest_string_each_column_shows() {
-        // The hint's only invented part would be the character count, so pin
-        // it: the widths themselves come from the measured monospace cell.
-        assert_eq!(widest_chars(0), 10, "report.pdf is longer than Name");
-        assert_eq!(widest_chars(1), 5, "Image / Video beat Type");
-        assert_eq!(widest_chars(2), 6, "2.1 MB beats Size");
-        assert_eq!(widest_chars(3), 10, "a date beats Modified");
-        assert_eq!(widest_chars(4), 5, "Owner ties guest");
-        // With no metrics provider (this test, and any headless harness) the
-        // binding publishes NOTHING rather than a made-up number.
-        assert_eq!(Owner::new().run(content_hints), None);
+    fn r1453_the_content_hint_is_the_widest_string_a_column_shows() {
+        // R1453 — the hint measures every string the column shows and takes the
+        // largest, rather than assuming a per-character width.
+        let owner = Owner::new();
+        pinion_core::TEXT_METRICS.provide(&owner, std::rc::Rc::new(CountingMetrics));
+        let hints = owner
+            .run(|| content_hints(&Theme::light()))
+            .expect("a seeded provider measures");
+
+        // Longest strings: report.pdf(10) Image/Video(5) 2.1 MB(6) a date(10)
+        // Owner/guest(5) — at 7px per character, plus the padding on both sides.
+        assert_eq!(hints, vec![94, 59, 66, 94, 59]);
+        // The hint is never narrower than any string it has to show.
+        for (l, hint) in hints.iter().enumerate() {
+            for s in column_strings(l) {
+                let w = u32::try_from(s.chars().count()).unwrap_or(0) * 7;
+                assert!(*hint >= w + 2 * CELL_PAD, "{s:?} fits column {l}");
+            }
+        }
+    }
+
+    #[test]
+    fn r1453_no_provider_publishes_nothing_rather_than_a_guess() {
+        // Headless, and in any harness without a shell: the binding must not
+        // invent a width. All-or-nothing, so a partial measurement cannot mix a
+        // real number with a made-up one.
+        assert_eq!(Owner::new().run(|| content_hints(&Theme::light())), None);
     }
 
     #[test]

@@ -37,7 +37,7 @@ pub use caret::{
     byte_offset_for_line_move, byte_offset_for_point, caret_rect_for_byte_offset,
     logical_line_span, selection_rects_for_range, visual_line_metrics,
 };
-pub use font_metrics::LayoutCacheMonospaceMetrics;
+pub use font_metrics::{LayoutCacheMonospaceMetrics, LayoutCacheTextMetrics};
 pub use layout::Layout;
 
 // Re-export parley so consumers (`paint_adapter::Text` arm, R47.3+

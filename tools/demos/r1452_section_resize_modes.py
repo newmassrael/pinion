@@ -21,8 +21,8 @@ What this asserts:
 
   (A) BOOT — the view fn's published inputs reach the SAME layout the external
       mutates. `available_width` reading back is the whole shared-instance
-      wiring in one assertion; `content_widths` are the MEASURED monospace
-      hints, not constants in the source.
+      wiring in one assertion; `content_widths` are MEASURED (R1453: in the
+      grid's own proportional face), not constants in the source.
   (B) STRETCH — the stretch sections take what the others leave over (not an
       equal split of the whole), the row totals EXACTLY the published width,
       and the painted rects agree with the model.
@@ -126,17 +126,16 @@ def body() -> None:
 
         hints = _h(tf, "content_widths")
         assert_eq(len(hints), NCOLS, "one content hint per section")                # 3
-        # The hints are MEASURED: a single monospace cell, times the longest
-        # string, plus the padding. Recovering the same cell width from every
-        # column is what shows the number came from a measurement rather than
-        # from a constant per column.
-        cells = [(h - 2 * CELL_PAD) // c for h, c in zip(hints, WIDEST_CHARS)]
-        assert_eq(len(set(cells)), 1,
-                  f"every hint resolves to one measured cell width: {cells}")       # 4
-        cell_w = cells[0]
-        assert cell_w > 0, f"the measured cell has a real width ({cell_w})"         # 5
-        assert_eq(hints[0], 2 * CELL_PAD + WIDEST_CHARS[0] * cell_w,
-                  "Name's hint fits its longest cell, report.pdf")                  # 6
+        # R1453 — the hints measure the STRINGS in the grid's own (proportional)
+        # face. Dividing each hint by its column's character count therefore
+        # yields DIFFERENT per-character widths — which is exactly what a
+        # character count times one cell could never produce. R1452's version of
+        # this assertion required them all equal, because back then the grid had
+        # to be monospace for the hint to be measurable at all.
+        per_char = [(h - 2 * CELL_PAD) / c for h, c in zip(hints, WIDEST_CHARS)]
+        assert len(set(per_char)) > 1, \
+            f"a proportional face measures differently per column: {per_char}"      # 4
+        assert all(w > 0 for w in per_char), f"and every one is real: {per_char}"   # 5
         assert hints[1] < hints[3], "Type needs less room than Modified"            # 7
         assert "modes iiiii" in find_by_tag(_paint(tf), LAYOUT_TAG)["content"], \
             "the policy is scene-as-data too"                                        # 8
@@ -173,17 +172,17 @@ def body() -> None:
         assert_eq(section["w"], hints[0] - GUTTER, "Name paints at its hint")       # 16
         # The claim an invented hint would fail: the widest cell's laid-out TEXT
         # fits inside the section, with the padding it was given on both sides.
-        widest = _rect(tf, f"colbody#0_{v0}")  # row 0 is "report.pdf", 10 chars
-        # The measured cell is a WHOLE number of pixels, so it is the ceiling of
-        # the face's real per-character advance and the hint is an upper bound —
-        # the right direction for a size hint. Pin the band it must stay in: an
-        # invented cell width lands outside it, and so does a hint that stopped
-        # tracking the face.
-        n = WIDEST_CHARS[0]
-        assert n * (cell_w - 1) < widest["w"] <= n * cell_w, (
-            f"the painted text ({widest['w']}) sits inside the measured band "
-            f"({n * (cell_w - 1)}, {n * cell_w}]"
-        )                                                                            # 17
+        # R1453 — EXACT, not a band. The hint is the measured extent of the
+        # widest string the column shows, so the widest PAINTED text plus the
+        # padding on both sides is the section's width to the pixel. R1452 could
+        # only assert a band here, because its hint was a character count times
+        # a whole-pixel cell (an upper bound); this equality is that debt paid.
+        # Which row is widest is not assumed — in a proportional face the
+        # longest string is not always the widest one.
+        painted = [_rect(tf, f"colbody#{r}_{v0}")["w"] for r in range(6)]
+        assert_eq(max(painted) + 2 * CELL_PAD, hints[0],
+                  f"the hint is exactly the widest painted cell: {painted}")        # 17
+        widest = _rect(tf, f"colbody#0_{v0}")
         assert_eq(widest["x"], section["x"] + CELL_PAD, "inset by the padding")     # 18
         assert widest["x"] + widest["w"] + CELL_PAD <= section["x"] + hints[0], \
             "and it FITS, padding and all, inside its own column"                    # 19
