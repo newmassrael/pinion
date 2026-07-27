@@ -70366,6 +70366,106 @@
         "that is a property of the pty harness, not of R1447, and was not investigated further"
       ]
     },
+    "Round 1448": {
+      "decision_summary": "R1448 - a window opens on a host with no fonts and draws the application's own face: the platform scan becomes a probe whose failure is a state, an application declares its faces at boot as Qt does, and where Qt writes a stderr warning pinion publishes typed data",
+      "changes_bullets": [
+        "the font-less-host abort is gone for EVERY backend, not just the TUI",
+        "R1447 removed it by never building a font context on the TUI path; the GUI still died",
+        "build_font_context probes the platform scan and reports failure as a state",
+        "catch_unwind is the boundary: the failure is an upstream unwrap, not a Result to match",
+        "parley's FontContext has pub fields, so the font-less collection needs no fork",
+        "a process-level OnceLock verdict means the collection that answered the question is kept",
+        "LayoutCache::register_font_data = Qt QFontDatabase::addApplicationFontFromData",
+        "it returns the family NAMES; Qt returns an opaque int and needs a second call",
+        "ShellConfig::with_application_font is the boot seam, mirroring Qt apps in main()",
+        "registration goes into the shell's RENDER cache, so a declared family really draws",
+        "FontSourceReport + SystemFontStatus live in pinion-core: backend-neutral facts",
+        "FONT_SOURCES ProviderSlot publishes them; a view fn reads font_sources()",
+        "Qt answers \"are there fonts\" with a qWarning on stderr, which nothing downstream can read",
+        "here it is typed data in the scene, so it arrives over scene/snapshot = §2#7",
+        "probe_system_fonts exists because reporting a fact requires looking for it"
+      ],
+      "verification_bullets": [
+        "core 2676 / text 180+2 integration / shell 159 / hello-app-font green; fmt/clippy/doc 0",
+        "the font-less fixture is a launcher + re-exec child: unsafe_code forbids set_var",
+        "so FONTCONFIG_FILE is provisioned in a child env, the R1267 dbus-run-session pattern",
+        "that child asserts: no abort, text still shapes, status reads Unavailable",
+        "and a registered face measures WIDER than the font-less bare width",
+        "plus a discriminator: an UNregistered name still finds nothing on that host",
+        "demo r1448_app_font: a GUI window boots and lays out a scene with ZERO system fonts",
+        "same binary, same code path: the status row reads available with fonts, unavailable without",
+        "the declared family is listed in BOTH environments, because the app supplied it",
+        "the sample row measures 449 px in both - the shipped face drew, the platform contributed nothing",
+        "discriminator: suppress the declaration and the row collapses to 0, so 449 was the registration",
+        "CF1 remove the recovery: the integration test panics and the demo reports rc=101 at boot",
+        "CF1's first edit left an unused import and did not compile = false negative, caught by the build gate",
+        "the demo's own readiness predicate was wrong first: it gated on a label having width",
+        "a label with no pinned family measures zero on a font-less host, which is what it was testing",
+        "the discriminator then exposed a real flaw: the boot snapshot reported not-probed forever"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.16",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "fontique's NoMatch unwrap is still upstream and unfixed; pinion recovers around it",
+        "that recovery is dead code the day fontique returns Result, and CF1's test is what notices",
+        "fontique's panic line still reaches stderr once per process on a font-less host",
+        "suppressing it needs a global panic hook, which would swallow a real racing panic",
+        "the published report is a boot-time snapshot; a mid-run registration seam would need a Signal",
+        "the TUI has no equivalent seam - it has no fonts, so there is nothing to declare"
+      ],
+      "publishable_decision_summary": "R1448 - a window opens on a host with no fonts and draws the application's own face: the platform scan becomes a probe whose failure is a state, an application declares its faces at boot as Qt does, and where Qt writes a stderr warning pinion publishes typed data",
+      "publishable_changes_bullets": [
+        "the font-less-host abort is gone for EVERY backend, not just the TUI",
+        "R1447 removed it by never building a font context on the TUI path; the GUI still died",
+        "build_font_context probes the platform scan and reports failure as a state",
+        "catch_unwind is the boundary: the failure is an upstream unwrap, not a Result to match",
+        "parley's FontContext has pub fields, so the font-less collection needs no fork",
+        "a process-level OnceLock verdict means the collection that answered the question is kept",
+        "LayoutCache::register_font_data = Qt QFontDatabase::addApplicationFontFromData",
+        "it returns the family NAMES; Qt returns an opaque int and needs a second call",
+        "ShellConfig::with_application_font is the boot seam, mirroring Qt apps in main()",
+        "registration goes into the shell's RENDER cache, so a declared family really draws",
+        "FontSourceReport + SystemFontStatus live in pinion-core: backend-neutral facts",
+        "FONT_SOURCES ProviderSlot publishes them; a view fn reads font_sources()",
+        "Qt answers \"are there fonts\" with a qWarning on stderr, which nothing downstream can read",
+        "here it is typed data in the scene, so it arrives over scene/snapshot = §2#7",
+        "probe_system_fonts exists because reporting a fact requires looking for it"
+      ],
+      "publishable_verification_bullets": [
+        "core 2676 / text 180+2 integration / shell 159 / hello-app-font green; fmt/clippy/doc 0",
+        "the font-less fixture is a launcher + re-exec child: unsafe_code forbids set_var",
+        "so FONTCONFIG_FILE is provisioned in a child env, the R1267 dbus-run-session pattern",
+        "that child asserts: no abort, text still shapes, status reads Unavailable",
+        "and a registered face measures WIDER than the font-less bare width",
+        "plus a discriminator: an UNregistered name still finds nothing on that host",
+        "demo r1448_app_font: a GUI window boots and lays out a scene with ZERO system fonts",
+        "same binary, same code path: the status row reads available with fonts, unavailable without",
+        "the declared family is listed in BOTH environments, because the app supplied it",
+        "the sample row measures 449 px in both - the shipped face drew, the platform contributed nothing",
+        "discriminator: suppress the declaration and the row collapses to 0, so 449 was the registration",
+        "CF1 remove the recovery: the integration test panics and the demo reports rc=101 at boot",
+        "CF1's first edit left an unused import and did not compile = false negative, caught by the build gate",
+        "the demo's own readiness predicate was wrong first: it gated on a label having width",
+        "a label with no pinned family measures zero on a font-less host, which is what it was testing",
+        "the discriminator then exposed a real flaw: the boot snapshot reported not-probed forever"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.16",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "fontique's NoMatch unwrap is still upstream and unfixed; pinion recovers around it",
+        "that recovery is dead code the day fontique returns Result, and CF1's test is what notices",
+        "fontique's panic line still reaches stderr once per process on a font-less host",
+        "suppressing it needs a global panic hook, which would swallow a real racing panic",
+        "the published report is a boot-time snapshot; a mid-run registration seam would need a Signal",
+        "the TUI has no equivalent seam - it has no fonts, so there is nothing to declare"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

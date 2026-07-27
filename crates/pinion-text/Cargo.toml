@@ -17,6 +17,10 @@ pinion-core = { path = "../pinion-core" }
 # path keeps LTR / bracket-free content allocation-free.
 pinion-text-unicode = { path = "../pinion-text-unicode" }
 parley = { workspace = true }
+# R1448 §5.36 §5.16 — the font-source probe recovers from an upstream fontique
+# `unwrap` and must say so on a real log level, not via `eprintln`
+# ([[verify-via-tracing-not-eprintln]]); the workspace logging substrate.
+tracing = { workspace = true }
 swash = { workspace = true }
 lru = { workspace = true }
 

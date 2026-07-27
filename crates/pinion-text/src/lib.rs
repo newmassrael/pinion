@@ -28,6 +28,7 @@
 mod cache;
 mod caret;
 mod font_metrics;
+pub mod font_source;
 mod layout;
 
 pub use cache::LayoutCache;

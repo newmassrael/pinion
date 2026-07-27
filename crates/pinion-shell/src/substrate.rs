@@ -42,6 +42,7 @@ use pinion_a11y::{
     translate_action,
 };
 use pinion_core::event::WheelDelta;
+use pinion_core::reactive::{FONT_SOURCES, FontSourceReport};
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
     DeferredInput, DispatchContext, DragButton, DragPhase, KeyWireState, LayoutNode, PreviewLedger,
@@ -595,11 +596,70 @@ impl<V: WidgetView> ShellCore<V> {
         Self::with_core(CoreShell::<V>::new_with_seed(seed))
     }
 
+    /// R1448 §5.36 — [`Self::new_with_seed`] plus the application's own fonts.
+    ///
+    /// `app_fonts` is the bytes of each face the application ships, in the
+    /// order `ShellConfig::with_application_font` declared them. Qt's
+    /// equivalent is `QFontDatabase::addApplicationFont` called from `main()`
+    /// before any widget exists; the ordering constraint is the same and here
+    /// it is structural rather than advisory.
+    ///
+    /// Registration happens **before** the root owner is seeded, because the
+    /// resulting [`FontSourceReport`] is what gets seeded: the report names the
+    /// families that just became selectable and the platform-scan verdict the
+    /// registration probed. Doing it the other way round would seed a report
+    /// describing a cache that did not exist yet.
+    ///
+    /// The fonts go into the **render** cache — the same `text_cache` the
+    /// layout and paint passes borrow — so a family declared here is selectable
+    /// by name from any `TextStyle` the binding emits. A face registered into
+    /// some other cache would be reported as available and then fail to draw,
+    /// which is the desync this constructor exists to make impossible.
+    #[must_use]
+    pub fn new_with_seed_and_fonts(
+        app_fonts: Vec<Vec<u8>>,
+        seed: impl FnOnce(&pinion_core::Owner),
+    ) -> Self {
+        let mut text_cache = LayoutCache::new();
+        let mut application_families = Vec::new();
+        for data in app_fonts {
+            application_families.extend(text_cache.register_font_data(data));
+        }
+        // Probe explicitly rather than reading whatever the registrations
+        // happened to leave behind. With no declared font nothing above shapes,
+        // so the status would be `NotProbed` — and it would STAY that way in the
+        // published report while the first frame went on to learn the truth,
+        // leaving a binding reporting "not-probed" on a host proven font-less.
+        // A GUI shell pays this scan on its first `Scene::Text` regardless, so
+        // this buys a report that is true from frame one for no real work.
+        let report = FontSourceReport {
+            system: text_cache.probe_system_fonts(),
+            application_families,
+        };
+        let core = CoreShell::<V>::new_with_seed(move |root_owner| {
+            // R1448 §5.36 — the font-source fact rides the same one seeding
+            // window as the backend's boundary handles, so a binding's first
+            // `view` reads a real report rather than minting the `NotProbed`
+            // default (`ProviderSlot::provide` panics on a late seed, which is
+            // what makes "before any read" structural here).
+            FONT_SOURCES.provide(root_owner, report);
+            seed(root_owner);
+        });
+        Self::with_core_and_cache(core, text_cache)
+    }
+
     /// Shared constructor body — focus seeding + Vello-side substrate fields —
     /// over an already-built [`CoreShell`], so [`Self::new`] (seeds no backend
     /// handles) and [`Self::new_with_seed`] (the backend seeds its live sinks)
     /// differ only in how `core` was constructed.
     fn with_core(core: CoreShell<V>) -> Self {
+        Self::with_core_and_cache(core, LayoutCache::new())
+    }
+
+    /// R1448 §5.36 — [`Self::with_core`] over a caller-supplied render cache,
+    /// so the fonts-aware constructor can hand in the cache it registered the
+    /// application's faces into instead of this body minting an empty one.
+    fn with_core_and_cache(core: CoreShell<V>, text_cache: LayoutCache) -> Self {
         // Log the initial state read through the §5.15 introspect
         // channel — same trace line shape AppShell relied on
         // pre-R51.123 so the dogfood eprintln + RPC-side observer
@@ -618,7 +678,7 @@ impl<V: WidgetView> ShellCore<V> {
             revision,
             focus: FocusManager::new(),
             modifiers: Modifiers::empty(),
-            text_cache: LayoutCache::new(),
+            text_cache,
             text_engine: build_text_engine_from_env(),
             last_access_tag_map: HashMap::new(),
             last_access_nodes: HashMap::new(),

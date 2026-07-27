@@ -7,6 +7,7 @@
 pub mod computed;
 pub mod effect;
 pub mod font_metrics;
+pub mod font_sources;
 pub mod introspect;
 pub mod owner;
 pub mod pane_viewport;
@@ -24,6 +25,7 @@ pub use effect::Effect;
 pub use font_metrics::{
     MONOSPACE_METRICS, MonospaceMetrics, NullMonospaceMetrics, measured_monospace_cell,
 };
+pub use font_sources::{FONT_SOURCES, FontSourceReport, SystemFontStatus, font_sources};
 pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
 pub use pane_viewport::use_pane_viewport_size;

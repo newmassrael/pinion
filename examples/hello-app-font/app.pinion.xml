@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1448 §5.36 — renderer for the application-font demo. Same single-source
+  emit template as hello-button's HelloButtonRenderer; only the name differs.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="AppFontRenderer"
+        backend="vello"/>

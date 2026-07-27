@@ -19,10 +19,12 @@
 
 use crate::layout::Layout;
 use lru::LruCache;
+use parley::fontique::Blob;
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontFamilyName, GenericFamily,
     LayoutContext, LineHeight as ParleyLineHeight, StyleProperty,
 };
+use pinion_core::reactive::SystemFontStatus;
 use pinion_core::scene::StyleRun;
 use pinion_core::style::{
     Color, FontFamily as PinFontFamily, FontStyle, GenericFontFamily, LineHeight, TextAlign,
@@ -148,7 +150,35 @@ pub struct LayoutCache {
     /// "at most once", and a count is what states that; see
     /// [`Self::font_scans`].
     font_scans: u32,
+    /// R1448 — set when `font_cx` is built; `NotProbed` until then.
+    font_status: SystemFontStatus,
+    /// R1448 — families made selectable by [`Self::register_font_data`], in
+    /// registration order, deduplicated.
+    app_families: Vec<String>,
     layout_cx: LayoutContext<Color>,
+}
+
+/// R1448 §5.36 — build `slot`'s [`FontContext`] if absent, recording the probe
+/// outcome and counting the scan.
+///
+/// A free function over the three fields rather than a `&mut self` method: the
+/// shaping path needs `layout_cx` borrowed at the same time, and a method
+/// taking `&mut self` would borrow the whole cache. Taking the slots
+/// explicitly keeps the borrows disjoint while both callers
+/// ([`LayoutCache::shape`] and [`LayoutCache::register_font_data`]) share one
+/// copy of the initialisation.
+fn ensure_font_context<'a>(
+    slot: &'a mut Option<FontContext>,
+    status: &mut SystemFontStatus,
+    scans: &mut u32,
+) -> &'a mut FontContext {
+    if slot.is_none() {
+        let (cx, probed) = crate::font_source::build_font_context();
+        *status = probed;
+        *scans += 1;
+        *slot = Some(cx);
+    }
+    slot.as_mut().expect("built directly above")
 }
 
 impl LayoutCache {
@@ -165,6 +195,8 @@ impl LayoutCache {
             inner: LruCache::new(capacity),
             font_cx: None,
             font_scans: 0,
+            font_status: SystemFontStatus::NotProbed,
+            app_families: Vec::new(),
             layout_cx: LayoutContext::new(),
         }
     }
@@ -260,6 +292,108 @@ impl LayoutCache {
         self.font_scans
     }
 
+    /// R1448 §5.36 — whether this cache reached the platform font database.
+    ///
+    /// [`SystemFontStatus::NotProbed`] until something shapes (R1447 defers
+    /// the scan), then `Available` or `Unavailable`. The Qt-parity condition
+    /// Qt reports as a `qWarning`, here as typed data a §2 #2 agent can read —
+    /// see the [`font_source`](crate::font_source) module docs.
+    #[must_use]
+    pub fn system_font_status(&self) -> SystemFontStatus {
+        self.font_status
+    }
+
+    /// R1448 §5.36 — families this cache made selectable via
+    /// [`Self::register_font_data`], in registration order without duplicates.
+    ///
+    /// Qt's `QFontDatabase::applicationFontFamilies(int id)` answers this per
+    /// registration id; this answers it for the cache, which is the question a
+    /// binding publishing its font state actually has.
+    #[must_use]
+    pub fn application_font_families(&self) -> &[String] {
+        &self.app_families
+    }
+
+    /// R1448 §5.36 — probe the platform font database now and report the
+    /// result, building the [`FontContext`] if it does not exist yet.
+    ///
+    /// R1447 defers the scan to the first shape, which is right for a caller
+    /// that may never shape — the whole TUI path. It is wrong for a caller that
+    /// must *report* the state: before this existed, a shell with no declared
+    /// application font published
+    /// [`NotProbed`](SystemFontStatus::NotProbed) at boot and kept saying so
+    /// even after a later frame had shaped and learned the truth. A status line
+    /// that reads "not-probed" on a host proven font-less is a wrong answer, not
+    /// a cautious one.
+    ///
+    /// So a reporter calls this and pays the scan deliberately. For a GUI shell
+    /// that is not extra work: any `Scene::Text` it paints reaches the shaper on
+    /// the first frame, so this moves the same scan a few milliseconds earlier
+    /// in exchange for a report that is true from frame one. A caller that
+    /// genuinely may never shape must NOT call it — that is exactly the cost
+    /// R1447 removed.
+    ///
+    /// Idempotent: on a cache that has already built its context this returns
+    /// the recorded verdict and scans nothing, so
+    /// [`Self::font_scans`] stays at 1.
+    pub fn probe_system_fonts(&mut self) -> SystemFontStatus {
+        let _ = ensure_font_context(
+            &mut self.font_cx,
+            &mut self.font_status,
+            &mut self.font_scans,
+        );
+        self.font_status
+    }
+
+    /// R1448 §5.36 — register a font from memory and return the families it
+    /// made selectable. Qt's `QFontDatabase::addApplicationFontFromData`.
+    ///
+    /// `data` is the bytes of a font file (TrueType / OpenType, including a
+    /// collection). The returned names are usable immediately as
+    /// [`PinFontFamily::Named`](pinion_core::style::FontFamily::Named) in any
+    /// [`TextStyle`] this cache shapes — a registered family is matched by
+    /// name before the platform database is consulted, so this works whether
+    /// or not [`Self::system_font_status`] is
+    /// [`Available`](SystemFontStatus::Available). On a host where it is
+    /// `Unavailable`, this is how an application gets glyphs at all.
+    ///
+    /// Returns an empty vector if `data` is not a font pinion's shaper can
+    /// read. That is a report, not a panic: the caller passed bytes from
+    /// somewhere (a file, an asset bundle, an RPC payload) and a malformed
+    /// asset is an ordinary runtime condition. An empty return with
+    /// [`Self::application_font_families`] unchanged says precisely "nothing
+    /// became selectable", which is more than Qt's `-1` sentinel carries.
+    ///
+    /// Registering forces the [`FontContext`] into existence, so it counts one
+    /// [`Self::font_scans`] on a cache that had not shaped yet. That is not an
+    /// accident of implementation — it really does pay the platform scan, and
+    /// the counter's job is to report what was paid.
+    ///
+    /// Cached layouts are not invalidated: a name that previously resolved to
+    /// a fallback keeps its already-shaped entry. Register before shaping the
+    /// text that should use the face — which is what an application doing this
+    /// at startup, as Qt apps do, already does.
+    pub fn register_font_data(&mut self, data: Vec<u8>) -> Vec<String> {
+        let cx = ensure_font_context(
+            &mut self.font_cx,
+            &mut self.font_status,
+            &mut self.font_scans,
+        );
+        let registered = cx.collection.register_fonts(Blob::from(data), None);
+        let mut names = Vec::with_capacity(registered.len());
+        for (family_id, _faces) in registered {
+            if let Some(name) = cx.collection.family_name(family_id) {
+                names.push(name.to_owned());
+            }
+        }
+        for name in &names {
+            if !self.app_families.contains(name) {
+                self.app_families.push(name.clone());
+            }
+        }
+        names
+    }
+
     /// R1002 §5.41 — measure the resolved monospace cell at `font_size_px`.
     ///
     /// This is the real Vello font measurement the R968 `CellMetric::new`
@@ -353,11 +487,11 @@ impl LayoutCache {
         // reaches `shape` never enumerates a font. `get_or_insert_with`
         // borrows `font_cx` and `layout_cx` as disjoint fields, so the
         // builder still takes both without a second pass over `self`.
-        let scans = &mut self.font_scans;
-        let font_cx = self.font_cx.get_or_insert_with(|| {
-            *scans += 1;
-            FontContext::new()
-        });
+        let font_cx = ensure_font_context(
+            &mut self.font_cx,
+            &mut self.font_status,
+            &mut self.font_scans,
+        );
         let mut builder = self
             .layout_cx
             .ranged_builder(font_cx, shape_input, 1.0, true);

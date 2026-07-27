@@ -1781,6 +1781,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-app-font"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-asset-browser"
 version = "0.0.1"
 dependencies = [
@@ -5576,6 +5587,7 @@ dependencies = [
  "pinion-core",
  "pinion-text-unicode",
  "swash",
+ "tracing",
 ]
 
 [[package]]

@@ -603,6 +603,16 @@ impl<V: WidgetView> AppShell<V> {
     /// `accesskit_winit::Adapter` on `resumed` (R51.62 §5.40).
     #[must_use]
     pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+        Self::new_with_fonts(proxy, Vec::new())
+    }
+
+    /// R1448 §5.36 — [`Self::new`] plus the faces the application declared
+    /// through [`ShellConfig::with_application_font`]. They are registered into
+    /// the shell's render cache before the binding's root owner is seeded, so
+    /// the first `view` both can select them and can read the resulting
+    /// [`FontSourceReport`](pinion_core::reactive::FontSourceReport).
+    #[must_use]
+    pub fn new_with_fonts(proxy: EventLoopProxy<AppEvent>, app_fonts: Vec<Vec<u8>>) -> Self {
         // R999 §5.23 / R1362 PR-65 — seed the binding's root Owner with the live
         // `EventLoopProxy`-backed boundary handles before `ShellCore::new_with_seed`
         // runs the binding factories, so a binding's `create_extra_externals` can
@@ -615,7 +625,7 @@ impl<V: WidgetView> AppShell<V> {
         // "before any read" structural, so that panic is never reached here.
         let seed_proxy = proxy.clone();
         Self {
-            core: ShellCore::new_with_seed(move |root_owner| {
+            core: ShellCore::new_with_seed_and_fonts(app_fonts, move |root_owner| {
                 pinion_core::REPAINT_SINK.provide(
                     root_owner,
                     std::sync::Arc::new(crate::ProxyRepaintSink::new(seed_proxy.clone())),
@@ -5154,6 +5164,8 @@ type RpcIngressHook = Box<dyn FnOnce(Arc<dyn RpcIngress>)>;
 pub struct ShellConfig {
     handlers: Option<HandlerRegistry>,
     on_ingress: Option<RpcIngressHook>,
+    /// R1448 §5.36 — faces the application ships, in declaration order.
+    app_fonts: Vec<Vec<u8>>,
 }
 
 impl ShellConfig {
@@ -5169,6 +5181,33 @@ impl ShellConfig {
     #[must_use]
     pub fn with_handlers(mut self, registry: HandlerRegistry) -> Self {
         self.handlers = Some(registry);
+        self
+    }
+
+    /// R1448 §5.36 — declare a font the application ships, from memory.
+    ///
+    /// Qt's `QFontDatabase::addApplicationFont` / `…FromData`, called from
+    /// `main()` before any widget exists. Here the "before any widget" part is
+    /// structural rather than a rule to remember: the shell registers these
+    /// into its render cache while it is being built, so a family declared
+    /// this way is selectable by name — as
+    /// [`TextStyle::with_font_family`](pinion_core::style::TextStyle::with_font_family)
+    /// — from the binding's very first `view`.
+    ///
+    /// Call it once per face; declarations accumulate. The resulting families
+    /// and the platform-scan verdict are published to the binding as
+    /// [`FontSourceReport`](pinion_core::reactive::FontSourceReport), readable
+    /// from a view fn via
+    /// [`font_sources()`](pinion_core::reactive::font_sources()) — so an
+    /// application can *render* its font state, and an agent can read it off
+    /// `scene/snapshot`, which is what Qt's stderr `qWarning` cannot offer.
+    ///
+    /// This is the only way an application supplies a face, and that is
+    /// deliberate: fonts declared before boot cannot make the published report
+    /// stale, so the report is a snapshot rather than a signal.
+    #[must_use]
+    pub fn with_application_font(mut self, data: Vec<u8>) -> Self {
+        self.app_fonts.push(data);
         self
     }
 
@@ -5236,13 +5275,17 @@ pub fn run_with_config<V: WidgetView>(config: ShellConfig) {
     // R-PR47 §5.7 — build the winit-free ingress seam once, then feed it
     // to every producer: the built-in stdin reader AND the consumer's
     // optional injected transport share the identical dispatch path.
+    // R1448 §5.36 — take the declared faces out of the config before the hook
+    // consumes the rest of it; they are handed to the shell constructor, which
+    // registers them into the render cache and publishes the resulting report.
+    let app_fonts = config.app_fonts;
     let ingress: Arc<dyn RpcIngress> = Arc::new(ProxyRpcIngress::new(event_loop.create_proxy()));
     spawn_stdin_rpc_reader(Arc::clone(&ingress));
     if let Some(hook) = config.on_ingress {
         hook(Arc::clone(&ingress));
     }
 
-    let mut app = AppShell::<V>::new(event_loop.create_proxy());
+    let mut app = AppShell::<V>::new_with_fonts(event_loop.create_proxy(), app_fonts);
 
     // R51.159 §5.23 — when handlers are supplied, assemble the
     // CommandExecutor and inject it before the loop starts so the first
