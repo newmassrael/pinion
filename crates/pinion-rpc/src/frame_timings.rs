@@ -171,6 +171,22 @@ pub struct FrameTimingsLast {
     pub shape_misses: u64,
 }
 
+/// R1460 §5.16 §2 #2 — cumulative work the RPC **scene producer** has done
+/// since boot, which is deliberately not counted as frames.
+///
+/// A `scene/snapshot` settles a scene exactly as a paint does but records no
+/// frame, so that introspection never manufactures a picture the user never
+/// saw. The consequence for the §2 #2 primary path was that an agent could not
+/// see the work its OWN calls caused. Difference these across a call to price
+/// that call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FrameTimingsProduce {
+    /// Cumulative view + layout passes run for introspection.
+    pub passes_total: u64,
+    /// Cumulative shaper misses run for introspection.
+    pub shape_misses_total: u64,
+}
+
 /// Rolling-window aggregates, in microseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FrameTimingsWindow {
@@ -226,6 +242,8 @@ pub struct FrameTimingsOutcome {
     /// that missed budget, in `[0.0, 1.0]`. `0.0` when no budget is
     /// set; echoed so a client need not re-derive the ratio.
     pub jank_ratio: f32,
+    /// R1460 — work done producing scenes for introspection, not for the user.
+    pub produce: FrameTimingsProduce,
 }
 
 /// Project a per-window [`FrameTimingsSnapshot`] onto the wire-shaped
@@ -255,6 +273,10 @@ pub fn frame_timings(
             settle_passes: s.last.settle_passes,
             settled: s.last.settled,
             shape_misses: s.last.shape_misses,
+        },
+        produce: FrameTimingsProduce {
+            passes_total: s.produce_passes_total,
+            shape_misses_total: s.produce_shape_misses_total,
         },
         window: FrameTimingsWindow {
             min_total_us: s.min_total_us,
@@ -324,6 +346,27 @@ mod tests {
         assert_eq!(a.last.total_us, b.last.total_us);
         assert_ne!(a.last.settle_passes, b.last.settle_passes);
         assert_ne!(a.last.shape_misses, b.last.shape_misses);
+    }
+
+    #[test]
+    fn r1460_producer_work_is_reported_and_is_not_frames() {
+        // The producer settles scenes for introspection and records no frame,
+        // which is the right contract and was also a blind spot: an agent on
+        // the §2 #2 path could not see the work its own calls caused. The two
+        // totals answer it WITHOUT being folded into the ring — a frame count
+        // and a produce count must never be the same number.
+        let mut snap = snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200).with_work(1, true, 0)]);
+        snap.produce_passes_total = 9;
+        snap.produce_shape_misses_total = 130;
+
+        let out = frame_timings(Some(snap)).unwrap();
+        assert_eq!(out.produce.passes_total, 9);
+        assert_eq!(out.produce.shape_misses_total, 130);
+        assert_eq!(out.frame_count, 1, "one FRAME, whatever the producer did");
+        assert_eq!(
+            out.last.settle_passes, 1,
+            "and the frame's own count is untouched by the producer's",
+        );
     }
 
     #[test]

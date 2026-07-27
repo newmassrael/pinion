@@ -335,27 +335,51 @@ def body() -> None:
         assert_eq(guard_pass, 1, "the TUI font-free guarantee ran")
 
         # ---- 5. the instrument: this environment really is font-less ----
-        # The parley arm CANNOT run here. If it could, every pass above would
-        # be consistent with the zero-font config quietly finding fonts, and
-        # the demo would prove nothing.
-        arm_test = "r1447_answering_measure_arm_leaves_the_font_scan_unrun"
-        _, arm_failed, arm_code = cargo_test(
-            ["-p", "pinion-runtime", "--lib", "-j2", arm_test], no_fonts
-        )
-        assert arm_code != 0, (
-            "premise: the parley path cannot run font-less — if this passed, "
-            "the 'zero fonts' config would not actually be zero fonts"
-        )
-        assert_eq(arm_failed, 1, "the parley-arm test fails font-less, as it must")
+        # Every claim above is only worth as much as the zero-font config, so
+        # this measures the config itself FROM INSIDE a pinion process rather
+        # than trusting `fc-list`.
+        #
+        # R1460 replaced what used to stand here. The old instrument required
+        # the parley path to FAIL font-less — and R1448 then taught pinion to
+        # run font-less on purpose ("a window opens on a host with no fonts"),
+        # so that failure stopped happening and this control started asserting
+        # pre-R1448 behaviour. The same fact is now measured positively through
+        # R1448's own typed status: with no fonts reachable, a probe answers
+        # `Unavailable`.
+        probe = "r1460_a_zero_font_config_is_font_less_from_inside_the_process"
+        probe_args = ["-p", "pinion-text", "--lib", "-j2", probe, "--", "--ignored"]
+        probe_pass, probe_fail, probe_rc = cargo_test(probe_args, no_fonts)
+        assert_eq(probe_fail, 0, "font-less probe failures under the demo's config")
+        assert_eq(probe_rc, 0, "font-less probe cargo exit code")
+        assert_eq(probe_pass, 1, "the font-less probe ran")
 
-        # ...and it passes with fonts, where the arm comparison is meaningful.
+        # And the half that makes it an instrument rather than a tautology: the
+        # SAME probe must fail under the system config. If it passed in both,
+        # it would be measuring nothing about which environment it is in.
+        _, _, probe_lit_rc = cargo_test(probe_args, None)
+        assert probe_lit_rc != 0, (
+            "premise: the probe distinguishes the two font environments — if "
+            "it passes with the system config too, it is not reading the "
+            "config at all and the zero-font claims above rest on nothing"
+        )
+
+        # The measure-arm comparison stays, on its own terms: with fonts
+        # present, an answering arm reaches no shaper while the parley arm
+        # does. That is a claim about the ARMS and it is checked where it is
+        # true, rather than being pressed into service as a font-environment
+        # detector — which is what R1448 broke by making the parley arm survive
+        # font-lessly.
+        arm_test = "r1447_answering_measure_arm_leaves_the_font_scan_unrun"
         arm_pass_lit, arm_fail_lit, arm_rc_lit = cargo_test(
             ["-p", "pinion-runtime", "--lib", "-j2", arm_test], None
         )
         assert_eq(arm_fail_lit, 0, "parley-arm test failures with system fonts")
         assert_eq(arm_rc_lit, 0, "parley-arm cargo exit code with system fonts")
         assert_eq(arm_pass_lit, 1, "the arm-comparison test ran and passed")
-        print("[demo] instrument verified: the parley path needs fonts, the TUI does not")
+        print(
+            "[demo] instrument verified: the probe reads the font environment, "
+            "and the TUI needs no fonts either way"
+        )
 
 
 if __name__ == "__main__":

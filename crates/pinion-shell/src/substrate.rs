@@ -305,6 +305,23 @@ pub struct ShellCore<V: WidgetView> {
     /// callers (`compute_paint_scene`, `dispatch_rpc`'s producer
     /// closure) use the field directly.
     text_cache: LayoutCache,
+
+    /// R1460 §5.16 §5.7 §2 #2 — cumulative work done by the RPC scene
+    /// PRODUCER, as `(settle passes, shaper misses)`.
+    ///
+    /// The producer runs the same settle loop a paint does, but records no
+    /// frame: a `scene/snapshot` must never manufacture a frame the user never
+    /// saw. That contract left a real hole for the §2 #2 primary path — an
+    /// agent driving pinion by RPC could not see the work its OWN calls
+    /// caused, because by the time the window painted, the produce had already
+    /// warmed every cache and settled every bound (`r1458_tail_reveal`'s append
+    /// frame reads 1 pass / 0 misses for exactly this reason).
+    ///
+    /// Cumulative rather than last-produce, because one dispatch may produce
+    /// several times (path resolution, then the post-dispatch finalize): the
+    /// answerable question is "what did my call cost", and a client answers it
+    /// by differencing across the call.
+    produce_work: (u64, u64),
     /// R1072 §5.37 — opt-in self-hosted text engine, the shipping consumer of
     /// the §5.37 paint + measure arms. `Some` when the `PINION_TEXT_ENGINE`
     /// environment variable selected it at construction AND a usable system font
@@ -692,6 +709,7 @@ impl<V: WidgetView> ShellCore<V> {
             focus: FocusManager::new(),
             modifiers: Modifiers::empty(),
             text_cache,
+            produce_work: (0, 0),
             text_engine: build_text_engine_from_env(),
             last_access_tag_map: HashMap::new(),
             last_access_nodes: HashMap::new(),
@@ -1637,6 +1655,16 @@ impl<V: WidgetView> ShellCore<V> {
         self.window_state(window_id)
             .and_then(|s| s.frame_timings.as_ref())
             .and_then(|stats| stats.snapshot(budget_us))
+            .map(|mut snap| {
+                // R1460 §5.16 §2 #2 — the producer's cumulative work rides the
+                // same read. It is NOT folded into the ring: the ring holds
+                // frames the user saw, and a produce is not one. Attached here
+                // so an agent gets both halves from one call instead of
+                // correlating two surfaces.
+                snap.produce_passes_total = self.produce_work.0;
+                snap.produce_shape_misses_total = self.produce_work.1;
+                snap
+            })
     }
 
     /// R1361 §5.16 §5.22 — publish the window's rolling frame-timing
@@ -5471,6 +5499,7 @@ impl<V: WidgetView> ShellCore<V> {
             let revision = self.revision.as_ref();
             let focus_ptr = &mut self.focus;
             let text_cache_ptr = &mut self.text_cache;
+            let produce_work_ptr = &mut self.produce_work;
             // R1072 §5.37 — the opt-in engine measure for the RPC-side producer,
             // so a `scene/snapshot from: paint` (and the post-dispatch
             // InputRouter finalize) sees the same §5.37 boxes the winit paint
@@ -5506,7 +5535,15 @@ impl<V: WidgetView> ShellCore<V> {
                 // (the R1006 contract). Idempotent on steady-state: Signal
                 // equality-skip floors the dirty bit at false on pass 1.
                 let text_measure = text_measure_override(text_engine_ptr.as_ref());
+                // R1460 §5.16 §2 #2 — the producer records no FRAME (it must
+                // not manufacture one the user never saw), but its work is
+                // still work, and an agent driving by RPC has no other way to
+                // see what its own call cost. Counted cumulatively here and
+                // published on `scene/frame_timings`.
+                let shapes_before = text_cache_ptr.shapes();
+                let mut produce_passes = 0_u64;
                 for pass in 1..=SETTLE_PASS_BUDGET {
+                    produce_passes += 1;
                     if !compute_layout_with_text_measure(
                         &mut paint,
                         text_cache_ptr,
@@ -5523,6 +5560,8 @@ impl<V: WidgetView> ShellCore<V> {
                         });
                     }
                 }
+                produce_work_ptr.0 += produce_passes;
+                produce_work_ptr.1 += text_cache_ptr.shapes() - shapes_before;
                 // R705 §5.39 §2 #1/#7 — inject the focus ring as the
                 // final paint step so `scene/snapshot from: paint` (and
                 // the R684 post-dispatch InputRouter finalize, which

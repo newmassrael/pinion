@@ -735,6 +735,37 @@ mod tests {
     /// probe that rebuilt the context per call would pay the ~25 ms platform
     /// scan on every status read a binding performs.
     #[test]
+    #[ignore = "asserts the HOST has no fonts; run by tools/demos/r1447_font_free_tui.py under its font-less config"]
+    fn r1460_a_zero_font_config_is_font_less_from_inside_the_process() {
+        // R1460 — the INSTRUMENT a font-free demo needs, replacing one R1448
+        // deliberately invalidated.
+        //
+        // `tools/demos/r1447_font_free_tui.py` proved its zero-font config was
+        // really zero-font by requiring the parley path to FAIL there. R1448
+        // then taught pinion to run font-less on purpose ("a window opens on a
+        // host with no fonts"), so that failure stopped happening and the
+        // demo's control started failing instead — asserting pre-R1448
+        // behaviour. The fix is not to weaken the control but to measure the
+        // same fact positively, which is exactly what R1448's typed status is
+        // for: with no fonts reachable, a probe must answer `Unavailable`.
+        //
+        // `#[ignore]` because this asserts a property of the ENVIRONMENT, not
+        // of the code: on a normal host (and in CI) fonts exist and the honest
+        // answer is `Available`, so as a plain test it would be the host-
+        // dependent assertion R1453 calls a flake. The demo runs it explicitly
+        // under its own font-less config, which is where the claim is true and
+        // where it is worth checking.
+        let mut cache = LayoutCache::new();
+        assert_eq!(
+            cache.probe_system_fonts(),
+            SystemFontStatus::Unavailable,
+            "this process can reach no system fonts — if it can, the caller's \
+             font-less configuration is not font-less and every font-free \
+             claim measured under it means nothing",
+        );
+    }
+
+    #[test]
     fn r1448_probe_answers_before_shaping_and_is_idempotent() {
         let mut cache = LayoutCache::new();
         assert_eq!(cache.font_scans(), 0, "premise: nothing has scanned yet");

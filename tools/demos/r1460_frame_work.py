@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R1459 §5.16 §5.36 §5.45 — a frame reports its WORK, not only its duration.
+"""R1459+R1460 §5.16 §5.36 §5.45 §2 #6 — a frame reports its WORK, not only its duration.
 
 `scene/frame_timings` has carried seven durations since R907. None of them can
 answer two questions a pro-tool profile actually asks:
@@ -23,6 +23,12 @@ bindings on the same wire:
     changes every frame. Its idle repaints must read shaper misses ABOVE zero,
     every single frame, forever.
 
+R1460 adds the third section: work the RPC scene PRODUCER did. It settles a
+scene exactly as a paint does but records no frame, so an agent on the §2 #2
+path could not see the work its own calls caused. `produce` is cumulative and
+is never folded into the frame ring — a produce is not a frame, and a pure read
+(which produces nothing) is charged nothing.
+
 That contrast is the whole claim. A counter that reported a lifetime total
 would grow on the first binding; one that reported a constant would not
 separate them; one that reported nothing is where we were.
@@ -33,7 +39,7 @@ metric — only counts, their zero/non-zero character, and invariants.
 
 Run from the workspace root:
     cargo build -p hello-tail-reveal -p hello-frame-profiler --release
-    python3 tools/demos/r1459_frame_work.py
+    python3 tools/demos/r1460_frame_work.py
 """
 
 from __future__ import annotations
@@ -183,6 +189,52 @@ def body() -> None:
             f"live: every idle frame did shaping work: {live_samples}"
         )
 
+    # ── (C) R1460: the work an RPC call causes is visible too ───────────────
+    # The scene producer settles exactly as a paint does but records no frame —
+    # introspection must not manufacture a picture the user never saw. That
+    # contract left the §2 #2 path unable to price its own calls, which is what
+    # `produce` answers: cumulative, differenced across a call, and never
+    # folded into the frame ring.
+    with RpcSubprocess(STATIC_TEXT_APP, boot_grace=1.5) as tf:
+        before = tf.frame_timings()
+        assert "produce" in before, "the produce section is on the wire"
+        for field in ("passes_total", "shape_misses_total"):
+            assert field in before["produce"], f"`produce.{field}` missing"
+            assert isinstance(before["produce"][field], int), (
+                f"`produce.{field}` is a cumulative count"
+            )
+
+        # A pure READ costs nothing. `scene/snapshot from: paint` serializes the
+        # stored last-painted scene rather than producing one, so it must move
+        # NEITHER counter — the control that stops "produce work" from meaning
+        # "any RPC traffic".
+        passes = int(before["produce"]["passes_total"])
+        frames = int(before["frame_count"])
+        tf.snapshot(source="paint", viewport=(520, 620))
+        idle = tf.frame_timings()
+        assert_eq(
+            int(idle["produce"]["passes_total"]),
+            passes,
+            "a read that produces nothing is charged nothing",
+        )
+        assert_eq(int(idle["frame_count"]), frames, "and it painted nothing")
+
+        # A dispatch that has to resolve geometry DOES produce, and says so.
+        tf.click(path="reveal_reply")
+        after = tf.frame_timings()
+        assert int(after["produce"]["passes_total"]) > passes, (
+            f"the click's produce ran and was counted ({passes} -> "
+            f"{after['produce']['passes_total']})"
+        )
+
+        # Monotonic, so differencing it across a call is well defined.
+        prev = int(after["produce"]["passes_total"])
+        for i in range(3):
+            tf.click(path="reveal_reply")
+            now = int(tf.frame_timings()["produce"]["passes_total"])
+            assert now > prev, f"produce total advanced on call {i + 1}"
+            prev = now
+
 
 if __name__ == "__main__":
-    run_demo("R1459 per-frame work counts (settle passes + shaper misses)", body)
+    run_demo("R1460 per-frame + per-produce work counts, both backends", body)

@@ -91,6 +91,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::time::Instant;
 
 use pinion_core::ProviderSlot;
 
@@ -102,6 +103,23 @@ use pinion_core::ProviderSlot;
 /// in-app profiler HUD uses (Tracy / Chrome frame history ≈ 120–300
 /// frames).
 pub const FRAME_TIMING_WINDOW: usize = 120;
+
+/// (R1460 §5.16 §2 #6) Microseconds elapsed between two [`Instant`]s, the unit
+/// every [`FrameTiming`] field is measured in.
+///
+/// Lifted out of `pinion-shell` when `pinion-tui` became the second backend to
+/// record frames: two surfaces rounding the same quantity their own way is the
+/// divergence class, not a style choice — a sample is comparable across
+/// backends only if the lowering is one function.
+///
+/// `saturating_duration_since` guards the (monotonic-clock-impossible)
+/// `end < start` case; the `u128 -> u64` cast saturates a frame longer than
+/// ~584,000 years, which keeps clippy and the type honest without a real
+/// overflow path.
+#[must_use]
+pub fn instant_delta_us(start: Instant, end: Instant) -> u64 {
+    u64::try_from(end.saturating_duration_since(start).as_micros()).unwrap_or(u64::MAX)
+}
 
 /// One painted frame's phase breakdown, in microseconds. `Copy` +
 /// no wall-clock references — the surface measures with
@@ -181,8 +199,21 @@ pub struct FrameTiming {
     /// bounded the worst offender with Qt's `resizeContentsPrecision`, but
     /// that bound is **consumer-honoured**: a binding that ignores it still
     /// measures every row, and nothing noticed. This is what notices. A steady
-    /// state repaint should read `0`; a frame that re-shapes its whole content
-    /// is one multiplication away from a budget answer.
+    /// state repaint should read `0`.
+    ///
+    /// # Why this is a count and pinion ships no cost to multiply it by
+    ///
+    /// R1460 — R1454's 18.5µs-per-miss was measured on one machine with one
+    /// font face, and it is recorded there as the RATIONALE for a bound, not
+    /// as a constant to compute with. Shipping it as an API would publish a
+    /// number pinion cannot know for the host it is running on: the cost moves
+    /// with the shaper, the face, the string, the CPU.
+    ///
+    /// So the split is deliberate and is the whole policy. **The count is
+    /// portable and pinion publishes it; the cost is not and pinion refuses
+    /// to.** A consumer that needs microseconds measures them on its own host
+    /// and multiplies by this — which is exactly the shape of a measurement it
+    /// can defend, and nothing in-tree does that multiplication on its behalf.
     pub shape_misses: u64,
 }
 
@@ -396,6 +427,10 @@ impl FrameTimingStats {
             0.0
         };
         Some(FrameTimingsSnapshot {
+            // Filled by the backend after projection: this ring holds FRAMES,
+            // and the producer's work is by definition not one.
+            produce_passes_total: 0,
+            produce_shape_misses_total: 0,
             frame_count: self.frame_count,
             window_len: u32::try_from(self.samples.len()).unwrap_or(u32::MAX),
             last,
@@ -479,6 +514,22 @@ pub struct FrameTimingsSnapshot {
     pub mean_render_us: u64,
     /// `1e6 / mean_total_us`, `0.0` for a zero mean.
     pub mean_fps: f32,
+    /// (R1460 §5.16 §2 #2) Cumulative view + layout passes the RPC **scene
+    /// producer** has run since boot — work that is deliberately NOT a frame.
+    ///
+    /// The producer settles a scene exactly as a paint does, but records no
+    /// sample: an introspection read must never manufacture a frame the user
+    /// never saw. That left the §2 #2 primary path unable to see the work its
+    /// own calls caused — by the time the window painted, the produce had
+    /// already warmed the caches and settled the bounds. Difference this
+    /// across a call to price that call.
+    ///
+    /// `0` on a backend that does not produce (or has not yet).
+    pub produce_passes_total: u64,
+    /// (R1460 §5.16 §2 #2) Cumulative shaper misses the RPC scene producer has
+    /// run since boot. Peer of [`Self::produce_passes_total`]; same
+    /// difference-across-a-call reading.
+    pub produce_shape_misses_total: u64,
     /// Per-frame budget the window's `total_us` is judged against, in
     /// microseconds. `None` for an unpaced window (no declared frame
     /// target — an idle retained window has no deadline, so "missed

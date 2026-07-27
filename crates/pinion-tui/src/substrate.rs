@@ -58,8 +58,8 @@ use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene, SceneRevision};
 use pinion_rpc::{DeferredInput, DispatchContext, PreviewLedger, dispatch_parsed};
 use pinion_runtime::{
-    CommandExecutor, CoreShell, DispatchTail, FocusManager, LayoutCache, PointerId,
-    SETTLE_PASS_BUDGET, clamp_frame_dt,
+    CommandExecutor, CoreShell, DispatchTail, FocusManager, FrameTiming, FrameTimingStats,
+    LayoutCache, PointerId, SETTLE_PASS_BUDGET, clamp_frame_dt, instant_delta_us,
 };
 
 use crate::WidgetViewTui;
@@ -81,6 +81,28 @@ use crate::text_layout::{layout_for_terminal, layout_for_viewport_px};
 /// dispatch + how to commit — stay one layer apart, so a future
 /// `--features test-backend` build targets this substrate directly
 /// without touching the crossterm raw-mode path.
+/// (R1460 §5.16 §5.41) One in-flight TUI frame: what
+/// [`ShellCoreTui::compute_paint_scene`] measured, waiting for the `&mut self`
+/// commit hook to close the total span and record it.
+///
+/// A named struct rather than the tuple it started as — clippy asked, and it
+/// was right for the reason [`FrameTiming::with_work`] documents: five
+/// positional fields of which three are integers is a transposition that
+/// compiles.
+#[derive(Debug, Clone, Copy)]
+struct PendingFrame {
+    /// When the produce started; the commit closes `total_us` against it.
+    start: Instant,
+    /// `view` + settle-loop span, measured where the work happened.
+    build_us: u64,
+    /// View + layout passes this paint spent (R1459).
+    passes: u32,
+    /// Whether those passes reached the fixed point.
+    settled: bool,
+    /// Text runs this paint handed to the shaper (R1459), as a per-paint delta.
+    shapes: u64,
+}
+
 pub struct ShellCoreTui<V: WidgetViewTui> {
     /// Backend-agnostic dispatch substrate. R51.124 §5.41 — lifted
     /// to `pinion-runtime` so both backends (Vello + TUI) share the
@@ -157,6 +179,25 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// second paint measures the elapsed delta.
     last_paint_instant: Cell<Option<Instant>>,
 
+    /// R1460 §5.16 §5.41 §2 #6 — the frame this paint is building, held between
+    /// [`Self::compute_paint_scene`] (which measures the build span and the
+    /// work counts) and [`Self::update_paint_scene`] (the `&mut self`
+    /// paint-commit hook that closes the total span and records the sample).
+    ///
+    /// `Cell`, for the same reason as [`Self::last_paint_instant`]: the
+    /// producer is `&self` by ratified contract
+    /// (`compute_paint_scene_takes_shared_borrow`).
+    ///
+    /// `None` between commits — a second commit without an intervening produce
+    /// records nothing rather than double-counting a frame.
+    pending_frame: Cell<Option<PendingFrame>>,
+
+    /// R1460 §5.16 §5.41 §2 #6 — this (single-window) surface's rolling
+    /// frame-timing ring, the TUI peer of the Vello shell's per-window
+    /// `WindowState::frame_timings`. `None` until the first commit, which is
+    /// the `FrameTimingsUnavailable` the wire reports before any paint.
+    frame_timings: Option<FrameTimingStats>,
+
     /// R1344 §5.41 §5.36 — the layout pass's cache, the TUI peer of
     /// `pinion_shell::ShellCore::text_cache`.
     ///
@@ -219,6 +260,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             revision: SceneRevision::default(),
             focus: FocusManager::new(),
             log_sink: None,
+            pending_frame: Cell::new(None),
+            frame_timings: None,
             last_paint_instant: Cell::new(None),
             layout_cache: RefCell::new(LayoutCache::new()),
         };
@@ -446,15 +489,34 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // is where it gets named.
         // Idempotent on steady-state frames (Signal equality-skip floors the
         // dirty bit at false on pass 1).
+        // R1460 §5.16 §2 #6 — the shaper-miss mark, read before any pass so the
+        // delta is THIS paint's work and not the cache's lifetime total.
+        let shapes_before = self.layout_cache.borrow().shapes();
         let mut scene = run_view();
+        let mut settled = false;
+        let mut passes = 0_u32;
         for pass in 1..=SETTLE_PASS_BUDGET {
-            if !self.run_layout(&mut scene, cols, rows) {
+            let dirty = self.run_layout(&mut scene, cols, rows);
+            passes = pass;
+            if !dirty {
+                settled = true;
                 break;
             }
             if pass < SETTLE_PASS_BUDGET {
                 scene = run_view();
             }
         }
+        // R1460 §5.16 §5.41 §2 #6 — hand the frame's build span + work counts to
+        // the commit hook, which owns `&mut self` and closes the total span.
+        // Measured here rather than there because this is where the work
+        // happened; a commit that never sees a produce records nothing.
+        self.pending_frame.set(Some(PendingFrame {
+            start: now,
+            build_us: instant_delta_us(now, Instant::now()),
+            passes,
+            settled,
+            shapes: self.layout_cache.borrow().shapes() - shapes_before,
+        }));
         // R1426 §5.41 §5.28 — arm the terminal-cursor blink clock from the
         // freshly-produced scene, mirroring the Vello sibling's arm in
         // `compute_paint_scene_internal`. The TUI is single-window
@@ -489,6 +551,21 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// layout. Surface calls this after every successful paint
     /// commit (initial + post-state-change + resize repaint).
     pub fn update_paint_scene(&mut self, paint_scene: Scene) {
+        // R1460 §5.16 §5.41 §2 #6 — close the frame the producer opened and
+        // record it. The TUI's sample has no GPU phases (there is no encode, no
+        // swapchain acquire, no submit), so those read `0` — and that is the
+        // honest shape, not a gap: a terminal frame really is build + commit.
+        // What it DOES carry is the same work counts the Vello sibling reports,
+        // which is the half a TUI binding could not see at all before.
+        if let Some(f) = self.pending_frame.take() {
+            let total_us = instant_delta_us(f.start, Instant::now());
+            self.frame_timings
+                .get_or_insert_with(FrameTimingStats::new)
+                .record(
+                    FrameTiming::new(f.build_us, 0, 0, 0, total_us)
+                        .with_work(f.passes, f.settled, f.shapes),
+                );
+        }
         // (R1020 §5.39) Re-derive the keyboard focus enumeration from the
         // freshly painted scene — the ratified scene-derived focus model, the
         // TUI peer of the Vello `compute_paint_scene_internal` refresh. This is
@@ -1521,6 +1598,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             let previews = &self.previews;
             let revision = &self.revision;
             let layout_cache = &self.layout_cache;
+            let frame_timings = &self.frame_timings;
             let focus_ptr = &mut self.focus;
             // R1344 §5.41 §5.12 §2 #2 — TUI paint scene producer. Runs the
             // layout pass against the caller's hypothetical viewport, exactly
@@ -1546,8 +1624,24 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
                 let mut scene = root_owner.run(|| V::view(cached_state, &frame));
-                let mut cache = layout_cache.borrow_mut();
-                let _ = layout_for_viewport_px(&mut scene, w, h, &mut cache);
+                // R1460 §5.16 §2 #6 — the SAME settle loop the TUI paint runs
+                // (and the Vello producer runs). Pre-R1460 this took exactly
+                // one layout pass, so a TUI `scene/snapshot` could report a
+                // scene the TUI's own paint would never have shown — the §2 #6
+                // divergence relocated onto the AI path, which is the one thing
+                // R1344 built this producer to avoid.
+                for pass in 1..=SETTLE_PASS_BUDGET {
+                    let dirty = {
+                        let mut cache = layout_cache.borrow_mut();
+                        layout_for_viewport_px(&mut scene, w, h, &mut cache)
+                    };
+                    if !dirty {
+                        break;
+                    }
+                    if pass < SETTLE_PASS_BUDGET {
+                        scene = root_owner.run(|| V::view(cached_state, &frame));
+                    }
+                }
                 scene
             };
             // R984 §5.40 §2 #7 — TUI `scene/access` producer, closing the
@@ -1576,6 +1670,10 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 }
                 (nodes, focus)
             };
+            // R1460 §5.16 §5.7 — project the rolling ring for this dispatch,
+            // paid only when a client actually asks (the R890 "store the
+            // source, project on read" rule the Vello sibling follows).
+            let frame_timings_snapshot = frame_timings.as_ref().and_then(|s| s.snapshot(None));
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_access_producer(&mut produce_access)
@@ -1591,6 +1689,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             // (cached ThemeProvider) work on the TUI path without
             // draining. Read-only borrow.
             ctx = ctx.with_runtime_owner(&root_owner);
+            // R1460 §5.16 §5.7 §2 #6 — `scene/frame_timings` answers on the TUI
+            // too. Pre-R1460 the method existed on the wire and every TUI
+            // binding replied `FrameTimingsUnavailable` forever, which reads as
+            // "this window has not painted" rather than "this backend does not
+            // measure" — an §2 #6 mirror that was missing, not declined.
+            if let Some(snapshot) = frame_timings_snapshot {
+                ctx = ctx.with_frame_timings(snapshot);
+            }
             if let Some(exec_arc) = executor_for_rpc.as_ref() {
                 ctx = ctx.with_commands_executor(exec_arc.as_ref());
             }
@@ -2032,6 +2138,54 @@ mod tests {
             let dt = recorder.last_dt.get();
             assert!(dt > 0.001, "5ms sleep → dt > 1ms (saw {dt})");
             assert!(dt < 1.0, "dt should not exceed 1s (saw {dt})");
+        }
+
+        #[test]
+        fn r1460_the_tui_records_frames_and_answers_frame_timings() {
+            // R1460 §2 #6 — pre-R1460 `scene/frame_timings` existed on the wire
+            // and every TUI binding answered `FrameTimingsUnavailable` forever,
+            // which an agent reads as "has not painted yet" rather than "this
+            // backend does not measure". That is a missing mirror, not a
+            // declined one, and this is the whole of it: a TUI paint records a
+            // sample, and the sample carries the R1459 work counts.
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            assert!(
+                core.frame_timings.is_none(),
+                "before any paint there is honestly nothing to report",
+            );
+
+            let scene = core.compute_paint_scene(80, 24);
+            core.update_paint_scene(scene);
+
+            let stats = core.frame_timings.as_ref().expect("a frame was recorded");
+            let snap = stats.snapshot(None).expect("a non-empty ring projects");
+            assert_eq!(snap.frame_count, 1, "exactly the one frame we painted");
+            assert!(
+                snap.last.settle_passes >= 1,
+                "a recorded frame ran at least one pass (0 is the \
+                 never-measured sentinel and must not reach a sample)",
+            );
+            assert!(snap.last.settled, "this fixture converges");
+            // The TUI has no GPU phases, and reporting zeros for them is the
+            // honest shape rather than a gap: a terminal frame IS build +
+            // commit. `total >= build` still holds by construction.
+            assert_eq!(snap.last.encode_us, 0);
+            assert_eq!(snap.last.acquire_us, 0);
+            assert_eq!(snap.last.render_us, 0);
+            assert!(snap.last.total_us >= snap.last.build_us);
+
+            // A second commit with no produce in between records NOTHING —
+            // the pending slot is taken, not cloned, so a frame cannot be
+            // counted twice.
+            core.update_paint_scene(pinion_core::Scene::Container(
+                pinion_core::scene::ContainerNode::new(Vec::new()),
+            ));
+            let after = core
+                .frame_timings
+                .as_ref()
+                .and_then(|s| s.snapshot(None))
+                .expect("ring still projects");
+            assert_eq!(after.frame_count, 1, "no produce, no frame");
         }
 
         #[test]

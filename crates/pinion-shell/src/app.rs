@@ -37,6 +37,7 @@ use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
 use pinion_core::style::CursorHint;
 use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply, try_async_wait_for};
+use pinion_runtime::instant_delta_us;
 use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
 use vello::kurbo::Affine;
@@ -3680,16 +3681,6 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // waiting on another event-loop cycle.
         self.drain_redraw_to_winit();
     }
-}
-
-/// R907 §5.16 §5.7 — microseconds elapsed between two `Instant`s for
-/// the frame-timing profiler, saturating to `u64::MAX`.
-/// `saturating_duration_since` guards the (monotonic-clock-impossible)
-/// `end < start` case; the `u128 → u64` cast saturates a frame longer
-/// than ~584,000 years, which keeps clippy + the type honest without a
-/// real overflow path.
-fn instant_delta_us(start: Instant, end: Instant) -> u64 {
-    u64::try_from(end.saturating_duration_since(start).as_micros()).unwrap_or(u64::MAX)
 }
 
 /// R51.37 §5.35 R1009 §5.13 — bridge from winit's [`NamedKey`] enum to the

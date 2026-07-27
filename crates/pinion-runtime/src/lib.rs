@@ -52,7 +52,7 @@ pub use focus::FocusManager;
 pub use frame_pacing::{FixedTimestep, MAX_FRAME_DT_SECS, PacingState, clamp_frame_dt, substep};
 pub use frame_timing::{
     FRAME_TIMING_WINDOW, FRAME_TIMINGS, FrameTiming, FrameTimingStats, FrameTimingsHolder,
-    FrameTimingsSnapshot, FrameTimingsView, use_frame_timings,
+    FrameTimingsSnapshot, FrameTimingsView, instant_delta_us, use_frame_timings,
 };
 /// R1404 §5.16 — the producer in-memory image surface, re-exported at the
 /// crate root (gated with the `image_cache` module on `vello`): the

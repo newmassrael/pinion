@@ -201,6 +201,22 @@ pub fn compute_layout(
 /// binding whose view and layout disagree forever — that one is a bug in the
 /// binding, and the honest response is to paint the best frame available and
 /// keep the loop responsive, not to hang inside one paint.
+///
+/// # This number is a survey, and a proof is not available
+///
+/// R1460 — R1459 left "the budget is a survey of the chains that exist, not a
+/// proof that none is longer" as an open debt. It is now closed as a decision,
+/// because the proof cannot exist: a chain's length is a property of the
+/// BINDING's view-to-layout feedback, which pinion does not author and cannot
+/// bound. Any number here is a policy about when to stop, never a theorem.
+///
+/// What is achievable is that overrunning it is impossible to miss, and that
+/// is what R1458 and R1459 built: the frame is bounded rather than hung, it
+/// asks for the frame that continues (so the app stays responsive), it names
+/// the binding in a log, and it publishes `settle_passes` + `settled` on
+/// `scene/frame_timings` so the overrun is DATA. Evidence about this constant
+/// therefore arrives as a number from a real binding — which is the only kind
+/// of evidence that could justify changing it.
 pub const SETTLE_PASS_BUDGET: u32 = 4;
 
 /// R57.X.scrollbar §5.45 — variant of [`compute_layout`] that returns
