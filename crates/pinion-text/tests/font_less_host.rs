@@ -32,6 +32,16 @@ use std::process::Command;
 const INNER_TEST: &str = "font_less_host_shapes_and_reports";
 const INNER_MARKER: &str = "PINION_R1448_FONT_LESS_CHILD";
 
+const RESCAN_INNER_TEST: &str = "system_scan_reruns_for_each_context";
+const RESCAN_MARKER: &str = "PINION_R1448_1_RESCAN_CHILD";
+/// Where the rescan child finds the font directory its config points at.
+const RESCAN_DIR_ENV: &str = "PINION_R1448_1_FONT_DIR";
+
+/// A face with NO Hangul coverage, and one with it. The pair is the whole
+/// discriminator below: U+AC00 is the codepoint that separates them.
+const NOTO_FONT: &str = "../pinion-text-font/tests/fonts/NotoSans-Regular.ttf";
+const HANGUL: &str = "\u{AC00}";
+
 /// A font this repo already ships as a shaping fixture. Registered from memory
 /// in the scenario below, which is the point: on a font-less host it is the
 /// only source of glyphs. Path is relative to this crate's root, matching the
@@ -210,5 +220,100 @@ fn font_less_host_shapes_and_reports() {
         "premise: an UNregistered name still finds nothing here, so the width \
          above came from the registration and not from the platform: \
          absent={absent_width} registered={named_width}",
+    );
+}
+
+/// Launcher: a fontconfig over a directory holding **one** face, so the child
+/// can add a second one mid-process and see whether a new context notices.
+#[test]
+fn rescan_fixture_drives_a_config_whose_directory_changes() {
+    let tmp = std::env::temp_dir().join(format!("pinion-r1448-1-{}", std::process::id()));
+    let conf = write_font_less_config(&tmp);
+    let fonts = tmp.join("fonts");
+    // Seed the directory with the Hangul-less face only.
+    std::fs::copy(NOTO_FONT, fonts.join("seed.ttf")).expect("seed face copies in");
+
+    let exe = std::env::current_exe().expect("test binary path");
+    let status = Command::new(&exe)
+        .args([RESCAN_INNER_TEST, "--exact", "--ignored", "--nocapture"])
+        .env("FONTCONFIG_FILE", &conf)
+        .env(RESCAN_MARKER, "1")
+        .env(RESCAN_DIR_ENV, &fonts)
+        .status()
+        .expect("re-exec of the rescan scenario");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(
+        status.success(),
+        "the per-context rescan scenario failed (see the child's output above)"
+    );
+}
+
+/// R1448.1 §5.36 — **each `FontContext` runs its own platform scan.**
+///
+/// `LayoutCache`'s doc asserts this ("fontique caches nothing across instances
+/// — each `Collection::new` runs a fresh `FcInitLoadConfig` scan"), and it is
+/// the reason the R1447 deferral matters at all: if the scan were
+/// process-cached, building a context would be cheap and there would be nothing
+/// to defer. Until now it was read off fontique's source, not observed.
+///
+/// Observed here without a clock, so there is nothing to be flaky about. The
+/// config points at a directory holding only a Hangul-less face. Shape U+AC00
+/// through one cache; add a Hangul face to the directory; shape it again
+/// through a **second** cache in the same process. A wider advance means that
+/// second context went and looked — the file did not exist when the first one
+/// did.
+#[test]
+#[ignore = "re-exec entry for rescan_fixture_drives_a_config_whose_directory_changes"]
+fn system_scan_reruns_for_each_context() {
+    if std::env::var_os(RESCAN_MARKER).is_none() {
+        return;
+    }
+    let dir = std::path::PathBuf::from(
+        std::env::var_os(RESCAN_DIR_ENV).expect("launcher passes the font dir"),
+    );
+    let style = TextStyle::new().with_size_px(32);
+
+    let mut before = LayoutCache::new();
+    assert_eq!(
+        before.probe_system_fonts(),
+        SystemFontStatus::Available,
+        "premise: this config HAS a font, so the scan succeeds — a font-less \
+         config would park the process verdict and make the second probe moot",
+    );
+    let width_before = before.layout(HANGUL, &style, None).width();
+
+    // The change the second context must notice.
+    std::fs::copy(
+        "../pinion-text-font/tests/fonts/NanumGothic-Regular.ttf",
+        dir.join("hangul.ttf"),
+    )
+    .expect("the Hangul face copies into the watched directory");
+
+    let mut after = LayoutCache::new();
+    assert_eq!(
+        after.probe_system_fonts(),
+        SystemFontStatus::Available,
+        "the second context also scanned successfully",
+    );
+    let width_after = after.layout(HANGUL, &style, None).width();
+
+    assert!(
+        width_after > width_before,
+        "a context built AFTER the directory gained a Hangul face shapes U+AC00 \
+         wider than one built before it: before={width_before} after={width_after}. \
+         Equal widths would mean the platform scan is cached across contexts, \
+         which is the opposite of what LayoutCache's doc claims and would make \
+         R1447's deferral pointless",
+    );
+
+    // The first cache is unaffected — it holds the collection it scanned, so
+    // this is per-context state and not a process-wide snapshot that mutates
+    // under a live cache.
+    let width_before_again = before.layout(HANGUL, &style, None).width();
+    assert!(
+        (width_before_again - width_before).abs() < f32::EPSILON,
+        "the older context keeps the world it scanned: {width_before} then \
+         {width_before_again}",
     );
 }

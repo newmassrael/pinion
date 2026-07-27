@@ -70538,6 +70538,74 @@
         "the integration child keeps shaping, registering and measuring correctly afterwards"
       ]
     },
+    "Round 1448.2": {
+      "decision_summary": "R1448.2 - one leftover claim proven and one withdrawn: per-context rescanning is observed behaviourally with no clock, and the unobservable claim about a dependency's private destructor is replaced by the bounded-unwind fact that actually justifies the recovery",
+      "changes_bullets": [
+        "the two claims R1448.1 left as provenance are settled - one proven, one withdrawn",
+        "\"each Collection::new re-runs the platform scan\" is now OBSERVED, not source-read",
+        "I had said a test would need a clock and be flaky; that was wrong",
+        "the observable is behavioural: add a face to the configured dir between two contexts",
+        "only the second context sees it, so only the second one went and looked",
+        "NotoSans has no U+AC00 and NanumGothic does, so Hangul advance is the discriminator",
+        "no clock, no syscall tracing, nothing to be flaky about",
+        "\"Config's Drop runs normally during the unwind\" is WITHDRAWN, not tested",
+        "it is a private type inside a dependency; from here any claim about it is a guess",
+        "replaced by the two things that ARE observable and that the recovery rests on",
+        "the recovered process still shapes, registers a face and measures it correctly",
+        "and at most ONE unwind per process is reachable, since the verdict is recorded",
+        "so even a leak on that path is bounded per process rather than growing per cache",
+        "which is why \"is it a leak\" need not be answered to justify the recovery"
+      ],
+      "verification_bullets": [
+        "text 183 incl. 4 integration / shell 160 / core 2676 green; fmt / clippy / doc 0",
+        "CF-C do not add the face: the rescan test FAILS with before=19.2 after=19.2",
+        "19.2 is the fallback advance - identical widths are exactly the cached-scan world",
+        "so the passing run's wider advance is the second context's own scan, not luck",
+        "the older cache re-measures unchanged, so a context keeps the world it scanned",
+        "the bounded-unwind claim is pinned by the existing second-cache assertions"
+      ],
+      "impact_refs": [
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "fontique's NoMatch unwrap remains upstream; pinion recovers around it",
+        "whether fontique leaks an FcConfig on that path is unknown and deliberately unasserted",
+        "the bound (one per process) is what makes it not worth answering from here"
+      ],
+      "publishable_decision_summary": "R1448.2 - one leftover claim proven and one withdrawn: per-context rescanning is observed behaviourally with no clock, and the unobservable claim about a dependency's private destructor is replaced by the bounded-unwind fact that actually justifies the recovery",
+      "publishable_changes_bullets": [
+        "the two claims R1448.1 left as provenance are settled - one proven, one withdrawn",
+        "\"each Collection::new re-runs the platform scan\" is now OBSERVED, not source-read",
+        "I had said a test would need a clock and be flaky; that was wrong",
+        "the observable is behavioural: add a face to the configured dir between two contexts",
+        "only the second context sees it, so only the second one went and looked",
+        "NotoSans has no U+AC00 and NanumGothic does, so Hangul advance is the discriminator",
+        "no clock, no syscall tracing, nothing to be flaky about",
+        "\"Config's Drop runs normally during the unwind\" is WITHDRAWN, not tested",
+        "it is a private type inside a dependency; from here any claim about it is a guess",
+        "replaced by the two things that ARE observable and that the recovery rests on",
+        "the recovered process still shapes, registers a face and measures it correctly",
+        "and at most ONE unwind per process is reachable, since the verdict is recorded",
+        "so even a leak on that path is bounded per process rather than growing per cache",
+        "which is why \"is it a leak\" need not be answered to justify the recovery"
+      ],
+      "publishable_verification_bullets": [
+        "text 183 incl. 4 integration / shell 160 / core 2676 green; fmt / clippy / doc 0",
+        "CF-C do not add the face: the rescan test FAILS with before=19.2 after=19.2",
+        "19.2 is the fallback advance - identical widths are exactly the cached-scan world",
+        "so the passing run's wider advance is the second context's own scan, not luck",
+        "the older cache re-measures unchanged, so a context keeps the world it scanned",
+        "the bounded-unwind claim is pinned by the existing second-cache assertions"
+      ],
+      "publishable_impact_refs": [
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "fontique's NoMatch unwrap remains upstream; pinion recovers around it",
+        "whether fontique leaks an FcConfig on that path is unknown and deliberately unasserted",
+        "the bound (one per process) is what makes it not worth answering from here"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

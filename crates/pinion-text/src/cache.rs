@@ -115,7 +115,12 @@ struct LayoutKey {
 /// through the platform font API (fontconfig on Linux): measured at
 /// **25.5 ms on a 635-font box**, and fontique caches nothing across
 /// instances — `CollectionOptions::system_fonts` is `true` by default and
-/// each `Collection::new` runs a fresh `FcInitLoadConfig` scan.
+/// each `Collection::new` runs a fresh `FcInitLoadConfig` scan. That last
+/// clause is the load-bearing one (a process-cached scan would leave nothing
+/// worth deferring) and R1448.1 observes it rather than reading it off
+/// fontique's source: `system_scan_reruns_for_each_context` in
+/// `tests/font_less_host.rs` adds a face to the configured directory between
+/// two contexts and shows only the second one sees it.
 ///
 /// That cost is not the interesting part. The load-bearing consequence is
 /// that a `LayoutCache` used by a **caller that never shapes** paid for a

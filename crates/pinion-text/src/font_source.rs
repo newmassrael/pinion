@@ -68,9 +68,25 @@ static SYSTEM_FONTS_USABLE: OnceLock<bool> = OnceLock::new();
 /// that this host has no usable font database is to attempt the scan and
 /// survive it. `catch_unwind` is the established in-repo boundary for exactly
 /// this shape (`pinion_core::reactive::owner` isolates each cleanup closure
-/// the same way), the workspace sets no `panic = "abort"` profile, and the
-/// unwind crosses only fontique's own frames — the FFI calls have already
-/// returned by the time it unwraps, so `Config`'s `Drop` runs normally.
+/// the same way), and the workspace sets no `panic = "abort"` profile.
+///
+/// ## What is actually known about the unwind (R1448.1)
+///
+/// Whether fontique's own `Config` destructor runs as it unwinds is **not
+/// observable from here** — it is a private type inside a dependency, so any
+/// claim about it would be a guess dressed as a comment. Two things are
+/// observable, and they are what the recovery rests on:
+///
+/// - **The recovered process is sound.** After the unwind it still shapes,
+///   still accepts a [`register_font_data`](crate::LayoutCache::register_font_data)
+///   face, and still measures it correctly — asserted in
+///   `tests/font_less_host.rs`, not assumed.
+/// - **At most one unwind per process is reachable.** [`SYSTEM_FONTS_USABLE`]
+///   records the verdict, so every later cache takes the early return and never
+///   re-enters the scan. So even if that path did leak an `FcConfig`, the leak
+///   is bounded to one per process rather than growing per cache — which is why
+///   "is it a leak?" does not need answering to justify this. The second-cache
+///   assertions in that same test are what pin the bound.
 ///
 /// This is a boundary against an upstream defect, and it is worth naming as
 /// one: the textbook fix is for fontique to return `Result` from its backend
