@@ -5136,7 +5136,7 @@ impl<V: WidgetView> ShellCore<V> {
         // `focus_set` / `focus_clear` return `true` only on a real focus
         // mutation (already-focused / missing-tag / already-clear all return
         // `false`), so this is the exact change boundary — the same signal the
-        // programmatic `drain_focus_request` path gates its redraw on.
+        // programmatic `drain_focus_mailboxes` path gates its redraw on.
         let focus_changed = if let Some(target) = self
             .core
             .hover_target_for_window(window_id, pid)
@@ -5158,7 +5158,7 @@ impl<V: WidgetView> ShellCore<V> {
         };
         self.notify_focus_change(focus_before.as_deref());
         // (R1024 §5.39) A click / tap that moves focus must request a redraw,
-        // mirroring `drain_focus_request`'s programmatic-focus pairing. The
+        // mirroring `drain_focus_mailboxes`'s programmatic-focus pairing. The
         // focus ring is paint-time-injected (`apply_focus_ring`) and a
         // `FocusManager` mutation dirties no reactive owner, so without this the
         // ring lags to the next unrelated repaint (sprag PR-13). The wake is
@@ -6019,33 +6019,96 @@ impl<V: WidgetView> ShellCore<V> {
                 cmd.payload,
             );
         }
-        // R664 §5.39 — drain the programmatic focus-request mailbox a
-        // widget body (`External::invoke`, reducer, `Effect`) may have
-        // populated during this dispatch. Routes through the same
-        // `FocusManager::focus_set` + `notify_focus_change` pair the
-        // mouse-driven [`Self::click_to_focus`] uses so observers
-        // (`External::on_focus_change`, the `TextField` IME bridge,
-        // the `CaretBlink` enable gate) see one consistent focus
-        // transition arc regardless of whether the focus came from a
-        // pointer press or a programmatic request.
-        self.drain_focus_request();
-        // R693 §5.39 — drain the modal focus-trap mailbox a reducer /
-        // `External::invoke` may have populated when a dialog opened or
-        // closed during this dispatch. Same single-frame guarantee as
-        // the focus-request drain above: the trap installs (or lifts)
-        // before the next paint, so auto-focus + Tab confinement are in
-        // place the moment the dialog appears.
-        self.drain_modal_request();
+        // R664 R693 R1462 §5.39 — resolve the focus this dispatch leaves
+        // behind: drain BOTH focus mailboxes at one point, apply the
+        // modal batch (automatic policy) before the focus request
+        // (explicit intent), and commit a single observable transition.
+        // The single-frame guarantee both mailboxes advertise is this
+        // call site: the trap installs (or lifts) and the requested tag
+        // takes focus before the next paint.
+        self.drain_focus_mailboxes();
     }
 
-    /// R693 §5.39 — apply every pending [`pinion_core::modal_scope_request`]
-    /// entry via [`FocusManager::push_modal_scope`] /
-    /// [`FocusManager::pop_modal_scope`], routing the resulting focus
-    /// move through [`Self::notify_focus_change`] so the auto-focused
-    /// dialog control (and, on close, the restored invoker) fire their
-    /// `External::on_focus_change` observers — the dialog's buttons mark
-    /// themselves focused for the focus ring exactly as a Tab traversal
-    /// would. No-op on an empty mailbox.
+    /// R1462 §5.39 — resolve the focus this dispatch leaves behind,
+    /// draining **both** focus mailboxes at one point and committing one
+    /// observable transition.
+    ///
+    /// Two channels can move focus at the end of a dispatch, and they carry
+    /// different *kinds* of thing:
+    ///
+    /// - [`pinion_core::modal_scope_request`] carries **automatic policy** —
+    ///   WAI-ARIA's "focus moves into the dialog when it opens, returns to
+    ///   the invoker when it closes". The binding asks for a modal; the
+    ///   restore target is a snapshot the substrate took on its own.
+    /// - [`pinion_core::focus_request`] carries **explicit intent** — a
+    ///   binding naming the tag focus must end up on.
+    ///
+    /// So the modal batch is applied FIRST and the request LAST: the
+    /// default lands, then a binding that knows better replaces it.
+    /// Draining them the other way round (pre-R1462) made the automatic
+    /// restore beat every explicit request issued in the same frame, so the
+    /// toolkit-standard command palette — close the palette, run the row,
+    /// focus what the row produced — always lost, landing either on the
+    /// stale invoker or, when the command had removed that node, on nothing
+    /// at all ([`FocusManager::pop_modal_scope`] commits its restore
+    /// unconditionally, and `None` is a commit). Qt reaches this order by
+    /// construction rather than by policy: a slot running `dialog.accept()`
+    /// then `widget->setFocus()` wins with the later call.
+    ///
+    /// The order also makes "open a dialog focused on a *specific* control"
+    /// expressible (a destructive prompt whose default is Cancel — or
+    /// deliberately is not): the push installs the trap before the request
+    /// is applied, so the member is in
+    /// [`FocusManager::active_tab_order`] by the time `focus_set` looks.
+    /// Applied the other way round the request ran while the trap was still
+    /// down, and the R1020 re-derive could even let it *succeed* — which was
+    /// worse than a refusal, because [`FocusManager::push_modal_scope`] then
+    /// snapshotted the dialog's own control as the invoker to restore, so
+    /// closing the dialog restored focus to a node the dialog took with it.
+    ///
+    /// One arc, one gate:
+    ///
+    /// - `External::on_focus_change` observers see the NET transition, never
+    ///   the intermediate owner the pop transiently restored. R1456
+    ///   established this for two modal edits in one frame; the same
+    ///   reasoning spans the two mailboxes, because an owner the same frame
+    ///   already replaced is never painted — announcing it makes a
+    ///   background `TextField` commit an IME composition and a caret start
+    ///   blinking off-screen.
+    /// - the §5.34 revision bump + redraw fire when focus moved **or** the
+    ///   modal stack was edited. A frame that only changes modal depth still
+    ///   changes what is painted and what `focus/get` reports, and gating
+    ///   that on a focus move alone (pre-R1462) meant a same-tag open/close
+    ///   scheduled nothing.
+    ///
+    /// No-op — and no snapshot cost — when both mailboxes are empty, which
+    /// is every quiescent frame.
+    fn drain_focus_mailboxes(&mut self) {
+        let modal_reqs = pinion_core::modal_scope_request::drain();
+        let focus_req = pinion_core::focus_request::drain();
+        if modal_reqs.is_empty() && focus_req.is_none() {
+            return;
+        }
+        let focus_before = self.focus.focused().map(str::to_owned);
+        let modal_edited = self.apply_modal_requests(modal_reqs);
+        self.apply_focus_request(focus_req.as_deref());
+        if self.focus.focused() != focus_before.as_deref() {
+            self.notify_focus_change(focus_before.as_deref());
+            self.revision.bump();
+            self.request_redraw();
+        } else if modal_edited {
+            self.revision.bump();
+            self.request_redraw();
+        }
+    }
+
+    /// R693 §5.39 — apply a drained [`pinion_core::modal_scope_request`]
+    /// batch via [`FocusManager::push_modal_scope`] /
+    /// [`FocusManager::pop_modal_scope`]. Returns whether the modal stack
+    /// was actually **edited** (an `Open`, or a `Close` that found a scope
+    /// to pop) — [`Self::drain_focus_mailboxes`] gates its redraw on that,
+    /// because a dialog appearing or vanishing changes the paint even when
+    /// the focused tag happens to be identical either side.
     ///
     /// R1456 — the batch is applied **in order**, not just its last
     /// entry: the requests are stack edits, and one dispatch frame can
@@ -6054,33 +6117,32 @@ impl<V: WidgetView> ShellCore<V> {
     /// only one leaked the unapplied scope onto the modal stack
     /// permanently.
     ///
-    /// The observer arc is snapshotted **once around the whole batch**,
-    /// so a handoff reports the one transition the user can perceive
-    /// (menu row → dialog button). The intermediate focus the pop
-    /// restores is never painted and never observed; firing
-    /// `on_focus_change` for it would announce a focus owner that the
-    /// same frame already replaced.
-    fn drain_modal_request(&mut self) {
-        let reqs = pinion_core::modal_scope_request::drain();
-        if reqs.is_empty() {
-            return;
-        }
-        let focus_before = self.focus.focused().map(str::to_owned);
+    /// R1462 — the observer arc is NOT snapshotted here. It belongs to
+    /// [`Self::drain_focus_mailboxes`], which spans this batch *and* the
+    /// focus request that may override its restore; an arc taken around
+    /// the batch alone would announce an invoker that the same frame's
+    /// explicit request has already replaced.
+    fn apply_modal_requests(
+        &mut self,
+        reqs: Vec<pinion_core::modal_scope_request::ModalRequest>,
+    ) -> bool {
+        let mut edited = false;
         for req in reqs {
             match req {
                 pinion_core::modal_scope_request::ModalRequest::Open { members } => {
+                    edited = true;
                     self.focus.push_modal_scope(members)
                 }
                 pinion_core::modal_scope_request::ModalRequest::Close => {
+                    // A `Close` against an empty stack pops nothing, so it is
+                    // not an edit — `pop_modal_scope`'s own `false` cannot
+                    // report that, since it means "focus did not move".
+                    edited |= self.focus.is_modal();
                     self.focus.pop_modal_scope()
                 }
             };
         }
-        if self.focus.focused() != focus_before.as_deref() {
-            self.notify_focus_change(focus_before.as_deref());
-            self.revision.bump();
-            self.request_redraw();
-        }
+        edited
     }
 
     /// R693 §5.39 — `true` while a modal focus trap is active. The
@@ -6092,21 +6154,27 @@ impl<V: WidgetView> ShellCore<V> {
         self.focus.is_modal()
     }
 
-    /// R664 §5.39 — pop one pending [`pinion_core::focus_request`]
-    /// entry and apply it via [`FocusManager::focus_set`] +
-    /// [`Self::notify_focus_change`]. No-op on empty mailbox (the
-    /// zero-cost steady state). Bumps the §5.34 revision + requests a
-    /// redraw on a real focus mutation so the next paint surfaces the
-    /// focus-ring highlight and any focus-gated reactive subscriptions
-    /// (e.g. an `EDIT_TF_TAG`-keyed
-    /// [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink)
-    /// activates) catch up before the user types.
-    fn drain_focus_request(&mut self) {
-        let Some(tag) = pinion_core::focus_request::drain() else {
+    /// R664 §5.39 — apply a drained [`pinion_core::focus_request`] entry
+    /// via [`FocusManager::focus_set`]. No-op on `None` (the empty-mailbox
+    /// steady state).
+    ///
+    /// Routes through the same `focus_set` the mouse-driven
+    /// [`Self::click_to_focus_for_window`] uses, so a programmatic request
+    /// and a pointer press are indistinguishable downstream — the focus ring, the
+    /// `TextField` IME bridge and the
+    /// [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink) enable
+    /// gate all react to one shape of focus transition.
+    ///
+    /// R1462 — the request is applied AFTER the frame's modal batch and
+    /// carries no arc or redraw of its own; both belong to
+    /// [`Self::drain_focus_mailboxes`], which owns the net transition.
+    /// Being last is the whole point: an explicit request outranks the
+    /// modal policy's automatic restore.
+    fn apply_focus_request(&mut self, tag: Option<&str>) {
+        let Some(tag) = tag else {
             return;
         };
-        let focus_before = self.focus.focused().map(str::to_owned);
-        if !self.focus.focus_set(&tag) {
+        if !self.focus.focus_set(tag) {
             // (R1020 §5.39) The requested tag is not in the current focus
             // enumeration. Under scene-derived focus the enumeration is
             // refreshed inside the paint pass, which has NOT run since this
@@ -6118,16 +6186,12 @@ impl<V: WidgetView> ShellCore<V> {
             // so "focus a widget on the frame it appears" works (the pre-R1020
             // boot-seeded superset accepted such a request unconditionally).
             self.refresh_focusable_from_view();
-            if !self.focus.focus_set(&tag) {
-                // Still unknown / non-focusable — silent no-op (matches the
-                // `click_to_focus` rejection arm): the requested tag is on no
-                // painted focusable node, or focus is already there.
-                return;
-            }
+            // Still unknown / non-focusable — silent no-op (matches the
+            // `click_to_focus` rejection arm): the requested tag is on no
+            // painted focusable node, is confined out by an active modal
+            // trap, or focus is already there.
+            let _ = self.focus.focus_set(tag);
         }
-        self.notify_focus_change(focus_before.as_deref());
-        self.revision.bump();
-        self.request_redraw();
     }
 
     /// R25.1 §5.39 §5.16 — record `window_key`'s focusable-tag contribution and
@@ -6465,7 +6529,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
     /// side-effect-free run of [`WidgetCore::view`](pinion_core::WidgetCore::view) over the current cached
     /// state, feeding [`FocusManager::update_focusable_tags`]. Used by
-    /// [`Self::drain_focus_request`] to enumerate a node that this dispatch
+    /// [`Self::apply_focus_request`] to enumerate a node that this dispatch
     /// just made paintable BEFORE the next paint pass runs the per-frame
     /// refresh.
     ///
@@ -7213,7 +7277,7 @@ mod r26_undock_focus_follow_tests {
     }
 
     /// The undock focus-follow guarantee: the binding places focus on the torn
-    /// pane (as `drain_focus_request` does after `toggle_pane_floating`), then
+    /// pane (as `apply_focus_request` does after `toggle_pane_floating`), then
     /// the PRIMARY repaints WITHOUT the pane (it left the dock). Pre-R26 the
     /// union was painted-only, so this repaint dropped focus to `None` (the dead
     /// undock window). With R26 the declared topology keeps the pane enumerated,
@@ -9906,140 +9970,72 @@ mod r1362_window_control_sink_seeding_tests {
 }
 
 #[cfg(test)]
-mod r1456_modal_handoff_tests {
-    //! R1456 §5.39 — a modal **handoff** (close A, open B from one user
-    //! action) survives the drain.
+mod modal_tail_focus_tests {
+    //! R1456 + R1462 §5.39 — what a dispatch tail does to focus when a
+    //! modal is involved.
     //!
-    //! Reported live from a downstream consumer (PINION-PR77): a command
-    //! palette whose destructive row hands off to a confirm dialog left a
-    //! ghost scope on the modal stack, and from then on *every* `focus/set`
-    //! was refused — the client's keyboard focus model was dead until
-    //! restart. Root cause was a type mismatch, not a missing feature: the
-    //! mailbox carried stack **edits** but inherited `focus_request`'s
-    //! last-write-wins **level** policy, so `close` then `open` in one frame
-    //! dropped the `close`.
+    //! Two consumer field reports, one seam, two independent defects; each
+    //! survives the other's fix, so both sets of witnesses live here over
+    //! one fixture.
     //!
-    //! These drive the real [`ShellCore::drain_modal_request`] against a
-    //! real [`FocusManager`], which is where the loss actually happened —
-    //! the mailbox-level unit tests in `pinion_core::modal_scope_request`
-    //! prove ordering, these prove the stack the shell builds from it.
+    //! ## R1456 (PINION-PR77) — a modal **handoff** survives the drain
+    //!
+    //! A command palette whose destructive row hands off to a confirm
+    //! dialog left a ghost scope on the modal stack, and from then on
+    //! *every* `focus/set` was refused — the client's keyboard focus model
+    //! was dead until restart. Root cause was a type mismatch, not a
+    //! missing feature: the mailbox carried stack **edits** but inherited
+    //! `focus_request`'s last-write-wins **level** policy, so `close` then
+    //! `open` in one frame dropped the `close`.
+    //!
+    //! ## R1462 (PINION-PR78) — explicit intent outranks automatic policy
+    //!
+    //! From the same consumer: a palette row that closes the palette and
+    //! then names where focus belongs always lost to `pop_modal_scope`'s
+    //! automatic invoker-restore, because the tail drained the request
+    //! mailbox *first*. The modal mailbox carries automatic policy and the
+    //! focus mailbox carries explicit intent, so policy is applied first
+    //! and intent last.
+    //!
+    //! ## Why here
+    //!
+    //! These drive the real [`ShellCore::drain_focus_mailboxes`] against a
+    //! real [`FocusManager`], which is where both losses actually happened
+    //! — the mailbox-level unit tests in `pinion_core::modal_scope_request`
+    //! prove ordering, these prove the focus the shell builds from it. The
+    //! fixture is shared with `pinion_tui::substrate::modal_tail_focus_tests`
+    //! so the §2 #6 mirror is asserted against the same binding, not a
+    //! look-alike.
 
     use super::ShellCore;
-    use crate::test_fixtures::TestRenderer;
-    use crate::{SizeStrategy, WidgetView};
-    use pinion_a11y::WidgetA11y;
-    use pinion_core::external::{
-        Backend, BackendFallback, BackendSupport, External, RepaintOwner, ThreadOwnership,
-    };
     use pinion_core::modal_scope_request;
-    use pinion_core::scene::ContainerNode;
-    use pinion_core::widget_core::ExtraExternal;
-    use pinion_core::{Frame, Scene, WidgetCore};
-    use std::cell::RefCell;
-
-    /// The invoker: a background control that opens the menu.
-    const TRIGGER: &str = "trigger";
-    /// A second background control — proves the base enumeration comes
-    /// back whole, not just non-empty.
-    const OTHER_BG: &str = "other_bg";
-    /// The menu's only member (modal A).
-    const MENU_ROW: &str = "menu_row";
-    /// The confirm dialog's only member (modal B).
-    const CONFIRM_OK: &str = "confirm_ok";
-
-    thread_local! {
-        /// `(tag, focused)` in dispatch order, appended by every
-        /// [`FocusRecorder`]. Thread-local, so parallel tests cannot
-        /// see each other's arcs.
-        static FOCUS_LOG: RefCell<Vec<(&'static str, bool)>> = const {
-            RefCell::new(Vec::new())
-        };
-    }
-
-    /// An [`External`] that records the focus arc the shell dispatches to
-    /// it. `ButtonExternal` only keeps the latest posture as a flag, which
-    /// cannot distinguish "never notified" from "notified twice and back"
-    /// — the exact distinction the batch-once claim rests on.
-    #[derive(Debug)]
-    struct FocusRecorder(&'static str);
-
-    impl External for FocusRecorder {
-        fn backends(&self) -> BackendSupport {
-            BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
-        }
-        fn repaint_ownership(&self) -> RepaintOwner {
-            RepaintOwner::Framework
-        }
-        fn thread_ownership(&self) -> ThreadOwnership {
-            ThreadOwnership::UiThreadSync
-        }
-        fn on_focus_change(&mut self, focused: bool) {
-            FOCUS_LOG.with_borrow_mut(|log| log.push((self.0, focused)));
-        }
-    }
-
-    struct HandoffFixture;
-
-    impl WidgetCore for HandoffFixture {
-        type State = ();
-        type Event = ();
-
-        fn create_external() -> Box<dyn External> {
-            Box::new(FocusRecorder(TRIGGER))
-        }
-        fn create_extra_externals() -> Vec<ExtraExternal> {
-            vec![
-                ExtraExternal::new(OTHER_BG, Box::new(FocusRecorder(OTHER_BG))),
-                ExtraExternal::new(MENU_ROW, Box::new(FocusRecorder(MENU_ROW))),
-                ExtraExternal::new(CONFIRM_OK, Box::new(FocusRecorder(CONFIRM_OK))),
-            ]
-        }
-        fn tag() -> &'static str {
-            TRIGGER
-        }
-        fn read_state(_scene: &Scene) -> Self::State {}
-        fn view((): Self::State, _frame: &Frame) -> Scene {
-            Scene::Container(ContainerNode::new(Vec::new()).with_tag(TRIGGER))
-        }
-        fn event_name((): Self::Event) -> &'static str {
-            "__internal__"
-        }
-        fn title() -> &'static str {
-            "ModalHandoff"
-        }
-    }
-
-    impl WidgetA11y for HandoffFixture {}
-
-    impl WidgetView for HandoffFixture {
-        type Renderer = TestRenderer;
-        fn initial_size_strategy() -> SizeStrategy {
-            SizeStrategy::Fixed {
-                width: 8,
-                height: 8,
-            }
-        }
-    }
+    use pinion_core::test_fixtures::{
+        MODAL_TAIL_CONFIRM_OK as CONFIRM_OK, MODAL_TAIL_MENU_ROW as MENU_ROW,
+        MODAL_TAIL_OTHER_BG as OTHER_BG, MODAL_TAIL_TRIGGER as TRIGGER, ModalTailFixture,
+        clear_focus_arc_log, focus_arc_log,
+    };
 
     /// A booted shell with two focusable background controls and focus
     /// resting on the trigger — the state a user is in when they open a
-    /// menu. Clears both thread-locals so each test starts clean.
-    fn boot() -> ShellCore<HandoffFixture> {
+    /// menu. Clears both mailboxes and the arc log so each test starts
+    /// clean.
+    fn boot() -> ShellCore<ModalTailFixture> {
         let _ = modal_scope_request::drain();
-        let mut sc = ShellCore::<HandoffFixture>::new();
+        let _ = pinion_core::focus_request::drain();
+        let mut sc = ShellCore::<ModalTailFixture>::new();
         sc.refresh_window_focusables(
             pinion_runtime::DEFAULT_WINDOW,
             vec![TRIGGER.to_owned(), OTHER_BG.to_owned()],
         );
         assert!(sc.focus.focus_set(TRIGGER), "the invoker starts focused");
-        FOCUS_LOG.with_borrow_mut(Vec::clear);
+        clear_focus_arc_log();
         sc
     }
 
     /// One dispatch frame's worth of requests reaches the focus stack.
-    fn open_menu(sc: &mut ShellCore<HandoffFixture>) {
+    fn open_menu(sc: &mut ShellCore<ModalTailFixture>) {
         modal_scope_request::open(vec![MENU_ROW.to_owned()]);
-        sc.drain_modal_request();
+        sc.drain_focus_mailboxes();
     }
 
     /// PR-77 acceptance #1 — `close()` then `open(["b"])` in ONE dispatch
@@ -10056,7 +10052,7 @@ mod r1456_modal_handoff_tests {
         // and opens the confirm dialog. Not two frames — one user action.
         modal_scope_request::close();
         modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
-        sc.drain_modal_request();
+        sc.drain_focus_mailboxes();
 
         assert_eq!(
             sc.focus().modal_depth(),
@@ -10082,11 +10078,11 @@ mod r1456_modal_handoff_tests {
         open_menu(&mut sc);
         modal_scope_request::close();
         modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
-        sc.drain_modal_request();
+        sc.drain_focus_mailboxes();
 
         // The user answers the confirm dialog.
         modal_scope_request::close();
-        sc.drain_modal_request();
+        sc.drain_focus_mailboxes();
 
         assert_eq!(sc.focus().modal_depth(), 0, "no trap survives the cycle");
         assert_eq!(
@@ -10115,13 +10111,13 @@ mod r1456_modal_handoff_tests {
         open_menu(&mut sc);
 
         modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
-        sc.drain_modal_request();
+        sc.drain_focus_mailboxes();
 
         assert_eq!(sc.focus().modal_depth(), 2, "B stacks ON TOP of A");
         assert_eq!(sc.focus().active_tab_order(), [CONFIRM_OK.to_owned()]);
 
         modal_scope_request::close();
-        sc.drain_modal_request();
+        sc.drain_focus_mailboxes();
         assert_eq!(sc.focus().modal_depth(), 1, "popping B re-exposes A");
         assert_eq!(
             sc.focus().active_tab_order(),
@@ -10141,14 +10137,14 @@ mod r1456_modal_handoff_tests {
     fn a_handoff_reports_one_focus_arc_not_the_transient_restore() {
         let mut sc = boot();
         open_menu(&mut sc);
-        FOCUS_LOG.with_borrow_mut(Vec::clear);
+        clear_focus_arc_log();
 
         modal_scope_request::close();
         modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
-        sc.drain_modal_request();
+        sc.drain_focus_mailboxes();
 
         assert_eq!(
-            FOCUS_LOG.with_borrow(Clone::clone),
+            focus_arc_log(),
             vec![(MENU_ROW, false), (CONFIRM_OK, true)],
             "blur the outgoing member, focus the incoming one — the \
              invoker the pop transiently restored is never announced",
@@ -10164,9 +10160,174 @@ mod r1456_modal_handoff_tests {
         open_menu(&mut sc);
 
         assert_eq!(sc.focus().modal_depth(), 1);
+        assert_eq!(focus_arc_log(), vec![(TRIGGER, false), (MENU_ROW, true)]);
+    }
+
+    // ---- R1462 (PINION-PR78): explicit intent outranks the modal's
+    // automatic restore, and the two mailboxes report ONE arc ------------
+
+    /// PR-78 acceptance #1 — the reported defect. One dispatch frame closes
+    /// the modal AND names where focus belongs; the name wins.
+    ///
+    /// Pre-R1462 the tail drained the request first, so
+    /// `pop_modal_scope`'s unconditional restore landed on top of it and
+    /// focus went back to the invoker — the command-palette pattern (close
+    /// the palette, run the row, focus what the row produced) could not be
+    /// expressed at all.
+    #[test]
+    fn an_explicit_request_outranks_the_modal_restore() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+
+        // The row runs: dismiss the palette, then put focus where the
+        // command's result lives.
+        modal_scope_request::close();
+        pinion_core::focus_request::request(OTHER_BG);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(sc.focus().modal_depth(), 0, "the palette is dismissed");
         assert_eq!(
-            FOCUS_LOG.with_borrow(Clone::clone),
-            vec![(TRIGGER, false), (MENU_ROW, true)],
+            sc.focus().focused(),
+            Some(OTHER_BG),
+            "the binding named the target; the automatic restore to the \
+             invoker is the DEFAULT it overrides, not a veto",
         );
+    }
+
+    /// The automatic restore is still the default — it is only
+    /// *overridable*, not demoted. The control for the test above:
+    /// the identical frame minus the request lands on the invoker,
+    /// WAI-ARIA's required behaviour.
+    #[test]
+    fn the_restore_still_wins_when_nothing_competes() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+
+        modal_scope_request::close();
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(sc.focus().focused(), Some(TRIGGER));
+    }
+
+    /// PR-78 acceptance #2 — the branch the field report calls the worse
+    /// one. The command that ran removed the invoker from the scene, so the
+    /// restore has nothing to land on and `pop_modal_scope` commits `None`
+    /// (a commit, not a skip). The explicit request is precisely the
+    /// information needed to avoid a keyboard-focus-less window, and
+    /// pre-R1462 it was consumed before that `None` overwrote it.
+    #[test]
+    fn a_request_lands_even_when_the_restore_target_is_gone() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+        // The command's side effect: the invoker leaves the scene. The
+        // modal guard in `update_focusable_tags` keeps the trap's focus
+        // alive across this, exactly as a real repaint would.
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec![OTHER_BG.to_owned()]);
+
+        modal_scope_request::close();
+        pinion_core::focus_request::request(OTHER_BG);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(
+            sc.focus().focused(),
+            Some(OTHER_BG),
+            "focus must not be nowhere: the frame that destroyed the \
+             restore target also said where to go instead",
+        );
+    }
+
+    /// The close-and-request frame is ONE observable transition. The
+    /// invoker the pop transiently restores is never painted, so announcing
+    /// it would tell a background widget it gained focus — an IME
+    /// composition commits, a caret starts blinking off-screen. R1456
+    /// established this across a modal batch; R1462 extends the same
+    /// snapshot across BOTH mailboxes, because applying policy before
+    /// intent is what creates the transient here.
+    #[test]
+    fn a_close_and_request_report_one_focus_arc() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+        clear_focus_arc_log();
+
+        modal_scope_request::close();
+        pinion_core::focus_request::request(OTHER_BG);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(
+            focus_arc_log(),
+            vec![(MENU_ROW, false), (OTHER_BG, true)],
+            "blur the outgoing member, focus the named target — TRIGGER, \
+             restored between the two, is never announced",
+        );
+    }
+
+    /// PR-78's new capability: open a dialog focused on a **chosen** member
+    /// (a destructive prompt whose default is deliberately not Cancel).
+    /// The push installs the trap before the request is applied, so the
+    /// member is enumerated by the time `focus_set` looks.
+    ///
+    /// The second half is the part that was silently corrupt rather than
+    /// merely impossible: with the request applied FIRST, the R1020
+    /// re-derive could let it succeed while the trap was still down, and
+    /// `push_modal_scope` then snapshotted the dialog's own control as the
+    /// invoker — so closing the dialog restored focus to a node the dialog
+    /// took with it. Asserting that the pop still finds TRIGGER is what
+    /// pins the snapshot to the real invoker.
+    #[test]
+    fn an_open_can_name_the_member_it_focuses_without_losing_the_invoker() {
+        let mut sc = boot();
+
+        modal_scope_request::open(vec![MENU_ROW.to_owned(), CONFIRM_OK.to_owned()]);
+        pinion_core::focus_request::request(CONFIRM_OK);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(sc.focus().modal_depth(), 1);
+        assert_eq!(
+            sc.focus().focused(),
+            Some(CONFIRM_OK),
+            "the named member takes focus instead of the first one",
+        );
+
+        modal_scope_request::close();
+        sc.drain_focus_mailboxes();
+        assert_eq!(
+            sc.focus().focused(),
+            Some(TRIGGER),
+            "the invoker snapshot survived: the request moved focus INSIDE \
+             the trap, it did not become the thing to restore",
+        );
+    }
+
+    /// Trap confinement outranks the request in turn. A request for a tag
+    /// outside the modal's members is refused, so a binding cannot walk
+    /// focus out of an open dialog by accident. (Pre-R1462 the request was
+    /// applied while the trap was still down and the push then yanked focus
+    /// back — same end state, reached by briefly leaving the trap.)
+    #[test]
+    fn a_request_cannot_escape_a_trap_opened_in_the_same_frame() {
+        let mut sc = boot();
+
+        modal_scope_request::open(vec![MENU_ROW.to_owned()]);
+        pinion_core::focus_request::request(OTHER_BG);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(
+            sc.focus().focused(),
+            Some(MENU_ROW),
+            "the trap confines the request; focus never leaves the dialog",
+        );
+    }
+
+    /// A request with no modal in the frame is untouched by the reorder —
+    /// the shape of nearly every focus request in the tree.
+    #[test]
+    fn a_request_without_a_modal_is_unchanged() {
+        let mut sc = boot();
+
+        pinion_core::focus_request::request(OTHER_BG);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(sc.focus().focused(), Some(OTHER_BG));
+        assert_eq!(sc.focus().modal_depth(), 0);
     }
 }

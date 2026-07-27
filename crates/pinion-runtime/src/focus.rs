@@ -326,6 +326,15 @@ impl FocusManager {
     /// focusable in the now-active enumeration. Returns `true` if the
     /// focused tag changed. No-op (returns `false`) when no modal scope
     /// is active.
+    ///
+    /// The restore is **unconditional**, including the `None` arm: a
+    /// vanished invoker clears focus rather than leaving it on a member of
+    /// the trap that just lifted. R1462 — this is a *default*, not a
+    /// verdict. The dispatch tail applies a same-frame
+    /// [`focus_request`](pinion_core::focus_request) after this call, so a
+    /// binding that knows where focus belongs (its command changed the view
+    /// out from under the invoker) replaces the restore, including that
+    /// `None`. Callers outside the tail get the raw policy.
     pub fn pop_modal_scope(&mut self) -> bool {
         let Some(scope) = self.modal_stack.pop() else {
             return false;

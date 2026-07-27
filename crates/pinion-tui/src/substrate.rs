@@ -122,7 +122,7 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// R670 §5.41 §5.34 — §5.34 R40.4 OCC revision token, mirror of
     /// `pinion_shell::ShellCore::revision`. `dispatch` auto-bumps on
     /// mutating RPC methods; programmatic-focus mutation also bumps
-    /// explicitly through [`Self::drain_focus_request`].
+    /// explicitly through [`Self::drain_focus_mailboxes`].
     revision: SceneRevision,
     /// R670 §5.41 §5.39 — framework-side focus state owner, mirror of
     /// `pinion_shell::ShellCore::focus`. Seeded at construction from
@@ -1360,24 +1360,19 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         for cmd in self.core.dispatch_pending_commands() {
             self.log_unhandled_command(&cmd);
         }
-        // R670 §5.41 §5.39 — drain the programmatic focus-request
-        // mailbox a widget body (`External::invoke`, reducer,
-        // `Effect`) may have populated during this dispatch. Mirror
-        // of `pinion_shell::ShellCore::handle_tail`'s drain call so
-        // both backends close the R664 focus-request arc identically.
-        // Returns `true` when a focus mutation actually committed —
-        // we OR it into the visible-state-change return so the
-        // crossterm surface repaints to refresh the focus ring +
-        // any focus-gated reactive subscriptions.
-        let focus_changed = self.drain_focus_request();
-        // R693 §5.39 — drain the modal focus-trap mailbox a reducer /
-        // `External::invoke` may have populated when a dialog opened or
-        // closed. Mirror of `pinion_shell::ShellCore::handle_tail`'s
-        // drain call so the modal trap is dual-backend: an AI client
-        // driving the TUI substrate over RPC sees the same Tab
-        // confinement + auto-focus the Vello shell produces.
-        let modal_changed = self.drain_modal_request();
-        state_changed || focus_changed || modal_changed
+        // R664 R693 R1462 §5.41 §5.39 — resolve the focus this dispatch
+        // leaves behind from BOTH focus mailboxes. Mirror of
+        // `pinion_shell::ShellCore::handle_tail`'s single drain call, so
+        // the two backends give identical focus AND identical modal
+        // stacks from identical input: an AI client driving the TUI
+        // substrate over RPC sees the same Tab confinement, the same
+        // auto-focus, and the same explicit-over-automatic precedence
+        // the Vello shell produces. Returns `true` when the frame is
+        // visibly different — a committed focus move (repaint for the
+        // focus ring + focus-gated reactive subscriptions) or a modal
+        // stack edit (the dialog itself appeared or vanished).
+        let focus_changed = self.drain_focus_mailboxes();
+        state_changed || focus_changed
     }
 
     /// R670 §5.41 §5.39 — fire [`External::on_focus_change`](pinion_core::External::on_focus_change) on the
@@ -1412,39 +1407,64 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         }
     }
 
-    /// R670 §5.41 §5.39 — pop one pending
-    /// [`pinion_core::focus_request`] entry and apply it via
-    /// [`FocusManager::focus_set`] + [`Self::notify_focus_change`].
-    /// No-op on empty mailbox (the zero-cost steady state). Bumps the
-    /// §5.34 revision on a real focus mutation so an in-flight
-    /// preview's `base_revision` can detect the concurrent focus
-    /// change.
+    /// R1462 §5.41 §5.39 — resolve this dispatch's focus from **both**
+    /// focus mailboxes at one point, applying the modal batch (automatic
+    /// policy) before the focus request (explicit intent) and committing
+    /// one observable transition.
     ///
-    /// Mirror of `pinion_shell::ShellCore::drain_focus_request`.
-    /// Returns `true` when a focus mutation actually committed so
-    /// [`Self::handle_tail`] can OR it into the visible-state-change
-    /// flag the crossterm surface repaints on.
-    fn drain_focus_request(&mut self) -> bool {
-        let Some(tag) = pinion_core::focus_request::drain() else {
+    /// Mirror of `pinion_shell::ShellCore::drain_focus_mailboxes`, which
+    /// carries the full rationale for the order (an explicit request must
+    /// outrank the modal's automatic invoker-restore), for the single
+    /// observer arc (R1456: never announce an owner the same frame already
+    /// replaced) and for the redraw gate (focus moved **or** the modal
+    /// stack was edited). §2 #6 makes the mirror mandatory: a fix on one
+    /// backend alone would give GUI and TUI different focus from identical
+    /// input.
+    ///
+    /// Returns `true` when the frame is visibly different, so
+    /// [`Self::handle_tail`] can OR it into the flag the crossterm surface
+    /// repaints on. Bumps the §5.34 revision on the same condition, so an
+    /// in-flight preview's `base_revision` detects the concurrent change.
+    fn drain_focus_mailboxes(&mut self) -> bool {
+        let modal_reqs = pinion_core::modal_scope_request::drain();
+        let focus_req = pinion_core::focus_request::drain();
+        if modal_reqs.is_empty() && focus_req.is_none() {
             return false;
-        };
-        let focus_before = self.focus.focused().map(str::to_owned);
-        if !self.focus.focus_set(&tag) {
-            // (R1020 §5.39) Re-derive the enumeration from a fresh view of the
-            // post-dispatch state and retry once — a node this dispatch just
-            // made paintable (a conditionally-painted inline editor) is not yet
-            // enumerated (the paint refresh has not run). Mirror of the
-            // pinion-shell `drain_focus_request` re-derive-on-miss.
-            self.refresh_focusable_from_view();
-            if !self.focus.focus_set(&tag) {
-                // Still unknown / non-focusable — silent no-op (matches the
-                // pinion-shell `click_to_focus` rejection arm).
-                return false;
-            }
         }
-        self.notify_focus_change(focus_before.as_deref());
-        self.revision.bump();
-        true
+        let focus_before = self.focus.focused().map(str::to_owned);
+        let modal_edited = self.apply_modal_requests(modal_reqs);
+        self.apply_focus_request(focus_req.as_deref());
+        if self.focus.focused() != focus_before.as_deref() {
+            self.notify_focus_change(focus_before.as_deref());
+            self.revision.bump();
+            return true;
+        }
+        if modal_edited {
+            self.revision.bump();
+        }
+        modal_edited
+    }
+
+    /// R664 §5.39 — apply a drained [`pinion_core::focus_request`] entry via
+    /// [`FocusManager::focus_set`]. No-op on `None`.
+    ///
+    /// Mirror of `pinion_shell::ShellCore::apply_focus_request`, including
+    /// the R1020 re-derive-on-miss: a node this dispatch just made paintable
+    /// (a conditionally-painted inline editor) is not yet enumerated, since
+    /// the paint refresh has not run. Carries no arc or redraw of its own —
+    /// [`Self::drain_focus_mailboxes`] owns the net transition.
+    fn apply_focus_request(&mut self, tag: Option<&str>) {
+        let Some(tag) = tag else {
+            return;
+        };
+        if !self.focus.focus_set(tag) {
+            self.refresh_focusable_from_view();
+            // Still unknown / non-focusable — silent no-op (matches the
+            // pinion-shell `click_to_focus` rejection arm): no painted
+            // focusable node carries the tag, an active modal trap confines
+            // it out, or focus is already there.
+            let _ = self.focus.focus_set(tag);
+        }
     }
 
     /// (R1020 §5.39) Re-derive the keyboard focus enumeration from a fresh,
@@ -1463,39 +1483,39 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             .update_focusable_tags(scene.collect_focusable_tags());
     }
 
-    /// R693 §5.39 — apply every pending
-    /// [`pinion_core::modal_scope_request`] entry via
-    /// [`FocusManager::push_modal_scope`] /
-    /// [`FocusManager::pop_modal_scope`], routing the resulting focus
-    /// move through [`Self::notify_focus_change`]. Mirror of
-    /// `pinion_shell::ShellCore::drain_modal_request`, including R1456's
-    /// apply-the-whole-batch-in-order contract (§2 #6: the two backends
-    /// drain the same mailbox, so a fix on one side that skipped the
-    /// other would give GUI and TUI different modal stacks from
-    /// identical input). Returns `true` when a focus mutation committed
-    /// so [`Self::handle_tail`] can OR it into the repaint flag.
-    fn drain_modal_request(&mut self) -> bool {
-        let reqs = pinion_core::modal_scope_request::drain();
-        if reqs.is_empty() {
-            return false;
-        }
-        let focus_before = self.focus.focused().map(str::to_owned);
+    /// R693 §5.39 — apply a drained [`pinion_core::modal_scope_request`]
+    /// batch via [`FocusManager::push_modal_scope`] /
+    /// [`FocusManager::pop_modal_scope`]. Returns whether the modal stack
+    /// was actually **edited**, which [`Self::drain_focus_mailboxes`] gates
+    /// its repaint on: a dialog appearing or vanishing changes the frame
+    /// even when the focused tag is identical either side.
+    ///
+    /// Mirror of `pinion_shell::ShellCore::apply_modal_requests`, including
+    /// R1456's apply-the-whole-batch-in-order contract (§2 #6: the two
+    /// backends drain the same mailbox, so a fix on one side that skipped
+    /// the other would give GUI and TUI different modal stacks from
+    /// identical input).
+    fn apply_modal_requests(
+        &mut self,
+        reqs: Vec<pinion_core::modal_scope_request::ModalRequest>,
+    ) -> bool {
+        let mut edited = false;
         for req in reqs {
             match req {
                 pinion_core::modal_scope_request::ModalRequest::Open { members } => {
+                    edited = true;
                     self.focus.push_modal_scope(members)
                 }
                 pinion_core::modal_scope_request::ModalRequest::Close => {
+                    // A `Close` against an empty stack pops nothing, so it is
+                    // not an edit — `pop_modal_scope`'s own `false` cannot
+                    // report that, since it means "focus did not move".
+                    edited |= self.focus.is_modal();
                     self.focus.pop_modal_scope()
                 }
             };
         }
-        let changed = self.focus.focused() != focus_before.as_deref();
-        if changed {
-            self.notify_focus_change(focus_before.as_deref());
-            self.revision.bump();
-        }
-        changed
+        edited
     }
 
     /// R693 §5.39 — `true` while a modal focus trap is active. The
@@ -3432,5 +3452,178 @@ mod r1364_5_deferred_input_parity {
             "these are listed as unimplemented but the terminal drain now names \
              them: {stale:?}. Remove them from UNCLASSIFIED_TERMINAL_GAPS.",
         );
+    }
+}
+
+#[cfg(test)]
+mod modal_tail_focus_tests {
+    //! R1462 §5.41 §5.39 §2 #6 — the terminal mirror of
+    //! `pinion_shell::substrate::modal_tail_focus_tests`.
+    //!
+    //! The two backends drain the SAME `modal_scope_request` /
+    //! `focus_request` mailboxes through separately-written code, so §2 #6
+    //! parity here is not decorative: an untested mirror is exactly the
+    //! class of defect where GUI and TUI end up with different focus — and
+    //! different modal stacks — from identical input. R1456 fixed the
+    //! handoff on both backends but left the terminal side with **zero**
+    //! modal tests, registered as debt at the time; R1462 closes that in
+    //! the round that changes the drain again.
+    //!
+    //! Same fixture as the Vello suite
+    //! ([`pinion_core::test_fixtures::ModalTailFixture`]) rather than a
+    //! look-alike, so a divergence shows up as a differing assertion and
+    //! not as differing scaffolding.
+
+    use super::ShellCoreTui;
+    use pinion_core::modal_scope_request;
+    use pinion_core::test_fixtures::{
+        MODAL_TAIL_CONFIRM_OK as CONFIRM_OK, MODAL_TAIL_MENU_ROW as MENU_ROW,
+        MODAL_TAIL_OTHER_BG as OTHER_BG, MODAL_TAIL_TRIGGER as TRIGGER, ModalTailFixture,
+        clear_focus_arc_log, focus_arc_log,
+    };
+
+    /// A booted terminal substrate with two focusable background controls
+    /// and focus resting on the trigger. Mirror of the Vello suite's
+    /// `boot`, differing only in how the enumeration is seeded (the TUI
+    /// has no per-window focusable fold — it derives one enumeration from
+    /// the single paint).
+    fn boot() -> ShellCoreTui<ModalTailFixture> {
+        let _ = modal_scope_request::drain();
+        let _ = pinion_core::focus_request::drain();
+        let mut core = ShellCoreTui::<ModalTailFixture>::new();
+        core.focus
+            .update_focusable_tags(vec![TRIGGER.to_owned(), OTHER_BG.to_owned()]);
+        assert!(core.focus.focus_set(TRIGGER), "the invoker starts focused");
+        clear_focus_arc_log();
+        core
+    }
+
+    /// One dispatch frame's worth of requests reaches the focus stack.
+    fn open_menu(core: &mut ShellCoreTui<ModalTailFixture>) {
+        modal_scope_request::open(vec![MENU_ROW.to_owned()]);
+        core.drain_focus_mailboxes();
+    }
+
+    /// R1456 parity — a handoff replaces the scope instead of stacking on
+    /// it, on the terminal backend too. Untested until R1462.
+    #[test]
+    fn a_handoff_replaces_the_scope_instead_of_stacking_on_it() {
+        let mut core = boot();
+        open_menu(&mut core);
+        assert_eq!(core.focus().modal_depth(), 1);
+
+        modal_scope_request::close();
+        modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
+        core.drain_focus_mailboxes();
+
+        assert_eq!(
+            core.focus().modal_depth(),
+            1,
+            "the handoff REPLACES the menu's scope; a depth of 2 here is \
+             the dismissed menu still trapping focus",
+        );
+        assert_eq!(core.focus().active_tab_order(), [CONFIRM_OK.to_owned()]);
+        assert_eq!(core.focus().focused(), Some(CONFIRM_OK));
+    }
+
+    /// R1456 parity — closing the handed-off modal returns to depth 0 and
+    /// the whole base enumeration, so the background is focusable again.
+    /// This is the assertion that reproduces the reported live symptom.
+    #[test]
+    fn closing_the_handed_off_modal_leaves_no_ghost_scope() {
+        let mut core = boot();
+        open_menu(&mut core);
+        modal_scope_request::close();
+        modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
+        core.drain_focus_mailboxes();
+
+        modal_scope_request::close();
+        core.drain_focus_mailboxes();
+
+        assert_eq!(core.focus().modal_depth(), 0);
+        assert_eq!(
+            core.focus().active_tab_order(),
+            [TRIGGER.to_owned(), OTHER_BG.to_owned()],
+        );
+        assert_eq!(core.focus().focused(), Some(TRIGGER));
+        assert!(core.focus.focus_set(OTHER_BG), "background is live again");
+    }
+
+    /// R1462 acceptance — an explicit request beats the automatic restore
+    /// on the terminal backend identically.
+    #[test]
+    fn an_explicit_request_outranks_the_modal_restore() {
+        let mut core = boot();
+        open_menu(&mut core);
+
+        modal_scope_request::close();
+        pinion_core::focus_request::request(OTHER_BG);
+        let visible = core.drain_focus_mailboxes();
+
+        assert_eq!(core.focus().modal_depth(), 0);
+        assert_eq!(core.focus().focused(), Some(OTHER_BG));
+        assert!(visible, "focus moved, so the terminal must repaint");
+    }
+
+    /// R1462 acceptance — the automatic restore is still the default when
+    /// no explicit request competes.
+    #[test]
+    fn the_restore_still_wins_when_nothing_competes() {
+        let mut core = boot();
+        open_menu(&mut core);
+
+        modal_scope_request::close();
+        core.drain_focus_mailboxes();
+
+        assert_eq!(core.focus().focused(), Some(TRIGGER));
+    }
+
+    /// R1462 — one dispatch tail, one observable arc, on this backend too.
+    /// The transiently-restored invoker is never announced.
+    #[test]
+    fn a_close_and_request_report_one_focus_arc() {
+        let mut core = boot();
+        open_menu(&mut core);
+        clear_focus_arc_log();
+
+        modal_scope_request::close();
+        pinion_core::focus_request::request(OTHER_BG);
+        core.drain_focus_mailboxes();
+
+        assert_eq!(
+            focus_arc_log(),
+            vec![(MENU_ROW, false), (OTHER_BG, true)],
+            "TRIGGER, restored between the two, is never announced",
+        );
+    }
+
+    /// R1462 — the repaint gate. A frame that edits the modal stack but
+    /// moves no focus still changed what is painted (the dialog itself
+    /// appeared), and the TUI's only repaint signal is this return value.
+    /// Gating it on a focus move alone left such a frame unpainted.
+    #[test]
+    fn a_modal_edit_that_moves_no_focus_still_reports_a_visible_change() {
+        let mut core = boot();
+
+        // A trap whose first member IS the already-focused tag: the stack
+        // grows, the focused tag does not change.
+        modal_scope_request::open(vec![TRIGGER.to_owned()]);
+        let visible = core.drain_focus_mailboxes();
+
+        assert_eq!(core.focus().focused(), Some(TRIGGER), "focus stood still");
+        assert_eq!(core.focus().modal_depth(), 1, "but the trap went up");
+        assert!(
+            visible,
+            "the dialog appeared; a repaint gated on the focused tag alone \
+             would leave the terminal showing the frame before it",
+        );
+    }
+
+    /// R1462 — an empty pair of mailboxes is the quiescent steady state and
+    /// must report no change at all.
+    #[test]
+    fn an_empty_pair_of_mailboxes_reports_nothing() {
+        let mut core = boot();
+        assert!(!core.drain_focus_mailboxes());
     }
 }

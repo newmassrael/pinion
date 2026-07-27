@@ -26,6 +26,28 @@
 //! the race). The same widget body that races itself is a programmer
 //! error the substrate need not arbitrate.
 //!
+//! ## Precedence against the modal mailbox (R1462)
+//!
+//! This mailbox carries **explicit intent** — a binding naming where
+//! focus must end up. Its sibling [`crate::modal_scope_request`] carries
+//! **automatic policy**: WAI-ARIA's "focus moves into the dialog when it
+//! opens, returns to the invoker when it closes", whose restore target is
+//! a snapshot the substrate takes on its own.
+//!
+//! When one dispatch frame writes both, the shell applies the modal batch
+//! first and this request last, so the policy is a *default* a binding may
+//! override rather than a veto. The canonical shape is the command
+//! palette: a row that dismisses the palette, runs its command, and then
+//! focuses whatever the command produced. Draining this mailbox first
+//! (pre-R1462) made that unexpressible — `pop_modal_scope` commits its
+//! restore unconditionally, and when the command had removed the invoker
+//! the commit was `None`, leaving the window with no keyboard focus at
+//! all.
+//!
+//! A request the active modal trap does not enumerate is still refused:
+//! confinement outranks the request in turn, so a binding cannot walk
+//! focus out of an open dialog by accident.
+//!
 //! ## Why a `thread_local` mailbox over an `Owner` field
 //!
 //! `Owner` is reactive infrastructure that the shell may construct

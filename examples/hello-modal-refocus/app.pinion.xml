@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1462 §5.16 §5.50 — pinion-forge renderer manifest for
+  hello-modal-refocus. Same single-source-of-truth template that emits
+  the other hello-* renderers; only the struct name diverges.
+  backend=vello.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloModalRefocusRenderer"
+        backend="vello"/>

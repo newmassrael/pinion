@@ -62,6 +62,26 @@
 //! (`open` then `close` in one frame) well-defined — the trap opens and
 //! immediately lifts — rather than silently keeping only the `close`.
 //!
+//! ## Automatic policy, applied before explicit intent (R1462)
+//!
+//! What this mailbox carries is *policy*, not a destination: `open`
+//! auto-focuses the first member and `close` restores the invoker the
+//! substrate snapshotted at push time. Neither target is something the
+//! binding named. [`crate::focus_request`] is the channel that names one.
+//!
+//! So when a frame writes both, the shell applies this batch FIRST and
+//! the focus request LAST — the policy lands, then a binding that knows
+//! better replaces it. That ordering is what makes the command-palette
+//! shape expressible (dismiss the palette, run the row, focus what the
+//! row produced), and what makes "open this dialog with a *chosen*
+//! control focused" expressible: the push installs the trap before the
+//! request is applied, so the member is enumerated by the time
+//! `focus_set` looks at it.
+//!
+//! The confinement is not overridable, though — a request naming a tag
+//! the topmost trap does not enumerate is refused, so an open dialog
+//! cannot be escaped by a stray request in the same frame.
+//!
 //! [`QMessageBox::question`]: https://doc.qt.io/qt-6/qmessagebox.html
 
 use std::cell::RefCell;

@@ -29,7 +29,9 @@
 
 use core::fmt;
 
-use pinion_core::test_fixtures::{ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
+use pinion_core::test_fixtures::{
+    ContextMenuFixture, EchoButtonFixture, ModalTailFixture, ScrollbarMultiFixture,
+};
 
 use crate::{VelloContext, VelloRenderer, WidgetRenderer, WidgetView};
 
@@ -206,6 +208,20 @@ impl WidgetView for ScrollbarMultiFixture {
 /// right-click arc (`secondary_click_for_window` →
 /// `apply_secondary_click`) through its own wiring path.
 impl WidgetView for ContextMenuFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> crate::SizeStrategy {
+        crate::SizeStrategy::Fixed {
+            width: 8,
+            height: 8,
+        }
+    }
+}
+
+/// R1456 R1462 §5.39 — Vello-side `WidgetView` impl for the dispatch-tail
+/// modal-focus fixture, so the shell's `handle_tail` drain is tested
+/// against the same binding the TUI mirror uses.
+impl WidgetView for ModalTailFixture {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> crate::SizeStrategy {

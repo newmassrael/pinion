@@ -252,7 +252,7 @@ fn focus_request_to_a_just_painted_node_re_derives() {
     core.root_owner().run(|| editor_visible().set(true));
     pinion_core::focus_request::request(EDITOR_TAG);
 
-    // Drive the dispatch tail (handle_tail -> drain_focus_request). The current
+    // Drive the dispatch tail (handle_tail -> drain_focus_mailboxes). The current
     // enumeration (from the pre-signal paint) lacks EDITOR_TAG, so focus_set
     // misses; the R1020 re-derive re-runs the view (the editor now paints),
     // enumerates it, and the retry lands focus. Pre-R1020 this request would be

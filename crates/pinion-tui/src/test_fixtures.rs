@@ -28,7 +28,7 @@
 //! same time this impl compiles.
 
 use pinion_core::test_fixtures::{
-    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture,
+    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, ScrollbarMultiFixture,
 };
 use ratatui::backend::TestBackend;
 
@@ -76,5 +76,16 @@ impl WidgetViewTui for ScrollbarMultiFixture {
 /// pin the same popup-opens-at-press-point observable the Vello
 /// sibling pins.
 impl WidgetViewTui for ContextMenuFixture {
+    type Renderer = crate::TuiRenderer<TestBackend>;
+}
+
+/// R1456 R1462 §5.41 §5.39 — TUI-side `WidgetViewTui` impl for the
+/// dispatch-tail modal-focus fixture, so the terminal backend drives the
+/// modal drain through its OWN `handle_tail` wiring rather than trusting
+/// the Vello side's result. §2 #6: the two backends share the
+/// `modal_scope_request` / `focus_request` mailboxes, so an untested
+/// mirror is the class of defect where GUI and TUI end up with different
+/// focus — and different modal stacks — from identical input.
+impl WidgetViewTui for ModalTailFixture {
     type Renderer = crate::TuiRenderer<TestBackend>;
 }

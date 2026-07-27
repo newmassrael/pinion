@@ -184,6 +184,7 @@ members = [
     "examples/hello-column-visibility",
     "examples/hello-dialog",
     "examples/hello-modal-handoff",
+    "examples/hello-modal-refocus",
     "examples/hello-file-open-dialog",
     "examples/hello-file-save-dialog",
     "examples/hello-file-manager",

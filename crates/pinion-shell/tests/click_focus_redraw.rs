@@ -8,7 +8,7 @@
 //! immediately (so the next key routes there), but the focus *ring* lagged on
 //! the old pane until some unrelated event (a keypress' PTY echo) happened to
 //! repaint. Root cause: `click_to_focus_for_window` mutated the `FocusManager`
-//! but — unlike the programmatic `drain_focus_request` path — never paired the
+//! but — unlike the programmatic `drain_focus_mailboxes` path — never paired the
 //! mutation with `revision.bump()` + `request_redraw()`. The focus ring is
 //! injected at paint time (`apply_focus_ring`) and no reactive owner is dirtied
 //! by a focus mutation, so without an explicit request the next frame is never

@@ -547,6 +547,147 @@ impl WidgetCore for ContextMenuFixture {
     }
 }
 
+/// R1456 R1462 §5.39 — the invoker of [`ModalTailFixture`]: a background
+/// control that opens the modal, and the tag the trap's automatic restore
+/// aims at.
+pub const MODAL_TAIL_TRIGGER: &str = "trigger";
+/// R1462 §5.39 — a second background control. Proves the base enumeration
+/// comes back *whole* on pop, and serves as the target of an explicit
+/// focus request that competes with the automatic restore.
+pub const MODAL_TAIL_OTHER_BG: &str = "other_bg";
+/// R1456 §5.39 — the command menu's only member (modal A).
+pub const MODAL_TAIL_MENU_ROW: &str = "menu_row";
+/// R1456 §5.39 — the confirm dialog's only member (modal B).
+pub const MODAL_TAIL_CONFIRM_OK: &str = "confirm_ok";
+
+thread_local! {
+    /// `(tag, focused)` in dispatch order, appended by every
+    /// [`FocusArcRecorder`]. Thread-local, so parallel tests cannot see
+    /// each other's arcs.
+    static FOCUS_ARC_LOG: std::cell::RefCell<Vec<(&'static str, bool)>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
+/// R1456 R1462 §5.39 — the focus arc dispatched to [`ModalTailFixture`]'s
+/// externals since the last [`clear_focus_arc_log`], as `(tag, focused)`
+/// pairs in order.
+///
+/// A `ButtonExternal` only keeps the latest posture as a flag, which cannot
+/// distinguish "never notified" from "notified twice and back" — the exact
+/// distinction the one-arc-per-dispatch-tail claim rests on. Hence a
+/// recorder that keeps the sequence.
+#[must_use]
+pub fn focus_arc_log() -> Vec<(&'static str, bool)> {
+    FOCUS_ARC_LOG.with_borrow(Clone::clone)
+}
+
+/// R1456 R1462 §5.39 — drop everything [`focus_arc_log`] would report, so
+/// a test can assert on the arc of one specific dispatch.
+pub fn clear_focus_arc_log() {
+    FOCUS_ARC_LOG.with_borrow_mut(Vec::clear);
+}
+
+/// R1456 R1462 §5.39 — an [`External`] that records the focus arc the
+/// substrate dispatches to it into [`focus_arc_log`].
+#[derive(Debug)]
+pub struct FocusArcRecorder(&'static str);
+
+impl FocusArcRecorder {
+    /// Record under `tag` — the paint tag the substrate addresses this
+    /// external by.
+    #[must_use]
+    pub fn new(tag: &'static str) -> Self {
+        Self(tag)
+    }
+}
+
+impl External for FocusArcRecorder {
+    fn backends(&self) -> crate::external::BackendSupport {
+        crate::external::BackendSupport::new(
+            &[
+                crate::external::Backend::Gui,
+                crate::external::Backend::Tui,
+                crate::external::Backend::Rpc,
+            ],
+            crate::external::BackendFallback::Skip,
+        )
+    }
+    fn repaint_ownership(&self) -> crate::external::RepaintOwner {
+        crate::external::RepaintOwner::Framework
+    }
+    fn thread_ownership(&self) -> crate::external::ThreadOwnership {
+        crate::external::ThreadOwnership::UiThreadSync
+    }
+    fn on_focus_change(&mut self, focused: bool) {
+        FOCUS_ARC_LOG.with_borrow_mut(|log| log.push((self.0, focused)));
+    }
+}
+
+/// R1456 R1462 §5.39 — the dispatch-tail modal-focus fixture: four
+/// focusable [`FocusArcRecorder`] externals standing in for the two
+/// background controls and the two modals' members.
+///
+/// Two consumer field reports drive it, one per backend, because §2 #6
+/// makes the modal drain a *mirrored* seam — a fix on one backend alone
+/// would give GUI and TUI different focus from identical input:
+///
+/// - `pinion-shell::substrate::modal_tail_focus_tests` (R1456 handoff,
+///   R1462 explicit-over-automatic precedence).
+/// - `pinion-tui::substrate::modal_tail_focus_tests` (the mirror; before
+///   R1462 the terminal drain had no modal test at all).
+///
+/// The view is a bare tagged [`Scene::Container`], deliberately: these
+/// tests drive [`crate::modal_scope_request`] / [`crate::focus_request`]
+/// against a real focus manager, and the enumeration is seeded by the test
+/// rather than derived from paint, so the fixture must not paint focusable
+/// nodes that would compete with it.
+pub struct ModalTailFixture;
+
+impl WidgetCore for ModalTailFixture {
+    type State = ();
+    type Event = ();
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(FocusArcRecorder::new(MODAL_TAIL_TRIGGER))
+    }
+
+    fn create_extra_externals() -> Vec<crate::widget_core::ExtraExternal> {
+        vec![
+            crate::widget_core::ExtraExternal::new(
+                MODAL_TAIL_OTHER_BG,
+                Box::new(FocusArcRecorder::new(MODAL_TAIL_OTHER_BG)),
+            ),
+            crate::widget_core::ExtraExternal::new(
+                MODAL_TAIL_MENU_ROW,
+                Box::new(FocusArcRecorder::new(MODAL_TAIL_MENU_ROW)),
+            ),
+            crate::widget_core::ExtraExternal::new(
+                MODAL_TAIL_CONFIRM_OK,
+                Box::new(FocusArcRecorder::new(MODAL_TAIL_CONFIRM_OK)),
+            ),
+        ]
+    }
+
+    fn tag() -> &'static str {
+        MODAL_TAIL_TRIGGER
+    }
+
+    fn read_state(_scene: &Scene) -> Self::State {}
+
+    fn view((): Self::State, _frame: &Frame) -> Scene {
+        Scene::Container(ContainerNode::new(Vec::new()).with_tag(MODAL_TAIL_TRIGGER))
+    }
+
+    fn event_name((): Self::Event) -> &'static str {
+        "__internal__"
+    }
+
+    fn title() -> &'static str {
+        "ModalTailFixture"
+    }
+}
+
 /// R51.167 §5.23 R27 — substrate-level reducer test fixture.
 ///
 /// Reuses [`ButtonFixture`]'s External / paint / `read_state` /

@@ -23,7 +23,7 @@
 //! [`ButtonFixture`]: pinion_core::test_fixtures::ButtonFixture
 
 use pinion_core::test_fixtures::{
-    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture,
+    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, ScrollbarMultiFixture,
 };
 
 use crate::widget_a11y::WidgetA11y;
@@ -50,3 +50,10 @@ impl WidgetA11y for EchoButtonFixture {}
 /// applies identically (trait lives here, fixture lives in
 /// `pinion-core`).
 impl WidgetA11y for ContextMenuFixture {}
+
+/// R1456 R1462 §5.40 §5.39 — atomic-default `WidgetA11y` impl for the
+/// dispatch-tail modal-focus fixture [`ModalTailFixture`]. Same
+/// default-empty shape as [`ButtonFixture`]; the orphan-rule placement
+/// rationale applies identically (trait lives here, fixture lives in
+/// `pinion-core`).
+impl WidgetA11y for ModalTailFixture {}
