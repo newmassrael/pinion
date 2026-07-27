@@ -74,17 +74,21 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
     SchemaField, ThreadOwnership,
 };
+use pinion_core::reactive::measured_monospace_cell;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::style::GenericFontFamily;
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::column_layout::{
-    ColumnLayout, ColumnLayoutView, SectionPlacement, read_column_layout,
+    ColumnLayout, ColumnLayoutView, SectionPlacement, SectionResizeMode, read_column_layout,
+    use_column_layout,
 };
 use pinion_core::{Frame, Intent, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use std::borrow::Cow;
+use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloColumnReorderRenderer, HelloColumnReorderRendererError);
@@ -153,6 +157,70 @@ const HDR_H: u32 = 40;
 const ROW_H: u32 = 34;
 /// Resize step for the `[` / `]` keyboard gesture.
 const RESIZE_STEP: u32 = 20;
+/// R1452 — cache key for the shared [`ColumnLayout`]: the External mutates it,
+/// the view fn publishes the two inputs only the view knows.
+const LAYOUT_KEY: &str = "colreorder.layout";
+/// R1452 — one text size for both the header and the body, so a single
+/// measured monospace cell answers for every cell in the grid.
+const TEXT_PX: u32 = 13;
+/// Horizontal padding inside a section, both sides — what a content-fitted
+/// column needs on top of its text.
+const CELL_PAD: u32 = 12;
+/// The width a `Stretch` row divides: the grid's span inside the window.
+const AVAILABLE_W: u32 = WIN_W - 2 * GRID_X;
+
+/// R1452 — the monospace face BOTH the header and the body paint in, so one
+/// measured cell answers for every string in the grid. `pinion_text` builds
+/// the very same style to measure that cell, which is what makes the content
+/// hint below exact rather than an estimate.
+fn grid_text(role: ColorRole, theme: &Theme) -> TextStyle {
+    TextStyle::new()
+        .with_size_px(TEXT_PX)
+        .with_generic_family(GenericFontFamily::Monospace)
+        .with_fg(theme.resolve(role))
+}
+
+/// The longest string logical column `logical` has to show, in characters —
+/// its header label or one of its cells.
+fn widest_chars(logical: usize) -> u32 {
+    let longest = std::iter::once(HEADERS[logical])
+        .chain((0..NROWS).map(|r| cell_text(r, logical)))
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(0);
+    u32::try_from(longest).unwrap_or(0)
+}
+
+/// R1452 — the per-logical-section content size hints: the peer of Qt's
+/// delegate `sizeHint`, which is where Qt gets them too (`QHeaderView` does not
+/// measure either).
+///
+/// Measured, and an **upper bound** rather than an exact width: the cells are
+/// monospace, so the longest string needs its character count times the
+/// per-character advance — but [`CellMetric`](pinion_core::cell_metric::CellMetric)
+/// reports that advance as a whole number of pixels, so a face whose real
+/// advance is 6.5px measures 7 and the hint runs up to one pixel per character
+/// wide. That is the right direction for a size hint (the content always fits;
+/// it is never clipped) and the demo pins the band it must stay inside.
+///
+/// Headless — no metrics provider — yields `None`, and the caller then
+/// publishes nothing rather than a made-up number.
+fn content_hints() -> Option<Vec<u32>> {
+    let cell = measured_monospace_cell(TEXT_PX)?;
+    Some(
+        (0..NCOLS)
+            .map(|l| 2 * CELL_PAD + widest_chars(l) * cell.cell_w())
+            .collect(),
+    )
+}
+
+/// R1452 — the one-letter code the readout row shows for a section's mode,
+/// derived from the wire spelling rather than tabled again (`interactive` /
+/// `fixed` / `stretch` / `resize_to_contents` have four distinct initials, so
+/// the derivation is total).
+fn mode_code(mode: SectionResizeMode) -> char {
+    mode.as_wire().chars().next().unwrap_or('?')
+}
 
 /// The section paint / hit tag for visual position `i` (`"colhdr#0"` …).
 fn section_tag(visual: usize) -> String {
@@ -167,13 +235,16 @@ fn section_tag(visual: usize) -> String {
 /// [`ColumnLayout::visible_placements`].
 #[derive(Debug)]
 struct ColumnHeaderExternal {
-    layout: ColumnLayout,
+    layout: Rc<ColumnLayout>,
 }
 
 impl ColumnHeaderExternal {
+    /// R1452 — resolves the SHARED layout rather than owning one, because the
+    /// view fn has to publish two inputs only it knows: the measured content
+    /// hints and the width a `Stretch` row divides.
     fn new() -> Self {
         Self {
-            layout: ColumnLayout::new(SECTION_W.to_vec()),
+            layout: use_column_layout(LAYOUT_KEY, || SECTION_W.to_vec()),
         }
     }
 }
@@ -232,6 +303,19 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     SchemaField::new("visible_widths", "json"),
                     SchemaField::new("visible_total", "int"),
                     SchemaField::new("hidden_count", "int"),
+                    SchemaField::new("resize_modes", "json"),
+                    SchemaField::new("content_widths", "json"),
+                    SchemaField::new("available_width", "int"),
+                    SchemaField::parametric(
+                        "resize_mode.<logical>",
+                        "string",
+                        const { &[SchemaArg::index("logical", "count")] },
+                    ),
+                    SchemaField::parametric(
+                        "content_width.<logical>",
+                        "int",
+                        const { &[SchemaArg::index("logical", "count")] },
+                    ),
                     SchemaField::new("preview", "json"),
                     SchemaField::new("focused_index", "int"),
                     SchemaField::new("grabbed", "boolean"),
@@ -267,6 +351,8 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     SchemaField::new("swap_sections", "string"),
                     SchemaField::new("resize_section", "string"),
                     SchemaField::new("set_section_hidden", "string"),
+                    SchemaField::new("set_resize_mode", "string"),
+                    SchemaField::new("set_all_resize_modes", "string"),
                     SchemaField::new("grab", "boolean"),
                     SchemaField::new("grab_cancel", "string"),
                 ]
@@ -338,6 +424,8 @@ struct HeaderState {
     sizes: [u32; NCOLS],
     /// Per-**logical**-section hidden flag.
     hidden: [bool; NCOLS],
+    /// R1452 — per-**logical**-section sizing policy.
+    modes: [SectionResizeMode; NCOLS],
     /// The painted sections; only `[..painted]` is meaningful.
     placements: [SectionPlacement; NCOLS],
     /// How many sections are painted (`NCOLS` minus the hidden ones).
@@ -359,6 +447,7 @@ impl Default for HeaderState {
             order: IDENTITY_ORDER,
             sizes: SECTION_W,
             hidden: [false; NCOLS],
+            modes: [SectionResizeMode::Interactive; NCOLS],
             placements: [SectionPlacement::default(); NCOLS],
             painted: 0,
             dragging: None,
@@ -412,6 +501,9 @@ impl HeaderState {
         }
         if let Ok(hidden) = <[bool; NCOLS]>::try_from(view.state.hidden.clone()) {
             self.hidden = hidden;
+        }
+        if let Ok(modes) = <[SectionResizeMode; NCOLS]>::try_from(view.state.modes.clone()) {
+            self.modes = modes;
         }
         self.painted = view.placements.len().min(NCOLS);
         for (slot, p) in self.placements.iter_mut().zip(&view.placements) {
@@ -468,6 +560,27 @@ fn logical_at(intro: &dyn ExternalIntrospect, cursor: Option<usize>) -> Option<u
     }
 }
 
+/// R1452 — the sizing policy of logical section `logical`, read back through
+/// the same wire slot an RPC client would use.
+fn read_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMode {
+    match intro.query(&format!("resize_mode.{logical}")) {
+        Some(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
+        _ => SectionResizeMode::default(),
+    }
+}
+
+/// The next mode in the `m`-key cycle. Ordered so the two stored-size modes sit
+/// together and the two derived ones follow, which is the order the readout
+/// reads.
+fn next_mode(mode: SectionResizeMode) -> SectionResizeMode {
+    match mode {
+        SectionResizeMode::Interactive => SectionResizeMode::Fixed,
+        SectionResizeMode::Fixed => SectionResizeMode::Stretch,
+        SectionResizeMode::Stretch => SectionResizeMode::ResizeToContents,
+        SectionResizeMode::ResizeToContents => SectionResizeMode::Interactive,
+    }
+}
+
 /// The painted section `delta` steps along the strip from `cursor` (clamped at
 /// the ends). With no cursor yet, entering from the left starts at the first
 /// section and from the right at the last.
@@ -479,6 +592,86 @@ fn step_visual(visuals: &[usize], cursor: Option<usize>, delta: i64) -> Option<u
         None => last,
     };
     visuals.get(usize::try_from(next).unwrap_or(0)).copied()
+}
+
+/// Qt `setSectionHidden` as a keyboard gesture. The cursor then steps off the
+/// section it just hid, because a cursor on an unpainted section has nothing to
+/// point at.
+fn toggle_hidden_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
+    let Some(logical) = logical_at(&*intro, cursor) else {
+        return false;
+    };
+    let hidden = matches!(
+        intro.query(&format!("section_hidden.{logical}")),
+        Some(IntrospectValue::Bool(true))
+    );
+    if intro
+        .invoke(
+            "set_section_hidden",
+            IntrospectValue::Text(format!("{logical}:{}", !hidden)),
+        )
+        .is_err()
+    {
+        return false;
+    }
+    let after = visible_visuals(&*intro);
+    if let Some(next) = cursor.and_then(|c| {
+        after
+            .iter()
+            .find(|&&v| v >= c)
+            .or_else(|| after.last())
+            .copied()
+    }) {
+        set_cursor(intro, next);
+    }
+    true
+}
+
+/// R1452 — Qt `setSectionResizeMode`, cycled in place. The whole row re-sizes
+/// when a `Stretch` section joins or leaves it, which is why the model answers
+/// with the resulting widths.
+fn cycle_mode_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
+    let Some(logical) = logical_at(&*intro, cursor) else {
+        return false;
+    };
+    let next = next_mode(read_mode(&*intro, logical));
+    intro
+        .invoke(
+            "set_resize_mode",
+            IntrospectValue::Text(format!("{logical}:{next}")),
+        )
+        .is_ok()
+}
+
+/// Qt `resizeSection` — the size is keyed by the logical section, so a column
+/// widened here stays wide wherever it is dragged next.
+///
+/// R1452 — but only where the mode says a USER may resize. `Fixed` is exactly
+/// the mode that refuses this while still accepting the programmatic
+/// `resize_section`, so the gate is the mode's own predicate rather than a
+/// second rule stated here.
+fn nudge_size_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>, grow: bool) -> bool {
+    let Some(logical) = logical_at(&*intro, cursor) else {
+        return false;
+    };
+    if !read_mode(&*intro, logical).user_resizable() {
+        return false;
+    }
+    let size = match intro.query(&format!("section_size.{logical}")) {
+        Some(IntrospectValue::Int(n)) => u32::try_from(n).unwrap_or(0),
+        _ => return false,
+    };
+    let next = if grow {
+        size.saturating_add(RESIZE_STEP)
+    } else {
+        size.saturating_sub(RESIZE_STEP)
+    };
+    intro
+        .invoke(
+            "resize_section",
+            IntrospectValue::Text(format!("{logical}:{next}")),
+        )
+        .is_ok()
 }
 
 /// Move the keyboard cursor to visual index `target`.
@@ -508,11 +701,14 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
         TextNode::styled(
             HEADERS[p.logical],
             Rect::default(),
-            TextStyle::new().with_size_px(14).with_fg(if is_dragged {
-                theme.resolve(ColorRole::OnSurfaceMuted)
-            } else {
-                theme.resolve(ColorRole::OnSurface)
-            }),
+            grid_text(
+                if is_dragged {
+                    ColorRole::OnSurfaceMuted
+                } else {
+                    ColorRole::OnSurface
+                },
+                theme,
+            ),
         )
         .with_tag(format!("colhdr_label#{visual}"))
         .with_layout(LayoutStyle::new().with_absolute_position(12, 12)),
@@ -573,9 +769,7 @@ fn body_cell(row: usize, p: &SectionPlacement, theme: &Theme) -> Scene {
         TextNode::styled(
             cell_text(row, p.logical),
             Rect::default(),
-            TextStyle::new()
-                .with_size_px(13)
-                .with_fg(theme.resolve(ColorRole::OnSurface)),
+            grid_text(ColorRole::OnSurface, theme),
         )
         .with_tag(format!("{BODY_TAG}#{row_i}_{visual}"))
         .with_layout(LayoutStyle::new().with_absolute_position(12, 9)),
@@ -603,11 +797,22 @@ fn body_cell(row: usize, p: &SectionPlacement, theme: &Theme) -> Scene {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &HeaderState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
+    // R1452 — publish into the shared layout what only the view knows: the
+    // width a `Stretch` row divides, and the MEASURED content hints a
+    // `ResizeToContents` section sizes to. Both are constant for this grid, so
+    // only the very first frame paints before them (the measure-then-settle
+    // warmup every measured seam in the tree has); a grid whose content
+    // changes republishes here each frame for the same reason.
+    let layout = use_column_layout(LAYOUT_KEY, || SECTION_W.to_vec());
+    layout.set_available_width(Some(AVAILABLE_W));
+    if let Some(hints) = content_hints() {
+        layout.set_content_widths(hints);
+    }
     let mut children: Vec<Scene> = Vec::with_capacity(NCOLS * (NROWS + 1) + 4);
 
     let caption = Scene::Text(
         TextNode::styled(
-            "Drag a header to move its column; [ ] resize, h hides",
+            "Drag a header to move it; [ ] resize, h hides, m cycles sizing",
             Rect::default(),
             TextStyle::new()
                 .with_size_px(14)
@@ -643,7 +848,7 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
     let layout_row = Scene::Text(
         TextNode::styled(
             format!(
-                "sizes {} | hidden {}",
+                "sizes {} | hidden {} | modes {}",
                 state
                     .sizes
                     .iter()
@@ -656,6 +861,11 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
                 } else {
                     hidden.join(" ")
                 },
+                state
+                    .modes
+                    .iter()
+                    .map(|m| mode_code(*m))
+                    .collect::<String>(),
             ),
             Rect::default(),
             TextStyle::new()
@@ -783,59 +993,11 @@ impl WidgetCore for ColumnReorderView {
             }
             "Escape" => grabbed && intro.invoke("grab_cancel", IntrospectValue::Null).is_ok(),
             // Qt `setSectionHidden` — the column chooser as a keyboard gesture.
-            // The cursor then steps off the section it just hid, because a
-            // cursor on an unpainted section has nothing to point at.
-            "h" => {
-                let Some(logical) = logical_at(&*intro, cursor) else {
-                    return false;
-                };
-                let hidden = matches!(
-                    intro.query(&format!("section_hidden.{logical}")),
-                    Some(IntrospectValue::Bool(true))
-                );
-                if intro
-                    .invoke(
-                        "set_section_hidden",
-                        IntrospectValue::Text(format!("{logical}:{}", !hidden)),
-                    )
-                    .is_err()
-                {
-                    return false;
-                }
-                let after = visible_visuals(&*intro);
-                if let Some(next) = cursor.and_then(|c| {
-                    after
-                        .iter()
-                        .find(|&&v| v >= c)
-                        .or_else(|| after.last())
-                        .copied()
-                }) {
-                    set_cursor(intro, next);
-                }
-                true
-            }
-            // Qt `resizeSection` — the size is keyed by the logical section, so
-            // a column widened here stays wide wherever it is dragged next.
-            "]" | "[" => {
-                let Some(logical) = logical_at(&*intro, cursor) else {
-                    return false;
-                };
-                let size = match intro.query(&format!("section_size.{logical}")) {
-                    Some(IntrospectValue::Int(n)) => u32::try_from(n).unwrap_or(0),
-                    _ => return false,
-                };
-                let next = if key == "]" {
-                    size.saturating_add(RESIZE_STEP)
-                } else {
-                    size.saturating_sub(RESIZE_STEP)
-                };
-                intro
-                    .invoke(
-                        "resize_section",
-                        IntrospectValue::Text(format!("{logical}:{next}")),
-                    )
-                    .is_ok()
-            }
+            "h" => toggle_hidden_at(intro, cursor),
+            // R1452 — Qt `setSectionResizeMode`, cycled in place.
+            "m" => cycle_mode_at(intro, cursor),
+            // Qt `resizeSection`, gated by the mode (R1452).
+            "]" | "[" => nudge_size_at(intro, cursor, key == "]"),
             _ => false,
         }
     }
@@ -846,8 +1008,8 @@ impl WidgetCore for ColumnReorderView {
 
     fn fmt_state_log(state: &HeaderState) -> String {
         format!(
-            "order={:?} sizes={:?} hidden={:?} focused={:?}",
-            state.order, state.sizes, state.hidden, state.focused
+            "order={:?} sizes={:?} hidden={:?} modes={:?} focused={:?}",
+            state.order, state.sizes, state.hidden, state.modes, state.focused
         )
     }
 }
@@ -901,16 +1063,23 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::reactive::Owner;
     use pinion_core::scene::ExternalNode;
 
+    /// R1452 — the external resolves the SHARED layout through
+    /// `use_column_layout`, so a test builds it inside an owner scope exactly
+    /// as the shell does. A fresh scope per call is a fresh layout, which is
+    /// what each test wants; the `Rc` the external keeps outlives the scope.
     fn fresh() -> ColumnHeaderExternal {
-        ColumnHeaderExternal::new()
+        Owner::new().run(ColumnHeaderExternal::new)
     }
 
     fn boot_scene() -> Scene {
-        Scene::Container(ContainerNode::new(vec![Scene::External(
-            ExternalNode::new(ColumnReorderView::create_external()).with_tag(HDR_TAG),
-        )]))
+        Owner::new().run(|| {
+            Scene::Container(ContainerNode::new(vec![Scene::External(
+                ExternalNode::new(ColumnReorderView::create_external()).with_tag(HDR_TAG),
+            )]))
+        })
     }
 
     fn press(scene: &mut Scene, key: &str) -> bool {
@@ -1276,6 +1445,110 @@ mod tests {
         assert_eq!(restored.sizes, arranged.sizes);
         assert_eq!(restored.hidden, arranged.hidden);
         assert_eq!(restored.labels(), arranged.labels());
+    }
+
+    #[test]
+    fn r1452_the_mode_key_cycles_and_the_resize_key_obeys_it() {
+        // §2 #2 — one model, two doors: `m` reaches the same
+        // `set_resize_mode` an RPC client calls, and `[` / `]` is gated by the
+        // mode's OWN predicate rather than a second rule in the binding.
+        let mut scene = boot_scene();
+        assert!(press(&mut scene, "ArrowRight"), "cursor onto Name");
+
+        assert!(press(&mut scene, "m"), "Interactive -> Fixed");
+        let state = read_header_state(&scene);
+        assert_eq!(state.modes[0], SectionResizeMode::Fixed);
+        // Fixed is precisely the mode a user may not drag but a program may set.
+        assert!(!press(&mut scene, "]"), "the key is refused");
+        assert_eq!(
+            read_header_state(&scene).sizes[0],
+            SECTION_W[0],
+            "unchanged"
+        );
+        let after = after(&mut scene, |i| {
+            i.invoke("resize_section", IntrospectValue::Text("0:220".into()))
+                .expect("but the programmatic path still works");
+        });
+        assert_eq!(after.sizes[0], 220);
+
+        assert!(press(&mut scene, "m"), "Fixed -> Stretch");
+        assert_eq!(
+            read_header_state(&scene).modes[0],
+            SectionResizeMode::Stretch
+        );
+        assert!(
+            !press(&mut scene, "]"),
+            "a derived section is not user-sized"
+        );
+        assert!(press(&mut scene, "m"), "Stretch -> ResizeToContents");
+        assert!(press(&mut scene, "m"), "and back to Interactive");
+        assert_eq!(
+            read_header_state(&scene).modes[0],
+            SectionResizeMode::Interactive
+        );
+        assert!(press(&mut scene, "]"), "which the user may size again");
+        assert_eq!(read_header_state(&scene).sizes[0], 220 + RESIZE_STEP);
+    }
+
+    #[test]
+    fn r1452_a_stretch_row_fills_the_width_the_view_publishes() {
+        let mut scene = boot_scene();
+        let state = after(&mut scene, |i| {
+            // The view fn publishes this every frame; a test says it directly.
+            i.intervene(
+                "available_width",
+                IntrospectValue::Int(i64::from(AVAILABLE_W)),
+            )
+            .expect("publish the viewport");
+            i.invoke("set_resize_mode", IntrospectValue::Text("1:stretch".into()))
+                .expect("Type stretches");
+            i.invoke("set_resize_mode", IntrospectValue::Text("4:stretch".into()))
+                .expect("Owner too");
+        });
+        // 640 less Name(150) + Size(100) + Modified(130) = 260, split two ways.
+        assert_eq!(
+            state
+                .placements()
+                .iter()
+                .map(|p| p.size)
+                .collect::<Vec<_>>(),
+            vec![150, 130, 100, 130, 130]
+        );
+        assert_eq!(state.total_w(), AVAILABLE_W, "the row fills the strip");
+    }
+
+    #[test]
+    fn r1452_the_content_hint_is_the_longest_string_each_column_shows() {
+        // The hint's only invented part would be the character count, so pin
+        // it: the widths themselves come from the measured monospace cell.
+        assert_eq!(widest_chars(0), 10, "report.pdf is longer than Name");
+        assert_eq!(widest_chars(1), 5, "Image / Video beat Type");
+        assert_eq!(widest_chars(2), 6, "2.1 MB beats Size");
+        assert_eq!(widest_chars(3), 10, "a date beats Modified");
+        assert_eq!(widest_chars(4), 5, "Owner ties guest");
+        // With no metrics provider (this test, and any headless harness) the
+        // binding publishes NOTHING rather than a made-up number.
+        assert_eq!(Owner::new().run(content_hints), None);
+    }
+
+    #[test]
+    fn r1452_the_mode_code_is_derived_from_the_wire_spelling() {
+        // Four distinct initials, so the readout's one-letter code needs no
+        // second table that could drift from the wire names.
+        let codes: Vec<char> = [
+            SectionResizeMode::Interactive,
+            SectionResizeMode::Fixed,
+            SectionResizeMode::Stretch,
+            SectionResizeMode::ResizeToContents,
+        ]
+        .into_iter()
+        .map(mode_code)
+        .collect();
+        assert_eq!(codes, ['i', 'f', 's', 'r']);
+        let mut sorted = codes.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), codes.len(), "the codes must stay distinct");
     }
 
     #[test]

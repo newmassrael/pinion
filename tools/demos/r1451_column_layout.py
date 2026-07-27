@@ -80,7 +80,15 @@ LABEL_INSET = 12
 # The `[` / `]` keyboard step.
 STEP = 20
 
-IDENTITY = {"order": [0, 1, 2, 3, 4], "sizes": BOOT_W, "hidden": [False] * NCOLS}
+# R1452 added the sizing policy to the saved state (Qt's saveState carries it
+# too), so the boot snapshot is this shape now — the assertions below still
+# check "saveState reads the WHOLE thing", which is why they moved with it.
+IDENTITY = {
+    "order": [0, 1, 2, 3, 4],
+    "sizes": BOOT_W,
+    "hidden": [False] * NCOLS,
+    "modes": ["interactive"] * NCOLS,
+}
 
 
 def _paint(tf):

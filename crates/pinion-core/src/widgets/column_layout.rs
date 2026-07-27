@@ -71,7 +71,7 @@ use std::rc::Rc;
 
 use crate::composite_tag::parse_pair;
 use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
-use crate::reactive::Signal;
+use crate::reactive::{Owner, Signal};
 use crate::widgets::column_widths::ColumnWidths;
 use crate::widgets::reorder::{ReorderAxis, ReorderModel};
 
@@ -91,6 +91,10 @@ pub struct ColumnLayoutState {
     pub sizes: Vec<u32>,
     /// Per-**logical**-section hidden flag.
     pub hidden: Vec<bool>,
+    /// R1452 — per-**logical**-section sizing policy. Qt's `saveState` carries
+    /// the modes too; a snapshot without them (one taken before R1452) decodes
+    /// as all-`Interactive`, so an older saved layout still restores.
+    pub modes: Vec<SectionResizeMode>,
 }
 
 impl ColumnLayoutState {
@@ -103,6 +107,7 @@ impl ColumnLayoutState {
             "order": self.order,
             "sizes": self.sizes,
             "hidden": self.hidden,
+            "modes": self.modes.iter().map(|m| m.as_wire()).collect::<Vec<_>>(),
         })
     }
 
@@ -132,10 +137,22 @@ impl ColumnLayoutState {
             .iter()
             .map(serde_json::Value::as_bool)
             .collect::<Option<_>>()?;
+        // R1452 — absent `modes` is the pre-R1452 snapshot shape and decodes as
+        // all-`Interactive`; PRESENT but malformed is still an error, so a
+        // client that meant to set a mode and misspelled it is told so.
+        let modes: Vec<SectionResizeMode> = match value.get("modes") {
+            None => vec![SectionResizeMode::default(); hidden.len()],
+            Some(v) => v
+                .as_array()?
+                .iter()
+                .map(|m| m.as_str()?.parse().ok())
+                .collect::<Option<_>>()?,
+        };
         Some(Self {
             order,
             sizes,
             hidden,
+            modes,
         })
     }
 }
@@ -164,6 +181,86 @@ pub struct SectionPlacement {
     pub size: u32,
 }
 
+/// R1452 §5.27 — where a section's size **comes from**: Qt's
+/// `QHeaderView::setSectionResizeMode`.
+///
+/// Before this, every pinion grid had exactly one policy — a stored number —
+/// so a column could not fill the viewport and could not fit its content. The
+/// mode is per **logical** section, like the size it governs.
+///
+/// The two questions the rest of the module asks are separate, because Qt
+/// answers them differently: [`stores_size`](Self::stores_size) decides whether
+/// the size is the stored one or a derived one, and
+/// [`user_resizable`](Self::user_resizable) decides whether a *human gesture*
+/// may change it. `Fixed` is the mode where those differ — a program may
+/// resize it, a drag may not.
+// `Signal` snapshots its value (`Owner::snapshot`), so a mode vector held in
+// one must be serde round-trippable — the `GridSortState::SortDir` precedent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SectionResizeMode {
+    /// The stored size, and the user may drag it. Qt's default.
+    #[default]
+    Interactive,
+    /// The stored size, but only a program may change it.
+    Fixed,
+    /// The section divides whatever width the other sections leave over.
+    Stretch,
+    /// The section takes its content's size hint
+    /// ([`set_content_widths`](ColumnLayout::set_content_widths)).
+    ResizeToContents,
+}
+
+impl SectionResizeMode {
+    /// Whether the size is the **stored** one rather than derived. The two
+    /// derived modes ignore what [`resize_section`](ColumnLayout::resize_section)
+    /// was last given, exactly as Qt does.
+    #[must_use]
+    pub fn stores_size(self) -> bool {
+        matches!(self, Self::Interactive | Self::Fixed)
+    }
+
+    /// Whether a **user gesture** may change the size. Only `Interactive` —
+    /// `Fixed` is precisely the mode that is programmatically settable and
+    /// interactively frozen.
+    #[must_use]
+    pub fn user_resizable(self) -> bool {
+        matches!(self, Self::Interactive)
+    }
+
+    /// The wire spelling, and the inverse of [`FromStr`](std::str::FromStr).
+    #[must_use]
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Fixed => "fixed",
+            Self::Stretch => "stretch",
+            Self::ResizeToContents => "resize_to_contents",
+        }
+    }
+}
+
+impl std::str::FromStr for SectionResizeMode {
+    type Err = ();
+
+    /// One spelling per mode, no aliases: a client that guessed wrong gets an
+    /// error rather than a silently different policy.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "interactive" => Ok(Self::Interactive),
+            "fixed" => Ok(Self::Fixed),
+            "stretch" => Ok(Self::Stretch),
+            "resize_to_contents" => Ok(Self::ResizeToContents),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for SectionResizeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_wire())
+    }
+}
+
 /// R1451 §5.27 §5.51 — order × size × visibility for one grid's columns,
 /// keyed as `QHeaderView` keys them. See the [module docs](self) for the
 /// ownership split; construct one per grid and let the header `External`
@@ -184,6 +281,21 @@ pub struct ColumnLayout {
     /// `hidden[logical]` — reactive, so a view-fn that reads the projection
     /// re-runs when a column is hidden.
     hidden: Signal<Vec<bool>>,
+    /// R1452 — `modes[logical]`: where each section's size comes from.
+    modes: Signal<Vec<SectionResizeMode>>,
+    /// R1452 — `content_widths[logical]`: the size hint a
+    /// [`SectionResizeMode::ResizeToContents`] section takes.
+    ///
+    /// Supplied by the consumer, because that is where the answer is: Qt's
+    /// `QHeaderView` does not measure either — `sectionSizeFromContents()`
+    /// asks the model / delegate for a `sizeHint`. A grid that measures its
+    /// cells feeds the measurement in here; one that knows its content
+    /// (fixed-format columns, a monospace grid) computes it directly.
+    content_widths: Signal<Vec<u32>>,
+    /// R1452 — the width [`SectionResizeMode::Stretch`] sections divide.
+    /// `None` until a consumer publishes its viewport, in which case a
+    /// `Stretch` section falls back to its stored size rather than collapsing.
+    available_width: Signal<Option<u32>>,
 }
 
 impl ColumnLayout {
@@ -200,11 +312,18 @@ impl ColumnLayout {
     #[must_use]
     pub fn with_widths(sizes: Rc<ColumnWidths>) -> Self {
         let count = sizes.col_count();
+        let content = sizes.widths();
         Self {
             count,
             sections: ReorderModel::new(count, ReorderAxis::Horizontal),
             sizes,
             hidden: Signal::new(vec![false; count]),
+            modes: Signal::new(vec![SectionResizeMode::default(); count]),
+            // Seeded from the initial sizes so a section switched to
+            // `ResizeToContents` before its consumer has published a hint
+            // keeps its width instead of collapsing to the floor.
+            content_widths: Signal::new(content),
+            available_width: Signal::new(None),
         }
     }
 
@@ -277,26 +396,118 @@ impl ColumnLayout {
         self.sections.set_order(&order);
     }
 
-    /// Size of logical section `logical` — Qt's `sectionSize()`. `0` for an
-    /// unknown section (Qt's answer too), which is *not* the same as a hidden
-    /// one: a hidden section keeps its size and gets it back when shown.
+    /// R1452 — where logical section `logical` takes its size from — Qt's
+    /// `sectionResizeMode()`.
+    #[must_use]
+    pub fn resize_mode(&self, logical: usize) -> SectionResizeMode {
+        self.modes.get().get(logical).copied().unwrap_or_default()
+    }
+
+    /// R1452 — set one section's sizing policy — Qt's
+    /// `setSectionResizeMode(logicalIndex, mode)`. Out of range is a no-op.
+    pub fn set_resize_mode(&self, logical: usize, mode: SectionResizeMode) {
+        if logical >= self.count {
+            return;
+        }
+        self.modes.set_with(|m| {
+            let mut next = m.clone();
+            if let Some(slot) = next.get_mut(logical) {
+                *slot = mode;
+            }
+            next
+        });
+    }
+
+    /// R1452 — set every section's policy at once — Qt's
+    /// `setSectionResizeMode(mode)`.
+    pub fn set_all_resize_modes(&self, mode: SectionResizeMode) {
+        self.modes.set(vec![mode; self.count]);
+    }
+
+    /// R1452 — the content size hint of logical section `logical`, what a
+    /// [`SectionResizeMode::ResizeToContents`] section sizes to.
+    #[must_use]
+    pub fn content_width(&self, logical: usize) -> u32 {
+        self.content_widths.get().get(logical).copied().unwrap_or(0)
+    }
+
+    /// R1452 — publish the per-**logical**-section content size hints (Qt's
+    /// delegate `sizeHint`). A vector of the wrong length is ignored, because a
+    /// partially-applied hint set would size some columns to another grid's
+    /// content.
+    pub fn set_content_widths(&self, widths: Vec<u32>) {
+        if widths.len() == self.count {
+            self.content_widths.set(widths);
+        }
+    }
+
+    /// R1452 — the width [`SectionResizeMode::Stretch`] sections divide,
+    /// usually the grid's viewport. `None` until a consumer publishes one.
+    #[must_use]
+    pub fn available_width(&self) -> Option<u32> {
+        self.available_width.get()
+    }
+
+    /// R1452 — publish the width `Stretch` sections divide.
+    pub fn set_available_width(&self, width: Option<u32>) {
+        self.available_width.set(width);
+    }
+
+    /// Size of logical section `logical` — Qt's `sectionSize()`, resolved
+    /// through the section's [`resize_mode`](Self::resize_mode). `0` for an
+    /// unknown section (Qt's answer too).
+    ///
+    /// A hidden section reports the size it will have when shown rather than
+    /// Qt's `0` — [`section_position`](Self::section_position) is the slot that
+    /// says "painted nowhere", so reporting the size here is strictly more
+    /// information and no ambiguity. A hidden `Stretch` section reports its
+    /// stored size: it takes part in no division, because there is no share to
+    /// take when it occupies no width.
     #[must_use]
     pub fn section_size(&self, logical: usize) -> u32 {
         if logical >= self.count {
             return 0;
         }
-        self.sizes.width(logical)
+        if let Some(p) = self
+            .visible_placements()
+            .iter()
+            .find(|p| p.logical == logical)
+        {
+            return p.size;
+        }
+        self.base_size(logical, self.resize_mode(logical))
+    }
+
+    /// The size a section brings to the division: the stored one, or the
+    /// content hint. `Stretch` has no size of its own — it gets what is left —
+    /// so it falls back to the stored size, which is what it reports when
+    /// there is nothing to divide.
+    fn base_size(&self, logical: usize, mode: SectionResizeMode) -> u32 {
+        match mode {
+            SectionResizeMode::ResizeToContents => {
+                self.content_width(logical).max(self.sizes.min_width())
+            }
+            _ => self.sizes.width(logical),
+        }
     }
 
     /// Resize logical section `logical` — Qt's `resizeSection()`. Returns the
     /// applied size after the width model's minimum-width clamp (`0` when the
     /// section does not exist), so an AI client learns the outcome in the same
     /// round-trip it asked for the change.
+    ///
+    /// R1452 — writes the stored size whatever the mode, but a `Stretch` or
+    /// `ResizeToContents` section keeps deriving its size, so the write is only
+    /// visible after a switch back. That is Qt (`resizeSection` "has no
+    /// effect" outside `Interactive` / `Fixed`), plus the stored value kept
+    /// rather than discarded; the return is the size the section actually has,
+    /// so a client is never told a number the grid is not painting.
     pub fn resize_section(&self, logical: usize, size: u32) -> u32 {
         if logical >= self.count {
             return 0;
         }
-        self.sizes.set_width(logical, size)
+        self.sizes.set_width(logical, size);
+        self.section_size(logical)
     }
 
     /// Whether logical section `logical` is hidden — Qt's
@@ -334,20 +545,68 @@ impl ColumnLayout {
     /// (`logical`, its data), and the geometry the header, the body cells, the
     /// insertion line, and the a11y tree all place themselves by.
     ///
-    /// Hiding is applied here and nowhere else, and the cumulative `x` is
-    /// summed here and nowhere else — every other derived answer below reads
-    /// this walk instead of repeating it, so a consumer painting a body cell
-    /// under its header cannot compute a different offset than the header did.
+    /// Hiding is applied here and nowhere else, the cumulative `x` is summed
+    /// here and nowhere else, and (R1452) the resize modes are resolved here
+    /// and nowhere else — every other derived answer below reads this walk
+    /// instead of repeating it, so a consumer painting a body cell under its
+    /// header cannot compute a different offset than the header did.
+    ///
+    /// The `Stretch` division needs the whole painted row at once (a share
+    /// depends on what every other section took), which is why the sizes are
+    /// resolved in this walk rather than per section.
     #[must_use]
     pub fn visible_placements(&self) -> Vec<SectionPlacement> {
         let hidden = self.hidden.get();
-        let mut x = 0;
-        let mut out = Vec::with_capacity(self.count);
+        let modes = self.modes.get();
+        // Pass 1 — who is painted, in what mode, at what size of their own.
+        let mut painted: Vec<(usize, usize, SectionResizeMode, u32)> =
+            Vec::with_capacity(self.count);
         for (visual, logical) in self.sections.order().into_iter().enumerate() {
             if hidden.get(logical).copied().unwrap_or(false) {
                 continue;
             }
-            let size = self.sizes.width(logical);
+            let mode = modes.get(logical).copied().unwrap_or_default();
+            painted.push((visual, logical, mode, self.base_size(logical, mode)));
+        }
+
+        // Pass 2 — what the stretch sections have to divide. `None` available
+        // width means nothing was published to divide, so a `Stretch` section
+        // keeps its stored size instead of collapsing.
+        let stretch_count = painted
+            .iter()
+            .filter(|(_, _, m, _)| *m == SectionResizeMode::Stretch)
+            .count();
+        let shares = self
+            .available_width
+            .get()
+            .filter(|_| stretch_count > 0)
+            .map(|available| {
+                let taken: u32 = painted
+                    .iter()
+                    .filter(|(_, _, m, _)| *m != SectionResizeMode::Stretch)
+                    .map(|(_, _, _, s)| *s)
+                    .sum();
+                let left = available.saturating_sub(taken);
+                let n = u32::try_from(stretch_count).unwrap_or(1).max(1);
+                // The remainder cannot be dropped or the row would not fill the
+                // width it was told to fill; it goes to the leading stretch
+                // sections, one pixel each, so the result is deterministic.
+                (left / n, left % n)
+            });
+
+        // Pass 3 — place them.
+        let mut x = 0;
+        let mut stretch_seen = 0u32;
+        let mut out = Vec::with_capacity(painted.len());
+        for (visual, logical, mode, own) in painted {
+            let size = match (mode, shares) {
+                (SectionResizeMode::Stretch, Some((share, extra))) => {
+                    let bonus = u32::from(stretch_seen < extra);
+                    stretch_seen += 1;
+                    (share + bonus).max(self.sizes.min_width())
+                }
+                _ => own,
+            };
             out.push(SectionPlacement {
                 visual,
                 logical,
@@ -411,8 +670,13 @@ impl ColumnLayout {
     pub fn save_state(&self) -> ColumnLayoutState {
         ColumnLayoutState {
             order: self.sections.order(),
+            // The STORED sizes, not the resolved ones: a saved layout has to
+            // restore what the user set, and a `Stretch` section's painted
+            // width belongs to the viewport it was painted in, not to the
+            // layout.
             sizes: (0..self.count).map(|l| self.sizes.width(l)).collect(),
             hidden: self.hidden.get(),
+            modes: self.modes.get(),
         }
     }
 
@@ -427,7 +691,10 @@ impl ColumnLayout {
     /// rejected permutation returns before any size or flag is written. The
     /// permutation rule is therefore still checked in exactly one place.
     pub fn restore_state(&self, state: &ColumnLayoutState) -> bool {
-        if state.sizes.len() != self.count || state.hidden.len() != self.count {
+        if state.sizes.len() != self.count
+            || state.hidden.len() != self.count
+            || state.modes.len() != self.count
+        {
             return false;
         }
         if !self.sections.set_order(&state.order) {
@@ -435,6 +702,7 @@ impl ColumnLayout {
         }
         self.sizes.set_widths(state.sizes.clone());
         self.hidden.set(state.hidden.clone());
+        self.modes.set(state.modes.clone());
         true
     }
 
@@ -494,6 +762,24 @@ impl ColumnLayout {
             ))),
             "visible_total" => Some(IntrospectValue::Int(i64::from(self.visible_total()))),
             "hidden_count" => Some(int(self.hidden_section_count())),
+            // R1452 — the sizing policy, and the two inputs the derived modes
+            // read. `sizes` above is what is STORED; these say where a painted
+            // width actually came from.
+            "resize_modes" => Some(IntrospectValue::Json(serde_json::Value::Array(
+                self.modes
+                    .get()
+                    .iter()
+                    .map(|m| serde_json::Value::from(m.as_wire()))
+                    .collect(),
+            ))),
+            "content_widths" => Some(json_of(self.content_widths.get())),
+            "available_width" => Some(
+                self.available_width
+                    .get()
+                    .map_or(IntrospectValue::Null, |w| {
+                        IntrospectValue::Int(i64::from(w))
+                    }),
+            ),
             // NB: no `?` in this arm — an early return here would skip the
             // reorder fall-through below, which is exactly how `order` first
             // came back `None` from a layout that holds one.
@@ -517,6 +803,13 @@ impl ColumnLayout {
                     "logical_index_at" => {
                         arg.parse().ok().map(|x| opt_int(self.logical_index_at(x)))
                     }
+                    "resize_mode" => arg.parse().ok().map(|l: usize| {
+                        IntrospectValue::Text(self.resize_mode(l).as_wire().to_string())
+                    }),
+                    "content_width" => arg
+                        .parse()
+                        .ok()
+                        .map(|l| IntrospectValue::Int(i64::from(self.content_width(l)))),
                     _ => None,
                 },
                 None => None,
@@ -576,6 +869,34 @@ impl ColumnLayout {
                     return Err(InterveneError::OutOfRange);
                 }
                 self.hidden.set(flags);
+                Ok(())
+            }
+            // R1452 — the two inputs the derived modes read. A grid publishes
+            // its measured content and its viewport here; over the wire an
+            // agent can do the same to explore a layout without a real grid.
+            "content_widths" => {
+                let widths: Vec<u32> = json_u64_array(value)
+                    .ok_or(InterveneError::TypeMismatch)?
+                    .into_iter()
+                    .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+                    .collect();
+                if widths.len() != self.count {
+                    return Err(InterveneError::OutOfRange);
+                }
+                self.content_widths.set(widths);
+                Ok(())
+            }
+            "available_width" => {
+                // `Null` clears the published viewport — the writable peer of
+                // the `Null` this slot reads back when nothing is published.
+                if matches!(value, IntrospectValue::Null) {
+                    self.set_available_width(None);
+                } else {
+                    let w = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
+                    self.set_available_width(Some(
+                        u32::try_from(w).map_err(|_| InterveneError::OutOfRange)?,
+                    ));
+                }
                 Ok(())
             }
             _ => self.sections.intervene(path, value),
@@ -646,9 +967,61 @@ impl ColumnLayout {
                     .query("visible_sections")
                     .unwrap_or(IntrospectValue::Null))
             }
+            // R1452 — Qt's setSectionResizeMode, both overloads. Each returns
+            // the resulting painted widths, because changing one section's
+            // policy re-sizes every `Stretch` section sharing the row with it —
+            // the outcome an agent needs is the row, not the section.
+            "set_resize_mode" => {
+                let text = pair_text(args)?;
+                let (logical, mode) = parse_pair::<usize, SectionResizeMode>(&text, ':')
+                    .ok_or(InvokeError::Rejected)?;
+                if logical >= self.count {
+                    return Err(InvokeError::Rejected);
+                }
+                self.set_resize_mode(logical, mode);
+                Ok(self
+                    .query("visible_widths")
+                    .unwrap_or(IntrospectValue::Null))
+            }
+            "set_all_resize_modes" => {
+                let IntrospectValue::Text(text) = args else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                let mode: SectionResizeMode =
+                    text.trim().parse().map_err(|()| InvokeError::Rejected)?;
+                self.set_all_resize_modes(mode);
+                Ok(self
+                    .query("visible_widths")
+                    .unwrap_or(IntrospectValue::Null))
+            }
             _ => self.sections.invoke(method, args),
         }
     }
+}
+
+/// R1452 §5.27 — resolve the shared [`ColumnLayout`] for `key`, building it
+/// once from `sizes` (the initial per-logical-section sizes). Mirrors
+/// [`use_column_widths`](crate::widgets::column_widths::use_column_widths).
+///
+/// The header layout has **two** readers that must be the same instance: the
+/// `External` that mutates it, and the view fn that publishes what only the
+/// view knows — the measured content hints
+/// ([`set_content_widths`](ColumnLayout::set_content_widths)) and the viewport
+/// a `Stretch` row divides
+/// ([`set_available_width`](ColumnLayout::set_available_width)). Owning it by
+/// value inside the `External` would put those inputs out of reach; the
+/// scope-id-keyed [`Owner::cache`] home is how every other interactive axis in
+/// this crate is shared.
+///
+/// # Panics
+///
+/// When called outside an active [`Owner`] scope (a view fn or an `External`
+/// factory both run inside one).
+#[must_use]
+pub fn use_column_layout(key: &'static str, sizes: impl FnOnce() -> Vec<u32>) -> Rc<ColumnLayout> {
+    Owner::current()
+        .expect("use_column_layout requires an active Owner scope")
+        .cache(key, || ColumnLayout::new(sizes()))
 }
 
 /// Decode a JSON array of non-negative integers out of an
@@ -705,7 +1078,9 @@ pub fn read_column_layout(intro: &dyn ExternalIntrospect) -> ColumnLayoutView {
 
 #[cfg(test)]
 mod tests {
-    use super::{ColumnLayout, ColumnLayoutState, SectionPlacement, read_column_layout};
+    use super::{
+        ColumnLayout, ColumnLayoutState, SectionPlacement, SectionResizeMode, read_column_layout,
+    };
     use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
     use crate::widgets::column_widths::DEFAULT_MIN_COL_WIDTH;
 
@@ -851,6 +1226,7 @@ mod tests {
             order: vec![0, 1, 1, 2],
             sizes: vec![10, 20, 30, 40],
             hidden: vec![true, true, true, true],
+            modes: vec![SectionResizeMode::Stretch; 4],
         };
         assert!(!l.restore_state(&bad_order));
         assert_eq!(l.save_state(), before, "no size or flag was written");
@@ -860,6 +1236,7 @@ mod tests {
             order: vec![3, 2, 1, 0],
             sizes: vec![10, 20, 30],
             hidden: vec![true; 4],
+            modes: vec![SectionResizeMode::Interactive; 4],
         };
         assert!(!l.restore_state(&short));
         assert_eq!(l.save_state(), before, "the order was not applied either");
@@ -1122,6 +1499,277 @@ mod tests {
         ) -> Result<IntrospectValue, InvokeError> {
             self.0.invoke(method, &args)
         }
+    }
+
+    #[test]
+    fn stretch_divides_what_the_others_leave_over() {
+        // Not an equal split of the whole width: `Stretch` takes the REMAINDER
+        // after the fixed sections. An equal split would answer 300 here.
+        let l = layout(); // 100 120 140 160
+        l.set_resize_mode(2, SectionResizeMode::Stretch);
+        l.set_resize_mode(3, SectionResizeMode::Stretch);
+        l.set_available_width(Some(600));
+
+        assert_eq!(l.visible_widths(), vec![100, 120, 190, 190]);
+        assert_eq!(
+            l.visible_total(),
+            600,
+            "the row fills exactly what it was given"
+        );
+        assert_eq!(l.section_size(2), 190, "and section_size says so too");
+    }
+
+    #[test]
+    fn a_stretch_remainder_is_dealt_out_not_dropped() {
+        // 381 across two sections is 190 and a half. Dropping the odd pixel
+        // would leave the row one short of the width it was told to fill.
+        let l = layout();
+        l.set_resize_mode(2, SectionResizeMode::Stretch);
+        l.set_resize_mode(3, SectionResizeMode::Stretch);
+        l.set_available_width(Some(601));
+        assert_eq!(l.visible_widths(), vec![100, 120, 191, 190]);
+        assert_eq!(l.visible_total(), 601);
+    }
+
+    #[test]
+    fn stretch_without_a_published_width_keeps_the_stored_size() {
+        // Nothing to divide is not the same as nothing to show.
+        let l = layout();
+        l.set_all_resize_modes(SectionResizeMode::Stretch);
+        assert_eq!(l.available_width(), None);
+        assert_eq!(l.visible_widths(), vec![100, 120, 140, 160]);
+        // And a width too small for the fixed sections does not underflow.
+        l.set_resize_mode(0, SectionResizeMode::Interactive);
+        l.set_available_width(Some(10));
+        assert_eq!(
+            l.visible_widths(),
+            vec![100, 40, 40, 40],
+            "the stretch shares floor at the minimum width"
+        );
+    }
+
+    #[test]
+    fn resize_to_contents_takes_the_hint_and_floors_it() {
+        let l = layout();
+        l.set_content_widths(vec![200, 30, 140, 160]);
+        l.set_resize_mode(0, SectionResizeMode::ResizeToContents);
+        l.set_resize_mode(1, SectionResizeMode::ResizeToContents);
+        assert_eq!(l.section_size(0), 200, "sized to its content");
+        assert_eq!(
+            l.section_size(1),
+            DEFAULT_MIN_COL_WIDTH,
+            "a content narrower than the floor still gets the floor"
+        );
+        // A hint vector of the wrong length is ignored whole — a partial hint
+        // set would size some columns to another grid's content.
+        l.set_content_widths(vec![1, 2]);
+        assert_eq!(l.section_size(0), 200, "the bad hint set was dropped");
+    }
+
+    #[test]
+    fn a_derived_section_stores_the_resize_but_keeps_deriving() {
+        // Qt: resizeSection has no effect outside Interactive / Fixed. The
+        // value is not discarded though, so switching back reveals it.
+        let l = layout();
+        l.set_resize_mode(2, SectionResizeMode::Stretch);
+        l.set_available_width(Some(600));
+        // 600 less the three interactive sections (100 + 120 + 160) is 220.
+        let reported = l.resize_section(2, 500);
+        assert_eq!(reported, 220, "the answer is the size it actually has");
+        assert_eq!(l.visible_widths(), vec![100, 120, 220, 160]);
+        l.set_resize_mode(2, SectionResizeMode::Interactive);
+        assert_eq!(l.section_size(2), 500, "the stored write was kept");
+    }
+
+    #[test]
+    fn the_two_mode_predicates_differ_exactly_at_fixed() {
+        // Fixed is the whole reason there are two questions rather than one.
+        for (mode, stores, user) in [
+            (SectionResizeMode::Interactive, true, true),
+            (SectionResizeMode::Fixed, true, false),
+            (SectionResizeMode::Stretch, false, false),
+            (SectionResizeMode::ResizeToContents, false, false),
+        ] {
+            assert_eq!(mode.stores_size(), stores, "{mode} stores_size");
+            assert_eq!(mode.user_resizable(), user, "{mode} user_resizable");
+            // The wire spelling round-trips, which is what the invoke parses.
+            assert_eq!(mode.as_wire().parse(), Ok(mode));
+        }
+        assert_eq!(
+            "Stretch".parse::<SectionResizeMode>(),
+            Err(()),
+            "no aliases"
+        );
+    }
+
+    #[test]
+    fn a_hidden_stretch_section_takes_no_share() {
+        let l = layout();
+        l.set_resize_mode(2, SectionResizeMode::Stretch);
+        l.set_resize_mode(3, SectionResizeMode::Stretch);
+        l.set_available_width(Some(600));
+        l.set_section_hidden(3, true);
+        assert_eq!(
+            l.visible_widths(),
+            vec![100, 120, 380],
+            "the remaining stretch section takes the whole leftover"
+        );
+        assert_eq!(
+            l.section_size(3),
+            160,
+            "and the hidden one reports its stored size, having no share"
+        );
+    }
+
+    #[test]
+    fn a_stretch_share_survives_a_reorder_but_its_place_does_not() {
+        // The composition: the mode is keyed by logical section like the size
+        // it replaces, so moving the section moves the policy with it.
+        let l = layout();
+        l.set_resize_mode(0, SectionResizeMode::Stretch);
+        l.set_available_width(Some(600));
+        assert_eq!(l.visible_widths(), vec![180, 120, 140, 160]);
+        l.move_section(0, 3);
+        assert_eq!(l.order(), vec![1, 2, 3, 0]);
+        assert_eq!(
+            l.visible_widths(),
+            vec![120, 140, 160, 180],
+            "the stretch section is last now, and still takes the leftover"
+        );
+        assert_eq!(l.section_position(0), Some(420));
+    }
+
+    #[test]
+    fn modes_round_trip_through_state_and_an_older_snapshot_still_restores() {
+        let l = layout();
+        l.set_resize_mode(1, SectionResizeMode::Fixed);
+        l.set_resize_mode(2, SectionResizeMode::Stretch);
+        let saved = l.save_state();
+        assert_eq!(
+            saved.modes,
+            vec![
+                SectionResizeMode::Interactive,
+                SectionResizeMode::Fixed,
+                SectionResizeMode::Stretch,
+                SectionResizeMode::Interactive,
+            ]
+        );
+        let json = saved.to_json();
+        assert_eq!(ColumnLayoutState::from_json(&json).expect("decode"), saved);
+
+        // A pre-R1452 snapshot has no `modes` at all and decodes as the
+        // default, so an older saved layout still restores.
+        let older = serde_json::json!({
+            "order": [3, 2, 1, 0],
+            "sizes": [50, 60, 70, 80],
+            "hidden": [false, false, false, false],
+        });
+        let decoded = ColumnLayoutState::from_json(&older).expect("older shape decodes");
+        assert_eq!(decoded.modes, vec![SectionResizeMode::Interactive; 4]);
+        assert!(l.restore_state(&decoded));
+        assert_eq!(l.visible_widths(), vec![80, 70, 60, 50]);
+
+        // Present but misspelled is an error, not a silent default — a client
+        // that meant to set a mode has to be told it did not.
+        assert_eq!(
+            ColumnLayoutState::from_json(&serde_json::json!({
+                "order": [0, 1, 2, 3],
+                "sizes": [50, 60, 70, 80],
+                "hidden": [false, false, false, false],
+                "modes": ["interactive", "Stretch", "fixed", "fixed"],
+            })),
+            None
+        );
+    }
+
+    #[test]
+    fn mode_invokes_report_the_row_they_resized() {
+        // Changing one section's policy re-sizes every stretch section sharing
+        // the row, so the useful answer is the row.
+        let l = layout();
+        l.set_available_width(Some(600));
+        let widths = l
+            .invoke("set_resize_mode", &text("3:stretch"))
+            .expect("set_resize_mode");
+        assert_eq!(ints(&widths), vec![100, 120, 140, 240]);
+        assert!(matches!(
+            l.query("resize_mode.3"),
+            Some(IntrospectValue::Text(ref m)) if m == "stretch"
+        ));
+
+        let widths = l
+            .invoke("set_all_resize_modes", &text("stretch"))
+            .expect("set_all");
+        assert_eq!(
+            ints(&widths),
+            vec![150, 150, 150, 150],
+            "600 split four ways"
+        );
+
+        assert!(matches!(
+            l.invoke("set_resize_mode", &text("0:sideways")),
+            Err(InvokeError::Rejected)
+        ));
+        assert!(matches!(
+            l.invoke("set_all_resize_modes", &text("sideways")),
+            Err(InvokeError::Rejected)
+        ));
+        assert!(matches!(
+            l.invoke("set_resize_mode", &text("9:fixed")),
+            Err(InvokeError::Rejected)
+        ));
+    }
+
+    #[test]
+    fn the_derived_inputs_are_readable_and_writable_over_the_wire() {
+        let l = layout();
+        assert!(matches!(
+            l.query("available_width"),
+            Some(IntrospectValue::Null)
+        ));
+        l.intervene("available_width", &IntrospectValue::Int(600))
+            .expect("publish a viewport");
+        assert!(matches!(
+            l.query("available_width"),
+            Some(IntrospectValue::Int(600))
+        ));
+        l.intervene(
+            "content_widths",
+            &IntrospectValue::Json(serde_json::json!([210, 20, 30, 40])),
+        )
+        .expect("publish hints");
+        assert_eq!(
+            ints(&l.query("content_widths").expect("read back")),
+            vec![210, 20, 30, 40]
+        );
+        assert!(matches!(
+            l.query("content_width.0"),
+            Some(IntrospectValue::Int(210))
+        ));
+        // Wrong length is a value error, wrong shape is a type error.
+        assert!(matches!(
+            l.intervene(
+                "content_widths",
+                &IntrospectValue::Json(serde_json::json!([1]))
+            ),
+            Err(InterveneError::OutOfRange)
+        ));
+        assert!(matches!(
+            l.intervene("content_widths", &IntrospectValue::Text("wide".into())),
+            Err(InterveneError::TypeMismatch)
+        ));
+        // Null clears the published viewport, so a stretch row falls back.
+        l.intervene("available_width", &IntrospectValue::Null)
+            .expect("clear");
+        assert_eq!(l.available_width(), None);
+        // The mode vector reads as its wire spellings.
+        l.set_resize_mode(0, SectionResizeMode::ResizeToContents);
+        let Some(IntrospectValue::Json(serde_json::Value::Array(modes))) = l.query("resize_modes")
+        else {
+            panic!("resize_modes")
+        };
+        assert_eq!(modes[0], serde_json::Value::from("resize_to_contents"));
+        assert_eq!(l.section_size(0), 210, "and the hint is what it sizes to");
     }
 
     #[test]
