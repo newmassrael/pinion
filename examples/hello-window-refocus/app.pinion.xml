@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1463 §5.39 §5.16 — Vello renderer for hello-window-refocus.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloWindowRefocusRenderer"
+        backend="vello"/>

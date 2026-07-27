@@ -1474,6 +1474,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// `LayoutStyle::focusable` (view-fn-assigned, not layout-derived), so no
     /// viewport size is needed; the view runs under `root_owner.run(...)` and
     /// is pure (§6.3).
+    ///
+    /// R1463 §2 #6 — the shell's peer now re-derives EVERY window it has
+    /// painted, because a painted window answers the enumeration from a
+    /// harvested cache that this dispatch may have invalidated. That arm has no
+    /// mirror here and needs none: a TUI process owns one alternate screen, so
+    /// this binding has exactly one window and `V::view` IS its whole
+    /// enumeration. The divergence is in the backends' window models, not in
+    /// the focus contract — both re-derive every window they paint.
     fn refresh_focusable_from_view(&mut self) {
         let cached_state = *self.core.cached_state();
         let frame = Frame::with_dt(0.0);

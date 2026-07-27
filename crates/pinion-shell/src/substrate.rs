@@ -6226,6 +6226,19 @@ impl<V: WidgetView> ShellCore<V> {
     /// call site (click / Tab / RPC / request-drain / modal).
     fn refresh_window_focusables(&mut self, window_key: &str, tags: Vec<String>) {
         self.window_state_mut(window_key).focusable_tags = Some(tags);
+        self.refold_focusables();
+    }
+
+    /// R1463 §5.39 §5.16 — re-fold the per-window contributions into the
+    /// binding-wide [`FocusManager`] enumeration and pair a dropped focus with a
+    /// redraw. The tail of [`Self::refresh_window_focusables`], lifted so
+    /// [`Self::refresh_focusable_from_view`] can rewrite SEVERAL windows'
+    /// contributions and fold **once**: folding per window would bump the §5.34
+    /// revision once per window for what is one enumeration change, and would
+    /// hand [`FocusManager::update_focusable_tags`] intermediate unions in which
+    /// a tag being moved between windows is momentarily in neither — a stale-focus
+    /// drop of a tag that never left the binding.
+    fn refold_focusables(&mut self) {
         let union = self.union_focusable_tags();
         if self.focus.update_focusable_tags(union) {
             self.revision.bump();
@@ -6324,6 +6337,18 @@ impl<V: WidgetView> ShellCore<V> {
         {
             return tags.clone();
         }
+        self.derive_window_focusables(window_id)
+    }
+
+    /// R26 / R1463 §5.39 §5.16 — one window's focusable tags DERIVED from the
+    /// pure view fn, ignoring any harvested cache: `V::view` for the primary,
+    /// [`WidgetView::view_for_window`] for a secondary. Split out of
+    /// [`Self::window_focusables`] (which prefers the cache) because
+    /// [`Self::refresh_focusable_from_view`] needs the opposite preference — it
+    /// runs precisely when the cache is known to be stale, one dispatch ahead of
+    /// the paint that will refresh it. Purity and the `root_owner` scoping are
+    /// documented on [`Self::window_focusables`]; both callers depend on them.
+    fn derive_window_focusables(&self, window_id: &str) -> Vec<String> {
         let cached_state = *self.core.cached_state();
         let frame = Frame::with_dt(0.0);
         let core = &self.core;
@@ -6548,23 +6573,57 @@ impl<V: WidgetView> ShellCore<V> {
     /// execute — no current binding does that, but it is the invariant this
     /// re-derive (and the boot-seed run) depends on.
     ///
-    /// R25.1 §5.39 §5.16 — runs the global `V::view` (the primary
-    /// [`pinion_runtime::DEFAULT_WINDOW`] enumeration), so it refreshes the
-    /// primary's per-window contribution and re-folds the union
-    /// ([`Self::refresh_window_focusables`]) rather than replacing the whole
-    /// `tab_order`: a programmatic focus request on the primary view must not
-    /// drop a secondary window's focusable panes from the enumeration.
+    /// R25.1 §5.39 §5.16 — refreshes each window's per-window contribution and
+    /// re-folds the union ([`Self::refold_focusables`]) rather than replacing
+    /// the whole `tab_order`: a programmatic focus request must not drop
+    /// another window's focusable panes from the enumeration.
+    ///
+    /// R1463 §5.39 §5.16 — the refresh spans **every window the binding has
+    /// painted**, not only [`pinion_runtime::DEFAULT_WINDOW`]. A painted window
+    /// short-circuits [`Self::window_focusables`] to its harvested cache, so
+    /// re-deriving the primary alone left a torn-off pane's enumeration frozen
+    /// at its last paint: the identical reducer — open an inline editor, name it
+    /// — landed in the primary and was silently dropped in a secondary window,
+    /// its one-shot [`pinion_core::focus_request`] consumed by the miss. Windows
+    /// the binding merely DECLARES need nothing here; [`Self::window_focusables`]
+    /// derives those on every fold already (R26), so this adds a derivation only
+    /// where a stale harvest would otherwise answer.
+    ///
+    /// Cost is paid on a focus MISS, not per frame: one view run per painted
+    /// window, bounded by the declared topology. The steady state — a request
+    /// naming an already-enumerated tag — never reaches here.
+    ///
+    /// A window with no contribution yet — including the primary before its
+    /// first paint, which is when the boot seed calls this — is deliberately
+    /// NOT written here: [`Self::union_focusable_tags`] always folds the
+    /// primary and derives any uncached window itself, so seeding it a second
+    /// time would be redundant work whose absence no assertion can see.
+    ///
+    /// The derivation is as faithful for a secondary window as for the primary
+    /// because the pane-viewport publish is per-window (R1021), so a re-derived
+    /// torn pane reads the sizes ITS window painted. The residual asymmetry is
+    /// [`use_viewport_size`](pinion_core::reactive::viewport::use_viewport_size),
+    /// which stays primary-gated: a secondary view that gates focusable nodes on
+    /// the *window* size derives against the primary's. That predates this and is
+    /// the same caveat [`Self::window_focusables`] documents for the R26
+    /// declared-but-unpainted derivation.
     fn refresh_focusable_from_view(&mut self) {
-        let cached_state = *self.core.cached_state();
-        let frame = Frame::with_dt(0.0);
-        let scene = {
-            let core = &self.core;
-            core.root_owner().run(|| V::view(cached_state, &frame))
-        };
-        self.refresh_window_focusables(
-            pinion_runtime::DEFAULT_WINDOW,
-            scene.collect_focusable_tags(),
-        );
+        let mut painted: Vec<String> = self
+            .window_states
+            .iter()
+            .filter(|(_, s)| s.focusable_tags.is_some())
+            .map(|(k, _)| k.clone())
+            .collect();
+        // `window_states` is a HashMap; sort so the view runs happen in a
+        // deterministic order. Fold-once makes the order irrelevant to the
+        // RESULT — that is the point of `refold_focusables` — so this buys
+        // reproducibility, not correctness.
+        painted.sort_unstable();
+        for key in painted {
+            let tags = self.derive_window_focusables(&key);
+            self.window_state_mut(&key).focusable_tags = Some(tags);
+        }
+        self.refold_focusables();
     }
 
     /// R51.159 §5.23 — install or replace the
@@ -7169,6 +7228,13 @@ mod r26_undock_focus_follow_tests {
     /// The torn-off (undock) secondary window id; declared in `windows_signal`.
     const TORN_WINDOW: &str = "float.left";
     const TORN_TAG: &str = "torn_pane";
+    /// The inline editor each window paints only while [`editor_open`] is set —
+    /// the R1020 "focus a widget on the frame it appears" shape, one per window.
+    const MAIN_EDITOR_TAG: &str = "main_editor";
+    const TORN_EDITOR_TAG: &str = "torn_editor";
+    /// A pane a reducer can move BETWEEN the two windows — drawn by exactly one
+    /// of them per frame, per the dock model.
+    const ROAMING_TAG: &str = "roaming_pane";
 
     /// A bare focusable Tab stop (`collect_focusable_tags` reads tag +
     /// `LayoutStyle::focusable`).
@@ -7178,6 +7244,38 @@ mod r26_undock_focus_follow_tests {
                 .with_tag(tag)
                 .with_layout(LayoutStyle::new().with_focusable(true)),
         )
+    }
+
+    /// The reducer-owned gate that makes each window's inline editor paintable.
+    /// `Owner::cache`-memoised on the same key the view reads, so a test flipping
+    /// it under `root_owner` and the view fn resolve the POINTER-EQUAL signal
+    /// (the R683 identity contract `windows_signal` relies on).
+    fn editor_open() -> Rc<Signal<bool>> {
+        Owner::current()
+            .expect("view fn and test both run under root_owner")
+            .cache::<Signal<bool>, _>("dock_follow_editor", || Signal::new(false))
+    }
+
+    /// Which window currently draws [`ROAMING_TAG`] — the undock model's one
+    /// invariant made movable: a pane is drawn in exactly ONE window per frame,
+    /// and a reducer can move it. `false` = the primary draws it.
+    fn roamer_in_torn() -> Rc<Signal<bool>> {
+        Owner::current()
+            .expect("view fn and test both run under root_owner")
+            .cache::<Signal<bool>, _>("dock_follow_roamer", || Signal::new(false))
+    }
+
+    /// One window's scene: its permanent focusable, the inline editor while the
+    /// gate is open, and the roaming pane while this window hosts it.
+    fn pane_with_editor(pane: &'static str, editor: &'static str, hosts_roamer: bool) -> Scene {
+        let mut kids = vec![focusable(pane)];
+        if editor_open().get() {
+            kids.push(focusable(editor));
+        }
+        if hosts_roamer {
+            kids.push(focusable(ROAMING_TAG));
+        }
+        Scene::Container(ContainerNode::new(kids))
     }
 
     /// A dock binding: the primary paints one focusable (`main_btn`); ONE
@@ -7201,7 +7299,7 @@ mod r26_undock_focus_follow_tests {
             <ButtonFixture as WidgetCore>::read_state(scene)
         }
         fn view(_state: Self::State, _frame: &Frame) -> Scene {
-            focusable(MAIN_TAG)
+            pane_with_editor(MAIN_TAG, MAIN_EDITOR_TAG, !roamer_in_torn().get())
         }
         fn event_name(event: Self::Event) -> &'static str {
             <ButtonFixture as WidgetCore>::event_name(event)
@@ -7251,7 +7349,7 @@ mod r26_undock_focus_follow_tests {
 
         fn view_for_window(window_id: &str, state: Self::State, frame: &Frame) -> Scene {
             if window_id == TORN_WINDOW {
-                focusable(TORN_TAG)
+                pane_with_editor(TORN_TAG, TORN_EDITOR_TAG, roamer_in_torn().get())
             } else {
                 Self::view(state, frame)
             }
@@ -7330,6 +7428,98 @@ mod r26_undock_focus_follow_tests {
             1,
             "after paint the torn tag still appears once — harvest supersedes \
              derivation, declared∪painted deduped: {order:?}",
+        );
+    }
+
+    /// R1020's guarantee, stated for the primary window — the CONTROL for the
+    /// secondary-window test below. A reducer opens an inline editor and names
+    /// it in the same dispatch; the paint refresh has not run, so the request
+    /// misses and the re-derive is what makes it land.
+    #[test]
+    fn a_request_reaches_a_node_this_dispatch_made_paintable_in_the_primary() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec![MAIN_TAG.to_owned()]);
+        sc.refresh_window_focusables(TORN_WINDOW, vec![TORN_TAG.to_owned()]);
+
+        sc.core.root_owner().run(|| editor_open().set(true));
+        pinion_core::focus_request::request(MAIN_EDITOR_TAG);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(
+            sc.focus().focused(),
+            Some(MAIN_EDITOR_TAG),
+            "the primary's just-appeared editor is focusable on its own frame",
+        );
+    }
+
+    /// R1463 §5.39 §5.16 — the SAME dispatch shape inside a PAINTED secondary
+    /// window. Pre-R1463 the re-derive ran `V::view` only, refreshing the
+    /// primary's contribution; a painted secondary short-circuits
+    /// [`ShellCore::window_focusables`] to its harvested cache, so the tag the
+    /// reducer just made paintable there was invisible to the retry and the
+    /// one-shot request was consumed and silently dropped. Same binding, same
+    /// intent, different window, different outcome — the divergence this closes.
+    #[test]
+    fn a_request_reaches_a_node_this_dispatch_made_paintable_in_a_secondary_window() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec![MAIN_TAG.to_owned()]);
+        // The torn window has PAINTED — this is what makes its enumeration a
+        // cache rather than a per-fold derivation.
+        sc.refresh_window_focusables(TORN_WINDOW, vec![TORN_TAG.to_owned()]);
+        assert!(
+            !sc.focus().tab_order().iter().any(|t| t == TORN_EDITOR_TAG),
+            "precondition: the editor is not enumerated before the reducer runs",
+        );
+
+        sc.core.root_owner().run(|| editor_open().set(true));
+        pinion_core::focus_request::request(TORN_EDITOR_TAG);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(
+            sc.focus().focused(),
+            Some(TORN_EDITOR_TAG),
+            "the torn pane's just-appeared editor is focusable on its own \
+             frame, exactly as the primary's is",
+        );
+    }
+
+    /// R1463 — the refresh folds ONCE, from the complete set of refreshed
+    /// contributions. A reducer that moves a pane between windows takes its tag
+    /// out of one window's scene and puts it in another's; if each window's
+    /// contribution were folded as it was rewritten, the union between the two
+    /// writes would contain the tag in NEITHER window (the primary already
+    /// rewritten without it, the secondary still holding its stale harvest) and
+    /// [`FocusManager::update_focusable_tags`] would drop a focus that never
+    /// left the binding. The request here MISSES deliberately: a request that
+    /// landed would mask the drop by moving focus itself.
+    #[test]
+    fn a_pane_moving_between_windows_keeps_its_focus_across_the_refresh() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+        sc.refresh_window_focusables(
+            pinion_runtime::DEFAULT_WINDOW,
+            vec![MAIN_TAG.to_owned(), ROAMING_TAG.to_owned()],
+        );
+        sc.refresh_window_focusables(TORN_WINDOW, vec![TORN_TAG.to_owned()]);
+        assert!(
+            sc.focus.focus_set(ROAMING_TAG),
+            "the roaming pane holds focus while the primary draws it",
+        );
+
+        // The reducer tears the pane off into the secondary window, then some
+        // other request misses (an unknown tag), driving the re-derive.
+        sc.core.root_owner().run(|| roamer_in_torn().set(true));
+        pinion_core::focus_request::request("no_such_tag");
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(
+            sc.focus().focused(),
+            Some(ROAMING_TAG),
+            "focus follows the pane into its new window — the tag was in one \
+             window's contribution or the other's at every point",
+        );
+        assert!(
+            sc.focus().tab_order().iter().any(|t| t == ROAMING_TAG),
+            "and it is enumerated exactly where it now paints",
         );
     }
 
