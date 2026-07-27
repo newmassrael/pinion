@@ -1363,25 +1363,34 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             .update_focusable_tags(scene.collect_focusable_tags());
     }
 
-    /// R693 §5.39 — pop one pending
-    /// [`pinion_core::modal_scope_request`] entry and apply it via
+    /// R693 §5.39 — apply every pending
+    /// [`pinion_core::modal_scope_request`] entry via
     /// [`FocusManager::push_modal_scope`] /
     /// [`FocusManager::pop_modal_scope`], routing the resulting focus
     /// move through [`Self::notify_focus_change`]. Mirror of
-    /// `pinion_shell::ShellCore::drain_modal_request`. Returns `true`
-    /// when a focus mutation committed so [`Self::handle_tail`] can OR
-    /// it into the repaint flag.
+    /// `pinion_shell::ShellCore::drain_modal_request`, including R1456's
+    /// apply-the-whole-batch-in-order contract (§2 #6: the two backends
+    /// drain the same mailbox, so a fix on one side that skipped the
+    /// other would give GUI and TUI different modal stacks from
+    /// identical input). Returns `true` when a focus mutation committed
+    /// so [`Self::handle_tail`] can OR it into the repaint flag.
     fn drain_modal_request(&mut self) -> bool {
-        let Some(req) = pinion_core::modal_scope_request::drain() else {
+        let reqs = pinion_core::modal_scope_request::drain();
+        if reqs.is_empty() {
             return false;
-        };
+        }
         let focus_before = self.focus.focused().map(str::to_owned);
-        let changed = match req {
-            pinion_core::modal_scope_request::ModalRequest::Open { members } => {
-                self.focus.push_modal_scope(members)
-            }
-            pinion_core::modal_scope_request::ModalRequest::Close => self.focus.pop_modal_scope(),
-        };
+        for req in reqs {
+            match req {
+                pinion_core::modal_scope_request::ModalRequest::Open { members } => {
+                    self.focus.push_modal_scope(members)
+                }
+                pinion_core::modal_scope_request::ModalRequest::Close => {
+                    self.focus.pop_modal_scope()
+                }
+            };
+        }
+        let changed = self.focus.focused() != focus_before.as_deref();
         if changed {
             self.notify_focus_change(focus_before.as_deref());
             self.revision.bump();

@@ -81,7 +81,7 @@ use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_mod
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
+    SurfaceAction, button_a11y_state, read_button_focused, read_button_state, surface_action_scene,
 };
 use pinion_widget_paint::drawer::{DrawerStyle, view_drawer};
 use std::rc::Rc;
@@ -199,34 +199,6 @@ struct DrawerViewState {
     items_focused: [bool; NAV_N],
 }
 
-/// Render one button via the [`pinion_widget_paint::button`] substrate.
-#[allow(clippy::too_many_arguments)] // R1020: one arg per paint axis + focusable opt-in
-fn button_scene(
-    tag: &'static str,
-    label: &str,
-    state: ButtonState,
-    focused: bool,
-    hover_key: &'static str,
-    size: Size,
-    theme: &pinion_core::theme::Theme,
-    focusable: bool,
-) -> Scene {
-    // R727 — opinionated default (filled-tonal + 16 px) stays local
-    // (2-consumer with hello-dialog, R703-deferred); the mechanical
-    // hover + view_button pairing is the lifted SSOT core.
-    pinion_widget_paint::button::button_scene(
-        label,
-        state,
-        focused,
-        hover_key,
-        &ButtonColors::filled_tonal(theme),
-        &ButtonStyle::m3_default(tag)
-            .with_size(size)
-            .with_label_font_size_px(16)
-            .with_focusable(focusable),
-    )
-}
-
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`,
 /// reading the reactive `drawer_open` + `drawer_active` signals. When
 /// open, the drawer overlay is pushed **last** so it paints over (and
@@ -237,15 +209,17 @@ fn view(state: &DrawerViewState, _frame: &Frame) -> Scene {
     let open = modal().is_open();
     let active = use_drawer_active().get().min(NAV_N - 1);
 
-    let trigger = button_scene(
-        TRIGGER_TAG,
-        "\u{2630} Open navigation",
-        state.trigger,
-        state.trigger_focused,
-        TRIGGER_HOVER_KEY,
-        Size::px(TRIGGER_W, TRIGGER_H),
+    let trigger = surface_action_scene(
+        &SurfaceAction {
+            tag: TRIGGER_TAG,
+            label: "\u{2630} Open navigation",
+            state: state.trigger,
+            focused: state.trigger_focused,
+            hover_key: TRIGGER_HOVER_KEY,
+            size: Size::px(TRIGGER_W, TRIGGER_H),
+            focusable: true,
+        },
         &theme,
-        true,
     );
     let status = Scene::Text(
         TextNode::styled(
@@ -275,15 +249,19 @@ fn view(state: &DrawerViewState, _frame: &Frame) -> Scene {
     if open {
         let items: Vec<Scene> = (0..NAV_N)
             .map(|i| {
-                button_scene(
-                    NAV_TAGS[i],
-                    DESTINATIONS[i],
-                    state.items[i],
-                    state.items_focused[i],
-                    ITEM_HOVER_KEYS[i],
-                    Size::px(DrawerStyle::m3_default().panel_width - 24, ITEM_H),
+                surface_action_scene(
+                    &SurfaceAction {
+                        tag: NAV_TAGS[i],
+                        label: DESTINATIONS[i],
+                        state: state.items[i],
+                        focused: state.items_focused[i],
+                        hover_key: ITEM_HOVER_KEYS[i],
+                        size: Size::px(DrawerStyle::m3_default().panel_width - 24, ITEM_H),
+                        // Nav items are modal members: focusable only
+                        // while the drawer's trap is up.
+                        focusable: false,
+                    },
                     &theme,
-                    false,
                 )
             })
             .collect();
@@ -521,15 +499,15 @@ mod tests {
     #[test]
     fn r702_trigger_click_opens_and_requests_modal() {
         Owner::new().run(|| {
-            let _ = pinion_core::modal_scope_request::drain();
             modal().close();
+            let _ = pinion_core::modal_scope_request::drain();
             let _ = DrawerView::update(idle(), &intent("drawer_trigger.click"));
             assert!(modal().is_open(), "open signal flipped true");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
-                Some(pinion_core::modal_scope_request::ModalRequest::Open {
+                vec![pinion_core::modal_scope_request::ModalRequest::Open {
                     members: nav_members(),
-                }),
+                }],
                 "modal trap requested over the nav items"
             );
         });
@@ -538,8 +516,8 @@ mod tests {
     #[test]
     fn r702_scrim_click_light_dismisses_without_navigating() {
         Owner::new().run(|| {
-            let _ = pinion_core::modal_scope_request::drain();
             modal().open(nav_members());
+            let _ = pinion_core::modal_scope_request::drain();
             use_drawer_active().set(2);
             let _ = DrawerView::update(idle(), &intent("drawer_scrim.click"));
             assert!(!modal().is_open(), "scrim tap closes the drawer");
@@ -550,7 +528,7 @@ mod tests {
             );
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
-                Some(pinion_core::modal_scope_request::ModalRequest::Close)
+                vec![pinion_core::modal_scope_request::ModalRequest::Close]
             );
         });
     }
@@ -558,15 +536,15 @@ mod tests {
     #[test]
     fn r702_item_click_selects_and_closes() {
         Owner::new().run(|| {
-            let _ = pinion_core::modal_scope_request::drain();
             modal().open(nav_members());
+            let _ = pinion_core::modal_scope_request::drain();
             use_drawer_active().set(0);
             let _ = DrawerView::update(idle(), &intent("drawer_item_2.click"));
             assert_eq!(use_drawer_active().get(), 2, "selecting item 2 sets active");
             assert!(!modal().is_open(), "selection closes the modal drawer");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
-                Some(pinion_core::modal_scope_request::ModalRequest::Close)
+                vec![pinion_core::modal_scope_request::ModalRequest::Close]
             );
         });
     }
@@ -576,8 +554,8 @@ mod tests {
     #[test]
     fn r702_escape_closes_open_drawer() {
         Owner::new().run(|| {
-            let _ = pinion_core::modal_scope_request::drain();
             modal().open(nav_members());
+            let _ = pinion_core::modal_scope_request::drain();
             use_drawer_active().set(1);
             let mut scene = boot_scene();
             let handled = DrawerView::apply_key(
@@ -591,7 +569,7 @@ mod tests {
             assert_eq!(use_drawer_active().get(), 1, "Escape does not navigate");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
-                Some(pinion_core::modal_scope_request::ModalRequest::Close)
+                vec![pinion_core::modal_scope_request::ModalRequest::Close]
             );
         });
     }

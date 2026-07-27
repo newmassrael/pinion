@@ -5902,26 +5902,45 @@ impl<V: WidgetView> ShellCore<V> {
         self.drain_modal_request();
     }
 
-    /// R693 §5.39 — pop one pending [`pinion_core::modal_scope_request`]
-    /// entry and apply it via [`FocusManager::push_modal_scope`] /
+    /// R693 §5.39 — apply every pending [`pinion_core::modal_scope_request`]
+    /// entry via [`FocusManager::push_modal_scope`] /
     /// [`FocusManager::pop_modal_scope`], routing the resulting focus
     /// move through [`Self::notify_focus_change`] so the auto-focused
     /// dialog control (and, on close, the restored invoker) fire their
     /// `External::on_focus_change` observers — the dialog's buttons mark
     /// themselves focused for the focus ring exactly as a Tab traversal
     /// would. No-op on an empty mailbox.
+    ///
+    /// R1456 — the batch is applied **in order**, not just its last
+    /// entry: the requests are stack edits, and one dispatch frame can
+    /// legitimately carry two (a menu handing off to a confirm dialog
+    /// closes itself and opens the dialog from one intent). Applying
+    /// only one leaked the unapplied scope onto the modal stack
+    /// permanently.
+    ///
+    /// The observer arc is snapshotted **once around the whole batch**,
+    /// so a handoff reports the one transition the user can perceive
+    /// (menu row → dialog button). The intermediate focus the pop
+    /// restores is never painted and never observed; firing
+    /// `on_focus_change` for it would announce a focus owner that the
+    /// same frame already replaced.
     fn drain_modal_request(&mut self) {
-        let Some(req) = pinion_core::modal_scope_request::drain() else {
+        let reqs = pinion_core::modal_scope_request::drain();
+        if reqs.is_empty() {
             return;
-        };
+        }
         let focus_before = self.focus.focused().map(str::to_owned);
-        let changed = match req {
-            pinion_core::modal_scope_request::ModalRequest::Open { members } => {
-                self.focus.push_modal_scope(members)
-            }
-            pinion_core::modal_scope_request::ModalRequest::Close => self.focus.pop_modal_scope(),
-        };
-        if changed {
+        for req in reqs {
+            match req {
+                pinion_core::modal_scope_request::ModalRequest::Open { members } => {
+                    self.focus.push_modal_scope(members)
+                }
+                pinion_core::modal_scope_request::ModalRequest::Close => {
+                    self.focus.pop_modal_scope()
+                }
+            };
+        }
+        if self.focus.focused() != focus_before.as_deref() {
             self.notify_focus_change(focus_before.as_deref());
             self.revision.bump();
             self.request_redraw();
@@ -9747,5 +9766,271 @@ mod r1362_window_control_sink_seeding_tests {
         wc.request_window_control("main", WindowControl::Close);
         rp.request_repaint();
         qt.request_quit();
+    }
+}
+
+#[cfg(test)]
+mod r1456_modal_handoff_tests {
+    //! R1456 §5.39 — a modal **handoff** (close A, open B from one user
+    //! action) survives the drain.
+    //!
+    //! Reported live from a downstream consumer (PINION-PR77): a command
+    //! palette whose destructive row hands off to a confirm dialog left a
+    //! ghost scope on the modal stack, and from then on *every* `focus/set`
+    //! was refused — the client's keyboard focus model was dead until
+    //! restart. Root cause was a type mismatch, not a missing feature: the
+    //! mailbox carried stack **edits** but inherited `focus_request`'s
+    //! last-write-wins **level** policy, so `close` then `open` in one frame
+    //! dropped the `close`.
+    //!
+    //! These drive the real [`ShellCore::drain_modal_request`] against a
+    //! real [`FocusManager`], which is where the loss actually happened —
+    //! the mailbox-level unit tests in `pinion_core::modal_scope_request`
+    //! prove ordering, these prove the stack the shell builds from it.
+
+    use super::ShellCore;
+    use crate::test_fixtures::TestRenderer;
+    use crate::{SizeStrategy, WidgetView};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::{
+        Backend, BackendFallback, BackendSupport, External, RepaintOwner, ThreadOwnership,
+    };
+    use pinion_core::modal_scope_request;
+    use pinion_core::scene::ContainerNode;
+    use pinion_core::widget_core::ExtraExternal;
+    use pinion_core::{Frame, Scene, WidgetCore};
+    use std::cell::RefCell;
+
+    /// The invoker: a background control that opens the menu.
+    const TRIGGER: &str = "trigger";
+    /// A second background control — proves the base enumeration comes
+    /// back whole, not just non-empty.
+    const OTHER_BG: &str = "other_bg";
+    /// The menu's only member (modal A).
+    const MENU_ROW: &str = "menu_row";
+    /// The confirm dialog's only member (modal B).
+    const CONFIRM_OK: &str = "confirm_ok";
+
+    thread_local! {
+        /// `(tag, focused)` in dispatch order, appended by every
+        /// [`FocusRecorder`]. Thread-local, so parallel tests cannot
+        /// see each other's arcs.
+        static FOCUS_LOG: RefCell<Vec<(&'static str, bool)>> = const {
+            RefCell::new(Vec::new())
+        };
+    }
+
+    /// An [`External`] that records the focus arc the shell dispatches to
+    /// it. `ButtonExternal` only keeps the latest posture as a flag, which
+    /// cannot distinguish "never notified" from "notified twice and back"
+    /// — the exact distinction the batch-once claim rests on.
+    #[derive(Debug)]
+    struct FocusRecorder(&'static str);
+
+    impl External for FocusRecorder {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn on_focus_change(&mut self, focused: bool) {
+            FOCUS_LOG.with_borrow_mut(|log| log.push((self.0, focused)));
+        }
+    }
+
+    struct HandoffFixture;
+
+    impl WidgetCore for HandoffFixture {
+        type State = ();
+        type Event = ();
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(FocusRecorder(TRIGGER))
+        }
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            vec![
+                ExtraExternal::new(OTHER_BG, Box::new(FocusRecorder(OTHER_BG))),
+                ExtraExternal::new(MENU_ROW, Box::new(FocusRecorder(MENU_ROW))),
+                ExtraExternal::new(CONFIRM_OK, Box::new(FocusRecorder(CONFIRM_OK))),
+            ]
+        }
+        fn tag() -> &'static str {
+            TRIGGER
+        }
+        fn read_state(_scene: &Scene) -> Self::State {}
+        fn view((): Self::State, _frame: &Frame) -> Scene {
+            Scene::Container(ContainerNode::new(Vec::new()).with_tag(TRIGGER))
+        }
+        fn event_name((): Self::Event) -> &'static str {
+            "__internal__"
+        }
+        fn title() -> &'static str {
+            "ModalHandoff"
+        }
+    }
+
+    impl WidgetA11y for HandoffFixture {}
+
+    impl WidgetView for HandoffFixture {
+        type Renderer = TestRenderer;
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 8,
+                height: 8,
+            }
+        }
+    }
+
+    /// A booted shell with two focusable background controls and focus
+    /// resting on the trigger — the state a user is in when they open a
+    /// menu. Clears both thread-locals so each test starts clean.
+    fn boot() -> ShellCore<HandoffFixture> {
+        let _ = modal_scope_request::drain();
+        let mut sc = ShellCore::<HandoffFixture>::new();
+        sc.refresh_window_focusables(
+            pinion_runtime::DEFAULT_WINDOW,
+            vec![TRIGGER.to_owned(), OTHER_BG.to_owned()],
+        );
+        assert!(sc.focus.focus_set(TRIGGER), "the invoker starts focused");
+        FOCUS_LOG.with_borrow_mut(Vec::clear);
+        sc
+    }
+
+    /// One dispatch frame's worth of requests reaches the focus stack.
+    fn open_menu(sc: &mut ShellCore<HandoffFixture>) {
+        modal_scope_request::open(vec![MENU_ROW.to_owned()]);
+        sc.drain_modal_request();
+    }
+
+    /// PR-77 acceptance #1 — `close()` then `open(["b"])` in ONE dispatch
+    /// frame lands at depth 1 over `["b"]`. Before R1456 the `close` was
+    /// overwritten, so this was depth 2 with a ghost scope underneath.
+    #[test]
+    fn a_handoff_replaces_the_scope_instead_of_stacking_on_it() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+        assert_eq!(sc.focus().modal_depth(), 1, "the menu's trap is up");
+        assert_eq!(sc.focus().focused(), Some(MENU_ROW));
+
+        // The destructive row: ONE `External::invoke` body closes the menu
+        // and opens the confirm dialog. Not two frames — one user action.
+        modal_scope_request::close();
+        modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
+        sc.drain_modal_request();
+
+        assert_eq!(
+            sc.focus().modal_depth(),
+            1,
+            "the handoff REPLACES the menu's scope; a depth of 2 here is \
+             the dismissed menu still trapping focus",
+        );
+        assert_eq!(
+            sc.focus().active_tab_order(),
+            [CONFIRM_OK.to_owned()],
+            "the confirm dialog owns the active enumeration",
+        );
+        assert_eq!(sc.focus().focused(), Some(CONFIRM_OK));
+    }
+
+    /// PR-77 acceptance #2 — closing the handed-off modal returns to depth
+    /// 0 and the BASE enumeration. This is the assertion that reproduces
+    /// the reported symptom: with a ghost scope, the background stays
+    /// unfocusable forever and `focus_set` refuses every tag.
+    #[test]
+    fn closing_the_handed_off_modal_leaves_no_ghost_scope() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+        modal_scope_request::close();
+        modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
+        sc.drain_modal_request();
+
+        // The user answers the confirm dialog.
+        modal_scope_request::close();
+        sc.drain_modal_request();
+
+        assert_eq!(sc.focus().modal_depth(), 0, "no trap survives the cycle");
+        assert_eq!(
+            sc.focus().active_tab_order(),
+            [TRIGGER.to_owned(), OTHER_BG.to_owned()],
+            "the base enumeration is active again, whole",
+        );
+        assert_eq!(
+            sc.focus().focused(),
+            Some(TRIGGER),
+            "focus lands back on the invoker that opened the menu",
+        );
+        assert!(
+            sc.focus.focus_set(OTHER_BG),
+            "a background control is focusable again — the live PR-77 \
+             symptom was this returning false for every tag, forever",
+        );
+    }
+
+    /// PR-77 acceptance #3 — nesting is untouched. Two frames, one `open`
+    /// each, still stack to depth 2; the batch drain changes how many
+    /// requests one frame may carry, not what a request means.
+    #[test]
+    fn nesting_across_separate_frames_still_stacks() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+
+        modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
+        sc.drain_modal_request();
+
+        assert_eq!(sc.focus().modal_depth(), 2, "B stacks ON TOP of A");
+        assert_eq!(sc.focus().active_tab_order(), [CONFIRM_OK.to_owned()]);
+
+        modal_scope_request::close();
+        sc.drain_modal_request();
+        assert_eq!(sc.focus().modal_depth(), 1, "popping B re-exposes A");
+        assert_eq!(
+            sc.focus().active_tab_order(),
+            [MENU_ROW.to_owned()],
+            "A is a LIVE scope here, unlike the handoff's ghost",
+        );
+    }
+
+    /// The batch is one observable focus transition, not two. A handoff's
+    /// pop transiently restores the invoker before the push moves focus
+    /// into the dialog; that intermediate owner is never painted, so
+    /// announcing it would tell a background widget it gained focus — a
+    /// `TextField` would commit an IME composition, a caret would start
+    /// blinking off-screen. Snapshotting the arc once around the whole
+    /// batch is what keeps `TRIGGER` out of this log.
+    #[test]
+    fn a_handoff_reports_one_focus_arc_not_the_transient_restore() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+        FOCUS_LOG.with_borrow_mut(Vec::clear);
+
+        modal_scope_request::close();
+        modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
+        sc.drain_modal_request();
+
+        assert_eq!(
+            FOCUS_LOG.with_borrow(Clone::clone),
+            vec![(MENU_ROW, false), (CONFIRM_OK, true)],
+            "blur the outgoing member, focus the incoming one — the \
+             invoker the pop transiently restored is never announced",
+        );
+    }
+
+    /// A frame carrying a single request behaves exactly as before the
+    /// batch drain: one arc, one scope. The overwhelming majority of
+    /// frames are this shape, so it is the regression that matters most.
+    #[test]
+    fn a_single_request_frame_is_unchanged() {
+        let mut sc = boot();
+        open_menu(&mut sc);
+
+        assert_eq!(sc.focus().modal_depth(), 1);
+        assert_eq!(
+            FOCUS_LOG.with_borrow(Clone::clone),
+            vec![(TRIGGER, false), (MENU_ROW, true)],
+        );
     }
 }

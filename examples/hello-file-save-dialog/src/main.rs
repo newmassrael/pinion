@@ -847,9 +847,9 @@ mod tests {
             );
             assert_eq!(
                 modal_scope_request::drain(),
-                Some(ModalRequest::Open {
+                vec![ModalRequest::Open {
                     members: dialog_members()
-                }),
+                }],
                 "modal trap requested over the filename field + action buttons",
             );
         });
@@ -877,7 +877,7 @@ mod tests {
             assert_eq!(directory().entries().len(), before, "no file created");
             assert_eq!(
                 modal_scope_request::drain(),
-                None,
+                Vec::new(),
                 "no modal lifecycle change"
             );
         });
@@ -904,7 +904,7 @@ mod tests {
                 "the file was created in the current directory",
             );
             assert!(!modal().is_open(), "Save closes the dialog");
-            assert_eq!(modal_scope_request::drain(), Some(ModalRequest::Close));
+            assert_eq!(modal_scope_request::drain(), vec![ModalRequest::Close]);
         });
     }
 
@@ -941,7 +941,7 @@ mod tests {
                     .any(|e| e.name == "scratch.txt"),
                 "Cancel writes no file",
             );
-            assert_eq!(modal_scope_request::drain(), Some(ModalRequest::Close));
+            assert_eq!(modal_scope_request::drain(), vec![ModalRequest::Close]);
         });
     }
 
@@ -1016,9 +1016,13 @@ mod tests {
     #[test]
     fn r790_escape_cancels_open_dialog() {
         Owner::new().run(|| {
-            let _ = modal_scope_request::drain();
             open_dialog();
             filename_state().set_text("draft.txt".to_owned());
+            // Flush the setup's own `Open` so the assertion below reads
+            // exactly what Escape requested (R1456: the mailbox keeps
+            // every request in a frame, it no longer swallows earlier
+            // ones).
+            let _ = modal_scope_request::drain();
             let mut scene = boot_scene();
             let handled = FileSaveView::apply_key(
                 &mut scene,
@@ -1029,7 +1033,7 @@ mod tests {
             assert!(handled);
             assert!(!modal().is_open(), "Escape dismisses");
             assert_eq!(use_saved().get(), None, "Escape does not save");
-            assert_eq!(modal_scope_request::drain(), Some(ModalRequest::Close));
+            assert_eq!(modal_scope_request::drain(), vec![ModalRequest::Close]);
         });
     }
 

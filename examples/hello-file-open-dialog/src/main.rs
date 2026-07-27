@@ -674,9 +674,9 @@ mod tests {
             assert_eq!(dir.selected(), None, "open clears any prior selection");
             assert_eq!(
                 modal_scope_request::drain(),
-                Some(ModalRequest::Open {
+                vec![ModalRequest::Open {
                     members: dialog_members()
-                }),
+                }],
                 "modal trap requested over the action buttons",
             );
         });
@@ -697,7 +697,7 @@ mod tests {
             assert_eq!(use_chosen().get(), None, "nothing chosen");
             assert_eq!(
                 modal_scope_request::drain(),
-                None,
+                Vec::new(),
                 "no modal lifecycle change"
             );
         });
@@ -717,7 +717,7 @@ mod tests {
                 "OK records the selected path as chosen",
             );
             assert!(!modal().is_open(), "OK closes the dialog");
-            assert_eq!(modal_scope_request::drain(), Some(ModalRequest::Close));
+            assert_eq!(modal_scope_request::drain(), vec![ModalRequest::Close]);
         });
     }
 
@@ -731,7 +731,7 @@ mod tests {
             let _ = FileOpenView::update(idle(), &intent("fileopen_cancel.click"));
             assert!(!modal().is_open(), "Cancel closes the dialog");
             assert_eq!(use_chosen().get(), None, "Cancel does not choose");
-            assert_eq!(modal_scope_request::drain(), Some(ModalRequest::Close));
+            assert_eq!(modal_scope_request::drain(), vec![ModalRequest::Close]);
         });
     }
 
@@ -740,9 +740,13 @@ mod tests {
     #[test]
     fn r788_escape_cancels_open_dialog() {
         Owner::new().run(|| {
-            let _ = modal_scope_request::drain();
             open_dialog();
             directory().select("README.md");
+            // Flush the setup's own `Open` so the assertion below reads
+            // exactly what Escape requested (R1456: the mailbox keeps
+            // every request in a frame, it no longer swallows earlier
+            // ones).
+            let _ = modal_scope_request::drain();
             let mut scene = boot_scene();
             let handled = FileOpenView::apply_key(
                 &mut scene,
@@ -753,7 +757,7 @@ mod tests {
             assert!(handled);
             assert!(!modal().is_open(), "Escape dismisses");
             assert_eq!(use_chosen().get(), None, "Escape does not choose");
-            assert_eq!(modal_scope_request::drain(), Some(ModalRequest::Close));
+            assert_eq!(modal_scope_request::drain(), vec![ModalRequest::Close]);
         });
     }
 

@@ -198,9 +198,9 @@ mod tests {
             assert!(m.is_open(), "open raises the flag");
             assert_eq!(
                 modal_scope_request::drain(),
-                Some(ModalRequest::Open {
+                vec![ModalRequest::Open {
                     members: vec!["ok".to_string(), "cancel".to_string()],
-                }),
+                }],
                 "open installs the focus trap over the members in lockstep",
             );
         });
@@ -217,7 +217,7 @@ mod tests {
             assert!(!m.is_open(), "close lowers the flag");
             assert_eq!(
                 modal_scope_request::drain(),
-                Some(ModalRequest::Close),
+                vec![ModalRequest::Close],
                 "close pops the focus trap in lockstep",
             );
         });

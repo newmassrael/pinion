@@ -462,6 +462,73 @@ pub fn button_scene(
     view_button(label, state, hover, focused, colors, style)
 }
 
+/// R1456 §5.16 §5.40 — label size of a [`surface_action_scene`] button.
+/// One notch above the [`ButtonStyle::m3_default`] 14 px: a modal
+/// surface's actions are the only interactive targets on screen while it
+/// is up, so they carry the emphasis the background no longer competes
+/// for.
+const SURFACE_ACTION_LABEL_PX: u32 = 16;
+
+/// R1456 §5.16 §5.40 — one filled-tonal action button on a **modal
+/// surface** (dialog action, drawer destination, command-menu row).
+///
+/// The per-button data; the *opinion* — filled-tonal tone,
+/// [`ButtonStyle::m3_default`] chrome, `SURFACE_ACTION_LABEL_PX` label
+/// — lives in [`surface_action_scene`].
+#[derive(Debug, Clone)]
+pub struct SurfaceAction<'a> {
+    /// Paint tag; routes input to this button's `ButtonExternal`.
+    pub tag: &'static str,
+    /// Visible label. Doubles as the AT accessible name via
+    /// `enrich_names_from_scene`, so it is never duplicated in
+    /// `access_node`.
+    pub label: &'a str,
+    /// Posture read back from the state scene ([`read_button_state`]).
+    pub state: ButtonState,
+    /// Keyboard-focus posture ([`read_button_focused`]) — drives the ring.
+    pub focused: bool,
+    /// `Owner::cache` key for this button's hover-progress animation.
+    pub hover_key: &'static str,
+    /// Fixed box size. Modal actions are laid out in a fixed row, not
+    /// stretched, so each carries its own.
+    pub size: Size,
+    /// Whether this button is a *static* Tab stop. Members of a modal
+    /// scope pass `false`: they are focusable only while the trap is up,
+    /// and the scope — not the base enumeration — is what makes them so
+    /// (see [`pinion_core::modal_scope_request`]).
+    pub focusable: bool,
+}
+
+/// R1456 §5.16 §5.40 — paint a [`SurfaceAction`].
+///
+/// The **3rd-identical lift** R703 deferred this exact composition for.
+/// [`button_scene`] above lifted only the un-opinionated hover+view
+/// wiring, leaving "which tone, which label size" at each call site
+/// "until a 3rd *identical* consumer". `hello-dialog` (R693) and
+/// `hello-drawer` (R702) had been that pair, byte-identical, since R703;
+/// `hello-modal-handoff` (R1456) is the third, so the opinion lands here
+/// and the three bindings drop their verbatim local wrappers.
+///
+/// Consumers whose preset genuinely differs keep theirs:
+/// `hello-file-dialog` (fixed size, no focus opt-out) and
+/// `hello-snackbar` / `hello-undo` (inverse-surface tone, not
+/// filled-tonal) are *not* this button and are deliberately left alone —
+/// three identical copies is the trigger, "three copies" is not.
+#[must_use]
+pub fn surface_action_scene(action: &SurfaceAction<'_>, theme: &Theme) -> Scene {
+    button_scene(
+        action.label,
+        action.state,
+        action.focused,
+        action.hover_key,
+        &ButtonColors::filled_tonal(theme),
+        &ButtonStyle::m3_default(action.tag)
+            .with_size(action.size)
+            .with_label_font_size_px(SURFACE_ACTION_LABEL_PX)
+            .with_focusable(action.focusable),
+    )
+}
+
 /// R703 §5.16 §5.40 — read a
 /// [`ButtonExternal`](pinion_core::widgets::button::ButtonExternal)'s
 /// [`ButtonState`] out of the state scene by tag (via the §5.15

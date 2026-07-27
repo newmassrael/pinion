@@ -182,6 +182,7 @@ members = [
     "examples/hello-selection-toolbar",
     "examples/hello-column-visibility",
     "examples/hello-dialog",
+    "examples/hello-modal-handoff",
     "examples/hello-file-open-dialog",
     "examples/hello-file-save-dialog",
     "examples/hello-file-manager",

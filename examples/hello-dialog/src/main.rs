@@ -80,7 +80,7 @@ use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_mod
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
+    SurfaceAction, button_a11y_state, read_button_focused, read_button_state, surface_action_scene,
 };
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use std::rc::Rc;
@@ -181,34 +181,6 @@ fn close_dialog(accepted: bool) {
 /// not owner-wrapped).
 type DialogViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 
-/// Render one button via the [`pinion_widget_paint::button`] substrate.
-#[allow(clippy::too_many_arguments)] // R1020: one arg per paint axis + focusable opt-in
-fn button_scene(
-    tag: &'static str,
-    label: &str,
-    state: ButtonState,
-    focused: bool,
-    hover_key: &'static str,
-    size: Size,
-    theme: &pinion_core::theme::Theme,
-    focusable: bool,
-) -> Scene {
-    // R727 — opinionated default (filled-tonal + 16 px) stays local
-    // (2-consumer with hello-drawer, R703-deferred); the mechanical
-    // hover + view_button pairing is the lifted SSOT core.
-    pinion_widget_paint::button::button_scene(
-        label,
-        state,
-        focused,
-        hover_key,
-        &ButtonColors::filled_tonal(theme),
-        &ButtonStyle::m3_default(tag)
-            .with_size(size)
-            .with_label_font_size_px(16)
-            .with_focusable(focusable),
-    )
-}
-
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`,
 /// reading the reactive `dialog_open` + `dialog_result` signals. When
 /// open, the dialog overlay is pushed **last** so it paints over (and
@@ -221,15 +193,17 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
     let open = modal().is_open();
     let result = use_dialog_result().get();
 
-    let trigger = button_scene(
-        TRIGGER_TAG,
-        "Delete file\u{2026}",
-        trigger_state,
-        trigger_focused,
-        TRIGGER_HOVER_KEY,
-        Size::px(TRIGGER_W, TRIGGER_H),
+    let trigger = surface_action_scene(
+        &SurfaceAction {
+            tag: TRIGGER_TAG,
+            label: "Delete file\u{2026}",
+            state: trigger_state,
+            focused: trigger_focused,
+            hover_key: TRIGGER_HOVER_KEY,
+            size: Size::px(TRIGGER_W, TRIGGER_H),
+            focusable: true,
+        },
         &theme,
-        true,
     );
     let status_label = match result {
         None => "No action taken yet.",
@@ -258,25 +232,31 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
     if open {
         // Action order matches `dialog_members()` (Cancel, then Delete)
         // so the left-to-right layout mirrors the Tab order.
-        let cancel = button_scene(
-            CANCEL_TAG,
-            "Cancel",
-            cancel_state,
-            cancel_focused,
-            CANCEL_HOVER_KEY,
-            Size::px(ACTION_W, ACTION_H),
+        let cancel = surface_action_scene(
+            &SurfaceAction {
+                tag: CANCEL_TAG,
+                label: "Cancel",
+                state: cancel_state,
+                focused: cancel_focused,
+                hover_key: CANCEL_HOVER_KEY,
+                size: Size::px(ACTION_W, ACTION_H),
+                // Action tags are modal members: focusable only while
+                // the trap is up, never in the base enumeration.
+                focusable: false,
+            },
             &theme,
-            false,
         );
-        let ok = button_scene(
-            OK_TAG,
-            "Delete",
-            ok_state,
-            ok_focused,
-            OK_HOVER_KEY,
-            Size::px(ACTION_W, ACTION_H),
+        let ok = surface_action_scene(
+            &SurfaceAction {
+                tag: OK_TAG,
+                label: "Delete",
+                state: ok_state,
+                focused: ok_focused,
+                hover_key: OK_HOVER_KEY,
+                size: Size::px(ACTION_W, ACTION_H),
+                focusable: false,
+            },
             &theme,
-            false,
         );
         children.push(view_dialog(
             SCRIM_TAG,
@@ -579,15 +559,15 @@ mod tests {
     #[test]
     fn r693_open_click_sets_open_and_requests_modal() {
         Owner::new().run(|| {
-            let _ = pinion_core::modal_scope_request::drain();
             modal().close();
+            let _ = pinion_core::modal_scope_request::drain();
             let _ = DialogView::update(idle(), &intent("open_dialog.click"));
             assert!(modal().is_open(), "open signal flipped true");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
-                Some(pinion_core::modal_scope_request::ModalRequest::Open {
+                vec![pinion_core::modal_scope_request::ModalRequest::Open {
                     members: dialog_members(),
-                }),
+                }],
                 "modal trap requested over the action buttons"
             );
         });
@@ -596,14 +576,14 @@ mod tests {
     #[test]
     fn r693_ok_click_accepts_and_closes_modal() {
         Owner::new().run(|| {
-            let _ = pinion_core::modal_scope_request::drain();
             modal().open(dialog_members());
+            let _ = pinion_core::modal_scope_request::drain();
             let _ = DialogView::update(idle(), &intent("dialog_ok.click"));
             assert!(!modal().is_open());
             assert_eq!(use_dialog_result().get(), Some(true));
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
-                Some(pinion_core::modal_scope_request::ModalRequest::Close)
+                vec![pinion_core::modal_scope_request::ModalRequest::Close]
             );
         });
     }
@@ -611,14 +591,14 @@ mod tests {
     #[test]
     fn r693_cancel_click_cancels_and_closes_modal() {
         Owner::new().run(|| {
-            let _ = pinion_core::modal_scope_request::drain();
             modal().open(dialog_members());
+            let _ = pinion_core::modal_scope_request::drain();
             let _ = DialogView::update(idle(), &intent("dialog_cancel.click"));
             assert!(!modal().is_open());
             assert_eq!(use_dialog_result().get(), Some(false));
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
-                Some(pinion_core::modal_scope_request::ModalRequest::Close)
+                vec![pinion_core::modal_scope_request::ModalRequest::Close]
             );
         });
     }
@@ -628,8 +608,8 @@ mod tests {
     #[test]
     fn r693_escape_cancels_open_dialog() {
         Owner::new().run(|| {
-            let _ = pinion_core::modal_scope_request::drain();
             modal().open(dialog_members());
+            let _ = pinion_core::modal_scope_request::drain();
             let mut scene = boot_scene();
             let handled = DialogView::apply_key(
                 &mut scene,
@@ -642,7 +622,7 @@ mod tests {
             assert_eq!(use_dialog_result().get(), Some(false));
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
-                Some(pinion_core::modal_scope_request::ModalRequest::Close)
+                vec![pinion_core::modal_scope_request::ModalRequest::Close]
             );
         });
     }
