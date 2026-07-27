@@ -139,10 +139,56 @@ pub struct FrameTiming {
     /// accessibility / IME / finalize work. `>= build + encode +
     /// acquire + render` by construction.
     pub total_us: u64,
+    /// (R1459 §5.16 §5.45) How many view + layout passes this paint spent
+    /// reaching its fixed point — `1` when the first pass changed nothing,
+    /// up to `SETTLE_PASS_BUDGET` when the frame gave up and asked for
+    /// another (see `ShellCore::report_unsettled_frame`).
+    ///
+    /// A **count**, next to five durations, because it answers a question no
+    /// duration can. [`Self::build_us`] is the whole settle loop, so a frame
+    /// that costs 4ms because one pass is heavy and a frame that costs 4ms
+    /// because four cheap passes disagree are the same number — and they want
+    /// opposite fixes. This is also the only evidence about whether the budget
+    /// itself is right: it was chosen from a survey of the settling chains
+    /// that exist, not proven to bound every chain, so a binding that sits at
+    /// the budget is data about pinion, not only about the binding.
+    ///
+    /// `0` on a sample no settle loop produced (a hand-built fixture, the
+    /// `Default`), which is distinguishable from every real paint's `>= 1`.
+    ///
+    /// Read it with [`Self::settled`]: a frame that converges exactly ON the
+    /// budget and a frame that gave up both report the budget, so the count
+    /// alone cannot tell them apart.
+    pub settle_passes: u32,
+    /// (R1459 §5.16 §5.45) Whether the paint reached its fixed point, or spent
+    /// [`Self::settle_passes`] and gave up.
+    ///
+    /// A separate field rather than a value encoded into the count, because
+    /// they answer different questions: "how much work" is a number and only a
+    /// number answers it; "did it finish" is a yes/no and only a bool answers
+    /// it. Encoding the second into the first (a sentinel count, a
+    /// budget-plus-one) would report passes the frame never ran.
+    ///
+    /// Without this, a §2 #2 agent reading `settle_passes == 4` on a 4-pass
+    /// budget could not tell a converged frame from one that is repainting
+    /// forever — and the only other record of that is a `tracing::warn!` the
+    /// wire cannot see.
+    pub settled: bool,
+    /// (R1459 §5.16 §5.36) How many text runs this paint handed to the shaper
+    /// — [`LayoutCache`](pinion_text::LayoutCache) misses, not lookups.
+    ///
+    /// R1454 measured what one miss costs (18.5µs against a 118ns hit) and
+    /// bounded the worst offender with Qt's `resizeContentsPrecision`, but
+    /// that bound is **consumer-honoured**: a binding that ignores it still
+    /// measures every row, and nothing noticed. This is what notices. A steady
+    /// state repaint should read `0`; a frame that re-shapes its whole content
+    /// is one multiplication away from a budget answer.
+    pub shape_misses: u64,
 }
 
 impl FrameTiming {
-    /// Construct a sample from the measured phase durations.
+    /// Construct a sample from the measured phase durations, with the R1459
+    /// work counts zeroed — see [`Self::with_work`].
     #[must_use]
     pub fn new(
         build_us: u64,
@@ -157,7 +203,26 @@ impl FrameTiming {
             acquire_us,
             render_us,
             total_us,
+            settle_passes: 0,
+            settled: false,
+            shape_misses: 0,
         }
+    }
+
+    /// (R1459 §5.16) Attach the frame's **work counts** to a sample built by
+    /// [`Self::new`].
+    ///
+    /// A separate builder rather than three more parameters on `new`: that
+    /// constructor already takes five positional `u64` durations, and further
+    /// ones would make a transposed call site compile silently. These three
+    /// have three distinct types (`u32` / `bool` / `u64`), none of which fits
+    /// a duration slot, so the shape of the API is what catches the mistake.
+    #[must_use]
+    pub fn with_work(mut self, settle_passes: u32, settled: bool, shape_misses: u64) -> Self {
+        self.settle_passes = settle_passes;
+        self.settled = settled;
+        self.shape_misses = shape_misses;
+        self
     }
 
     /// `build + encode + acquire + render` (saturating). The accounted

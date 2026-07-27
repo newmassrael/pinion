@@ -1322,6 +1322,21 @@ impl<V: WidgetView> AppShell<V> {
     /// gate) or `RenderBackendUnavailable` (the screenshot handler's
     /// absent-snapshot path). This is the ONE site that can read live
     /// pixels — the dispatch runs in `ShellCore`, which holds no renderer.
+    /// R1459 §5.16 §5.36 — attach the paint's WORK counts to a duration sample
+    /// and record it.
+    ///
+    /// The counts are read from the window the paint just wrote, so both halves
+    /// describe the same frame. They live on one sample rather than a second
+    /// surface because they answer the same question from two sides:
+    /// `build_us` is the whole settle loop, so a 4ms frame that ran one heavy
+    /// pass and a 4ms frame whose four cheap passes disagree are identical by
+    /// time alone — and they want opposite fixes.
+    fn record_frame_sample(&mut self, window: &str, timing: pinion_runtime::FrameTiming) {
+        let (passes, settled, shapes) = self.core.last_frame_work_for_window(window);
+        self.core
+            .record_frame_timing(window, timing.with_work(passes, settled, shapes));
+    }
+
     fn capture_window_screenshot(
         &mut self,
         window_scope: Option<&str>,
@@ -1760,7 +1775,13 @@ impl<V: WidgetView> AppShell<V> {
         // window. The O(window) aggregate fold is deferred to the
         // AI-paced `scene/frame_timings` read, never run here.
         let total_us = instant_delta_us(frame_start, Instant::now());
-        self.core.record_frame_timing(
+        // R1459 §5.16 §5.36 — the frame's WORK counts ride the same sample as
+        // its durations. `build_us` is the whole settle loop, so a 4ms frame
+        // that ran one heavy pass and a 4ms frame whose four cheap passes
+        // disagree are indistinguishable by time alone — and they want
+        // opposite fixes. Read from the window the paint just wrote, so the
+        // counts and the spans describe the same frame.
+        self.record_frame_sample(
             target_window,
             pinion_runtime::FrameTiming::new(build_us, encode_us, acquire_us, render_us, total_us),
         );

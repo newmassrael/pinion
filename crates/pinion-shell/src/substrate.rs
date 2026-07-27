@@ -180,6 +180,18 @@ struct WindowState {
     /// Tab order); `None` ≡ never painted focusables (presence gates the
     /// [`ShellCore::union_focusable_tags`] window set).
     focusable_tags: Option<Vec<String>>,
+    /// R1459 — the work the last paint of THIS window did, as counts:
+    /// `(settle passes, settled, shape misses)`. Written by
+    /// [`ShellCore::compute_paint_scene_internal`] and read back one step
+    /// later by the surface, which owns the `Instant` spans and assembles the
+    /// [`FrameTiming`] sample. `(0, false, 0)` before the first paint, which is
+    /// the same "no sample yet" the timing ring reports.
+    ///
+    /// Stored rather than returned because the paint-scene producer's return
+    /// type is the `Scene` itself — the one thing every caller wants — and
+    /// widening it to a tuple would make every call site carry a measurement
+    /// it does not use.
+    last_frame_work: (u32, bool, u64),
 }
 
 impl WindowState {
@@ -208,6 +220,7 @@ impl WindowState {
             && self.render_fidelity.is_none()
             && !self.maximized
             && self.focusable_tags.is_none()
+            && self.last_frame_work == (0, false, 0)
     }
 }
 
@@ -4033,7 +4046,7 @@ impl<V: WidgetView> ShellCore<V> {
         // R1121 §5.16 §5.21 — borderless windows inset content below their
         // chrome strip (`Some(height)`); decorated windows are `None` (no-op).
         let chrome_h = self.chrome_inset_height(window_id);
-        let (mut paint_scene, frame_settled) = {
+        let (mut paint_scene, frame_settled, settle_passes, shape_misses) = {
             let core = &self.core;
             let run_view = || {
                 let view = core.root_owner().run(|| match window_id {
@@ -4049,8 +4062,14 @@ impl<V: WidgetView> ShellCore<V> {
             // Paired with the §5.37 paint arm at the `text_cache_and_engine`
             // site so both arms size + render eligible text identically.
             let text_measure = text_measure_override(self.text_engine.as_ref());
+            // R1459 §5.16 §5.36 — the shaper-miss mark. Read before any pass so
+            // the delta below is THIS paint's shape work, not the cache's
+            // lifetime total; the cache is shared across windows, so only a
+            // per-paint delta is attributable to a window's frame.
+            let shapes_before = self.text_cache.shapes();
             let mut scene = run_view();
             let mut settled = false;
+            let mut passes = 0_u32;
             for pass in 1..=SETTLE_PASS_BUDGET {
                 // R57.X.scrollbar §5.45 — first-paint chicken-and-egg. The
                 // layout pass writes the post-layout
@@ -4097,6 +4116,7 @@ impl<V: WidgetView> ShellCore<V> {
                     h,
                     text_measure,
                 ) | self.core.publish_pane_viewports(&scene);
+                passes = pass;
                 if !dirty {
                     settled = true;
                     break;
@@ -4109,7 +4129,12 @@ impl<V: WidgetView> ShellCore<V> {
                     scene = run_view();
                 }
             }
-            (scene, settled)
+            (
+                scene,
+                settled,
+                passes,
+                self.text_cache.shapes() - shapes_before,
+            )
         };
         // (R1020 §5.39) Re-derive the keyboard focus enumeration from the
         // freshly produced paint scene — the ratified scene-derived focus
@@ -4296,9 +4321,11 @@ impl<V: WidgetView> ShellCore<V> {
             task_pump.poll();
             self.redraw_requested = true;
         }
-        if !frame_settled {
-            self.report_unsettled_frame(window_key);
-        }
+        // R1459 §5.16 — publish this paint's WORK counts for the surface to
+        // fold into its `FrameTiming` sample. Written before the unsettled
+        // report so a budget-exhausted frame is readable as data
+        // (`settle_passes == SETTLE_PASS_BUDGET`) and not only as a log line.
+        self.record_paint_work(window_key, (settle_passes, frame_settled, shape_misses));
         // R705.1 §2 #7 — this paint just consumed the current reactive
         // state (the `V::view` run above re-subscribed `root_owner` to
         // every `Signal` it read). Reset the dirty flag so the NEXT
@@ -4642,6 +4669,36 @@ impl<V: WidgetView> ShellCore<V> {
     /// scene producer reads it back via [`Self::maximized_for_window`].
     pub fn set_maximized_for_window(&mut self, window_id: &str, maximized: bool) {
         self.window_state_mut(window_id).maximized = maximized;
+    }
+
+    /// (R1459 §5.16) The work this window's last paint did, as counts:
+    /// `(settle passes, settled, shape misses)`.
+    ///
+    /// The surface reads this immediately after
+    /// [`Self::compute_paint_scene_for_window`] and folds it into the
+    /// [`FrameTiming`] sample it is already assembling, so the two live on one
+    /// wire (`scene/frame_timings`) rather than in two surfaces an agent has
+    /// to correlate. `(0, false, 0)` for a window that has not painted — the
+    /// same "no sample yet" the timing ring itself reports.
+    #[must_use]
+    pub fn last_frame_work_for_window(&self, window_id: &str) -> (u32, bool, u64) {
+        self.window_state(window_id)
+            .map_or((0, false, 0), |s| s.last_frame_work)
+    }
+
+    /// (R1459 §5.16) Close out a paint's settle accounting: publish the work
+    /// counts for the surface's [`FrameTiming`] sample, and — when the frame
+    /// never arrived — ask for the one that continues it.
+    ///
+    /// One call rather than two because they are the same fact read twice: a
+    /// frame that spent its budget is both the count an agent reads and the
+    /// redraw the user needs. Splitting them is how one of the two gets
+    /// forgotten at a future call site.
+    fn record_paint_work(&mut self, window_key: &str, work: (u32, bool, u64)) {
+        self.window_state_mut(window_key).last_frame_work = work;
+        if !work.1 {
+            self.report_unsettled_frame(window_key);
+        }
     }
 
     /// (R1458 §5.45 §5.27) The paint's settle loop ran out of

@@ -146,6 +146,29 @@ pub struct FrameTimingsLast {
     /// the `acquire_us` block excluded. Echoed so a client need not
     /// re-derive the one number a capacity question actually wants.
     pub work_us: u64,
+    /// R1459 — how many view + layout passes this paint spent reaching its
+    /// fixed point. `1` is a frame that converged immediately; the
+    /// `SETTLE_PASS_BUDGET` value is a frame that gave up and asked for
+    /// another, which is the binding telling you its view and layout disagree.
+    ///
+    /// The first **count** on this wire, next to seven durations, because
+    /// `build_us` covers the whole loop: one heavy pass and four cheap
+    /// disagreeing passes cost the same microseconds and want opposite fixes.
+    pub settle_passes: u32,
+    /// R1459 — whether the paint reached its fixed point, or spent
+    /// `settle_passes` and gave up. Read WITH `settle_passes`: a frame that
+    /// converges exactly on the budget and one that gave up report the same
+    /// count, and only this separates them. `false` on a frame that is still
+    /// moving means the binding's view and layout disagree about a value each
+    /// derives from the other.
+    pub settled: bool,
+    /// R1459 — how many text runs this paint handed to the shaper (layout-cache
+    /// misses, not lookups). A steady-state repaint should read `0`; R1454
+    /// measured one miss at 18.5µs against a 118ns hit, so this is one
+    /// multiplication away from a budget answer — and it is what catches a
+    /// binding that ignores a consumer-honoured sampling bound like
+    /// `resize_contents_precision`.
+    pub shape_misses: u64,
 }
 
 /// Rolling-window aggregates, in microseconds.
@@ -229,6 +252,9 @@ pub fn frame_timings(
             total_us: s.last.total_us,
             other_us: s.last.other_us(),
             work_us: s.last.work_us(),
+            settle_passes: s.last.settle_passes,
+            settled: s.last.settled,
+            shape_misses: s.last.shape_misses,
         },
         window: FrameTimingsWindow {
             min_total_us: s.min_total_us,
@@ -267,6 +293,49 @@ mod tests {
         stats
             .snapshot(budget_us)
             .expect("non-empty window yields a snapshot")
+    }
+
+    #[test]
+    fn r1459_work_counts_reach_the_wire_and_are_not_derived_from_durations() {
+        // The counts ride the same sample as the durations, and nothing on the
+        // wire recomputes them: a frame can be fast AND unsettled, or slow and
+        // converged on its first pass. The fixture makes both independent of
+        // the timings by giving two samples identical durations and different
+        // work.
+        let converged = FrameTiming::new(100, 10, 0, 20, 200).with_work(1, true, 0);
+        let struggling = FrameTiming::new(100, 10, 0, 20, 200).with_work(4, false, 37);
+
+        let a = frame_timings(Some(snapshot_of(&[converged]))).unwrap();
+        assert_eq!(a.last.settle_passes, 1);
+        assert!(a.last.settled);
+        assert_eq!(a.last.shape_misses, 0);
+
+        let b = frame_timings(Some(snapshot_of(&[struggling]))).unwrap();
+        assert_eq!(b.last.settle_passes, 4);
+        assert!(
+            !b.last.settled,
+            "a frame that spent its budget without arriving says so — the only \
+             other record of it is a log line no RPC client can read",
+        );
+        assert_eq!(b.last.shape_misses, 37);
+
+        // Same durations, different work: the durations cannot be the source.
+        assert_eq!(a.last.build_us, b.last.build_us);
+        assert_eq!(a.last.total_us, b.last.total_us);
+        assert_ne!(a.last.settle_passes, b.last.settle_passes);
+        assert_ne!(a.last.shape_misses, b.last.shape_misses);
+    }
+
+    #[test]
+    fn r1459_a_sample_no_settle_loop_produced_reads_zero() {
+        // `FrameTiming::new` without `with_work` — a hand-built fixture or the
+        // `Default`. Zero passes is distinguishable from every real paint's
+        // `>= 1`, so a consumer can tell "not measured" from "measured one".
+        let bare = FrameTiming::new(1, 2, 3, 4, 20);
+        let out = frame_timings(Some(snapshot_of(&[bare]))).unwrap();
+        assert_eq!(out.last.settle_passes, 0, "the never-measured sentinel");
+        assert!(!out.last.settled);
+        assert_eq!(out.last.shape_misses, 0);
     }
 
     #[test]
