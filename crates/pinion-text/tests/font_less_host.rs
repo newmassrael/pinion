@@ -169,6 +169,36 @@ fn font_less_host_shapes_and_reports() {
          not: bare={bare_width} registered={named_width}",
     );
 
+    // --- the process-level verdict: a SECOND cache takes the cached-no path ---
+    // `build_font_context`'s early return (`SYSTEM_FONTS_USABLE == Some(false)`)
+    // had no coverage: the first cache above goes through `catch_unwind`, so
+    // nothing exercised the branch that skips it. A regression there would
+    // re-run a scan already known to panic — recovered from, so still green,
+    // but paying the failed scan again per cache.
+    let mut second = LayoutCache::new();
+    assert_eq!(
+        second.system_font_status(),
+        SystemFontStatus::NotProbed,
+        "a fresh cache has not looked yet, whatever the process already knows",
+    );
+    assert_eq!(
+        second.probe_system_fonts(),
+        SystemFontStatus::Unavailable,
+        "the second cache reaches the same verdict through the cached-no path",
+    );
+    assert_eq!(
+        second.font_scans(),
+        1,
+        "one context build, not one per probe attempt",
+    );
+    // The verdict is process-level, not inherited state: this cache has its own
+    // (empty) registration list, so the two caches agree about the HOST and
+    // disagree about what the application gave THEM.
+    assert!(
+        second.application_font_families().is_empty(),
+        "the process verdict is shared; a cache's registrations are its own",
+    );
+
     // The face is selectable by name because it was registered, not because
     // the platform has it — the discriminator for the claim above.
     let absent = TextStyle::new()

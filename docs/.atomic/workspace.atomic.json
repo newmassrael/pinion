@@ -70466,6 +70466,78 @@
         "the TUI has no equivalent seam - it has no fonts, so there is nothing to declare"
       ]
     },
+    "Round 1448.1": {
+      "decision_summary": "R1448.1 - the three R1448 claims that only prose asserted are now tests: the probe's idempotence, the not-probed mechanism, and the shell's published report; each shown to fail under its counterfactual",
+      "changes_bullets": [
+        "R1448 shipped three claims that no test checked; this proves them or would fail",
+        "probe_system_fonts had ZERO tests while its doc asserted idempotence and one scan",
+        "the SYSTEM_FONTS_USABLE cached-no early return had no coverage at all",
+        "and the boot-report mechanism was pinned only by the R1448 demo, not by a test",
+        "r1448_probe_answers_before_shaping_and_is_idempotent: repeated probes keep font_scans at 1",
+        "r1448_status_is_not_probed_until_something_looks: the mechanism, as a test",
+        "a cache that has not shaped reports NotProbed on a host WITH 635 fonts",
+        "which is exactly why the shell published not-probed when no font was declared",
+        "r1448_the_published_font_report_is_never_unprobed: the shell-level regression net",
+        "two cases - no declaration at all, and a bogus declaration that registers nothing",
+        "the font-less integration child now also drives a SECOND cache",
+        "so the cached-no branch that skips catch_unwind is exercised, not just the first probe"
+      ],
+      "verification_bullets": [
+        "text 181 / shell 159+ / core 2676 green; fmt / clippy / cargo doc all 0",
+        "CF-A revert the shell to system_font_status(): the new shell test FAILS, left NotProbed",
+        "it fails on the FIRST loop case (no declaration) - the case that actually regressed",
+        "so the mechanism inferred from one demo observation in R1448 is now test-proven",
+        "CF-B rebuild the context per probe: the idempotence test FAILS, left 4 right 1",
+        "the second-cache assertions pin one context build per cache, not one per probe attempt",
+        "and that the process verdict is shared while a cache's registrations stay its own"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "still inferred from source reading, not from a test: fontique caches nothing across",
+        "Collection::new calls (its fontconfig backend comments say FcInitLoadConfig returns",
+        "a fresh config each call) - a timing test for it would be flaky, so it stays provenance",
+        "that Config::Drop runs normally during the recovered unwind is evidenced only indirectly",
+        "the integration child keeps shaping, registering and measuring correctly afterwards"
+      ],
+      "publishable_decision_summary": "R1448.1 - the three R1448 claims that only prose asserted are now tests: the probe's idempotence, the not-probed mechanism, and the shell's published report; each shown to fail under its counterfactual",
+      "publishable_changes_bullets": [
+        "R1448 shipped three claims that no test checked; this proves them or would fail",
+        "probe_system_fonts had ZERO tests while its doc asserted idempotence and one scan",
+        "the SYSTEM_FONTS_USABLE cached-no early return had no coverage at all",
+        "and the boot-report mechanism was pinned only by the R1448 demo, not by a test",
+        "r1448_probe_answers_before_shaping_and_is_idempotent: repeated probes keep font_scans at 1",
+        "r1448_status_is_not_probed_until_something_looks: the mechanism, as a test",
+        "a cache that has not shaped reports NotProbed on a host WITH 635 fonts",
+        "which is exactly why the shell published not-probed when no font was declared",
+        "r1448_the_published_font_report_is_never_unprobed: the shell-level regression net",
+        "two cases - no declaration at all, and a bogus declaration that registers nothing",
+        "the font-less integration child now also drives a SECOND cache",
+        "so the cached-no branch that skips catch_unwind is exercised, not just the first probe"
+      ],
+      "publishable_verification_bullets": [
+        "text 181 / shell 159+ / core 2676 green; fmt / clippy / cargo doc all 0",
+        "CF-A revert the shell to system_font_status(): the new shell test FAILS, left NotProbed",
+        "it fails on the FIRST loop case (no declaration) - the case that actually regressed",
+        "so the mechanism inferred from one demo observation in R1448 is now test-proven",
+        "CF-B rebuild the context per probe: the idempotence test FAILS, left 4 right 1",
+        "the second-cache assertions pin one context build per cache, not one per probe attempt",
+        "and that the process verdict is shared while a cache's registrations stay its own"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "still inferred from source reading, not from a test: fontique caches nothing across",
+        "Collection::new calls (its fontconfig backend comments say FcInitLoadConfig returns",
+        "a fresh config each call) - a timing test for it would be flaky, so it stays provenance",
+        "that Config::Drop runs normally during the recovered unwind is evidenced only indirectly",
+        "the integration child keeps shaping, registering and measuring correctly afterwards"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -686,6 +686,72 @@ mod tests {
         );
     }
 
+    /// R1448 §5.36 — [`LayoutCache::probe_system_fonts`] answers before anything
+    /// has shaped, and is idempotent.
+    ///
+    /// Written because the method's doc asserted both properties and nothing
+    /// checked either: "idempotent" and "`font_scans` stays at 1" were prose. A
+    /// probe that rebuilt the context per call would pay the ~25 ms platform
+    /// scan on every status read a binding performs.
+    #[test]
+    fn r1448_probe_answers_before_shaping_and_is_idempotent() {
+        let mut cache = LayoutCache::new();
+        assert_eq!(cache.font_scans(), 0, "premise: nothing has scanned yet");
+        let first = cache.probe_system_fonts();
+        assert_ne!(
+            first,
+            SystemFontStatus::NotProbed,
+            "probing resolves the status — that is the whole point of the call",
+        );
+        assert_eq!(cache.font_scans(), 1, "the probe IS the one scan");
+
+        // Idempotence, and specifically the cheap kind: same answer, no rescan.
+        for _ in 0..3 {
+            assert_eq!(cache.probe_system_fonts(), first, "same verdict");
+        }
+        assert_eq!(
+            cache.font_scans(),
+            1,
+            "repeated probes cost nothing — a rebuild per call would pay the \
+             platform scan on every status read",
+        );
+
+        // And a later shape does not scan again either: the probe already built
+        // the context the shaper needs.
+        let _ = cache.layout("after the probe", &style(16), None);
+        assert_eq!(cache.font_scans(), 1, "shaping reuses the probe's context");
+    }
+
+    /// R1448 §5.36 — **the mechanism behind the R1448 boot-report defect**, as a
+    /// test rather than as the single demo observation that exposed it.
+    ///
+    /// Reading the status off a cache that has not shaped yields `NotProbed`
+    /// *regardless of the host* — this box has 635 fonts and still answers
+    /// `NotProbed` here. That is exactly why the shell's boot report said
+    /// `not-probed` forever when the application declared no font: with nothing
+    /// to register, nothing shaped, so nothing had looked. The fix is not "read
+    /// it later", it is [`LayoutCache::probe_system_fonts`] — reporting a fact
+    /// requires looking for it.
+    ///
+    /// The discriminating pair is the two assertions together: same cache, same
+    /// host, `NotProbed` before and a real verdict after. Either alone would
+    /// also pass on a build where the status never resolved at all.
+    #[test]
+    fn r1448_status_is_not_probed_until_something_looks() {
+        let mut cache = LayoutCache::new();
+        assert_eq!(
+            cache.system_font_status(),
+            SystemFontStatus::NotProbed,
+            "an unshaped cache reports NotProbed even on a host WITH fonts — \
+             the defect the shell's boot report had",
+        );
+        assert_ne!(
+            cache.probe_system_fonts(),
+            SystemFontStatus::NotProbed,
+            "and it resolves as soon as something looks",
+        );
+    }
+
     /// R1447 §5.36 — the scan happens **once**, not once per shape.
     ///
     /// Three `layout` calls (two misses and a hit) must still total one

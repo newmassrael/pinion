@@ -9684,6 +9684,48 @@ mod r1362_window_control_sink_seeding_tests {
         );
     }
 
+    /// R1448 §5.36 — the shell's published font report never says `NotProbed`,
+    /// **including when the application declared no font of its own**.
+    ///
+    /// This is the regression net for the defect the R1448 demo's discriminator
+    /// exposed and which, until this test, was pinned only by that demo. With an
+    /// empty `app_fonts` nothing registers, so nothing shapes, so a report built
+    /// from `system_font_status()` would read `NotProbed` — and keep reading it
+    /// while the first frame went on to learn the truth. `probe_system_fonts`
+    /// makes the shell look; this asserts that it does.
+    ///
+    /// Both halves matter. The empty case is the one that regressed; the
+    /// declared case is the discriminator, since a shell that probed only when
+    /// it had fonts to register would pass the second assertion alone.
+    #[test]
+    fn r1448_the_published_font_report_is_never_unprobed() {
+        for (label, fonts) in [
+            ("no application font declared", Vec::new()),
+            (
+                "a bogus declaration that registers nothing",
+                vec![vec![0_u8; 64]],
+            ),
+        ] {
+            RESOLVED.with(|slot| *slot.borrow_mut() = None);
+            let sc = ShellCore::<SinkCapturingFixture>::new_with_seed_and_fonts(fonts, |_owner| {});
+            let report = sc.root_owner().run(pinion_core::reactive::font_sources);
+            assert_ne!(
+                report.system,
+                pinion_core::reactive::SystemFontStatus::NotProbed,
+                "the shell must have LOOKED before publishing ({label}): a \
+                 report reading not-probed is a status line that stays wrong \
+                 after the first frame has learned otherwise",
+            );
+            // Bytes that are not a font register nothing, and that is reported
+            // rather than invented — the honest half of `register_font_data`.
+            assert!(
+                report.application_families.is_empty(),
+                "nothing became selectable ({label}): {:?}",
+                report.application_families,
+            );
+        }
+    }
+
     /// An unseeded `ShellCore::new` (headless / RPC-driven tests) still BOOTS,
     /// and the hooks a binding calls unconditionally in its factory resolve to
     /// something inert rather than panicking.
