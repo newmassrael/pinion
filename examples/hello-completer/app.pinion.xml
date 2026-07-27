@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1449 §5.16 completer: pinion-forge renderer manifest for
+  hello-completer. Same single-source-of-truth template that emits the
+  other hello-* renderers; only the struct name diverges.
+  backend=vello + default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloCompleterRenderer"
+        backend="vello"/>

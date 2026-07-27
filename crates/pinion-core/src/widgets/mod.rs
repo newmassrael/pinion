@@ -6,6 +6,7 @@ pub mod checkbox;
 pub mod color_area;
 pub mod column_widths;
 pub mod commit;
+pub mod completion;
 pub mod context_menu;
 pub mod datepicker;
 pub mod disclosure;

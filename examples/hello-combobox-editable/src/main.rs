@@ -89,6 +89,7 @@ use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::ButtonExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
+use pinion_core::widgets::completion::{CompletionCase, CompletionFilter, completion_matches};
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::use_text_edit_state;
@@ -173,16 +174,25 @@ fn close_combo() {
 
 /// The editable combobox's filter: the absolute indices of the options
 /// whose label contains the typed text (case-insensitive). Empty text
-/// matches everything (the full list). This is the entire "typeahead"
-/// — a pure function, no new substrate.
+/// matches everything (the full list).
+///
+/// R1449 — this **is** a completion, so it is now the R1449
+/// [`completion_matches`] rule rather than a hand-rolled
+/// `to_lowercase().contains()`: `Contains` + `Insensitive` reproduces the
+/// R717 behaviour exactly (an empty prefix is contained in every label, so
+/// the "matches everything" case needs no special arm). The combobox is the
+/// **2nd consumer** of that model, which is what justifies its existence per
+/// `[[abstraction-needs-second-consumer]]`; the R717 filter tests below are
+/// the parity oracle for the swap. The combobox keeps trimming its input —
+/// that is *its* policy about a value field, not the completion rule's.
 fn filter_indices(text: &str) -> Vec<usize> {
-    let q = text.trim().to_lowercase();
-    if q.is_empty() {
-        return (0..N).collect();
-    }
-    (0..N)
-        .filter(|&i| LABELS[i].to_lowercase().contains(&q))
-        .collect()
+    completion_matches(
+        N,
+        text.trim(),
+        CompletionFilter::Contains,
+        CompletionCase::Insensitive,
+        |i| LABELS[i],
+    )
 }
 
 /// Commit option `idx`: replace the field text with its label, park the

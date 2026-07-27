@@ -70606,6 +70606,108 @@
         "the bound (one per process) is what makes it not worth answering from here"
       ]
     },
+    "Round 1449": {
+      "decision_summary": "R1449 - a completer attached to a plain text input: Qt QCompleter parity (filter mode x case sensitivity x popup/unfiltered/inline) as a pinion_core completion model, with the whole completion readable and drivable over the wire - the part QCompleter answers only to C++",
+      "changes_bullets": [
+        "Qt's QCompleter is a model you hang off any input, not a widget",
+        "pinion had its answers hard-coded: six sites spell to_lowercase().contains()",
+        "so a prefix-only, case-sensitive, or inline completion was unwritable",
+        "new pinion_core::widgets::completion — the match rule, the list, the cursor",
+        "CompletionFilter starts_with/contains/ends_with = QCompleter::setFilterMode",
+        "CompletionCase = setCaseSensitivity; CompletionMode = setCompletionMode",
+        "one cursor rule covers both popup shapes: first DISPLAYED entry that accepts",
+        "a filtered list accepts every entry so it lands on 0; unfiltered on the match",
+        "completion_suffix scans the candidate's own char boundaries, not prefix.len()",
+        "because a case fold is not length-preserving and a byte slice would panic",
+        "OrderMemo is reused as the memo (4th consumer), not re-implemented",
+        "CompleterExternal is the wire surface QCompleter never had (the pinion edge)",
+        "hello-completer is the 1st consumer: field + popup + 3 live knobs",
+        "inline mode is a REAL text mutation - prefix+suffix with the suffix SELECTED",
+        "so the next keystroke types over it, on the field's type-to-replace path",
+        "hello-combobox-editable's filter_indices is the 2nd consumer, migrated",
+        "its 19 R717 tests are the parity oracle for the swap"
+      ],
+      "verification_bullets": [
+        "core 2692 (18 new) / hello-completer 8 / hello-combobox-editable 19 green",
+        "fmt / clippy --all-targets / cargo doc --document-private-items all 0",
+        "demo r1449_completer.py: 53 assertions PASS, no wall-clock sleeps",
+        "r717_combobox_editable.py PASS after the migration = end-to-end parity",
+        "CF the migration one at a time: StartsWith fails on \"berry\", Sensitive on \"AP\"",
+        "so the R717 oracle really discriminates the rule and the case, not just shape",
+        "THE DEMO CAUGHT A REAL DEFECT the unit tests did not: a knob click closed the",
+        "popup on the human path while scene/intervene did not - the two §2#2 paths",
+        "disagreed after a mode round-trip, because cycle_knob WROTE a copy of the",
+        "popup_showing predicate. Fixed by deleting the write, not adding a second one",
+        "new test drives the mode both ways and compares the traces; CF restoring the",
+        "write fails it with left [true,true,false,false] right [true,true,false,true]"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "five to_lowercase().contains() sites remain: property-grid, tree-filter,",
+        "node-editor, audio-device. They are SEARCH boxes over other data models, not",
+        "completions; routing them through completion_accepts is a real design question",
+        "(does a search share a completer's rule?) and is not asserted here",
+        "QCompleter::splitPath / pathFromIndex (filesystem path completion) is absent -",
+        "a different source model, and pinion has no consumer for it",
+        "the completer's candidate list is boot-fixed; a live-updating source would",
+        "need the state to hold a Signal source rather than a materialized Vec",
+        "AutoComplete::Both stays unused - the three Qt modes are exclusive"
+      ],
+      "publishable_decision_summary": "R1449 - a completer attached to a plain text input: Qt QCompleter parity (filter mode x case sensitivity x popup/unfiltered/inline) as a pinion_core completion model, with the whole completion readable and drivable over the wire - the part QCompleter answers only to C++",
+      "publishable_changes_bullets": [
+        "Qt's QCompleter is a model you hang off any input, not a widget",
+        "pinion had its answers hard-coded: six sites spell to_lowercase().contains()",
+        "so a prefix-only, case-sensitive, or inline completion was unwritable",
+        "new pinion_core::widgets::completion — the match rule, the list, the cursor",
+        "CompletionFilter starts_with/contains/ends_with = QCompleter::setFilterMode",
+        "CompletionCase = setCaseSensitivity; CompletionMode = setCompletionMode",
+        "one cursor rule covers both popup shapes: first DISPLAYED entry that accepts",
+        "a filtered list accepts every entry so it lands on 0; unfiltered on the match",
+        "completion_suffix scans the candidate's own char boundaries, not prefix.len()",
+        "because a case fold is not length-preserving and a byte slice would panic",
+        "OrderMemo is reused as the memo (4th consumer), not re-implemented",
+        "CompleterExternal is the wire surface QCompleter never had (the pinion edge)",
+        "hello-completer is the 1st consumer: field + popup + 3 live knobs",
+        "inline mode is a REAL text mutation - prefix+suffix with the suffix SELECTED",
+        "so the next keystroke types over it, on the field's type-to-replace path",
+        "hello-combobox-editable's filter_indices is the 2nd consumer, migrated",
+        "its 19 R717 tests are the parity oracle for the swap"
+      ],
+      "publishable_verification_bullets": [
+        "core 2692 (18 new) / hello-completer 8 / hello-combobox-editable 19 green",
+        "fmt / clippy --all-targets / cargo doc --document-private-items all 0",
+        "demo r1449_completer.py: 53 assertions PASS, no wall-clock sleeps",
+        "r717_combobox_editable.py PASS after the migration = end-to-end parity",
+        "CF the migration one at a time: StartsWith fails on \"berry\", Sensitive on \"AP\"",
+        "so the R717 oracle really discriminates the rule and the case, not just shape",
+        "THE DEMO CAUGHT A REAL DEFECT the unit tests did not: a knob click closed the",
+        "popup on the human path while scene/intervene did not - the two §2#2 paths",
+        "disagreed after a mode round-trip, because cycle_knob WROTE a copy of the",
+        "popup_showing predicate. Fixed by deleting the write, not adding a second one",
+        "new test drives the mode both ways and compares the traces; CF restoring the",
+        "write fails it with left [true,true,false,false] right [true,true,false,true]"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "five to_lowercase().contains() sites remain: property-grid, tree-filter,",
+        "node-editor, audio-device. They are SEARCH boxes over other data models, not",
+        "completions; routing them through completion_accepts is a real design question",
+        "(does a search share a completer's rule?) and is not asserted here",
+        "QCompleter::splitPath / pathFromIndex (filesystem path completion) is absent -",
+        "a different source model, and pinion has no consumer for it",
+        "the completer's candidate list is boot-fixed; a live-updating source would",
+        "need the state to hold a Signal source rather than a materialized Vec",
+        "AutoComplete::Both stays unused - the three Qt modes are exclusive"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
@@ -83514,5 +83616,5 @@
   "parameter_deltas": {},
   "parameter_gates": {},
   "fact_counts": {},
-  "schema_version": 42
+  "schema_version": 43
 }
