@@ -322,6 +322,21 @@ pub struct ShellCore<V: WidgetView> {
     /// answerable question is "what did my call cost", and a client answers it
     /// by differencing across the call.
     produce_work: (u64, u64),
+    /// R1464 §5.16 §5.39 §2 #2 — cumulative view work the FOCUS ENUMERATION has
+    /// caused, the third producer of view runs beside the paint and the RPC
+    /// scene producer.
+    ///
+    /// R1463 widened [`Self::refresh_focusable_from_view`] to re-derive every
+    /// painted window and documented the cost as "one view run per painted
+    /// window, paid on a miss" — a claim with no way to check it, on either
+    /// side of the seam. This is the check: a test reads it directly, and §2 #2
+    /// reads it off `scene/frame_timings`.
+    ///
+    /// A [`pinion_runtime::FocusWorkCell`] because the deriving call sites hold
+    /// `&self` ([`Self::union_focusable_tags`] folds while borrowing
+    /// `window_states`), and a counter must not dictate the borrow shape of the
+    /// code it measures.
+    focus_work: pinion_runtime::FocusWorkCell,
     /// R1072 §5.37 — opt-in self-hosted text engine, the shipping consumer of
     /// the §5.37 paint + measure arms. `Some` when the `PINION_TEXT_ENGINE`
     /// environment variable selected it at construction AND a usable system font
@@ -710,6 +725,7 @@ impl<V: WidgetView> ShellCore<V> {
             modifiers: Modifiers::empty(),
             text_cache,
             produce_work: (0, 0),
+            focus_work: pinion_runtime::FocusWorkCell::default(),
             text_engine: build_text_engine_from_env(),
             last_access_tag_map: HashMap::new(),
             last_access_nodes: HashMap::new(),
@@ -1663,6 +1679,10 @@ impl<V: WidgetView> ShellCore<V> {
                 // correlating two surfaces.
                 snap.produce_passes_total = self.produce_work.0;
                 snap.produce_shape_misses_total = self.produce_work.1;
+                // R1464 §5.16 §5.39 — same rule, same reason: binding-wide work
+                // that painted nothing, attached to the read rather than folded
+                // into the ring.
+                snap.focus = self.focus_work.get();
                 snap
             })
     }
@@ -6185,6 +6205,12 @@ impl<V: WidgetView> ShellCore<V> {
             // side-effect-free view of the post-dispatch state and retry once,
             // so "focus a widget on the frame it appears" works (the pre-R1020
             // boot-seeded superset accepted such a request unconditionally).
+            //
+            // R1464 §5.16 — the retry is the DENOMINATOR of `focus_work`: it is
+            // recorded whether or not the second `focus_set` succeeds, because
+            // the cost was paid either way. Counting only successes would price
+            // the enumeration at zero for the binding that misses most.
+            self.focus_work.record_retry();
             self.refresh_focusable_from_view();
             // Still unknown / non-focusable — silent no-op (matches the
             // `click_to_focus` rejection arm): the requested tag is on no
@@ -6349,6 +6375,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// the paint that will refresh it. Purity and the `root_owner` scoping are
     /// documented on [`Self::window_focusables`]; both callers depend on them.
     fn derive_window_focusables(&self, window_id: &str) -> Vec<String> {
+        // R1464 §5.16 — counted HERE, at the one place a view actually runs for
+        // the enumeration, rather than at each caller: both callers reach it
+        // (the R1020 miss-retry and the R26 fold over a declared-but-unpainted
+        // window), and a caller-side count would silently miss whichever arm a
+        // later round adds.
+        self.focus_work.record_derivation();
+
         let cached_state = *self.core.cached_state();
         let frame = Frame::with_dt(0.0);
         let core = &self.core;
@@ -6592,6 +6625,11 @@ impl<V: WidgetView> ShellCore<V> {
     /// Cost is paid on a focus MISS, not per frame: one view run per painted
     /// window, bounded by the declared topology. The steady state — a request
     /// naming an already-enumerated tag — never reaches here.
+    ///
+    /// R1464 §5.16 — that paragraph was prose when R1463 wrote it, and prose is
+    /// not a bound. [`Self::focus_work`] now counts both halves of it, so the
+    /// claim is checkable in a test and priceable over `scene/frame_timings`:
+    /// `derivations / retries` IS "one view run per painted window", measured.
     ///
     /// A window with no contribution yet — including the primary before its
     /// first paint, which is when the boot seed calls this — is deliberately
@@ -7520,6 +7558,118 @@ mod r26_undock_focus_follow_tests {
         assert!(
             sc.focus().tab_order().iter().any(|t| t == ROAMING_TAG),
             "and it is enumerated exactly where it now paints",
+        );
+    }
+
+    /// R1464 §5.16 §5.39 — the steady state is FREE. A request naming a tag the
+    /// enumeration already holds is satisfied by the first `focus_set` and never
+    /// reaches the re-derive, so neither counter moves.
+    ///
+    /// The control for the two tests below: without it, "a miss costs two view
+    /// runs" would be equally consistent with "every request costs two".
+    #[test]
+    fn a_focus_request_that_hits_runs_no_view_at_all() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec![MAIN_TAG.to_owned()]);
+        sc.refresh_window_focusables(TORN_WINDOW, vec![TORN_TAG.to_owned()]);
+
+        let before = sc.focus_work.get();
+        pinion_core::focus_request::request(MAIN_TAG);
+        sc.drain_focus_mailboxes();
+
+        assert_eq!(
+            sc.focus().focused(),
+            Some(MAIN_TAG),
+            "precondition: the request landed, so this measured a HIT",
+        );
+        assert_eq!(
+            sc.focus_work.get().retries,
+            before.retries,
+            "a hit is not a retry",
+        );
+        assert_eq!(
+            sc.focus_work.get().derivations,
+            before.derivations,
+            "and it runs no view: the enumeration already answered",
+        );
+    }
+
+    /// R1464 §5.16 §5.39 — R1463's cost claim, measured. Its doc says "one view
+    /// run per painted window, paid on a miss"; with TWO painted windows a miss
+    /// must cost exactly two derivations and one retry.
+    ///
+    /// This is what makes the R1463 widening observable from outside: pre-R1463
+    /// the same dispatch re-derived the primary alone, and the only difference
+    /// on any surface was a focus that silently failed to land in a secondary
+    /// window. The delta is now a number, on both the test seam and
+    /// `scene/frame_timings`.
+    #[test]
+    fn a_focus_miss_costs_one_view_run_per_painted_window() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec![MAIN_TAG.to_owned()]);
+        sc.refresh_window_focusables(TORN_WINDOW, vec![TORN_TAG.to_owned()]);
+
+        let before = sc.focus_work.get();
+        sc.core.root_owner().run(|| editor_open().set(true));
+        pinion_core::focus_request::request(TORN_EDITOR_TAG);
+        sc.drain_focus_mailboxes();
+
+        let after = sc.focus_work.get();
+        assert_eq!(
+            after.retries - before.retries,
+            1,
+            "one request missed, so one retry",
+        );
+        assert_eq!(
+            after.derivations - before.derivations,
+            2,
+            "and the retry re-derived BOTH painted windows — the R1463 bound. \
+             `1` here is the pre-R1463 primary-only refresh; a number above `2` \
+             would mean the fold re-derived a window whose cache was just written",
+        );
+        assert_eq!(
+            sc.focus().focused(),
+            Some(TORN_EDITOR_TAG),
+            "and the work bought the outcome it claims to",
+        );
+    }
+
+    /// R1464 §5.16 §5.39 — the OTHER half of the count, and the reason it is not
+    /// simply `retries * window_count`.
+    ///
+    /// A window the binding DECLARES but has not painted has no harvested cache
+    /// to answer from, so R26 derives it afresh on every fold — with no focus
+    /// request involved at all. A `derivations` count that climbs while nothing
+    /// is being focused is that transient, and it ends at that window's first
+    /// paint. Pinning it here keeps a later reader from diagnosing a leak.
+    #[test]
+    fn an_unpainted_declared_window_is_re_derived_on_every_fold() {
+        let mut sc = ShellCore::<DockFollowFixture>::new();
+
+        // Only the primary has painted; TORN_WINDOW is declared, unpainted.
+        let before = sc.focus_work.get();
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec![MAIN_TAG.to_owned()]);
+        let one_fold = sc.focus_work.get();
+        assert_eq!(
+            one_fold.derivations - before.derivations,
+            1,
+            "the fold derived the declared-but-unpainted window, and only it: \
+             the primary answered from the cache this very call wrote",
+        );
+        assert_eq!(
+            one_fold.retries, before.retries,
+            "no focus request was made — this cost is not a retry's",
+        );
+
+        // The torn window first-paints. Its contribution is now a cache too,
+        // and the transient is over.
+        sc.refresh_window_focusables(TORN_WINDOW, vec![TORN_TAG.to_owned()]);
+        let painted = sc.focus_work.get();
+        sc.refresh_window_focusables(pinion_runtime::DEFAULT_WINDOW, vec![MAIN_TAG.to_owned()]);
+        assert_eq!(
+            sc.focus_work.get().derivations,
+            painted.derivations,
+            "with every declared window painted, a fold derives nothing",
         );
     }
 

@@ -72518,6 +72518,64 @@
         "Measured while running the mandate-3b census, and left alone deliberately: the centred-column root container is repeated across the examples tree — 37 byte-identical copies of one `LayoutStyle` chain, plus ~40 near-variants. That predates this round by dozens of copies; it is a real lift candidate (an `app_root` paint helper) and a round of its own, not something to smuggle into a focus-semantics change."
       ]
     },
+    "Round 1464": {
+      "decision_summary": "R1464: a focus miss reports what it re-derived - FocusWork counters on scene/frame_timings turn R1463's prose cost bound into a number",
+      "changes_bullets": [
+        "pinion-runtime: FocusWork {derivations, retries} + FocusWorkCell accumulator; FrameTimingsSnapshot.focus, backend-filled like the produce totals (the ring holds frames, and neither is one)",
+        "pinion-rpc: FrameTimingsFocus {derivations_total, retries_total} on scene/frame_timings; module wire-shape doc refreshed (it was stale by R1459's three work counts and R1460's produce group as well)",
+        "pinion-shell: count inside derive_window_focusables (the one place a view actually runs for the enumeration, reached by both the R1020 miss-retry and the R26 fold) + record the retry in apply_focus_request whether or not the second focus_set lands",
+        "pinion-tui: the §2 #6 mirror — one alternate screen, so one derivation per retry; totals read before the dispatch split-borrow, the instant the ring is projected at",
+        "FocusWorkCell lifted rather than four Cell get/mutate/set sequences: dropping the set loses a count silently, with every test green and the wire still answering"
+      ],
+      "verification_bullets": [
+        "pinion-shell 199 lib (+3): a hit costs (0,0); a miss with two painted windows costs exactly (2 derivations, 1 retry); an unpainted declared window is re-derived on every fold and stops at its first paint",
+        "pinion-rpc 943 (+2), pinion-tui 146 (+1), pinion-runtime 558; fmt/clippy/cargo doc all 0 across the four changed crates",
+        "CF-1 (revert R1463 to a primary-only refresh) = the miss-cost assertion fails 1 vs 2 and the demo fails at (C) on the NUMBER, before any focus outcome is read; the hit control and the fold test still pass",
+        "CF-2 (do not record the retry) = only the retry assertion fails, 0 vs 1",
+        "CF-3 (count per refresh call instead of per view run) = the miss test AND the fold test fail, which is exactly the pair the placement governs",
+        "tools/demos/r1464_focus_work.py PASS (33 assertion sites, 41 executed) driving R1463's own two-window consumer; r1463/r1460/r907/r925/r1374/r1375/r1389 frame-timings family all PASS on freshly built binaries"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "The consumer's original symptom stays unverified: that binding has never been run from here, and whether its first-pane case is this gap is a measurement only that side can take (cross-repo)",
+        "Demo section (F) cannot isolate \"a re-derive is not producer work\": driving a miss needs a path-addressed input, which is itself hit-tested against a produced scene. Asserted the interference rather than approximating around it; the unit test pins the claim",
+        "produce.passes_total stays 0 for reads on a window that has painted (from: paint answers from the committed frame, R890.1) - measured this round, not a regression, but it means R1460's counter is silent on the most common read path",
+        "use_viewport_size stays primary-gated, so a secondary window's derivation reads the primary's size (R26-era caveat, not narrowed here)",
+        "R1463 carry (e) still open and still a round of its own: 34 byte-identical root containers in examples (measured; the earlier note said 37), plus 39 near-variants - an app_root lift"
+      ],
+      "publishable_decision_summary": "R1464: a focus miss reports what it re-derived - FocusWork counters on scene/frame_timings turn R1463's prose cost bound into a number",
+      "publishable_changes_bullets": [
+        "pinion-runtime: FocusWork {derivations, retries} + FocusWorkCell accumulator; FrameTimingsSnapshot.focus, backend-filled like the produce totals (the ring holds frames, and neither is one)",
+        "pinion-rpc: FrameTimingsFocus {derivations_total, retries_total} on scene/frame_timings; module wire-shape doc refreshed (it was stale by R1459's three work counts and R1460's produce group as well)",
+        "pinion-shell: count inside derive_window_focusables (the one place a view actually runs for the enumeration, reached by both the R1020 miss-retry and the R26 fold) + record the retry in apply_focus_request whether or not the second focus_set lands",
+        "pinion-tui: the §2 #6 mirror — one alternate screen, so one derivation per retry; totals read before the dispatch split-borrow, the instant the ring is projected at",
+        "FocusWorkCell lifted rather than four Cell get/mutate/set sequences: dropping the set loses a count silently, with every test green and the wire still answering"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-shell 199 lib (+3): a hit costs (0,0); a miss with two painted windows costs exactly (2 derivations, 1 retry); an unpainted declared window is re-derived on every fold and stops at its first paint",
+        "pinion-rpc 943 (+2), pinion-tui 146 (+1), pinion-runtime 558; fmt/clippy/cargo doc all 0 across the four changed crates",
+        "CF-1 (revert R1463 to a primary-only refresh) = the miss-cost assertion fails 1 vs 2 and the demo fails at (C) on the NUMBER, before any focus outcome is read; the hit control and the fold test still pass",
+        "CF-2 (do not record the retry) = only the retry assertion fails, 0 vs 1",
+        "CF-3 (count per refresh call instead of per view run) = the miss test AND the fold test fail, which is exactly the pair the placement governs",
+        "tools/demos/r1464_focus_work.py PASS (33 assertion sites, 41 executed) driving R1463's own two-window consumer; r1463/r1460/r907/r925/r1374/r1375/r1389 frame-timings family all PASS on freshly built binaries"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The consumer's original symptom stays unverified: that binding has never been run from here, and whether its first-pane case is this gap is a measurement only that side can take (cross-repo)",
+        "Demo section (F) cannot isolate \"a re-derive is not producer work\": driving a miss needs a path-addressed input, which is itself hit-tested against a produced scene. Asserted the interference rather than approximating around it; the unit test pins the claim",
+        "produce.passes_total stays 0 for reads on a window that has painted (from: paint answers from the committed frame, R890.1) - measured this round, not a regression, but it means R1460's counter is silent on the most common read path",
+        "use_viewport_size stays primary-gated, so a secondary window's derivation reads the primary's size (R26-era caveat, not narrowed here)",
+        "R1463 carry (e) still open and still a round of its own: 34 byte-identical root containers in examples (measured; the earlier note said 37), plus 39 near-variants - an app_root lift"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

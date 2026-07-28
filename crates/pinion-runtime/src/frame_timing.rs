@@ -428,9 +428,10 @@ impl FrameTimingStats {
         };
         Some(FrameTimingsSnapshot {
             // Filled by the backend after projection: this ring holds FRAMES,
-            // and the producer's work is by definition not one.
+            // and neither the producer's work nor the focus enumeration's is one.
             produce_passes_total: 0,
             produce_shape_misses_total: 0,
+            focus: FocusWork::default(),
             frame_count: self.frame_count,
             window_len: u32::try_from(self.samples.len()).unwrap_or(u32::MAX),
             last,
@@ -447,6 +448,94 @@ impl FrameTimingStats {
             worst_overrun_us,
             jank_ratio,
         })
+    }
+}
+
+/// (R1464 §5.16 §5.39 §2 #2) Cumulative view work the **focus enumeration** has
+/// caused since boot — view runs that never became a frame.
+///
+/// The third producer of view runs, beside the paint ([`FrameTiming::settle_passes`])
+/// and the RPC scene producer
+/// ([`FrameTimingsSnapshot::produce_passes_total`]). A focus enumeration is a
+/// pure function of state ([`Scene::collect_focusable_tags`](pinion_core::Scene::collect_focusable_tags)
+/// reads only the view-assigned tag and `focusable` flag), so the backends
+/// answer "which tags can take focus?" by running the view with no layout, no
+/// paint, and no sample recorded. That is what makes it invisible: the work is
+/// real, it scales with the window count, and until this counter nothing on any
+/// surface could see it.
+///
+/// **Binding-wide, not per-window** — the [`FocusManager`](crate::FocusManager)
+/// enumeration it feeds is one order across every window, so the same totals
+/// ride whichever window's snapshot is read. Peer of the `produce_*` totals in
+/// that respect, and read the same way: **difference the pair across a call to
+/// price that call.** The ratio is the interesting number —
+/// `derivations / retries` is how many windows one missed focus request costs.
+///
+/// Deliberately NOT folded into the frame ring: that ring holds frames the user
+/// saw, and none of this is one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FocusWork {
+    /// View runs the focus enumeration has performed.
+    ///
+    /// Two call sites contribute, and the distinction matters when reading a
+    /// climbing count:
+    ///
+    /// - **per retry** (R1020 / R1463): a [`Self::retries`] re-derive rewrites
+    ///   every window the binding has *painted*, because a painted window
+    ///   answers the enumeration from a harvested cache that the dispatch just
+    ///   invalidated. This is the bounded, on-demand half — `retries` times the
+    ///   painted-window count.
+    /// - **per fold** (R26): a window the binding *declares* but has not painted
+    ///   yet has no cache to answer from, so every fold derives it afresh. This
+    ///   is the transient half — it repeats each frame until that window's first
+    ///   paint, and a count that climbs while nothing is being focused is that
+    ///   transient, not a leak.
+    pub derivations: u64,
+    /// Focus requests that named a tag the enumeration did not hold, and so
+    /// forced a re-derive (the R1020 miss-retry).
+    ///
+    /// The denominator for [`Self::derivations`]. `0` in the steady state: a
+    /// request naming an already-enumerated tag is satisfied by the first
+    /// `focus_set` and never reaches the re-derive.
+    pub retries: u64,
+}
+
+/// (R1464 §5.16 §5.39) The accumulator a backend keeps [`FocusWork`] in.
+///
+/// Interior-mutable because the deriving call sites hold `&self` — the shell
+/// folds the enumeration while borrowing its window map, and a counter must not
+/// dictate the borrow shape of the code it measures.
+///
+/// A type rather than a bare `Cell<FocusWork>` at each backend, because the
+/// read-modify-write those call sites would otherwise spell out (`get`, mutate,
+/// `set`) has a silent failure mode: drop the `set` and the count is simply
+/// lost, with every test still green and the wire still answering. There are
+/// four such sites across the two backends and no reason for any of them to
+/// hold the sequence.
+#[derive(Debug, Default)]
+pub struct FocusWorkCell(core::cell::Cell<FocusWork>);
+
+impl FocusWorkCell {
+    /// The totals as of now. `Copy`, so this neither borrows nor blocks a
+    /// concurrent record.
+    #[must_use]
+    pub fn get(&self) -> FocusWork {
+        self.0.get()
+    }
+
+    /// Record one view run performed to derive a window's focusable tags.
+    pub fn record_derivation(&self) {
+        let mut work = self.0.get();
+        work.derivations = work.derivations.saturating_add(1);
+        self.0.set(work);
+    }
+
+    /// Record one focus request that missed the enumeration and forced a
+    /// re-derive.
+    pub fn record_retry(&self) {
+        let mut work = self.0.get();
+        work.retries = work.retries.saturating_add(1);
+        self.0.set(work);
     }
 }
 
@@ -530,6 +619,13 @@ pub struct FrameTimingsSnapshot {
     /// run since boot. Peer of [`Self::produce_passes_total`]; same
     /// difference-across-a-call reading.
     pub produce_shape_misses_total: u64,
+    /// (R1464 §5.16 §5.39 §2 #2) Cumulative view work the focus enumeration has
+    /// caused since boot — see [`FocusWork`].
+    ///
+    /// Binding-wide like the `produce_*` totals, and filled by the backend for
+    /// the same reason: the ring holds frames, and a focus derivation is not
+    /// one. All-zero on a backend that has never missed a focus request.
+    pub focus: FocusWork,
     /// Per-frame budget the window's `total_us` is judged against, in
     /// microseconds. `None` for an unpaced window (no declared frame
     /// target — an idle retained window has no deadline, so "missed

@@ -46,11 +46,14 @@ Verification scope (>=36 assertions):
 ## What this demo does NOT cover
 
 That the re-derive adds only a bounded amount of work (one view run per
-PAINTED window, on a miss, never per frame) is not observable here — the
-wire reports the focused tag, not how many view runs produced it. That
-half is pinned by `pinion_shell::substrate::r26_undock_focus_follow_tests`
-and by the example's own `ShellCore` tests. Recorded here rather than
-approximated with a check that cannot fail.
+PAINTED window, on a miss, never per frame). This demo reports the focused
+tag, not how many view runs produced it.
+
+R1464 closed that: `scene/frame_timings` now carries
+`focus.derivations_total` / `focus.retries_total`, and
+`tools/demos/r1464_focus_work.py` drives THIS example to assert the bound
+as arithmetic on the same two windows. Read the pair together — this file
+is the outcome, that one is the price.
 
 Run from the workspace root:
 

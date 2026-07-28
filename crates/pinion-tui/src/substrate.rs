@@ -208,6 +208,18 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// cell is the pattern; the borrow is confined to the layout call and
     /// never overlaps a `V::view` re-entry, so it cannot panic.
     layout_cache: RefCell<LayoutCache>,
+
+    /// R1464 §5.16 §5.39 §2 #6 — cumulative view work the focus enumeration has
+    /// caused, the TUI peer of `pinion_shell::ShellCore::focus_work`.
+    ///
+    /// The GUI side's `derivations` climbs with the painted-window count; this
+    /// one moves in lockstep with `retries`, because a TUI process owns one
+    /// alternate screen and therefore one window. That is not a weaker mirror —
+    /// it is the SAME contract ("re-derive every window you paint") evaluated
+    /// against a one-window backend, and a §2 #6 client reading
+    /// `derivations_total / retries_total` gets `1` here and the window count
+    /// there, which is the honest answer on both.
+    focus_work: pinion_runtime::FocusWorkCell,
 }
 
 impl<V: WidgetViewTui> Default for ShellCoreTui<V> {
@@ -264,6 +276,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             frame_timings: None,
             last_paint_instant: Cell::new(None),
             layout_cache: RefCell::new(LayoutCache::new()),
+            focus_work: pinion_runtime::FocusWorkCell::default(),
         };
         // R1335 §5.39 (PR-53) — attach this binding's root owner so RPC-driven
         // focus mutations publish the focused tag to the owner mirror an AI
@@ -1458,6 +1471,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             return;
         };
         if !self.focus.focus_set(tag) {
+            // R1464 §5.16 §2 #6 — count the retry, mirroring the shell.
+            self.focus_work.record_retry();
             self.refresh_focusable_from_view();
             // Still unknown / non-focusable — silent no-op (matches the
             // pinion-shell `click_to_focus` rejection arm): no painted
@@ -1483,6 +1498,11 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// enumeration. The divergence is in the backends' window models, not in
     /// the focus contract — both re-derive every window they paint.
     fn refresh_focusable_from_view(&mut self) {
+        // R1464 §5.16 — the single window this backend paints is derived here,
+        // so this is the TUI's one derivation site (the shell's peer counts
+        // inside `derive_window_focusables`, which it reaches from two arms).
+        self.focus_work.record_derivation();
+
         let cached_state = *self.core.cached_state();
         let frame = Frame::with_dt(0.0);
         let scene = self.core.root_owner().run(|| V::view(cached_state, &frame));
@@ -1603,6 +1623,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let input_state_snapshot =
             self.core
                 .input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None, None);
+        // R1464 §5.16 §5.39 — read the focus-work totals BEFORE the split
+        // borrow, and therefore before this dispatch runs. That is the same
+        // instant the ring below is projected at, so the two halves of one
+        // `scene/frame_timings` reply describe one moment; a client prices a
+        // call by differencing two replies, never by reading one mid-dispatch.
+        let focus_work = self.focus_work.get();
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.
@@ -1701,7 +1727,17 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             // R1460 §5.16 §5.7 — project the rolling ring for this dispatch,
             // paid only when a client actually asks (the R890 "store the
             // source, project on read" rule the Vello sibling follows).
-            let frame_timings_snapshot = frame_timings.as_ref().and_then(|s| s.snapshot(None));
+            let frame_timings_snapshot =
+                frame_timings
+                    .as_ref()
+                    .and_then(|s| s.snapshot(None))
+                    .map(|mut snap| {
+                        // R1464 §5.16 §5.39 §2 #6 — binding-wide work that painted
+                        // nothing rides the read, never the ring. GUI peer:
+                        // `ShellCore::frame_timings_for_window`.
+                        snap.focus = focus_work;
+                        snap
+                    });
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_access_producer(&mut produce_access)
@@ -2230,6 +2266,54 @@ mod tests {
             let _a = core_ref.compute_paint_scene(80, 24);
             let _b = core_ref.compute_paint_scene(80, 24);
         }
+    }
+
+    /// R1464 §5.16 §5.39 §2 #6 — the terminal counts its focus work too, and
+    /// the ratio the GUI reports as "one view run per painted window" is `1`
+    /// here because this backend paints one window.
+    ///
+    /// The mirror is what makes the count comparable across backends: a §2 #2
+    /// client differencing `scene/frame_timings` gets the same units from a
+    /// terminal binding as from a windowed one, instead of a silent zero it
+    /// would read as "this binding never misses".
+    #[test]
+    fn r1464_the_terminal_counts_the_view_runs_a_focus_miss_costs() {
+        let _ = pinion_core::focus_request::drain();
+        let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+
+        // A hit costs nothing — the control, without which "a miss costs one"
+        // is indistinguishable from "every request costs one".
+        let before = core.focus_work.get();
+        pinion_core::focus_request::request(<TestButtonView as pinion_core::WidgetCore>::tag());
+        core.drain_focus_mailboxes();
+        assert_eq!(
+            core.focus().focused(),
+            Some(<TestButtonView as pinion_core::WidgetCore>::tag()),
+            "precondition: the request landed, so this measured a HIT",
+        );
+        assert_eq!(
+            core.focus_work.get(),
+            before,
+            "a hit runs no view and is not a retry",
+        );
+
+        // A miss re-derives this backend's one window.
+        pinion_core::focus_request::request("no_such_tag");
+        core.drain_focus_mailboxes();
+        let after = core.focus_work.get();
+        assert_eq!(after.retries - before.retries, 1, "one missed request");
+        assert_eq!(
+            after.derivations - before.derivations,
+            1,
+            "one alternate screen, so one window, so one view run — the same \
+             contract the shell evaluates against its painted-window set",
+        );
+        assert_eq!(
+            core.focus().focused(),
+            Some(<TestButtonView as pinion_core::WidgetCore>::tag()),
+            "and the work is charged even though the retry ALSO missed: the \
+             re-derived enumeration is unchanged, so the standing focus stays",
+        );
     }
 
     // ───────────────────────────────────────────────────────────────

@@ -41,8 +41,11 @@
 //!     "last": {
 //!       "build_us": 320, "encode_us": 110, "acquire_us": 8200,
 //!       "render_us": 80, "total_us": 8740, "other_us": 30,
-//!       "work_us": 510
+//!       "work_us": 510,
+//!       "settle_passes": 1, "settled": true, "shape_misses": 0
 //!     },
+//!     "produce": { "passes_total": 9, "shape_misses_total": 130 },
+//!     "focus": { "derivations_total": 6, "retries_total": 3 },
 //!     "window": {
 //!       "min_total_us": 8100, "mean_total_us": 8600, "max_total_us": 9800,
 //!       "mean_build_us": 310, "mean_encode_us": 105,
@@ -88,6 +91,25 @@
 //!   largest single overrun, and `jank_ratio = over_budget_frames /
 //!   window_len` — the measure-first signal a frame-budget tuning round
 //!   reads before optimizing (Unreal `stat unit` hitches / Chrome jank).
+//!
+//! ## Work that is not a frame
+//!
+//! Three producers run `view` fns; only one of them paints, and the ring
+//! above counts only that one. The other two ride the same reply as
+//! cumulative totals a client **differences across a call** to price it:
+//!
+//! - `produce` (R1460) — the RPC scene producer. A `scene/snapshot` settles
+//!   a scene exactly as a paint does but records no frame, so introspection
+//!   never manufactures a picture the user never saw. Without this pair an
+//!   agent on the §2 #2 path could not see the work its OWN calls caused.
+//! - `focus` (R1464) — the focus enumeration. A request naming a node the
+//!   dispatch just made paintable misses, and the binding answers by
+//!   re-deriving from a pure view run, one per painted window. Read
+//!   `derivations_total / retries_total`: that ratio IS the per-miss cost,
+//!   and it is the painted-window count on a healthy binding.
+//!
+//! Both are binding-wide, not per-window, because the producer and the
+//! focus enumeration are: the same totals ride whichever window is asked.
 //!
 //! ## Multi-window scope
 //!
@@ -187,6 +209,28 @@ pub struct FrameTimingsProduce {
     pub shape_misses_total: u64,
 }
 
+/// R1464 §5.16 §5.39 §2 #2 — cumulative view work the **focus enumeration** has
+/// caused since boot, which is deliberately not counted as frames.
+///
+/// A focus request naming a node this dispatch just made paintable misses the
+/// enumeration, and the binding answers by re-deriving it from a fresh, pure
+/// view run — one per window it has painted (R1463). That work never becomes a
+/// picture, so no frame records it, and until this pair nothing on any surface
+/// could see it grow with the window count.
+///
+/// Binding-wide, not per-window: the enumeration is one Tab order across every
+/// window, so these totals are identical on whichever window's snapshot is
+/// read. Difference the pair across a call to price that call —
+/// `derivations_total / retries_total` is what one missed request costs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FrameTimingsFocus {
+    /// Cumulative view runs performed to derive a window's focusable tags.
+    pub derivations_total: u64,
+    /// Cumulative focus requests that missed the enumeration and forced a
+    /// re-derive. `0` in the steady state.
+    pub retries_total: u64,
+}
+
 /// Rolling-window aggregates, in microseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FrameTimingsWindow {
@@ -244,6 +288,8 @@ pub struct FrameTimingsOutcome {
     pub jank_ratio: f32,
     /// R1460 — work done producing scenes for introspection, not for the user.
     pub produce: FrameTimingsProduce,
+    /// R1464 — work done deriving the focus enumeration, which paints nothing.
+    pub focus: FrameTimingsFocus,
 }
 
 /// Project a per-window [`FrameTimingsSnapshot`] onto the wire-shaped
@@ -277,6 +323,10 @@ pub fn frame_timings(
         produce: FrameTimingsProduce {
             passes_total: s.produce_passes_total,
             shape_misses_total: s.produce_shape_misses_total,
+        },
+        focus: FrameTimingsFocus {
+            derivations_total: s.focus.derivations,
+            retries_total: s.focus.retries,
         },
         window: FrameTimingsWindow {
             min_total_us: s.min_total_us,
@@ -367,6 +417,46 @@ mod tests {
             out.last.settle_passes, 1,
             "and the frame's own count is untouched by the producer's",
         );
+    }
+
+    #[test]
+    fn r1464_focus_work_is_reported_and_is_neither_frames_nor_produce() {
+        // The third producer of view runs. It must be readable as its OWN pair:
+        // folding it into `produce` would price an agent's introspection with
+        // work the user's own interaction caused, and folding it into the ring
+        // would invent frames nobody saw.
+        let mut snap = snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200).with_work(1, true, 0)]);
+        snap.produce_passes_total = 9;
+        snap.focus = pinion_runtime::FocusWork {
+            derivations: 6,
+            retries: 2,
+        };
+
+        let out = frame_timings(Some(snap)).unwrap();
+        assert_eq!(out.focus.derivations_total, 6);
+        assert_eq!(out.focus.retries_total, 2);
+        assert_eq!(
+            out.focus.derivations_total / out.focus.retries_total,
+            3,
+            "the ratio a client actually reads: three painted windows re-derived \
+             per missed request",
+        );
+        assert_eq!(
+            out.produce.passes_total, 9,
+            "not folded into the producer's"
+        );
+        assert_eq!(out.frame_count, 1, "and not counted as frames");
+    }
+
+    #[test]
+    fn r1464_a_backend_that_never_missed_a_focus_request_reads_zero() {
+        // The steady state is all-zero, and that is a MEASUREMENT, not a
+        // sentinel: unlike `settle_passes` (where `0` means never-measured and
+        // every real paint is `>= 1`), zero focus work is the honest report of a
+        // binding whose every focus request hit.
+        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
+        assert_eq!(out.focus.derivations_total, 0);
+        assert_eq!(out.focus.retries_total, 0);
     }
 
     #[test]
