@@ -671,58 +671,13 @@ impl WidgetCore for HelloAudioDevice {
         // never lands (measured). See `pinion_audio::world`, point 1.
         let camera = rig.world.listener().position;
 
-        let theme = use_theme(THEME_TAG).theme_animated();
-        let mut children: Vec<Scene> = Vec::new();
-
-        for line in [
-            format!("hello-audio-device — real cpal callback + RPC ({state} live voice(s))"),
-            format!("camera {camera:?} — the per-frame clock carries this to the listener"),
-            "The audio thread is clocked by the DEVICE, not by an RPC step-verb.".to_string(),
-            "Run it on a silent card: sudo modprobe snd-dummy + PINION_AUDIO_DEVICE=Dummy"
-                .to_string(),
-            "query: device / sample_rate / channels + the RT surface (voice_count,".to_string(),
-            "     peak, frames_rendered, voices, rejected, stolen, listener, …)".to_string(),
-            "invoke: play / stop / stop_all / set_master_gain / set_voice_{gain,pan,position}"
-                .to_string(),
-        ] {
-            // R1345 §5.21 — no authored `rect`: the column below places each
-            // row and the text measure sizes it, so a long line wraps rather
-            // than truncating.
-            //
-            // R1360.2 — the fg comes from the theme. `TextStyle::new()`'s
-            // default is `rgb(0, 0, 0)`, which this binding paired with a
-            // transparent root: every pixel of the live window was
-            // `(0, 0, 0, α)` — black on black, invisible.
-            children.push(Scene::Text(TextNode::styled(
-                line,
-                Rect::default(),
-                TextStyle::new().with_fg(theme.resolve(ColorRole::OnSurface)),
-            )));
-        }
-
-        // R55.G.17 — the paint scene carries a node tagged `tag()` so AI-side
-        // path routing / `rect_for_tag` resolve.
-        //
-        // R1360.2 — the root fill IS the window's clear colour (see
-        // `paint_adapter::root_background`), so the default (alpha 0) means a
-        // transparent — i.e. black — window, not "no background". Pinned by
-        // `assert_widget_view_paints_opaque_root`.
-        let mut root = ContainerNode::new(children)
-            .with_tag(TAG)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)));
-        // R1345 §5.21 — a padded column with a uniform row gap. The pre-R1345
-        // view authored `rect` from a running `y` cursor, none of which reached
-        // a pixel: `compute_layout` overwrites `rect` (it is an OUTPUT), so the
-        // rows painted flush at x=0 with none of the intended spacing.
-        //
-        // The old `y += 26` pitch was 16px of authored row + a 10px gap, so
-        // `gap: 10` reproduces the GAP — but not the pitch: a measured row is
-        // 24px, so the real pitch is 34. That is why the window grew.
-        root.layout.display = Display::Flex;
-        root.layout.flex_direction = FlexDirection::Column;
-        root.layout.gap = 10;
-        root.layout.padding = Rect::new(16, 16, 16, 16);
-        Scene::Container(root)
+        // R1470 — everything above is the DEVICE half (it resolves the rig, which
+        // opens a real output device); everything below is scene shape, and none
+        // of it needs a device. The tail call is the whole scene, so the root
+        // `audio_panel_scene` returns IS the root this view returns — which is
+        // what lets the R1360.2 opacity assertion be made on the builder without
+        // opening the speakers. Keep it a tail call.
+        audio_panel_scene(state, camera)
     }
 
     fn event_name((): ()) -> &'static str {
@@ -732,6 +687,74 @@ impl WidgetCore for HelloAudioDevice {
     fn title() -> &'static str {
         "pinion hello-audio-device — real device callback + RPC (§5.54 / §2 #2)"
     }
+}
+
+/// R1470 — the pure panel builder: `(live voice count, camera pose) -> Scene`,
+/// resolving the theme from the active `Owner` scope.
+///
+/// Split out of [`HelloAudioDevice::view`] so a test can assert on the scene
+/// without resolving the [`AudioRig`] — that resolution opens a **real cpal
+/// output device**, and this binding's device policy is deliberately fail-loud
+/// (`open_output` aborts the process rather than guessing a device). That is
+/// right for the binary and wrong for `cargo test`: before this split, the
+/// R1360.2 opacity assertion opened the developer's speakers, and on a host
+/// with no output device it aborted the whole test binary — which is why CI
+/// (no sound card in the workspace-test job) had been red.
+///
+/// The device policy itself is unchanged: `view` still resolves the rig on
+/// every paint, and the binary still fails loudly.
+fn audio_panel_scene(state: u16, camera: pinion_audio::Vec3) -> Scene {
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let mut children: Vec<Scene> = Vec::new();
+
+    for line in [
+        format!("hello-audio-device — real cpal callback + RPC ({state} live voice(s))"),
+        format!("camera {camera:?} — the per-frame clock carries this to the listener"),
+        "The audio thread is clocked by the DEVICE, not by an RPC step-verb.".to_string(),
+        "Run it on a silent card: sudo modprobe snd-dummy + PINION_AUDIO_DEVICE=Dummy".to_string(),
+        "query: device / sample_rate / channels + the RT surface (voice_count,".to_string(),
+        "     peak, frames_rendered, voices, rejected, stolen, listener, …)".to_string(),
+        "invoke: play / stop / stop_all / set_master_gain / set_voice_{gain,pan,position}"
+            .to_string(),
+    ] {
+        // R1345 §5.21 — no authored `rect`: the column below places each
+        // row and the text measure sizes it, so a long line wraps rather
+        // than truncating.
+        //
+        // R1360.2 — the fg comes from the theme. `TextStyle::new()`'s
+        // default is `rgb(0, 0, 0)`, which this binding paired with a
+        // transparent root: every pixel of the live window was
+        // `(0, 0, 0, α)` — black on black, invisible.
+        children.push(Scene::Text(TextNode::styled(
+            line,
+            Rect::default(),
+            TextStyle::new().with_fg(theme.resolve(ColorRole::OnSurface)),
+        )));
+    }
+
+    // R55.G.17 — the paint scene carries a node tagged `tag()` so AI-side
+    // path routing / `rect_for_tag` resolve.
+    //
+    // R1360.2 — the root fill IS the window's clear colour (see
+    // `paint_adapter::root_background`), so the default (alpha 0) means a
+    // transparent — i.e. black — window, not "no background". Pinned by
+    // `assert_widget_view_paints_opaque_root`.
+    let mut root = ContainerNode::new(children)
+        .with_tag(TAG)
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)));
+    // R1345 §5.21 — a padded column with a uniform row gap. The pre-R1345
+    // view authored `rect` from a running `y` cursor, none of which reached
+    // a pixel: `compute_layout` overwrites `rect` (it is an OUTPUT), so the
+    // rows painted flush at x=0 with none of the intended spacing.
+    //
+    // The old `y += 26` pitch was 16px of authored row + a 10px gap, so
+    // `gap: 10` reproduces the GAP — but not the pitch: a measured row is
+    // 24px, so the real pitch is 34. That is why the window grew.
+    root.layout.display = Display::Flex;
+    root.layout.flex_direction = FlexDirection::Column;
+    root.layout.gap = 10;
+    root.layout.padding = Rect::new(16, 16, 16, 16);
+    Scene::Container(root)
 }
 
 impl WidgetA11y for HelloAudioDevice {
@@ -780,7 +803,27 @@ mod tests {
     //! zero-flake violation on a host without a sound card, and an abort of the
     //! whole test binary rather than a test failure. `tools/demos/
     //! hello_audio_device.py` covers the rendered window against a real device.
-    use super::{DEVICE_FIELDS, DeviceChoice, RT_EXTERNAL_FIELDS, SCHEMA_FIELDS, resolve_device};
+    //!
+    //! R1470 — **that warning was written here, and the very next round walked
+    //! into it.** R1360.2 added an opacity test that called
+    //! `assert_widget_view_paints_opaque_root::<HelloAudioDevice>`, i.e. `view`,
+    //! i.e. `audio_rig()` — so on every CI runner (no sound card in the
+    //! workspace-test job) `cargo test --workspace` aborted exactly as described
+    //! above, and on a developer's box it opened the real speakers. CI had been
+    //! red on that for ~99 consecutive pushes, and because the other two CI jobs
+    //! `needs:` this one, the full demo sweep and the GPU pixel tests never ran
+    //! at all. The fix is the split this module doc already implies: the scene
+    //! comes from the pure [`super::audio_panel_scene`] builder, which `view`
+    //! tail-calls, so the layout/paint properties are testable here while the
+    //! device stays in `view`. A prose warning is not a gate — the standing rule
+    //! is now the assertion below (`the_panel_builds_without_opening_a_device`)
+    //! plus this module's device-free contract.
+    use super::{
+        DEVICE_FIELDS, DeviceChoice, RT_EXTERNAL_FIELDS, SCHEMA_FIELDS, TAG, audio_panel_scene,
+        resolve_device,
+    };
+    use pinion_core::reactive::Owner;
+    use pinion_core::scene::Scene;
 
     /// A realistic ALSA list: a real (AUDIBLE) card plus the silent dummy under
     /// several PCM prefixes — the shape that makes substring matching dangerous.
@@ -798,11 +841,40 @@ mod tests {
     /// R1360.2 — the window must be legible. Same defect as `hello-audio-rt`:
     /// an unfilled root clears the window transparent (black on a compositor)
     /// under `TextNode::new`'s pure-black default fg — every pixel `(0,0,0,α)`.
+    ///
+    /// R1470 — asserted on [`audio_panel_scene`] rather than through
+    /// `assert_widget_view_paints_opaque_root::<HelloAudioDevice>`, which every
+    /// other binding still uses. That fixture calls `view`, and this binding's
+    /// `view` resolves the [`AudioRig`] — opening a **real cpal output device**.
+    /// So the opacity check used to open the developer's speakers, and on a host
+    /// with no output device (every CI runner: `cargo test --workspace` runs
+    /// without a sound card) `open_output`'s deliberate fail-loud path aborted
+    /// the whole test binary. Since `view`'s tail call IS this builder, asserting
+    /// here covers exactly the same root — without the device.
     #[test]
     fn r1360_2_view_paints_an_opaque_window() {
-        pinion_core::test_fixtures::assert_widget_view_paints_opaque_root::<super::HelloAudioDevice>(
-            0,
-            &pinion_core::Frame::default(),
+        let owner = Owner::new();
+        let scene = owner.run(|| audio_panel_scene(0, pinion_audio::Vec3::default()));
+        pinion_core::test_fixtures::assert_scene_root_is_opaque(&scene, "HelloAudioDevice");
+    }
+
+    /// R1470 — the whole point of the split: this binding's test suite must not
+    /// need an audio device. A regression that put a rig read back into
+    /// [`audio_panel_scene`] would abort the test binary on a device-less host
+    /// (and open the speakers on a developer's), so the builder is exercised
+    /// here on its own, with no `AudioRig` resolved anywhere in this module's
+    /// tests.
+    #[test]
+    fn the_panel_builds_without_opening_a_device() {
+        let owner = Owner::new();
+        let scene = owner.run(|| audio_panel_scene(3, pinion_audio::Vec3::default()));
+        let Scene::Container(root) = &scene else {
+            panic!("the panel root is a Container");
+        };
+        assert_eq!(root.tag.as_deref(), Some(TAG), "the paint carries tag()");
+        assert!(
+            !root.children.is_empty(),
+            "the panel renders its readout rows",
         );
     }
 

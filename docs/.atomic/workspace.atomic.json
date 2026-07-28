@@ -72882,6 +72882,66 @@
         "sprag consumes this in a sprag-native session (never from pinion): sprag_rpc::mount replaces serve(path, ingress)? + control.set_enabled(boot_enabled(opts)) with serve_with_exposure(path, ingress, Exposure::from_serving(boot_enabled(opts)))?"
       ]
     },
+    "Round 1470": {
+      "decision_summary": "A paint assertion must not open the speakers: hello-audio-device's R1360.2 opacity test reached a real cpal device through view(), aborting the workspace test binary on every host without a sound card — so the scene is now built by a pure builder that view tail-calls, and the device stays in view.",
+      "changes_bullets": [
+        "pinion-core: assert_scene_root_is_opaque(scene, who) splits the R1360.2 check from HOW the scene was obtained; assert_widget_view_paints_opaque_root now delegates to it, so its 80-odd call sites are untouched",
+        "examples/hello-audio-device: audio_panel_scene(state, camera) is the pure panel builder view now tail-calls, so the root the test asserts on IS the root view returns",
+        "examples/hello-audio-device: the R1360.2 opacity test asserts on that builder instead of on view, and a new test pins the module's own device-free contract",
+        "examples/hello-audio-device: the test module doc records that R1345 had ALREADY written this warning here and R1360.2 walked into it one round later",
+        "device policy unchanged: view still resolves the rig every paint, open_output still aborts loudly rather than guessing a device, and the demo-sweep job still provisions its null sink for the live demo"
+      ],
+      "verification_bullets": [
+        "ROOT CAUSE, measured not inferred: r1360_2_view_paints_an_opaque_window -> assert_widget_view_paints_opaque_root -> view -> audio_rig() -> Owner::cache(AudioRig::open) -> open_output() -> CpalOutput::start_default Err -> eprintln + std::process::exit(1). A paint assertion opened a real cpal output device",
+        "REPRODUCED LOCALLY before touching anything: ALSA_CONFIG_PATH=<empty file> removes the default PCM, and cargo test -p hello-audio-device died with CI's exact signature (test exited abnormally, exit status 1); --nocapture named the dying test and printed open_output's message",
+        "SCOPE, from CI itself: 99 of the last 100 runs failed, all in the lint-and-test job's workspace tests step. demo-sweep and gpu-tests both `needs: lint-and-test`, so the full demo sweep and the GPU pixel guard never ran across those pushes",
+        "FIXED, re-measured under the same reproduced condition: 8 passed / 0 failed (was: process abort). Normal host: cargo test --workspace = 277 ok targets, 0 FAILED",
+        "CF (one change, rebuilt): restoring the opacity test to go through view() aborts again under the reproduced condition; the split is what fixes it",
+        "LIVE PATH unchanged: the release binary boots on the real device and paints the tagged root with all 7 readout rows (boot starts no voice, so the check is silent). The audible play/stop demo stays CI's job, where the null sink exists",
+        "NOT CI failures, stated to avoid inventing work: two pinion-audio device::tests fail under my reproduction because it also breaks device ENUMERATION, which CI's runner can still do. CI stops at the first failing target without --no-fail-fast and reported hello-audio-device, so those two passed there",
+        "gate: cargo fmt --all --check clean, clippy -D pedantic 0 (incl. pinion-core --features test-fixtures), cargo doc 0, pinion-core 2739 + hello-audio-device 8 (+1 new)"
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.54",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "A prose warning is not a gate: R1345 wrote the exact hazard into this test module's doc and R1360.2 walked into it one round later. The standing gate is CI having no sound card plus the new device-free assertion; the warning is now a record of what happened rather than the only defence",
+        "CI results were not checked at round close. 99 red pushes were recorded as green rounds because the local gate gauges only changed crates and the pre-push hook runs no tests. Checking `gh run list` at round close is the cheap fix and is now a memory rule",
+        "The two pinion-audio device::tests are not robust on a host that cannot enumerate output devices. NOT touched here (CI can enumerate, so this is not the CI failure and fixing it on my stricter reproduction would be inventing work) but it is a real fragility in a CLOSED audio-proof area",
+        "Whether other bindings resolve a device-or-network-opening Owner::cache from `view` was not swept. hello-audio-device was found because CI named it; a census of view fns that open OS resources is a separate round"
+      ],
+      "publishable_decision_summary": "A paint assertion must not open the speakers: hello-audio-device's R1360.2 opacity test reached a real cpal device through view(), aborting the workspace test binary on every host without a sound card — so the scene is now built by a pure builder that view tail-calls, and the device stays in view.",
+      "publishable_changes_bullets": [
+        "pinion-core: assert_scene_root_is_opaque(scene, who) splits the R1360.2 check from HOW the scene was obtained; assert_widget_view_paints_opaque_root now delegates to it, so its 80-odd call sites are untouched",
+        "examples/hello-audio-device: audio_panel_scene(state, camera) is the pure panel builder view now tail-calls, so the root the test asserts on IS the root view returns",
+        "examples/hello-audio-device: the R1360.2 opacity test asserts on that builder instead of on view, and a new test pins the module's own device-free contract",
+        "examples/hello-audio-device: the test module doc records that R1345 had ALREADY written this warning here and R1360.2 walked into it one round later",
+        "device policy unchanged: view still resolves the rig every paint, open_output still aborts loudly rather than guessing a device, and the demo-sweep job still provisions its null sink for the live demo"
+      ],
+      "publishable_verification_bullets": [
+        "ROOT CAUSE, measured not inferred: r1360_2_view_paints_an_opaque_window -> assert_widget_view_paints_opaque_root -> view -> audio_rig() -> Owner::cache(AudioRig::open) -> open_output() -> CpalOutput::start_default Err -> eprintln + std::process::exit(1). A paint assertion opened a real cpal output device",
+        "REPRODUCED LOCALLY before touching anything: ALSA_CONFIG_PATH=<empty file> removes the default PCM, and cargo test -p hello-audio-device died with CI's exact signature (test exited abnormally, exit status 1); --nocapture named the dying test and printed open_output's message",
+        "SCOPE, from CI itself: 99 of the last 100 runs failed, all in the lint-and-test job's workspace tests step. demo-sweep and gpu-tests both `needs: lint-and-test`, so the full demo sweep and the GPU pixel guard never ran across those pushes",
+        "FIXED, re-measured under the same reproduced condition: 8 passed / 0 failed (was: process abort). Normal host: cargo test --workspace = 277 ok targets, 0 FAILED",
+        "CF (one change, rebuilt): restoring the opacity test to go through view() aborts again under the reproduced condition; the split is what fixes it",
+        "LIVE PATH unchanged: the release binary boots on the real device and paints the tagged root with all 7 readout rows (boot starts no voice, so the check is silent). The audible play/stop demo stays CI's job, where the null sink exists",
+        "NOT CI failures, stated to avoid inventing work: two pinion-audio device::tests fail under my reproduction because it also breaks device ENUMERATION, which CI's runner can still do. CI stops at the first failing target without --no-fail-fast and reported hello-audio-device, so those two passed there",
+        "gate: cargo fmt --all --check clean, clippy -D pedantic 0 (incl. pinion-core --features test-fixtures), cargo doc 0, pinion-core 2739 + hello-audio-device 8 (+1 new)"
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.54",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "A prose warning is not a gate: R1345 wrote the exact hazard into this test module's doc and R1360.2 walked into it one round later. The standing gate is CI having no sound card plus the new device-free assertion; the warning is now a record of what happened rather than the only defence",
+        "CI results were not checked at round close. 99 red pushes were recorded as green rounds because the local gate gauges only changed crates and the pre-push hook runs no tests. Checking `gh run list` at round close is the cheap fix and is now a memory rule",
+        "The two pinion-audio device::tests are not robust on a host that cannot enumerate output devices. NOT touched here (CI can enumerate, so this is not the CI failure and fixing it on my stricter reproduction would be inventing work) but it is a real fragility in a CLOSED audio-proof area",
+        "Whether other bindings resolve a device-or-network-opening Owner::cache from `view` was not swept. hello-audio-device was found because CI named it; a census of view fns that open OS resources is a separate round"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

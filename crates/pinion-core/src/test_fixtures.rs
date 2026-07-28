@@ -143,23 +143,43 @@ pub fn assert_widget_view_carries_tag<V: WidgetCore>(state: V::State, frame: &Fr
 pub fn assert_widget_view_paints_opaque_root<V: WidgetCore>(state: V::State, frame: &Frame) {
     let owner = Owner::new();
     let scene = owner.run(|| V::view(state, frame));
-    let Scene::Container(root) = &scene else {
+    assert_scene_root_is_opaque(&scene, core::any::type_name::<V>());
+}
+
+/// R1470 §5.50 — the same R1360.2 check, made on a [`Scene`] the caller
+/// already built.
+///
+/// [`assert_widget_view_paints_opaque_root`] is the one-liner for the common
+/// case, but it can only reach a binding whose `view` is safe to *call* from a
+/// test. `hello-audio-device`'s was not: its `view` resolves an `Owner::cache`
+/// rig that opens a real cpal output device, so the opacity assertion opened
+/// the developer's speakers — and on a host with no output device (every CI
+/// runner) the binding's deliberate fail-loud path aborted the whole test
+/// binary. Splitting the assertion from the *way the scene was obtained* lets
+/// such a binding factor its scene into a pure builder, assert on that, and
+/// keep the boot-time device policy untouched.
+///
+/// `who` names the subject in the panic message (a type name, a binding name).
+///
+/// # Panics
+///
+/// As [`assert_widget_view_paints_opaque_root`]: if `scene`'s root is not a
+/// [`Scene::Container`], or if that Container's fill is not fully opaque.
+pub fn assert_scene_root_is_opaque(scene: &Scene, who: &str) {
+    let Scene::Container(root) = scene else {
         panic!(
-            "{}'s view must return a Scene::Container root — its fill is the \
+            "{who}'s view must return a Scene::Container root — its fill is the \
              window's clear colour, and any other root variant clears to \
              opaque black (R1360.2)",
-            core::any::type_name::<V>(),
         );
     };
     assert_eq!(
-        root.style.fill.a,
-        0xFF,
-        "{}'s view must fill its root with an OPAQUE colour: the root fill is \
+        root.style.fill.a, 0xFF,
+        "{who}'s view must fill its root with an OPAQUE colour: the root fill is \
          the window's clear colour, and the default (alpha 0) leaves the \
          window transparent — black on a compositor, under text whose own \
          default is black. Got {:?}. Fix: `.with_style(BoxStyle::filled(\
          theme.resolve(ColorRole::Surface)))` on the root. (R1360.2)",
-        core::any::type_name::<V>(),
         root.style.fill,
     );
 }
