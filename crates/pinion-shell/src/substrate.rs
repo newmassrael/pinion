@@ -51,8 +51,9 @@ use pinion_rpc::{
 use pinion_runtime::text_engine::SelfHostedTextEngine;
 use pinion_runtime::{
     CommandExecutor, CoreShell, DispatchTail, FocusManager, FrameTiming, FrameTimingStats,
-    FrameTimingsSnapshot, IntentQueue, Modifiers, PanRelease, PointerId, SETTLE_PASS_BUDGET,
-    TextMeasure, Touch, TouchPhase, clamp_frame_dt, compute_layout_with_text_measure, rect_for_tag,
+    FrameTimingsSnapshot, IntentQueue, MirrorWork, Modifiers, PanRelease, PointerId, ProduceWork,
+    SETTLE_PASS_BUDGET, TextMeasure, Touch, TouchPhase, clamp_frame_dt,
+    compute_layout_with_text_measure, rect_for_tag, settle_to_fixed_point,
     walk_scene_and_drain_immediate,
 };
 use pinion_text::LayoutCache;
@@ -307,7 +308,7 @@ pub struct ShellCore<V: WidgetView> {
     text_cache: LayoutCache,
 
     /// R1460 §5.16 §5.7 §2 #2 — cumulative work done by the RPC scene
-    /// PRODUCER, as `(settle passes, shaper misses)`.
+    /// PRODUCER (see [`pinion_runtime::ProduceWork`]).
     ///
     /// The producer runs the same settle loop a paint does, but records no
     /// frame: a `scene/snapshot` must never manufacture a frame the user never
@@ -321,7 +322,17 @@ pub struct ShellCore<V: WidgetView> {
     /// several times (path resolution, then the post-dispatch finalize): the
     /// answerable question is "what did my call cost", and a client answers it
     /// by differencing across the call.
-    produce_work: (u64, u64),
+    produce_work: ProduceWork,
+    /// R1465 §5.16 §5.12 §2 #7 — cumulative work done by the stored paint-scene
+    /// MIRROR ([`Self::compute_paint_scene_pure_internal`]), the fourth
+    /// producer of view runs and the last one that was neither settled nor
+    /// counted.
+    ///
+    /// Plain `&mut`, not a [`pinion_runtime::FocusWorkCell`]-style accumulator:
+    /// the one site that records it already holds `&mut self`, and interior
+    /// mutability bought for nothing is a borrow rule that later rounds have to
+    /// keep obeying.
+    mirror_work: MirrorWork,
     /// R1464 §5.16 §5.39 §2 #2 — cumulative view work the FOCUS ENUMERATION has
     /// caused, the third producer of view runs beside the paint and the RPC
     /// scene producer.
@@ -724,7 +735,8 @@ impl<V: WidgetView> ShellCore<V> {
             focus: FocusManager::new(),
             modifiers: Modifiers::empty(),
             text_cache,
-            produce_work: (0, 0),
+            produce_work: ProduceWork::default(),
+            mirror_work: MirrorWork::default(),
             focus_work: pinion_runtime::FocusWorkCell::default(),
             text_engine: build_text_engine_from_env(),
             last_access_tag_map: HashMap::new(),
@@ -1677,12 +1689,12 @@ impl<V: WidgetView> ShellCore<V> {
                 // frames the user saw, and a produce is not one. Attached here
                 // so an agent gets both halves from one call instead of
                 // correlating two surfaces.
-                snap.produce_passes_total = self.produce_work.0;
-                snap.produce_shape_misses_total = self.produce_work.1;
-                // R1464 §5.16 §5.39 — same rule, same reason: binding-wide work
-                // that painted nothing, attached to the read rather than folded
-                // into the ring.
+                snap.produce = self.produce_work;
+                // R1464 §5.16 §5.39 / R1465 §5.12 — same rule, same reason:
+                // binding-wide work that painted nothing, attached to the read
+                // rather than folded into the ring.
                 snap.focus = self.focus_work.get();
+                snap.mirror = self.mirror_work;
                 snap
             })
     }
@@ -4115,10 +4127,8 @@ impl<V: WidgetView> ShellCore<V> {
             // lifetime total; the cache is shared across windows, so only a
             // per-paint delta is attributable to a window's frame.
             let shapes_before = self.text_cache.shapes();
-            let mut scene = run_view();
-            let mut settled = false;
-            let mut passes = 0_u32;
-            for pass in 1..=SETTLE_PASS_BUDGET {
+            let text_cache = &mut self.text_cache;
+            let settle = settle_to_fixed_point(run_view, |scene| {
                 // R57.X.scrollbar §5.45 — first-paint chicken-and-egg. The
                 // layout pass writes the post-layout
                 // [`ScrollState::set_max`] *after* `V::view` has already
@@ -4157,30 +4167,13 @@ impl<V: WidgetView> ShellCore<V> {
                 // forcing consumer). The side-effect-free mirror
                 // (`compute_paint_scene_pure_internal`) never reaches this fn, so
                 // an introspection paint never publishes (the R1006 contract).
-                let dirty = compute_layout_with_text_measure(
-                    &mut scene,
-                    &mut self.text_cache,
-                    w,
-                    h,
-                    text_measure,
-                ) | self.core.publish_pane_viewports(&scene);
-                passes = pass;
-                if !dirty {
-                    settled = true;
-                    break;
-                }
-                // Not the last pass: re-run the view against what this pass
-                // wrote, and lay THAT out. On the last pass we keep the scene
-                // this iteration laid out — a freshly-run view with no layout
-                // behind it would paint at every rect's default.
-                if pass < SETTLE_PASS_BUDGET {
-                    scene = run_view();
-                }
-            }
+                compute_layout_with_text_measure(scene, text_cache, w, h, text_measure)
+                    | core.publish_pane_viewports(scene)
+            });
             (
-                scene,
-                settled,
-                passes,
+                settle.scene,
+                settle.settled,
+                settle.passes,
                 self.text_cache.shapes() - shapes_before,
             )
         };
@@ -4892,14 +4885,28 @@ impl<V: WidgetView> ShellCore<V> {
     ///   advancing the binding's animation / IM state.
     ///
     /// The R51.146 `root_owner.run(...)` wrap is preserved so
-    /// `Owner::cache` slots resolve correctly. The R57.X scrollbar
-    /// first-paint chicken-and-egg fix is intentionally NOT
-    /// retained — that fix's purpose is to let the scrollbar widget
-    /// observe a `max` update written by the layout pass within the
-    /// same paint cycle, but the pure variant runs as an auxiliary
-    /// after the canonical paint already produced the right
-    /// scrollbar shape; re-running the scroll-dirty guard here
-    /// would just emit redundant work.
+    /// `Owner::cache` slots resolve correctly.
+    ///
+    /// ## R1465 §5.45 §5.27 §2 #7 — it settles, like the paint it mirrors
+    ///
+    /// Pre-R1465 this ran exactly one layout pass and dropped its dirty bit,
+    /// justified by "the canonical paint already produced the right shape, so
+    /// re-running here would just emit redundant work". That is true of the
+    /// R684 first-paint finalize, whose producer closure settled the same
+    /// window at the same viewport moments earlier. It is **false** of the
+    /// R705 re-store, which is the reason this method has a hot caller at all:
+    /// the produce closure ran *before* the handler mutated state, so the
+    /// mirror stored afterwards is the first pass of a chain that has since
+    /// moved. An agent reading `scene/snapshot from: paint` then sees an
+    /// earlier pass of the picture the window is settling to — a §2 #7
+    /// divergence at the one seam whose whole job is to not diverge.
+    ///
+    /// So the R1458 fixed point applies here too, with the side-effect budget
+    /// unchanged: no pane publish (the R1006 contract), no animation or
+    /// immediate-mode tick, no redraw arming. Exceeding
+    /// [`pinion_runtime::SETTLE_PASS_BUDGET`] is reported as data
+    /// ([`pinion_runtime::MirrorWork::unsettled`]) instead of arming a frame,
+    /// because an introspection render must not schedule one.
     pub fn compute_paint_scene_pure_for_window(
         &mut self,
         window_id: &str,
@@ -4941,24 +4948,41 @@ impl<V: WidgetView> ShellCore<V> {
         let cached_state = *self.core.cached_state();
         let frame = Frame::new();
         let chrome_h = self.chrome_inset_height(window_id);
-        let mut paint_scene = self.core.root_owner().run(|| match window_id {
-            Some(id) => V::view_for_window(id, cached_state, &frame),
-            None => V::view(cached_state, &frame),
-        });
-        // R1121 §5.16 §5.21 — mirror the live path's borderless content inset so
-        // the introspection snapshot matches the painted geometry (§2 #7).
-        paint_scene = apply_chrome_inset(paint_scene, chrome_h);
         // R1072 §5.37 — measure the introspection mirror with the same opt-in
         // engine the production paint path uses, so `scene/layout` reports the
         // boxes that were (or would be) painted via §5.37 (Scene-as-data coherence,
         // §2 #7). `None` keeps it parley-identical.
         let text_measure = text_measure_override(self.text_engine.as_ref());
-        let _ = compute_layout_with_text_measure(
-            &mut paint_scene,
-            &mut self.text_cache,
-            w,
-            h,
-            text_measure,
+        // R1459 §5.16 §5.36 — the shaper-miss mark, read before any pass so the
+        // delta below is THIS mirror's shape work and not the shared cache's
+        // lifetime total.
+        let shapes_before = self.text_cache.shapes();
+        let core = &self.core;
+        let text_cache = &mut self.text_cache;
+        let settle = settle_to_fixed_point(
+            || {
+                // R1121 §5.16 §5.21 — mirror the live path's borderless content
+                // inset so the introspection snapshot matches the painted
+                // geometry (§2 #7).
+                apply_chrome_inset(
+                    core.root_owner().run(|| match window_id {
+                        Some(id) => V::view_for_window(id, cached_state, &frame),
+                        None => V::view(cached_state, &frame),
+                    }),
+                    chrome_h,
+                )
+            },
+            |scene| compute_layout_with_text_measure(scene, text_cache, w, h, text_measure),
+        );
+        let paint_scene = settle.scene;
+        // R1465 §5.16 §2 #2 — a stored mirror is not a frame, so it rides the
+        // cumulative work groups rather than the ring. `unsettled` is how the
+        // budget's truncation stays loud without arming a frame this
+        // side-effect-free path is not allowed to ask for.
+        self.mirror_work.record(
+            settle.passes,
+            settle.settled,
+            self.text_cache.shapes() - shapes_before,
         );
         // R705.1 §2 #7 — see `compute_paint_scene_internal`: this auxiliary
         // (re-store / headless) render also consumed the current reactive
@@ -5542,17 +5566,13 @@ impl<V: WidgetView> ShellCore<V> {
                 // matches the geometry the RPC handler just saw.
                 produce_size.set(Some((w, h)));
                 let frame = Frame::new();
-                let mut paint = root_owner.run(|| match producer_window_id.as_deref() {
-                    Some(id) => V::view_for_window(id, cached_state, &frame),
-                    None => V::view(cached_state, &frame),
-                });
-                // R57.X.scrollbar §5.45 / R1458 §5.45 §5.27 — same settle loop
-                // as [`Self::compute_paint_scene`], for the same reason and to
-                // the same fixed point (producer parity: an agent reading
-                // `scene/snapshot from: paint` must see the scene the window
-                // shows, not an earlier pass of it). No pane publish here — the
-                // RPC producer is the introspection mirror and never publishes
-                // (the R1006 contract). Idempotent on steady-state: Signal
+                // R57.X.scrollbar §5.45 / R1458 §5.45 §5.27 / R1465 — the shared
+                // fixed point, for the same reason the window paint runs it
+                // (producer parity: an agent reading `scene/snapshot from: paint`
+                // must see the scene the window shows, not an earlier pass of
+                // it). No pane publish inside the layout closure — the RPC
+                // producer is the introspection mirror and never publishes (the
+                // R1006 contract). Idempotent on steady-state: Signal
                 // equality-skip floors the dirty bit at false on pass 1.
                 let text_measure = text_measure_override(text_engine_ptr.as_ref());
                 // R1460 §5.16 §2 #2 — the producer records no FRAME (it must
@@ -5561,27 +5581,19 @@ impl<V: WidgetView> ShellCore<V> {
                 // see what its own call cost. Counted cumulatively here and
                 // published on `scene/frame_timings`.
                 let shapes_before = text_cache_ptr.shapes();
-                let mut produce_passes = 0_u64;
-                for pass in 1..=SETTLE_PASS_BUDGET {
-                    produce_passes += 1;
-                    if !compute_layout_with_text_measure(
-                        &mut paint,
-                        text_cache_ptr,
-                        w,
-                        h,
-                        text_measure,
-                    ) {
-                        break;
-                    }
-                    if pass < SETTLE_PASS_BUDGET {
-                        paint = root_owner.run(|| match producer_window_id.as_deref() {
+                let settle = settle_to_fixed_point(
+                    || {
+                        root_owner.run(|| match producer_window_id.as_deref() {
                             Some(id) => V::view_for_window(id, cached_state, &frame),
                             None => V::view(cached_state, &frame),
-                        });
-                    }
-                }
-                produce_work_ptr.0 += produce_passes;
-                produce_work_ptr.1 += text_cache_ptr.shapes() - shapes_before;
+                        })
+                    },
+                    |scene| {
+                        compute_layout_with_text_measure(scene, text_cache_ptr, w, h, text_measure)
+                    },
+                );
+                let paint = settle.scene;
+                produce_work_ptr.record(settle.passes, text_cache_ptr.shapes() - shapes_before);
                 // R705 §5.39 §2 #1/#7 — inject the focus ring as the
                 // final paint step so `scene/snapshot from: paint` (and
                 // the R684 post-dispatch InputRouter finalize, which
@@ -5801,11 +5813,22 @@ impl<V: WidgetView> ShellCore<V> {
         // addressed window's InputRouter so the downstream
         // `drain_deferred_inputs_for_window` hit-tests against real
         // geometry (and, since R890, so `scene/layout` projections
-        // see this window's own frame). **First-paint only** — gated on the router
-        // having no `last_paint_scene` yet — so already-active windows
-        // do NOT pay any per-RPC side-effect cost.
+        // see this window's own frame).
         //
-        // Why first-paint only:
+        // R1465 doc honesty — this said "**first-paint only**, so already-active
+        // windows do NOT pay any per-RPC side-effect cost". R684 was written
+        // that way; R685 (`76d5b8bf`) deliberately dropped the
+        // `has_last_paint_scene_for_window` gate when it swapped the full
+        // recompute for the pure variant + the storage-only publish, and the
+        // comment kept the old claim. What survives is the SIDE-EFFECT half
+        // (below): the storage-only publish synthesizes no hover arcs, which is
+        // why running it every dispatch is safe. The COST half was false, and
+        // is now measured rather than asserted — every producing dispatch
+        // renders one mirror here, and a mutating one renders another per
+        // painted window in the R705 re-store below, both counted into
+        // `mirror_work` and readable as `scene/frame_timings.mirror`.
+        //
+        // Why the storage-only publish:
         //
         // `update_paint_scene_for_window` calls
         // [`pinion_runtime::InputRouter::refresh_hover`] for every

@@ -72576,6 +72576,62 @@
         "R1463 carry (e) still open and still a round of its own: 34 byte-identical root containers in examples (measured; the earlier note said 37), plus 39 near-variants - an app_root lift"
       ]
     },
+    "Round 1465": {
+      "decision_summary": "R1465: the mirror an agent reads settles like the paint it mirrors - the fourth view producer runs the fixed point and reports what it cost",
+      "changes_bullets": [
+        "pinion-shell: the stored paint-scene mirror runs the R1458 fixed point - it took one layout pass and dropped the dirty bit, so a mutating dispatch left an earlier pass of the picture in the store for `from: paint` to read",
+        "pinion-runtime: `MirrorWork {scenes, passes, shape_misses, unsettled}` + `ProduceWork` typed from a loose `(u64, u64)` pair now that two backends record it",
+        "pinion-rpc: `scene/frame_timings.mirror` - width (scenes), depth (passes/scenes), and the budget truncation as data (`unsettled`), never folded into the ring",
+        "pinion-tui: the terminal records its own producer's work - R1460 put the `produce` group on the wire and recorded into it from the Vello side only, so every TUI binding answered 0 forever",
+        "pinion-runtime: `settle_to_fixed_point` lifts the settle loop - five hand-written copies, two of which a later round found running a single pass",
+        "pinion-shell: doc honesty - the R684 finalize comment claimed first-paint-only; R685 dropped that gate and the cost half of the claim was false"
+      ],
+      "verification_bullets": [
+        "measured first: the mirror of a 4-pass chain reported content height 200 against the settled 400, before any fix",
+        "CF-1 (mirror runs one pass) fails the 3 mirror tests, passes every paint-side control; CF-2 (settle but do not record) fails the 4 counter tests and passes the settle claim; CF-3 (arm a catch-up redraw on give-up) fails exactly 1",
+        "demo r1465_mirror_work.py on hello-tail-reveal: 34 assertion sites, and re-run against a CF-1 build it fails with \"2 passes on 2 stored scenes\" - the pre-fix lockstep",
+        "gates: fmt + clippy pedantic + cargo doc all clean; runtime 945, rpc 561, shell 199+160, tui 147 tests",
+        "demos re-run: r1465 + r1458 + r1460 + r1464 + r907 + r925 + r1374 + r1389 + r1445 + r1194 all PASS"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.12",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "one `scene/click` on a single-window binding stores TWO mirrors (R684 finalize + R705 re-store), measured; whether the finalize render can be skipped when the re-store will follow is a separate audit with its own hit-test dependency",
+        "the stored scene's own content is pinned by unit test, not by the demo: a live window repaints and repairs the store, so asserting it over RPC would go green whenever the compositor won",
+        "`mirror` is all-zero on pinion-tui because that backend has no re-store producer, not because it is unmeasured",
+        "R1464 carry (a) stands: the consumer's own symptom is still unverified here (cross-repo)"
+      ],
+      "publishable_decision_summary": "R1465: the mirror an agent reads settles like the paint it mirrors - the fourth view producer runs the fixed point and reports what it cost",
+      "publishable_changes_bullets": [
+        "pinion-shell: the stored paint-scene mirror runs the R1458 fixed point - it took one layout pass and dropped the dirty bit, so a mutating dispatch left an earlier pass of the picture in the store for `from: paint` to read",
+        "pinion-runtime: `MirrorWork {scenes, passes, shape_misses, unsettled}` + `ProduceWork` typed from a loose `(u64, u64)` pair now that two backends record it",
+        "pinion-rpc: `scene/frame_timings.mirror` - width (scenes), depth (passes/scenes), and the budget truncation as data (`unsettled`), never folded into the ring",
+        "pinion-tui: the terminal records its own producer's work - R1460 put the `produce` group on the wire and recorded into it from the Vello side only, so every TUI binding answered 0 forever",
+        "pinion-runtime: `settle_to_fixed_point` lifts the settle loop - five hand-written copies, two of which a later round found running a single pass",
+        "pinion-shell: doc honesty - the R684 finalize comment claimed first-paint-only; R685 dropped that gate and the cost half of the claim was false"
+      ],
+      "publishable_verification_bullets": [
+        "measured first: the mirror of a 4-pass chain reported content height 200 against the settled 400, before any fix",
+        "CF-1 (mirror runs one pass) fails the 3 mirror tests, passes every paint-side control; CF-2 (settle but do not record) fails the 4 counter tests and passes the settle claim; CF-3 (arm a catch-up redraw on give-up) fails exactly 1",
+        "demo r1465_mirror_work.py on hello-tail-reveal: 34 assertion sites, and re-run against a CF-1 build it fails with \"2 passes on 2 stored scenes\" - the pre-fix lockstep",
+        "gates: fmt + clippy pedantic + cargo doc all clean; runtime 945, rpc 561, shell 199+160, tui 147 tests",
+        "demos re-run: r1465 + r1458 + r1460 + r1464 + r907 + r925 + r1374 + r1389 + r1445 + r1194 all PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.12",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "one `scene/click` on a single-window binding stores TWO mirrors (R684 finalize + R705 re-store), measured; whether the finalize render can be skipped when the re-store will follow is a separate audit with its own hit-test dependency",
+        "the stored scene's own content is pinned by unit test, not by the demo: a live window repaints and repairs the store, so asserting it over RPC would go green whenever the compositor won",
+        "`mirror` is all-zero on pinion-tui because that backend has no re-store producer, not because it is unmeasured",
+        "R1464 carry (a) stands: the consumer's own symptom is still unverified here (cross-repo)"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

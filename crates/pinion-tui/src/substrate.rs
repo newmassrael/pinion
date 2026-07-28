@@ -59,7 +59,7 @@ use pinion_core::{Frame, Owner, Scene, SceneRevision};
 use pinion_rpc::{DeferredInput, DispatchContext, PreviewLedger, dispatch_parsed};
 use pinion_runtime::{
     CommandExecutor, CoreShell, DispatchTail, FocusManager, FrameTiming, FrameTimingStats,
-    LayoutCache, PointerId, SETTLE_PASS_BUDGET, clamp_frame_dt, instant_delta_us,
+    LayoutCache, PointerId, clamp_frame_dt, instant_delta_us, settle_to_fixed_point,
 };
 
 use crate::WidgetViewTui;
@@ -220,6 +220,20 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// `derivations_total / retries_total` gets `1` here and the window count
     /// there, which is the honest answer on both.
     focus_work: pinion_runtime::FocusWorkCell,
+
+    /// R1465 §5.16 §5.7 §2 #6 — cumulative work this backend's RPC scene
+    /// producer has done, the TUI peer of `pinion_shell::ShellCore::produce_work`.
+    ///
+    /// R1460 gave the TUI producer the settle loop AND put the `produce` group
+    /// on the wire, but recorded into it from the Vello side only, so every TUI
+    /// binding answered `passes_total: 0` forever. A client reads that as "this
+    /// call produced nothing", which is a claim, not a gap — the §2 #6 mirror
+    /// was half-built rather than declined.
+    ///
+    /// The `mirror` group has no TUI peer and correctly stays zero: that
+    /// producer is the R705 multi-window re-store, and this backend has one
+    /// window whose own paint publishes it.
+    produce_work: pinion_runtime::ProduceWork,
 }
 
 impl<V: WidgetViewTui> Default for ShellCoreTui<V> {
@@ -277,6 +291,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             last_paint_instant: Cell::new(None),
             layout_cache: RefCell::new(LayoutCache::new()),
             focus_work: pinion_runtime::FocusWorkCell::default(),
+            produce_work: pinion_runtime::ProduceWork::default(),
         };
         // R1335 §5.39 (PR-53) — attach this binding's root owner so RPC-driven
         // focus mutations publish the focused tag to the owner mirror an AI
@@ -505,20 +520,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // R1460 §5.16 §2 #6 — the shaper-miss mark, read before any pass so the
         // delta is THIS paint's work and not the cache's lifetime total.
         let shapes_before = self.layout_cache.borrow().shapes();
-        let mut scene = run_view();
-        let mut settled = false;
-        let mut passes = 0_u32;
-        for pass in 1..=SETTLE_PASS_BUDGET {
-            let dirty = self.run_layout(&mut scene, cols, rows);
-            passes = pass;
-            if !dirty {
-                settled = true;
-                break;
-            }
-            if pass < SETTLE_PASS_BUDGET {
-                scene = run_view();
-            }
-        }
+        // R1465 §5.45 §2 #6 — the shared fixed point (`pinion_runtime`), not a
+        // fifth hand-written copy of it: this loop's invariants are what R1458
+        // established, and every round that re-typed them found one producer
+        // running a single pass.
+        let settle = settle_to_fixed_point(run_view, |scene| self.run_layout(scene, cols, rows));
+        let (scene, passes, settled) = (settle.scene, settle.passes, settle.settled);
         // R1460 §5.16 §5.41 §2 #6 — hand the frame's build span + work counts to
         // the commit hook, which owns `&mut self` and closes the total span.
         // Measured here rather than there because this is where the work
@@ -1556,6 +1563,31 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         self.focus.is_modal()
     }
 
+    /// R1460 §5.16 §5.7 / R1465 — project the rolling frame ring for one
+    /// dispatch, paid only when a client actually asks (the R890 "store the
+    /// source, project on read" rule the Vello sibling follows).
+    ///
+    /// Called at dispatch ENTRY, before the split borrow and therefore before
+    /// this dispatch does anything: the ring and the two cumulative work groups
+    /// are then read at ONE instant, so both halves of a reply describe the same
+    /// moment. A client prices a call by differencing two replies, never by
+    /// reading one mid-dispatch.
+    ///
+    /// `snap.mirror` is deliberately left at its default. The stored paint-scene
+    /// mirror is the R705 multi-window re-store, and this backend has one window
+    /// that publishes its own paint — zero here means the producer does not
+    /// exist, which is the same number as "it did nothing" and true as both.
+    fn rpc_frame_timings(&self) -> Option<pinion_runtime::FrameTimingsSnapshot> {
+        self.frame_timings
+            .as_ref()
+            .and_then(|s| s.snapshot(None))
+            .map(|mut snap| {
+                snap.focus = self.focus_work.get();
+                snap.produce = self.produce_work;
+                snap
+            })
+    }
+
     /// R670 §5.41 §5.40 — dispatch one JSON-RPC 2.0 frame against the
     /// LIVE state scene. Mirror of
     /// `pinion_shell::ShellCore::dispatch_rpc`.
@@ -1623,12 +1655,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let input_state_snapshot =
             self.core
                 .input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None, None);
-        // R1464 §5.16 §5.39 — read the focus-work totals BEFORE the split
-        // borrow, and therefore before this dispatch runs. That is the same
-        // instant the ring below is projected at, so the two halves of one
-        // `scene/frame_timings` reply describe one moment; a client prices a
-        // call by differencing two replies, never by reading one mid-dispatch.
-        let focus_work = self.focus_work.get();
+        let frame_timings_snapshot = self.rpc_frame_timings();
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.
@@ -1652,8 +1679,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             let previews = &self.previews;
             let revision = &self.revision;
             let layout_cache = &self.layout_cache;
-            let frame_timings = &self.frame_timings;
             let focus_ptr = &mut self.focus;
+            let produce_work_ptr = &mut self.produce_work;
             // R1344 §5.41 §5.12 §2 #2 — TUI paint scene producer. Runs the
             // layout pass against the caller's hypothetical viewport, exactly
             // as `DispatchContext::paint_producer`'s contract requires ("the
@@ -1677,26 +1704,29 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             // synthetic-paint path resolves to this binding's reactive scope.
             let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
-                let mut scene = root_owner.run(|| V::view(cached_state, &frame));
                 // R1460 §5.16 §2 #6 — the SAME settle loop the TUI paint runs
                 // (and the Vello producer runs). Pre-R1460 this took exactly
                 // one layout pass, so a TUI `scene/snapshot` could report a
                 // scene the TUI's own paint would never have shown — the §2 #6
                 // divergence relocated onto the AI path, which is the one thing
                 // R1344 built this producer to avoid.
-                for pass in 1..=SETTLE_PASS_BUDGET {
-                    let dirty = {
+                // R1465 §5.16 §2 #6 — and it RECORDS that loop, which R1460 wired
+                // on the Vello side only. Same shaper-miss delta discipline as
+                // the sibling: mark before the first pass, so the count is this
+                // produce's work and not the shared cache's lifetime total.
+                let shapes_before = layout_cache.borrow().shapes();
+                let settle = settle_to_fixed_point(
+                    || root_owner.run(|| V::view(cached_state, &frame)),
+                    |scene| {
                         let mut cache = layout_cache.borrow_mut();
-                        layout_for_viewport_px(&mut scene, w, h, &mut cache)
-                    };
-                    if !dirty {
-                        break;
-                    }
-                    if pass < SETTLE_PASS_BUDGET {
-                        scene = root_owner.run(|| V::view(cached_state, &frame));
-                    }
-                }
-                scene
+                        layout_for_viewport_px(scene, w, h, &mut cache)
+                    },
+                );
+                produce_work_ptr.record(
+                    settle.passes,
+                    layout_cache.borrow().shapes() - shapes_before,
+                );
+                settle.scene
             };
             // R984 §5.40 §2 #7 — TUI `scene/access` producer, closing the
             // §2 #6 dual-backend asymmetry (pre-R984 the TUI returned
@@ -1724,20 +1754,6 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 }
                 (nodes, focus)
             };
-            // R1460 §5.16 §5.7 — project the rolling ring for this dispatch,
-            // paid only when a client actually asks (the R890 "store the
-            // source, project on read" rule the Vello sibling follows).
-            let frame_timings_snapshot =
-                frame_timings
-                    .as_ref()
-                    .and_then(|s| s.snapshot(None))
-                    .map(|mut snap| {
-                        // R1464 §5.16 §5.39 §2 #6 — binding-wide work that painted
-                        // nothing rides the read, never the ring. GUI peer:
-                        // `ShellCore::frame_timings_for_window`.
-                        snap.focus = focus_work;
-                        snap
-                    });
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_access_producer(&mut produce_access)
@@ -2266,6 +2282,48 @@ mod tests {
             let _a = core_ref.compute_paint_scene(80, 24);
             let _b = core_ref.compute_paint_scene(80, 24);
         }
+    }
+
+    /// R1465 §5.16 §5.7 §2 #6 — the terminal counts its PRODUCER's work too.
+    ///
+    /// R1460 gave this backend the settle loop and put the `produce` group on
+    /// the wire, then recorded into it from the Vello side only. Every TUI
+    /// binding therefore answered `passes_total: 0` forever — which a client
+    /// reads as "that call produced nothing", a claim rather than a gap. The
+    /// same half-built-mirror class R1460 itself was written to close.
+    #[test]
+    fn r1465_the_terminal_counts_the_work_its_own_producer_does() {
+        let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+        assert_eq!(
+            core.produce_work,
+            pinion_runtime::ProduceWork::default(),
+            "nothing has produced yet",
+        );
+
+        // `scene/layout {viewport}` is the request that always runs the paint
+        // producer (the same one the Vello-side finalize tests drive).
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"scene/layout","params":{"viewport":{"width":80,"height":24}}}"#;
+        let reply = core.dispatch_rpc(req).expect("a reply");
+        assert!(
+            !reply.contains("\"error\""),
+            "the layout read answers: {reply}"
+        );
+
+        let after = core.produce_work;
+        assert!(
+            after.passes >= 1,
+            "the producer ran its settle loop and said so; `0` here is the \
+             pre-R1465 silence",
+        );
+
+        // A read that needs no scene must not be billed for one — the control
+        // that makes the number above mean "work this call did".
+        let req = r#"{"jsonrpc":"2.0","id":2,"method":"focus/get","params":{}}"#;
+        let _ = core.dispatch_rpc(req).expect("a reply");
+        assert_eq!(
+            core.produce_work, after,
+            "a read served without a scene produces nothing",
+        );
     }
 
     /// R1464 §5.16 §5.39 §2 #6 — the terminal counts its focus work too, and

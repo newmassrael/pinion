@@ -428,10 +428,11 @@ impl FrameTimingStats {
         };
         Some(FrameTimingsSnapshot {
             // Filled by the backend after projection: this ring holds FRAMES,
-            // and neither the producer's work nor the focus enumeration's is one.
-            produce_passes_total: 0,
-            produce_shape_misses_total: 0,
+            // and none of the producer's work, the focus enumeration's, or the
+            // stored mirror's is one.
+            produce: ProduceWork::default(),
             focus: FocusWork::default(),
+            mirror: MirrorWork::default(),
             frame_count: self.frame_count,
             window_len: u32::try_from(self.samples.len()).unwrap_or(u32::MAX),
             last,
@@ -451,12 +452,96 @@ impl FrameTimingStats {
     }
 }
 
+/// (R1460 §5.16 §2 #2) Cumulative work the RPC **scene producer** has done
+/// since boot — view runs that never became a frame.
+///
+/// The producer settles a scene exactly as a paint does, but records no sample:
+/// an introspection read must never manufacture a frame the user never saw.
+/// That correct contract left the §2 #2 primary path unable to see the work its
+/// own calls caused — by the time the window painted, the produce had already
+/// warmed the caches and settled the bounds. **Difference this across a call to
+/// price that call.**
+///
+/// A read that is answered from the committed frame (`scene/snapshot
+/// from: paint`, R890.1) never reaches the producer, so its delta is `0`. That
+/// zero is the true price of reusing a painted frame, not a silence — the work
+/// a mutating dispatch causes downstream of the producer is [`MirrorWork`].
+///
+/// (R1465) A struct rather than the pair of loose `u64`s this began as: two
+/// backends now record it, and two same-typed fields written positionally at a
+/// distance are the transposition R1459 refused for the same reason.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProduceWork {
+    /// View + layout passes run for introspection.
+    pub passes: u64,
+    /// Shaper misses (layout-cache misses, not lookups) charged to those passes.
+    pub shape_misses: u64,
+}
+
+impl ProduceWork {
+    /// Add one producer run's work. `passes` is `u32` and `shape_misses` `u64`
+    /// so the two cannot be swapped silently at a call site.
+    pub fn record(&mut self, passes: u32, shape_misses: u64) {
+        self.passes = self.passes.saturating_add(u64::from(passes));
+        self.shape_misses = self.shape_misses.saturating_add(shape_misses);
+    }
+}
+
+/// (R1465 §5.16 §5.12 §2 #7) Cumulative work the **stored paint-scene mirror**
+/// has done since boot — the fourth producer of view runs, and the last one
+/// that was neither settled nor counted.
+///
+/// An RPC dispatch that changed visible state re-renders each painted window's
+/// scene and stores it, so a follow-up `scene/snapshot from: paint` reflects the
+/// state that was just committed instead of waiting for the compositor to catch
+/// up (R705). That render is side-effect-free — no animation tick, no
+/// immediate-mode tick, no pane publish — but it is a full view + layout, once
+/// per painted window, on every mutating call.
+///
+/// Read it as three questions the other groups cannot answer:
+///
+/// - **width** — [`Self::scenes`] per call is the window fan-out. A dispatch on
+///   a three-window binding stores three scenes; nothing else on this wire says
+///   so.
+/// - **depth** — `passes / scenes` is how far the mirror had to settle. `1.0`
+///   is a binding whose view and layout agree on the first pass.
+/// - **failure** — [`Self::unsettled`] counts the mirrors that spent
+///   [`SETTLE_PASS_BUDGET`](crate::SETTLE_PASS_BUDGET) without converging.
+///   A stored scene that is still moving is a scene an agent may read as final,
+///   so the budget's truncation is reported rather than silent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MirrorWork {
+    /// Paint-scene mirrors rendered and stored.
+    pub scenes: u64,
+    /// View + layout passes spent across those mirrors.
+    pub passes: u64,
+    /// Shaper misses charged to those passes. Unlike the focus enumeration
+    /// (which runs no layout, so shaping it is meaningless), the mirror lays
+    /// out against the shared text cache and can miss.
+    pub shape_misses: u64,
+    /// Mirrors that hit the settle budget without reaching a fixed point.
+    pub unsettled: u64,
+}
+
+impl MirrorWork {
+    /// Add one stored mirror's work. The three argument types are distinct, so
+    /// a transposed call does not compile (R1459's rule for the same reason).
+    pub fn record(&mut self, passes: u32, settled: bool, shape_misses: u64) {
+        self.scenes = self.scenes.saturating_add(1);
+        self.passes = self.passes.saturating_add(u64::from(passes));
+        self.shape_misses = self.shape_misses.saturating_add(shape_misses);
+        if !settled {
+            self.unsettled = self.unsettled.saturating_add(1);
+        }
+    }
+}
+
 /// (R1464 §5.16 §5.39 §2 #2) Cumulative view work the **focus enumeration** has
 /// caused since boot — view runs that never became a frame.
 ///
 /// The third producer of view runs, beside the paint ([`FrameTiming::settle_passes`])
 /// and the RPC scene producer
-/// ([`FrameTimingsSnapshot::produce_passes_total`]). A focus enumeration is a
+/// ([`ProduceWork`]) and the stored mirror ([`MirrorWork`]). A focus enumeration is a
 /// pure function of state ([`Scene::collect_focusable_tags`](pinion_core::Scene::collect_focusable_tags)
 /// reads only the view-assigned tag and `focusable` flag), so the backends
 /// answer "which tags can take focus?" by running the view with no layout, no
@@ -603,29 +688,25 @@ pub struct FrameTimingsSnapshot {
     pub mean_render_us: u64,
     /// `1e6 / mean_total_us`, `0.0` for a zero mean.
     pub mean_fps: f32,
-    /// (R1460 §5.16 §2 #2) Cumulative view + layout passes the RPC **scene
-    /// producer** has run since boot — work that is deliberately NOT a frame.
-    ///
-    /// The producer settles a scene exactly as a paint does, but records no
-    /// sample: an introspection read must never manufacture a frame the user
-    /// never saw. That left the §2 #2 primary path unable to see the work its
-    /// own calls caused — by the time the window painted, the produce had
-    /// already warmed the caches and settled the bounds. Difference this
-    /// across a call to price that call.
+    /// (R1460 §5.16 §2 #2) Cumulative work the RPC **scene producer** has done
+    /// since boot — see [`ProduceWork`].
     ///
     /// `0` on a backend that does not produce (or has not yet).
-    pub produce_passes_total: u64,
-    /// (R1460 §5.16 §2 #2) Cumulative shaper misses the RPC scene producer has
-    /// run since boot. Peer of [`Self::produce_passes_total`]; same
-    /// difference-across-a-call reading.
-    pub produce_shape_misses_total: u64,
+    pub produce: ProduceWork,
     /// (R1464 §5.16 §5.39 §2 #2) Cumulative view work the focus enumeration has
     /// caused since boot — see [`FocusWork`].
     ///
-    /// Binding-wide like the `produce_*` totals, and filled by the backend for
+    /// Binding-wide like the `produce` totals, and filled by the backend for
     /// the same reason: the ring holds frames, and a focus derivation is not
     /// one. All-zero on a backend that has never missed a focus request.
     pub focus: FocusWork,
+    /// (R1465 §5.16 §5.12 §2 #7) Cumulative work the stored paint-scene
+    /// **mirror** has done since boot — see [`MirrorWork`].
+    ///
+    /// All-zero on a backend that keeps no such mirror (`pinion-tui` paints one
+    /// window and re-stores nothing), which is the honest reading there rather
+    /// than a gap: the producer does not exist, so it has done no work.
+    pub mirror: MirrorWork,
     /// Per-frame budget the window's `total_us` is judged against, in
     /// microseconds. `None` for an unpaced window (no declared frame
     /// target — an idle retained window has no deadline, so "missed

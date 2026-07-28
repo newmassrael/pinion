@@ -34,7 +34,7 @@ use pinion_core::style::{LayoutStyle, Size, TextStyle};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::{Effect, Owner, use_pane_viewport_size};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_runtime::{DEFAULT_WINDOW, SETTLE_PASS_BUDGET};
+use pinion_runtime::{DEFAULT_WINDOW, FrameTiming, SETTLE_PASS_BUDGET};
 use pinion_shell::test_fixtures::TestRenderer;
 use pinion_shell::{ShellCore, SizeStrategy, WidgetView};
 use std::cell::RefCell;
@@ -412,5 +412,129 @@ fn the_pane_publish_lands_on_the_settled_rect_and_says_what_it_did_on_the_way() 
         *values.last().expect("at least one publish"),
         (200, VIEWPORT_H + TARGET),
         "the frame ends on the fixed point's rect",
+    );
+}
+
+// ─── R1465: the mirror an agent reads settles like the paint it mirrors ─────
+
+#[test]
+fn the_side_effect_free_mirror_settles_like_the_paint_it_mirrors() {
+    // R1458 gave the fixed point to the three producers it found — the window
+    // paint, the RPC produce closure, the TUI paint. A fourth was already
+    // there: `compute_paint_scene_pure_*`, the scene the RPC dispatch STORES
+    // for `scene/snapshot from: paint` to read. It ran one layout pass and
+    // dropped its dirty bit, so the mirror an agent reads could be an earlier
+    // pass of the picture the user is looking at — §2 #7 divergence at the one
+    // seam whose entire job is to not diverge.
+    let mut core = ShellCore::<ConvergingView>::new();
+    let mirror = core.compute_paint_scene_pure(W, H);
+
+    assert_eq!(
+        painted_content_height(&mirror),
+        Some(VIEWPORT_H + TARGET),
+        "the mirror is the fixed point's own scene, not the first pass of it",
+    );
+    assert_eq!(
+        bound_of(&core, "settle_converging_scroll"),
+        i32::try_from(TARGET).unwrap(),
+        "and it left the chain where a real paint would have",
+    );
+}
+
+/// The mirror's totals as an agent reads them — through the same
+/// `scene/frame_timings` projection, not a test-only door.
+fn mirror_of<V: WidgetView>(core: &ShellCore<V>) -> pinion_runtime::MirrorWork {
+    core.frame_timings_for_window(DEFAULT_WINDOW)
+        .expect("a frame was recorded, so the snapshot projects")
+        .mirror
+}
+
+#[test]
+fn a_stored_mirror_reports_its_work_and_is_still_not_a_frame() {
+    let mut core = ShellCore::<ConvergingView>::new();
+    // One recorded frame, so the projection an agent reads exists at all. Its
+    // count is the control below: mirrors must not become frames.
+    core.record_frame_timing(DEFAULT_WINDOW, FrameTiming::new(300, 100, 0, 80, 540));
+    let before = mirror_of(&core);
+
+    let _ = core.compute_paint_scene_pure(W, H);
+    let cold = mirror_of(&core);
+    assert_eq!(cold.scenes - before.scenes, 1, "one stored mirror");
+    assert_eq!(
+        u32::try_from(cold.passes - before.passes).unwrap(),
+        SETTLE_PASS_BUDGET,
+        "which cost the same four passes the paint spends on this chain — the \
+         work R705 does on every mutating call, and the number that was \
+         missing from every surface until it was counted",
+    );
+    assert_eq!(cold.unsettled, 0, "and it arrived");
+    assert_eq!(
+        core.frame_timings_for_window(DEFAULT_WINDOW)
+            .unwrap()
+            .frame_count,
+        1,
+        "the ring still holds the ONE frame the user saw; a mirror is work, \
+         not a picture",
+    );
+
+    // The discriminating control: a settled chain mirrors in one pass. Without
+    // it, a `passes` that always read the budget would satisfy the assertion
+    // above and mean nothing (R1459's rule, applied to the new counter).
+    let _ = core.compute_paint_scene_pure(W, H);
+    let warm = mirror_of(&core);
+    assert_eq!(warm.scenes - cold.scenes, 1);
+    assert_eq!(
+        warm.passes - cold.passes,
+        1,
+        "a chain already at its fixed point mirrors in a single pass",
+    );
+}
+
+#[test]
+fn a_mirror_that_cannot_settle_says_so_instead_of_asking_for_a_frame() {
+    let mut core = ShellCore::<RunawayView>::new();
+    core.record_frame_timing(DEFAULT_WINDOW, FrameTiming::new(300, 100, 0, 80, 540));
+
+    let _ = core.compute_paint_scene_pure(W, H);
+    let work = mirror_of(&core);
+
+    assert_eq!(
+        u32::try_from(work.passes).unwrap(),
+        SETTLE_PASS_BUDGET,
+        "bounded, like the paint's loop",
+    );
+    assert_eq!(
+        work.unsettled, 1,
+        "and the truncation is DATA. The paint answers this case with a \
+         catch-up redraw; a mirror may not ask for a frame — arming one from \
+         an introspection render is the side effect this path exists to \
+         avoid — so the only way it can be loud is by being counted",
+    );
+    assert!(
+        !core.take_redraw_request(),
+        "the mirror asked for nothing: it is side-effect-free even when it \
+         gives up",
+    );
+}
+
+#[test]
+fn mirror_shape_work_is_a_delta_not_a_lifetime_total() {
+    let mut core = ShellCore::<LabelledView>::new();
+    core.record_frame_timing(DEFAULT_WINDOW, FrameTiming::new(300, 100, 0, 80, 540));
+
+    let _ = core.compute_paint_scene_pure(W, H);
+    let cold = mirror_of(&core);
+    assert_eq!(
+        cold.shape_misses, LABELS as u64,
+        "a cold mirror hands the shaper each distinct label once — the mirror \
+         lays out, so unlike the focus enumeration its shaping is real work",
+    );
+
+    let _ = core.compute_paint_scene_pure(W, H);
+    let warm = mirror_of(&core);
+    assert_eq!(
+        warm.shape_misses, cold.shape_misses,
+        "and a warm one hands it nothing: the count is this mirror's work, \
+         not the shared cache's lifetime total",
     );
 }

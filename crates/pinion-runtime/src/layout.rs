@@ -219,6 +219,76 @@ pub fn compute_layout(
 /// of evidence that could justify changing it.
 pub const SETTLE_PASS_BUDGET: u32 = 4;
 
+/// What [`settle_to_fixed_point`] arrived at: the settled scene and the account
+/// of getting there.
+///
+/// Named fields rather than a tuple: every caller forwards `passes` and
+/// `settled` straight into a work counter alongside a shaper-miss count, and
+/// positional results among same-shaped numbers are the transposition R1459
+/// refused for the same reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Settled<S> {
+    /// The scene the last executed pass laid out — never a freshly run view
+    /// with no layout behind it, which would carry every rect at its default.
+    pub scene: S,
+    /// Passes spent, in `1..=`[`SETTLE_PASS_BUDGET`].
+    pub passes: u32,
+    /// Whether a pass found nothing left to change. `false` means the budget
+    /// ran out with the chain still moving — read it WITH `passes`, since a
+    /// chain that converges exactly ON the budget reports the same count.
+    pub settled: bool,
+}
+
+/// (R1465 §5.45 §5.27 §2 #6) Run view → layout to a fixed point, bounded by
+/// [`SETTLE_PASS_BUDGET`].
+///
+/// A layout pass writes state the view reads back — a scroll bound, a measured
+/// row height, a pane's rect — so the scene it just laid out can already be out
+/// of date. The loop that resolves that is four lines long and every one of
+/// them is load-bearing: the last executed pass's scene is the one to keep, the
+/// view is re-run only when another layout pass will follow it, the count is
+/// the pass that ran and not the pass that was planned, and the whole thing is
+/// bounded.
+///
+/// It lives here because getting it wrong is invisible. R1458 wrote it into the
+/// three producers it found; R1460 discovered a fourth (the TUI's RPC producer)
+/// running a single pass, and R1465 a fifth (the shell's stored paint-scene
+/// mirror) — each one a copy that had been left behind, each found by a
+/// consumer noticing a stale picture rather than by a test. Five copies of a
+/// skeleton that must not drift is the case for having one.
+///
+/// The two closures are what legitimately differs: `run_view` produces a fresh
+/// scene (which view fn, which window, whether a chrome inset applies), and
+/// `layout` measures one into it and answers **whether this pass changed
+/// anything the next view run would read**. Side effects that must happen on
+/// every pass — the pane-viewport publish — belong inside `layout`, folded with
+/// `|` so they run even when the layout itself came back clean.
+pub fn settle_to_fixed_point<S>(
+    mut run_view: impl FnMut() -> S,
+    mut layout: impl FnMut(&mut S) -> bool,
+) -> Settled<S> {
+    let mut scene = run_view();
+    let mut passes = 0_u32;
+    for pass in 1..=SETTLE_PASS_BUDGET {
+        passes = pass;
+        if !layout(&mut scene) {
+            return Settled {
+                scene,
+                passes,
+                settled: true,
+            };
+        }
+        if pass < SETTLE_PASS_BUDGET {
+            scene = run_view();
+        }
+    }
+    Settled {
+        scene,
+        passes,
+        settled: false,
+    }
+}
+
 /// R57.X.scrollbar §5.45 — variant of [`compute_layout`] that returns
 /// whether this pass *actually* mutated state the next `V::view` would read
 /// back — a [`ScrollState::set_max`](pinion_core::widgets::scroll::ScrollState::set_max)
@@ -3002,5 +3072,83 @@ mod tests {
             "premise: this scene's text does reach parley with no measure arm \
              — otherwise the assertion above is about a scene with no text",
         );
+    }
+
+    /// R1465 §5.45 — the lifted fixed point's own invariants, the ones five
+    /// hand-written copies each had to get right.
+    mod settle {
+        use super::super::{SETTLE_PASS_BUDGET, settle_to_fixed_point};
+        use std::cell::Cell;
+
+        #[test]
+        fn a_converging_chain_stops_at_its_fixed_point() {
+            // The bound the layout pass writes and the view reads back is the
+            // same shape a scroll bound has: pass N's output is pass N+1's
+            // input. A fixture whose view ignored it would measure nothing.
+            let bound = Cell::new(0_u32);
+            let settle = settle_to_fixed_point(
+                || bound.get(),
+                |scene: &mut u32| {
+                    if *scene < 3 {
+                        *scene += 1;
+                        bound.set(*scene);
+                        true
+                    } else {
+                        false
+                    }
+                },
+            );
+            assert!(settle.settled, "it arrived");
+            assert_eq!(settle.passes, 4, "three that grew it, one that agreed");
+            assert_eq!(settle.scene, 3, "and the scene is the fixed point's");
+        }
+
+        #[test]
+        fn a_chain_that_never_agrees_is_bounded_and_says_so() {
+            let settle = settle_to_fixed_point(
+                || 0_u32,
+                |scene: &mut u32| {
+                    *scene += 1;
+                    true
+                },
+            );
+            assert_eq!(settle.passes, SETTLE_PASS_BUDGET, "bounded, not hung");
+            assert!(
+                !settle.settled,
+                "and it reports that it gave up — a caller that read `passes` \
+                 alone could not tell this from converging ON the budget",
+            );
+        }
+
+        #[test]
+        fn every_view_run_is_laid_out() {
+            // The invariant a copy gets wrong silently: re-running the view on
+            // the LAST pass would return a scene with no layout behind it,
+            // every rect at its default. Equal counts is what forbids it.
+            for (label, mut step) in [
+                (
+                    "converging",
+                    Box::new(|s: &mut u32| {
+                        *s += 1;
+                        *s < 3
+                    }) as Box<dyn FnMut(&mut u32) -> bool>,
+                ),
+                ("runaway", Box::new(|_: &mut u32| true)),
+            ] {
+                let views = Cell::new(0_u32);
+                let settle = settle_to_fixed_point(
+                    || {
+                        views.set(views.get() + 1);
+                        0_u32
+                    },
+                    |scene: &mut u32| step(scene),
+                );
+                assert_eq!(
+                    views.get(),
+                    settle.passes,
+                    "{label}: the loop never runs a view it does not lay out",
+                );
+            }
+        }
     }
 }

@@ -46,6 +46,10 @@
 //!     },
 //!     "produce": { "passes_total": 9, "shape_misses_total": 130 },
 //!     "focus": { "derivations_total": 6, "retries_total": 3 },
+//!     "mirror": {
+//!       "scenes_total": 4, "passes_total": 7,
+//!       "shape_misses_total": 12, "unsettled_total": 0
+//!     },
 //!     "window": {
 //!       "min_total_us": 8100, "mean_total_us": 8600, "max_total_us": 9800,
 //!       "mean_build_us": 310, "mean_encode_us": 105,
@@ -94,22 +98,37 @@
 //!
 //! ## Work that is not a frame
 //!
-//! Three producers run `view` fns; only one of them paints, and the ring
-//! above counts only that one. The other two ride the same reply as
+//! Four producers run `view` fns; only one of them paints, and the ring
+//! above counts only that one. The other three ride the same reply as
 //! cumulative totals a client **differences across a call** to price it:
 //!
 //! - `produce` (R1460) — the RPC scene producer. A `scene/snapshot` settles
 //!   a scene exactly as a paint does but records no frame, so introspection
 //!   never manufactures a picture the user never saw. Without this pair an
 //!   agent on the §2 #2 path could not see the work its OWN calls caused.
+//!   A read served from the committed frame (`from: paint`) never reaches
+//!   the producer, so its delta is `0` — the true price of reusing a painted
+//!   frame, and the reason the group below exists.
 //! - `focus` (R1464) — the focus enumeration. A request naming a node the
 //!   dispatch just made paintable misses, and the binding answers by
 //!   re-deriving from a pure view run, one per painted window. Read
 //!   `derivations_total / retries_total`: that ratio IS the per-miss cost,
 //!   and it is the painted-window count on a healthy binding.
+//! - `mirror` (R1465) — the stored paint scene a mutating dispatch leaves
+//!   behind for `from: paint` to read (R705). One side-effect-free view +
+//!   layout **per painted window, per mutating call**, which on a
+//!   multi-window binding is the largest thing a call does and was the last
+//!   producer with no counter at all. `scenes_total` is the fan-out width,
+//!   `passes_total / scenes_total` the settle depth, and `unsettled_total`
+//!   the mirrors that spent the settle budget without converging — a stored
+//!   scene an agent might read as final while it is still moving.
 //!
-//! Both are binding-wide, not per-window, because the producer and the
-//! focus enumeration are: the same totals ride whichever window is asked.
+//! All three are binding-wide, not per-window, because the producer, the focus
+//! enumeration and the re-store fan-out are: the same totals ride whichever
+//! window is asked. A backend without one of these producers reports its group
+//! as zeros, which is the honest answer there — `pinion-tui` paints a single
+//! terminal window and re-stores nothing, so its `mirror` is all-zero because
+//! no such work exists, not because none was measured.
 //!
 //! ## Multi-window scope
 //!
@@ -231,6 +250,32 @@ pub struct FrameTimingsFocus {
     pub retries_total: u64,
 }
 
+/// R1465 §5.16 §5.12 §2 #7 — cumulative work the **stored paint-scene mirror**
+/// has done since boot, which is deliberately not counted as frames.
+///
+/// A dispatch that changed visible state re-renders each painted window and
+/// stores the result, so a follow-up `scene/snapshot from: paint` answers with
+/// the state just committed instead of waiting for the compositor. That render
+/// runs no side effects, but it is a full view + layout per painted window on
+/// every mutating call — the single largest thing such a call does on a
+/// multi-window binding, and until R1465 the only view producer with no counter.
+///
+/// Difference these across a call: `scenes_total` is how many windows it fanned
+/// out to, `passes_total / scenes_total` how far each had to settle, and
+/// `unsettled_total` how many gave up at the budget with a still-moving scene
+/// left in the store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FrameTimingsMirror {
+    /// Cumulative paint-scene mirrors rendered and stored.
+    pub scenes_total: u64,
+    /// Cumulative view + layout passes spent across those mirrors.
+    pub passes_total: u64,
+    /// Cumulative shaper misses charged to those passes.
+    pub shape_misses_total: u64,
+    /// Cumulative mirrors that hit the settle budget without converging.
+    pub unsettled_total: u64,
+}
+
 /// Rolling-window aggregates, in microseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FrameTimingsWindow {
@@ -290,6 +335,9 @@ pub struct FrameTimingsOutcome {
     pub produce: FrameTimingsProduce,
     /// R1464 — work done deriving the focus enumeration, which paints nothing.
     pub focus: FrameTimingsFocus,
+    /// R1465 — work done re-rendering the stored mirror a `from: paint` read
+    /// answers from. All-zero on a backend that keeps no mirror.
+    pub mirror: FrameTimingsMirror,
 }
 
 /// Project a per-window [`FrameTimingsSnapshot`] onto the wire-shaped
@@ -321,12 +369,18 @@ pub fn frame_timings(
             shape_misses: s.last.shape_misses,
         },
         produce: FrameTimingsProduce {
-            passes_total: s.produce_passes_total,
-            shape_misses_total: s.produce_shape_misses_total,
+            passes_total: s.produce.passes,
+            shape_misses_total: s.produce.shape_misses,
         },
         focus: FrameTimingsFocus {
             derivations_total: s.focus.derivations,
             retries_total: s.focus.retries,
+        },
+        mirror: FrameTimingsMirror {
+            scenes_total: s.mirror.scenes,
+            passes_total: s.mirror.passes,
+            shape_misses_total: s.mirror.shape_misses,
+            unsettled_total: s.mirror.unsettled,
         },
         window: FrameTimingsWindow {
             min_total_us: s.min_total_us,
@@ -406,8 +460,10 @@ mod tests {
         // totals answer it WITHOUT being folded into the ring — a frame count
         // and a produce count must never be the same number.
         let mut snap = snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200).with_work(1, true, 0)]);
-        snap.produce_passes_total = 9;
-        snap.produce_shape_misses_total = 130;
+        snap.produce = pinion_runtime::ProduceWork {
+            passes: 9,
+            shape_misses: 130,
+        };
 
         let out = frame_timings(Some(snap)).unwrap();
         assert_eq!(out.produce.passes_total, 9);
@@ -426,7 +482,10 @@ mod tests {
         // work the user's own interaction caused, and folding it into the ring
         // would invent frames nobody saw.
         let mut snap = snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200).with_work(1, true, 0)]);
-        snap.produce_passes_total = 9;
+        snap.produce = pinion_runtime::ProduceWork {
+            passes: 9,
+            shape_misses: 0,
+        };
         snap.focus = pinion_runtime::FocusWork {
             derivations: 6,
             retries: 2,
@@ -457,6 +516,57 @@ mod tests {
         let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
         assert_eq!(out.focus.derivations_total, 0);
         assert_eq!(out.focus.retries_total, 0);
+    }
+
+    #[test]
+    fn r1465_mirror_work_is_reported_and_is_none_of_the_other_three() {
+        // The fourth producer. Folding it into `produce` would price the
+        // window fan-out a MUTATION caused as introspection the agent asked
+        // for; folding it into the ring would invent pictures nobody saw.
+        let mut snap = snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200).with_work(1, true, 0)]);
+        snap.produce = pinion_runtime::ProduceWork {
+            passes: 9,
+            shape_misses: 130,
+        };
+        snap.mirror = pinion_runtime::MirrorWork {
+            scenes: 3,
+            passes: 6,
+            shape_misses: 12,
+            unsettled: 1,
+        };
+
+        let out = frame_timings(Some(snap)).unwrap();
+        assert_eq!(
+            out.mirror.scenes_total, 3,
+            "the fan-out width: one stored scene per painted window",
+        );
+        assert_eq!(
+            out.mirror.passes_total / out.mirror.scenes_total,
+            2,
+            "and the depth each had to settle to — the ratio a client reads",
+        );
+        assert_eq!(out.mirror.shape_misses_total, 12);
+        assert_eq!(
+            out.mirror.unsettled_total, 1,
+            "a stored scene that was still moving when the budget ran out; the \
+             mirror cannot ask for another frame, so counting is how it says so",
+        );
+        assert_eq!(
+            out.produce.passes_total, 9,
+            "not folded into the producer's"
+        );
+        assert_eq!(out.frame_count, 1, "and not counted as frames");
+    }
+
+    #[test]
+    fn r1465_a_backend_without_a_mirror_reads_zero() {
+        // `pinion-tui` has no R705 re-store — it paints one window that
+        // publishes itself. Zero here is "that producer does not exist", which
+        // is the same number as "it did nothing" and is honest as both.
+        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
+        assert_eq!(out.mirror.scenes_total, 0);
+        assert_eq!(out.mirror.passes_total, 0);
+        assert_eq!(out.mirror.unsettled_total, 0);
     }
 
     #[test]

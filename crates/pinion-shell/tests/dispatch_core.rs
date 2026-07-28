@@ -4661,6 +4661,96 @@ mod r684_headless_rpc_floating_window_finalize {
             "no router slot materialises for a rejected window id",
         );
     }
+
+    /// R1465 §5.16 §5.12 §2 #2 — what a call costs, priced at the two paths an
+    /// agent actually drives.
+    ///
+    /// This is also the answer R1464 left open. Its carry asked whether
+    /// `produce.passes_total` sitting at `0` on a `from: paint` read was a gap;
+    /// the measurement below says it is not — that read is served from the
+    /// committed frame (R890.1), so zero produce passes is the true price of
+    /// reusing it. The silence was one producer further along: a MUTATING
+    /// dispatch re-renders every painted window into the store (R705), and
+    /// until this group nothing on any surface counted the largest thing such
+    /// a call does.
+    #[test]
+    fn r1465_a_read_is_free_and_a_mutation_is_priced_at_the_window_fan_out() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("win_a");
+        core.register_window("win_b");
+        // Paint both, so the fan-out below has two windows to re-store.
+        for (id, window) in [(1_u64, "win_a"), (2, "win_b")] {
+            let req = parse_request(&snapshot_request(id, window, 320, 200)).expect("parses");
+            let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        }
+        // One recorded frame per window makes the projection readable; its
+        // count is also the control that none of this becomes a frame.
+        core.record_frame_timing(
+            "win_a",
+            pinion_runtime::FrameTiming::new(300, 100, 0, 80, 540),
+        );
+        core.record_frame_timing(
+            "win_b",
+            pinion_runtime::FrameTiming::new(300, 100, 0, 80, 540),
+        );
+        let mirror_of = |c: &ShellCore<TestView>| c.frame_timings_for_window("win_a").unwrap();
+        let before = mirror_of(&core);
+
+        // (1) A pure read: `focus/get` resolves from state, raises no redraw,
+        //     and reaches neither producer.
+        let req = parse_request(r#"{"jsonrpc":"2.0","id":3,"method":"focus/get","params":{}}"#)
+            .expect("parses");
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let after_read = mirror_of(&core);
+        assert_eq!(
+            after_read.mirror, before.mirror,
+            "a read stores no mirror: there is nothing new to mirror",
+        );
+        assert_eq!(
+            after_read.produce, before.produce,
+            "and it runs no producer either — the R1464 carry's zero, which is \
+             a price and not a gap",
+        );
+
+        // (2) A mutation: `focus/set` moves focus, which arms the redraw that
+        //     re-stores every painted window.
+        let req = parse_request(
+            r#"{"jsonrpc":"2.0","id":4,"method":"focus/set","params":{"tag":"test"}}"#,
+        )
+        .expect("parses");
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let after_write = mirror_of(&core);
+        assert_eq!(
+            after_write.mirror.scenes - after_read.mirror.scenes,
+            2,
+            "ONE call re-stored BOTH painted windows. That fan-out is the \
+             largest thing a mutating call does on a multi-window binding, and \
+             it is what no counter could see before this one",
+        );
+        assert!(
+            after_write.mirror.passes >= after_write.mirror.scenes,
+            "every stored mirror cost at least one view + layout pass",
+        );
+        assert_eq!(
+            after_write.mirror.unsettled, 0,
+            "and this binding's chain converges, so none was stored mid-settle",
+        );
+
+        // Binding-wide, not per-window: the fan-out belongs to the call, so
+        // both windows' snapshots report the same totals.
+        assert_eq!(
+            core.frame_timings_for_window("win_b").unwrap().mirror,
+            after_write.mirror,
+            "whichever window is asked answers with the binding's totals",
+        );
+        assert_eq!(
+            core.frame_timings_for_window("win_b").unwrap().frame_count,
+            1,
+            "and none of this work became a frame",
+        );
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────

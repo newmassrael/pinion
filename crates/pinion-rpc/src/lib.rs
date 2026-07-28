@@ -87,8 +87,8 @@ pub use font::{
     subfamily_name as font_subfamily_name,
 };
 pub use frame_timings::{
-    FrameTimingsError, FrameTimingsLast, FrameTimingsOutcome, FrameTimingsProduce,
-    FrameTimingsWindow, frame_timings,
+    FrameTimingsError, FrameTimingsLast, FrameTimingsMirror, FrameTimingsOutcome,
+    FrameTimingsProduce, FrameTimingsWindow, frame_timings,
 };
 pub use intents::{IntentsError, drain_intents};
 pub use invoke::{InvokeError, invoke};
