@@ -72,6 +72,12 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
             sub,
         )),
     ])
+    // R1467 §2 #2 §2 #7 — TAG the body. Until now this window's content was
+    // entirely untagged, so the one thing the chrome demo is about — addressing
+    // a node by name — was possible for the injected chrome controls and for
+    // nothing the binding itself drew. An agent needs a handle on the content to
+    // ask where it sits relative to the strip above it.
+    .with_tag(CONTENT_TAG.to_owned())
     .with_style(BoxStyle::filled(Color::rgb(0xF2, 0xF2, 0xF2)))
     .with_layout(
         LayoutStyle::new()

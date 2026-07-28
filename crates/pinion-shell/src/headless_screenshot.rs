@@ -711,7 +711,7 @@ mod tests {
     /// wrapped in the same centred Surface container the binding's view
     /// fn uses, [`pinion_runtime::compute_layout`] for the post-layout
     /// rects, then [`pinion_overlay::inject_focus_ring`] at the
-    /// active-descendant cell exactly as `ShellCore::apply_focus_ring`
+    /// active-descendant cell exactly as `WindowOverlayInputs::apply`
     /// does — and rasterizes it through `to_vello_cached` (the live winit
     /// render path) into an offscreen wgpu surface. It then reads the
     /// pixels back and asserts the keyboard focus ring frames the FOCUSED

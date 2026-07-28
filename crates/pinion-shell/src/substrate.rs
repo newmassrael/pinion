@@ -436,7 +436,8 @@ pub struct ShellCore<V: WidgetView> {
     /// the source window's drag moves do not otherwise dirty the target. `None`
     /// when no drag maps onto another window. Set in
     /// [`Self::cursor_moved_for_window`]; the strip itself is injected by
-    /// [`Self::apply_cross_window_drop_preview`] from the same resolution.
+    /// [`WindowOverlayInputs::apply_cross_window_drop_preview`] from the same
+    /// resolution.
     cross_preview_target: Option<String>,
 
     /// R763 §5.36 §5.22 — in-progress pointer-driven text selection.
@@ -953,7 +954,7 @@ fn text_measure_override(engine: Option<&SelfHostedTextEngine>) -> Option<&dyn T
 /// resolve to the focused tag unchanged.
 ///
 /// Single source of truth for BOTH paint-scene producers — the winit
-/// path ([`ShellCore::apply_focus_ring`]) and the RPC
+/// path (the shared [`WindowOverlayInputs::apply`] chain) and the RPC
 /// `scene/snapshot from: paint` produce closure. Keeping the two on one
 /// resolver is mandatory: when they diverged during R705 development
 /// the live window framed the active day while `scene/snapshot` still
@@ -972,7 +973,7 @@ fn resolve_focus_ring_tag<V: WidgetView>(
 
 /// R1010 §5.39 §5.40 — inject the framework focus ring around `ring_tag`, styled
 /// (or suppressed) by the binding's [`WidgetView::focus_ring_style`]. The single
-/// home shared by the winit paint path ([`ShellCore::apply_focus_ring`]) and the
+/// home shared by the winit paint path ([`WindowOverlayInputs::apply`]) and the
 /// RPC produce path: `None` from the hook draws no ring (the content-surface
 /// opt-out), `Some(style)` draws it; a `None` `ring_tag` (no focus) is also a
 /// no-op.
@@ -1046,6 +1047,35 @@ fn apply_chrome_inset(scene: Scene, chrome_h: Option<u32>) -> Scene {
     }
 }
 
+/// (R1467 §5.16 §5.21) Produce one window's view scene: run the per-window view
+/// fn under the binding's reactive `owner`, then inset it below any client-side
+/// chrome strip.
+///
+/// The step every paint-scene producer starts its settle loop from, and — since
+/// R1467 put the RPC produce closure on the same footing as the winit paint and
+/// the introspection mirror — the third byte-similar copy of it, so it lifts
+/// (R727 / R732). Mechanical wiring with no opinion in it: the owner wrap is
+/// R51.146's (`Owner::current()` must resolve inside `V::view`), the
+/// `Some`/`None` split is R670.B's per-window dispatch, and the inset is
+/// R1121's. Keeping them in one place is what makes "all three producers lay a
+/// chromed window out the same way" a property of the code rather than of three
+/// call sites agreeing.
+fn window_view<V: WidgetView>(
+    owner: &pinion_core::Owner,
+    window_id: Option<&str>,
+    state: V::State,
+    frame: Frame,
+    chrome_h: Option<u32>,
+) -> Scene {
+    apply_chrome_inset(
+        owner.run(|| match window_id {
+            Some(id) => V::view_for_window(id, state, &frame),
+            None => V::view(state, &frame),
+        }),
+        chrome_h,
+    )
+}
+
 /// (R1121 §5.21) Apply the vertical flex-main idiom (`flex-basis: 0;
 /// flex-grow: 1; min-height: 0`) to a `Scene`'s own root layout so it fills
 /// — and can shrink within — a `Column` flex parent's main axis. Mirrors
@@ -1092,6 +1122,272 @@ fn set_scene_flex_fill_vertical(scene: Scene) -> Scene {
         other => {
             Scene::Container(ContainerNode::new(vec![other]).with_layout(fill(LayoutStyle::new())))
         }
+    }
+}
+
+/// (R1467 §5.16 §5.39 §2 #7) The shell-owned state the window-overlay chain
+/// reads, sampled once so every paint-scene producer can dress a window the
+/// same way.
+///
+/// Three producers exist: the winit paint
+/// ([`ShellCore::compute_paint_scene_internal`]), the introspection mirror
+/// ([`ShellCore::compute_paint_scene_pure_internal`]), and the RPC dispatch's
+/// produce closure. §2 #7 holds only if all three dress the window identically.
+/// The first two take `&self` and can call the chain as methods; the third runs
+/// inside a closure that has already split `&mut self` into disjoint field
+/// borrows, so it can call NO `&self` method. Pre-R1467 that borrow shape is
+/// why the closure grew its own two-step chain (focus ring + drag image) and
+/// skipped the other four steps — measured on a chromed window, its scene had
+/// no strip, no resize border and, because the content inset rides the same
+/// policy read, no inset either. Every coordinate the produce path derived for
+/// such a window therefore sat [`WindowChromeStyle::height_px`](crate::WindowChromeStyle::height_px)
+/// too high, and
+/// `scene/click {path}` resolved through it lands that far above the widget it
+/// named — on the chrome strip, for anything near the top.
+///
+/// Sampling the reads into a value the closure can own is what lets ONE chain
+/// ([`Self::apply`]) serve all three, the same hoist `ring_tag` and the drag
+/// sample already used to cross the borrow split.
+struct WindowOverlayInputs {
+    /// The binding's policy for the resolved window spec (chrome style +
+    /// resize override); `Default` when the id resolves to no declared spec.
+    policy: crate::WindowPolicy,
+    /// Declared title of the resolved spec, for the chrome strip's label.
+    /// `None` when the id resolves to no spec (nothing to dress).
+    title: Option<String>,
+    /// Whether the OS reports this window maximized (restore glyph + the
+    /// resize-border suppression).
+    maximized: bool,
+    /// Focus-ring target, already resolved through `access_focus_target`
+    /// ([`resolve_focus_ring_tag`]). `None` = nothing focused = no ring.
+    ring_tag: Option<String>,
+    /// An incoming cross-window dock drop that targets this window.
+    cross_window_drop: Option<(String, pinion_runtime::CrossWindowDrop)>,
+    /// Active drag label + window-logical cursor for the drag-image chip.
+    drag_image: Option<(String, (f64, f64))>,
+    /// The desktop drag-preview window is already showing this drag, so the
+    /// in-window chip is suppressed (exactly one chip).
+    desktop_drag_preview_active: bool,
+}
+
+impl WindowOverlayInputs {
+    /// (R1121 §5.16 §5.21) Logical-pixel height the window content is inset by
+    /// to clear the client-side chrome strip, or `None` for a window with no
+    /// chrome. Read from the SAME policy sample the strip injection uses, so a
+    /// producer cannot inset without dressing (or dress without insetting).
+    fn chrome_inset(&self) -> Option<u32> {
+        self.policy.chrome.map(|style| style.height_px)
+    }
+
+    /// (R1113 §5.51 §5.33) The window-level paint overlays, in z-order: resize
+    /// border, chrome strip, raised top resize edge, keyboard focus ring,
+    /// cross-window drop preview, drag-image follower. Applied as the final step
+    /// of every paint-scene producer.
+    fn apply<V: WidgetView>(
+        &self,
+        scene: Scene,
+        w: u32,
+        h: u32,
+        root_owner: &pinion_core::Owner,
+    ) -> Scene {
+        // R1122 §5.16 §5.39 — resize border UNDER the chrome strip: a chromed
+        // borderless window has no OS frame, so client-side edge / corner
+        // regions restore drag-resize. Injected first so the chrome strip
+        // (next) layers on top of the north edge / top corners and keeps its
+        // controls clickable. No-op for a window without client-side chrome.
+        let resizable = self.apply_resize_border(scene, w, h);
+        // R1121 §5.16 §5.39 PR-38 — client-side window chrome (under the
+        // transient ring / drag-image), so a chromed window's title bar +
+        // controls paint on the strip the content was inset below. A window
+        // whose `window_policy().chrome` is `None` is a no-op.
+        let chromed = self.apply_chrome(resizable, w, h);
+        // R1195 §5.16 §5.39 — VS Code / Win11 / GTK parity: keep a chromed
+        // window's TOP EDGE a live resize band. `apply_chrome` layered the strip
+        // over the north resize region (killing top-edge resize); raise the
+        // north band back on top so the outermost `RESIZE_EDGE_PX` resize the
+        // window (the R1189 hover cursor + R1122 press routing light up for
+        // free). Self-gating on the band's presence.
+        let chromed = pinion_overlay::raise_top_resize_edge(chromed, Some((w, h)));
+        // R705 §5.39 §2 #1/#7 — the keyboard focus ring as an introspectable,
+        // pointer-transparent overlay, so it is (a) painted by the generic box
+        // path rather than an opaque vello stroke, (b) visible to
+        // `scene/snapshot from: paint` (§2 #7), and (c) corner-radius-aware.
+        // Pointer-transparent (R705 §5.39) so it never shadows its widget for
+        // input, even though this very scene feeds
+        // [`pinion_runtime::InputRouter::last_paint_scene`] hit-testing.
+        let ringed = inject_styled_focus_ring::<V>(chromed, self.ring_tag.as_deref(), Some((w, h)));
+        // R1125 §5.51 PR-33 — the incoming cross-window dock drop-zone preview,
+        // drawn at the dock zone in the TARGET (host) window where the panel
+        // will land. This is the redock affordance. (R1168 retired the static
+        // dock-zone GUIDES that used to layer here: a guide outlined whole panel
+        // rects, independent of `resolve_drop`, so it diverged from the cursor
+        // preview — the "선≠preview" divergence. The cursor preview, derived
+        // from the one `resolve_drop` SSOT, is the SOLE drop affordance now.)
+        let previewed = self.apply_cross_window_drop_preview::<V>(ringed, root_owner);
+        // R1150 §5.51 — the R1137 on-FLOATER hint was REMOVED here (it drew the
+        // zone schematic on the dragged floater's OWN rect; under the R1146
+        // release-only model the floater stays PUT during the drag, so the hint
+        // sat at the floater's static spot while the panel docked at the
+        // cursor's target ELSEWHERE — the user's "preview here, docks there").
+        // The on-target preview above is correctly placed; the R1147 desktop
+        // chip is the cursor affordance. (Hiding the floater to un-occlude was
+        // rejected: unmapping releases the X11 pointer grab the drag relies on.)
+        self.apply_drag_image::<V>(previewed, w, h)
+    }
+
+    /// (R1122 §5.16 §5.39 §2 #7) The eight client-side resize edge / corner hit
+    /// regions, injected when [`crate::WindowPolicy::resizable`] resolves true
+    /// (default: derive from chrome presence — R1186 decoupled the two so a
+    /// controls-in-header floater with `chrome: None` stays resizable). The
+    /// regions are introspectable [`Scene`] nodes the shell maps to a
+    /// `winit::window::ResizeDirection` in `AppShell::try_chrome_press`.
+    ///
+    /// R1123 — dropped while maximized: a maximized window fills the work area
+    /// and edge-resize is meaningless (and would fight the WM), matching how
+    /// OS-decorated windows hide their border when maximized.
+    fn apply_resize_border(&self, scene: Scene, w: u32, h: u32) -> Scene {
+        if self.title.is_none() {
+            return scene;
+        }
+        let has_chrome = self.policy.chrome.is_some();
+        if !self.policy.resizable.unwrap_or(has_chrome) || self.maximized {
+            return scene;
+        }
+        if has_chrome {
+            // The chrome strip (injected next, over this border) reclaims the
+            // top; R1195's `raise_top_resize_edge` then lifts the north edge
+            // back above the strip so the top edge still resizes.
+            pinion_overlay::inject_resize_border(scene, Some((w, h)))
+        } else {
+            // R1197 / R1198 — a content dock header owns the top and hosts the
+            // window controls at its top-RIGHT. Resize from the top EDGE + BOTH
+            // top corners (VS Code parity for a floating panel); the top-right
+            // corner is a small edge-sized box that fits inside the header's
+            // right padding, so it resizes diagonally without shadowing the
+            // close button (a full corner would — the R1186 concern).
+            pinion_overlay::inject_resize_border_content_header(scene, Some((w, h)))
+        }
+    }
+
+    /// (R1121 §5.16 §5.39 §2 #7) The client-side chrome strip (title bar +
+    /// close / minimize / maximize controls) for a window whose policy carries
+    /// a [`WindowChromeStyle`](crate::WindowChromeStyle). The buttons are real,
+    /// introspectable [`Scene`]
+    /// nodes an AI agent observes and drives via `scene/snapshot` + a click on
+    /// the composite control tag — the reason custom chrome beats OS chrome,
+    /// whose controls live outside the scene tree. R1467 is what makes that
+    /// claim true of the RPC produce path too, not only of a stored frame.
+    fn apply_chrome(&self, scene: Scene, w: u32, h: u32) -> Scene {
+        match (self.title.as_deref(), self.policy.chrome) {
+            (Some(title), Some(style)) => pinion_overlay::inject_window_chrome(
+                scene,
+                title,
+                self.maximized,
+                Some((w, h)),
+                style,
+            ),
+            _ => scene,
+        }
+    }
+
+    /// (R1125 §5.51 §2 #7 PR-33) The cross-window dock drop-zone PREVIEW, drawn
+    /// when a floating panel dragged in ANOTHER window currently maps onto this
+    /// one. The shell — the sole holder of every window's geometry — resolved
+    /// the incoming drop into [`Self::cross_window_drop`]; the RESULT region of
+    /// the target panel (the split half the redock would occupy, or the whole
+    /// pane for a centre tabify) is highlighted, so the user SEES where the
+    /// floater will land before releasing. No-op when no drag targets this
+    /// window, the binding opts out ([`WidgetView::dock_drop_preview`] `None`),
+    /// or the resolved panel has no rect in this scene. Each paint re-derives
+    /// it (the prior strip is stripped by tag), so it follows the cursor live.
+    fn apply_cross_window_drop_preview<V: WidgetView>(
+        &self,
+        scene: Scene,
+        root_owner: &pinion_core::Owner,
+    ) -> Scene {
+        let inner = self.cross_window_drop.as_ref().and_then(|(source, drop)| {
+            // GENERIC half: the target panel's window-absolute rect. The
+            // dock-specific zone classification + strip rendering is the
+            // binding's (`V::dock_drop_preview`), so the shell stays
+            // widget-agnostic.
+            // (R1156) OUTER full-span dock: the perimeter zone has no panel
+            // rect — hand the binding the DOCK-AREA rect so it renders a
+            // full-span strip (a row/column across every pane).
+            let rect = if drop.point.tag == pinion_core::external::OUTER_DOCK_ZONE_TAG {
+                // (R1205) …the DOCK AREA, NOT the whole window: the target
+                // window's dock content sits below any client-side chrome strip
+                // / toolbar / menu, so a preview spanning `scene.rect()` painted
+                // the full-span band ACROSS the title-bar controls when redocking
+                // a floater onto a chromed window (the user's "붙일 때 최소화/최대화/x
+                // 영역까지 preview가 보임"). Read the dock walker's
+                // `DOCK_SURFACE_TAG` rect so the previewed band == where
+                // `dock_panel_outer` actually lands (the topology has no chrome
+                // row) — preview == result. The same `dock_surface_rect` SSOT the
+                // same-window band reads; a window with no dock surface (a
+                // decorated / naked one) falls back to its own rect, unchanged.
+                scene.dock_surface_rect()
+            } else {
+                scene.rect_for_tag_absolute(&drop.point.tag)?
+            };
+            // (R1163b) Pass the dragged `source` so the binding resolves through
+            // the SAME `resolve_drop` SSOT the release applies (preview ==
+            // result). The hook reads the binding's reactive reorganizer
+            // (is_panel / tabbing) via `use_*` hooks, so run it inside
+            // `root_owner.run` — exactly like `collect_access_emit_inputs` wraps
+            // `V::access_node` (the callback-root-owner-wrap family). This
+            // overlay step runs AFTER the view's `root_owner.run` closed, so
+            // without the wrap `Owner::current()` is `None` and the hook panics.
+            // Read-only, so it re-subscribes nothing it did not already (no
+            // re-dirty after the caller's `clear_dirty`).
+            root_owner.run(|| {
+                V::dock_drop_preview(
+                    source,
+                    &drop.point.tag,
+                    rect,
+                    drop.point.x_rel,
+                    drop.point.y_rel,
+                )
+            })
+        });
+        // Wrap the binding's overlay in a shell-owned, pointer-transparent slot
+        // so the strip is stripped + replaced by ONE known tag each paint
+        // (idempotent, like every other overlay), independent of the binding
+        // node's own tag.
+        let slot = inner.map(|node| {
+            Scene::Container(
+                pinion_core::scene::ContainerNode::new(vec![node])
+                    .with_tag(CROSS_WINDOW_DROP_PREVIEW_TAG.to_string())
+                    .with_layout(
+                        pinion_core::style::LayoutStyle::new().with_pointer_transparent(true),
+                    ),
+            )
+        });
+        pinion_overlay::inject_overlay_node(scene, CROSS_WINDOW_DROP_PREVIEW_TAG, slot)
+    }
+
+    /// (R1113 §5.51 §5.33 §2 #7) The drag-image follower — the translucent chip
+    /// floated under the cursor during a drag — as an introspectable,
+    /// pointer-transparent overlay. Because the chip is anchored at the cursor
+    /// (window-level) it is correct no matter where the dragged widget sits,
+    /// and every consumer gets it with no wiring.
+    ///
+    /// No-op when the R1147 cross-desktop PREVIEW window is already showing
+    /// this drag (exactly one chip shows — the desktop preview, which roams the
+    /// whole desktop), when no REAL drag is in flight (a pending click shows
+    /// none), when the drag carries no text label (a capture-drag like a
+    /// splitter resize, or a non-text payload), or when the binding's
+    /// [`WidgetView::drag_image_style`] hook returns `None`.
+    fn apply_drag_image<V: WidgetView>(&self, scene: Scene, w: u32, h: u32) -> Scene {
+        if self.desktop_drag_preview_active {
+            return scene;
+        }
+        let Some((label, cursor)) = self.drag_image.as_ref() else {
+            return scene;
+        };
+        let Some(style) = V::drag_image_style(label) else {
+            return scene;
+        };
+        pinion_overlay::inject_drag_image(scene, label, *cursor, style, Some((w, h)))
     }
 }
 
@@ -4105,16 +4401,13 @@ impl<V: WidgetView> ShellCore<V> {
         // double-lay-out the first pass.
         // R1121 §5.16 §5.21 — borderless windows inset content below their
         // chrome strip (`Some(height)`); decorated windows are `None` (no-op).
-        let chrome_h = self.chrome_inset_height(window_id);
+        // R1467 — the inset and the strip that fills it come from ONE sample.
+        let overlays = self.sample_window_overlay_inputs(window_id);
+        let chrome_h = overlays.chrome_inset();
         let (mut paint_scene, frame_settled, settle_passes, shape_misses) = {
             let core = &self.core;
-            let run_view = || {
-                let view = core.root_owner().run(|| match window_id {
-                    Some(id) => V::view_for_window(id, cached_state, &frame),
-                    None => V::view(cached_state, &frame),
-                });
-                apply_chrome_inset(view, chrome_h)
-            };
+            let run_view =
+                || window_view::<V>(core.root_owner(), window_id, cached_state, frame, chrome_h);
             // R1072 §5.37 — the opt-in self-hosted measure override (None unless
             // `PINION_TEXT_ENGINE` is enabled). Borrows `self.text_engine` as a
             // field disjoint from the `&mut self.text_cache` the layout passes
@@ -4373,321 +4666,58 @@ impl<V: WidgetView> ShellCore<V> {
         // `Signal::set` re-flags it — the `handle_tail` `is_dirty()` bridge
         // then knows a real change occurred and a benign no-op did not.
         self.core.root_owner().clear_dirty();
-        self.apply_window_overlays(paint_scene, w, h, window_id)
+        overlays.apply::<V>(paint_scene, w, h, self.core.root_owner())
     }
 
-    /// R705 §5.39 §2 #1/#7 — inject the keyboard focus ring as an
-    /// introspectable, pointer-transparent overlay [`Scene::Box`].
-    /// Applied as the final step of every paint-scene producer
-    /// ([`Self::compute_paint_scene_internal`],
-    /// [`Self::compute_paint_scene_pure_internal`], and the
-    /// `dispatch_rpc_inner` RPC produce closure) so the ring is
-    /// (a) painted by the generic box path rather than an opaque vello
-    /// stroke, (b) visible to `scene/snapshot from: paint` (§2 #7), and
-    /// (c) corner-radius-aware (concentric on rounded widgets). No-op
-    /// when nothing is focused. The injected box is pointer-transparent
-    /// (R705 §5.39 substrate) so it never shadows its widget for input,
-    /// even though the very scene returned here also feeds
-    /// [`pinion_runtime::InputRouter::last_paint_scene`] hit-testing.
-    fn apply_focus_ring(&self, scene: Scene, w: u32, h: u32) -> Scene {
-        let Some(focused) = self.focus.focused() else {
-            return scene;
-        };
-        // R705 §5.39 §5.40 — resolve through the active-descendant SSOT
-        // ([`resolve_focus_ring_tag`]) so a roving widget's ring tracks
-        // its active cell rather than wrapping the container.
-        let ring_tag =
-            resolve_focus_ring_tag::<V>(self.core.cached_state(), focused, self.core.root_owner());
-        // R1010 §5.39 §5.40 — the binding owns the ring style for the rung tag
-        // (None suppresses it; the default draws the framework ring).
-        // R1022 §5.39 — `(w, h)` = the layout viewport the scene was laid out to,
-        // so the ring's far edges clamp on-screen for a window-flush widget.
-        inject_styled_focus_ring::<V>(scene, Some(&ring_tag), Some((w, h)))
-    }
-
-    /// R1113 §5.51 §5.33 §2 #7 — inject the drag-image follower (the
-    /// translucent chip floated under the cursor during a drag) as an
-    /// introspectable, pointer-transparent overlay [`Scene::Container`]. The
-    /// sibling of [`Self::apply_focus_ring`]: it reads `window_id`'s live drag
-    /// session from the [`pinion_runtime::InputRouter`]
-    /// ([`active_drag_label_for_window`](pinion_runtime::CoreShell::active_drag_label_for_window)
-    /// — the payload's text label + the window-logical cursor the router
-    /// measured) and floats the chip at the cursor, exactly the way
-    /// `apply_focus_ring` reads focus state. Because the follower is anchored
-    /// at the cursor (window-level), it is correct no matter where the dragged
-    /// widget sits in the window — there is no per-widget composition to
-    /// mis-anchor, and every consumer gets it automatically (no wiring).
+    /// (R1467 §5.16 §5.39 §2 #7) Sample the shell-owned state the window-overlay
+    /// chain reads, so one [`WindowOverlayInputs::apply`] dresses this window on
+    /// whichever paint-scene producer is running.
     ///
-    /// No-op when no REAL drag is in flight (a pending click shows none), the
-    /// drag carries no text label (a capture-drag like a splitter resize, or a
-    /// non-text payload), or the binding's
-    /// [`WidgetView::drag_image_style`]
-    /// hook returns `None`. The chip is `pointer_transparent` so it never
-    /// shadows the drag it represents.
-    fn apply_drag_image(&self, scene: Scene, w: u32, h: u32, window_id: &str) -> Scene {
-        // R1147 §5.51 — while the shell's cross-desktop drag PREVIEW window is
-        // showing this drag, suppress the in-window overlay so exactly one chip
-        // shows (the desktop preview, which roams the whole desktop). Default
-        // false keeps this the headless / introspection chip (the preview is
-        // never shown under `PINION_HIDDEN_WINDOW`).
-        if self.core.desktop_drag_preview_active() {
-            return scene;
-        }
-        let Some((label, cursor)) = self
-            .core
-            .active_drag_label_for_window(window_id, PointerId::MOUSE)
-        else {
-            return scene;
-        };
-        let Some(style) = V::drag_image_style(&label) else {
-            return scene;
-        };
-        pinion_overlay::inject_drag_image(scene, &label, cursor, style, Some((w, h)))
-    }
-
-    /// (R1125 §5.51 §2 #7 PR-33) Inject the cross-window dock drop-zone PREVIEW
-    /// into `window_id` when a floating panel dragged in ANOTHER window currently
-    /// maps onto it. The sibling of [`Self::apply_drag_image`]: the shell — the
-    /// sole holder of every window's geometry — resolves the incoming drop via
-    /// [`pinion_runtime::CoreShell::cross_window_drag_into`] and highlights the
-    /// RESULT region of the target panel (the split half the redock would occupy,
-    /// or the whole pane for a centre tabify), so the user SEES where the floater
-    /// will land before releasing — exactly the same affordance the same-window
-    /// drag shows, now across windows. Driven from shell-owned drag state +
-    /// injected as a top-level overlay, so every consumer gets it with ZERO
-    /// per-binding wiring. No-op when no drag targets this window, the binding
-    /// opts out ([`WidgetView::dock_drop_preview`] `None`), or the resolved
-    /// panel has no rect in this scene. Each paint re-derives it (the prior
-    /// strip is stripped by tag), so it follows the cursor live.
-    fn apply_cross_window_drop_preview(&self, scene: Scene, window_id: Option<&str>) -> Scene {
-        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        let inner = self
-            .core
-            .cross_window_drag_into(key)
-            .and_then(|(source, drop)| {
-                // GENERIC half: the target panel's window-absolute rect. The
-                // dock-specific zone classification + strip rendering is the binding's
-                // (`V::dock_drop_preview`), so the shell stays widget-agnostic.
-                // (R1156) OUTER full-span dock: the perimeter zone has no panel rect —
-                // hand the binding the DOCK-AREA rect so it renders a full-span strip
-                // (a row/column across every pane).
-                let rect = if drop.point.tag == pinion_core::external::OUTER_DOCK_ZONE_TAG {
-                    // (R1205) …the DOCK AREA, NOT the whole window: the target
-                    // window's dock content sits below any client-side chrome strip
-                    // / toolbar / menu, so a preview spanning `scene.rect()` painted
-                    // the full-span band ACROSS the title-bar controls when redocking
-                    // a floater onto a chromed window (the user's "붙일 때 최소화/최대화/x
-                    // 영역까지 preview가 보임"). Read the dock walker's `DOCK_SURFACE_TAG`
-                    // rect so the previewed band == where `dock_panel_outer` actually
-                    // lands (the topology has no chrome row) — preview == result. The
-                    // same `dock_surface_rect` SSOT the same-window band reads; a
-                    // window with no dock surface (a decorated / naked one) falls back
-                    // to its own rect, unchanged.
-                    scene.dock_surface_rect()
-                } else {
-                    scene.rect_for_tag_absolute(&drop.point.tag)?
-                };
-                // (R1163b) Pass the dragged `source` so the binding resolves through
-                // the SAME `resolve_drop` SSOT the release applies (preview == result).
-                // The hook reads the binding's reactive reorganizer (is_panel /
-                // tabbing) via `use_*` hooks, so run it inside `root_owner.run` —
-                // exactly like `collect_access_emit_inputs` wraps `V::access_node`
-                // (the callback-root-owner-wrap family). This overlay step runs AFTER
-                // the view's `root_owner.run` closed, so without the wrap
-                // `Owner::current()` is `None` and the hook panics. Read-only, so it
-                // re-subscribes nothing it did not already (no re-dirty after the
-                // caller's `clear_dirty`).
-                self.core.root_owner().run(|| {
-                    V::dock_drop_preview(
-                        &source,
-                        &drop.point.tag,
-                        rect,
-                        drop.point.x_rel,
-                        drop.point.y_rel,
-                    )
-                })
-            });
-        // Wrap the binding's overlay in a shell-owned, pointer-transparent slot so
-        // the strip is stripped + replaced by ONE known tag each paint (idempotent,
-        // like every other overlay), independent of the binding node's own tag.
-        let slot = inner.map(|node| {
-            Scene::Container(
-                pinion_core::scene::ContainerNode::new(vec![node])
-                    .with_tag(CROSS_WINDOW_DROP_PREVIEW_TAG.to_string())
-                    .with_layout(
-                        pinion_core::style::LayoutStyle::new().with_pointer_transparent(true),
-                    ),
-            )
+    /// Taken ONCE per produced scene, before the view runs, and used for BOTH the
+    /// content inset ([`WindowOverlayInputs::chrome_inset`]) and the overlay tail.
+    /// That single read is the point, not a saved call: pre-R1467 the inset and
+    /// the strip were independent reads on two of the three producers and absent
+    /// on the third, which is how the RPC produce path came to lay a chromed
+    /// window's content out as if the strip were not there. One sample cannot
+    /// inset without dressing, or dress without insetting.
+    ///
+    /// `window_id` is the producer's `Option<&str>`: the `None` single-window
+    /// primary resolves to the first declared spec, and to the
+    /// [`pinion_runtime::DEFAULT_WINDOW`] router key for the drag lookups.
+    fn sample_window_overlay_inputs(&self, window_id: Option<&str>) -> WindowOverlayInputs {
+        let window_key = window_id
+            .unwrap_or(pinion_runtime::DEFAULT_WINDOW)
+            .to_owned();
+        // R1186 — resolve identity WITHOUT requiring chrome, then read the whole
+        // policy ONCE (R1190: chrome + resizable together, not two hooks).
+        // R1123.1 — every per-window lookup keys off THIS single resolution, so
+        // the live paint and the mirror pick the same window's state (§2 #7); a
+        // `DEFAULT_WINDOW` key would diverge for a binding whose first window is
+        // not named `"main"`.
+        let spec = self.resolve_window_spec(window_id);
+        let policy = spec
+            .as_ref()
+            .map_or_else(crate::WindowPolicy::default, |(id, _)| V::window_policy(id));
+        let maximized = spec
+            .as_ref()
+            .is_some_and(|(id, _)| self.maximized_for_window(id));
+        // R705 §5.39 §5.40 — resolve the ring target through the
+        // active-descendant SSOT ([`resolve_focus_ring_tag`]) so a roving
+        // widget's ring tracks its active cell rather than wrapping the
+        // container. `None` (nothing focused) draws no ring.
+        let ring_tag = self.focus.focused().map(|focused| {
+            resolve_focus_ring_tag::<V>(self.core.cached_state(), focused, self.core.root_owner())
         });
-        pinion_overlay::inject_overlay_node(scene, CROSS_WINDOW_DROP_PREVIEW_TAG, slot)
-    }
-
-    // R1150 §5.51 — the R1137 `apply_redock_drag_hint` (the on-FLOATER redock
-    // schematic) was REMOVED. It drew the resolved zone on the dragged floater's
-    // OWN rect, a workaround for the R1116 *following* floater occluding the
-    // target preview. R1146 made the floater stay PUT during the drag, so the
-    // hint sat at the floater's static spot while the panel docked at the cursor's
-    // target elsewhere — the user's "preview here, docks there". The on-TARGET
-    // `apply_cross_window_drop_preview` is correctly placed and remains; the R1147
-    // desktop chip is the cursor affordance. (Hiding the floater to un-occlude was
-    // rejected: unmapping releases the X11 pointer grab the live drag relies on.)
-
-    /// R1113 §5.51 §5.33 — the window-level paint overlays, in z-order: the
-    /// keyboard focus ring then the drag-image follower. Both are injected by
-    /// the shell from its own state (focus / the router's live drag session),
-    /// as the final step of every paint-scene producer. `window_id` is the
-    /// producer's `Option<&str>` (the `None` single-window primary resolves to
-    /// the [`pinion_runtime::DEFAULT_WINDOW`] router key). Lifted from the two
-    /// internal producers so each tail stays one line.
-    fn apply_window_overlays(
-        &self,
-        scene: Scene,
-        w: u32,
-        h: u32,
-        window_id: Option<&str>,
-    ) -> Scene {
-        let key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        // R1122 §5.16 §5.39 — resize border UNDER the chrome strip: a chromed
-        // borderless window has no OS frame, so client-side edge / corner
-        // regions restore drag-resize. Injected first so the chrome strip
-        // (next) layers on top of the north edge / top corners and keeps its
-        // controls clickable. No-op for a window without client-side chrome.
-        let resizable = self.apply_resize_border(scene, w, h, window_id);
-        // R1121 §5.16 §5.39 PR-38 — client-side window chrome (under the
-        // transient ring / drag-image), so a chromed window's title bar +
-        // controls paint on the strip the content was inset below. A window
-        // whose `window_policy().chrome` is `None` is a no-op (byte-identical
-        // to pre-R1121).
-        let chromed = self.apply_window_chrome(resizable, w, h, window_id);
-        // R1195 §5.16 §5.39 — VS Code / Win11 / GTK parity: keep a chromed
-        // window's TOP EDGE a live resize band. `apply_window_chrome` layered
-        // the strip over the north resize region (killing top-edge resize);
-        // raise the north band back on top so the outermost `RESIZE_EDGE_PX`
-        // resize the window (the R1189 hover cursor + R1122 press routing light
-        // up for free). Self-gating on the band's presence: a no-op unless the
-        // window is a resizable, non-maximized, chromed one.
-        let chromed = pinion_overlay::raise_top_resize_edge(chromed, Some((w, h)));
-        let ringed = self.apply_focus_ring(chromed, w, h);
-        // R1125 §5.51 PR-33 — the incoming cross-window dock drop-zone preview,
-        // drawn at the dock zone in the TARGET (host) window where the panel will
-        // land. This is the redock affordance. (R1168 retired the static dock-zone
-        // GUIDES that used to layer here: a guide outlined whole panel rects,
-        // independent of `resolve_drop`, so it diverged from the cursor preview —
-        // the "선≠preview" divergence. The cursor preview, derived from the one
-        // `resolve_drop` SSOT, is the SOLE drop affordance now.)
-        let previewed = self.apply_cross_window_drop_preview(ringed, window_id);
-        // R1150 §5.51 — the R1137 on-FLOATER hint was REMOVED here (it drew the
-        // zone schematic on the dragged floater's OWN rect; under the R1146
-        // release-only model the floater stays PUT during the drag, so the hint sat
-        // at the floater's static spot while the panel docked at the cursor's
-        // target ELSEWHERE — the user's "preview here, docks there"). The on-target
-        // preview above is correctly placed; the R1147 desktop chip is the cursor
-        // affordance. (Hiding the floater to un-occlude was rejected: unmapping it
-        // releases the X11 pointer grab the live drag relies on.)
-        self.apply_drag_image(previewed, w, h, key)
-    }
-
-    /// (R1121 §5.16 §5.39 §2 #7) Inject the client-side window-chrome strip
-    /// (title bar + close / minimize / maximize controls) when the binding's
-    /// [`WidgetView::window_policy`] returns a
-    /// [`WindowPolicy`](crate::WindowPolicy) with `chrome: Some(style)` for
-    /// `window_id`. The buttons are real, introspectable
-    /// [`Scene`] nodes an AI agent observes and drives via `scene/snapshot` +
-    /// a click on the composite control tag — the reason custom chrome beats
-    /// OS chrome, whose controls live outside the scene tree. A window whose
-    /// hook returns `None` is unchanged.
-    ///
-    /// `is_maximized` is `false` for R1121 (the maximize button toggles; the
-    /// per-window maximized state lives in `AppShell`/winit and is threaded
-    /// in a follow-up). Shared by the live paint path and the introspection
-    /// mirror (both route through [`Self::apply_window_overlays`]).
-    fn apply_window_chrome(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
-        match self.window_chrome_for(window_id) {
-            Some((spec_id, title, style)) => {
-                // R1123 — the maximize button draws the "restore" glyph when the
-                // window is maximized. R1123.1 — key by the resolved `spec_id`
-                // (not `window_id.unwrap_or(DEFAULT_WINDOW)`) so the live paint
-                // and the pure mirror pick the same window's state (§2 #7).
-                let maximized = self.maximized_for_window(&spec_id);
-                pinion_overlay::inject_window_chrome(scene, &title, maximized, Some((w, h)), style)
-            }
-            None => scene,
-        }
-    }
-
-    /// (R1122 §5.16 §5.39 §2 #7) Inject the eight client-side window-resize
-    /// edge / corner hit regions when the window has client-side chrome (the
-    /// same [`WindowPolicy::chrome`](crate::WindowPolicy::chrome) gate as
-    /// [`Self::apply_window_chrome`]): a borderless window that draws
-    /// its own title bar also needs its own resize border, since the OS frame
-    /// that normally provides edge-drag-resize is gone. The regions are
-    /// introspectable [`Scene`] nodes (`scene/snapshot`) the shell maps to a
-    /// `winit::window::ResizeDirection` in `AppShell::try_chrome_press`. A
-    /// window with no client-side chrome is unchanged (OS frame resizes it).
-    ///
-    /// R1186 §5.16 §5.39 — DECOUPLED from chrome via
-    /// [`WindowPolicy::resizable`](crate::WindowPolicy::resizable) (R1190 folded
-    /// the former resizable getter into the policy). Pre-R1186 the border
-    /// rode the chrome gate ("resize travels with chrome"), which could not express
-    /// a **controls-in-header** floating window: a torn-off dock panel whose title
-    /// bar is its own dock header (R1171) has `chrome: None` (ONE strip, no separate
-    /// chrome bar) yet must stay resizable. `resizable` defaults to `None` = derive
-    /// from chrome
-    /// presence (the exact pre-R1186 behaviour, so every existing binding is
-    /// unchanged); `Some(true)` keeps the border on a chrome-less window;
-    /// `Some(false)` drops it on a chromed one.
-    ///
-    /// R1123 — the border is dropped while the window is maximized: a maximized
-    /// window fills the work area and edge-resize is meaningless (and would
-    /// fight the WM), matching how OS-decorated windows hide their resize border
-    /// when maximized.
-    ///
-    /// R1186 — the border VARIANT depends on who owns the top edge. A CHROMED
-    /// window layers its chrome strip ON TOP of the border, so all eight regions
-    /// are injected; the north EDGE is then raised back above the strip by
-    /// [`pinion_overlay::raise_top_resize_edge`] (R1195) so the top edge stays a
-    /// live resize band (VS Code / Win11), while the two top CORNERS stay under
-    /// the strip (their diagonal resize yields to the corner controls). A
-    /// CHROME-LESS resizable window (`chrome: None`) draws its title bar as a CONTENT
-    /// dock header (R1171 controls-in-header). R1197 / R1198 — it resizes from the
-    /// top EDGE + BOTH top corners (VS Code parity for a floating panel), via
-    /// [`inject_resize_border_content_header`](pinion_overlay::inject_resize_border_content_header):
-    /// a full top-LEFT corner and a small edge-sized top-RIGHT corner that fits
-    /// inside the header's right padding, so the top-right resizes diagonally
-    /// without shadowing the close button (R1198). The grazing north band clears
-    /// the button's clickable center. These regions are already the topmost
-    /// siblings over the content, so the north edge is NOT re-raised (that would
-    /// lift it above the top-left corner and lose that corner's diagonal resize —
-    /// hence [`raise_top_resize_edge`](pinion_overlay::raise_top_resize_edge)
-    /// gates on the chrome strip's presence).
-    fn apply_resize_border(&self, scene: Scene, w: u32, h: u32, window_id: Option<&str>) -> Scene {
-        // R1186 — resolve identity WITHOUT requiring chrome, then gate on the
-        // decoupled `resizable` policy (default derives from chrome presence).
-        // R1123.1 — the maximized-check keys off the same single spec resolution.
-        // R1190 — read the whole `WindowPolicy` ONCE (chrome + resizable), instead
-        // of two `V::window_chrome`/`window_resizable` calls.
-        let Some((spec_id, _)) = self.resolve_window_spec(window_id) else {
-            return scene;
-        };
-        let policy = V::window_policy(&spec_id);
-        let has_chrome = policy.chrome.is_some();
-        let resizable = policy.resizable.unwrap_or(has_chrome);
-        if !resizable || self.maximized_for_window(&spec_id) {
-            return scene;
-        }
-        if has_chrome {
-            // The chrome strip (injected next, over this border) reclaims the
-            // top; R1195's `raise_top_resize_edge` then lifts the north edge back
-            // above the strip so the top edge still resizes.
-            pinion_overlay::inject_resize_border(scene, Some((w, h)))
-        } else {
-            // R1197 / R1198 — a content dock header owns the top and hosts the
-            // window controls at its top-RIGHT. Resize from the top EDGE + BOTH
-            // top corners (VS Code parity for a floating panel); the top-right
-            // corner is a small edge-sized box that fits inside the header's
-            // right padding, so it resizes diagonally without shadowing the
-            // close button (a full corner would — the R1186 concern).
-            pinion_overlay::inject_resize_border_content_header(scene, Some((w, h)))
+        WindowOverlayInputs {
+            cross_window_drop: self.core.cross_window_drag_into(&window_key),
+            drag_image: self
+                .core
+                .active_drag_label_for_window(&window_key, PointerId::MOUSE),
+            desktop_drag_preview_active: self.core.desktop_drag_preview_active(),
+            title: spec.map(|(_, title)| title),
+            policy,
+            maximized,
+            ring_tag,
         }
     }
 
@@ -4772,51 +4802,13 @@ impl<V: WidgetView> ShellCore<V> {
         self.request_redraw_for_window(window_key);
     }
 
-    /// (R1121 §5.16 §5.21) Logical-pixel height the window content is inset by
-    /// to clear the client-side chrome strip, or `None` when the window has no
-    /// chrome (OS-decorated, or naked borderless). The single resolution shared
-    /// by the live ([`Self::compute_paint_scene_internal`]) and pure-mirror
-    /// ([`Self::compute_paint_scene_pure_internal`]) inset sites (R1123.1 — was
-    /// duplicated at both).
-    fn chrome_inset_height(&self, window_id: Option<&str>) -> Option<u32> {
-        self.window_chrome_for(window_id)
-            .map(|(_, _, style)| style.height_px)
-    }
-
-    /// (R1121.1 §5.16 §2 #7) Resolve client-side chrome for the window being
-    /// painted: `Some((spec_id, title, style))` when the binding's
-    /// [`WidgetView::window_policy`] returns a
-    /// [`WindowPolicy`](crate::WindowPolicy) with `chrome: Some(style)` for this
-    /// window, else `None`. `window_id == None` is the
-    /// primary window (the first declared spec); `Some(id)` matches by canonical
-    /// id. The title is the window's declared title; the chrome decision is the
-    /// hook's — ORTHOGONAL to `decorations` (R1121.1 decoupled the two so a
-    /// `decorations:false` window can be naked, not forced to carry chrome).
-    /// Reads the same `windows_signal` / `windows` SSOT as
-    /// [`Self::declared_window_specs`].
-    ///
-    /// R1123.1 — returns the resolved canonical `spec_id` as the FIRST element so
-    /// every per-window lookup keyed off "the window being painted" (the
-    /// [`Self::maximized_for_window`] glyph + resize gate) uses THIS single
-    /// resolution. A `window_id == None` paint (the primary, via
-    /// [`Self::compute_paint_scene`] / the pure mirror) resolves to the first
-    /// spec — keying the maximized cache by `DEFAULT_WINDOW` instead would
-    /// diverge from this resolution for a binding whose first window is not named
-    /// `"main"`, silently breaking the live-vs-mirror glyph parity (§2 #7).
-    fn window_chrome_for(
-        &self,
-        window_id: Option<&str>,
-    ) -> Option<(String, String, pinion_overlay::WindowChromeStyle)> {
-        let (id, title) = self.resolve_window_spec(window_id)?;
-        let style = V::window_policy(&id).chrome?;
-        Some((id, title, style))
-    }
-
     /// (R1186 §5.16) Resolve the `(spec_id, title)` of the window being painted,
     /// INDEPENDENT of chrome. `window_id == None` is the primary window (the first
     /// declared spec); `Some(id)` matches by canonical id. Reads the same
-    /// `windows_signal` / `windows` SSOT as [`Self::window_chrome_for`] (which now
-    /// delegates here) — extracted so the R1186 resize-border decoupling can key
+    /// `windows_signal` / `windows` SSOT the chrome resolution reads (R1467 folded
+    /// the former `window_chrome_for` into
+    /// [`ShellCore::sample_window_overlay_inputs`]) — extracted so the R1186
+    /// resize-border decoupling can key
     /// off the window identity + [`WindowPolicy::resizable`](crate::WindowPolicy::resizable)
     /// WITHOUT requiring the window to also carry chrome (a controls-in-header
     /// floating window has `chrome: None` yet is resizable).
@@ -4947,7 +4939,9 @@ impl<V: WidgetView> ShellCore<V> {
     ) -> Scene {
         let cached_state = *self.core.cached_state();
         let frame = Frame::new();
-        let chrome_h = self.chrome_inset_height(window_id);
+        // R1467 — one sample feeds the inset here and the overlay tail below.
+        let overlays = self.sample_window_overlay_inputs(window_id);
+        let chrome_h = overlays.chrome_inset();
         // R1072 §5.37 — measure the introspection mirror with the same opt-in
         // engine the production paint path uses, so `scene/layout` reports the
         // boxes that were (or would be) painted via §5.37 (Scene-as-data coherence,
@@ -4960,18 +4954,9 @@ impl<V: WidgetView> ShellCore<V> {
         let core = &self.core;
         let text_cache = &mut self.text_cache;
         let settle = settle_to_fixed_point(
-            || {
-                // R1121 §5.16 §5.21 — mirror the live path's borderless content
-                // inset so the introspection snapshot matches the painted
-                // geometry (§2 #7).
-                apply_chrome_inset(
-                    core.root_owner().run(|| match window_id {
-                        Some(id) => V::view_for_window(id, cached_state, &frame),
-                        None => V::view(cached_state, &frame),
-                    }),
-                    chrome_h,
-                )
-            },
+            // R1121 §5.16 §5.21 — mirror the live path's borderless content inset
+            // so the introspection snapshot matches the painted geometry (§2 #7).
+            || window_view::<V>(core.root_owner(), window_id, cached_state, frame, chrome_h),
             |scene| compute_layout_with_text_measure(scene, text_cache, w, h, text_measure),
         );
         let paint_scene = settle.scene;
@@ -4988,7 +4973,7 @@ impl<V: WidgetView> ShellCore<V> {
         // (re-store / headless) render also consumed the current reactive
         // state, so reset the dirty flag in lockstep.
         self.core.root_owner().clear_dirty();
-        self.apply_window_overlays(paint_scene, w, h, window_id)
+        overlays.apply::<V>(paint_scene, w, h, self.core.root_owner())
     }
 
     /// R51.80 §5.40 — build the inputs to
@@ -5203,11 +5188,11 @@ impl<V: WidgetView> ShellCore<V> {
         self.notify_focus_change(focus_before.as_deref());
         // (R1024 §5.39) A click / tap that moves focus must request a redraw,
         // mirroring `drain_focus_mailboxes`'s programmatic-focus pairing. The
-        // focus ring is paint-time-injected (`apply_focus_ring`) and a
+        // focus ring is paint-time-injected (`WindowOverlayInputs::apply`) and a
         // `FocusManager` mutation dirties no reactive owner, so without this the
         // ring lags to the next unrelated repaint (sprag PR-13). The wake is
         // binding-wide (`request_redraw`), not per-window: the focused tag is
-        // binding-wide state and `apply_focus_ring` reads the single
+        // binding-wide state and the ring step reads the single
         // `FocusManager` in EVERY window's producer, so a shared-state tag
         // rendered in more than one window must repaint all of them on a focus
         // change (R1024.1: not a cross-window "steal" — the enumeration is the
@@ -5501,7 +5486,7 @@ impl<V: WidgetView> ShellCore<V> {
             let cached_state = *self.core.cached_state();
             let root_owner = self.core.root_owner().clone();
             // R705 §5.39 §5.40 — resolve the focus-ring target the same
-            // way `apply_focus_ring` does for the winit paint path:
+            // way the shared overlay chain does for the winit paint path:
             // through `access_focus_target` so a roving widget's ring
             // tracks its aria-activedescendant cell (`datepicker#15`)
             // rather than wrapping the container. Computed once here
@@ -5528,14 +5513,28 @@ impl<V: WidgetView> ShellCore<V> {
             // that drifted from the on-screen pixels
             // ([[introspection-from-paint-not-screen]]).
             let paint_window_key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-            // R1113 §5.51 §5.33 §2 #7 — sample the addressed window's live drag
-            // (label + cursor) BEFORE the `scene_mut` reborrow, the same way
-            // `ring_tag_for_paint` is sampled before it, so the produce closure
-            // injects the drag-image follower for producer parity with the winit
-            // path ([[r670b-paint-scene-producer-parity]]). `None` mid-drag-less.
-            let drag_image_for_paint: Option<(String, (f64, f64))> = self
-                .core
-                .active_drag_label_for_window(paint_window_key, PointerId::MOUSE);
+            // R1467 §5.16 §5.39 §2 #7 — sample the WHOLE window-overlay chain
+            // (resize border, chrome strip + its content inset, raised top edge,
+            // focus ring, cross-window drop preview, drag-image chip) BEFORE the
+            // `scene_mut` reborrow, so the produce closure can dress its scene
+            // with the SAME [`WindowOverlayInputs::apply`] the two `&self`
+            // producers run ([[r670b-paint-scene-producer-parity]]).
+            //
+            // Pre-R1467 only the last two steps crossed the borrow split, each
+            // hoisted by hand as its own local. That is the whole defect: a
+            // chromed window's produce scene carried no strip and, worse, no
+            // content inset, so every coordinate this path derived for it sat
+            // `WindowChromeStyle::height_px` too high — and `scene/click {path}`
+            // resolves through exactly this producer.
+            //
+            // `ring_tag` is then overridden with the pre-dispatch sample: a
+            // focus-mutating method in THIS dispatch has not flushed when the
+            // closure runs for path resolution, so the ring must reflect ENTRY
+            // focus — which is what the AI client addressed.
+            let overlays_for_paint = WindowOverlayInputs {
+                ring_tag: ring_tag_for_paint,
+                ..self.sample_window_overlay_inputs(window_id)
+            };
             let (scene_ptr, last_paint_scene_ref) = self
                 .core
                 .scene_mut_and_last_paint_for_window(paint_window_key);
@@ -5581,12 +5580,21 @@ impl<V: WidgetView> ShellCore<V> {
                 // see what its own call cost. Counted cumulatively here and
                 // published on `scene/frame_timings`.
                 let shapes_before = text_cache_ptr.shapes();
+                // R1121 §5.16 §5.21 / R1467 — inset the content below the chrome
+                // strip INSIDE the settle loop, exactly where the two `&self`
+                // producers do it: the inset changes the height the view lays out
+                // into, so a window whose view reads its own measured extent must
+                // settle against the inset geometry, not be shifted afterwards.
+                let chrome_h = overlays_for_paint.chrome_inset();
                 let settle = settle_to_fixed_point(
                     || {
-                        root_owner.run(|| match producer_window_id.as_deref() {
-                            Some(id) => V::view_for_window(id, cached_state, &frame),
-                            None => V::view(cached_state, &frame),
-                        })
+                        window_view::<V>(
+                            &root_owner,
+                            producer_window_id.as_deref(),
+                            cached_state,
+                            frame,
+                            chrome_h,
+                        )
                     },
                     |scene| {
                         compute_layout_with_text_measure(scene, text_cache_ptr, w, h, text_measure)
@@ -5594,41 +5602,16 @@ impl<V: WidgetView> ShellCore<V> {
                 );
                 let paint = settle.scene;
                 produce_work_ptr.record(settle.passes, text_cache_ptr.shapes() - shapes_before);
-                // R705 §5.39 §2 #1/#7 — inject the focus ring as the
-                // final paint step so `scene/snapshot from: paint` (and
-                // the R684 post-dispatch InputRouter finalize, which
-                // re-runs this producer) observe the same introspectable
-                // pointer-transparent overlay the winit paint cycle does
-                // (producer parity, [[r670b-paint-scene-producer-parity]]).
-                // `focus_before` is the pre-dispatch focus sample; a
-                // focus-mutating method in THIS dispatch has not yet
-                // flushed when the produce closure runs for path
-                // resolution, so the ring reflects entry focus — which
-                // matches what the AI client addressed.
-                // R1010 §5.39 §5.40 — same binding-controlled ring as the winit
-                // paint path (None = no ring), through the shared SSOT.
-                // R1022 §5.39 — same layout viewport `(w, h)` the produce closure
-                // laid out to, so the introspected ring rect matches the winit path.
-                let ringed = inject_styled_focus_ring::<V>(
-                    paint,
-                    ring_tag_for_paint.as_deref(),
-                    Some((w, h)),
-                );
-                // R1113 §5.51 §5.33 — drag-image follower after the ring (the
-                // RPC produce mirror of `apply_drag_image`; the sampled label +
-                // cursor + the binding's style hook). No-op mid-drag-less.
-                match drag_image_for_paint.as_ref().and_then(|(label, cursor)| {
-                    V::drag_image_style(label).map(|style| (label.as_str(), *cursor, style))
-                }) {
-                    Some((label, cursor, style)) => pinion_overlay::inject_drag_image(
-                        ringed,
-                        label,
-                        cursor,
-                        style,
-                        Some((w, h)),
-                    ),
-                    None => ringed,
-                }
+                // R1467 §5.16 §5.39 §2 #7 — the ONE overlay chain, the same call
+                // the winit paint and the introspection mirror make. Pre-R1467
+                // this tail hand-rolled two of its six steps and omitted four
+                // (resize border, chrome strip, raised top edge, cross-window drop
+                // preview), so `scene/snapshot from: paint` on a never-painted
+                // chromed window reported a window that does not exist and
+                // `scene/click {path}` aimed at coordinates the window never had.
+                // R1022 §5.39 — `(w, h)` is the viewport this closure laid out to,
+                // so every overlay rect matches the geometry it dresses.
+                overlays_for_paint.apply::<V>(paint, w, h, &root_owner)
             };
             // R979 §5.40 §2 #7 — `scene/access` producer (the `build_access_tree`
             // SSOT the live AccessKit emit also runs; entry-focus `focus_before`).
@@ -5845,13 +5828,24 @@ impl<V: WidgetView> ShellCore<V> {
         //   the repaint that repairs the store — which is exactly why the
         //   deterministic unit test is the evidence and the demo suite is not.
         // * **Reusing the scene the produce closure just built** — same state,
-        //   same viewport, already settled — is not the same scene. The
-        //   producer applies the focus ring and drag image; a stored paint
-        //   scene goes through `apply_window_overlays` (resize border, chrome
-        //   strip, raised top edge, drop-zone preview, drag image). R1188's
-        //   window-control interception hit-tests the hover target for a
-        //   CHROME tag, which exists only in the second. Reuse would silently
-        //   un-drive the window controls it depends on.
+        //   same viewport, already settled — is not the same scene, but NOT for
+        //   the reason R1467 found this comment giving. R1466 wrote that the
+        //   producer applies only the ring + drag image while a stored scene
+        //   also gets the resize border, chrome strip, raised top edge and
+        //   drop-zone preview, so reuse would strip the CHROME tag R1188's
+        //   window-control interception hit-tests for. That divergence was real
+        //   and is now GONE: R1467 put all three producers on the one
+        //   [`WindowOverlayInputs::apply`] chain, precisely because a produce
+        //   path that dressed windows differently from the paint was a §2 #7
+        //   break in its own right (it also mis-placed every path-resolved
+        //   coordinate on a chromed window).
+        //
+        //   What survives the correction is the TIMELINE, which is the stronger
+        //   reason: the produce closure runs BEFORE the handler mutates state
+        //   (it resolves paths, and samples focus pre-dispatch), while this
+        //   re-render runs after. Same chain, different frame. The unit test
+        //   named above pins that, and it is what keeps the render load-bearing
+        //   now that the overlay argument no longer does.
         //
         // Why the storage-only publish:
         //
@@ -8437,6 +8431,15 @@ mod r1138_redock_hint_injection_tests {
         }
     }
 
+    /// (R1467) Run the drop-preview overlay step on `scene` the way a producer
+    /// does: through the sampled [`super::WindowOverlayInputs`], not a bypass. So
+    /// these tests also witness that the sampler actually picks the incoming
+    /// cross-window drag up.
+    fn drop_preview<V: WidgetView>(sc: &ShellCore<V>, scene: Scene) -> Scene {
+        sc.sample_window_overlay_inputs(Some("main"))
+            .apply_cross_window_drop_preview::<V>(scene, sc.root_owner())
+    }
+
     #[test]
     fn held_floater_drag_over_main_shows_the_on_target_preview() {
         let mut sc = ShellCore::<RedockHintFixture>::new();
@@ -8463,7 +8466,7 @@ mod r1138_redock_hint_injection_tests {
         // Idle: nothing resolved → no preview injected.
         assert!(
             !has_tag(
-                &sc.apply_cross_window_drop_preview(main_dock_scene(), Some("main")),
+                &drop_preview(&sc, main_dock_scene()),
                 super::CROSS_WINDOW_DROP_PREVIEW_TAG
             ),
             "no drag in flight = no on-target redock preview",
@@ -8494,7 +8497,7 @@ mod r1138_redock_hint_injection_tests {
         // AI `scene/snapshot` SEES (and the user sees), correctly placed where the
         // panel will land (the R1150 fix for "preview here, docks there": the
         // misplaced on-floater schematic is gone).
-        let previewed = sc.apply_cross_window_drop_preview(main_dock_scene(), Some("main"));
+        let previewed = drop_preview(&sc, main_dock_scene());
         assert!(
             has_tag(&previewed, super::CROSS_WINDOW_DROP_PREVIEW_TAG),
             "a held floater drag over main shows the on-target redock preview in main",
@@ -8517,7 +8520,7 @@ mod r1138_redock_hint_injection_tests {
         sc.mouse_released_for_window(FLOAT_WINDOW, PointerId::MOUSE);
         assert!(
             !has_tag(
-                &sc.apply_cross_window_drop_preview(main_dock_scene(), Some("main")),
+                &drop_preview(&sc, main_dock_scene()),
                 super::CROSS_WINDOW_DROP_PREVIEW_TAG
             ),
             "after release the on-target redock preview clears",
@@ -8585,7 +8588,7 @@ mod r1138_redock_hint_injection_tests {
         sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, 40.0, 40.0);
         sc.mouse_pressed_for_window(FLOAT_WINDOW, PointerId::MOUSE);
         sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -795.0, 300.0);
-        let previewed = sc.apply_cross_window_drop_preview(main_scene(), Some("main"));
+        let previewed = drop_preview(&sc, main_scene());
         assert!(
             has_tag(&previewed, super::CROSS_WINDOW_DROP_PREVIEW_TAG),
             "a floater over main's outer band shows the full-span OUTER redock preview",
@@ -8636,7 +8639,7 @@ mod r1138_redock_hint_injection_tests {
         sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, 40.0, 40.0);
         sc.mouse_pressed_for_window(FLOAT_WINDOW, PointerId::MOUSE);
         sc.cursor_moved_for_window(FLOAT_WINDOW, PointerId::MOUSE, -795.0, 300.0);
-        let previewed = sc.apply_cross_window_drop_preview(main_scene(), Some("main"));
+        let previewed = drop_preview(&sc, main_scene());
         assert!(
             !has_tag(&previewed, super::CROSS_WINDOW_DROP_PREVIEW_TAG),
             "★no dock surface → no outer redock zone, so no preview band is injected",
@@ -10090,6 +10093,338 @@ mod r1121_window_chrome_tests {
             Scene::Scroll(s) => path_command_count_at(&s.content, rect),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod r1467_producer_dresses_the_window_tests {
+    //! R1467 §5.16 §5.39 §2 #7 — the RPC produce closure is the THIRD
+    //! paint-scene producer, and pre-R1467 it was the only one that did not
+    //! dress the window it produced: no chrome strip, no resize border, no
+    //! raised top edge, no cross-window drop preview — and, because the content
+    //! inset rides the same policy read as the strip, no inset either.
+    //!
+    //! Two consumers read that producer, and both were wrong for a chromed
+    //! window:
+    //!
+    //! * `scene/snapshot from: paint` / `scene/layout {viewport}` fall back to
+    //!   it whenever the addressed window has stored no frame yet (a headless
+    //!   agent driving a binding before the first winit paint), so §2 #7's
+    //!   "introspection equals the displayed frame" reported a window with no
+    //!   title bar and content sitting where the title bar is.
+    //! * `scene/click {path}` / `scene/hover {path}` ALWAYS resolve their
+    //!   coordinate through it (`resolve_path_to_center` runs the producer; it
+    //!   reads the stored frame only for the viewport size), and then the drain
+    //!   hit-tests that coordinate against the STORED — inset, chromed — scene.
+    //!   So a path click on a chromed window landed
+    //!   [`WindowChromeStyle::height_px`] above the widget it named. For
+    //!   anything in the top strip's height that is not a near miss: the
+    //!   coordinate lands ON the chrome, where R1188's window-control
+    //!   interception reads it as a title-bar grip.
+    //!
+    //! The existing R1121 module pins the same claims for the winit paint and
+    //! the pure mirror; nothing pinned them for the produce path, which is why
+    //! the whole `pinion-shell` suite stayed green across the defect.
+    use crate::test_fixtures::TestRenderer;
+    use crate::{ShellCore, SizeStrategy, WidgetView, WindowChromeStyle, WindowSpec};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::{External, StubExternal};
+    use pinion_core::scene::{ContainerNode, Rect, Scene};
+    use pinion_core::style::{FlexDirection, LayoutStyle, Size, SizeValue};
+    use pinion_core::widgets::button::{ButtonEvent, ButtonState};
+    use pinion_core::{Frame, WidgetCore};
+    use pinion_runtime::PointerId;
+
+    const CHROME_H: u32 = 32; // WindowChromeStyle::default().height_px
+    const ROW_H: u32 = 40;
+    const ROWS: [&str; 3] = ["r1467-row0", "r1467-row1", "r1467-row2"];
+    const W: u32 = 400;
+    const H: u32 = 300;
+
+    /// Three FIXED-height rows stacked at the top of the window. Fixed height is
+    /// what makes the fixture discriminating: the chrome inset shifts every row
+    /// down by a whole `CHROME_H`, which is `CHROME_H / ROW_H` of a row — so a
+    /// producer that forgets the inset resolves row 0 onto the chrome strip and
+    /// each later row onto its predecessor. A percentage-height layout would
+    /// merely squash, and every row centre would still land inside its own row.
+    fn rows_view() -> Scene {
+        let rows = ROWS
+            .iter()
+            .map(|tag| {
+                Scene::Container(
+                    ContainerNode::new(Vec::new())
+                        .with_tag((*tag).to_owned())
+                        .with_layout(
+                            LayoutStyle::new().with_size(
+                                Size::auto()
+                                    .with_width(SizeValue::Percent(100))
+                                    .with_height(SizeValue::Px(ROW_H)),
+                            ),
+                        ),
+                )
+            })
+            .collect();
+        Scene::Container(
+            ContainerNode::new(rows).with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+        )
+    }
+
+    macro_rules! rows_fixture {
+        ($name:ident, $chrome:expr) => {
+            struct $name;
+            impl WidgetCore for $name {
+                type State = ButtonState;
+                type Event = ButtonEvent;
+                fn create_external() -> Box<dyn External> {
+                    Box::new(StubExternal)
+                }
+                fn tag() -> &'static str {
+                    ROWS[0]
+                }
+                fn read_state(_: &Scene) -> Self::State {
+                    ButtonState::Idle
+                }
+                fn view(_: Self::State, _: &Frame) -> Scene {
+                    rows_view()
+                }
+                fn event_name(_: Self::Event) -> &'static str {
+                    "__internal__"
+                }
+                fn title() -> &'static str {
+                    "Rows"
+                }
+            }
+            impl WidgetA11y for $name {}
+            impl WidgetView for $name {
+                type Renderer = TestRenderer;
+                fn initial_size_strategy() -> SizeStrategy {
+                    SizeStrategy::Fixed {
+                        width: W,
+                        height: H,
+                    }
+                }
+                fn windows() -> Vec<WindowSpec> {
+                    vec![
+                        WindowSpec::new(
+                            "main",
+                            "Rows",
+                            SizeStrategy::Fixed {
+                                width: W,
+                                height: H,
+                            },
+                        )
+                        .with_decorations($chrome.is_none()),
+                    ]
+                }
+                fn window_policy(_window_id: &str) -> crate::WindowPolicy {
+                    crate::WindowPolicy {
+                        chrome: $chrome,
+                        resizable: None,
+                    }
+                }
+            }
+        };
+    }
+    rows_fixture!(ChromedRows, Some(WindowChromeStyle::default()));
+    // Negative control: the same rows in an OS-decorated window, where there is
+    // no inset to forget. Every claim below must hold here BOTH before and after
+    // R1467 — it is what proves the fix is about chrome and not about the
+    // producer generally.
+    rows_fixture!(DecoratedRows, Option::<WindowChromeStyle>::None);
+
+    fn has_tag(scene: &Scene, tag: &str) -> bool {
+        if scene.tag() == Some(tag) {
+            return true;
+        }
+        match scene {
+            Scene::Container(c) => c.children.iter().any(|ch| has_tag(ch, tag)),
+            Scene::Scroll(s) => has_tag(&s.content, tag),
+            _ => false,
+        }
+    }
+
+    /// Snapshot the produce path: a shell that has stored NO frame, so
+    /// `scene/snapshot from: paint` falls through to the producer.
+    fn produced_snapshot<V: WidgetView>(sc: &mut ShellCore<V>) -> String {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/snapshot","params":{{"path":"","from":"paint","viewport":{{"w":{W},"h":{H}}}}},"id":1}}"#
+        );
+        sc.dispatch_rpc(&req, &mut |_, _| {}).unwrap_or_default()
+    }
+
+    /// `scene/hover {path}`: the producer resolves the tag's centre, the drain
+    /// hit-tests that point against the STORED scene. The returned tag is what
+    /// the coordinate actually landed on — the whole round in one read.
+    fn hover_by_path<V: WidgetView>(sc: &mut ShellCore<V>, tag: &str) -> Option<String> {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/hover","params":{{"path":"{tag}"}},"id":1}}"#
+        );
+        let _ = sc.dispatch_rpc(&req, &mut |_, _| {});
+        sc.hover_target(PointerId::MOUSE).map(str::to_owned)
+    }
+
+    fn rect_of<V: WidgetView>(sc: &mut ShellCore<V>, tag: &str) -> Rect {
+        sc.compute_paint_scene(W, H)
+            .rect_for_tag_absolute(tag)
+            .unwrap_or_else(|| panic!("{tag} laid out"))
+    }
+
+    #[test]
+    fn a_path_hover_on_a_chromed_window_lands_on_the_widget_it_named() {
+        // The consumer-visible half. The window has painted, so the drain
+        // hit-tests a real chromed frame; the coordinate still comes from the
+        // producer, which is the half R1467 fixed.
+        let mut sc = ShellCore::<ChromedRows>::new();
+        let boot = sc.compute_paint_scene(W, H);
+        sc.finalize_frame(boot);
+        // Row 0's painted band is [CHROME_H, CHROME_H + ROW_H); an un-inset
+        // producer puts its centre at ROW_H / 2 = 20, which is INSIDE the 32px
+        // chrome strip — so pre-R1467 this resolved the title-bar grip and the
+        // click became a window move.
+        assert_eq!(
+            hover_by_path(&mut sc, ROWS[0]).as_deref(),
+            Some(ROWS[0]),
+            "★a path hover on the top row lands on the row, not on the chrome strip",
+        );
+        // The later rows fail one step less dramatically: each resolves onto its
+        // PREDECESSOR, because CHROME_H (32) is under a full row (40).
+        for (i, tag) in ROWS.iter().enumerate() {
+            assert_eq!(
+                hover_by_path(&mut sc, tag).as_deref(),
+                Some(*tag),
+                "★row {i} resolves to itself, not to the row above it",
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_hover_on_a_decorated_window_is_unchanged() {
+        // Negative control: no chrome, no inset, nothing for the producer to
+        // forget. Green before AND after R1467.
+        let mut sc = ShellCore::<DecoratedRows>::new();
+        let boot = sc.compute_paint_scene(W, H);
+        sc.finalize_frame(boot);
+        for tag in ROWS {
+            assert_eq!(
+                hover_by_path(&mut sc, tag).as_deref(),
+                Some(tag),
+                "a decorated window's path hover resolves to {tag}",
+            );
+        }
+    }
+
+    #[test]
+    fn the_produce_path_insets_a_chromed_window_like_the_paint_does() {
+        // §2 #7 for the geometry: the scene an agent reads from the produce
+        // fallback must be laid out where the window paints it.
+        let mut sc = ShellCore::<ChromedRows>::new();
+        let painted = rect_of(&mut sc, ROWS[0]);
+        assert_eq!(
+            painted.y, CHROME_H,
+            "premise: the painted top row sits below the strip",
+        );
+        let mut fresh = ShellCore::<ChromedRows>::new();
+        let resp = produced_snapshot(&mut fresh);
+        // State the claim as the ROW's own rect, not as a substring of the
+        // response: the outermost overlay container legitimately spans the whole
+        // window, so "no full-window rect appears" is a different (and false)
+        // claim than "the content is inset" — the first shape of this assertion
+        // said the second and tested the first.
+        assert!(
+            resp.contains(&format!(
+                r#""rect":{{"h":{ROW_H},"w":{W},"x":0,"y":{CHROME_H}}},"style":{{"border":null,"corner_radius":0,"fill":{{"a":0,"b":0,"g":0,"r":0}},"gradient":null,"shadows":[]}},"tag":"{}""#,
+                ROWS[0]
+            )),
+            "★the produce path insets the top row below the chrome strip: {resp}",
+        );
+        assert!(
+            !resp.contains(&format!(r#""rect":{{"h":{ROW_H},"w":{W},"x":0,"y":0}}"#)),
+            "★no row is laid out at y=0 any more (the un-inset shape): {resp}",
+        );
+    }
+
+    #[test]
+    fn the_produce_path_dresses_a_chromed_window_with_its_controls() {
+        // R1121 claims the chrome buttons are "real, introspectable Scene nodes
+        // an AI agent observes and drives via scene/snapshot". Pre-R1467 that
+        // was true only of a window that had already painted; an agent driving a
+        // fresh binding saw a window with no title bar at all.
+        let mut sc = ShellCore::<ChromedRows>::new();
+        let resp = produced_snapshot(&mut sc);
+        for tag in [
+            pinion_overlay::WINDOW_CHROME_TAG,
+            pinion_overlay::WINDOW_CHROME_CLOSE_TAG,
+            pinion_overlay::WINDOW_CHROME_MINIMIZE_TAG,
+            pinion_overlay::WINDOW_CHROME_MAXIMIZE_TAG,
+            pinion_overlay::WINDOW_CHROME_GRIP_TAG,
+            pinion_overlay::WINDOW_RESIZE_NORTH_TAG,
+            pinion_overlay::WINDOW_RESIZE_SOUTH_EAST_TAG,
+        ] {
+            assert!(
+                resp.contains(tag),
+                "★the produce path carries {tag}: {resp}",
+            );
+        }
+    }
+
+    #[test]
+    fn the_produce_path_leaves_a_decorated_window_naked() {
+        // The gate is the policy, not the producer: a decorated window must gain
+        // nothing. Without this, "dress everything" would pass the tests above.
+        let mut sc = ShellCore::<DecoratedRows>::new();
+        let resp = produced_snapshot(&mut sc);
+        assert!(
+            !resp.contains(pinion_overlay::WINDOW_CHROME_TAG),
+            "a decorated window's produce path injects no chrome: {resp}",
+        );
+        assert!(
+            !resp.contains(pinion_overlay::WINDOW_RESIZE_NORTH_TAG),
+            "…and no resize border: {resp}",
+        );
+        assert!(
+            resp.contains(r#""y":0"#),
+            "…and no inset (the top row still starts at y=0): {resp}",
+        );
+    }
+
+    #[test]
+    fn all_three_producers_agree_on_a_chromed_window() {
+        // The invariant the three previous tests are instances of, stated once:
+        // the winit paint, the introspection mirror and the RPC produce closure
+        // dress the same window the same way. R1467 made this true by giving all
+        // three ONE chain (`WindowOverlayInputs::apply`) instead of two callers
+        // of a `&self` method plus a hand-rolled partial copy behind the borrow
+        // split.
+        let mut sc = ShellCore::<ChromedRows>::new();
+        let winit = sc.compute_paint_scene(W, H);
+        let mirror = sc.compute_paint_scene_pure(W, H);
+        for tag in ROWS {
+            assert_eq!(
+                winit.rect_for_tag_absolute(tag),
+                mirror.rect_for_tag_absolute(tag),
+                "paint and mirror agree on {tag} (the pre-R1467 pair)",
+            );
+        }
+        let mut fresh = ShellCore::<ChromedRows>::new();
+        let resp = produced_snapshot(&mut fresh);
+        for tag in ROWS {
+            let r = winit
+                .rect_for_tag_absolute(tag)
+                .unwrap_or_else(|| panic!("{tag} painted"));
+            assert!(
+                resp.contains(&format!(
+                    r#""h":{},"w":{},"x":{},"y":{}"#,
+                    r.h, r.w, r.x, r.y
+                )),
+                "★the produce path agrees with the paint on {tag} ({r:?}): {resp}",
+            );
+        }
+        assert!(
+            has_tag(&winit, pinion_overlay::WINDOW_CHROME_TAG)
+                && has_tag(&mirror, pinion_overlay::WINDOW_CHROME_TAG)
+                && resp.contains(pinion_overlay::WINDOW_CHROME_TAG),
+            "…and all three carry the strip",
+        );
     }
 }
 

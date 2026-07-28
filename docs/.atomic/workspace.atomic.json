@@ -72674,6 +72674,72 @@
         "whether `from: paint` (chromed, stored) and a viewport-supplied read (unchromed, produced) should differ at all is a §2 #7 question this round did not open"
       ]
     },
+    "Round 1467": {
+      "decision_summary": "The RPC produce closure dresses the window like the paint does: one sampled WindowOverlayInputs chain for all three paint-scene producers, so a chromed window's produce path stops reporting geometry one strip-height high",
+      "changes_bullets": [
+        "Measured first: on a chromed window the RPC produce closure emitted no chrome strip and no content inset (root at y=0 vs the paint's y=32).",
+        "Root cause is the borrow shape, not an oversight: the closure runs after &mut self is split into field borrows, so it can call no &self method; only the ring + drag sample had been hoisted past that split by hand.",
+        "Lifted WindowOverlayInputs (sampled state) + ::apply (the six-step chain: resize border, chrome strip, raised top edge, focus ring, cross-window drop preview, drag image); all three producers now call the one chain.",
+        "The inset and the strip come from ONE sample, so a producer cannot inset without dressing; sample_window_overlay_inputs replaces chrome_inset_height + window_chrome_for.",
+        "3rd-consumer self-grep found apply_chrome_inset at 3 sites (I made the third) -> lifted window_view (owner-wrapped per-window view fn + inset).",
+        "Consumer half: scene/click and scene/hover with {path} resolve through the producer, so a path click on a chromed window landed one strip-height high — on the chrome itself for anything in the top rows.",
+        "R1466 wrote that reuse of the produce scene is rejected because only a stored scene carries the CHROME tag; R1467 makes that half false and the comment now states the surviving reason (the produce runs before the mutation, the re-store after).",
+        "examples/hello-window-chrome content was entirely untagged, so nothing the binding drew was path-addressable; tagged it."
+      ],
+      "verification_bullets": [
+        "cargo fmt --all --check clean; clippy -p pinion-shell -p pinion-overlay --all-targets --features pinion-runtime/vello 0; cargo doc --workspace --no-deps --document-private-items 0 (4 links repaired locally).",
+        "pinion-shell 205 lib (+6 new) + 161 integration + 12 other targets green; pinion-overlay 72 green.",
+        "CF-1 (producer drops the inset, keeps the chain): exactly 3 FAIL, all geometry (path hover, three-producer agreement, inset); controls + both decorated controls PASS.",
+        "CF-2 (producer keeps the inset, reverts to the 2-step tail): exactly 2 FAIL, both dressing; hover + inset PASS.",
+        "CF-3 (strip ignores the policy gate): 10 FAIL, all negative-control — 2 new + 8 pre-existing R1113/R1121, so the gate was already guarded and the new tests are not its only witness.",
+        "New demo tools/demos/r1467_producer_dresses_the_window.py: 37 assertion executions, ends by closing the window through scene/click {path} on the chrome close tag; discriminates under CF-1 (expected 32, got 0) and CF-2 (producer tag set is {content}).",
+        "Neighbour demos green after rebuild: r1171 (content-header floater), r1462, r1463, r1464, r1465, todomvc_r666."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39",
+        "5.12",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "The one sample is taken before the view runs; focus / drag cannot change during a pure view+layout settle, but that equivalence is argued from purity and pinned only by the suite staying green, not by a test that would fail if a producer mutated them.",
+        "scene/layout {viewport} now reports overlay nodes for a hypothetical size; whether an agent asking \"what would this look like at 800x600\" wants the chrome measured at that size or the current one is unexamined — both answers are defensible and the code picks the former.",
+        "R1466 carry (a) and (b) are cleared by this round: the divergence is gone, so there is nothing left to pin about it, and the from:paint vs viewport-read question is answered no.",
+        "Still open and independent: app_root lift (34 byte-identical example roots), a pre-push demo gate, R1456 residue, R1454 resize_contents_precision, MonospaceMetrics x TextMetrics, remaining QHeaderView signals."
+      ],
+      "publishable_decision_summary": "The RPC produce closure dresses the window like the paint does: one sampled WindowOverlayInputs chain for all three paint-scene producers, so a chromed window's produce path stops reporting geometry one strip-height high",
+      "publishable_changes_bullets": [
+        "Measured first: on a chromed window the RPC produce closure emitted no chrome strip and no content inset (root at y=0 vs the paint's y=32).",
+        "Root cause is the borrow shape, not an oversight: the closure runs after &mut self is split into field borrows, so it can call no &self method; only the ring + drag sample had been hoisted past that split by hand.",
+        "Lifted WindowOverlayInputs (sampled state) + ::apply (the six-step chain: resize border, chrome strip, raised top edge, focus ring, cross-window drop preview, drag image); all three producers now call the one chain.",
+        "The inset and the strip come from ONE sample, so a producer cannot inset without dressing; sample_window_overlay_inputs replaces chrome_inset_height + window_chrome_for.",
+        "3rd-consumer self-grep found apply_chrome_inset at 3 sites (I made the third) -> lifted window_view (owner-wrapped per-window view fn + inset).",
+        "Consumer half: scene/click and scene/hover with {path} resolve through the producer, so a path click on a chromed window landed one strip-height high — on the chrome itself for anything in the top rows.",
+        "R1466 wrote that reuse of the produce scene is rejected because only a stored scene carries the CHROME tag; R1467 makes that half false and the comment now states the surviving reason (the produce runs before the mutation, the re-store after).",
+        "examples/hello-window-chrome content was entirely untagged, so nothing the binding drew was path-addressable; tagged it."
+      ],
+      "publishable_verification_bullets": [
+        "cargo fmt --all --check clean; clippy -p pinion-shell -p pinion-overlay --all-targets --features pinion-runtime/vello 0; cargo doc --workspace --no-deps --document-private-items 0 (4 links repaired locally).",
+        "pinion-shell 205 lib (+6 new) + 161 integration + 12 other targets green; pinion-overlay 72 green.",
+        "CF-1 (producer drops the inset, keeps the chain): exactly 3 FAIL, all geometry (path hover, three-producer agreement, inset); controls + both decorated controls PASS.",
+        "CF-2 (producer keeps the inset, reverts to the 2-step tail): exactly 2 FAIL, both dressing; hover + inset PASS.",
+        "CF-3 (strip ignores the policy gate): 10 FAIL, all negative-control — 2 new + 8 pre-existing R1113/R1121, so the gate was already guarded and the new tests are not its only witness.",
+        "New demo tools/demos/r1467_producer_dresses_the_window.py: 37 assertion executions, ends by closing the window through scene/click {path} on the chrome close tag; discriminates under CF-1 (expected 32, got 0) and CF-2 (producer tag set is {content}).",
+        "Neighbour demos green after rebuild: r1171 (content-header floater), r1462, r1463, r1464, r1465, todomvc_r666."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39",
+        "5.12",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The one sample is taken before the view runs; focus / drag cannot change during a pure view+layout settle, but that equivalence is argued from purity and pinned only by the suite staying green, not by a test that would fail if a producer mutated them.",
+        "scene/layout {viewport} now reports overlay nodes for a hypothetical size; whether an agent asking \"what would this look like at 800x600\" wants the chrome measured at that size or the current one is unexamined — both answers are defensible and the code picks the former.",
+        "R1466 carry (a) and (b) are cleared by this round: the divergence is gone, so there is nothing left to pin about it, and the from:paint vs viewport-read question is answered no.",
+        "Still open and independent: app_root lift (34 byte-identical example roots), a pre-push demo gate, R1456 residue, R1454 resize_contents_precision, MonospaceMetrics x TextMetrics, remaining QHeaderView signals."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

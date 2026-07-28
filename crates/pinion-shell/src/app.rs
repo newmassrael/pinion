@@ -1616,7 +1616,7 @@ impl<V: WidgetView> AppShell<V> {
             // structurally-derived contract holds trivially.
             // R705 §5.39 — the focus ring is no longer stroked here. It is
             // injected upstream as a pointer-transparent overlay
-            // `Scene::Box` by `Substrate::apply_focus_ring` (the final step
+            // `Scene::Box` by `WindowOverlayInputs::apply` (the final step
             // of every paint-scene producer), so `to_vello_cached` paints it
             // via the generic box path and `scene/snapshot from: paint`
             // observes it (§2 #1 + #7). The pre-R705 opaque

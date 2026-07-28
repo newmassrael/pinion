@@ -670,7 +670,7 @@ fn push_control(
 ) {
     // R1358 — the glyph's commands are relative to its rect, so the AUTHORED
     // `rect` is now what places it. That is sound here for one reason: the
-    // whole strip is injected AFTER `compute_layout` (`apply_window_overlays`
+    // whole strip is injected AFTER `compute_layout` (`WindowOverlayInputs::apply`
     // is the last step of every paint-scene producer), so no layout pass
     // overwrites these rects — the same footing `preview/blueprint.rs`
     // documents for a never-laid-out subtree. It is NOT layout intent: the
