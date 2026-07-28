@@ -73360,6 +73360,68 @@
         "The residue note was the SSOT for this list and was stale for two of six items. A note that survives the rounds that close its contents will mis-steer the next entry, as it nearly did here"
       ]
     },
+    "Round 1478": {
+      "decision_summary": "An RPC endpoint owns a NAME, and only ever binds or unbinds its own: a bind at a live path is refused rather than allowed to displace the incumbent, and teardown releases the name exactly once while it still holds it. The inode guard I first wrote for the second half could not fail — a tmpfs recycles the freed inode straight back to the next bind — so the window is removed by ordering instead of detected.",
+      "changes_bullets": [
+        "crates/pinion-rpc-transport/src/lib.rs: `bind_unless_live` replaces the unconditional pre-bind unlink — bind first, and only on `EADDRINUSE` probe the path with a `connect`; a live owner (serving OR withdrawn) is refused with `AddrInUse`, a stale file is reclaimed as before",
+        "crates/pinion-rpc-transport/src/lib.rs: `TransportControl::shutdown` releases the name ONCE and only while the listener is still open (unlink, then signal, then join); the accept thread no longer unlinks at all, and the taken `JoinHandle` is what makes the idempotent second call and the following `Drop` a no-op",
+        "examples/hello-endpoint-identity: the reference consumer — it does NOT `expect` its bind, it reports the outcome as scene data on a `role=status` region (`EndpointClaim` = Bound / Contested / Unavailable), so an app that lost its endpoint still answers \"which path is contested\" over the out-of-band channel",
+        "tools/rpc_verify.py: obligation 3b — `SocketClient` (3rd copy: r1393 `SockClient`, r1469 `connect_socket`+`rpc_over_socket`, r1478) and `texts_of` (3 byte-identical copies, one md5) lifted; r1393 and r1469 migrated and re-run",
+        "NOT changed: exposure policy, in-flight session semantics, or the stale-reclaim behaviour the old unlink existed for"
+      ],
+      "verification_bullets": [
+        "DEFECT MEASURED BEFORE THE FIX: the three new integration tests were written first and FAILED on unmodified code (`a_bind_refuses_to_displace_a_live_endpoint`, `a_withdrawn_endpoint_still_owns_its_name`, and the teardown half), while `a_bind_reclaims_a_stale_socket_file` PASSED — the negative control naming the behaviour that had to survive",
+        "MY FIRST FIX WAS WRONG AND THE DEMO CAUGHT IT. It carried a `SocketIdentity{dev, ino}` guard so teardown would unlink only its own file. Running the demo failed on `gamma: a NEW socket file`, so the inode was measured directly: four bind/unlink cycles on one tmpfs path returned the SAME `st_ino` every time. A tmpfs hands the freed inode number straight back to the next bind, so the guard could not fail and was no guard at all",
+        "SO THE WINDOW IS REMOVED RATHER THAN DETECTED: unlink before signalling the accept loop, while the listener still holds the name, so no successor can be bound at that path yet; and never touch the path again. No inode arithmetic survives in the crate",
+        "THE SAME MEASUREMENT DELETED THREE DEMO ASSERTIONS. The demo had asserted inode equality in phases B/C/E as \"the name did not change hands\"; those would have passed just as happily for a replaced file. They are gone, and the docstring records the measurement and why",
+        "CF-1 (the liveness probe never refuses = the pre-R1478 unconditional unlink): exactly 2 unit failures, both R1478 ownership claims; the stale-reclaim control and the whole teardown half PASSED, so the two halves are independent. Demo FAILED at `beta: the bind was REFUSED`, reporting `bound at <alpha's path>` — the takeover, visible",
+        "CF-2 (teardown unlinks on every call = the old double unlink): exactly 1 unit failure, the teardown test. `drop_unbinds_the_socket_path` passed — normal teardown is unchanged — and CF-1's two tests passed, so each test has its own teeth",
+        "CF-3 (CF-1 plus beta's claim assertions relaxed, so the run reaches the ownership check): FAILED at `beta: clients still reach the INCUMBENT`, `expected 'Instance: alpha', got 'Instance: beta'`. This is the measurement that justifies dropping the inode proxy — the label read back over the socket catches the takeover ON ITS OWN",
+        "gate: `cargo fmt --all --check` clean; clippy clean on both changed crates with `-D pedantic`; `cargo doc --workspace --no-deps --document-private-items` exit 0 (two pub-doc links to the private `bind_unless_live` were rewritten as code spans); pinion-rpc-transport 16 integration + 2 unit + 1 doc, hello-endpoint-identity 3 unit",
+        "demos: r1478_endpoint_identity PASS (32 assertion sites, 5 phases, 2 concurrent instances), and both migrated neighbours re-run — r1469_transport_exposure PASS, r1393_conn_lifecycle PASS"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.16",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The ORDERING claim in `shutdown` (unlink while the listener is open, so no successor can have bound) is argued from the bind protocol, not measured: the window it closes is sub-scheduler and a ZERO-FLAKE test will not race for it. What IS pinned deterministically is the double-unlink hazard the ordering also removes",
+        "Two racing successors reclaiming the SAME stale path can still displace each other (both probe, both find nobody, both unlink, both bind). Inherent to the standard AF_UNIX stale-recovery protocol without a lock file; strictly narrower than the defect fixed here, which struck LIVE endpoints",
+        "The liveness probe costs the incumbent one accepted-and-closed connection (an `on_connect`/`on_disconnect` pair with no frames). Documented, and paid only by a bind that was about to displace something; no demo observes it because `hello-endpoint-identity` does not track connections",
+        "`text_of` remains duplicated in r1469 and r1478 — two copies, below the 3rd-identical lift trigger, and each demo picks its own \"which text counts\" rule"
+      ],
+      "publishable_decision_summary": "An RPC endpoint owns a NAME, and only ever binds or unbinds its own: a bind at a live path is refused rather than allowed to displace the incumbent, and teardown releases the name exactly once while it still holds it. The inode guard I first wrote for the second half could not fail — a tmpfs recycles the freed inode straight back to the next bind — so the window is removed by ordering instead of detected.",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc-transport/src/lib.rs: `bind_unless_live` replaces the unconditional pre-bind unlink — bind first, and only on `EADDRINUSE` probe the path with a `connect`; a live owner (serving OR withdrawn) is refused with `AddrInUse`, a stale file is reclaimed as before",
+        "crates/pinion-rpc-transport/src/lib.rs: `TransportControl::shutdown` releases the name ONCE and only while the listener is still open (unlink, then signal, then join); the accept thread no longer unlinks at all, and the taken `JoinHandle` is what makes the idempotent second call and the following `Drop` a no-op",
+        "examples/hello-endpoint-identity: the reference consumer — it does NOT `expect` its bind, it reports the outcome as scene data on a `role=status` region (`EndpointClaim` = Bound / Contested / Unavailable), so an app that lost its endpoint still answers \"which path is contested\" over the out-of-band channel",
+        "tools/rpc_verify.py: obligation 3b — `SocketClient` (3rd copy: r1393 `SockClient`, r1469 `connect_socket`+`rpc_over_socket`, r1478) and `texts_of` (3 byte-identical copies, one md5) lifted; r1393 and r1469 migrated and re-run",
+        "NOT changed: exposure policy, in-flight session semantics, or the stale-reclaim behaviour the old unlink existed for"
+      ],
+      "publishable_verification_bullets": [
+        "DEFECT MEASURED BEFORE THE FIX: the three new integration tests were written first and FAILED on unmodified code (`a_bind_refuses_to_displace_a_live_endpoint`, `a_withdrawn_endpoint_still_owns_its_name`, and the teardown half), while `a_bind_reclaims_a_stale_socket_file` PASSED — the negative control naming the behaviour that had to survive",
+        "MY FIRST FIX WAS WRONG AND THE DEMO CAUGHT IT. It carried a `SocketIdentity{dev, ino}` guard so teardown would unlink only its own file. Running the demo failed on `gamma: a NEW socket file`, so the inode was measured directly: four bind/unlink cycles on one tmpfs path returned the SAME `st_ino` every time. A tmpfs hands the freed inode number straight back to the next bind, so the guard could not fail and was no guard at all",
+        "SO THE WINDOW IS REMOVED RATHER THAN DETECTED: unlink before signalling the accept loop, while the listener still holds the name, so no successor can be bound at that path yet; and never touch the path again. No inode arithmetic survives in the crate",
+        "THE SAME MEASUREMENT DELETED THREE DEMO ASSERTIONS. The demo had asserted inode equality in phases B/C/E as \"the name did not change hands\"; those would have passed just as happily for a replaced file. They are gone, and the docstring records the measurement and why",
+        "CF-1 (the liveness probe never refuses = the pre-R1478 unconditional unlink): exactly 2 unit failures, both R1478 ownership claims; the stale-reclaim control and the whole teardown half PASSED, so the two halves are independent. Demo FAILED at `beta: the bind was REFUSED`, reporting `bound at <alpha's path>` — the takeover, visible",
+        "CF-2 (teardown unlinks on every call = the old double unlink): exactly 1 unit failure, the teardown test. `drop_unbinds_the_socket_path` passed — normal teardown is unchanged — and CF-1's two tests passed, so each test has its own teeth",
+        "CF-3 (CF-1 plus beta's claim assertions relaxed, so the run reaches the ownership check): FAILED at `beta: clients still reach the INCUMBENT`, `expected 'Instance: alpha', got 'Instance: beta'`. This is the measurement that justifies dropping the inode proxy — the label read back over the socket catches the takeover ON ITS OWN",
+        "gate: `cargo fmt --all --check` clean; clippy clean on both changed crates with `-D pedantic`; `cargo doc --workspace --no-deps --document-private-items` exit 0 (two pub-doc links to the private `bind_unless_live` were rewritten as code spans); pinion-rpc-transport 16 integration + 2 unit + 1 doc, hello-endpoint-identity 3 unit",
+        "demos: r1478_endpoint_identity PASS (32 assertion sites, 5 phases, 2 concurrent instances), and both migrated neighbours re-run — r1469_transport_exposure PASS, r1393_conn_lifecycle PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.16",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The ORDERING claim in `shutdown` (unlink while the listener is open, so no successor can have bound) is argued from the bind protocol, not measured: the window it closes is sub-scheduler and a ZERO-FLAKE test will not race for it. What IS pinned deterministically is the double-unlink hazard the ordering also removes",
+        "Two racing successors reclaiming the SAME stale path can still displace each other (both probe, both find nobody, both unlink, both bind). Inherent to the standard AF_UNIX stale-recovery protocol without a lock file; strictly narrower than the defect fixed here, which struck LIVE endpoints",
+        "The liveness probe costs the incumbent one accepted-and-closed connection (an `on_connect`/`on_disconnect` pair with no frames). Documented, and paid only by a bind that was about to displace something; no demo observes it because `hello-endpoint-identity` does not track connections",
+        "`text_of` remains duplicated in r1469 and r1478 — two copies, below the 3rd-identical lift trigger, and each demo picks its own \"which text counts\" rule"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

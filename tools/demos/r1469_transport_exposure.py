@@ -55,13 +55,10 @@ Run from the workspace root:
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import socket
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -69,9 +66,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    SocketClient,
     assert_eq,
     find_by_tag,
     run_demo,
+    texts_of,
     wait_snap,
 )
 
@@ -97,28 +96,11 @@ REFUSAL_TIMEOUT = 5.0
 # ── scene-as-data extraction (matches the binding's SSOT text fns) ──────────
 
 
-def _texts_of(node: Any) -> list[str]:
-    """All `Text.content` strings under `node`, depth-first."""
-    out: list[str] = []
-    if not isinstance(node, dict):
-        return out
-    content = node.get("content")
-    if isinstance(content, str):
-        out.append(content)
-    children = node.get("children")
-    if isinstance(children, list):
-        for child in children:
-            out.extend(_texts_of(child))
-    if isinstance(content, dict):  # Scroll.content is a node, not a string
-        out.extend(_texts_of(content))
-    return out
-
-
 def text_of(snap: Any, tag: str) -> Optional[str]:
     node = find_by_tag(snap, tag)
     if node is None:
         return None
-    texts = _texts_of(node)
+    texts = texts_of(node)
     return texts[0] if texts else None
 
 
@@ -149,57 +131,11 @@ def live_ids(snap: Any) -> list[int]:
     if node is None:
         return []
     ids: list[int] = []
-    for text in _texts_of(node):
+    for text in texts_of(node):
         m = re.match(r"conn #(\d+)", text)
         if m:
             ids.append(int(m.group(1)))
     return sorted(ids)
-
-
-# ── a raw AF_UNIX client, the thing an exposure policy admits or refuses ────
-
-
-def connect_socket(path: str) -> socket.socket:
-    """Open a real AF_UNIX connection to `path`, retrying only while the file
-    is still absent (the app binds during boot). Succeeding here says nothing
-    about exposure: a withdrawn endpoint is BOUND, so the OS-level connect
-    completes either way — the server's response is what differs."""
-    deadline = time.monotonic() + 5.0
-    while True:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(REFUSAL_TIMEOUT)
-        try:
-            sock.connect(path)
-            return sock
-        except OSError:
-            sock.close()
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(0.02)
-
-
-def rpc_over_socket(sock: socket.socket, method: str, params: Any, rid: int) -> Optional[dict]:
-    """Send one JSON-RPC frame over `sock` and return the response, or `None`
-    if the endpoint refused service (closed the connection / reset it)."""
-    env: dict[str, Any] = {"jsonrpc": "2.0", "id": rid, "method": method}
-    if params is not None:
-        env["params"] = params
-    try:
-        sock.sendall((json.dumps(env) + "\n").encode())
-    except OSError:
-        # The refusal beat our write. The read below is the real check, but
-        # there is nothing left to read on a socket that is already gone.
-        return None
-    buf = b""
-    while b"\n" not in buf:
-        try:
-            chunk = sock.recv(4096)
-        except (ConnectionResetError, TimeoutError):
-            return None
-        if not chunk:  # EOF: closed with no response — refused.
-            return None
-        buf += chunk
-    return json.loads(buf.split(b"\n", 1)[0].decode())
 
 
 def fresh_socket_path(label: str) -> Path:
@@ -241,10 +177,10 @@ def phase_withdrawn(sock_path: Path) -> None:
         assert find_by_tag(snap, LIST_TAG) is not None, "connections list present"
 
         # A real client: the OS-level connect succeeds (bound) ...
-        sock = connect_socket(str(sock_path))
+        sock = SocketClient(sock_path, timeout=REFUSAL_TIMEOUT)
         try:
             # ... and the endpoint refuses to serve it.
-            resp = rpc_over_socket(sock, "scene/snapshot", {"path": "", "from": "state"}, 11)
+            resp = sock.rpc("scene/snapshot", {"path": "", "from": "state"}, 11)
             assert resp is None, "withdrawn: the client's frame got NO response"
         finally:
             sock.close()
@@ -258,9 +194,9 @@ def phase_withdrawn(sock_path: Path) -> None:
 
         # A second client fares exactly the same — the refusal is the policy,
         # not a one-off boot artefact.
-        sock2 = connect_socket(str(sock_path))
+        sock2 = SocketClient(sock_path, timeout=REFUSAL_TIMEOUT)
         try:
-            resp2 = rpc_over_socket(sock2, "scene/snapshot", {"path": "", "from": "state"}, 12)
+            resp2 = sock2.rpc("scene/snapshot", {"path": "", "from": "state"}, 12)
             assert resp2 is None, "withdrawn: a second client is refused too"
         finally:
             sock2.close()
@@ -301,10 +237,10 @@ def phase_serving(sock_path: Path) -> None:
         assert_eq(status_count(snap), 0, "serving: nothing attached yet")
         assert_eq(live_ids(snap), [], "serving: no live ids yet")
 
-        sock = connect_socket(str(sock_path))
+        sock = SocketClient(sock_path, timeout=REFUSAL_TIMEOUT)
         try:
             # The step that returned None in (A) returns a real response here.
-            resp = rpc_over_socket(sock, "scene/snapshot", {"path": "", "from": "state"}, 21)
+            resp = sock.rpc("scene/snapshot", {"path": "", "from": "state"}, 21)
             assert resp is not None, "serving: the identical client IS served"
             assert_eq(resp.get("id"), 21, "serving: the response echoes the request id")
             assert "result" in resp, "serving: the frame dispatched through the real core"

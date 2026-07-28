@@ -56,6 +56,7 @@ members = [
     "examples/hello-paged-stream",
     "examples/hello-live-data",
     "examples/hello-conn-lifecycle",
+    "examples/hello-endpoint-identity",
     "examples/hello-lazy-tree",
     "examples/hello-million-row",
     "examples/hello-asset-browser",

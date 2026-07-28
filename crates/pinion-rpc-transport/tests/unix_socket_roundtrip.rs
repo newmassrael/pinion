@@ -487,3 +487,137 @@ fn two_connections_get_distinct_ids_and_independent_disconnect() {
 
     drop(control);
 }
+
+// ─── R1478: the endpoint's identity at the path ─────────────────────────────
+
+#[test]
+fn a_bind_refuses_to_displace_a_live_endpoint() {
+    // R1478 — the path is the endpoint's NAME, and a name has one owner. A
+    // second bind at a live path used to unlink the incumbent's socket file
+    // and bind its own in place: every later client reached the newcomer,
+    // while the incumbent kept a listener nobody could ever reach again.
+    // Refusing is what makes a fixed-path endpoint an identity rather than a
+    // last-writer-wins slot.
+    let path = unique_socket_path();
+    let incumbent = UnixSocketTransport::serve(&path, Arc::new(EchoIngress)).unwrap();
+
+    let Err(err) = UnixSocketTransport::serve(&path, Arc::new(EchoIngress)) else {
+        panic!("a live path must not be taken over");
+    };
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::AddrInUse,
+        "the refusal is the OS's own vocabulary for a contested name",
+    );
+
+    // The incumbent still owns the name: only its listener is bound to this
+    // path, so being served here proves the name never changed hands.
+    let mut stream = connect(&path);
+    send_line(&mut stream, "still-the-incumbent");
+    assert_eq!(
+        read_line(&stream).unwrap(),
+        "echo:still-the-incumbent",
+        "the incumbent kept serving its own path",
+    );
+
+    drop(incumbent);
+}
+
+#[test]
+fn a_withdrawn_endpoint_still_owns_its_name() {
+    // R1478 × R-PR48 — `Withdrawn` refuses SERVICE, not the name: the socket
+    // is bound, which is the whole point of "always there, withdrawn". So a
+    // second bind must be refused exactly as it is against a serving endpoint
+    // — otherwise "bound but refusing service" would be a policy any other
+    // process on the box could revoke by binding over it.
+    //
+    // This is also why the liveness probe is a `connect`: it succeeds against
+    // a withdrawn endpoint (the listen backlog is what answers), so it tests
+    // ownership of the name rather than willingness to serve.
+    let path = unique_socket_path();
+    let incumbent =
+        UnixSocketTransport::serve_with_exposure(&path, Arc::new(EchoIngress), Exposure::Withdrawn)
+            .unwrap();
+
+    let Err(err) = UnixSocketTransport::serve(&path, Arc::new(EchoIngress)) else {
+        panic!("a withdrawn endpoint's name is still taken");
+    };
+    assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+
+    // ... and it is still the withdrawn incumbent behind the name, not a
+    // newcomer that quietly took it and serves.
+    let mut stream = connect(&path);
+    send_line(&mut stream, "would-be-served-by-a-usurper");
+    assert_eq!(
+        read_line(&stream),
+        None,
+        "the withdrawn incumbent still answers for this path",
+    );
+
+    drop(incumbent);
+}
+
+#[test]
+fn a_bind_reclaims_a_stale_socket_file() {
+    // R1478 negative control — the behaviour the old unconditional unlink was
+    // FOR must survive: a crashed run leaves a socket file with nobody behind
+    // it, and a fixed-path endpoint has to be re-bindable across that. Here
+    // the leftover is made deterministically (std does not unlink an
+    // `AF_UNIX` path when the listener drops), so no crash is simulated.
+    let path = unique_socket_path();
+    {
+        let leftover = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        drop(leftover);
+    }
+    assert!(path.exists(), "the leftover file is the precondition");
+
+    let control = UnixSocketTransport::serve(&path, Arc::new(EchoIngress))
+        .expect("a stale path is still reclaimable");
+    let mut stream = connect(&path);
+    send_line(&mut stream, "after-reclaiming");
+    assert_eq!(read_line(&stream).unwrap(), "echo:after-reclaiming");
+
+    drop(control);
+}
+
+#[test]
+fn a_departed_endpoint_never_unlinks_the_path_a_second_time() {
+    // R1478 — the other half of the same invariant. Teardown used to unlink
+    // the path TWICE (the accept thread on its way out, then `shutdown` after
+    // the join), and between those two moments the path is free — so a
+    // successor could bind it and the second unlink would delete the
+    // successor's socket, leaving a live app nobody can reach.
+    //
+    // Staged rather than raced, and entirely through the public API: the
+    // departing endpoint completes its release, a successor takes the name,
+    // and only then does the departing control run its second teardown (the
+    // `Drop` that always follows an explicit `shutdown`). ZERO-FLAKE — no
+    // timing is relied on, and no external actor touches the path.
+    let path = unique_socket_path();
+    let mut departing = UnixSocketTransport::serve(&path, Arc::new(EchoIngress)).unwrap();
+
+    // The release: after this the name is free and the departing endpoint has
+    // no further business with it.
+    departing.shutdown();
+    assert!(!path.exists(), "shutdown released the name");
+
+    let successor = UnixSocketTransport::serve(&path, Arc::new(EchoIngress)).unwrap();
+
+    // The second teardown — via `Drop`, exactly as a consumer's scope end
+    // would run it.
+    drop(departing);
+
+    assert!(
+        path.exists(),
+        "the successor's socket file outlived the departed endpoint's Drop",
+    );
+    let mut stream = connect(&path);
+    send_line(&mut stream, "successor-still-reachable");
+    assert_eq!(
+        read_line(&stream).unwrap(),
+        "echo:successor-still-reachable",
+        "a departed endpoint took only its own name with it",
+    );
+
+    drop(successor);
+}

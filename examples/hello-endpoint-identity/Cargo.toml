@@ -1,0 +1,31 @@
+[package]
+name = "hello-endpoint-identity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1478 §5.7 reference consumer — a fixed-path RPC endpoint is an identity, not a last-writer-wins slot: a second instance aimed at a live path is refused rather than taking the name, and reports the contested bind into the scene as data over the out-of-band channel"
+publish = false
+
+[[bin]]
+name = "hello-endpoint-identity"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1478 §5.7 — the winit-free RPC ingress seam this example mounts a socket on.
+pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
+# R1478 §5.7 — the Unix-socket transport whose bind-time endpoint identity is
+# the subject of this example.
+pinion-rpc-transport = { path = "../../crates/pinion-rpc-transport", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

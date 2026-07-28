@@ -42,13 +42,10 @@ observed post-action state; a private per-pid socket path. >=30 assertions.
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import socket
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -56,9 +53,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    SocketClient,
     assert_eq,
     find_by_tag,
     run_demo,
+    texts_of,
     wait_snap,
 )
 
@@ -73,28 +72,11 @@ HINT_TAG = "conn_hint"
 # ── scene-as-data extraction (matches the binding's SSOT text fns) ──────────
 
 
-def _texts_of(node: Any) -> list[str]:
-    """All `Text.content` strings under `node`, depth-first."""
-    out: list[str] = []
-    if not isinstance(node, dict):
-        return out
-    content = node.get("content")
-    if isinstance(content, str):
-        out.append(content)
-    children = node.get("children")
-    if isinstance(children, list):
-        for child in children:
-            out.extend(_texts_of(child))
-    if isinstance(content, dict):  # Scroll.content is a node, not a string
-        out.extend(_texts_of(content))
-    return out
-
-
 def status_text(snap: Any) -> Optional[str]:
     node = find_by_tag(snap, STATUS_TAG)
     if node is None:
         return None
-    texts = _texts_of(node)
+    texts = texts_of(node)
     return texts[0] if texts else None
 
 
@@ -112,7 +94,7 @@ def live_ids(snap: Any) -> list[int]:
     if node is None:
         return []
     ids: list[int] = []
-    for text in _texts_of(node):
+    for text in texts_of(node):
         m = re.match(r"conn #(\d+)", text)
         if m:
             ids.append(int(m.group(1)))
@@ -121,49 +103,7 @@ def live_ids(snap: Any) -> list[int]:
 
 def list_texts(snap: Any) -> list[str]:
     node = find_by_tag(snap, LIST_TAG)
-    return _texts_of(node) if node is not None else []
-
-
-# ── a raw AF_UNIX client connection (the tracked-client analog) ─────────────
-
-
-class SockClient:
-    """One line-framed JSON-RPC 2.0 connection straight to the app's socket —
-    a tracked client, distinct from the harness's stdin observer channel."""
-
-    def __init__(self, path: str) -> None:
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(5.0)
-        # `serve` returns before the accept thread has necessarily reached its
-        # first `accept()`, so a connect can race the bind — bounded retry.
-        deadline = time.monotonic() + 5.0
-        while True:
-            try:
-                self.sock.connect(path)
-                break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.02)
-        self._buf = b""
-
-    def rpc(self, method: str, params: Any = None, rid: int = 1) -> dict:
-        env: dict[str, Any] = {"jsonrpc": "2.0", "id": rid, "method": method}
-        if params is not None:
-            env["params"] = params
-        self.sock.sendall((json.dumps(env) + "\n").encode())
-        while b"\n" not in self._buf:
-            chunk = self.sock.recv(4096)
-            if not chunk:
-                raise AssertionError("socket closed before a response arrived")
-            self._buf += chunk
-        line, self._buf = self._buf.split(b"\n", 1)
-        return json.loads(line.decode())
-
-    def close(self) -> None:
-        # A plain close is the crash analog: the server's reader hits EOF and
-        # must fire on_disconnect for THIS connection's id.
-        self.sock.close()
+    return texts_of(node) if node is not None else []
 
 
 def body() -> None:
@@ -175,7 +115,7 @@ def body() -> None:
     except FileNotFoundError:
         pass
 
-    clients: list[SockClient] = []
+    clients: list[SocketClient] = []
     try:
         with RpcSubprocess(EXAMPLE, env={SOCK_ENV: str(sock_path)}, boot_grace=1.0) as tf:
             # ── (A) baseline: the observer sees 0 attached ──────────────────
@@ -200,14 +140,15 @@ def body() -> None:
             hint = find_by_tag(snap, HINT_TAG)
             assert hint is not None, "hint region present"
             assert any(
-                str(sock_path) in t for t in _texts_of(hint)
+                str(sock_path) in t for t in texts_of(hint)
             ), "hint shows the bound socket path"
             assert sock_path.exists(), "the app bound the Unix socket file"
 
             # ── (B) open client A + a frame over it round-trips ─────────────
-            a = SockClient(str(sock_path))
+            a = SocketClient(sock_path)
             clients.append(a)
             resp_a = a.rpc("scene/snapshot", {"path": "", "from": "state"}, rid=11)
+            assert resp_a is not None, "A: a serving endpoint answered the frame"
             assert_eq(resp_a.get("id"), 11, "A: response echoes the request id")
             assert "result" in resp_a, "A: a frame over the socket dispatched + routed back"
             assert "error" not in resp_a, "A: the socket frame succeeded"
@@ -229,9 +170,10 @@ def body() -> None:
             ), "A's id row renders via the conn_row_text SSOT"
 
             # ── (C) open client B: two distinct ids ─────────────────────────
-            b = SockClient(str(sock_path))
+            b = SocketClient(sock_path)
             clients.append(b)
             resp_b = b.rpc("scene/snapshot", {"path": "", "from": "state"}, rid=22)
+            assert resp_b is not None, "B: a serving endpoint answered the frame"
             assert_eq(resp_b.get("id"), 22, "B: response echoes the request id")
             assert "result" in resp_b, "B: a frame over the socket dispatched + routed back"
 

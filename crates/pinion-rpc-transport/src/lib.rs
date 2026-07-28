@@ -71,6 +71,54 @@ use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply};
 /// TUI shell already uses for its own event source.
 const ACCEPT_POLL: Duration = Duration::from_millis(50);
 
+/// R1478 §5.7 — bind a listener at `path`, reclaiming the path only when no
+/// live endpoint owns it.
+///
+/// The fixed-path endpoint has two indistinguishable-by-`stat` states to tell
+/// apart, and only one syscall tells them apart: a **stale** socket file left
+/// by a crashed run (nothing behind it) versus a **live** endpoint that is
+/// serving right now. `bind` reports both as `EADDRINUSE`, so the ambiguity
+/// is resolved by asking the path itself — a `connect` that succeeds means
+/// somebody is listening.
+///
+/// The probe runs *only* on `EADDRINUSE`, so the ordinary case (a free path)
+/// costs nothing and disturbs nobody. When it does run against a live
+/// endpoint it costs that endpoint one accepted-and-immediately-closed
+/// connection — an `on_connect` / `on_disconnect` pair carrying no frames.
+/// That is the price of the only liveness test `AF_UNIX` offers without a
+/// side-channel lock file, and it is paid only by a bind that was about to
+/// displace something.
+///
+/// A `connect` against a [`Withdrawn`](Exposure::Withdrawn) endpoint also
+/// succeeds — the listen backlog answers, not the accept loop — which is the
+/// wanted answer: withdrawn refuses *service*, it still owns the *name*.
+fn bind_unless_live(path: &Path) -> io::Result<UnixListener> {
+    match UnixListener::bind(path) {
+        Ok(listener) => Ok(listener),
+        Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
+            if UnixStream::connect(path).is_ok() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!(
+                        "{} is held by a live RPC endpoint; refusing to displace it",
+                        path.display()
+                    ),
+                ));
+            }
+            // Nobody is behind it: a genuine leftover, so reclaim the path.
+            // A removal failure is propagated rather than swallowed — the
+            // endpoint cannot exist, and the caller should hear why.
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+            UnixListener::bind(path)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// R-PR48 §5.7 — whether a bound endpoint *serves* the connections it
 /// accepts: the transport-policy state, declared at bind and toggleable at
 /// runtime.
@@ -171,11 +219,18 @@ impl UnixSocketTransport {
     /// (crash-safe: however the client dies, its reader thread ends and
     /// signals). A stateful ingress uses these to keep per-connection state.
     ///
-    /// A stale socket file left at `path` by a previous crashed run is
-    /// removed before binding. The returned [`TransportControl`] owns the
-    /// endpoint's lifetime: keep it alive to keep serving, toggle
-    /// [`TransportControl::set_exposure`] for runtime on/off, or drop it to
-    /// unbind and stop.
+    /// R1478 — the path is the endpoint's **name**, and a name has one owner.
+    /// A *stale* socket file left at `path` by a previous crashed run is
+    /// reclaimed; a *live* endpoint already bound there is never displaced —
+    /// the bind fails with [`io::ErrorKind::AddrInUse`] instead (see
+    /// `bind_unless_live` for how the two are told apart, and why a
+    /// withdrawn endpoint counts as live). Symmetrically, the name is
+    /// released exactly once and only while this endpoint still holds it —
+    /// see [`TransportControl::shutdown`].
+    ///
+    /// The returned [`TransportControl`] owns the endpoint's lifetime: keep it
+    /// alive to keep serving, toggle [`TransportControl::set_exposure`] for
+    /// runtime on/off, or drop it to unbind and stop.
     ///
     /// # Why exposure is an argument and not a post-bind call
     ///
@@ -197,18 +252,15 @@ impl UnixSocketTransport {
     /// Returns the underlying [`io::Error`] if the socket cannot be bound
     /// at `path` (permission, path too long, parent dir missing), if the
     /// listener cannot be set non-blocking, or if the accept thread cannot
-    /// be spawned.
+    /// be spawned. R1478 — [`io::ErrorKind::AddrInUse`] specifically means a
+    /// live endpoint already owns `path`.
     pub fn serve_with_exposure(
         path: impl AsRef<Path>,
         ingress: Arc<dyn RpcIngress>,
         exposure: Exposure,
     ) -> io::Result<TransportControl> {
         let path = path.as_ref().to_path_buf();
-        // A leftover socket file from a crashed run would make `bind` fail
-        // with EADDRINUSE; clearing it first makes a fixed-path endpoint
-        // reliably re-bindable across restarts.
-        let _ = fs::remove_file(&path);
-        let listener = UnixListener::bind(&path)?;
+        let listener = bind_unless_live(&path)?;
         // Non-blocking accept so the loop can observe `shutdown` between
         // polls without a blocked syscall pinning the thread.
         listener.set_nonblocking(true)?;
@@ -231,15 +283,13 @@ impl UnixSocketTransport {
         let accept = {
             let serving = Arc::clone(&serving);
             let shutdown = Arc::clone(&shutdown);
-            let path = path.clone();
+            // R1478 — this thread deliberately does NOT unlink the path on its
+            // way out. Releasing the name is `TransportControl::shutdown`'s
+            // single responsibility, and it does it while the listener is
+            // still open; see there for why that ordering is the invariant.
             thread::Builder::new()
                 .name("pinion-rpc-unix-accept".to_owned())
-                .spawn(move || {
-                    accept_loop(&listener, &ingress, &serving, &shutdown);
-                    // Best-effort: remove the socket file when serving
-                    // ends so the path is free for the next bind.
-                    let _ = fs::remove_file(&path);
-                })?
+                .spawn(move || accept_loop(&listener, &ingress, &serving, &shutdown))?
         };
 
         Ok(TransportControl {
@@ -264,6 +314,9 @@ pub struct TransportControl {
     serving: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     path: PathBuf,
+    /// The accept thread, and — because it is taken by the first
+    /// [`shutdown`](TransportControl::shutdown) — this endpoint's "do I still
+    /// own the name?" bit (R1478).
     accept: Option<JoinHandle<()>>,
 }
 
@@ -325,16 +378,44 @@ impl TransportControl {
 
     /// Stop serving, unbind the socket, and join the accept thread.
     /// Idempotent; also run by [`Drop`].
+    ///
+    /// # R1478 — releasing the name exactly once, while still holding it
+    ///
+    /// Teardown used to unlink `path` twice: once as the accept thread wound
+    /// down, once here after the join. Between those two moments the path was
+    /// free, so a *successor* could bind it — and the second unlink then
+    /// deleted the successor's socket, leaving a live app nobody could reach.
+    ///
+    /// The window is removed rather than detected. Detecting it would mean
+    /// comparing the file's identity before unlinking, and `(dev, ino)` cannot
+    /// carry that weight: a `tmpfs` — where these sockets live — hands the
+    /// freed inode number straight back to the next `bind`, so a successor's
+    /// socket file routinely presents the *same* inode the departed one had.
+    /// A check that cannot fail is not a guard.
+    ///
+    /// So instead: unlink **before** signalling the accept loop, while the
+    /// listener is still open. A successor attempting to bind at that moment
+    /// meets a live endpoint and is refused (`bind_unless_live`), so nothing
+    /// can be bound at `path` except this endpoint. After the unlink the path
+    /// is free and this endpoint never touches it again — the taken
+    /// [`JoinHandle`] is what makes "never again" hold across the idempotent
+    /// second call and the [`Drop`] that follows an explicit `shutdown`.
+    ///
+    /// Connections already accepted are unaffected, matching
+    /// [`set_exposure`](Self::set_exposure): releasing the name refuses future
+    /// arrivals, it does not evict live sessions.
     pub fn shutdown(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.accept.take() {
-            // The accept loop observes `shutdown` within one `ACCEPT_POLL`
-            // and then removes the socket file itself.
-            let _ = handle.join();
-        }
-        // Best-effort in case the accept thread never spawned / already
-        // exited; removing an absent file is harmless.
+        let Some(handle) = self.accept.take() else {
+            // Already shut down: the name was released then, and whatever
+            // holds it now is not ours to remove.
+            return;
+        };
+        // Ordered deliberately — see the note above. Best-effort: an unlink
+        // failure leaves a stale file, which the next bind reclaims.
         let _ = fs::remove_file(&self.path);
+        self.shutdown.store(true, Ordering::Relaxed);
+        // The accept loop observes `shutdown` within one `ACCEPT_POLL`.
+        let _ = handle.join();
     }
 }
 

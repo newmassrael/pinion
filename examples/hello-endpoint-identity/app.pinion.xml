@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1478 §5.7 endpoint identity: pinion-forge renderer manifest for
+  hello-endpoint-identity. Emits `HelloEndpointIdentityRenderer` (Vello-backed).
+  Same manifest shape as hello-conn-lifecycle — only the struct name diverges;
+  the scene structure lives entirely in the binding's view fn.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloEndpointIdentityRenderer"
+        backend="vello"/>

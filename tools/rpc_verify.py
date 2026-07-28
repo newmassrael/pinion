@@ -30,6 +30,7 @@ import json
 import queue
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -235,6 +236,79 @@ def write_fontconfig(root: Path, faces: tuple[str, ...] = ()) -> Path:
         "</fontconfig>\n"
     )
     return conf
+
+
+class SocketClient(AbstractContextManager["SocketClient"]):
+    """One line-framed JSON-RPC 2.0 connection straight to an app's `AF_UNIX`
+    socket — the *client* channel, as distinct from `RpcSubprocess`'s
+    out-of-band stdin *observer* channel.
+
+    R1478 obligation-3b lift: r1393 (`SockClient`) and r1469
+    (`connect_socket` + `rpc_over_socket`) had already wired this by hand, and
+    the R1478 demo was the third site. The wiring is mechanical — an `AF_UNIX`
+    stream, a bounded connect retry, one JSON line out, one JSON line back —
+    so it is shared; what a *closed* connection means is the caller's opinion
+    and stays at the call site (see `rpc`).
+
+    The bounded connect retry is not politeness: `serve` returns before the
+    accept thread has necessarily reached its first `accept()`, and an app
+    binds during boot, so a connect can legitimately arrive early. Bounded and
+    deterministic — never a fixed sleep.
+    """
+
+    def __init__(self, path: str | Path, *, timeout: float = 5.0) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(timeout)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                self.sock.connect(str(path))
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    self.sock.close()
+                    raise
+                time.sleep(0.02)
+        self._buf = b""
+
+    def rpc(self, method: str, params: Any = None, rid: int = 1) -> Optional[dict]:
+        """Send one frame and return the response, or `None` if the endpoint
+        refused service — closed or reset the connection without answering.
+
+        `None` is a *mechanical* report ("nothing came back"), not a verdict: a
+        demo asserting the endpoint serves writes `assert resp is not None`, and
+        one asserting it refuses (a withdrawn endpoint, R-PR48) writes
+        `assert resp is None`. Raising here instead would make the refusing
+        demos catch exceptions to express their own passing case.
+        """
+        env: dict[str, Any] = {"jsonrpc": "2.0", "id": rid, "method": method}
+        if params is not None:
+            env["params"] = params
+        try:
+            self.sock.sendall((json.dumps(env) + "\n").encode())
+        except OSError:
+            # The refusal beat our write. There is nothing left to read on a
+            # socket that is already gone.
+            return None
+        while b"\n" not in self._buf:
+            try:
+                chunk = self.sock.recv(4096)
+            except (ConnectionResetError, TimeoutError):
+                return None
+            if not chunk:  # EOF: closed with no response.
+                return None
+            self._buf += chunk
+        line, self._buf = self._buf.split(b"\n", 1)
+        return json.loads(line.decode())
+
+    def close(self) -> None:
+        """Close the connection. A plain close is the crash analog: the
+        server's reader hits EOF and must fire `on_disconnect` for THIS
+        connection's id."""
+        self.sock.close()
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
 
 
 class RpcError(Exception):
@@ -1581,6 +1655,36 @@ def wait_stderr(
         interval=interval,
         desc=desc or f"stderr contains {needle!r}",
     )
+
+
+def texts_of(node: Any) -> list[str]:
+    """Every `Text.content` string under `node`, depth-first.
+
+    The read half of `find_by_tag`: that answers *which* node, this answers
+    *what it says*. Descends `Container.children` and `Scroll.content`, and
+    treats a string `content` as the text itself rather than a child — the
+    same wire-shape distinction `find_by_tag` makes.
+
+    R1478 obligation-3b lift: r1393, r1469 and r1478 each carried a
+    byte-identical private copy (measured — one md5 across all three). Purely
+    mechanical tree walking with no per-demo opinion in it, so it is shared;
+    the one-line `find_by_tag(...)` + `texts_of(...)[0]` convenience each demo
+    wraps it in stays local, being only two copies and each picking its own
+    "which text counts" rule.
+    """
+    out: list[str] = []
+    if not isinstance(node, dict):
+        return out
+    content = node.get("content")
+    if isinstance(content, str):
+        out.append(content)
+    children = node.get("children")
+    if isinstance(children, list):
+        for child in children:
+            out.extend(texts_of(child))
+    if isinstance(content, dict):  # Scroll.content is a node, not a string
+        out.extend(texts_of(content))
+    return out
 
 
 def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
