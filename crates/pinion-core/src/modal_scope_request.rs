@@ -119,7 +119,16 @@ thread_local! {
 /// that flips the application's `dialog_open` signal — it passes the
 /// dialog's focusable control tags (in Tab order) so the shell
 /// auto-focuses the first control and traps Tab inside the dialog.
+///
+/// R1468 — inert while
+/// [`is_simulating`](crate::reactive::is_simulating), for the reason
+/// [`crate::focus_request::request`] documents: a stack edit committed
+/// from a scenario or a mirror is a real change to a world the caller
+/// only asked about.
 pub fn open(members: Vec<String>) {
+    if crate::reactive::is_simulating() {
+        return;
+    }
     PENDING_MODAL_REQUESTS.with_borrow_mut(|q| q.push(ModalRequest::Open { members }));
 }
 
@@ -131,7 +140,16 @@ pub fn open(members: Vec<String>) {
 /// shell pops the scope and restores the invoker's focus. A reducer
 /// handing one modal off to another calls this and then [`open`] in the
 /// same body; both edits survive (see the module-level handoff note).
+///
+/// R1468 — inert while
+/// [`is_simulating`](crate::reactive::is_simulating), the same gate
+/// [`open`] carries. Gating BOTH halves is what keeps the queue
+/// coherent: suppressing only one would let a scenario's `close` pop a
+/// scope its matching `open` never pushed.
 pub fn close() {
+    if crate::reactive::is_simulating() {
+        return;
+    }
     PENDING_MODAL_REQUESTS.with_borrow_mut(|q| q.push(ModalRequest::Close));
 }
 
@@ -153,6 +171,42 @@ pub fn drain() -> Vec<ModalRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── R1468 containment ─────────────────────────────────────────────
+
+    #[test]
+    fn stack_edits_made_inside_a_containment_scope_are_dropped() {
+        let _ = drain();
+        {
+            let _sim = crate::reactive::SimulationGuard::enter();
+            open(vec!["dialog_ok".to_owned()]);
+            close();
+        }
+        assert!(
+            drain().is_empty(),
+            "★a scenario / mirror run cannot edit the real modal stack",
+        );
+    }
+
+    #[test]
+    fn a_contained_close_cannot_pop_a_live_open() {
+        // Why BOTH halves are gated. Suppressing only `open` would let a
+        // contained run's `close` pop a scope its own `open` never pushed —
+        // an introspection read dismissing the user's dialog.
+        let _ = drain();
+        open(vec!["dialog_ok".to_owned()]);
+        {
+            let _sim = crate::reactive::SimulationGuard::enter();
+            close();
+        }
+        assert_eq!(
+            drain(),
+            vec![ModalRequest::Open {
+                members: vec!["dialog_ok".to_owned()]
+            }],
+            "★the live open survives; the contained close never joined the queue",
+        );
+    }
 
     fn tags(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| (*s).to_string()).collect()

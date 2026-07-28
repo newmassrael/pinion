@@ -78,6 +78,20 @@
 //!    [`Effect`](super::effect::Effect) is the secondary defense, exactly as for
 //!    the R1006 window seam.)
 //!
+//!    R1468 — what that costs, **measured**, so the clause is not read as
+//!    "therefore fine": under `scene/layout {viewport: 400x1200}` a pane whose
+//!    own rect is 50% reports `h: 600` while a sibling sized from
+//!    `use_pane_viewport_size(pane)` still reports the **live** 150. That is
+//!    the same two-geometry split R1468 closed for the R1006 *window* seam, and
+//!    it is deliberately NOT closed here, because the two seams differ in kind:
+//!    the window extent is the caller's own input, known before the view runs,
+//!    while a pane rect is an OUTPUT of the layout pass this clause forbids the
+//!    mirror to publish. Republishing it hypothetically would mean writing —
+//!    and restoring — every registered pane's signal from inside the settle
+//!    loop, which is a different design with its own fixed-point question, not
+//!    an extra argument to
+//!    [`IntrospectionPaint`](../../../pinion_runtime/struct.IntrospectionPaint.html).
+//!
 //! # Per-window publish (R1021)
 //!
 //! Unlike the R1006 *window*-size seam — one global signal, published

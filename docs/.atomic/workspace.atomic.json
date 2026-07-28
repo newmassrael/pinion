@@ -72740,6 +72740,74 @@
         "Still open and independent: app_root lift (34 byte-identical example roots), a pre-push demo gate, R1456 residue, R1454 resize_contents_precision, MonospaceMetrics x TextMetrics, remaining QHeaderView signals."
       ]
     },
+    "Round 1468": {
+      "decision_summary": "The introspection mirror answers a hypothetical-viewport question in ONE geometry and cannot change the world it was asked about: it publishes the extent it lays out to, restores the live one, and runs inside a SimulationGuard the two focus mailboxes now honour.",
+      "changes_bullets": [
+        "pinion-runtime: new IntrospectionPaint RAII scope — the mirror publishes the extent it lays out to, restores the live one on drop, all inside a SimulationGuard",
+        "pinion-runtime: CoreShell::introspection_viewport_signal carries the same primary-window gate set_viewport_size's call site applies, so a mirror cannot re-derive it and drift",
+        "pinion-core: focus_request::request and modal_scope_request::open/close are inert while is_simulating() — a scenario or a mirror cannot queue a real focus move or a modal stack edit",
+        "pinion-shell: compute_paint_scene_pure_internal and the RPC produce closure both enter the scope; the closure's signal handle is hoisted across the &mut self borrow split",
+        "pinion-tui: the terminal producer enters the same scope (None seam — the TUI publishes no viewport value at all, stated at the call site)",
+        "pinion-core: the R1006 viewport contract clause 3 is rewritten (it said \"introspection does not publish\" and \"none does today\"); simulation.rs now enumerates every channel the flag gates",
+        "pinion-core: pane_viewport clause 3 records the MEASURED cost of not doing this for the pane seam (600 vs 150) and why that seam is a different design",
+        "examples/hello-viewport-question + tools/demos/r1468_one_geometry_per_question.py (36 assertions)"
+      ],
+      "verification_bullets": [
+        "MEASURED FIRST: scene/layout {viewport 400x1200} answered root h=1200, a Percent(50) child h=600, and a use_viewport_size-derived child h=150 — one question, two geometries",
+        "MEASURED: a focus_request written by reactive code a mirror reached survived the dispatch's own drain (pending=Some after scene/snapshot, scene/layout) and was applied by a later unrelated RPC",
+        "CF-1 (publish removed): shell 1 FAIL (one-geometry) + runtime 1 FAIL; demo FAIL at B with expected 600 got 210",
+        "CF-2 (restore removed): first shape passed ALL 6 shell tests — the R705 re-store mirror republishes the live extent and masks it; assertion reshaped onto a never-painted binding, then exactly 1 shell + 1 runtime FAIL",
+        "CF-3 (focus mailbox gate removed): exactly 2 FAIL, both containment; the live-paint negative control passed",
+        "CF-4 (SimulationGuard removed): exactly 3 FAIL — reflow + both containment; geometry passed. Demo FAIL at D (reflows 20 -> 26)",
+        "CF-5 (TUI producer uncontained): exactly 1 FAIL, the terminal producer assertion",
+        "gates: fmt/clippy/cargo doc 0; core 2739+4, runtime 468, shell 212 lib + 161 integration + 41 others, tui 148+19; new demo 36 assertions PASS",
+        "neighbour demos green after rebuild: r1467, r1462, r1463, r1465, r1464, r1458, r1460"
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.22",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "The pane seam has the same split and is NOT closed: measured at scene/layout {viewport 400x1200}, a pane reports h=600 while a use_pane_viewport_size-derived sibling reports the live 150. A pane rect is a layout OUTPUT published from inside the settle loop, not the caller's input, so republishing it hypothetically is its own fixed-point design — recorded in pane_viewport.rs clause 3, not in IntrospectionPaint",
+        "Nothing enforces the is_simulating() channel list: a new side channel (a clipboard write from a reducer, an outbound command) will not consult the flag unless its author knows to, and the absence is silent. simulation.rs enumerates the three channels; a registry that made it un-forgettable has no second consumer to design against yet",
+        "The restore is correct by construction but observable only on a binding that has not painted — on a painted one the R705 re-store mirror republishes the live extent and masks a missing restore. The never-painted test is its only witness",
+        "IntrospectionPaint contains the viewport seam and the two mailboxes; other Signal values a mirrored layout writes (a scroll bound, a measured-row height) are still written and are recomputed by the next live paint from the live extent. Stated in the module docs; a full Owner::snapshot/restore per introspection read is what simulate already pays for and a plain scene/layout does not"
+      ],
+      "publishable_decision_summary": "The introspection mirror answers a hypothetical-viewport question in ONE geometry and cannot change the world it was asked about: it publishes the extent it lays out to, restores the live one, and runs inside a SimulationGuard the two focus mailboxes now honour.",
+      "publishable_changes_bullets": [
+        "pinion-runtime: new IntrospectionPaint RAII scope — the mirror publishes the extent it lays out to, restores the live one on drop, all inside a SimulationGuard",
+        "pinion-runtime: CoreShell::introspection_viewport_signal carries the same primary-window gate set_viewport_size's call site applies, so a mirror cannot re-derive it and drift",
+        "pinion-core: focus_request::request and modal_scope_request::open/close are inert while is_simulating() — a scenario or a mirror cannot queue a real focus move or a modal stack edit",
+        "pinion-shell: compute_paint_scene_pure_internal and the RPC produce closure both enter the scope; the closure's signal handle is hoisted across the &mut self borrow split",
+        "pinion-tui: the terminal producer enters the same scope (None seam — the TUI publishes no viewport value at all, stated at the call site)",
+        "pinion-core: the R1006 viewport contract clause 3 is rewritten (it said \"introspection does not publish\" and \"none does today\"); simulation.rs now enumerates every channel the flag gates",
+        "pinion-core: pane_viewport clause 3 records the MEASURED cost of not doing this for the pane seam (600 vs 150) and why that seam is a different design",
+        "examples/hello-viewport-question + tools/demos/r1468_one_geometry_per_question.py (36 assertions)"
+      ],
+      "publishable_verification_bullets": [
+        "MEASURED FIRST: scene/layout {viewport 400x1200} answered root h=1200, a Percent(50) child h=600, and a use_viewport_size-derived child h=150 — one question, two geometries",
+        "MEASURED: a focus_request written by reactive code a mirror reached survived the dispatch's own drain (pending=Some after scene/snapshot, scene/layout) and was applied by a later unrelated RPC",
+        "CF-1 (publish removed): shell 1 FAIL (one-geometry) + runtime 1 FAIL; demo FAIL at B with expected 600 got 210",
+        "CF-2 (restore removed): first shape passed ALL 6 shell tests — the R705 re-store mirror republishes the live extent and masks it; assertion reshaped onto a never-painted binding, then exactly 1 shell + 1 runtime FAIL",
+        "CF-3 (focus mailbox gate removed): exactly 2 FAIL, both containment; the live-paint negative control passed",
+        "CF-4 (SimulationGuard removed): exactly 3 FAIL — reflow + both containment; geometry passed. Demo FAIL at D (reflows 20 -> 26)",
+        "CF-5 (TUI producer uncontained): exactly 1 FAIL, the terminal producer assertion",
+        "gates: fmt/clippy/cargo doc 0; core 2739+4, runtime 468, shell 212 lib + 161 integration + 41 others, tui 148+19; new demo 36 assertions PASS",
+        "neighbour demos green after rebuild: r1467, r1462, r1463, r1465, r1464, r1458, r1460"
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.22",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The pane seam has the same split and is NOT closed: measured at scene/layout {viewport 400x1200}, a pane reports h=600 while a use_pane_viewport_size-derived sibling reports the live 150. A pane rect is a layout OUTPUT published from inside the settle loop, not the caller's input, so republishing it hypothetically is its own fixed-point design — recorded in pane_viewport.rs clause 3, not in IntrospectionPaint",
+        "Nothing enforces the is_simulating() channel list: a new side channel (a clipboard write from a reducer, an outbound command) will not consult the flag unless its author knows to, and the absence is silent. simulation.rs enumerates the three channels; a registry that made it un-forgettable has no second consumer to design against yet",
+        "The restore is correct by construction but observable only on a binding that has not painted — on a painted one the R705 re-store mirror republishes the live extent and masks a missing restore. The never-painted test is its only witness",
+        "IntrospectionPaint contains the viewport seam and the two mailboxes; other Signal values a mirrored layout writes (a scroll bound, a measured-row height) are still written and are recomputed by the next live paint from the live extent. Stated in the module docs; a full Owner::snapshot/restore per introspection read is what simulate already pays for and a plain scene/layout does not"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

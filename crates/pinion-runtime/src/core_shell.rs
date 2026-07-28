@@ -1532,6 +1532,25 @@ impl<V: WidgetCore> CoreShell<V> {
             .run(|| self.viewport_signal.set((width, height)));
     }
 
+    /// R1468 §5.23 §5.22 §2 #7 — the seam signal an
+    /// [`IntrospectionPaint`](crate::IntrospectionPaint) scope may republish
+    /// for `window_key`, or `None` when it may not.
+    ///
+    /// Carries the SAME primary gate [`Self::set_viewport_size`]'s call site
+    /// applies, and for the same reason: the R1006 signal is seeded once at the
+    /// root, so a secondary window writing it would hand the binding another
+    /// window's size. Expressed as an accessor rather than repeated at each
+    /// mirror because a mirror that re-derived the gate could drift from the
+    /// live publish — and a mirror whose extent disagrees with the paint is the
+    /// whole class §2 #7 forbids.
+    ///
+    /// A mirror is also the only intended caller: nothing else should be able
+    /// to reach for a handle on the live seam and write it off-paint.
+    #[must_use]
+    pub fn introspection_viewport_signal(&self, window_key: &str) -> Option<&Signal<(u32, u32)>> {
+        (window_key == DEFAULT_WINDOW).then_some(&self.viewport_signal)
+    }
+
     /// R1047 §5.23 §5.22 §6.3 — run the binding's per-paint
     /// [`WidgetCore::reconcile_frame`] reducer inside the root
     /// [`Owner`] scope, so a binding can

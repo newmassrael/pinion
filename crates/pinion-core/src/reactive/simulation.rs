@@ -23,6 +23,30 @@
 //!   the next post-simulation `Signal::set` fires the Effect
 //!   normally.
 //!
+//! ## What the flag gates (R1468 — keep this list current)
+//!
+//! [`is_simulating`] started as one call site and is now consulted by every
+//! channel through which reactive code can reach the live world:
+//!
+//! | channel | what suppression means |
+//! |---|---|
+//! | [`crate::Effect`]'s `mark_dirty` | the re-run is skipped (R649) |
+//! | [`crate::focus_request::request`] | the focus move is not queued (R1468) |
+//! | [`crate::modal_scope_request::open`] / `close` | the stack edit is not queued (R1468) |
+//!
+//! The list is here because nothing enforces it: a NEW side channel — a
+//! clipboard write from a reducer, an outbound command — will not consult the
+//! flag unless its author knows to, and its absence is silent in exactly the
+//! way R1468's was (the request was not lost, it was applied later, by an
+//! unrelated dispatch). Enumerating the channels is the cheap half; a registry
+//! that made the gate un-forgettable would need a second consumer to design
+//! against, and there is one home per channel today.
+//!
+//! Both entering paths are worth knowing when reading a suppression: `dry_run`
+//! / `simulate` (`pinion-rpc`) and the introspection mirror
+//! (`pinion_runtime::IntrospectionPaint`, R1468) — the second being why a plain
+//! `scene/layout {viewport}` is now a scope and not just a read.
+//!
 //! ## What R649 does NOT change
 //!
 //! - **Signal values** are still mutated by `External::intervene` →

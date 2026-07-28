@@ -1703,6 +1703,22 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             // above wraps the view fn so `Owner::current()` inside the
             // synthetic-paint path resolves to this binding's reactive scope.
             let mut produce = |w: u32, h: u32| -> Scene {
+                // R1468 §5.23 §2 #3 §2 #6 §2 #7 — the TUI producer is an
+                // introspection mirror too, so it runs inside the same
+                // containment scope its Vello sibling does: a view reached from
+                // here cannot queue a focus move or a modal stack edit through
+                // the `pinion_core` mailboxes, which the shell drains BEFORE
+                // this producer can run again and would otherwise apply to
+                // whichever later dispatch came next.
+                //
+                // `None`, not a signal, and the asymmetry is honest rather than
+                // accidental: the TUI never publishes the R1006
+                // `use_viewport_size` seam at all (the Vello paint's
+                // `CoreShell::set_viewport_size` has no TUI caller), so there is
+                // no live extent here to hold still or to restore. If a TUI
+                // viewport publish lands, this is the argument it fills in — and
+                // the containment it needs is already in place.
+                let _mirror = pinion_runtime::IntrospectionPaint::enter(&root_owner, None, (w, h));
                 let frame = Frame::new();
                 // R1460 §5.16 §2 #6 — the SAME settle loop the TUI paint runs
                 // (and the Vello producer runs). Pre-R1460 this took exactly
@@ -3601,6 +3617,113 @@ mod r1364_5_deferred_input_parity {
             stale.is_empty(),
             "these are listed as unimplemented but the terminal drain now names \
              them: {stale:?}. Remove them from UNCLASSIFIED_TERMINAL_GAPS.",
+        );
+    }
+}
+
+#[cfg(test)]
+mod r1468_terminal_mirror_containment_tests {
+    //! R1468 §5.23 §2 #3 §2 #6 §2 #7 — the terminal's producer is an
+    //! introspection mirror too, so it runs inside the containment scope.
+    //!
+    //! The claim is proved as a composition, because each half already has its
+    //! own home:
+    //!
+    //! * `pinion_core::focus_request` / `modal_scope_request` pin *"the flag
+    //!   makes the mailbox inert"* (their own unit tests);
+    //! * this module pins *"the terminal producer sets the flag, and the
+    //!   terminal PAINT does not"* — the half only this backend can answer.
+    //!
+    //! The negative control is the load-bearing one. Containment must cost the
+    //! binding nothing: the live paint is not a mirror, so reactive code
+    //! reached from it still queues a real focus move, exactly as on the Vello
+    //! side. A round that made both paths inert would pass the positive
+    //! assertion and break every `focus_request` consumer in the repo.
+    //!
+    //! The terminal passes `None` for the viewport seam — it publishes no
+    //! `use_viewport_size` value at all — so the geometry half of the scope has
+    //! nothing to hold still here. That asymmetry is stated at the call site
+    //! rather than silently inherited.
+    use super::ShellCoreTui;
+    use crate::WidgetViewTui;
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::{External, StubExternal};
+    use pinion_core::reactive::is_simulating;
+    use pinion_core::scene::{ContainerNode, Rect, Scene};
+    use pinion_core::widgets::button::{ButtonEvent, ButtonState};
+    use pinion_core::{Frame, WidgetCore};
+    use std::cell::Cell;
+
+    thread_local! {
+        /// What `is_simulating()` reported the last time the view ran.
+        static SEEN_CONTAINED: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    struct ProbeView;
+    impl WidgetCore for ProbeView {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+        fn create_external() -> Box<dyn External> {
+            Box::new(StubExternal)
+        }
+        fn tag() -> &'static str {
+            "r1468_tui"
+        }
+        fn read_state(_: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+        fn view(_: Self::State, _: &Frame) -> Scene {
+            SEEN_CONTAINED.with(|c| c.set(Some(is_simulating())));
+            let mut c = ContainerNode::new(Vec::new()).with_tag("r1468_tui");
+            c.rect = Rect::new(0, 0, 40, 10);
+            Scene::Container(c)
+        }
+        fn event_name(_: Self::Event) -> &'static str {
+            "__internal__"
+        }
+        fn title() -> &'static str {
+            "Probe"
+        }
+    }
+    impl WidgetA11y for ProbeView {}
+    impl WidgetViewTui for ProbeView {
+        type Renderer = crate::TuiRenderer<ratatui::backend::TestBackend>;
+    }
+
+    fn last_view_contained() -> bool {
+        SEEN_CONTAINED
+            .with(Cell::take)
+            .expect("the view ran on this path")
+    }
+
+    #[test]
+    fn the_terminal_producer_runs_contained_and_the_paint_does_not() {
+        let mut core: ShellCoreTui<ProbeView> = ShellCoreTui::new();
+
+        // The live paint: real, so reactive code it reaches may queue.
+        let _ = core.compute_paint_scene(80, 24);
+        assert!(
+            !last_view_contained(),
+            "★the terminal PAINT is not a mirror — containing it would break \
+             every focus_request consumer",
+        );
+
+        // `scene/layout {viewport}` is the request that always runs the
+        // producer (the same one the R1465 terminal produce-work test drives).
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"scene/layout","params":{"viewport":{"width":80,"height":24}}}"#;
+        let reply = core.dispatch_rpc(req).expect("a reply");
+        assert!(!reply.contains("\"error\""), "the read answers: {reply}");
+        assert!(
+            last_view_contained(),
+            "★the terminal PRODUCER is a mirror, and says so — which is what \
+             makes the pinion_core mailbox gate apply to this backend",
+        );
+
+        // Scoped, not sticky: the next real paint is live again.
+        let _ = core.compute_paint_scene(80, 24);
+        assert!(
+            !last_view_contained(),
+            "★containment ends with the producer call",
         );
     }
 }

@@ -4937,6 +4937,22 @@ impl<V: WidgetView> ShellCore<V> {
         w: u32,
         h: u32,
     ) -> Scene {
+        // R1468 §5.23 §5.22 §2 #3 §2 #7 — this producer is the introspection
+        // MIRROR, so it runs inside the containment scope for the extent it is
+        // about to lay out to: the R1006 seam publishes `(w, h)` (so a
+        // `use_viewport_size`-derived child agrees with a percentage one — one
+        // question, one geometry), the live extent is restored on drop, and the
+        // whole run is a `SimulationGuard` scope so neither the republish's
+        // Effects nor a focus / modal mailbox write can escape a paint nobody
+        // is looking at. Entered BEFORE the overlay sample and the view, since
+        // both read binding state the scope is meant to hold still. Free at the
+        // live extent (the R684 / R705 callers), which is the common case.
+        let _mirror = pinion_runtime::IntrospectionPaint::enter(
+            self.core.root_owner(),
+            self.core
+                .introspection_viewport_signal(window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW)),
+            (w, h),
+        );
         let cached_state = *self.core.cached_state();
         let frame = Frame::new();
         // R1467 — one sample feeds the inset here and the overlay tail below.
@@ -5535,6 +5551,18 @@ impl<V: WidgetView> ShellCore<V> {
                 ring_tag: ring_tag_for_paint,
                 ..self.sample_window_overlay_inputs(window_id)
             };
+            // R1468 §5.23 §5.22 §2 #3 §2 #7 — the third producer is a mirror
+            // too, so it enters the same containment scope. Hoisted here for
+            // the R1467 reason: the closure runs after `&mut self` is split, so
+            // it cannot reach a `&self` accessor and must own what it needs.
+            // Cloned rather than borrowed because the split hands the closure
+            // no path back to `self.core` at all; `Signal` is a handle, so the
+            // clone is a refcount bump onto the SAME seam the live paint
+            // publishes — a copy of the value would defeat the point.
+            let mirror_viewport = self
+                .core
+                .introspection_viewport_signal(paint_window_key)
+                .cloned();
             let (scene_ptr, last_paint_scene_ref) = self
                 .core
                 .scene_mut_and_last_paint_for_window(paint_window_key);
@@ -5564,6 +5592,17 @@ impl<V: WidgetView> ShellCore<V> {
                 // at the same viewport so the InputRouter snapshot
                 // matches the geometry the RPC handler just saw.
                 produce_size.set(Some((w, h)));
+                // R1468 — the containment scope, entered per CALL because the
+                // extent is the caller's: `resolve_path_to_center` runs this at
+                // the live viewport while `scene/layout {viewport}` runs it at a
+                // hypothetical one, and it is the hypothetical case that has to
+                // publish. Restored before the closure returns, so two calls in
+                // one dispatch cannot leak one another's extent.
+                let _mirror = pinion_runtime::IntrospectionPaint::enter(
+                    &root_owner,
+                    mirror_viewport.as_ref(),
+                    (w, h),
+                );
                 let frame = Frame::new();
                 // R57.X.scrollbar §5.45 / R1458 §5.45 §5.27 / R1465 — the shared
                 // fixed point, for the same reason the window paint runs it
@@ -10426,6 +10465,345 @@ mod r1467_producer_dresses_the_window_tests {
             "…and all three carry the strip",
         );
     }
+}
+
+#[cfg(test)]
+mod r1468_one_geometry_tests {
+    //! R1468 §5.23 §5.22 §5.16 §2 #3 §2 #7 — an introspection paint answers in
+    //! ONE geometry, and cannot change the world it was asked about.
+    //!
+    //! `scene/layout {viewport}` asks a hypothetical: lay this binding out as
+    //! if the window were W×H. A binding can express an extent-derived size two
+    //! equally-correct ways — through the layout engine (`height: 50%`) or
+    //! through the R1006 reactive seam (`use_viewport_size`, which exists
+    //! because a reflow is a side effect and so must be readable from an
+    //! `Effect`). Pre-R1468 taffy was handed the hypothetical extent while the
+    //! seam was never republished, so the two halves of one answer described
+    //! two different windows — and R1467 had just moved the window chrome and
+    //! its content inset onto the hypothetical side of that split.
+    //!
+    //! Publishing the hypothetical is only safe if it is contained, so the
+    //! mirror runs inside [`pinion_runtime::IntrospectionPaint`]: the live
+    //! extent is restored on drop, and the run is a `SimulationGuard` scope so
+    //! the republish cannot fire a reflow `Effect` at a size no window has.
+    //!
+    //! That scope closes a second, independently-measured leak. The shell's
+    //! mirror runs AFTER the dispatch's own focus-mailbox drain, so a
+    //! `focus_request` written by reactive code the mirror reached sat pending
+    //! and was applied by whichever LATER, unrelated RPC drained next. Both
+    //! mailboxes now honour `is_simulating()`, so a paint nobody is looking at
+    //! cannot queue a real focus move.
+    use crate::test_fixtures::TestRenderer;
+    use crate::{ShellCore, SizeStrategy, WidgetView};
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::external::{External, StubExternal};
+    use pinion_core::scene::{ContainerNode, Scene};
+    use pinion_core::style::{FlexDirection, LayoutStyle, Size, SizeValue};
+    use pinion_core::widgets::button::{ButtonEvent, ButtonState};
+    use pinion_core::{Effect, Frame, WidgetCore, use_viewport_size};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    const W: u32 = 400;
+    const H: u32 = 300;
+    /// Deliberately not a multiple of [`H`], so a "half the window" child
+    /// measured against the wrong extent cannot coincide with the right one.
+    const HYPOTHETICAL_H: u32 = 1200;
+    const BY_SEAM: &str = "r1468_by_seam";
+    const BY_ENGINE: &str = "r1468_by_engine";
+
+    thread_local! {
+        /// One-shot: armed by a test, consumed by the next `V::view` run, so a
+        /// single request is attributable to a single producer run.
+        static ARMED_REQUEST: Cell<Option<&'static str>> = const { Cell::new(None) };
+    }
+
+    /// Half the window, expressed the two ways a binding can express it. Both
+    /// are legitimate; the round is about them agreeing.
+    fn half_and_half() -> Scene {
+        let (_, vh) = use_viewport_size();
+        let sized = |tag: &str, h: SizeValue| {
+            Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_tag(tag.to_owned())
+                    .with_layout(
+                        LayoutStyle::new().with_focusable(true).with_size(
+                            Size::auto()
+                                .with_width(SizeValue::Percent(100))
+                                .with_height(h),
+                        ),
+                    ),
+            )
+        };
+        Scene::Container(
+            ContainerNode::new(vec![
+                sized(BY_SEAM, SizeValue::Px(vh / 2)),
+                sized(BY_ENGINE, SizeValue::Percent(50)),
+            ])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+        )
+    }
+
+    struct HalfView;
+    impl WidgetCore for HalfView {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+        fn create_external() -> Box<dyn External> {
+            Box::new(StubExternal)
+        }
+        fn tag() -> &'static str {
+            BY_SEAM
+        }
+        fn read_state(_: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+        fn view(_: Self::State, _: &Frame) -> Scene {
+            // The forcing consumer for the mailbox half: reactive code reached
+            // from a view CAN write the focus mailbox (an `Effect` created here
+            // is a documented call site), so the containment must survive it.
+            if let Some(tag) = ARMED_REQUEST.with(Cell::take) {
+                pinion_core::focus_request::request(tag);
+            }
+            half_and_half()
+        }
+        fn event_name(_: Self::Event) -> &'static str {
+            "__internal__"
+        }
+        fn title() -> &'static str {
+            "Half"
+        }
+    }
+    impl WidgetA11y for HalfView {}
+    impl WidgetView for HalfView {
+        type Renderer = TestRenderer;
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: W,
+                height: H,
+            }
+        }
+    }
+
+    fn booted() -> ShellCore<HalfView> {
+        let _ = pinion_core::focus_request::drain();
+        ARMED_REQUEST.with(|c| c.set(None));
+        let mut sc = ShellCore::<HalfView>::new();
+        let boot = sc.compute_paint_scene(W, H);
+        sc.finalize_frame(boot);
+        sc
+    }
+
+    fn rpc(sc: &mut ShellCore<HalfView>, req: &str) -> String {
+        sc.dispatch_rpc(req, &mut |_, _| {}).unwrap_or_default()
+    }
+
+    /// `scene/layout` at the caller's hypothetical extent (runs the producer).
+    fn layout_at(sc: &mut ShellCore<HalfView>, h: u32) -> String {
+        rpc(
+            sc,
+            &format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/layout","params":{{"path":"","viewport":{{"width":{W},"height":{h}}}}},"id":1}}"#
+            ),
+        )
+    }
+
+    /// The reported height of the tagged node in a `scene/layout` answer.
+    fn height_of(resp: &str, tag: &str) -> u32 {
+        let at = resp
+            .find(&format!(r#""tag":"{tag}""#))
+            .unwrap_or_else(|| panic!("{tag} present in {resp}"));
+        let rect = resp[..at]
+            .rfind(r#""rect":{"h":"#)
+            .unwrap_or_else(|| panic!("{tag} carries a rect in {resp}"));
+        let tail = &resp[rect + r#""rect":{"h":"#.len()..];
+        let end = tail.find(',').expect("h is followed by w");
+        tail[..end].parse().expect("h is a number")
+    }
+
+    #[test]
+    fn a_hypothetical_viewport_answers_in_one_geometry() {
+        let mut sc = booted();
+        let resp = layout_at(&mut sc, HYPOTHETICAL_H);
+        let (seam, engine) = (height_of(&resp, BY_SEAM), height_of(&resp, BY_ENGINE));
+        assert_eq!(
+            engine,
+            HYPOTHETICAL_H / 2,
+            "premise: the layout engine already answered in the hypothetical",
+        );
+        assert_eq!(
+            seam, engine,
+            "★both halves of one answer describe the same window: {resp}",
+        );
+        assert_ne!(
+            seam,
+            H / 2,
+            "★…and specifically not the LIVE extent, which is what the \
+             unpublished seam used to report",
+        );
+    }
+
+    #[test]
+    fn the_live_extent_survives_the_hypothetical_question() {
+        let mut sc = booted();
+        let before = layout_at(&mut sc, H);
+        let _ = layout_at(&mut sc, HYPOTHETICAL_H);
+        let after = layout_at(&mut sc, H);
+        assert_eq!(
+            height_of(&before, BY_SEAM),
+            H / 2,
+            "premise: at the live extent the seam reports the live half",
+        );
+        assert_eq!(
+            height_of(&after, BY_SEAM),
+            height_of(&before, BY_SEAM),
+            "★asking about another size does not leave the binding believing it",
+        );
+        // The paint the user is actually shown is the claim that matters, so
+        // state it against the paint path and not only against another query.
+        let painted = sc.compute_paint_scene(W, H);
+        assert_eq!(
+            painted.rect_for_tag_absolute(BY_SEAM).map(|r| r.h),
+            Some(H / 2),
+            "★and the next real paint is unchanged by the question",
+        );
+    }
+
+    #[test]
+    fn a_question_does_not_fire_the_reflow_effect() {
+        let mut sc = booted();
+        let runs = Rc::new(Cell::new(0_u32));
+        let r = Rc::clone(&runs);
+        // The R1006 consumer shape: a side-effecting reflow (a PTY's winsize
+        // ioctl) subscribed to the seam. It must not be driven at a size no
+        // window has — that is what makes republishing need a guard at all.
+        //
+        // Registered INSIDE `root_owner.run` because R1006 blocker B is not a
+        // formality: `use_viewport_size` resolves `Owner::current`, which reads
+        // the owner-handle stack, and the eager first run has none of its own.
+        let owner = sc.root_owner().clone();
+        let _reflow = owner.run(|| {
+            Effect::new(&owner, move || {
+                let _ = use_viewport_size();
+                r.set(r.get() + 1);
+            })
+        });
+        let at_registration = runs.get();
+        assert!(at_registration >= 1, "premise: the Effect subscribed");
+        let _ = layout_at(&mut sc, HYPOTHETICAL_H);
+        assert_eq!(
+            runs.get(),
+            at_registration,
+            "★neither the hypothetical publish nor its restore reflows",
+        );
+        // This is the claim the RESTORE carries, and the reason "a later
+        // publisher overwrites it anyway" is not an argument for dropping it.
+        // The live paint publishes its own extent BEFORE the view runs, outside
+        // any guard. If the seam were still holding the hypothetical, that
+        // publish would be a CHANGE rather than an equality-skip — so the
+        // reflow the guard suppressed would simply fire one frame later, at the
+        // first place the guard is not watching.
+        let paint = sc.compute_paint_scene(W, H);
+        sc.finalize_frame(paint);
+        assert_eq!(
+            runs.get(),
+            at_registration,
+            "★…and the next LIVE paint does not reflow either: the question left \
+             the seam where it found it",
+        );
+        // Scoped, not sticky: a REAL resize still reaches the same Effect.
+        sc.core.set_viewport_size(W, HYPOTHETICAL_H);
+        assert_eq!(
+            runs.get(),
+            at_registration + 1,
+            "★suppression ends with the paint; a real resize still reflows",
+        );
+    }
+
+    #[test]
+    fn a_question_before_the_first_paint_leaves_the_seam_unknown() {
+        // Where the restore is the ONLY thing that puts the seam back.
+        //
+        // On a shell that has painted, the dispatch tail's R705 re-store is
+        // itself a mirror at the live extent, so it re-publishes the live value
+        // and masks a missing restore. A binding an agent drives BEFORE its
+        // first paint has no stored frame for that loop to walk, so nothing
+        // follows the producer — and the value it would be left holding is the
+        // worst one: R1006 defines `(0, 0)` as "viewport unknown" and requires
+        // consumers to skip on it, so a query that overwrote it with a
+        // plausible size would make every reflow consumer act on a window that
+        // does not exist yet.
+        let _ = pinion_core::focus_request::drain();
+        ARMED_REQUEST.with(|c| c.set(None));
+        let mut sc = ShellCore::<HalfView>::new();
+        let before = sc.root_owner().run(use_viewport_size);
+        assert_eq!(
+            before,
+            (0, 0),
+            "premise: no paint has happened, so the seam is honestly unknown",
+        );
+        let _ = layout_at(&mut sc, HYPOTHETICAL_H);
+        assert_eq!(
+            sc.root_owner().run(use_viewport_size),
+            before,
+            "★the question leaves the seam exactly as it found it",
+        );
+    }
+
+    #[test]
+    fn a_mirror_run_cannot_queue_a_focus_move() {
+        let mut sc = booted();
+        let focus_before = rpc(&mut sc, FOCUS_GET);
+        ARMED_REQUEST.with(|c| c.set(Some(BY_ENGINE)));
+        // A pure READ. It runs the view (through the producer for the
+        // hypothetical, and again through the R705 re-store mirror), and
+        // pre-R1468 the request that view wrote outlived the dispatch's own
+        // drain point to be applied by whatever came next.
+        let _ = layout_at(&mut sc, HYPOTHETICAL_H);
+        assert_eq!(
+            pinion_core::focus_request::drain(),
+            None,
+            "★a read leaves no request stranded in the mailbox",
+        );
+        assert_eq!(
+            rpc(&mut sc, FOCUS_GET),
+            focus_before,
+            "★…and no later dispatch inherits a focus move it did not cause",
+        );
+    }
+
+    #[test]
+    fn a_mirror_at_the_live_extent_is_contained_too() {
+        // The R705 re-store mirror runs at the LIVE extent, so it publishes
+        // nothing and the geometry half of the scope is a no-op — but it is
+        // still the run that measured the stranding, so the containment must
+        // not be gated on the extent differing.
+        let mut sc = booted();
+        ARMED_REQUEST.with(|c| c.set(Some(BY_ENGINE)));
+        let _ = sc.compute_paint_scene_pure(W, H);
+        assert_eq!(
+            pinion_core::focus_request::drain(),
+            None,
+            "★the side-effect-free mirror queues nothing even at the live size",
+        );
+    }
+
+    #[test]
+    fn a_live_paint_still_carries_a_genuine_request() {
+        // The negative control the whole round hangs on: containment must not
+        // cost the capability. The live paint is NOT a mirror, so a request
+        // reactive code writes there is real, drains on that path, and moves
+        // focus. Green before AND after R1468.
+        let mut sc = booted();
+        ARMED_REQUEST.with(|c| c.set(Some(BY_ENGINE)));
+        let paint = sc.compute_paint_scene(W, H);
+        sc.finalize_frame(paint);
+        assert!(
+            rpc(&mut sc, FOCUS_GET).contains(&format!(r#""focused":"{BY_ENGINE}""#)),
+            "★a request from the live paint still lands",
+        );
+    }
+
+    const FOCUS_GET: &str = r#"{"jsonrpc":"2.0","method":"focus/get","id":9}"#;
 }
 
 #[cfg(test)]

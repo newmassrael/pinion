@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1468 §5.23 §5.22 — renderer for the hypothetical-viewport demo. Same
+  single-source emit template as hello-button's HelloButtonRenderer; only the
+  struct name differs.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="ViewportQuestionRenderer"
+        backend="vello"/>

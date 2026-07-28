@@ -34,6 +34,7 @@ pub mod frame_timing;
 pub mod image_cache;
 pub mod input;
 pub mod intent_queue;
+pub mod introspection_paint;
 pub mod layout;
 #[cfg(feature = "vello")]
 pub mod paint_adapter;
@@ -67,6 +68,7 @@ pub use input::{
     rect_for_tag, resolve_cross_window_drop,
 };
 pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
+pub use introspection_paint::IntrospectionPaint;
 pub use layout::{
     SETTLE_PASS_BUDGET, Settled, TextBox, TextMeasure, compute_layout,
     compute_layout_with_scroll_dirty, compute_layout_with_text_measure, settle_to_fixed_point,

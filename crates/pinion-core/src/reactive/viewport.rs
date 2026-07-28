@@ -48,16 +48,26 @@
 //!    window is `resumed`. A consumer's reflow Effect runs eagerly once at
 //!    registration with this value, so it MUST skip on `(0, 0)` (distinct from
 //!    a plain unchanged-skip) to avoid a spurious `1 x 1` reflow at boot.
-//! 3. **Introspection paint does not publish.** The RPC `scene/snapshot` and
-//!    AccessKit producers run their own `view` + layout pass and never call the
-//!    shell's publish — only the gated live paint
-//!    (`compute_paint_scene_internal`) does. So an introspection paint, even at
-//!    an off-live size, cannot fire the reflow side-effect: there is no `set`,
-//!    hence nothing to gate. Equality-skip is the *live* path's own secondary
-//!    defense (a same-size re-paint does not re-fire), and `is_simulating()`
-//!    additionally suppresses `dry_run` / `simulate`. Only a future
-//!    introspection path that *did* publish at an off-live size would need a
-//!    [`SimulationGuard`](super::simulation::SimulationGuard) — none does today.
+//! 3. **An introspection paint publishes only inside a containment scope**
+//!    (R1468 — this clause replaces R1006's "introspection does not publish").
+//!    Not publishing turned out to be the wrong half of the promise to keep:
+//!    `scene/layout {viewport}` hands taffy a hypothetical extent, so a
+//!    percentage child answered in the hypothetical while a
+//!    [`use_viewport_size`] child answered in the live one — one request, two
+//!    geometries, and since R1467 the window chrome and its content inset sat
+//!    on the hypothetical side of the split. The mirror therefore DOES publish
+//!    now, and it does so from inside
+//!    [`IntrospectionPaint`](../../../pinion_runtime/struct.IntrospectionPaint.html):
+//!    the extent it is laying out to, restored on drop, with the whole run
+//!    wrapped in the [`SimulationGuard`](super::simulation::SimulationGuard)
+//!    this clause always said such a path would need. So the reflow side-effect
+//!    still cannot fire at a size no window has — the guarantee is unchanged;
+//!    what changed is that it is now enforced by a scope instead of by the
+//!    absence of a write. The live paint keeps its own secondary defense
+//!    (equality-skip on a same-size re-paint), and the restore is what keeps
+//!    that defense working: a mirror that left the hypothetical behind would
+//!    turn the next live publish into a *change* and reflow one frame later,
+//!    outside any guard.
 //!
 //! [`compute_layout`]: ../../../pinion_runtime/fn.compute_layout.html
 //! [`Signal`]: super::signal::Signal

@@ -61,6 +61,32 @@
 //! unused (`Cell<Option<String>>::take` is a single conditional
 //! pointer write on the empty-mailbox path).
 //!
+//! ## Inert inside a containment scope (R1468)
+//!
+//! [`request`] is a **side effect on the live world**: it is queued now
+//! and committed by the shell's next drain, which moves real keyboard
+//! focus. Reactive code therefore must not be able to commit one from a
+//! run that is only *modelling* the world —
+//! [`dry_run`](crate::reactive::SimulationGuard)'s scenario exploration
+//! (§2 #3) or an introspection paint's mirror (§2 #7). Both already
+//! declare themselves by entering a
+//! [`SimulationGuard`](crate::reactive::SimulationGuard), so this
+//! mailbox honours the same flag and the write is dropped while
+//! [`is_simulating`](crate::reactive::is_simulating) holds.
+//!
+//! The gate had to be here rather than only on
+//! [`Effect`](crate::reactive::Effect): that guard suppresses Effect
+//! *re-runs*, but [`request`] is a direct thread-local write which any
+//! code reached from a mirrored `view` can perform, so the Effect gate
+//! never saw it. What the leak looked like is worth recording, because
+//! it is not "the request is lost": the shell's mirror runs **after**
+//! the dispatch's own drain point (the R705 re-store), so a request the
+//! mirror produced sat in the mailbox until some **later, unrelated**
+//! dispatch drained it — a focus jump attributed to whichever RPC
+//! happened to come next. Dropping it is also not a lost capability:
+//! the live paint runs the same view outside any guard, so a genuine
+//! request is emitted there and drained on that path.
+//!
 //! ## Bounded scope
 //!
 //! The mailbox holds *one* request — a request for a different tag
@@ -98,7 +124,17 @@ thread_local! {
 ///   immediately (R664 todomvc).
 /// - A reducer body responding to a domain event that should refocus
 ///   a specific widget (modal close → restore caller's focus).
+///
+/// R1468 — **inert while
+/// [`is_simulating`](crate::reactive::is_simulating)**: a `dry_run` /
+/// `simulate` scenario and an introspection paint's mirror model the
+/// world rather than change it, so neither may queue a real focus move.
+/// See the module docs for why the [`Effect`](crate::reactive::Effect)
+/// gate did not already cover this write.
 pub fn request(tag: impl Into<String>) {
+    if crate::reactive::is_simulating() {
+        return;
+    }
     let value = tag.into();
     PENDING_FOCUS_REQUEST.with(|cell| cell.set(Some(value)));
 }
@@ -249,6 +285,51 @@ mod tests {
         request("first");
         request("second");
         assert_eq!(drain(), Some("second".to_string()));
+    }
+
+    // ── R1468 containment ─────────────────────────────────────────────
+
+    #[test]
+    fn a_request_made_inside_a_containment_scope_is_dropped() {
+        let _ = drain();
+        {
+            let _sim = crate::reactive::SimulationGuard::enter();
+            request("from_a_scenario");
+        }
+        assert_eq!(
+            drain(),
+            None,
+            "★a scenario / mirror run cannot queue a real focus move",
+        );
+    }
+
+    #[test]
+    fn a_containment_scope_does_not_swallow_what_was_already_pending() {
+        // The gate refuses new writes; it is not a clear(). A request the real
+        // dispatch made before a mirror ran must still reach the drain, or an
+        // introspection read would cancel the binding's own intent.
+        let _ = drain();
+        request("from_the_handler");
+        {
+            let _sim = crate::reactive::SimulationGuard::enter();
+            request("from_a_scenario");
+        }
+        assert_eq!(
+            drain().as_deref(),
+            Some("from_the_handler"),
+            "★the live request survives a contained run that tried to replace it",
+        );
+    }
+
+    #[test]
+    fn the_gate_lifts_with_the_scope() {
+        let _ = drain();
+        {
+            let _sim = crate::reactive::SimulationGuard::enter();
+            request("dropped");
+        }
+        request("kept");
+        assert_eq!(drain().as_deref(), Some("kept"), "containment is scoped");
     }
 
     #[test]
