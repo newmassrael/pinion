@@ -38,8 +38,6 @@ Run from the workspace root:
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -51,6 +49,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    fc_list_count,
     wait_snap,
     write_fontconfig,
 )
@@ -84,26 +83,7 @@ WIN_W, WIN_H = 800, 460
 REVEAL_MS = 60_000
 
 
-def hangul_faces(fontconfig: Path | None) -> int:
-    """How many fonts under `fontconfig` cover U+AC00 (None = the system's).
-
-    The measurement that makes the restricted environment honest: `fc-list`
-    counting *fonts* would say "this host has fonts" while saying nothing about
-    the script the demo is about.
-    """
-    env = dict(os.environ)
-    if fontconfig is None:
-        env.pop("FONTCONFIG_FILE", None)
-    else:
-        env["FONTCONFIG_FILE"] = str(fontconfig)
-    out = subprocess.run(
-        ["fc-list", ":charset=ac00"],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return len([line for line in out.stdout.splitlines() if line.strip()])
+HANGUL_CHARSET = ":charset=ac00"
 
 
 def write_hangul_less_config(root: Path) -> Path:
@@ -224,16 +204,25 @@ def body() -> None:
         no_hangul = write_hangul_less_config(Path(tmp))
 
         # ---- 1. premise: an environment that has fonts and no Korean ----
-        host_hangul = hangul_faces(None)
-        restricted_hangul = hangul_faces(no_hangul)
-        assert host_hangul > 0, (
-            f"premise: this host CAN draw Hangul ({host_hangul} faces cover "
-            "U+AC00); with none, the two runs below would be one environment"
+        # Both measurements are of the DEMO'S CONFIG, deliberately. An earlier
+        # draft also required the HOST to have Hangul faces, reasoning that
+        # otherwise the restricted config restricts nothing — and CI failed on
+        # it, because a GitHub runner has 53 fonts and none of them Korean. The
+        # claim never needed that: what has to be true is that this config has
+        # fonts AND cannot draw Hangul, which is a property of the config. The
+        # host count is printed, not asserted.
+        config_fonts = fc_list_count(no_hangul)
+        config_hangul = fc_list_count(no_hangul, HANGUL_CHARSET)
+        assert config_fonts > 0, (
+            f"premise: the demo's config HAS faces ({config_fonts}) — with none "
+            "this would be a font-less container, where the application's "
+            "registered face is the only candidate left and would win for a "
+            "reason that has nothing to do with the default"
         )
-        assert_eq(restricted_hangul, 0, "Hangul faces under the demo's config")
+        assert_eq(config_hangul, 0, "Hangul faces under the demo's config")
         print(
-            f"[demo] host covers U+AC00 with {host_hangul} faces; "
-            "the demo's config with 0"
+            f"[demo] the demo's config: {config_fonts} faces, 0 covering U+AC00 "
+            f"(host: {fc_list_count(None, HANGUL_CHARSET)} covering it)"
         )
 
         # ---- 2. the report: what does an unset family resolve to? ----

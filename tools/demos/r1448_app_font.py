@@ -49,8 +49,6 @@ Run from the workspace root:
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -61,6 +59,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     find_by_tag,
+    fc_list_count,
     run_demo,
     wait_snap,
     write_fontconfig,
@@ -78,15 +77,8 @@ DECLARED_FONT = "crates/pinion-text-font/tests/fonts/NanumGothic-Regular.ttf"
 
 def font_count(fontconfig: Path | None) -> int:
     """Fonts `fc-list` reports under `fontconfig` (None = the system's)."""
-    env = dict(os.environ)
-    if fontconfig is None:
-        env.pop("FONTCONFIG_FILE", None)
-    else:
-        env["FONTCONFIG_FILE"] = str(fontconfig)
-    out = subprocess.run(
-        ["fc-list"], env=env, capture_output=True, text=True, check=False
-    )
-    return len([line for line in out.stdout.splitlines() if line.strip()])
+    return fc_list_count(fontconfig)
+
 
 
 def write_font_less_config(root: Path) -> Path:

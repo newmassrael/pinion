@@ -73124,6 +73124,60 @@
         "hello-vn-tide's opening narration was lengthened so a fold is observable over the wire. That is content, and it is load-bearing for the demo; a shorter script would leave the wire unable to tell Hangul from tofu, since both measure the same stretched box"
       ]
     },
+    "Round 1474": {
+      "decision_summary": "A premise must be about the fixture, not about the developer's machine; and when two explanations are refuted, ship the measurement rather than a third guess — r1473's premise asserted the host could draw Hangul, and r1447's timeout now carries a per-phase clock instead of a fix nobody could justify.",
+      "changes_bullets": [
+        "tools/demos/r1473_app_default_font.py: the premise is about the DEMO'S CONFIG (it has faces, and none cover U+AC00), not about the developer's host having Korean fonts",
+        "tools/rpc_verify.py: fc_list_count(fontconfig, pattern) lifted at its third copy; the pattern argument is what lets one helper answer both \"any faces\" and \"faces for this script\"",
+        "tools/demos/r1447_font_free_tui.py + r1448_app_font.py: both now call the lifted counter",
+        "tools/demos/r1447_font_free_tui.py: every progress line carries elapsed seconds, so the runner that kills this demo reports WHERE the time went",
+        "NOT changed: the demo's work. Two explanations for its timeout were measured and refuted, and reducing work on a third guess would have been a change with no evidence behind it"
+      ],
+      "verification_bullets": [
+        "BOTH failures came from the first CI run after R1472/R1473 (run 30346762987): 441 asserted / 448 run, FAILURES r1447_font_free_tui.py(timeout) r1473_app_default_font.py. R1472 worked: the failure KIND is named and the diagnostics survived, which is how both causes below were read off the log rather than guessed",
+        "r1473 CAUSE, quoted from the log: \"premise: this host CAN draw Hangul (0 faces cover U+AC00)\". The runner has 53 fonts and no Korean among them. The assertion was about the developer's machine; the claim only ever needed the demo's own config to have faces and no Hangul coverage",
+        "r1473 FIXED and re-run: \"the demo's config: 1 faces, 0 covering U+AC00 (host: 85 covering it)\" — the host count is printed, not asserted, so the demo now passes on a Korean-capable host and a Korean-less one alike",
+        "r1447 HYPOTHESIS 1 REFUTED by measurement: cargo feature unification would have meant the job's `cargo test --workspace --no-run` did not warm what `cargo test -p <crate>` builds. Measured: after the workspace pre-build, `cargo test -p pinion-tui --lib --no-run` compiles 0 crates in 0.351s",
+        "r1447 HYPOTHESIS 2 REFUTED by measurement: a 2-core runner being simply slower. Measured: `taskset -c 0,1` over the whole demo finishes in 3.61s, against 3.30s unrestricted",
+        "r1447 WHAT IS KNOWN, from the preserved log: it reached \"pinion-tui: 148 tests pass in both environments\" and was killed in the example batteries that follow. Locally that point is t+1.3s. So a runner spent ~180s reaching where this machine spends about a second, and neither refuted explanation covers it",
+        "r1447 INSTRUMENTED rather than guessed: each progress line now carries elapsed seconds. Verified locally end to end (t+0.3 premise, t+1.3 the pinion-tui pair, t+2.8 the four batteries, t+4.5 the instrument phase)",
+        "gate: python syntax clean on all three touched demos; r1447 PASS 4.50s, r1448 PASS 4.39s, r1473 PASS 2.61s locally. No Rust changed"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "r1447 IS STILL EXPECTED TO FAIL in CI, and that is the deliberate state: its cause is unknown, two explanations were refuted, and the round shipped a measurement instead of a guess. The next run's t+ numbers name the phase, and only then is there a fix worth making",
+        "The obvious candidate reduction — folding the four example batteries into one `cargo test -p a -p b -p c -p d` — was NOT taken. It would confound the very measurement being shipped, and locally those four cost 0.2s each, so there is no evidence it is where the time is",
+        "A demo that asserts about the HOST rather than about its own fixture is a class, not one bug: R1471 fixed one, R1473 shipped another one round later. Nothing enforces the distinction; the cheap check is to ask of every premise whether a CI runner could fail it while the claim still holds"
+      ],
+      "publishable_decision_summary": "A premise must be about the fixture, not about the developer's machine; and when two explanations are refuted, ship the measurement rather than a third guess — r1473's premise asserted the host could draw Hangul, and r1447's timeout now carries a per-phase clock instead of a fix nobody could justify.",
+      "publishable_changes_bullets": [
+        "tools/demos/r1473_app_default_font.py: the premise is about the DEMO'S CONFIG (it has faces, and none cover U+AC00), not about the developer's host having Korean fonts",
+        "tools/rpc_verify.py: fc_list_count(fontconfig, pattern) lifted at its third copy; the pattern argument is what lets one helper answer both \"any faces\" and \"faces for this script\"",
+        "tools/demos/r1447_font_free_tui.py + r1448_app_font.py: both now call the lifted counter",
+        "tools/demos/r1447_font_free_tui.py: every progress line carries elapsed seconds, so the runner that kills this demo reports WHERE the time went",
+        "NOT changed: the demo's work. Two explanations for its timeout were measured and refuted, and reducing work on a third guess would have been a change with no evidence behind it"
+      ],
+      "publishable_verification_bullets": [
+        "BOTH failures came from the first CI run after R1472/R1473 (run 30346762987): 441 asserted / 448 run, FAILURES r1447_font_free_tui.py(timeout) r1473_app_default_font.py. R1472 worked: the failure KIND is named and the diagnostics survived, which is how both causes below were read off the log rather than guessed",
+        "r1473 CAUSE, quoted from the log: \"premise: this host CAN draw Hangul (0 faces cover U+AC00)\". The runner has 53 fonts and no Korean among them. The assertion was about the developer's machine; the claim only ever needed the demo's own config to have faces and no Hangul coverage",
+        "r1473 FIXED and re-run: \"the demo's config: 1 faces, 0 covering U+AC00 (host: 85 covering it)\" — the host count is printed, not asserted, so the demo now passes on a Korean-capable host and a Korean-less one alike",
+        "r1447 HYPOTHESIS 1 REFUTED by measurement: cargo feature unification would have meant the job's `cargo test --workspace --no-run` did not warm what `cargo test -p <crate>` builds. Measured: after the workspace pre-build, `cargo test -p pinion-tui --lib --no-run` compiles 0 crates in 0.351s",
+        "r1447 HYPOTHESIS 2 REFUTED by measurement: a 2-core runner being simply slower. Measured: `taskset -c 0,1` over the whole demo finishes in 3.61s, against 3.30s unrestricted",
+        "r1447 WHAT IS KNOWN, from the preserved log: it reached \"pinion-tui: 148 tests pass in both environments\" and was killed in the example batteries that follow. Locally that point is t+1.3s. So a runner spent ~180s reaching where this machine spends about a second, and neither refuted explanation covers it",
+        "r1447 INSTRUMENTED rather than guessed: each progress line now carries elapsed seconds. Verified locally end to end (t+0.3 premise, t+1.3 the pinion-tui pair, t+2.8 the four batteries, t+4.5 the instrument phase)",
+        "gate: python syntax clean on all three touched demos; r1447 PASS 4.50s, r1448 PASS 4.39s, r1473 PASS 2.61s locally. No Rust changed"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "r1447 IS STILL EXPECTED TO FAIL in CI, and that is the deliberate state: its cause is unknown, two explanations were refuted, and the round shipped a measurement instead of a guess. The next run's t+ numbers name the phase, and only then is there a fix worth making",
+        "The obvious candidate reduction — folding the four example batteries into one `cargo test -p a -p b -p c -p d` — was NOT taken. It would confound the very measurement being shipped, and locally those four cost 0.2s each, so there is no evidence it is where the time is",
+        "A demo that asserts about the HOST rather than about its own fixture is a class, not one bug: R1471 fixed one, R1473 shipped another one round later. Nothing enforces the distinction; the cheap check is to ask of every premise whether a CI runner could fail it while the claim still holds"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

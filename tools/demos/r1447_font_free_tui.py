@@ -70,7 +70,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from build_gate import ensure_built  # noqa: E402
-from rpc_verify import assert_eq, run_demo, write_fontconfig  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    assert_eq,
+    fc_list_count,
+    run_demo,
+    write_fontconfig,
+)
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
@@ -101,17 +106,29 @@ TEST_RESULT_RE = re.compile(
 )
 
 
+_T0 = time.monotonic()
+
+
+def phase(label: str) -> str:
+    """R1474 — seconds since the demo started, for the CI log.
+
+    This demo was killed twice by the sweep's 180s budget on a runner while
+    finishing in 3.6s here, and neither of the two obvious explanations
+    survived measurement: after the job pre-builds the test binaries a
+    `cargo test -p ...` recompiles nothing (0 crates, 0.35s), and pinning the
+    whole demo to two cores reproduces nothing (3.61s). What is left is
+    something about the runner this machine cannot reproduce — so the demo
+    reports its own elapsed time per phase and lets the failing machine say
+    where the time goes. R1472 is what makes that readable: a killed demo now
+    keeps its output.
+    """
+    return f"[demo t+{time.monotonic() - _T0:6.1f}s] {label}"
+
+
 def font_count(fontconfig: Path | None) -> int:
     """Fonts `fc-list` reports under `fontconfig` (None = the system's)."""
-    env = dict(os.environ)
-    if fontconfig is None:
-        env.pop("FONTCONFIG_FILE", None)
-    else:
-        env["FONTCONFIG_FILE"] = str(fontconfig)
-    out = subprocess.run(
-        ["fc-list"], env=env, capture_output=True, text=True, check=False
-    )
-    return len([line for line in out.stdout.splitlines() if line.strip()])
+    return fc_list_count(fontconfig)
+
 
 
 def write_empty_fontconfig(root: Path) -> Path:
@@ -233,7 +250,7 @@ def body() -> None:
             "with none, the 'fonts change nothing' comparison below would be "
             "two identical environments"
         )
-        print(f"[demo] system fontconfig: {system_fonts} fonts")
+        print(phase(f"system fontconfig: {system_fonts} fonts"))
         assert_eq(font_count(no_fonts), 0, "fonts visible under the demo's config")
 
         # ---- 2. the claim: a real TUI binary paints font-less ----
@@ -258,7 +275,7 @@ def body() -> None:
             "no fontique NoMatch — the exact failure R1447 removes: "
             f"{dark_err[:400]!r}"
         )
-        print(f"[demo] painted {len(dark)} bytes with 0 fonts (exit={dark_code})")
+        print(phase(f"painted {len(dark)} bytes with 0 fonts (exit={dark_code})"))
 
         # ---- 3. fonts change nothing (§2 #6, as a measurement) ----
         lit, lit_err, lit_code = paint_on_pty(binary, None)
@@ -274,7 +291,7 @@ def body() -> None:
             "the painted frame is byte-identical with 635 fonts and with none: "
             "a TUI frame is cells, and cells do not consult a font"
         )
-        print("[demo] byte-identical paint across both font environments")
+        print(phase(f"byte-identical paint across both font environments"))
 
         # ---- 4. the suite runs font-less ----
         # `pinion-tui` is the crate whose whole point is that it has no fonts.
@@ -297,7 +314,7 @@ def body() -> None:
             tui_pass_lit,
             "pinion-tui tests passing — the count must not depend on fonts",
         )
-        print(f"[demo] pinion-tui: {tui_pass_dark} tests pass in both environments")
+        print(phase(f"pinion-tui: {tui_pass_dark} tests pass in both environments"))
 
         # Every TUI example's battery — these drive `render_one_frame`, the
         # entry point the consumer field report measured.
@@ -306,7 +323,7 @@ def body() -> None:
             assert_eq(failed, 0, f"{example} failures with zero fonts")
             assert_eq(code, 0, f"{example} cargo exit code with zero fonts")
             assert passed > 0, f"premise: {example} has tests that ran ({passed})"
-            print(f"[demo] {example}: {passed} tests pass with 0 fonts")
+            print(phase(f"{example}: {passed} tests pass with 0 fonts"))
 
         # The mechanism itself, not only its effect: `pinion-text` pins that a
         # fresh cache has NOT scanned and that the first shape builds the
@@ -372,8 +389,10 @@ def body() -> None:
         assert_eq(arm_rc_lit, 0, "parley-arm cargo exit code with system fonts")
         assert_eq(arm_pass_lit, 1, "the arm-comparison test ran and passed")
         print(
-            "[demo] instrument verified: the probe reads the font environment, "
-            "and the TUI needs no fonts either way"
+            phase(
+                "instrument verified: the probe reads the font environment, "
+                "and the TUI needs no fonts either way"
+            )
         )
 
 

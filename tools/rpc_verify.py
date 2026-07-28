@@ -86,6 +86,30 @@ def isolated_storage_dir(prefix: str) -> Iterator[Path]:
         shutil.rmtree(storage_dir, ignore_errors=True)
 
 
+def fc_list_count(fontconfig: Path | None, pattern: str | None = None) -> int:
+    """R1474 — how many faces `fc-list` reports under `fontconfig`, optionally
+    matching `pattern` (e.g. `":charset=ac00"` for Hangul coverage).
+
+    `None` means the host's own configuration.
+
+    Lifted at its third copy (`r1447_font_free_tui`, `r1448_app_font`,
+    `r1473_app_default_font`). The `pattern` argument is what makes one helper
+    serve all three: counting *fonts* answers "does this host have any", while
+    counting a charset answers "can it draw this script" — and R1474 landed
+    because a demo asserted the first when it meant the second.
+    """
+    env = dict(os.environ)
+    if fontconfig is None:
+        env.pop("FONTCONFIG_FILE", None)
+    else:
+        env["FONTCONFIG_FILE"] = str(fontconfig)
+    args = ["fc-list"]
+    if pattern is not None:
+        args.append(pattern)
+    out = subprocess.run(args, env=env, capture_output=True, text=True, check=False)
+    return len([line for line in out.stdout.splitlines() if line.strip()])
+
+
 def write_fontconfig(root: Path, faces: tuple[str, ...] = ()) -> Path:
     """R1473 — a well-formed fontconfig over a directory holding exactly `faces`.
 
