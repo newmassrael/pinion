@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use pinion_rpc::{ConnId, RpcFrame, RpcIngress};
-use pinion_rpc_transport::UnixSocketTransport;
+use pinion_rpc_transport::{Exposure, UnixSocketTransport};
 
 /// Inline echo ingress: answers each frame with `echo:<request>` on the
 /// submitting thread. Stands in for the shell's UI-thread dispatch.
@@ -241,6 +241,143 @@ fn disabled_endpoint_refuses_new_connections() {
     let mut stream = connect(&path);
     send_line(&mut stream, "req-after-enable");
     assert_eq!(read_line(&stream).unwrap(), "echo:req-after-enable");
+
+    drop(control);
+}
+
+// ─── R-PR48: the endpoint's exposure is declared at bind ────────────────────
+
+#[test]
+fn a_withdrawn_bind_admits_no_session_at_all() {
+    // R-PR48 — the endpoint sprag's `APP_RPC=off` policy asks for: the socket
+    // is bound (the path exists, `connect` succeeds at the OS level) and the
+    // very first client is refused. The recorder is the discriminating half —
+    // `on_connect` only fires from `handle_connection`, which the accept loop
+    // spawns only while serving, so an empty log means no session was ever
+    // admitted, not merely that no reply came back.
+    let path = unique_socket_path();
+    let recorder = Arc::new(RecordingIngress::default());
+    let control =
+        UnixSocketTransport::serve_with_exposure(&path, recorder.clone(), Exposure::Withdrawn)
+            .unwrap();
+
+    assert!(path.exists(), "a withdrawn endpoint is still BOUND");
+
+    let mut stream = connect(&path);
+    send_line(&mut stream, "would-have-landed-in-the-window");
+    // The `None` here is the accept loop having closed the connection, so by
+    // this point the accept has definitely happened — the emptiness below is
+    // an observed refusal, not an unobserved race.
+    assert_eq!(read_line(&stream), None, "the first client is refused");
+    assert_eq!(
+        recorder.events(),
+        Vec::new(),
+        "no on_connect, no frame: the ingress never saw a session",
+    );
+
+    drop(control);
+}
+
+#[test]
+fn a_post_bind_withdraw_leaves_a_session_it_meant_to_refuse() {
+    // R-PR48 — WHY the exposure has to be part of the bind, reproduced
+    // deterministically: this is the only sequence the pre-PR48 API allowed a
+    // withdrawn-at-boot consumer — bind serving, then withdraw once the
+    // control comes back. Whatever the consumer does in between is window;
+    // here we simply connect IN it rather than racing it.
+    let path = unique_socket_path();
+    let control = UnixSocketTransport::serve(&path, Arc::new(EchoIngress)).unwrap();
+
+    let mut early = connect(&path);
+    send_line(&mut early, "landed-in-the-window");
+    assert_eq!(read_line(&early).unwrap(), "echo:landed-in-the-window");
+
+    // The consumer now applies the boot policy it wanted all along.
+    control.set_exposure(Exposure::Withdrawn);
+    assert_eq!(control.exposure(), Exposure::Withdrawn);
+
+    // New connections are refused from here on ...
+    let mut late = connect(&path);
+    send_line(&mut late, "after-the-withdraw");
+    assert_eq!(read_line(&late), None, "later clients are refused");
+
+    // ... but the session admitted in the window keeps being served, because
+    // withdrawing refuses future admissions and deliberately does not evict
+    // live ones. So the cost of the window is not "microseconds of exposure":
+    // it is one unintended session, open for as long as its client holds it.
+    send_line(&mut early, "still-served-after-the-withdraw");
+    assert_eq!(
+        read_line(&early).unwrap(),
+        "echo:still-served-after-the-withdraw",
+        "the in-window session outlives the withdraw",
+    );
+
+    drop(control);
+}
+
+#[test]
+fn a_withdrawn_bind_is_a_starting_point_not_a_lock() {
+    // The boot exposure sets where the endpoint starts; the runtime toggle is
+    // unchanged, so an app booted withdrawn can still be exposed later
+    // (sprag's `APP_RPC=off` then an operator opting in).
+    let path = unique_socket_path();
+    let control =
+        UnixSocketTransport::serve_with_exposure(&path, Arc::new(EchoIngress), Exposure::Withdrawn)
+            .unwrap();
+
+    let mut refused = connect(&path);
+    send_line(&mut refused, "before-exposing");
+    assert_eq!(read_line(&refused), None);
+
+    control.set_exposure(Exposure::Serving);
+    let mut served = connect(&path);
+    send_line(&mut served, "after-exposing");
+    assert_eq!(read_line(&served).unwrap(), "echo:after-exposing");
+
+    drop(control);
+}
+
+#[test]
+fn the_bare_serve_binds_serving() {
+    // The pre-PR48 contract is unchanged: `serve` is the `Exposure::Serving`
+    // shorthand, and says so in the type a consumer reads back.
+    let path = unique_socket_path();
+    let control = UnixSocketTransport::serve(&path, Arc::new(EchoIngress)).unwrap();
+    assert_eq!(control.exposure(), Exposure::Serving);
+
+    let mut stream = connect(&path);
+    send_line(&mut stream, "served-with-no-exposure-argument");
+    assert_eq!(
+        read_line(&stream).unwrap(),
+        "echo:served-with-no-exposure-argument"
+    );
+
+    drop(control);
+}
+
+#[test]
+fn the_bool_view_and_the_typed_view_are_one_state() {
+    // Read/write symmetry across the two vocabularies: whichever one writes,
+    // both read the same state back.
+    let path = unique_socket_path();
+    let control = UnixSocketTransport::serve(&path, Arc::new(EchoIngress)).unwrap();
+    assert_eq!(control.exposure(), Exposure::Serving);
+    assert!(control.is_enabled());
+
+    control.set_enabled(false);
+    assert_eq!(
+        control.exposure(),
+        Exposure::Withdrawn,
+        "a bool write reads back typed",
+    );
+
+    control.set_exposure(Exposure::Serving);
+    assert!(control.is_enabled(), "a typed write reads back as the bool");
+
+    control.disable();
+    assert_eq!(control.exposure(), Exposure::Withdrawn);
+    control.enable();
+    assert_eq!(control.exposure(), Exposure::Serving);
 
     drop(control);
 }

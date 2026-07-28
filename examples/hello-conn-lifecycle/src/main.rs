@@ -43,7 +43,30 @@
 //! tracked *clients* — mirroring sprag, where the tracked attachments are the
 //! pane/session clients, not the control channel.
 //!
+//! ## R1469 PINION-PR48 — the endpoint's boot exposure
+//!
+//! A second consumer requirement landed on the same mount site. A host whose
+//! policy is `APP_RPC=off` wants the socket **bound but withdrawn**: the path
+//! is always there, service is refused. Before PR-48 the only expressible
+//! sequence was `serve()` (which binds *serving* and arms the accept loop)
+//! followed by a withdraw once the control came back — so every such consumer
+//! had a window, and a client landing in it was admitted for its whole
+//! session, because withdrawing does not evict live connections.
+//!
+//! This example is that consumer: [`EXPOSURE_ENV`] declares the boot
+//! [`Exposure`], and `main` hands it to
+//! [`UnixSocketTransport::serve_with_exposure`] rather than applying it after.
+//! The exposure is then reflected into the scene as data (§2 #7) on the
+//! `conn_exposure` region, read live off the [`TransportControl`] — so an agent
+//! learns "bound, refusing service" over the *out-of-band* stdin channel, the
+//! one channel a withdrawn endpoint leaves open. A plain socket library has no
+//! answer to that question at all.
+//!
 //! ## Verification
+//!
+//! `tools/demos/r1469_transport_exposure.py`: the same binary booted twice —
+//! withdrawn, where the socket file exists but a client is refused and the
+//! count never leaves 0; then serving, where that same client attaches.
 //!
 //! `tools/demos/r1393_conn_lifecycle.py`: over stdin the count starts at 0; a
 //! raw `AF_UNIX` connection opens → the count rises to 1 and the new id appears;
@@ -66,7 +89,7 @@ use pinion_core::use_repaint_sink;
 use pinion_core::widget_core::{ExtraExternal, PrimarySurface};
 use pinion_core::{External, Frame, RepaintSink, Scene, WidgetCore};
 use pinion_rpc::{ConnId, RpcFrame, RpcIngress};
-use pinion_rpc_transport::{TransportControl, UnixSocketTransport};
+use pinion_rpc_transport::{Exposure, TransportControl, UnixSocketTransport};
 use pinion_shell::{ShellConfig, SizeStrategy, WidgetView, run_with_config, vello_renderer_impl};
 
 // pinion-forge codegen output — defines `HelloConnLifecycleRenderer` +
@@ -76,7 +99,9 @@ include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloConnLifecycleRenderer, HelloConnLifecycleRendererError);
 
 const WIN_W: u32 = 460;
-const WIN_H: u32 = 380;
+/// R1469 — grown by one row's worth over R1393's 380 to seat the
+/// endpoint-exposure line without crowding the list.
+const WIN_H: u32 = 420;
 
 /// Shared `ThemeProvider` cache key (the `"app"` gallery convention).
 const THEME_TAG: &str = "app";
@@ -84,10 +109,18 @@ const THEME_TAG: &str = "app";
 const STATUS_TAG: &str = "conn_status";
 const LIST_TAG: &str = "conn_list";
 const HINT_TAG: &str = "conn_hint";
+const EXPOSURE_TAG: &str = "conn_exposure";
 
 /// Env var naming the socket path to bind. The r1393 demo sets a unique path;
 /// a bare `cargo run` falls back to a per-pid temp path (printed in the hint).
 const SOCK_ENV: &str = "PINION_CONN_LIFECYCLE_SOCK";
+
+/// R1469 §5.7 PINION-PR48 — env var declaring the endpoint's **boot
+/// [`Exposure`]**, the deployment knob a host exposes as `APP_RPC=off`:
+/// `withdrawn` binds the socket but refuses service, anything else (including
+/// unset) serves. Read once, in `main`, and handed to the bind — never applied
+/// after it, which is the whole point of PR-48.
+const EXPOSURE_ENV: &str = "PINION_CONN_LIFECYCLE_EXPOSURE";
 
 // ─── the process-global connection board ────────────────────────────────────
 
@@ -137,6 +170,19 @@ impl ConnBoard {
     /// The live ids, sorted — the SSOT the view and a11y both read.
     fn snapshot_ids(&self) -> Vec<u64> {
         self.ids.lock().unwrap().iter().copied().collect()
+    }
+
+    /// R1469 — the endpoint's exposure *right now*, read off the live
+    /// [`TransportControl`], or `None` before one is mounted. Reading the
+    /// control rather than caching the boot value is what makes the rendered
+    /// line answer the question actually asked ("is this endpoint serving?")
+    /// rather than a stale "what did it boot as?".
+    fn exposure(&self) -> Option<Exposure> {
+        self.control
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(TransportControl::exposure)
     }
 }
 
@@ -193,6 +239,22 @@ fn conn_row_text(id: u64) -> String {
 /// `AccessNode`, so AT bounds attach to the paint.
 fn row_tag(visible_index: usize) -> String {
     format!("conn_row_{visible_index}")
+}
+
+/// R1469 PINION-PR48 — the endpoint-exposure line: the single SSOT for the
+/// painted text and its `role=status` accessible name.
+///
+/// This is the §2 #7 half of PR-48 that a plain socket library cannot offer:
+/// "bound but refusing" is a real, distinct state, and here an agent reads it
+/// as *scene data* over the out-of-band channel — the one channel still open
+/// when the endpoint is withdrawn. `None` is the pre-mount state (unit tests
+/// drive the pure builder), reported as such rather than guessed at.
+fn exposure_line(exposure: Option<Exposure>) -> String {
+    match exposure {
+        Some(Exposure::Serving) => "Endpoint: serving".to_owned(),
+        Some(Exposure::Withdrawn) => "Endpoint: withdrawn (bound, refusing service)".to_owned(),
+        None => "Endpoint: unbound".to_owned(),
+    }
 }
 
 /// The human-facing hint (socket path); empty in tests, where nothing seeded
@@ -272,10 +334,39 @@ fn conn_list_scene(ids: &[u64], theme: &pinion_core::Theme) -> Scene {
     )
 }
 
-/// Pure panel builder: `(live ids) -> Scene`, resolving the theme from the
-/// active owner scope. Split out so tests drive it with explicit ids instead of
-/// mutating the process-global [`BOARD`].
-fn conn_panel_scene(ids: &[u64]) -> Scene {
+/// R1469 (obligation 3b) — one tagged, horizontally-centred line of text.
+///
+/// The panel's status / exposure / hint rows had byte-identical wiring and
+/// differed only in their [`TextStyle`]; adding the exposure row made that the
+/// third copy, so the wiring is shared and every style opinion stays at the
+/// call site. Deliberately local to this binding: the surrounding "centred
+/// row" *vocabulary* is common across the example gallery, but a shared
+/// helper for it is a substrate decision of its own, not a side effect of
+/// this round.
+fn tagged_centered_line(
+    tag: impl Into<std::borrow::Cow<'static, str>>,
+    text: String,
+    style: TextStyle,
+) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            text,
+            Rect::default(),
+            style,
+        ))])
+        .with_tag(tag)
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Center),
+        ),
+    )
+}
+
+/// Pure panel builder: `(live ids, endpoint exposure) -> Scene`, resolving the
+/// theme from the active owner scope. Split out so tests drive it with explicit
+/// inputs instead of mutating the process-global [`BOARD`].
+fn conn_panel_scene(ids: &[u64], exposure: Option<Exposure>) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
 
     let title = Scene::Text(TextNode::styled(
@@ -286,43 +377,41 @@ fn conn_panel_scene(ids: &[u64]) -> Scene {
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
-    let status = Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            status_line(ids.len()),
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(14)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))])
-        .with_tag(STATUS_TAG)
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_justify(JustifyContent::Center),
-        ),
+    let status = tagged_centered_line(
+        STATUS_TAG,
+        status_line(ids.len()),
+        TextStyle::new()
+            .with_size_px(14)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+    );
+
+    // R1469 PINION-PR48 — the endpoint's exposure, as data. Muted when
+    // serving (the unremarkable case), Error-toned when withdrawn, so the
+    // "bound but refusing" state is legible in the pixels too.
+    let exposure_fg = if exposure == Some(Exposure::Withdrawn) {
+        theme.resolve(ColorRole::Error)
+    } else {
+        theme.resolve(ColorRole::OnSurfaceMuted)
+    };
+    let exposure_row = tagged_centered_line(
+        EXPOSURE_TAG,
+        exposure_line(exposure),
+        TextStyle::new().with_size_px(14).with_fg(exposure_fg),
     );
 
     let list = conn_list_scene(ids, &theme);
 
-    let hint = Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            socket_hint(),
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(12)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted))
-                .with_align(TextAlign::Center),
-        ))])
-        .with_tag(HINT_TAG)
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_justify(JustifyContent::Center),
-        ),
+    let hint = tagged_centered_line(
+        HINT_TAG,
+        socket_hint(),
+        TextStyle::new()
+            .with_size_px(12)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted))
+            .with_align(TextAlign::Center),
     );
 
     Scene::Container(
-        ContainerNode::new(vec![title, status, list, hint])
+        ContainerNode::new(vec![title, status, exposure_row, list, hint])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
@@ -339,7 +428,7 @@ fn conn_panel_scene(ids: &[u64]) -> Scene {
 /// (a producer-authoritative shared handle, like `hello-live-data`'s buffer).
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(_state: (), _frame: &Frame) -> Scene {
-    conn_panel_scene(&BOARD.snapshot_ids())
+    conn_panel_scene(&BOARD.snapshot_ids(), BOARD.exposure())
 }
 
 /// The binding. Hand-written (not `#[widget]`-derived) because it is
@@ -413,10 +502,17 @@ impl WidgetA11y for ConnLifecycleView {
             );
         }
 
-        let mut nodes = Vec::with_capacity(items.len() + 2);
+        let mut nodes = Vec::with_capacity(items.len() + 3);
         nodes.push(list);
         nodes.extend(items);
         nodes.push(AccessNode::new(STATUS_TAG, AriaRole::Status).with_name(status_line(ids.len())));
+        // R1469 — the endpoint's exposure is a second live region: it changes
+        // out-of-band (a runtime withdraw), so AT should announce it, and it is
+        // named from the same SSOT the paint uses.
+        nodes.push(
+            AccessNode::new(EXPOSURE_TAG, AriaRole::Status)
+                .with_name(exposure_line(BOARD.exposure())),
+        );
         nodes
     }
 }
@@ -446,17 +542,42 @@ fn resolve_socket_path() -> PathBuf {
     )
 }
 
+/// R1469 PINION-PR48 — parse the boot [`Exposure`] from the raw env value.
+///
+/// Pure (takes the value, does not read the environment) so both arms are unit
+/// testable without mutating process state. Only the exact token `withdrawn`
+/// withdraws: an unrecognised value must not silently take an endpoint off the
+/// air, so everything else — including unset — is [`Exposure::default`], which
+/// is the pre-PR48 behaviour.
+fn parse_boot_exposure(raw: Option<&str>) -> Exposure {
+    match raw.map(str::trim) {
+        Some(v) if v.eq_ignore_ascii_case("withdrawn") => Exposure::Withdrawn,
+        _ => Exposure::default(),
+    }
+}
+
+/// The boot exposure this process was launched with.
+fn boot_exposure() -> Exposure {
+    parse_boot_exposure(std::env::var(EXPOSURE_ENV).ok().as_deref())
+}
+
 fn main() {
     let sock_path = resolve_socket_path();
     *SOCKET_PATH.lock().unwrap() = Some(sock_path.display().to_string());
+    // R-PR48 — resolved BEFORE the bind, because it is an argument to the
+    // bind. Reading it here (rather than withdrawing after `serve` returned)
+    // is exactly the one-line change PINION-PR48 asked for: there is no
+    // instant at which this endpoint serves against its declared policy.
+    let exposure = boot_exposure();
 
     // Mount the socket transport through the ingress hook, wrapping the shell's
     // real ingress in the stateful tracker. The built-in stdin transport is
     // installed separately by `run_with_config` over the UNwrapped ingress, so
-    // the observer channel never counts.
+    // the observer channel never counts — and it stays reachable even when the
+    // socket is withdrawn, which is how an agent still reads this app's state.
     let config = ShellConfig::new().on_rpc_ingress(move |ingress| {
         let tracking: Arc<dyn RpcIngress> = Arc::new(AttachTrackingIngress { inner: ingress });
-        let control = UnixSocketTransport::serve(&sock_path, tracking)
+        let control = UnixSocketTransport::serve_with_exposure(&sock_path, tracking, exposure)
             .expect("bind hello-conn-lifecycle RPC socket");
         // Park the endpoint for the process lifetime — the app owns its socket.
         *BOARD.control.lock().unwrap() = Some(control);
@@ -501,9 +622,51 @@ mod tests {
     }
 
     #[test]
+    fn boot_exposure_withdraws_only_on_the_exact_token() {
+        // R1469 PINION-PR48 — an unrecognised value must not take the endpoint
+        // off the air, so only `withdrawn` (case/space insensitive) withdraws.
+        assert_eq!(parse_boot_exposure(Some("withdrawn")), Exposure::Withdrawn);
+        assert_eq!(
+            parse_boot_exposure(Some(" Withdrawn ")),
+            Exposure::Withdrawn
+        );
+        assert_eq!(parse_boot_exposure(Some("serving")), Exposure::Serving);
+        assert_eq!(parse_boot_exposure(None), Exposure::Serving);
+        assert_eq!(parse_boot_exposure(Some("")), Exposure::Serving);
+        assert_eq!(parse_boot_exposure(Some("off")), Exposure::Serving);
+    }
+
+    #[test]
+    fn the_exposure_line_names_all_three_states() {
+        // The SSOT the paint and the `role=status` accessible name share.
+        assert_eq!(exposure_line(Some(Exposure::Serving)), "Endpoint: serving");
+        assert_eq!(
+            exposure_line(Some(Exposure::Withdrawn)),
+            "Endpoint: withdrawn (bound, refusing service)",
+        );
+        assert_eq!(exposure_line(None), "Endpoint: unbound");
+    }
+
+    #[test]
+    fn the_panel_reports_the_endpoint_exposure_as_data() {
+        // R1469 §2 #7 — "bound but refusing" is legible without pixels.
+        let owner = Owner::new();
+        let withdrawn = owner.run(|| conn_panel_scene(&[], Some(Exposure::Withdrawn)));
+        assert_eq!(
+            text_under(&withdrawn, EXPOSURE_TAG).as_deref(),
+            Some("Endpoint: withdrawn (bound, refusing service)"),
+        );
+        let serving = owner.run(|| conn_panel_scene(&[], Some(Exposure::Serving)));
+        assert_eq!(
+            text_under(&serving, EXPOSURE_TAG).as_deref(),
+            Some("Endpoint: serving"),
+        );
+    }
+
+    #[test]
     fn empty_panel_shows_zero_and_a_placeholder() {
         let owner = Owner::new();
-        let scene = owner.run(|| conn_panel_scene(&[]));
+        let scene = owner.run(|| conn_panel_scene(&[], Some(Exposure::Serving)));
         assert_eq!(
             text_under(&scene, STATUS_TAG).as_deref(),
             Some("0 connections attached"),
@@ -520,7 +683,7 @@ mod tests {
     fn panel_renders_the_live_ids_in_order() {
         let owner = Owner::new();
         // Explicit ids — the pure panel builder never reads the global BOARD.
-        let scene = owner.run(|| conn_panel_scene(&[3, 8]));
+        let scene = owner.run(|| conn_panel_scene(&[3, 8], Some(Exposure::Serving)));
         assert_eq!(
             text_under(&scene, STATUS_TAG).as_deref(),
             Some("2 connections attached"),

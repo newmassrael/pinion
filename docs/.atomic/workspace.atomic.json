@@ -72808,6 +72808,80 @@
         "IntrospectionPaint contains the viewport seam and the two mailboxes; other Signal values a mirrored layout writes (a scroll bound, a measured-row height) are still written and are recomputed by the next live paint from the live extent. Stated in the module docs; a full Owner::snapshot/restore per introspection read is what simulate already pays for and a plain scene/layout does not"
       ]
     },
+    "Round 1469": {
+      "decision_summary": "The RPC endpoint's exposure is declared at BIND, not applied after it: UnixSocketTransport::serve_with_exposure takes the boot Exposure, so a 'bound but withdrawn' policy holds from the endpoint's first instant instead of after a window that admits whole sessions.",
+      "changes_bullets": [
+        "pinion-rpc-transport: new Exposure { Serving, Withdrawn } — the endpoint's transport-policy state, named in the vocabulary the crate doc already used (\"exposed or withdrawn\"), not a bool",
+        "pinion-rpc-transport: UnixSocketTransport::serve_with_exposure is now the sole constructor and takes the endpoint's boot exposure; serve delegates to it with Exposure::Serving, so the pre-PR48 contract is unchanged",
+        "pinion-rpc-transport: the flag the accept loop reads has ONE construction site and it is the declared exposure — no TransportControl exists until the tail of the function, so nothing can write it between creation and the loop being armed",
+        "pinion-rpc-transport: TransportControl::exposure / set_exposure are the typed read/write pair; is_enabled / set_enabled / enable / disable are retained as the bool view over them",
+        "pinion-shell: the on_rpc_ingress seam doc names the boot exposure as consumer-owned policy (the hook example now shows serve_with_exposure)",
+        "examples/hello-conn-lifecycle: PINION_CONN_LIFECYCLE_EXPOSURE declares the boot exposure and main hands it to the bind; the live exposure is reflected into the scene as data on a conn_exposure region and as a role=status AccessNode, read off the TransportControl so it answers \"is this serving?\" not \"what did it boot as?\"",
+        "examples/hello-conn-lifecycle: obligation 3b — the exposure row was the THIRD copy of the status/hint tagged-centred-line wiring, so that wiring is lifted to tagged_centered_line and every style opinion stays at the call site",
+        "tools/demos/r1469_transport_exposure.py (35 assertion sites): the same binary booted withdrawn then serving"
+      ],
+      "verification_bullets": [
+        "CONFIRMED AT HEAD FIRST: the sprag handoff was pinned at 24409c46/R1263, so the claim was re-read against current source — serve did hardcode AtomicBool::new(true) and spawn the accept loop immediately",
+        "MEASURED, deterministic: a_post_bind_withdraw_leaves_a_session_it_meant_to_refuse — a client admitted in the window is still served AFTER the withdraw, because set_exposure deliberately does not evict in-flight connections; the cost of the window is one unintended SESSION, not one instant",
+        "CF-1 (serve_with_exposure ignores its argument): exactly 2 FAIL, both withdrawn-bind claims; every serving-side control passed",
+        "CF-2 (serve delegates with Withdrawn): 7 FAIL including all 6 pre-existing PR-47/PR-67 tests — backward compatibility is pinned by the suite that already existed, not by a new assertion",
+        "CF-3 (Exposure::from_serving transposed): 5 FAIL (1 unit + 4 integration, incl. the pre-existing disabled_endpoint_refuses_new_connections)",
+        "PROCESS: CF-3 was first read as \"only the unit test catches it\" — wrong, because cargo test stops at the first failing TARGET and never ran the integration binary. Re-measured with --no-fail-fast before recording. A counterfactual must be read under --no-fail-fast or its negative half is unmeasured, not passing",
+        "CF-D2 (binary ignores the declared policy, always binds Serving): demo FAIL at the first exposure assertion",
+        "CF-D3 (scene reports the declared policy but the transport ignores it): demo FAIL at the refusal assertion — so the refusal half discriminates independently of the exposure-line half",
+        "CF-D1 (the pre-PR48 sequence: serve() then withdraw) PASSES the demo — the stated honest limit MEASURED rather than assumed: a sub-microsecond internal window has no external witness and a ZERO-FLAKE demo will not race for one. Window closure is structural; its consequence is what the unit test pins",
+        "gate: cargo fmt --all --check clean, clippy -D pedantic 0 on pinion-rpc-transport + hello-conn-lifecycle + pinion-shell, cargo doc --workspace --no-deps --document-private-items 0",
+        "tests: pinion-rpc-transport 12 integration (+5 new) + 2 unit (new) + 1 doc; hello-conn-lifecycle 8 (+3 new)",
+        "demos: r1469 PASS (35 assertion sites, 2 subprocess phases), neighbour r1393_conn_lifecycle PASS after the panel change (WIN_H 380 to 420, new row, wiring lift)"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.16",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The sub-microsecond window INSIDE the old sequence has no external witness — measured, not assumed (CF-D1 passes the demo). An implementation that bound Serving and withdrew before returning would pass every test in the crate. The guarantee is structural (one construction site; no TransportControl in scope before the spawn) and is documented as such at the site rather than claimed as tested",
+        "serve's stale-socket removal is unconditional: a second bind at a live path silently unlinks the first endpoint's socket and takes over, leaving the first serving an unlinked inode. Found while auditing this constructor, NOT fixed here (out of PR-48's scope) — it is an endpoint-identity question, not an exposure one, and wants its own round",
+        "The exposure axis has exactly two states because that is what the consumer asked for. If a third ever lands (a paused / local-only state), Exposure is deliberately not #[non_exhaustive] so every consumer match must be revisited",
+        "sprag consumes this in a sprag-native session (never from pinion): sprag_rpc::mount replaces serve(path, ingress)? + control.set_enabled(boot_enabled(opts)) with serve_with_exposure(path, ingress, Exposure::from_serving(boot_enabled(opts)))?"
+      ],
+      "publishable_decision_summary": "The RPC endpoint's exposure is declared at BIND, not applied after it: UnixSocketTransport::serve_with_exposure takes the boot Exposure, so a 'bound but withdrawn' policy holds from the endpoint's first instant instead of after a window that admits whole sessions.",
+      "publishable_changes_bullets": [
+        "pinion-rpc-transport: new Exposure { Serving, Withdrawn } — the endpoint's transport-policy state, named in the vocabulary the crate doc already used (\"exposed or withdrawn\"), not a bool",
+        "pinion-rpc-transport: UnixSocketTransport::serve_with_exposure is now the sole constructor and takes the endpoint's boot exposure; serve delegates to it with Exposure::Serving, so the pre-PR48 contract is unchanged",
+        "pinion-rpc-transport: the flag the accept loop reads has ONE construction site and it is the declared exposure — no TransportControl exists until the tail of the function, so nothing can write it between creation and the loop being armed",
+        "pinion-rpc-transport: TransportControl::exposure / set_exposure are the typed read/write pair; is_enabled / set_enabled / enable / disable are retained as the bool view over them",
+        "pinion-shell: the on_rpc_ingress seam doc names the boot exposure as consumer-owned policy (the hook example now shows serve_with_exposure)",
+        "examples/hello-conn-lifecycle: PINION_CONN_LIFECYCLE_EXPOSURE declares the boot exposure and main hands it to the bind; the live exposure is reflected into the scene as data on a conn_exposure region and as a role=status AccessNode, read off the TransportControl so it answers \"is this serving?\" not \"what did it boot as?\"",
+        "examples/hello-conn-lifecycle: obligation 3b — the exposure row was the THIRD copy of the status/hint tagged-centred-line wiring, so that wiring is lifted to tagged_centered_line and every style opinion stays at the call site",
+        "tools/demos/r1469_transport_exposure.py (35 assertion sites): the same binary booted withdrawn then serving"
+      ],
+      "publishable_verification_bullets": [
+        "CONFIRMED AT HEAD FIRST: the sprag handoff was pinned at 24409c46/R1263, so the claim was re-read against current source — serve did hardcode AtomicBool::new(true) and spawn the accept loop immediately",
+        "MEASURED, deterministic: a_post_bind_withdraw_leaves_a_session_it_meant_to_refuse — a client admitted in the window is still served AFTER the withdraw, because set_exposure deliberately does not evict in-flight connections; the cost of the window is one unintended SESSION, not one instant",
+        "CF-1 (serve_with_exposure ignores its argument): exactly 2 FAIL, both withdrawn-bind claims; every serving-side control passed",
+        "CF-2 (serve delegates with Withdrawn): 7 FAIL including all 6 pre-existing PR-47/PR-67 tests — backward compatibility is pinned by the suite that already existed, not by a new assertion",
+        "CF-3 (Exposure::from_serving transposed): 5 FAIL (1 unit + 4 integration, incl. the pre-existing disabled_endpoint_refuses_new_connections)",
+        "PROCESS: CF-3 was first read as \"only the unit test catches it\" — wrong, because cargo test stops at the first failing TARGET and never ran the integration binary. Re-measured with --no-fail-fast before recording. A counterfactual must be read under --no-fail-fast or its negative half is unmeasured, not passing",
+        "CF-D2 (binary ignores the declared policy, always binds Serving): demo FAIL at the first exposure assertion",
+        "CF-D3 (scene reports the declared policy but the transport ignores it): demo FAIL at the refusal assertion — so the refusal half discriminates independently of the exposure-line half",
+        "CF-D1 (the pre-PR48 sequence: serve() then withdraw) PASSES the demo — the stated honest limit MEASURED rather than assumed: a sub-microsecond internal window has no external witness and a ZERO-FLAKE demo will not race for one. Window closure is structural; its consequence is what the unit test pins",
+        "gate: cargo fmt --all --check clean, clippy -D pedantic 0 on pinion-rpc-transport + hello-conn-lifecycle + pinion-shell, cargo doc --workspace --no-deps --document-private-items 0",
+        "tests: pinion-rpc-transport 12 integration (+5 new) + 2 unit (new) + 1 doc; hello-conn-lifecycle 8 (+3 new)",
+        "demos: r1469 PASS (35 assertion sites, 2 subprocess phases), neighbour r1393_conn_lifecycle PASS after the panel change (WIN_H 380 to 420, new row, wiring lift)"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.16",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The sub-microsecond window INSIDE the old sequence has no external witness — measured, not assumed (CF-D1 passes the demo). An implementation that bound Serving and withdrew before returning would pass every test in the crate. The guarantee is structural (one construction site; no TransportControl in scope before the spawn) and is documented as such at the site rather than claimed as tested",
+        "serve's stale-socket removal is unconditional: a second bind at a live path silently unlinks the first endpoint's socket and takes over, leaving the first serving an unlinked inode. Found while auditing this constructor, NOT fixed here (out of PR-48's scope) — it is an endpoint-identity question, not an exposure one, and wants its own round",
+        "The exposure axis has exactly two states because that is what the consumer asked for. If a third ever lands (a paused / local-only state), Exposure is deliberately not #[non_exhaustive] so every consumer match must be revisited",
+        "sprag consumes this in a sprag-native session (never from pinion): sprag_rpc::mount replaces serve(path, ingress)? + control.set_enabled(boot_enabled(opts)) with serve_with_exposure(path, ingress, Exposure::from_serving(boot_enabled(opts)))?"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

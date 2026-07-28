@@ -5161,9 +5161,10 @@ fn init_tracing() {
 ///   mounts its own transport (e.g. the Unix-socket adapter in
 ///   `pinion-rpc-transport`) to get an always-on, execution-independent
 ///   RPC endpoint. The consumer owns whatever it spawns — including its
-///   lifetime, so runtime on/off is the consumer toggling its own
-///   transport, with no framework-side toggle mechanism. pinion never
-///   owns transport *policy*; it only exposes the seam.
+///   lifetime and its boot exposure (R-PR48), so runtime on/off is the
+///   consumer toggling its own transport, with no framework-side toggle
+///   mechanism. pinion never owns transport *policy*; it only exposes the
+///   seam.
 ///
 /// The built-in `stdin → stdout` transport is always installed regardless
 /// of `on_ingress`, so the pre-PR47 pipe-driven workflow is unchanged.
@@ -5237,9 +5238,12 @@ impl ShellConfig {
     ///     // Mount any transport here and drive `ingress`. For an
     ///     // always-on Unix socket:
     ///     //   let control = pinion_rpc_transport::UnixSocketTransport
-    ///     //       ::serve("/run/user/1000/app.sock", ingress)?;
-    ///     // Keep `control` alive for the endpoint's lifetime; toggle
-    ///     // `control.set_enabled(..)` for runtime on/off; drop it to stop.
+    ///     //       ::serve_with_exposure("/run/user/1000/app.sock", ingress,
+    ///     //                             boot_exposure)?;
+    ///     // R-PR48 — the boot exposure belongs to the bind, so a
+    ///     // "bound but withdrawn" policy has no serving window. Keep
+    ///     // `control` alive for the endpoint's lifetime; toggle
+    ///     // `control.set_exposure(..)` for runtime on/off; drop it to stop.
     ///     let _ = ingress;
     /// });
     /// ```
