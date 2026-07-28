@@ -29,6 +29,8 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
+use serde_json::value::RawValue;
+
 use crate::Event;
 use crate::input::{GesturePhase, Modifiers, PointerKind, RawPointerButton};
 use crate::intent::Intent;
@@ -452,12 +454,97 @@ impl IntrospectSchema {
     }
 }
 
+/// R1480 §5.15 — JSON text a producer has **already encoded**, carried to
+/// the wire without a `serde_json::Value` DOM in between.
+///
+/// [`IntrospectValue::Json`] is a DOM. An [`ExternalIntrospect::query`]
+/// answering with anything larger than a scalar builds a tree of maps and
+/// vectors that the JSON-RPC envelope then walks again to produce text.
+/// Neither end wants the tree: the producer holds a `Serialize` type, the
+/// consumer receives bytes. The tree exists only because the channel's
+/// type demanded one. `RawJson` widens the channel — the producer
+/// serializes once and the envelope splices the result.
+///
+/// **The bytes are the value.** Two `RawJson`s are equal iff their text is
+/// identical, so `{"a":1,"b":2}` and `{"b":2,"a":1}` differ here although
+/// their `Value` projections do not. That is the contract the type exists
+/// to keep: a raw answer promises a particular encoding, and an equality
+/// that looked past the encoding would compare something this type does
+/// not carry.
+///
+/// **Serialization is `serde_json`-specific.** [`RawValue`] asks its
+/// serializer for verbatim splicing through a private token; any other
+/// `Serializer` would see a struct named by that token. pinion's only
+/// response serializer is `serde_json`, so the requirement holds by
+/// construction — but a future non-JSON transport must go through
+/// [`Self::to_value`] rather than serialize a `RawJson` directly.
+#[derive(Debug, Clone)]
+pub struct RawJson(Box<RawValue>);
+
+impl RawJson {
+    /// Encode `value` straight to JSON text — one serialization pass, no
+    /// intermediate DOM. Validity needs no check because the encoder
+    /// produced the text.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `T`'s `Serialize` impl reports: a custom impl that errors,
+    /// or a map with non-string keys (the same inputs
+    /// `serde_json::to_value` rejects).
+    pub fn encode<T: ?Sized + serde::Serialize>(value: &T) -> Result<Self, serde_json::Error> {
+        serde_json::value::to_raw_value(value).map(Self)
+    }
+    /// Adopt JSON text from an untrusted source. The text is parsed for
+    /// validity — and discarded, not retained as a DOM — so malformed
+    /// JSON is rejected here rather than corrupting a wire frame.
+    ///
+    /// # Errors
+    ///
+    /// `json` is not a single well-formed JSON value.
+    pub fn parse(json: String) -> Result<Self, serde_json::Error> {
+        RawValue::from_string(json).map(Self)
+    }
+
+    /// The JSON text, exactly as the producer wrote it.
+    #[must_use]
+    pub fn get(&self) -> &str {
+        self.0.get()
+    }
+
+    /// Materialize the DOM this type exists to avoid. For contexts that
+    /// genuinely need one — a raw answer nested inside a larger `Value`
+    /// the envelope is assembling (`scene/snapshot`, `scene/dry_run`),
+    /// where the enclosing tree has to be walked regardless.
+    ///
+    /// # Errors
+    ///
+    /// The text is valid JSON that `Value` cannot represent — in
+    /// practice only a number outside `f64` range, which `Value` has no
+    /// slot for.
+    pub fn to_value(&self) -> Result<serde_json::Value, serde_json::Error> {
+        serde_json::from_str(self.0.get())
+    }
+}
+
+impl PartialEq for RawJson {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.get() == other.0.get()
+    }
+}
+
+impl serde::Serialize for RawJson {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
 /// Opaque value payload for `query` / `intervene`. Scalar variants
 /// cover the JSON-RPC primitive surface; `Json` carries arbitrary
 /// structured payloads (objects, arrays, mixed scalars) for callers
 /// that round-trip through `serde_json::Value` — used by the §5.22
 /// reactive bridge for `Signal<T>` where `T` is a struct or sequence
-/// (R37.6 #11 extension).
+/// (R37.6 #11 extension); `Raw` carries the same structured payloads
+/// for producers that already hold the encoding (R1480).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum IntrospectValue {
@@ -467,6 +554,10 @@ pub enum IntrospectValue {
     Float(f64),
     Text(String),
     Json(serde_json::Value),
+    /// R1480 §5.15 — an answer whose JSON text the producer already has.
+    /// Reaches the `scene/query` / `scene/invoke` result verbatim; nested
+    /// introspection contexts materialize it (see [`RawJson::to_value`]).
+    Raw(RawJson),
 }
 
 impl IntrospectValue {
@@ -567,6 +658,34 @@ impl IntrospectValue {
     #[must_use]
     pub fn json<T: serde::Serialize>(value: &T) -> Self {
         Self::Json(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// R1480 §5.15 — construct a [`Self::Raw`] payload: the same call
+    /// shape as [`Self::json`] with the DOM removed. Prefer it whenever
+    /// the answer is larger than a scalar and the caller is a `query` /
+    /// `invoke` result, which is where the raw text survives to the wire.
+    ///
+    /// Degrades to [`Self::Null`] on a serialization failure — the same
+    /// inputs [`Self::json`] refuses, and the same JSON `null` on the
+    /// wire (that one keeps a `Json` wrapper around its null; past the
+    /// envelope the two are indistinguishable). The variant differs on
+    /// purpose: [`Self::as_raw`] then reports `None`, so a caller can
+    /// still tell the encoding did not happen. A producer that wants the
+    /// error itself builds with [`RawJson::encode`].
+    #[must_use]
+    pub fn raw<T: serde::Serialize>(value: &T) -> Self {
+        RawJson::encode(value).map_or(Self::Null, Self::Raw)
+    }
+
+    /// R1480 §5.15 — borrow a [`Self::Raw`] payload. Returns `None` for
+    /// every other variant, including a `Json` holding the same document:
+    /// the typed accessors do not coerce across variants.
+    #[must_use]
+    pub fn as_raw(&self) -> Option<&RawJson> {
+        match self {
+            Self::Raw(r) => Some(r),
+            _ => None,
+        }
     }
 }
 
@@ -3326,5 +3445,127 @@ mod selection_copy_payload_tests {
         // string) and the key falls through.
         let ext = FakeSelection(Some("x"));
         assert_eq!(selection_copy_payload(&ext, "c", ctrl(), "count"), None);
+    }
+}
+
+// R1480 §5.15 — `RawJson`: the bytes a producer already has.
+#[cfg(test)]
+mod raw_json_tests {
+    use super::{IntrospectValue, RawJson};
+
+    /// Declared z → m → a; sorted order is a → m → z. The gap between the
+    /// two is what every test below reads.
+    #[derive(serde::Serialize)]
+    struct Doc {
+        z: u8,
+        m: &'static str,
+        a: u8,
+    }
+
+    const DOC: Doc = Doc {
+        z: 1,
+        m: "mid",
+        a: 9,
+    };
+
+    #[test]
+    fn r1480_encode_keeps_the_producers_own_encoding() {
+        assert_eq!(
+            RawJson::encode(&DOC)
+                .expect("a derived Serialize cannot fail")
+                .get(),
+            r#"{"z":1,"m":"mid","a":9}"#,
+            "the text must be what the producer wrote, not a re-rendering",
+        );
+    }
+
+    #[test]
+    fn r1480_a_dom_round_trip_would_have_reordered_it() {
+        // The premise the wire tests rely on, asserted rather than assumed:
+        // going through a `Value` really does change the text. Without this,
+        // a serde_json built with `preserve_order` would silently turn every
+        // key-order witness in this round into a vacuous pass.
+        let via_dom = serde_json::to_string(&serde_json::to_value(DOC).expect("to_value"))
+            .expect("to_string");
+        assert_eq!(via_dom, r#"{"a":9,"m":"mid","z":1}"#);
+        assert_ne!(
+            via_dom,
+            RawJson::encode(&DOC).expect("encode").get(),
+            "if these ever agree the DOM/raw witness has lost its teeth",
+        );
+    }
+
+    #[test]
+    fn r1480_parse_rejects_text_that_is_not_json() {
+        assert!(RawJson::parse("{\"unterminated\":".to_owned()).is_err());
+        assert!(RawJson::parse("not json at all".to_owned()).is_err());
+        // Two values are not one value: a frame spliced from this would be
+        // malformed downstream of the splice, where nothing could report it.
+        assert!(RawJson::parse("{} {}".to_owned()).is_err());
+    }
+
+    #[test]
+    fn r1480_parse_keeps_the_text_it_accepted() {
+        let raw = RawJson::parse(r#"{"b":2,  "a":1}"#.to_owned()).expect("valid JSON");
+        assert_eq!(raw.get(), r#"{"b":2,  "a":1}"#);
+    }
+
+    #[test]
+    fn r1480_equality_is_textual_because_the_text_is_the_payload() {
+        let one = RawJson::parse(r#"{"a":1,"b":2}"#.to_owned()).expect("valid");
+        let other = RawJson::parse(r#"{"b":2,"a":1}"#.to_owned()).expect("valid");
+        assert_ne!(one, other, "different encodings are different RawJsons");
+        assert_eq!(
+            one.to_value().expect("value"),
+            other.to_value().expect("value"),
+            "…of the same JSON value — which is why the wire may pick either",
+        );
+    }
+
+    #[test]
+    fn r1480_to_value_materializes_the_tree_the_type_exists_to_avoid() {
+        assert_eq!(
+            RawJson::encode(&DOC)
+                .expect("encode")
+                .to_value()
+                .expect("valid JSON parses"),
+            serde_json::json!({"z":1,"m":"mid","a":9}),
+        );
+    }
+
+    #[test]
+    fn r1480_introspect_raw_mirrors_introspect_json() {
+        // Same call shape, same degradation policy, different channel.
+        let raw = IntrospectValue::raw(&DOC);
+        assert_eq!(
+            raw.as_raw().expect("Raw variant").get(),
+            r#"{"z":1,"m":"mid","a":9}"#,
+        );
+
+        // A map with non-string keys is the input both encoders reject.
+        // Neither fabricates an answer; both land on a null-valued payload
+        // the envelope renders identically. They differ in variant, and
+        // that difference is useful: `as_raw` reports the failure, which
+        // `json`'s `Json(Null)` cannot.
+        let unencodable = std::collections::BTreeMap::from([(vec![1_u8, 2], "x")]);
+        assert_eq!(
+            IntrospectValue::json(&unencodable),
+            IntrospectValue::Json(serde_json::Value::Null),
+        );
+        let degraded = IntrospectValue::raw(&unencodable);
+        assert_eq!(degraded, IntrospectValue::Null);
+        assert!(
+            degraded.as_raw().is_none(),
+            "a failed encode must not read back as an encoded answer",
+        );
+    }
+
+    #[test]
+    fn r1480_as_raw_does_not_coerce_across_variants() {
+        assert!(
+            IntrospectValue::json(&DOC).as_raw().is_none(),
+            "a Json holding the same document is still not a Raw",
+        );
+        assert!(IntrospectValue::Null.as_raw().is_none());
     }
 }

@@ -27,7 +27,7 @@
 
 use pinion_a11y::{AccessFocus, AccessNode};
 use pinion_core::event::WheelDelta;
-use pinion_core::external::IntrospectValue;
+use pinion_core::external::{IntrospectValue, RawJson};
 use pinion_core::input::{GesturePhase, PointerButton, PointerEdge, PointerKind};
 use pinion_core::intent::Intent;
 use pinion_core::style::{Border, BoxStyle, Color};
@@ -149,15 +149,28 @@ pub enum RequestId {
 /// trip as `Some(Value::Null)` and only an absent field decays to
 /// `None`. Cleans up R51.16's `selected_index None` carry that had to
 /// `assert!(raw.contains("\"result\":null"))` against the wire form.
+///
+/// R1480 §5.7 — the payload is a type parameter because reading and
+/// writing a result want different representations of the same wire
+/// shape. A *parsed* response yields `Value`, which is why `P` defaults
+/// to it and every reader spells the type unchanged. A response being
+/// *written* may carry the crate-private `ResultBody`, whose `Raw` arm is
+/// text the producer already encoded — bytes a `Value` could only hold by
+/// being parsed out of them and serialized back. Both instantiations
+/// describe one wire object; the parameter is the representation, not the
+/// shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Response {
+// `deserialize_with` opts the field out of serde's inferred bounds, so the
+// payload bound is declared here instead.
+#[serde(bound(deserialize = "P: Deserialize<'de>"))]
+pub struct Response<P = Value> {
     pub jsonrpc: String,
     #[serde(
         default,
         deserialize_with = "deserialize_nullable_present",
         skip_serializing_if = "Option::is_none"
     )]
-    pub result: Option<Value>,
+    pub result: Option<P>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<RpcError>,
     pub id: Option<RequestId>,
@@ -167,11 +180,50 @@ pub struct Response {
 /// `Some(Value::Null)` rather than `None`. Paired with
 /// `#[serde(default)]` on the field — when the field is absent the
 /// deserializer never runs and serde supplies `None` via the default.
-fn deserialize_nullable_present<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+fn deserialize_nullable_present<'de, D, P>(deserializer: D) -> Result<Option<P>, D::Error>
 where
     D: serde::Deserializer<'de>,
+    P: Deserialize<'de>,
 {
-    Value::deserialize(deserializer).map(Some)
+    P::deserialize(deserializer).map(Some)
+}
+
+/// R1480 §5.7 — the payload of a success response on its way out.
+///
+/// `Dom` is what all but two of the ~89 handlers produce: a `Value` the
+/// envelope walks once to write. `Raw` is what a handler produces when the answer
+/// arrived from an [`ExternalIntrospect`](pinion_core::external::ExternalIntrospect)
+/// already encoded ([`IntrospectValue::Raw`]) — the envelope splices the
+/// text instead of parsing it into a tree only to write the same bytes
+/// back out.
+///
+/// The two arms are not interchangeable at the byte level, and that is
+/// the point rather than a defect. `Value`'s object is a `BTreeMap`, so
+/// the `Dom` arm emits keys in sorted order and re-renders numbers in
+/// `serde_json`'s canonical form; the `Raw` arm emits the producer's
+/// bytes. Both are the same JSON *value* — key order and number spelling
+/// carry no meaning in JSON — so a consumer cannot tell the difference,
+/// while a test comparing the frame text can, which is how the raw path
+/// is proven to have avoided the tree.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ResultBody {
+    Dom(Value),
+    Raw(RawJson),
+}
+
+impl From<Value> for ResultBody {
+    fn from(value: Value) -> Self {
+        Self::Dom(value)
+    }
+}
+
+impl Serialize for ResultBody {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Dom(v) => v.serialize(serializer),
+            Self::Raw(r) => r.serialize(serializer),
+        }
+    }
 }
 
 /// JSON-RPC 2.0 error object.
@@ -1832,673 +1884,746 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // compiler enforces the pairing (missing kind = tuple shape
     // mismatch). See `HandlerKind` docstring for the read-vs-mutate
     // taxonomy.
+    // R1480 §5.7 — one dispatch expression, two payload funnels. The
+    // outer arms are the methods whose answer can arrive already encoded
+    // (§5.15 `IntrospectValue::Raw`): they hand back a [`ResultBody`], so
+    // a producer's bytes reach `serialize` with no `Value` in between.
+    // Every other method answers with a tree the envelope has to walk
+    // anyway, so the inner match keeps `Value` and the projection happens
+    // in exactly one place, below. A method joins the outer group by
+    // moving its arm — not by re-typing the ~87 that have nothing to say
+    // about encoding.
     let (outcome, kind) = match request.method.as_str() {
         "scene/query" => (
             handle_scene_query(scene, last_paint_scene, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/click" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_click(inbox, producer, last_paint_scene, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/pointer_button" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pointer_button(
-                    inbox,
-                    producer,
-                    last_paint_scene,
-                    request.params.as_ref(),
-                ),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/pointer_pressure" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pointer_pressure(inbox, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/pointer_tilt" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pointer_tilt(inbox, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/pointer_twist" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pointer_twist(inbox, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/pointer_tangential_pressure" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pointer_tangential_pressure(inbox, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/pointer_height" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pointer_height(inbox, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/pointer_type" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pointer_type(inbox, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/hover" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_hover(inbox, producer, last_paint_scene, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "app/quit" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (handle_app_quit(inbox), HandlerKind::Mutate)
-        }
-        "scene/pointer_leave" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (handle_scene_pointer_leave(inbox), HandlerKind::Mutate)
-        }
-        "scene/hover_file" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_file_event(inbox, request.params.as_ref(), FileEventKind::Hover),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/hover_file_cancel" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_file_event(inbox, request.params.as_ref(), FileEventKind::Cancel),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/drop_file" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_file_event(inbox, request.params.as_ref(), FileEventKind::Drop),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/tick" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_tick(inbox, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/set_fps" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_set_fps(inbox, request.params.as_ref(), pacing_state.is_some()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/modifiers" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_modifiers(inbox, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/double_click" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_double_click(
-                    inbox,
-                    producer,
-                    last_paint_scene,
-                    request.params.as_ref(),
-                ),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/drag" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_drag(inbox, producer, last_paint_scene, request.params.as_ref()),
-                HandlerKind::Mutate,
-            )
-        }
-        "scene/rewind" => (
-            handle_scene_rewind(scene, request.params.as_ref()),
-            HandlerKind::Mutate,
-        ),
-        "scene/snapshot" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_snapshot(scene, producer, last_paint_scene, request.params.as_ref()),
-                HandlerKind::Read,
-            )
-        }
-        "scene/access" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = access_producer.as_mut().map(|p| &mut **p);
-            (handle_scene_access(producer), HandlerKind::Read)
-        }
-        "scene/dry_run" => (
-            handle_scene_dry_run(scene, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/simulate" => (
-            handle_scene_simulate(scene, runtime_owner, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/waitFor" => (
-            handle_scene_wait_for(scene, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/revision" => (Ok(handle_scene_revision(revision)), HandlerKind::Read),
-        "scene/screenshot" => (
-            handle_scene_screenshot(screenshot, request.params.as_ref()),
             HandlerKind::Read,
         ),
         "scene/invoke" => (
             handle_scene_invoke(scene, request.params.as_ref()),
             HandlerKind::Mutate,
         ),
-        "scene/intervene" => (
-            handle_scene_intervene(scene, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/intents" => (handle_scene_intents(scene), HandlerKind::Read),
-        "scene/commands" => (
-            handle_scene_commands(runtime_owner, commands_executor),
-            HandlerKind::Read,
-        ),
-        "scene/theme_tokens" => (
-            handle_scene_theme_tokens(runtime_owner, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/set_theme_mode" => (
-            handle_scene_set_theme_mode(runtime_owner, request.params.as_ref()),
-            HandlerKind::Mutate,
-        ),
-        "scene/set_theme_palettes" => (
-            handle_scene_set_theme_palettes(runtime_owner, request.params.as_ref()),
-            HandlerKind::Mutate,
-        ),
-        "scene/animation_state" => (
-            handle_scene_animation_state(runtime_owner, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/cache_stats" => (
-            handle_scene_cache_stats(fragment_cache_stats),
-            HandlerKind::Read,
-        ),
-        "scene/frame_timings" => (handle_scene_frame_timings(frame_timings), HandlerKind::Read),
-        "scene/render_fidelity" => {
-            let producer = paint_producer.as_deref_mut();
-            (
-                handle_scene_render_fidelity(render_fidelity.as_ref(), producer),
-                HandlerKind::Read,
-            )
-        }
-        "scene/export_pdf" => (
-            handle_scene_export_pdf(last_paint_scene, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/pacing_state" => (handle_scene_pacing_state(pacing_state), HandlerKind::Read),
-        "rpc/methods" => (handle_rpc_methods(), HandlerKind::Read),
-        "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
-        "scene/cross_window_drop" => (
-            handle_scene_cross_window_drop(cross_window_drop, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/window_move" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let req = reposition_request.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_window_move(req, request.params.as_ref()),
-                // Async — the signal write fires reconcile + the actual OS
-                // move lands when the shell next reconciles. No OCC bump
-                // here (mirrors `scene/resize`).
-                HandlerKind::Read,
-            )
-        }
-        "scene/window_focus" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let req = window_focus_request.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_window_focus(req, request.params.as_ref()),
-                // R1419 — out-of-band OS-focus drive, like `focus/set`: it
-                // changes the OS-focus gate + mirror (a repaint lands on the
-                // next reactive frame) but bumps no scene OCC synchronously.
-                HandlerKind::Read,
-            )
-        }
-        "scene/input_state" => (handle_scene_input_state(input_state), HandlerKind::Read),
-        "scene/animate_settle" => (
-            handle_scene_animate_settle(runtime_owner),
-            HandlerKind::Mutate,
-        ),
-        "scene/animate_cancel" => (
-            handle_scene_animate_cancel(runtime_owner),
-            HandlerKind::Mutate,
-        ),
-        "scene/scroll_state" => (
-            handle_scene_scroll_state(runtime_owner, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/set_scroll_offset" => (
-            handle_scene_set_scroll_offset(runtime_owner, request.params.as_ref()),
-            HandlerKind::Mutate,
-        ),
-        "scene/text_state" => (
-            handle_scene_text_state(runtime_owner, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/set_text" => (
-            handle_scene_set_text(runtime_owner, request.params.as_ref()),
-            HandlerKind::Mutate,
-        ),
-        "scene/set_selection" => (
-            handle_scene_set_selection(runtime_owner, request.params.as_ref()),
-            HandlerKind::Mutate,
-        ),
-        "scene/set_caret" => (
-            handle_scene_set_caret(runtime_owner, request.params.as_ref()),
-            HandlerKind::Mutate,
-        ),
-        "scene/caret_state" => (
-            handle_scene_caret_state(runtime_owner, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/locate" => (
-            handle_scene_locate(scene, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/locate_region" => (
-            handle_scene_locate_region(scene, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/bbox" => (
-            handle_scene_bbox(scene, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/resize" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let req = resize_request.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_resize(req, request.params.as_ref()),
-                // Async — actual scene mutation lands when the
-                // embedder repaints. No immediate OCC bump.
-                HandlerKind::Read,
-            )
-        }
-        "scene/layout" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_layout(producer, last_paint_scene, request.params.as_ref()),
-                HandlerKind::Read,
-            )
-        }
-        "scene/key" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_key(inbox, producer, last_paint_scene, request.params.as_ref()),
-                // Input enqueue — mutation deferred to next dispatch
-                // cycle; no immediate OCC bump.
-                HandlerKind::Read,
-            )
-        }
-        "scene/type" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_type(inbox, producer, last_paint_scene, request.params.as_ref()),
-                // Batch text injection — one deferred CharacterKey per
-                // codepoint; the mutation lands next dispatch cycle, no
-                // immediate OCC bump (mirrors scene/key).
-                HandlerKind::Read,
-            )
-        }
-        "scene/wheel" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_wheel(inbox, producer, last_paint_scene, request.params.as_ref()),
-                HandlerKind::Read,
-            )
-        }
-        "scene/pinch_gesture" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pinch_gesture(
-                    inbox,
-                    producer,
-                    last_paint_scene,
-                    request.params.as_ref(),
+        dom_method => {
+            let (outcome, kind) = match dom_method {
+                "scene/click" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_click(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/pointer_button" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pointer_button(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/pointer_pressure" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pointer_pressure(inbox, request.params.as_ref()),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/pointer_tilt" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pointer_tilt(inbox, request.params.as_ref()),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/pointer_twist" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pointer_twist(inbox, request.params.as_ref()),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/pointer_tangential_pressure" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pointer_tangential_pressure(inbox, request.params.as_ref()),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/pointer_height" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pointer_height(inbox, request.params.as_ref()),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/pointer_type" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pointer_type(inbox, request.params.as_ref()),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/hover" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_hover(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "app/quit" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (handle_app_quit(inbox), HandlerKind::Mutate)
+                }
+                "scene/pointer_leave" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (handle_scene_pointer_leave(inbox), HandlerKind::Mutate)
+                }
+                "scene/hover_file" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_file_event(
+                            inbox,
+                            request.params.as_ref(),
+                            FileEventKind::Hover,
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/hover_file_cancel" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_file_event(
+                            inbox,
+                            request.params.as_ref(),
+                            FileEventKind::Cancel,
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/drop_file" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_file_event(
+                            inbox,
+                            request.params.as_ref(),
+                            FileEventKind::Drop,
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/tick" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_tick(inbox, request.params.as_ref()),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/set_fps" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_set_fps(
+                            inbox,
+                            request.params.as_ref(),
+                            pacing_state.is_some(),
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/modifiers" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_modifiers(inbox, request.params.as_ref()),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/double_click" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_double_click(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/drag" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_drag(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Mutate,
+                    )
+                }
+                "scene/rewind" => (
+                    handle_scene_rewind(scene, request.params.as_ref()),
+                    HandlerKind::Mutate,
                 ),
-                HandlerKind::Read,
-            )
-        }
-        "scene/rotation_gesture" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_rotation_gesture(
-                    inbox,
-                    producer,
-                    last_paint_scene,
-                    request.params.as_ref(),
+                "scene/snapshot" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_snapshot(
+                            scene,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/access" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = access_producer.as_mut().map(|p| &mut **p);
+                    (handle_scene_access(producer), HandlerKind::Read)
+                }
+                "scene/dry_run" => (
+                    handle_scene_dry_run(scene, request.params.as_ref()),
+                    HandlerKind::Read,
                 ),
-                HandlerKind::Read,
-            )
-        }
-        "scene/pan_gesture" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_pan_gesture(
-                    inbox,
-                    producer,
-                    last_paint_scene,
-                    request.params.as_ref(),
+                "scene/simulate" => (
+                    handle_scene_simulate(scene, runtime_owner, request.params.as_ref()),
+                    HandlerKind::Read,
                 ),
-                HandlerKind::Read,
-            )
-        }
-        "scene/smart_zoom_gesture" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "Vec is not DerefMut; manual reborrow required"
-            )]
-            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_smart_zoom_gesture(
-                    inbox,
-                    producer,
-                    last_paint_scene,
-                    request.params.as_ref(),
+                "scene/waitFor" => (
+                    handle_scene_wait_for(scene, request.params.as_ref()),
+                    HandlerKind::Read,
                 ),
-                HandlerKind::Read,
-            )
+                "scene/revision" => (Ok(handle_scene_revision(revision)), HandlerKind::Read),
+                "scene/screenshot" => (
+                    handle_scene_screenshot(screenshot, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/intervene" => (
+                    handle_scene_intervene(scene, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/intents" => (handle_scene_intents(scene), HandlerKind::Read),
+                "scene/commands" => (
+                    handle_scene_commands(runtime_owner, commands_executor),
+                    HandlerKind::Read,
+                ),
+                "scene/theme_tokens" => (
+                    handle_scene_theme_tokens(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/set_theme_mode" => (
+                    handle_scene_set_theme_mode(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Mutate,
+                ),
+                "scene/set_theme_palettes" => (
+                    handle_scene_set_theme_palettes(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Mutate,
+                ),
+                "scene/animation_state" => (
+                    handle_scene_animation_state(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/cache_stats" => (
+                    handle_scene_cache_stats(fragment_cache_stats),
+                    HandlerKind::Read,
+                ),
+                "scene/frame_timings" => {
+                    (handle_scene_frame_timings(frame_timings), HandlerKind::Read)
+                }
+                "scene/render_fidelity" => {
+                    let producer = paint_producer.as_deref_mut();
+                    (
+                        handle_scene_render_fidelity(render_fidelity.as_ref(), producer),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/export_pdf" => (
+                    handle_scene_export_pdf(last_paint_scene, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/pacing_state" => {
+                    (handle_scene_pacing_state(pacing_state), HandlerKind::Read)
+                }
+                "rpc/methods" => (handle_rpc_methods(), HandlerKind::Read),
+                "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
+                "scene/cross_window_drop" => (
+                    handle_scene_cross_window_drop(cross_window_drop, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/window_move" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let req = reposition_request.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_window_move(req, request.params.as_ref()),
+                        // Async — the signal write fires reconcile + the actual OS
+                        // move lands when the shell next reconciles. No OCC bump
+                        // here (mirrors `scene/resize`).
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/window_focus" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let req = window_focus_request.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_window_focus(req, request.params.as_ref()),
+                        // R1419 — out-of-band OS-focus drive, like `focus/set`: it
+                        // changes the OS-focus gate + mirror (a repaint lands on the
+                        // next reactive frame) but bumps no scene OCC synchronously.
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/input_state" => (handle_scene_input_state(input_state), HandlerKind::Read),
+                "scene/animate_settle" => (
+                    handle_scene_animate_settle(runtime_owner),
+                    HandlerKind::Mutate,
+                ),
+                "scene/animate_cancel" => (
+                    handle_scene_animate_cancel(runtime_owner),
+                    HandlerKind::Mutate,
+                ),
+                "scene/scroll_state" => (
+                    handle_scene_scroll_state(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/set_scroll_offset" => (
+                    handle_scene_set_scroll_offset(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Mutate,
+                ),
+                "scene/text_state" => (
+                    handle_scene_text_state(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/set_text" => (
+                    handle_scene_set_text(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Mutate,
+                ),
+                "scene/set_selection" => (
+                    handle_scene_set_selection(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Mutate,
+                ),
+                "scene/set_caret" => (
+                    handle_scene_set_caret(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Mutate,
+                ),
+                "scene/caret_state" => (
+                    handle_scene_caret_state(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/locate" => (
+                    handle_scene_locate(scene, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/locate_region" => (
+                    handle_scene_locate_region(scene, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/bbox" => (
+                    handle_scene_bbox(scene, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/resize" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let req = resize_request.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_resize(req, request.params.as_ref()),
+                        // Async — actual scene mutation lands when the
+                        // embedder repaints. No immediate OCC bump.
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/layout" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_layout(producer, last_paint_scene, request.params.as_ref()),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/key" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_key(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        // Input enqueue — mutation deferred to next dispatch
+                        // cycle; no immediate OCC bump.
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/type" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_type(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        // Batch text injection — one deferred CharacterKey per
+                        // codepoint; the mutation lands next dispatch cycle, no
+                        // immediate OCC bump (mirrors scene/key).
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/wheel" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_wheel(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/pinch_gesture" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pinch_gesture(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/rotation_gesture" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_rotation_gesture(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/pan_gesture" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_pan_gesture(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/smart_zoom_gesture" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "Vec is not DerefMut; manual reborrow required"
+                    )]
+                    let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_smart_zoom_gesture(
+                            inbox,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/scroll" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_scroll(producer, last_paint_scene, request.params.as_ref()),
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/cancel_preview" => (
+                    handle_scene_cancel_preview(previews, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/list_previews" => (handle_scene_list_previews(previews), HandlerKind::Read),
+                "scene/propose_change" => (
+                    handle_scene_propose_change(previews, revision, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/apply_preview" => (
+                    handle_scene_apply_preview(scene, revision, previews, request.params.as_ref()),
+                    // apply_preview bumps SceneRevision INTERNALLY (via
+                    // crate::preview::apply_preview); a dispatcher-side bump
+                    // would double-count. HandlerKind::Read signals "do not
+                    // bump from here".
+                    HandlerKind::Read,
+                ),
+                "font/parse" => (
+                    handle_font_parse(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/family_name" => (
+                    handle_font_family_name(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/glyph_id_for" => (
+                    handle_font_glyph_id_for(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/glyph_outline" => (
+                    handle_font_glyph_outline(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/cmap_subtables" => (
+                    handle_font_cmap_subtables(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/metrics" => (
+                    handle_font_metrics(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/subfamily_name" => (
+                    handle_font_subfamily_name(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/full_name" => (
+                    handle_font_full_name(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/postscript_name" => (
+                    handle_font_postscript_name(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/dispose" => (
+                    handle_font_dispose(font_registry, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "font/list" => (handle_font_list(font_registry), HandlerKind::Read),
+                "text/normalize" => (
+                    handle_text_normalize(request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "focus/set" => (
+                    crate::focus::handle_focus_set(
+                        focus_manager.as_deref_mut(),
+                        request.params.as_ref(),
+                    ),
+                    // Focus state tracked independently of SceneRevision.
+                    HandlerKind::Read,
+                ),
+                "focus/get" => (
+                    crate::focus::handle_focus_get(focus_manager.as_deref()),
+                    HandlerKind::Read,
+                ),
+                "focus/next" => (
+                    crate::focus::handle_focus_next(focus_manager.as_deref_mut()),
+                    HandlerKind::Read,
+                ),
+                "focus/prev" => (
+                    crate::focus::handle_focus_prev(focus_manager),
+                    HandlerKind::Read,
+                ),
+                _ => (
+                    Err(RpcError::new(-32601, "Method not found")
+                        .with_data_string(request.method.clone())),
+                    HandlerKind::Read,
+                ),
+            };
+            (outcome.map(ResultBody::from), kind)
         }
-        "scene/scroll" => {
-            #[allow(
-                clippy::option_as_ref_deref,
-                reason = "dyn FnMut is not DerefMut; manual reborrow required"
-            )]
-            let producer = paint_producer.as_mut().map(|p| &mut **p);
-            (
-                handle_scene_scroll(producer, last_paint_scene, request.params.as_ref()),
-                HandlerKind::Read,
-            )
-        }
-        "scene/cancel_preview" => (
-            handle_scene_cancel_preview(previews, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/list_previews" => (handle_scene_list_previews(previews), HandlerKind::Read),
-        "scene/propose_change" => (
-            handle_scene_propose_change(previews, revision, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "scene/apply_preview" => (
-            handle_scene_apply_preview(scene, revision, previews, request.params.as_ref()),
-            // apply_preview bumps SceneRevision INTERNALLY (via
-            // crate::preview::apply_preview); a dispatcher-side bump
-            // would double-count. HandlerKind::Read signals "do not
-            // bump from here".
-            HandlerKind::Read,
-        ),
-        "font/parse" => (
-            handle_font_parse(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/family_name" => (
-            handle_font_family_name(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/glyph_id_for" => (
-            handle_font_glyph_id_for(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/glyph_outline" => (
-            handle_font_glyph_outline(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/cmap_subtables" => (
-            handle_font_cmap_subtables(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/metrics" => (
-            handle_font_metrics(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/subfamily_name" => (
-            handle_font_subfamily_name(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/full_name" => (
-            handle_font_full_name(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/postscript_name" => (
-            handle_font_postscript_name(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/dispose" => (
-            handle_font_dispose(font_registry, request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "font/list" => (handle_font_list(font_registry), HandlerKind::Read),
-        "text/normalize" => (
-            handle_text_normalize(request.params.as_ref()),
-            HandlerKind::Read,
-        ),
-        "focus/set" => (
-            crate::focus::handle_focus_set(focus_manager.as_deref_mut(), request.params.as_ref()),
-            // Focus state tracked independently of SceneRevision.
-            HandlerKind::Read,
-        ),
-        "focus/get" => (
-            crate::focus::handle_focus_get(focus_manager.as_deref()),
-            HandlerKind::Read,
-        ),
-        "focus/next" => (
-            crate::focus::handle_focus_next(focus_manager.as_deref_mut()),
-            HandlerKind::Read,
-        ),
-        "focus/prev" => (
-            crate::focus::handle_focus_prev(focus_manager),
-            HandlerKind::Read,
-        ),
-        _ => (
-            Err(RpcError::new(-32601, "Method not found").with_data_string(request.method.clone())),
-            HandlerKind::Read,
-        ),
     };
 
     // §5.34 R40.4 + R620 §5.7 — bump the OCC token after any
@@ -2577,7 +2702,7 @@ fn handle_scene_query(
     scene: &Scene,
     last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
-) -> Result<Value, RpcError> {
+) -> Result<ResultBody, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params(
@@ -2586,7 +2711,7 @@ fn handle_scene_query(
     };
 
     match query(scene, path) {
-        Ok(value) => Ok(introspect_value_to_json(value)),
+        Ok(value) => Ok(introspect_value_to_body(value)),
         // R828 §2 #4 §5.12 — paint-scene fallback for immediate-mode
         // drivers. `Scene::ImmediateModeNode`s live only in the per-frame
         // paint scene (the view fn emits them; they are absent from the
@@ -2601,7 +2726,7 @@ fn handle_scene_query(
         // any other resolution outcome is returned verbatim.
         Err(QueryError::NoExternalAtPath) => match last_paint_scene {
             Some(paint) => match query(paint, path) {
-                Ok(value) => Ok(introspect_value_to_json(value)),
+                Ok(value) => Ok(introspect_value_to_body(value)),
                 Err(err) => Err(query_error_to_rpc(err)),
             },
             None => Err(query_error_to_rpc(QueryError::NoExternalAtPath)),
@@ -5348,7 +5473,7 @@ fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
     RpcError::invalid_params(variant)
 }
 
-fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<ResultBody, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params(
@@ -5365,7 +5490,7 @@ fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Valu
     };
 
     match invoke(scene, path, args) {
-        Ok(value) => Ok(introspect_value_to_json(value)),
+        Ok(value) => Ok(introspect_value_to_body(value)),
         Err(err) => Err(invoke_error_to_rpc(&err)),
     }
 }
@@ -7652,10 +7777,35 @@ pub(crate) fn introspect_value_to_json(value: IntrospectValue) -> Value {
         }
         IntrospectValue::Text(s) => Value::String(s),
         IntrospectValue::Json(v) => v,
+        // R1480 §5.15 — a raw answer nested inside a `Value` the
+        // envelope is assembling (a snapshot node's `introspect` map, a
+        // dry-run step, an intent payload) has to become a tree: the
+        // enclosing document is one, and there is no splice point part
+        // way down a `Value`. Only a result the handler returns whole
+        // reaches the wire raw — see [`introspect_value_to_body`]. The
+        // failure arm is a number outside `f64` range, which `Value` has
+        // no slot for; it reports the §5.12 present-but-empty `null`,
+        // the same answer every other unrepresentable payload gets.
+        IntrospectValue::Raw(raw) => raw.to_value().unwrap_or(Value::Null),
         // `IntrospectValue::Null` collapses into the non_exhaustive
         // wildcard; future additive variants also land as JSON null
         // until §5.12 schema settles a richer projection.
         _ => Value::Null,
+    }
+}
+
+/// R1480 §5.15 — project an [`IntrospectValue`] into a response body.
+///
+/// The counterpart of [`introspect_value_to_json`] for the two handlers
+/// whose answer *is* the whole result (`scene/query`, `scene/invoke`).
+/// A `Raw` payload rides through as bytes; every other variant takes the
+/// established `Value` projection, so a producer that never builds a raw
+/// answer sees a byte-identical frame to the one it saw before this
+/// existed.
+pub(crate) fn introspect_value_to_body(value: IntrospectValue) -> ResultBody {
+    match value {
+        IntrospectValue::Raw(raw) => ResultBody::Raw(raw),
+        other => ResultBody::Dom(introspect_value_to_json(other)),
     }
 }
 
@@ -7677,7 +7827,7 @@ fn error_response(
     }
 }
 
-pub(crate) fn serialize(resp: &Response) -> String {
+pub(crate) fn serialize<P: Serialize>(resp: &Response<P>) -> String {
     // serde_json on a well-formed Response cannot fail in practice.
     serde_json::to_string(resp).unwrap_or_else(|e| {
         format!(

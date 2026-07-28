@@ -749,7 +749,9 @@ fn response_result_some_null_serializes_to_explicit_null() {
 fn response_result_none_is_elided_on_serialize() {
     // Round-trip — `None` (error response) must skip serialization
     // so the wire form omits the `result` key entirely.
-    let resp = Response {
+    // `Response` (not `Response<_>`) — an error frame carries no payload,
+    // so the parse-side default names the type the reader would get.
+    let resp: Response = Response {
         jsonrpc: JSONRPC_V2.to_owned(),
         result: None,
         error: Some(RpcError::new(-32601, "method not found")),
@@ -7555,5 +7557,181 @@ fn r1352_parameterized_read_rides_the_path_and_bumps_no_revision() {
         revision.current(),
         0,
         "a parameterized read is a Read: it bumps no revision and wakes no waitFor",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R1480 §5.15 §5.7 — an answer the producer has already encoded.
+//
+// The whole point is a *negative*: no `serde_json::Value` is built between
+// the producer and the socket. An absence is not directly observable, so
+// these tests use a witness that only the DOM path can leave behind.
+// `Value`'s object is a `BTreeMap`, so a tree round-trip sorts keys;
+// `serde`'s derived `Serialize` emits them in declaration order. A fixture
+// whose declared order is deliberately NOT sorted therefore prints
+// differently depending on whether a tree was built — and the wire frame
+// says which happened, deterministically, with no timing involved.
+// ---------------------------------------------------------------------------
+
+/// Declared z → m → a; sorted order is a → m → z. Every field is scalar so
+/// the two encodings differ in key order alone.
+#[derive(serde::Serialize)]
+struct EncodedFrame {
+    z: u8,
+    m: &'static str,
+    a: u8,
+}
+
+const FRAME: EncodedFrame = EncodedFrame {
+    z: 1,
+    m: "mid",
+    a: 9,
+};
+
+/// What the producer wrote.
+const PRODUCER_TEXT: &str = r#"{"z":1,"m":"mid","a":9}"#;
+/// What a `Value` renders the same document as.
+const DOM_TEXT: &str = r#"{"a":9,"m":"mid","z":1}"#;
+
+/// Answers one document two ways, so a single fixture exercises both the
+/// pre-encoded path and the DOM control.
+#[derive(Debug)]
+struct EncodedExternal;
+
+// The query-only `External` skeleton is substrate; only the introspect impl
+// below is this fixture's own.
+pinion_core::external::query_proxy_external_impl!(EncodedExternal);
+
+impl pinion_core::external::ExternalIntrospect for EncodedExternal {
+    fn schema(&self) -> pinion_core::external::IntrospectSchema {
+        pinion_core::external::IntrospectSchema::new(
+            const {
+                &[
+                    pinion_core::external::SchemaField::new("raw", "json"),
+                    pinion_core::external::SchemaField::new("dom", "json"),
+                ]
+            },
+        )
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "raw" => Some(IntrospectValue::raw(&FRAME)),
+            "dom" => Some(IntrospectValue::json(&FRAME)),
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), pinion_core::external::InterveneError> {
+        Err(pinion_core::external::read_only_or_unknown(
+            &self.schema(),
+            path,
+        ))
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        _args: IntrospectValue,
+    ) -> Result<IntrospectValue, pinion_core::external::InvokeError> {
+        match path {
+            "encode" => Ok(IntrospectValue::raw(&FRAME)),
+            _ => Err(pinion_core::external::InvokeError::UnknownPath),
+        }
+    }
+}
+
+fn encoded_scene() -> Scene {
+    Scene::External(ExternalNode::new(Box::new(EncodedExternal)))
+}
+
+#[test]
+fn r1480_scene_query_carries_a_raw_answer_to_the_wire_verbatim() {
+    let mut scene = encoded_scene();
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/raw"},"id":1}"#;
+    let wire = dispatch_t(&mut scene, req).expect("scene/query answers");
+
+    assert!(
+        wire.contains(&format!(r#""result":{PRODUCER_TEXT}"#)),
+        "the producer's bytes must reach the frame unchanged, got: {wire}",
+    );
+    assert!(
+        !wire.contains(DOM_TEXT),
+        "a tree was built and re-rendered: {wire}",
+    );
+}
+
+#[test]
+fn r1480_a_dom_answer_is_still_rendered_through_the_tree() {
+    // The control. Same document, same fixture, `Json` instead of `Raw`:
+    // the frame must be byte-identical to what it was before `Raw` existed,
+    // which is what "no producer pays for a variant it does not use" means.
+    let mut scene = encoded_scene();
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/dom"},"id":1}"#;
+    let wire = dispatch_t(&mut scene, req).expect("scene/query answers");
+
+    assert!(
+        wire.contains(&format!(r#""result":{DOM_TEXT}"#)),
+        "the DOM path must keep rendering sorted keys, got: {wire}",
+    );
+}
+
+#[test]
+fn r1480_both_paths_answer_the_same_json_value() {
+    // Key order carries no meaning in JSON, so the two frames differ as
+    // *text* and agree as *values*. That is what makes the witness above a
+    // safe one: it tells the paths apart without either being wrong.
+    let mut scene = encoded_scene();
+    let mut of = |path: &str| {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"/external/{path}"}},"id":1}}"#
+        );
+        parse_response(&dispatch_t(&mut scene, &req).expect("answers"))
+            .result
+            .expect("a result")
+    };
+    assert_eq!(of("raw"), of("dom"));
+}
+
+#[test]
+fn r1480_scene_invoke_carries_a_raw_answer_to_the_wire_verbatim() {
+    // `invoke` is the other handler whose answer *is* the whole result, so
+    // it gets the same treatment — an action returning a large computed
+    // payload is exactly the case that would otherwise pay for a tree.
+    let mut scene = encoded_scene();
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/encode","args":null},"id":2}"#;
+    let wire = dispatch_t(&mut scene, req).expect("scene/invoke answers");
+
+    assert!(
+        wire.contains(&format!(r#""result":{PRODUCER_TEXT}"#)),
+        "invoke must carry the producer's bytes too, got: {wire}",
+    );
+}
+
+#[test]
+fn r1480_a_raw_answer_nested_in_a_snapshot_materializes() {
+    // The honest limit. `scene/snapshot` assembles one big `Value`, and
+    // there is no splice point part way down a tree, so a raw answer nested
+    // inside it becomes a tree like everything else — the sorted rendering
+    // proves it did, rather than arriving as a JSON *string* or vanishing
+    // into the `non_exhaustive` wildcard's `null`.
+    let mut scene = encoded_scene();
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"","from":"state"},"id":3}"#;
+    let wire = dispatch_t(&mut scene, req).expect("scene/snapshot answers");
+
+    assert!(
+        wire.contains(&format!(r#""raw":{DOM_TEXT}"#)),
+        "a nested raw answer must materialize into the enclosing tree: {wire}",
+    );
+    assert!(
+        !wire.contains(r#""raw":null"#),
+        "the new variant must not fall through to the wildcard's null: {wire}",
     );
 }
