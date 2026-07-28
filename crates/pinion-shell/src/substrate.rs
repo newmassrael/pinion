@@ -42,7 +42,7 @@ use pinion_a11y::{
     translate_action,
 };
 use pinion_core::event::WheelDelta;
-use pinion_core::reactive::{FONT_SOURCES, FontSourceReport};
+use pinion_core::reactive::{FONT_SOURCES, FontSourceReport, SelfHostedFace};
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
     DeferredInput, DispatchContext, DragButton, DragPhase, KeyWireState, LayoutNode, PreviewLedger,
@@ -698,10 +698,16 @@ impl<V: WidgetView> ShellCore<V> {
         // leaving a binding reporting "not-probed" on a host proven font-less.
         // A GUI shell pays this scan on its first `Scene::Text` regardless, so
         // this buys a report that is true from frame one for no real work.
+        // R1479 §5.37 — the opt-in second shaper is built here, before the
+        // report, and against the SAME default family the cache just took: what
+        // "unset" resolves to has to mean one thing to both shapers, and the
+        // face this arm holds is a font-source fact the report owes an agent.
+        let text_engine = build_text_engine_from_env(default_family.clone());
         let report = FontSourceReport {
             system: text_cache.probe_system_fonts(),
             application_families,
             default_family,
+            self_hosted: self_hosted_face(text_engine.as_ref()),
         };
         let core = CoreShell::<V>::new_with_seed(move |root_owner| {
             // R1448 §5.36 — the font-source fact rides the same one seeding
@@ -712,7 +718,7 @@ impl<V: WidgetView> ShellCore<V> {
             FONT_SOURCES.provide(root_owner, report);
             seed(root_owner);
         });
-        Self::with_core_and_cache(core, text_cache)
+        Self::with_core_and_cache(core, text_cache, text_engine)
     }
 
     /// Shared constructor body — focus seeding + Vello-side substrate fields —
@@ -720,13 +726,25 @@ impl<V: WidgetView> ShellCore<V> {
     /// handles) and [`Self::new_with_seed`] (the backend seeds its live sinks)
     /// differ only in how `core` was constructed.
     fn with_core(core: CoreShell<V>) -> Self {
-        Self::with_core_and_cache(core, LayoutCache::new())
+        // No `ShellConfig` reached this path, so there is no application default
+        // family for the §5.37 arm to resolve unset text against (R1479).
+        Self::with_core_and_cache(core, LayoutCache::new(), build_text_engine_from_env(None))
     }
 
     /// R1448 §5.36 — [`Self::with_core`] over a caller-supplied render cache,
     /// so the fonts-aware constructor can hand in the cache it registered the
     /// application's faces into instead of this body minting an empty one.
-    fn with_core_and_cache(core: CoreShell<V>, text_cache: LayoutCache) -> Self {
+    ///
+    /// R1479 §5.37 — and over a caller-supplied `text_engine`, for the same
+    /// reason one step further: the fonts-aware constructor has to build the arm
+    /// BEFORE it seeds the [`FontSourceReport`], because the face the arm holds
+    /// is one of the facts that report carries. Building it here would publish a
+    /// report describing an arm that did not exist yet.
+    fn with_core_and_cache(
+        core: CoreShell<V>,
+        text_cache: LayoutCache,
+        text_engine: Option<SelfHostedTextEngine>,
+    ) -> Self {
         // Log the initial state read through the §5.15 introspect
         // channel — same trace line shape AppShell relied on
         // pre-R51.123 so the dogfood eprintln + RPC-side observer
@@ -749,7 +767,7 @@ impl<V: WidgetView> ShellCore<V> {
             produce_work: ProduceWork::default(),
             mirror_work: MirrorWork::default(),
             focus_work: pinion_runtime::FocusWorkCell::default(),
-            text_engine: build_text_engine_from_env(),
+            text_engine,
             last_access_tag_map: HashMap::new(),
             last_access_nodes: HashMap::new(),
             access_emit_initial: true,
@@ -923,7 +941,15 @@ impl<V: WidgetView> Default for ShellCore<V> {
 /// ([`SelfHostedTextEngine::from_system_font`]). Any other case — unset, falsey,
 /// or no installed font — returns `None`, so the shell stays on parley (the
 /// 0-regression default). A font-load failure is logged, never fatal.
-fn build_text_engine_from_env() -> Option<SelfHostedTextEngine> {
+///
+/// R1479 §5.37 — `default_family` is the same value the render cache was given
+/// (`LayoutCache::set_default_font_family`), so both shapers resolve an unset
+/// `TextStyle::font_family` against one declaration. Without it the arm treated
+/// every unstyled leaf as its own, silently overriding the application's
+/// declared face for exactly the text R1472 exists to serve.
+fn build_text_engine_from_env(
+    default_family: Option<pinion_core::style::FontFamily>,
+) -> Option<SelfHostedTextEngine> {
     let requested = std::env::var("PINION_TEXT_ENGINE").is_ok_and(|v| {
         matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -934,12 +960,25 @@ fn build_text_engine_from_env() -> Option<SelfHostedTextEngine> {
         return None;
     }
     match SelfHostedTextEngine::from_system_font() {
-        Ok(engine) => Some(engine),
+        Ok(engine) => Some(engine.with_default_family(default_family)),
         Err(e) => {
             tracing::warn!(target: "pinion::shell", error = %e, "PINION_TEXT_ENGINE set but no usable system font");
             None
         }
     }
+}
+
+/// R1479 §5.37 — the arm's face as the fact the [`FontSourceReport`] publishes.
+///
+/// A face with no `name`-table family is [`SelfHostedFace::Unnamed`] rather than
+/// absent: the arm IS running over it — which shows in the geometry of unset
+/// text — it simply cannot prove it serves any named request. Collapsing that
+/// into `Disabled` would report a shaper that is drawing as one that is not.
+fn self_hosted_face(engine: Option<&SelfHostedTextEngine>) -> SelfHostedFace {
+    engine.map_or(SelfHostedFace::Disabled, |e| {
+        e.served_family()
+            .map_or(SelfHostedFace::Unnamed, SelfHostedFace::Serving)
+    })
 }
 
 /// R1072 §5.37 — the [`TextMeasure`] override for the layout pass, or `None` when
@@ -8889,7 +8928,7 @@ mod r1072_text_engine_wiring_tests {
         // on the env so a developer who opted in does not see a spurious failure.
         if std::env::var("PINION_TEXT_ENGINE").is_err() {
             assert!(
-                build_text_engine_from_env().is_none(),
+                build_text_engine_from_env(None).is_none(),
                 "no engine without the opt-in env var"
             );
         }

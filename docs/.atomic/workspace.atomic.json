@@ -73422,6 +73422,72 @@
         "`text_of` remains duplicated in r1469 and r1478 — two copies, below the 3rd-identical lift trigger, and each demo picks its own \"which text counts\" rule"
       ]
     },
+    "Round 1479": {
+      "decision_summary": "A second shaper may only draw the face it was asked for: the opt-in §5.37 arm holds one parsed font, so it now resolves a leaf's family the way the platform shaper does — the style's own family, else the application default — and declines anything that does not resolve to the face it holds. Before this it measured and painted every eligible leaf in its own face, which silently overrode a named family and undid R1472's application default for exactly the unstyled text that default exists to serve.",
+      "changes_bullets": [
+        "crates/pinion-runtime/src/text_engine.rs: `SelfHostedTextEngine::serves` is the eligibility SSOT both arms now ask — the R1070 style-shape predicate AND the new `serves_family`, in one call so a caller cannot satisfy one and forget the other",
+        "crates/pinion-runtime/src/text_engine.rs: `serves_family` resolves a leaf's request the way the platform shaper does (the style's family, else the process default) and serves it only when the engine's own parsed `name`-table family matches; a CSS generic always defers, because only the platform database knows what this host resolves the keyword to",
+        "crates/pinion-runtime/src/text_engine.rs: the engine carries the application default (`with_default_family`) and reports the face it holds (`served_family`)",
+        "crates/pinion-runtime/src/paint_adapter.rs: the paint arm's `self_hosted_eligible` takes the engine and delegates, so paint and measure still cannot split on eligibility",
+        "crates/pinion-core/src/reactive/font_sources.rs: `FontSourceReport.self_hosted` (`SelfHostedFace` = Disabled / Serving(family) / Unnamed) — the fact, not a derived verdict; the per-leaf rule stays in the engine",
+        "crates/pinion-shell/src/substrate.rs: the arm is built before the report is seeded and against the same default family the render cache took, so both shapers resolve \"unset\" from one declaration",
+        "examples/hello-app-font: a fourth tagged row (`afd_arm`) publishes which face the second shaper holds",
+        "NOT changed: what the arm does with the text it DOES serve, the opt-in gate, or the platform shaper's own resolution"
+      ],
+      "verification_bullets": [
+        "DEFECT REPRODUCED BEFORE THE FIX, over the wire, in both halves. Named family (`hello-app-font`, every row naming NanumGothic): with `PINION_TEXT_ENGINE=1` the sample row measured 487x31 against 449x33 with the arm off — the arm sized text in a face nobody asked for. Application default (`hello-vn-tide`, no row naming a family, NanumGothic declared as the default): line_count fell from 2 to 1 and the box from h=41 to h=19, which is exactly the pre-R1472 symptom, while the binding's font-state row went on reporting `default=NanumGothic`",
+        "AFTER: both re-measured identically to the arm-off run (449x33; line_count=2, h=41)",
+        "THE ARM IS NOT MERELY DISABLED: the whole pinion-runtime suite passes unchanged (570), including `self_hosted_measure_box_registers_with_paint_advance`, which requires the arm to still size unset text; and the demo prints the unpinned rows still measuring 487x31 with the arm on against 450x38 with it off",
+        "CF-1 (`serves_family` always true = the pre-R1479 arm): exactly 3 unit failures, all R1479, with the other 567 passing — the fix is scoped to what it claims. Demo FAILED on the first row width (156 expected, 175 got)",
+        "CF-2 (the default family dropped from the resolution, keeping the named half): exactly 1 unit failure — AND THE DEMO PASSED. That measurement is why the demo grew its fifth phase over `hello-vn-tide`; re-run under CF-2 it now FAILS at `expected 2, got 1`, so both halves have demo teeth",
+        "HOST-INDEPENDENCE: the demo picks which fixture the application declares FROM the arm's reported face, so \"the two shapers hold different faces\" is constructed rather than assumed. The layout test's positive control compares against the fixture's own §5.37 advance, not against parley, because what parley resolves a name to is a property of the runner",
+        "gate: `cargo fmt --all --check` clean; clippy `-D pedantic` clean on pinion-core / pinion-runtime / pinion-shell / hello-app-font; `cargo doc --workspace --no-deps --document-private-items` exit 0; pinion-core 2739, pinion-runtime 570 (+3), pinion-shell 213 + 161 integration",
+        "demos: r1479_arm_serves_the_face_asked_for PASS (5 phases, 2 bindings, 7 boots), and the neighbours re-run — r1473_app_default_font PASS, r1448_app_font PASS (same example, new row), r1447_font_free_tui PASS"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.37",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "The arm still holds ONE face. Declining is correct but not capable: an application that declares a default now keeps its face by sending ALL of its unstyled text to the platform shaper, so the §5.37 arm is inert for exactly the applications R1472 serves. Serving a requested family — parsing the faces the application already handed the shell, and selecting by family from the platform enumeration — is the named next step, and it is a campaign rather than a round",
+        "A CSS generic always defers, including `sans-serif` on a host whose default sans IS the engine's face. Correct-by-construction rather than measured: the engine has no way to prove the resolution, so the cost is paid in coverage",
+        "`layout_line_count` is now duplicated in r1473 and r1479 (two copies, below the 3rd-identical lift trigger)",
+        "The demo's fixture choice assumes at least one of the two bundled fixture families differs from the arm's pick; a host declaring both would fail the premise loudly rather than pass vacuously"
+      ],
+      "publishable_decision_summary": "A second shaper may only draw the face it was asked for: the opt-in §5.37 arm holds one parsed font, so it now resolves a leaf's family the way the platform shaper does — the style's own family, else the application default — and declines anything that does not resolve to the face it holds. Before this it measured and painted every eligible leaf in its own face, which silently overrode a named family and undid R1472's application default for exactly the unstyled text that default exists to serve.",
+      "publishable_changes_bullets": [
+        "crates/pinion-runtime/src/text_engine.rs: `SelfHostedTextEngine::serves` is the eligibility SSOT both arms now ask — the R1070 style-shape predicate AND the new `serves_family`, in one call so a caller cannot satisfy one and forget the other",
+        "crates/pinion-runtime/src/text_engine.rs: `serves_family` resolves a leaf's request the way the platform shaper does (the style's family, else the process default) and serves it only when the engine's own parsed `name`-table family matches; a CSS generic always defers, because only the platform database knows what this host resolves the keyword to",
+        "crates/pinion-runtime/src/text_engine.rs: the engine carries the application default (`with_default_family`) and reports the face it holds (`served_family`)",
+        "crates/pinion-runtime/src/paint_adapter.rs: the paint arm's `self_hosted_eligible` takes the engine and delegates, so paint and measure still cannot split on eligibility",
+        "crates/pinion-core/src/reactive/font_sources.rs: `FontSourceReport.self_hosted` (`SelfHostedFace` = Disabled / Serving(family) / Unnamed) — the fact, not a derived verdict; the per-leaf rule stays in the engine",
+        "crates/pinion-shell/src/substrate.rs: the arm is built before the report is seeded and against the same default family the render cache took, so both shapers resolve \"unset\" from one declaration",
+        "examples/hello-app-font: a fourth tagged row (`afd_arm`) publishes which face the second shaper holds",
+        "NOT changed: what the arm does with the text it DOES serve, the opt-in gate, or the platform shaper's own resolution"
+      ],
+      "publishable_verification_bullets": [
+        "DEFECT REPRODUCED BEFORE THE FIX, over the wire, in both halves. Named family (`hello-app-font`, every row naming NanumGothic): with `PINION_TEXT_ENGINE=1` the sample row measured 487x31 against 449x33 with the arm off — the arm sized text in a face nobody asked for. Application default (`hello-vn-tide`, no row naming a family, NanumGothic declared as the default): line_count fell from 2 to 1 and the box from h=41 to h=19, which is exactly the pre-R1472 symptom, while the binding's font-state row went on reporting `default=NanumGothic`",
+        "AFTER: both re-measured identically to the arm-off run (449x33; line_count=2, h=41)",
+        "THE ARM IS NOT MERELY DISABLED: the whole pinion-runtime suite passes unchanged (570), including `self_hosted_measure_box_registers_with_paint_advance`, which requires the arm to still size unset text; and the demo prints the unpinned rows still measuring 487x31 with the arm on against 450x38 with it off",
+        "CF-1 (`serves_family` always true = the pre-R1479 arm): exactly 3 unit failures, all R1479, with the other 567 passing — the fix is scoped to what it claims. Demo FAILED on the first row width (156 expected, 175 got)",
+        "CF-2 (the default family dropped from the resolution, keeping the named half): exactly 1 unit failure — AND THE DEMO PASSED. That measurement is why the demo grew its fifth phase over `hello-vn-tide`; re-run under CF-2 it now FAILS at `expected 2, got 1`, so both halves have demo teeth",
+        "HOST-INDEPENDENCE: the demo picks which fixture the application declares FROM the arm's reported face, so \"the two shapers hold different faces\" is constructed rather than assumed. The layout test's positive control compares against the fixture's own §5.37 advance, not against parley, because what parley resolves a name to is a property of the runner",
+        "gate: `cargo fmt --all --check` clean; clippy `-D pedantic` clean on pinion-core / pinion-runtime / pinion-shell / hello-app-font; `cargo doc --workspace --no-deps --document-private-items` exit 0; pinion-core 2739, pinion-runtime 570 (+3), pinion-shell 213 + 161 integration",
+        "demos: r1479_arm_serves_the_face_asked_for PASS (5 phases, 2 bindings, 7 boots), and the neighbours re-run — r1473_app_default_font PASS, r1448_app_font PASS (same example, new row), r1447_font_free_tui PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.37",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The arm still holds ONE face. Declining is correct but not capable: an application that declares a default now keeps its face by sending ALL of its unstyled text to the platform shaper, so the §5.37 arm is inert for exactly the applications R1472 serves. Serving a requested family — parsing the faces the application already handed the shell, and selecting by family from the platform enumeration — is the named next step, and it is a campaign rather than a round",
+        "A CSS generic always defers, including `sans-serif` on a host whose default sans IS the engine's face. Correct-by-construction rather than measured: the engine has no way to prove the resolution, so the cost is paid in coverage",
+        "`layout_line_count` is now duplicated in r1473 and r1479 (two copies, below the 3rd-identical lift trigger)",
+        "The demo's fixture choice assumes at least one of the two bundled fixture families differs from the arm's pick; a host declaring both would fail the premise loudly rather than pass vacuously"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

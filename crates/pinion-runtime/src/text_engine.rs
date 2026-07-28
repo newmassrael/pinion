@@ -19,7 +19,7 @@
 
 use crate::layout::{TextBox, TextMeasure};
 use pinion_core::scene::StyleRun;
-use pinion_core::style::{LineHeight, TextAlign, TextStyle};
+use pinion_core::style::{FontFamily, LineHeight, TextAlign, TextStyle};
 use pinion_text::{CaretRect, TextLayout, VisualLineMetric};
 use pinion_text_font::{Font, shape_paragraph_with_fallback};
 use std::path::PathBuf;
@@ -36,8 +36,17 @@ use std::path::PathBuf;
 /// single font today (the R1068 single-style arm); a fallback stack is the
 /// multi-font step. Construct once at app / window init via
 /// [`SelfHostedTextEngine::from_system_font`].
+///
+/// R1479 §5.37 — it also carries the family unset text resolves to in this
+/// process ([`Self::with_default_family`]), because holding one face means the
+/// arm has to know which requests that face answers. See [`Self::serves`].
 pub struct SelfHostedTextEngine {
     font: Font,
+    /// The process-wide default family (R1472 `ShellConfig::with_default_font_family`),
+    /// or `None` when unset text means the platform stack. Boot-time, like the
+    /// font: what a `TextStyle` leaves out is resolved against this before the
+    /// arm decides whether it may render the leaf.
+    default_family: Option<FontFamily>,
 }
 
 impl SelfHostedTextEngine {
@@ -49,6 +58,7 @@ impl SelfHostedTextEngine {
     pub fn from_system_font() -> Result<Self, LoadFontError> {
         Ok(Self {
             font: load_system_font()?,
+            default_family: None,
         })
     }
 
@@ -58,7 +68,23 @@ impl SelfHostedTextEngine {
     /// specific (e.g. embedded brand) font.
     #[must_use]
     pub fn from_font(font: Font) -> Self {
-        Self { font }
+        Self {
+            font,
+            default_family: None,
+        }
+    }
+
+    /// R1479 §5.37 — declare the family unset text resolves to in this process,
+    /// so the arm resolves a leaf's request the same way the platform shaper
+    /// does before deciding whether it may render it ([`Self::serves`]).
+    ///
+    /// The shell passes what it set on the render cache
+    /// (`LayoutCache::set_default_font_family`), from the one `ShellConfig`
+    /// value, so the two shapers cannot disagree about what "unset" means.
+    #[must_use]
+    pub fn with_default_family(mut self, family: Option<FontFamily>) -> Self {
+        self.default_family = family;
+        self
     }
 
     /// The engine's font.
@@ -66,11 +92,86 @@ impl SelfHostedTextEngine {
     pub fn font(&self) -> &Font {
         &self.font
     }
+
+    /// R1479 §5.37 — the family the engine's face declares in its own `name`
+    /// table, or `None` on a face that declares none.
+    ///
+    /// This is the whole of what the arm can render, so it is also what the
+    /// shell publishes as [`SelfHostedFace`](pinion_core::reactive::SelfHostedFace).
+    #[must_use]
+    pub fn served_family(&self) -> Option<String> {
+        self.font.family_name()
+    }
+
+    /// R1479 §5.37 — may this arm render this leaf? The eligibility SSOT both
+    /// arms ask, and the only entry point either should use.
+    ///
+    /// Two independent questions, deliberately answered in one call so a caller
+    /// cannot satisfy one and forget the other (the split-rule class R1449 fixed
+    /// elsewhere):
+    ///
+    /// 1. is the leaf's SHAPE one the arm reproduces — [`self_hosted_text_eligible`];
+    /// 2. is the leaf's FACE the one the arm holds — [`Self::serves_family`].
+    #[must_use]
+    pub fn serves(
+        &self,
+        content: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        caret_bearing: bool,
+    ) -> bool {
+        self_hosted_text_eligible(content, style, runs, caret_bearing) && self.serves_family(style)
+    }
+
+    /// R1479 §5.37 — does this leaf's requested face resolve to the ONE face the
+    /// engine holds?
+    ///
+    /// The arm shapes with `self.font` whatever the style says, so before R1479
+    /// a leaf naming a family was measured and painted in a face nobody asked
+    /// for — and an application default ([`Self::with_default_family`]) was
+    /// silently overridden for every leaf that named nothing, which is the whole
+    /// of what R1472 built. The face is not a rendering detail: it changes the
+    /// advance, so the *measured box* is wrong too, and text that folds through
+    /// the requested face collapses to one line through this one.
+    ///
+    /// Resolution mirrors the platform shaper's: the style's own family, else
+    /// the process default, else nothing.
+    ///
+    /// - **nothing requested** — the arm is the default face by construction
+    ///   (this is the R1068 premise, and the configuration every §5.37 test and
+    ///   demo has exercised): serve it.
+    /// - **a named family** — serve it only when the engine's face declares that
+    ///   name (ASCII-case-insensitive, as font family matching is). Anything
+    ///   else defers.
+    /// - **a CSS generic** (`sans-serif`, `monospace`, …) — defer, always. The
+    ///   engine cannot *prove* its face is what this host resolves the keyword
+    ///   to; only fontconfig / the platform database knows, and a guess here
+    ///   would be the same silent wrong-face bug in a smaller costume.
+    ///
+    /// Serving a strict subset is always safe: everything declined renders
+    /// through the platform shaper, which is where all of it rendered before the
+    /// arm existed.
+    #[must_use]
+    pub fn serves_family(&self, style: &TextStyle) -> bool {
+        match style.font_family.as_ref().or(self.default_family.as_ref()) {
+            None => true,
+            Some(FontFamily::Named(name)) => self
+                .served_family()
+                .is_some_and(|served| served.eq_ignore_ascii_case(name)),
+            Some(FontFamily::Generic(_)) => false,
+        }
+    }
 }
 
-/// R1070 §5.37 — eligibility SSOT, shared by the paint arm
-/// (`crate::paint_adapter::self_hosted_eligible`) and the measure arm
+/// R1070 §5.37 — the STYLE-SHAPE half of the eligibility SSOT, shared by the
+/// paint arm (`crate::paint_adapter::self_hosted_eligible`) and the measure arm
 /// ([`SelfHostedTextEngine`]'s [`TextMeasure`] impl).
+///
+/// R1479 — the other half is the FACE ([`SelfHostedTextEngine::serves_family`]),
+/// which needs the engine and so cannot live in a free function. Both arms call
+/// [`SelfHostedTextEngine::serves`], which is the two together; this is public
+/// because the conditions below are a property of the leaf alone and a caller
+/// may want to ask about them without an engine in hand.
 ///
 /// These are the NECESSARY conditions for a `Scene::Text` leaf to be both
 /// *rendered and sized* by the §5.37 self-hosted engine so paint and measure
@@ -187,7 +288,9 @@ pub(crate) fn single_line_overflows(advance: f32, bound: Option<u32>) -> bool {
 /// parley measured box.
 impl TextMeasure for SelfHostedTextEngine {
     /// Returns `None` (defer to the parley measure — byte-identical to pre-R1070)
-    /// when the leaf is ineligible ([`self_hosted_text_eligible`]); the font is
+    /// when the leaf is ineligible ([`SelfHostedTextEngine::serves`] — its shape
+    /// is one the arm does not reproduce, or its face is not the one it holds);
+    /// the font is
     /// malformed (`units_per_em` 0) or the size non-positive; nothing shapes
     /// (empty content); or the single line would soft-wrap inside a bounded
     /// `max_width`. The soft-wrap decline shares the SSOT comparison
@@ -214,7 +317,7 @@ impl TextMeasure for SelfHostedTextEngine {
         max_width: Option<u32>,
         caret_bearing: bool,
     ) -> Option<TextBox> {
-        if !self_hosted_text_eligible(content, style, runs, caret_bearing) {
+        if !self.serves(content, style, runs, caret_bearing) {
             return None;
         }
         let font = &self.font;
@@ -774,6 +877,136 @@ mod tests {
         // The eligibility SSOT itself is the single decision point shared with paint.
         assert!(self_hosted_text_eligible("Name", &style, &[], false));
         assert!(!self_hosted_text_eligible("Name", &style, &[], true));
+    }
+
+    /// The two fixture families, read from the fonts' own `name` tables and
+    /// asserted DIFFERENT — the premise every face test below rests on. Two
+    /// fixtures that happened to declare one family would make "defers for a
+    /// face it does not hold" pass without holding.
+    fn fixture_families() -> (String, String) {
+        let noto = noto_engine()
+            .served_family()
+            .expect("the NotoSans fixture declares a family");
+        let nanum = Font::from_bytes(NANUM_FIXTURE.to_vec())
+            .expect("parse NanumGothic fixture")
+            .family_name()
+            .expect("the NanumGothic fixture declares a family");
+        assert_ne!(
+            noto, nanum,
+            "premise: the two fixtures declare different families, or a leaf \
+             asking for one could be served by the other for free"
+        );
+        (noto, nanum)
+    }
+
+    #[test]
+    fn r1479_the_arm_serves_only_the_face_it_holds() {
+        // R1479 — the arm shapes with ONE font. Before this, a leaf naming a
+        // family was measured and painted in whatever face the engine happened
+        // to hold: a different advance, so a wrong box as well as wrong glyphs.
+        use crate::layout::TextMeasure;
+        let engine = noto_engine();
+        let (served, other) = fixture_families();
+        let base = TextStyle::new().with_size_px(20);
+        let measured = |style: &TextStyle| engine.measure_text("Face", style, &[], None, false);
+
+        // Names nothing: the arm IS the unnamed face (the R1068 premise).
+        assert!(
+            measured(&base).is_some(),
+            "text naming no family is what the arm was always for"
+        );
+        // Names the face it holds: served, and case-insensitively — family
+        // matching is not case-sensitive, and refusing here would push text onto
+        // the platform shaper over a capital letter.
+        assert!(
+            measured(&base.clone().with_font_family(served.clone())).is_some(),
+            "a leaf naming the engine's own family is served"
+        );
+        assert!(
+            measured(&base.clone().with_font_family(served.to_ascii_uppercase())).is_some(),
+            "and the match ignores ASCII case"
+        );
+        // Names a different face: deferred. This is the defect.
+        assert!(
+            measured(&base.clone().with_font_family(other.clone())).is_none(),
+            "a leaf naming {other} must not be measured in {served}"
+        );
+        // A CSS generic: deferred, because only the platform database knows what
+        // this host resolves the keyword to. Guessing would be the same bug.
+        assert!(
+            measured(
+                &base
+                    .clone()
+                    .with_generic_family(pinion_core::style::GenericFontFamily::SansSerif)
+            )
+            .is_none(),
+            "the engine cannot prove its face is this host's `sans-serif`"
+        );
+        // The paint arm asks the same question through the same method, so the
+        // two arms cannot split on the face any more than on the shape.
+        assert!(engine.serves("Face", &base, &[], false));
+        assert!(!engine.serves(
+            "Face",
+            &base.clone().with_font_family(other.clone()),
+            &[],
+            false
+        ));
+        // And the face half is genuinely independent of the shape half: the
+        // style-shape predicate accepts the leaf the face predicate refuses.
+        assert!(self_hosted_text_eligible(
+            "Face",
+            &base.clone().with_font_family(other),
+            &[],
+            false
+        ));
+    }
+
+    #[test]
+    fn r1479_an_application_default_is_a_request_the_arm_must_answer() {
+        // R1479 — the half R1472 built and this arm ignored. `ShellConfig::
+        // with_default_font_family` makes an application's face what unset text
+        // resolves to; the arm claimed every unset leaf regardless, so turning
+        // the arm on silently put the declared face back out of use — for the
+        // exact text (unstyled UI prose) it was declared to serve.
+        use crate::layout::TextMeasure;
+        let (served, other) = fixture_families();
+        let unset = TextStyle::new().with_size_px(20);
+        let measure = |engine: &SelfHostedTextEngine, style: &TextStyle| {
+            engine
+                .measure_text("Face", style, &[], None, false)
+                .is_some()
+        };
+
+        // Default names another face: unset text belongs to that face, not this
+        // arm's. Same leaf, same engine, opposite verdict from the declaration
+        // alone.
+        let foreign_default =
+            noto_engine().with_default_family(Some(FontFamily::Named(other.clone().into())));
+        assert!(
+            !measure(&foreign_default, &unset),
+            "unset text resolves to {other}, which this arm does not hold"
+        );
+        // Default names the arm's own face: served, so declaring a default does
+        // not disable the arm — it aims it.
+        let own_default =
+            noto_engine().with_default_family(Some(FontFamily::Named(served.clone().into())));
+        assert!(
+            measure(&own_default, &unset),
+            "a default naming the engine's face is the arm's own text"
+        );
+        // No default at all: unchanged from before R1479.
+        assert!(measure(&noto_engine(), &unset));
+        // The style's own family still wins over the default, both ways — the
+        // arm resolves the request the way the platform shaper does rather than
+        // letting a process-wide default overrule a leaf that spelled its face.
+        assert!(
+            measure(&foreign_default, &unset.clone().with_font_family(served)),
+            "a leaf naming the engine's face is served despite a foreign default"
+        );
+        assert!(
+            !measure(&own_default, &unset.with_font_family(other)),
+            "and a leaf naming another face defers despite a matching default"
+        );
     }
 
     // R1077 §5.37 — SelfHostedLayout is the second `TextLayout` implementor

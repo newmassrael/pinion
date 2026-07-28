@@ -26,7 +26,9 @@ pub use effect::Effect;
 pub use font_metrics::{
     MONOSPACE_METRICS, MonospaceMetrics, NullMonospaceMetrics, measured_monospace_cell,
 };
-pub use font_sources::{FONT_SOURCES, FontSourceReport, SystemFontStatus, font_sources};
+pub use font_sources::{
+    FONT_SOURCES, FontSourceReport, SelfHostedFace, SystemFontStatus, font_sources,
+};
 pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
 pub use pane_viewport::use_pane_viewport_size;

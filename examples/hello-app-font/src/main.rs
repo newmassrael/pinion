@@ -19,12 +19,15 @@
 //!
 //! Here the answer is a [`FontSourceReport`] the view fn reads with
 //! [`font_sources()`] and paints into the scene, so it travels over
-//! `scene/snapshot` like any other node (§2 #7). Three tagged rows:
+//! `scene/snapshot` like any other node (§2 #7). Four tagged rows:
 //!
 //!   * **`afd_system`** — the platform-scan verdict, `available` /
 //!     `unavailable` / `not-probed`.
 //!   * **`afd_families`** — the families this application supplied, or
 //!     `(none)`.
+//!   * **`afd_arm`** — R1479: which face the opt-in self-hosted (§5.37) shaper
+//!     holds, or `disabled`. Two shapers can be live at once, and this is the
+//!     row that says which text each of them may draw.
 //!   * **`afd_sample`** — the same string laid out in the **application's**
 //!     family. Its measured width is the honest end-to-end proof: a face that
 //!     were reported but not really registered would report fine and measure
@@ -52,7 +55,7 @@
 
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{External, StubExternal};
-use pinion_core::reactive::{SystemFontStatus, font_sources};
+use pinion_core::reactive::{SelfHostedFace, SystemFontStatus, font_sources};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
@@ -70,6 +73,7 @@ const WIN_H: u32 = 300;
 
 const SYSTEM_TAG: &str = "afd_system";
 const FAMILIES_TAG: &str = "afd_families";
+const ARM_TAG: &str = "afd_arm";
 const SAMPLE_TAG: &str = "afd_sample";
 
 /// The face this application "ships". A fixture already in the repo — declaring
@@ -94,7 +98,21 @@ fn status_word(status: SystemFontStatus) -> &'static str {
     }
 }
 
-/// view-fn (§6.3): three tagged rows over the process's font-source report.
+/// R1479 — the self-hosted arm's face as the row publishes it.
+///
+/// The family is spelled out rather than reduced to "on", because "on" is not
+/// the answer to any question an agent has: the arm renders exactly the text
+/// that resolves to this family and nothing else, so which family it is IS the
+/// scope of the second shaper.
+fn arm_word(face: &SelfHostedFace) -> String {
+    match face {
+        SelfHostedFace::Disabled => "disabled".to_owned(),
+        SelfHostedFace::Serving(family) => format!("serving {family}"),
+        SelfHostedFace::Unnamed => "an unnamed face".to_owned(),
+    }
+}
+
+/// view-fn (§6.3): four tagged rows over the process's font-source report.
 ///
 /// Pure and sync — [`font_sources()`] reads a boot-time snapshot from the owner
 /// scope, so two calls on the same state agree and `dry_run` is unaffected.
@@ -145,9 +163,17 @@ fn view(_state: ButtonState, _frame: &Frame) -> Scene {
             TextNode::styled(
                 format!("application families: {families}"),
                 Rect::default(),
-                label,
+                label.clone(),
             )
             .with_tag(FAMILIES_TAG),
+        ),
+        Scene::Text(
+            TextNode::styled(
+                format!("self-hosted arm: {}", arm_word(&report.self_hosted)),
+                Rect::default(),
+                label,
+            )
+            .with_tag(ARM_TAG),
         ),
         Scene::Text(TextNode::styled(SAMPLE, Rect::default(), sample_style).with_tag(SAMPLE_TAG)),
     ])

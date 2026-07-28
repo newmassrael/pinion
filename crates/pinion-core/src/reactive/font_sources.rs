@@ -87,6 +87,35 @@ pub enum SystemFontStatus {
     Unavailable,
 }
 
+/// R1479 §5.37 — which face the opt-in self-hosted (§5.37) text arm holds.
+///
+/// The arm shapes with ONE parsed face and nothing else, so the family it holds
+/// is the whole of what it can render: text resolving to any other family has to
+/// go to the platform shaper or it would be drawn in a face nobody asked for.
+/// That makes this the fact an agent needs to explain a face — and, together
+/// with [`FontSourceReport::default_family`], to explain why some text takes the
+/// self-hosted path and the rest does not.
+///
+/// The *rule* that turns this into a per-leaf verdict lives with the engine
+/// (`SelfHostedTextEngine::serves`), in one place. This is only the fact it
+/// reads.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SelfHostedFace {
+    /// The self-hosted arm is not running in this process — the platform shaper
+    /// draws everything. The default, and the shipping configuration.
+    #[default]
+    Disabled,
+    /// The arm is running over a face declaring this family, so this family is
+    /// the only text it may render.
+    Serving(String),
+    /// The arm is running over a face whose `name` table declares no family.
+    ///
+    /// It can prove nothing about what it serves, so it renders only text that
+    /// requests no family at all. Distinct from [`Self::Disabled`]: the arm IS
+    /// running, which is visible in the geometry of unset text.
+    Unnamed,
+}
+
 /// R1448 §5.36 — the faces available to this process and where they came from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FontSourceReport {
@@ -109,6 +138,17 @@ pub struct FontSourceReport {
     /// not know which face drew the text. The node carries the style **as
     /// written**; this carries how the process resolves what was left out.
     pub default_family: Option<crate::style::FontFamily>,
+    /// R1479 §5.37 — the face the opt-in self-hosted text arm holds, or
+    /// [`SelfHostedFace::Disabled`] when that arm is not running.
+    ///
+    /// The other three fields describe the faces this process CAN select. This
+    /// one describes which of them a second shaper is actually able to draw, and
+    /// it is the field that explains a divergence the others cannot: with the arm
+    /// enabled over one face, text naming any other family is measured and
+    /// painted by the platform shaper instead, so two rows in the same scene can
+    /// take different paths. Without it an agent reads a family on the node, a
+    /// default on the report, and still cannot say which engine drew the glyphs.
+    pub self_hosted: SelfHostedFace,
 }
 
 impl FontSourceReport {
@@ -167,6 +207,7 @@ mod tests {
             system: SystemFontStatus::Unavailable,
             application_families: vec!["Fixture Sans".to_owned()],
             default_family: Some(crate::style::FontFamily::Named("Fixture Sans".into())),
+            self_hosted: SelfHostedFace::Serving("Fixture Sans".to_owned()),
         }
     }
 
@@ -193,6 +234,11 @@ mod tests {
             "R1472: and unset text means the platform stack until an \
              application says otherwise",
         );
+        assert_eq!(
+            report.self_hosted,
+            SelfHostedFace::Disabled,
+            "R1479: and no second shaper is claiming any of it",
+        );
     }
 
     /// R1448 — the state this round exists for: a host with no font database
@@ -203,6 +249,7 @@ mod tests {
             system: SystemFontStatus::Unavailable,
             application_families: vec!["Shipped Sans".to_owned()],
             default_family: None,
+            self_hosted: SelfHostedFace::Disabled,
         };
         assert!(
             report.has_any_face(),
@@ -214,6 +261,7 @@ mod tests {
             system: SystemFontStatus::Unavailable,
             application_families: Vec::new(),
             default_family: None,
+            self_hosted: SelfHostedFace::Disabled,
         };
         assert!(!bare.has_any_face());
     }

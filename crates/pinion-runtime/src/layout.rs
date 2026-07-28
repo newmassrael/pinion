@@ -3006,6 +3006,111 @@ mod tests {
         );
     }
 
+    /// R1479 §5.37 — the leaf's FAMILY reaches the eligibility decision through
+    /// the same `TextNode` → `NodeContext::Text` → measure-callback path as the
+    /// caret marker above, so a leaf naming a family the engine does not hold is
+    /// sized by parley — the shaper that can actually select that face.
+    ///
+    /// Asserted as engine-on == engine-off rather than against a number: what
+    /// parley resolves the name to is a property of the host, but that the
+    /// override changes nothing is a property of this code, and it is the one
+    /// under test. The positive control (a leaf naming nothing IS sized by
+    /// §5.37) is what keeps this from passing by disabling the arm.
+    #[cfg(feature = "vello")]
+    #[test]
+    fn r1479_leaf_naming_a_foreign_family_defers_to_parley_measure() {
+        use crate::text_engine::SelfHostedTextEngine;
+        use pinion_text_font::Font;
+
+        const NOTO: &[u8] =
+            include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+        const NANUM: &[u8] =
+            include_bytes!("../../pinion-text-font/tests/fonts/NanumGothic-Regular.ttf");
+
+        let engine = SelfHostedTextEngine::from_font(
+            Font::from_bytes(NOTO.to_vec()).expect("parse NotoSans fixture"),
+        );
+        let served = engine
+            .served_family()
+            .expect("the NotoSans fixture declares a family");
+        let foreign = Font::from_bytes(NANUM.to_vec())
+            .expect("parse NanumGothic fixture")
+            .family_name()
+            .expect("the NanumGothic fixture declares a family");
+        assert_ne!(
+            served, foreign,
+            "premise: the fixtures name different faces"
+        );
+
+        let make_scene = |style: TextStyle| {
+            move || {
+                let text = Scene::Text(TextNode::styled("Measure", Rect::default(), style.clone()));
+                Scene::Container(
+                    ContainerNode::new(vec![text]).with_layout(
+                        LayoutStyle::new()
+                            .flex(FlexDirection::Row)
+                            .with_align_items(AlignItems::Start),
+                    ),
+                )
+            }
+        };
+        let measured = |scene: &Scene| -> (u32, u32) {
+            let Scene::Container(c) = scene else {
+                panic!("container")
+            };
+            let Scene::Text(t) = &c.children[0] else {
+                panic!("text")
+            };
+            (t.rect.w, t.rect.h)
+        };
+        let lay = |scene: &mut Scene, engine: Option<&SelfHostedTextEngine>| {
+            let mut cache = LayoutCache::new();
+            let m = engine.map(|e| e as &dyn TextMeasure);
+            let _ = compute_layout_with_text_measure(scene, &mut cache, 800, 200, m);
+        };
+
+        // A leaf that names the OTHER fixture's family.
+        let named = make_scene(TextStyle::new().with_size_px(18).with_font_family(foreign));
+        let (mut on, mut off) = (named(), named());
+        lay(&mut on, Some(&engine));
+        lay(&mut off, None);
+        assert_eq!(
+            measured(&on),
+            measured(&off),
+            "a leaf naming a family the engine does not hold measures through \
+             parley, engine on or off",
+        );
+
+        // Positive control: with the family the engine DOES hold, the override
+        // takes effect — so the equality above is a decline and not an inert
+        // arm. Asserted against the §5.37 advance computed from the fixture's
+        // own bytes, NOT against parley: what parley resolves a name to is the
+        // host's business, and a control that asked it would pass or fail by
+        // which fonts the runner has installed.
+        let own = make_scene(
+            TextStyle::new()
+                .with_size_px(18)
+                .with_font_family(served.clone()),
+        );
+        let mut own_on = own();
+        lay(&mut own_on, Some(&engine));
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a single line advance is a small positive px value"
+        )]
+        let s537_w =
+            pinion_text_font::shape_paragraph_with_fallback(&[engine.font()], "Measure", 18.0_f32)
+                .advance
+                .ceil() as u32;
+        assert_eq!(
+            measured(&own_on).0,
+            s537_w,
+            "a leaf naming {served} IS sized by the §5.37 arm (intrinsic width \
+             == the §5.37 advance), so the override reached this layout pass",
+        );
+    }
+
     /// R1447 §5.36 §5.37 — the `TextMeasure` seam decides whether a layout
     /// pass touches fonts at all, and [`LayoutCache`] now defers the system
     /// font scan to the first shape, so "touches fonts" is observable.

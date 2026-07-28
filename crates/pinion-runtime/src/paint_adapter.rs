@@ -2974,13 +2974,18 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
 /// falls through to parley when the shaped text would not fit one line (soft
 /// wrap). Everything excluded here stays on the parley path.
 ///
+/// R1479 — and the face: the arm holds ONE font, so a leaf whose family (its
+/// own, or the process default) is not that font's would be painted in a face
+/// nobody asked for. [`SelfHostedTextEngine::serves`] is both halves, asked of
+/// the engine that would do the painting.
+///
 /// R1070 — a thin `TextNode`-shaped convenience over the eligibility SSOT
 /// [`crate::text_engine::self_hosted_text_eligible`], so the paint arm and the
 /// §5.37 measure arm share one definition of "eligible". Layout / measure picks
 /// the §5.37 box only when this same predicate holds, so paint and measure never
 /// disagree on which path renders a leaf.
-fn self_hosted_eligible(t: &TextNode) -> bool {
-    crate::text_engine::self_hosted_text_eligible(&t.content, &t.style, &t.runs, t.caret_bearing)
+fn self_hosted_eligible(t: &TextNode, engine: &SelfHostedTextEngine) -> bool {
+    engine.serves(&t.content, &t.style, &t.runs, t.caret_bearing)
 }
 
 /// R1068 §5.37 — paint an [`self_hosted_eligible`] `Scene::Text` leaf through the
@@ -3092,7 +3097,7 @@ fn paint_text(
     // or declined) fall through to the unchanged parley path below, so
     // `engine == None` is byte-identical to the pre-R1068 `paint_text`.
     if let Some(engine) = engine
-        && self_hosted_eligible(t)
+        && self_hosted_eligible(t, engine)
         && paint_text_self_hosted(out, t, engine, parent_transform)
     {
         return;
@@ -3871,7 +3876,7 @@ mod tests {
             unreachable!()
         };
         assert!(
-            !self_hosted_eligible(node),
+            !self_hosted_eligible(node, &engine),
             "a styled-run node is out of the self-hosted arm's scope"
         );
 
@@ -4070,7 +4075,7 @@ mod tests {
             unreachable!()
         };
         assert!(
-            !self_hosted_eligible(node),
+            !self_hosted_eligible(node, &engine),
             "a caret-bearing node is excluded from the self-hosted arm"
         );
 
