@@ -73248,6 +73248,68 @@
         "The RELEASE side is warmed only because `--print-warmup` names hello-button-tui. A future vello-less example reached by a different demo would be unwarmed again, and only the `cargo test` half is gated"
       ]
     },
+    "Round 1476": {
+      "decision_summary": "A rule kept by review is a rule that ships again — R1471 and R1473 each shipped a premise about the developer's machine one round apart, so the host reading now has a type that prints and refuses to be compared, and both surviving instances became configs the demo builds, measured to behave identically to a 635-face host.",
+      "changes_bullets": [
+        "tools/rpc_verify.py: `HostObservation` — a reading of the running machine that formats and refuses every comparison, so the shape R1471 and R1473 each shipped cannot be written again",
+        "tools/rpc_verify.py: `host_font_count()` is the host question under its own name, answering with that type; `fc_list_count` is the fixture question and keeps returning a plain int",
+        "tools/rpc_verify.py: `fc_list_count` rejects `None` at RUNTIME — an annotation is not a gate, and passing None used to hand back an assertable int",
+        "tools/rpc_verify.py: `write_fontconfig` now creates `root`; the `mkdir` its callers had to write first reached four copies the moment a second demo grew a populated arm",
+        "tools/demos/r1447_font_free_tui.py: both arms are configs the demo builds (two vendored faces vs none) instead of the developer's fontconfig vs none; the host is printed",
+        "tools/demos/r1448_app_font.py: the healthy-platform arm is a one-face config the demo builds, deliberately a DIFFERENT face from the declared one so the two cannot be confused",
+        "tools/demos/r1473_app_default_font.py: moved to `host_font_count` — it was already reporting rather than asserting, which is the shape the other two now match",
+        "tools/demos/r1447_font_free_tui.py: the `phase()` docstring still posed the question R1475 answered; replaced with the answer, since R1475 left it standing"
+      ],
+      "verification_bullets": [
+        "THE UNKNOWN R1475 CARRIED, NOW MEASURED. All four of r1447's populated arms behave identically under a two-face fixture and under this 635-face host: pinion-text `r1447_` 3 passed / rc 0 in both, the r1460 font-less probe FAILED rc 101 in both (it is an instrument only if it fails where fonts exist), pinion-runtime's arm comparison 1 passed / rc 0 in both",
+        "and r1448's app arm: `system fonts: available`, `application families: NanumGothic`, sample width 449 — identical under the one-face fixture and the host. Converting the arms weakened no claim, which is why the conversion was allowed to happen at all",
+        "GUARD, DISCRIMINATING ON THIS HOST: `assert host_font_count() > 0` — the exact shape R1471 and R1473 shipped — now raises on a machine that HAS 635 fonts. That is the point: the old code passed here and failed only on a differently-provisioned runner, while the guard fails everywhere and at once",
+        "the bypass is closed in the same breath: `fc_list_count(None)` raises instead of returning an int an `assert` would consume",
+        "NEGATIVE CONTROL, so the guard is not merely hostile: `fc_list_count(fixture) > 0` returns True and `f\"{host_font_count()}\"` returns \"635\". Fixture readings compare; host readings print",
+        "CENSUS: `fc_list_count(None)` and `font_count(None)` now appear nowhere under tools/",
+        "gate: python syntax clean on rpc_verify and the three demos; r1447 PASS 3.56s, r1448 PASS 3.42s, r1473 PASS 2.33s; and through the touched helper r1460 PASS, r1469 PASS, todomvc_r666 PASS. No Rust changed",
+        "3b self-grep caught my own hand: the `root.mkdir` I had just written into two demos was the third and fourth copy of it, lifted into `write_fontconfig` in the same round"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "The class is closed for FONT readings only. A demo asserting any other host property — a binary on PATH, core count, DISPLAY — has no type standing in its way, and the `shutil.which` guards in the pixel demos are skips rather than asserts by convention alone",
+        "r1448's populated arm has one face where a real platform has hundreds. The claims measured identical, but \"the platform contributed nothing\" is now checked against a smaller platform than before",
+        "R1475's own verification is still outstanding: whether the warmup replay lands r1447 inside its 180s budget is answered by CI run 30362652715, not by this round"
+      ],
+      "publishable_decision_summary": "A rule kept by review is a rule that ships again — R1471 and R1473 each shipped a premise about the developer's machine one round apart, so the host reading now has a type that prints and refuses to be compared, and both surviving instances became configs the demo builds, measured to behave identically to a 635-face host.",
+      "publishable_changes_bullets": [
+        "tools/rpc_verify.py: `HostObservation` — a reading of the running machine that formats and refuses every comparison, so the shape R1471 and R1473 each shipped cannot be written again",
+        "tools/rpc_verify.py: `host_font_count()` is the host question under its own name, answering with that type; `fc_list_count` is the fixture question and keeps returning a plain int",
+        "tools/rpc_verify.py: `fc_list_count` rejects `None` at RUNTIME — an annotation is not a gate, and passing None used to hand back an assertable int",
+        "tools/rpc_verify.py: `write_fontconfig` now creates `root`; the `mkdir` its callers had to write first reached four copies the moment a second demo grew a populated arm",
+        "tools/demos/r1447_font_free_tui.py: both arms are configs the demo builds (two vendored faces vs none) instead of the developer's fontconfig vs none; the host is printed",
+        "tools/demos/r1448_app_font.py: the healthy-platform arm is a one-face config the demo builds, deliberately a DIFFERENT face from the declared one so the two cannot be confused",
+        "tools/demos/r1473_app_default_font.py: moved to `host_font_count` — it was already reporting rather than asserting, which is the shape the other two now match",
+        "tools/demos/r1447_font_free_tui.py: the `phase()` docstring still posed the question R1475 answered; replaced with the answer, since R1475 left it standing"
+      ],
+      "publishable_verification_bullets": [
+        "THE UNKNOWN R1475 CARRIED, NOW MEASURED. All four of r1447's populated arms behave identically under a two-face fixture and under this 635-face host: pinion-text `r1447_` 3 passed / rc 0 in both, the r1460 font-less probe FAILED rc 101 in both (it is an instrument only if it fails where fonts exist), pinion-runtime's arm comparison 1 passed / rc 0 in both",
+        "and r1448's app arm: `system fonts: available`, `application families: NanumGothic`, sample width 449 — identical under the one-face fixture and the host. Converting the arms weakened no claim, which is why the conversion was allowed to happen at all",
+        "GUARD, DISCRIMINATING ON THIS HOST: `assert host_font_count() > 0` — the exact shape R1471 and R1473 shipped — now raises on a machine that HAS 635 fonts. That is the point: the old code passed here and failed only on a differently-provisioned runner, while the guard fails everywhere and at once",
+        "the bypass is closed in the same breath: `fc_list_count(None)` raises instead of returning an int an `assert` would consume",
+        "NEGATIVE CONTROL, so the guard is not merely hostile: `fc_list_count(fixture) > 0` returns True and `f\"{host_font_count()}\"` returns \"635\". Fixture readings compare; host readings print",
+        "CENSUS: `fc_list_count(None)` and `font_count(None)` now appear nowhere under tools/",
+        "gate: python syntax clean on rpc_verify and the three demos; r1447 PASS 3.56s, r1448 PASS 3.42s, r1473 PASS 2.33s; and through the touched helper r1460 PASS, r1469 PASS, todomvc_r666 PASS. No Rust changed",
+        "3b self-grep caught my own hand: the `root.mkdir` I had just written into two demos was the third and fourth copy of it, lifted into `write_fontconfig` in the same round"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The class is closed for FONT readings only. A demo asserting any other host property — a binary on PATH, core count, DISPLAY — has no type standing in its way, and the `shutil.which` guards in the pixel demos are skips rather than asserts by convention alone",
+        "r1448's populated arm has one face where a real platform has hundreds. The claims measured identical, but \"the platform contributed nothing\" is now checked against a smaller platform than before",
+        "R1475's own verification is still outstanding: whether the warmup replay lands r1447 inside its 180s budget is answered by CI run 30362652715, not by this round"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

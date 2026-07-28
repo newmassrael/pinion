@@ -42,7 +42,7 @@ import tempfile
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, NoReturn, Optional
 
 from build_gate import BuildError, ensure_built
 
@@ -86,18 +86,74 @@ def isolated_storage_dir(prefix: str) -> Iterator[Path]:
         shutil.rmtree(storage_dir, ignore_errors=True)
 
 
-def fc_list_count(fontconfig: Path | None, pattern: str | None = None) -> int:
-    """R1474 — how many faces `fc-list` reports under `fontconfig`, optionally
-    matching `pattern` (e.g. `":charset=ac00"` for Hangul coverage).
+class HostObservation:
+    """R1476 — a reading of whatever machine happens to be running the demo:
+    printable, and deliberately NOT comparable.
 
-    `None` means the host's own configuration.
+    R1471 and R1473 each shipped a demo whose premise asserted something about
+    the HOST — that it could draw Hangul, that it had any fonts at all — when
+    the claim under test only ever needed the demo's own fixture. Both passed on
+    a developer box and failed on a CI runner provisioned differently, which
+    made a host property read as a defect in pinion. R1474 named it a class and
+    recorded that nothing enforced the distinction.
 
-    Lifted at its third copy (`r1447_font_free_tui`, `r1448_app_font`,
-    `r1473_app_default_font`). The `pattern` argument is what makes one helper
-    serve all three: counting *fonts* answers "does this host have any", while
-    counting a charset answers "can it draw this script" — and R1474 landed
-    because a demo asserted the first when it meant the second.
+    This is the enforcement, and it is a type rather than a review habit: the
+    host arm of any comparison is worth *reporting* (a reader wants to know the
+    real machine had 635 faces) and is never worth *asserting*. So `str`/format
+    work and every comparison raises. `assert host_font_count() > 0` now fails
+    the moment it is written, on every host, instead of only on the one runner
+    that would have disproved it.
     """
+
+    __slots__ = ("_value", "_what")
+
+    def __init__(self, value: int, what: str) -> None:
+        self._value = value
+        self._what = what
+
+    def __str__(self) -> str:
+        return str(self._value)
+
+    def __format__(self, spec: str) -> str:
+        return format(self._value, spec)
+
+    def __repr__(self) -> str:
+        return f"<host {self._what}={self._value}, report-only>"
+
+    def _refuse(self, op: str) -> "NoReturn":
+        raise AssertionError(
+            f"a premise must be about the fixture, not the host: this {op} "
+            f"reads the developer's machine ({self._what}={self._value}). "
+            "Build the environment the claim needs with `write_fontconfig(root, "
+            "faces=...)` and assert on that; print this value instead."
+        )
+
+    def __bool__(self) -> bool:
+        self._refuse("truth test")
+
+    def __eq__(self, other: object) -> bool:
+        self._refuse("comparison")
+
+    def __ne__(self, other: object) -> bool:
+        self._refuse("comparison")
+
+    def __lt__(self, other: object) -> bool:
+        self._refuse("comparison")
+
+    def __le__(self, other: object) -> bool:
+        self._refuse("comparison")
+
+    def __gt__(self, other: object) -> bool:
+        self._refuse("comparison")
+
+    def __ge__(self, other: object) -> bool:
+        self._refuse("comparison")
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+def _fc_list(fontconfig: Path | None, pattern: str | None) -> int:
+    """Faces `fc-list` reports under `fontconfig` (`None` = the host's own)."""
     env = dict(os.environ)
     if fontconfig is None:
         env.pop("FONTCONFIG_FILE", None)
@@ -108,6 +164,40 @@ def fc_list_count(fontconfig: Path | None, pattern: str | None = None) -> int:
         args.append(pattern)
     out = subprocess.run(args, env=env, capture_output=True, text=True, check=False)
     return len([line for line in out.stdout.splitlines() if line.strip()])
+
+
+def fc_list_count(fontconfig: Path, pattern: str | None = None) -> int:
+    """R1474 — how many faces `fc-list` reports under a fontconfig the demo
+    BUILT, optionally matching `pattern` (e.g. `":charset=ac00"` for Hangul).
+
+    Lifted at its third copy (`r1447_font_free_tui`, `r1448_app_font`,
+    `r1473_app_default_font`). The `pattern` argument is what makes one helper
+    serve all three: counting *fonts* answers "are there any", while counting a
+    charset answers "can this draw the script" — and R1474 landed because a demo
+    asserted the first when it meant the second.
+
+    R1476 — `fontconfig` is no longer optional, and the check is at runtime
+    rather than in the annotation, because an annotation is not a gate: passing
+    `None` here used to hand back an ordinary `int` that an `assert` would
+    happily consume. The host is a different question with a different answer
+    type; ask it through [`host_font_count`].
+    """
+    if fontconfig is None:
+        raise AssertionError(
+            "fc_list_count reads a fontconfig the DEMO built. For the machine "
+            "running the demo call host_font_count(), whose value prints and "
+            "refuses to be compared — a premise must be about the fixture."
+        )
+    return _fc_list(fontconfig, pattern)
+
+
+def host_font_count(pattern: str | None = None) -> HostObservation:
+    """R1476 — what the machine running this demo happens to have installed.
+
+    The return value formats and refuses to compare, because a claim resting on
+    it is a claim about the developer's box. See [`HostObservation`].
+    """
+    return HostObservation(_fc_list(None, pattern), f"fc-list {pattern or 'faces'}")
 
 
 def write_fontconfig(root: Path, faces: tuple[str, ...] = ()) -> Path:
@@ -123,13 +213,16 @@ def write_fontconfig(root: Path, faces: tuple[str, ...] = ()) -> Path:
     same two directories). The variable part is only which faces go in, so the
     duplication was mechanical and carried no per-demo opinion.
 
-    `root` must exist; the `fonts/` and `cache/` subdirectories are created.
+    R1476 — `root` is created if absent, along with `fonts/` and `cache/`. It
+    used to have to exist, which meant every caller that wanted two environments
+    in one temp dir wrote the same `mkdir` first; that reached four copies the
+    moment a second demo grew a populated arm.
     Returns the config path, for `FONTCONFIG_FILE`.
     """
     fonts = root / "fonts"
     cache = root / "cache"
-    fonts.mkdir(exist_ok=True)
-    cache.mkdir(exist_ok=True)
+    fonts.mkdir(parents=True, exist_ok=True)
+    cache.mkdir(parents=True, exist_ok=True)
     for face in faces:
         shutil.copy(face, fonts / Path(face).name)
     conf = root / "fontconfig.conf"

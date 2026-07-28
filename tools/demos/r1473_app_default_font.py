@@ -50,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     run_demo,
     fc_list_count,
+    host_font_count,
     wait_snap,
     write_fontconfig,
 )
@@ -222,7 +223,7 @@ def body() -> None:
         assert_eq(config_hangul, 0, "Hangul faces under the demo's config")
         print(
             f"[demo] the demo's config: {config_fonts} faces, 0 covering U+AC00 "
-            f"(host: {fc_list_count(None, HANGUL_CHARSET)} covering it)"
+            f"(host: {host_font_count(HANGUL_CHARSET)} covering it)"
         )
 
         # ---- 2. the report: what does an unset family resolve to? ----

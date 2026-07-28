@@ -21,8 +21,10 @@ a `FontSourceReport` the binding paints into its scene, so it arrives over
 
 What this asserts, in both font environments:
 
-  1. PREMISE — the host has fonts; the demo's synthesised config has none. Both
-     measured, so a broken fixture cannot read as a pass.
+  1. PREMISE — the demo synthesises BOTH configs, one with a face and one with
+     none. Both measured, so a broken fixture cannot read as a pass. (R1476:
+     this used to assert the HOST had fonts, which failed a demo about pinion
+     on a font-less runner. The host is printed now, not asserted.)
   2. THE CARRY — `hello-app-font` boots, answers RPC and lays out a scene under
      the zero-font config. Before R1448 this exact run aborted in fontique.
   3. THE REPORT — the published status row reads `available` with system fonts
@@ -60,6 +62,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     fc_list_count,
+    host_font_count,
     run_demo,
     wait_snap,
     write_fontconfig,
@@ -74,17 +77,27 @@ SAMPLE_TAG = "afd_sample"
 # The face the example declares by default (a fixture already in the repo).
 DECLARED_FONT = "crates/pinion-text-font/tests/fonts/NanumGothic-Regular.ttf"
 
-
-def font_count(fontconfig: Path | None) -> int:
-    """Fonts `fc-list` reports under `fontconfig` (None = the system's)."""
-    return fc_list_count(fontconfig)
-
+# R1476 — a DIFFERENT face, so the platform arm cannot be confused with the
+# application's own: the families row must name the declared one either way.
+SYSTEM_FACE = "crates/pinion-text-font/tests/fonts/NotoSans-Regular.ttf"
 
 
 def write_font_less_config(root: Path) -> Path:
     """A fontconfig over an empty font tree — a slim container's font
     situation, without needing one."""
     return write_fontconfig(root)
+
+
+def write_font_ful_config(root: Path) -> Path:
+    """R1476 — the healthy-host arm, built rather than assumed.
+
+    This used to be the developer's own fontconfig, with the demo asserting the
+    machine had faces installed — a claim about the box, which a font-less
+    runner would have failed on pinion's behalf. One vendored face is a real
+    font database: measured, the example reports `system fonts: available`, the
+    same families and the same sample width under it as under a 635-face host.
+    """
+    return write_fontconfig(root, faces=(SYSTEM_FACE,))
 
 
 def text_of(snap, tag: str) -> str:
@@ -142,20 +155,28 @@ def body() -> None:
         "example has nothing to register and every assertion below is vacuous"
     )
 
-    with tempfile.TemporaryDirectory(prefix="r1448-nofonts-") as tmp:
-        no_fonts = write_font_less_config(Path(tmp))
+    with tempfile.TemporaryDirectory(prefix="r1448-fontconfigs-") as tmp:
+        no_fonts = write_font_less_config(Path(tmp) / "none")
+        with_fonts = write_font_ful_config(Path(tmp) / "faces")
 
-        # ---- 1. premise: two genuinely different font environments ----
-        system_fonts = font_count(None)
-        assert system_fonts > 0, (
-            f"premise: this host has fonts (fc-list = {system_fonts}); with none, "
-            "the two runs below would be the same environment"
+        # ---- 1. premise: two font environments the demo BUILT ----
+        # R1476 — both sides are the demo's own. This used to assert the HOST
+        # had fonts, so a font-less runner failed a demo about pinion. The host
+        # is printed, and `host_font_count` returns a value that refuses to be
+        # compared, so the premise cannot quietly become about the box again.
+        platform_faces = fc_list_count(with_fonts)
+        assert platform_faces > 0, (
+            f"premise: the demo's platform config HAS faces ({platform_faces}); "
+            "with none, the two runs below would be the same environment"
         )
-        assert_eq(font_count(no_fonts), 0, "fonts visible under the demo's config")
-        print(f"[demo] system fontconfig: {system_fonts} fonts; fixture: 0")
+        assert_eq(fc_list_count(no_fonts), 0, "faces under the demo's zero config")
+        print(
+            f"[demo] the demo's configs: {platform_faces} faces vs 0 "
+            f"(host: {host_font_count()})"
+        )
 
-        # ---- 2 + 3 + 4 + 5. the healthy host, then the font-less one ----
-        lit_system, lit_families, lit_sample = read_rows(None)
+        # ---- 2 + 3 + 4 + 5. the healthy platform, then the font-less one ----
+        lit_system, lit_families, lit_sample = read_rows(with_fonts)
         assert_eq(lit_system, "system fonts: available", "status row with fonts")
         print(f"[demo] system fonts: {lit_system!r} / {lit_families!r}")
 

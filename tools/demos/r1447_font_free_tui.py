@@ -13,16 +13,18 @@ host, it **panics**: fontique unwraps a `NoMatch` while populating its
 generic-family map (`backend/fontconfig.rs:685`). So the font-less backend
 could not run on a font-less machine. This demo is that claim, executed:
 
-  1. PREMISE — the system has fonts; the demo's own fontconfig has zero.
-     Both are measured, so a broken fixture cannot read as a pass.
+  1. PREMISE — the demo builds BOTH font environments: one config with faces
+     and one with none. Both are measured, so a broken fixture cannot read as
+     a pass. (R1476: this used to assert that the HOST had fonts, which made a
+     font-less runner look like a pinion defect. The host is printed now.)
   2. THE CLAIM — `hello-button-tui`, a real terminal binary on a real pty,
      paints its frame under the zero-font config. Before R1447 this exact
      invocation exited 101 with the fontique panic having painted nothing.
-  3. FONTS CHANGE NOTHING — the same binary under the system's 635-font
+  3. FONTS CHANGE NOTHING — the same binary under the demo's populated
      config paints a **byte-identical** frame. That is §2#6 stated as a
      measurement: the TUI's output does not depend on fonts at all.
   4. THE SUITE — `pinion-tui`'s unit tests pass font-less, with the same
-     count as under system fonts, and so do all four TUI examples'
+     count as under the populated config, and so do all four TUI examples'
      batteries. (Pre-R1447: 51 of 136 `pinion-tui` tests died.)
   5. THE INSTRUMENT — the parley arm genuinely cannot run in this
      environment. Asserted by running `pinion-runtime`'s arm-comparison
@@ -87,6 +89,7 @@ from build_gate import ensure_built  # noqa: E402
 from rpc_verify import (  # noqa: E402
     assert_eq,
     fc_list_count,
+    host_font_count,
     run_demo,
     write_fontconfig,
 )
@@ -94,6 +97,13 @@ from rpc_verify import (  # noqa: E402
 REPO = Path(__file__).resolve().parent.parent.parent
 
 EXAMPLE = "hello-button-tui"
+
+# R1476 — the faces that make the populated arm a real font database. Vendored
+# in-repo, so the "with fonts" environment is the demo's to build.
+FACES = (
+    "crates/pinion-text-font/tests/fonts/NanumGothic-Regular.ttf",
+    "crates/pinion-text-font/tests/fonts/NotoSans-Regular.ttf",
+)
 COLS, ROWS = 80, 24
 PAINT_TIMEOUT_S = 30.0
 
@@ -141,29 +151,36 @@ _T0 = time.monotonic()
 def phase(label: str) -> str:
     """R1474 — seconds since the demo started, for the CI log.
 
-    This demo was killed twice by the sweep's 180s budget on a runner while
-    finishing in 3.6s here, and neither of the two obvious explanations
-    survived measurement: after the job pre-builds the test binaries a
-    `cargo test -p ...` recompiles nothing (0 crates, 0.35s), and pinning the
-    whole demo to two cores reproduces nothing (3.61s). What is left is
-    something about the runner this machine cannot reproduce — so the demo
-    reports its own elapsed time per phase and lets the failing machine say
-    where the time goes. R1472 is what makes that readable: a killed demo now
-    keeps its output.
+    This demo was killed twice by the sweep's 180s budget while finishing in
+    3.6s here, and R1474 shipped this clock instead of a third guess after two
+    explanations died under measurement. R1475 then read the answer off it: the
+    first line printed at t+123.3s, so most of the budget went before any of the
+    demo's own work — see the module comment above. The clock stays, because it
+    is what turned a bare `TIMEOUT` into a phase, and it is the only thing that
+    would say so again. R1472 is what makes it readable: a killed demo keeps its
+    output.
     """
     return f"[demo t+{time.monotonic() - _T0:6.1f}s] {label}"
-
-
-def font_count(fontconfig: Path | None) -> int:
-    """Fonts `fc-list` reports under `fontconfig` (None = the system's)."""
-    return fc_list_count(fontconfig)
-
 
 
 def write_empty_fontconfig(root: Path) -> Path:
     """A valid fontconfig whose font directory is empty — a font-less host,
     without needing one. Every generic family then resolves to no font."""
     return write_fontconfig(root)
+
+
+def write_face_fontconfig(root: Path) -> Path:
+    """R1476 — the OTHER arm: a host that has fonts, built rather than assumed.
+
+    This used to be the developer's own fontconfig, and the demo asserted the
+    machine had faces installed. That is a claim about the box: a slim CI
+    runner with no fonts would have failed a demo whose subject is pinion. Two
+    vendored faces are a real font database, and the four `cargo test` arms
+    below were measured to behave identically under it and under a 635-face
+    host, so nothing about the claims weakened when the host stopped being a
+    party to them.
+    """
+    return write_fontconfig(root, faces=FACES)
 
 
 def paint_on_pty(
@@ -269,18 +286,29 @@ def cargo_test(args: list[str], fontconfig: Path | None) -> tuple[int, int, int]
 def body() -> None:
     binary = ensure_built(EXAMPLE)
 
-    with tempfile.TemporaryDirectory(prefix="r1447-nofonts-") as tmp:
-        no_fonts = write_empty_fontconfig(Path(tmp))
+    with tempfile.TemporaryDirectory(prefix="r1447-fontconfigs-") as tmp:
+        no_fonts = write_empty_fontconfig(Path(tmp) / "none")
+        with_fonts = write_face_fontconfig(Path(tmp) / "faces")
 
-        # ---- 1. premise: two genuinely different font environments ----
-        system_fonts = font_count(None)
-        assert system_fonts > 0, (
-            f"premise: this host has fonts installed (fc-list = {system_fonts}); "
-            "with none, the 'fonts change nothing' comparison below would be "
-            "two identical environments"
+        # ---- 1. premise: two font environments the demo BUILT ----
+        # R1476 — both sides are the demo's own. This used to assert that the
+        # HOST had fonts, which is a claim about the machine: a font-less runner
+        # would have failed a demo whose subject is pinion. The host is printed
+        # so a reader still sees the real box, and `host_font_count` returns a
+        # value that refuses to be compared, so the old shape cannot come back.
+        lit_faces = fc_list_count(with_fonts)
+        assert lit_faces > 0, (
+            f"premise: the demo's populated config HAS faces ({lit_faces}); with "
+            "none, the 'fonts change nothing' comparison below would be two "
+            "identical environments"
         )
-        print(phase(f"system fontconfig: {system_fonts} fonts"))
-        assert_eq(font_count(no_fonts), 0, "fonts visible under the demo's config")
+        assert_eq(fc_list_count(no_fonts), 0, "faces under the demo's zero config")
+        print(
+            phase(
+                f"the demo's configs: {lit_faces} faces vs 0 "
+                f"(host: {host_font_count()})"
+            )
+        )
 
         # ---- 2. the claim: a real TUI binary paints font-less ----
         dark, dark_err, dark_code = paint_on_pty(binary, no_fonts)
@@ -307,18 +335,18 @@ def body() -> None:
         print(phase(f"painted {len(dark)} bytes with 0 fonts (exit={dark_code})"))
 
         # ---- 3. fonts change nothing (§2 #6, as a measurement) ----
-        lit, lit_err, lit_code = paint_on_pty(binary, None)
-        assert LABEL in lit, "the same binary paints under the system font config"
+        lit, lit_err, lit_code = paint_on_pty(binary, with_fonts)
+        assert LABEL in lit, "the same binary paints under the populated config"
         assert b"panicked" not in lit_err, f"clean run with fonts: {lit_err[:400]!r}"
         assert_eq(lit_code, dark_code, "exit code across the two font environments")
         assert_eq(
             len(lit),
             len(dark),
-            "painted byte count across 635 fonts and 0 fonts",
+            "painted byte count across the two configs the demo built",
         )
         assert lit == dark, (
-            "the painted frame is byte-identical with 635 fonts and with none: "
-            "a TUI frame is cells, and cells do not consult a font"
+            f"the painted frame is byte-identical with {lit_faces} faces and "
+            "with none: a TUI frame is cells, and cells do not consult a font"
         )
         print(phase(f"byte-identical paint across both font environments"))
 
@@ -334,10 +362,10 @@ def body() -> None:
             f"premise: the suite is substantial, not a stub ({tui_pass_dark} tests)"
         )
         tui_pass_lit, tui_fail_lit, tui_rc_lit = cargo_test(
-            ["-p", "pinion-tui", "--lib", "-j2"], None
+            ["-p", "pinion-tui", "--lib", "-j2"], with_fonts
         )
-        assert_eq(tui_fail_lit, 0, "pinion-tui failures with system fonts")
-        assert_eq(tui_rc_lit, 0, "pinion-tui cargo exit code with system fonts")
+        assert_eq(tui_fail_lit, 0, "pinion-tui failures with the populated config")
+        assert_eq(tui_rc_lit, 0, "pinion-tui cargo exit code with the populated config")
         assert_eq(
             tui_pass_dark,
             tui_pass_lit,
@@ -359,7 +387,7 @@ def body() -> None:
         # context. That crate legitimately needs fonts (shaping is its job), so
         # it runs under the system config.
         text_pass, text_fail, text_rc = cargo_test(
-            ["-p", "pinion-text", "--lib", "-j2", "r1447_"], None
+            ["-p", "pinion-text", "--lib", "-j2", "r1447_"], with_fonts
         )
         assert_eq(text_fail, 0, "pinion-text deferral test failures")
         assert_eq(text_rc, 0, "pinion-text deferral cargo exit code")
@@ -397,7 +425,7 @@ def body() -> None:
         # And the half that makes it an instrument rather than a tautology: the
         # SAME probe must fail under the system config. If it passed in both,
         # it would be measuring nothing about which environment it is in.
-        _, _, probe_lit_rc = cargo_test(probe_args, None)
+        _, _, probe_lit_rc = cargo_test(probe_args, with_fonts)
         assert probe_lit_rc != 0, (
             "premise: the probe distinguishes the two font environments — if "
             "it passes with the system config too, it is not reading the "
@@ -412,10 +440,10 @@ def body() -> None:
         # font-lessly.
         arm_test = "r1447_answering_measure_arm_leaves_the_font_scan_unrun"
         arm_pass_lit, arm_fail_lit, arm_rc_lit = cargo_test(
-            ["-p", "pinion-runtime", "--lib", "-j2", arm_test], None
+            ["-p", "pinion-runtime", "--lib", "-j2", arm_test], with_fonts
         )
-        assert_eq(arm_fail_lit, 0, "parley-arm test failures with system fonts")
-        assert_eq(arm_rc_lit, 0, "parley-arm cargo exit code with system fonts")
+        assert_eq(arm_fail_lit, 0, "parley-arm test failures with the populated config")
+        assert_eq(arm_rc_lit, 0, "parley-arm cargo exit code with the populated config")
         assert_eq(arm_pass_lit, 1, "the arm-comparison test ran and passed")
         print(
             phase(
