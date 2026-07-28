@@ -11239,6 +11239,21 @@ mod modal_tail_focus_tests {
         modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
         sc.drain_focus_mailboxes();
 
+        // R1477 — the premise this test's NAME presupposes: the handoff
+        // actually happened, so what the close below closes is the confirm
+        // dialog. Without it the end state is reachable two ways — the whole
+        // batch applied, or only the `close` — and the assertions after the
+        // cycle hold either way. Measured: under a drain that applies only the
+        // first queued request, this test passed on both backends while
+        // claiming to cover exactly that batch.
+        assert_eq!(
+            sc.focus().modal_depth(),
+            1,
+            "the confirm dialog is up; a depth of 0 means the `open` in the \
+             same batch was dropped and the cycle below proves nothing",
+        );
+        assert_eq!(sc.focus().focused(), Some(CONFIRM_OK));
+
         // The user answers the confirm dialog.
         modal_scope_request::close();
         sc.drain_focus_mailboxes();

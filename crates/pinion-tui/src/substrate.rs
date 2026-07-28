@@ -3810,6 +3810,18 @@ mod modal_tail_focus_tests {
         modal_scope_request::open(vec![CONFIRM_OK.to_owned()]);
         core.drain_focus_mailboxes();
 
+        // R1477 — same premise as the shell twin, and the TUI needed it more:
+        // under a first-request-only drain the terminal suite lost just ONE
+        // test to the shell's two, so this mirror was the thinner half of a
+        // §2 #6 pair that reads as symmetric.
+        assert_eq!(
+            core.focus().modal_depth(),
+            1,
+            "the confirm dialog is up; a depth of 0 means the `open` in the \
+             same batch was dropped and the cycle below proves nothing",
+        );
+        assert_eq!(core.focus().focused(), Some(CONFIRM_OK));
+
         modal_scope_request::close();
         core.drain_focus_mailboxes();
 

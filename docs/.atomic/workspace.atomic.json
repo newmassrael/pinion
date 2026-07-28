@@ -73310,6 +73310,56 @@
         "R1475's own verification is still outstanding: whether the warmup replay lands r1447 inside its 180s budget is answered by CI run 30362652715, not by this round"
       ]
     },
+    "Round 1477": {
+      "decision_summary": "A test must assert the premise its own name presupposes: `closing_the_handed_off_modal_leaves_no_ghost_scope` reached the same end state whether the whole batch drained or only its first request, so it passed under the counterfactual it was named for — on BOTH backends, where the note had recorded only one. The entry audit also found the two items that note ranked first already closed by R1462.",
+      "changes_bullets": [
+        "crates/pinion-shell/src/substrate.rs: `closing_the_handed_off_modal_leaves_no_ghost_scope` now asserts the premise its own NAME presupposes — that the handoff happened — before exercising the close",
+        "crates/pinion-tui/src/substrate.rs: the same assertion in the §2#6 mirror, which had the identical blind spot and half the surrounding margin",
+        "NOT changed: `apply_modal_requests` on either backend. The batch drain was correct; what was wrong was a test that could not tell"
+      ],
+      "verification_bullets": [
+        "ENTRY AUDIT REFUTED THE PRIORITY IT WAS GIVEN. The residue note (and the SEED plan built on it) named item ① \"TUI batch drain has ZERO tests\" as the cheapest and first item. It is CLOSED: R1462 (`c237da6e`) added `modal_tail_focus_tests` to `pinion-tui` driving the terminal `handle_tail` through `ModalTailFixture`. Item ② is closed by the same commit — `a_modal_edit_that_moves_no_focus_still_reports_a_visible_change` pins exactly the depth-changed-but-focus-stood-still frame it described",
+        "so the note's two changelog-recorded items were both already done, and a round entered on the note alone would have rebuilt them",
+        "ITEM ③ CONFIRMED BY MEASUREMENT, and larger than recorded. Under CF-2 (the drain applies only the first queued request) `closing_the_handed_off_modal_leaves_no_ghost_scope` passed on the shell — the recorded blind spot — AND on the TUI, which the note did not claim. Failures under CF-2: shell 2, TUI 1",
+        "WHY it could not discriminate: the end state is reachable two ways. Correct = close, open, then close (depth 1 then 0); CF-2 = close only (depth 0, and the second close pops nothing). Every assertion in the test is about the end state, so both paths satisfy all four",
+        "FIX VERIFIED IN BOTH DIRECTIONS: on main behaviour shell 12 passed / TUI 7 passed; re-applying CF-2 now fails shell 3 (was 2) and TUI 2 (was 1), with the fixed test among them each time",
+        "ITEM ④ JUDGED AT THE SEAM WITH A MEASUREMENT rather than prose: the three surviving local `button_scene` wrappers (hello-undo, hello-snackbar, hello-file-dialog) hash to three DISTINCT bodies, so the \"third identical\" trigger is not met and the deferral stands on evidence",
+        "gate: `cargo fmt --all --check` clean, clippy clean on both changed crates with `-D pedantic`, pinion-shell 213 + 12 target suites, pinion-tui 148 + 19. Demos r1456_modal_handoff PASS, r1462_modal_refocus PASS, r693_dialog PASS"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "Item ⑤ stays open and is NOT R1456 residue: the modal family (r693_dialog, r702_drawer, r1456_modal_handoff) verifies scene-as-data only, so scrim alpha and panel shadow are read as style data and never as pixels. Family-level, and it belongs to the live-pixel campaign rather than to this round",
+        "Item ④ is a watch item with a measured basis now: a THIRD identical body among the three local button wrappers is the lift trigger, and today there are three distinct ones",
+        "The residue note was the SSOT for this list and was stale for two of six items. A note that survives the rounds that close its contents will mis-steer the next entry, as it nearly did here"
+      ],
+      "publishable_decision_summary": "A test must assert the premise its own name presupposes: `closing_the_handed_off_modal_leaves_no_ghost_scope` reached the same end state whether the whole batch drained or only its first request, so it passed under the counterfactual it was named for — on BOTH backends, where the note had recorded only one. The entry audit also found the two items that note ranked first already closed by R1462.",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/substrate.rs: `closing_the_handed_off_modal_leaves_no_ghost_scope` now asserts the premise its own NAME presupposes — that the handoff happened — before exercising the close",
+        "crates/pinion-tui/src/substrate.rs: the same assertion in the §2#6 mirror, which had the identical blind spot and half the surrounding margin",
+        "NOT changed: `apply_modal_requests` on either backend. The batch drain was correct; what was wrong was a test that could not tell"
+      ],
+      "publishable_verification_bullets": [
+        "ENTRY AUDIT REFUTED THE PRIORITY IT WAS GIVEN. The residue note (and the SEED plan built on it) named item ① \"TUI batch drain has ZERO tests\" as the cheapest and first item. It is CLOSED: R1462 (`c237da6e`) added `modal_tail_focus_tests` to `pinion-tui` driving the terminal `handle_tail` through `ModalTailFixture`. Item ② is closed by the same commit — `a_modal_edit_that_moves_no_focus_still_reports_a_visible_change` pins exactly the depth-changed-but-focus-stood-still frame it described",
+        "so the note's two changelog-recorded items were both already done, and a round entered on the note alone would have rebuilt them",
+        "ITEM ③ CONFIRMED BY MEASUREMENT, and larger than recorded. Under CF-2 (the drain applies only the first queued request) `closing_the_handed_off_modal_leaves_no_ghost_scope` passed on the shell — the recorded blind spot — AND on the TUI, which the note did not claim. Failures under CF-2: shell 2, TUI 1",
+        "WHY it could not discriminate: the end state is reachable two ways. Correct = close, open, then close (depth 1 then 0); CF-2 = close only (depth 0, and the second close pops nothing). Every assertion in the test is about the end state, so both paths satisfy all four",
+        "FIX VERIFIED IN BOTH DIRECTIONS: on main behaviour shell 12 passed / TUI 7 passed; re-applying CF-2 now fails shell 3 (was 2) and TUI 2 (was 1), with the fixed test among them each time",
+        "ITEM ④ JUDGED AT THE SEAM WITH A MEASUREMENT rather than prose: the three surviving local `button_scene` wrappers (hello-undo, hello-snackbar, hello-file-dialog) hash to three DISTINCT bodies, so the \"third identical\" trigger is not met and the deferral stands on evidence",
+        "gate: `cargo fmt --all --check` clean, clippy clean on both changed crates with `-D pedantic`, pinion-shell 213 + 12 target suites, pinion-tui 148 + 19. Demos r1456_modal_handoff PASS, r1462_modal_refocus PASS, r693_dialog PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Item ⑤ stays open and is NOT R1456 residue: the modal family (r693_dialog, r702_drawer, r1456_modal_handoff) verifies scene-as-data only, so scrim alpha and panel shadow are read as style data and never as pixels. Family-level, and it belongs to the live-pixel campaign rather than to this round",
+        "Item ④ is a watch item with a measured basis now: a THIRD identical body among the three local button wrappers is the lift trigger, and today there are three distinct ones",
+        "The residue note was the SSOT for this list and was stale for two of six items. A note that survives the rounds that close its contents will mis-steer the next entry, as it nearly did here"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
