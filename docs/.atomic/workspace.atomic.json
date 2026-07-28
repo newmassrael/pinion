@@ -72632,6 +72632,48 @@
         "R1464 carry (a) stands: the consumer's own symptom is still unverified here (cross-repo)"
       ]
     },
+    "Round 1466": {
+      "decision_summary": "R1466: the finalize render a click depends on is load-bearing - the audit R1465 deferred, closed with a test instead of an argument",
+      "changes_bullets": [
+        "pinion-shell: the R684 finalize render is load-bearing, and now has a test - a click must hit-test against the geometry THIS dispatch resolved, not the geometry the window last painted",
+        "pinion-shell: the seam records both cheaper routes as refuted, with the reason each fails"
+      ],
+      "verification_bullets": [
+        "the experiment first: restoring R684's first-paint-only gate leaves the ENTIRE pinion-shell suite green and every demo passing - a coverage hole open from R685 to R1466",
+        "the new test fails under that same gate with `focused: None` against `Some(\"target\")`, and passes on main",
+        "timing was NOT used as evidence: a 4-9x demo slowdown looked causal until the same ungated build reproduced it under load (2.29s then 10.15s on r1462), so the claim was dropped rather than written down",
+        "gates: fmt + clippy pedantic + cargo doc clean; pinion-shell 199 + 161 tests; demos r1465 + r1458 + todomvc_r666 + r1462 + r1463 green on freshly built release binaries"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "the reuse route is refuted by reading, not by measuring: nothing today tests that a stored scene carries chrome while the producer's does not, so the argument rests on R1188's interception reading a chrome tag",
+        "the cost stands at two mirror renders per producing+mutating dispatch, now justified rather than merely measured",
+        "whether `from: paint` (chromed, stored) and a viewport-supplied read (unchromed, produced) should differ at all is a §2 #7 question this round did not open"
+      ],
+      "publishable_decision_summary": "R1466: the finalize render a click depends on is load-bearing - the audit R1465 deferred, closed with a test instead of an argument",
+      "publishable_changes_bullets": [
+        "pinion-shell: the R684 finalize render is load-bearing, and now has a test - a click must hit-test against the geometry THIS dispatch resolved, not the geometry the window last painted",
+        "pinion-shell: the seam records both cheaper routes as refuted, with the reason each fails"
+      ],
+      "publishable_verification_bullets": [
+        "the experiment first: restoring R684's first-paint-only gate leaves the ENTIRE pinion-shell suite green and every demo passing - a coverage hole open from R685 to R1466",
+        "the new test fails under that same gate with `focused: None` against `Some(\"target\")`, and passes on main",
+        "timing was NOT used as evidence: a 4-9x demo slowdown looked causal until the same ungated build reproduced it under load (2.29s then 10.15s on r1462), so the claim was dropped rather than written down",
+        "gates: fmt + clippy pedantic + cargo doc clean; pinion-shell 199 + 161 tests; demos r1465 + r1458 + todomvc_r666 + r1462 + r1463 green on freshly built release binaries"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the reuse route is refuted by reading, not by measuring: nothing today tests that a stored scene carries chrome while the producer's does not, so the argument rests on R1188's interception reading a chrome tag",
+        "the cost stands at two mirror renders per producing+mutating dispatch, now justified rather than merely measured",
+        "whether `from: paint` (chromed, stored) and a viewport-supplied read (unchromed, produced) should differ at all is a §2 #7 question this round did not open"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

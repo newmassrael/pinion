@@ -5828,6 +5828,31 @@ impl<V: WidgetView> ShellCore<V> {
         // painted window in the R705 re-store below, both counted into
         // `mirror_work` and readable as `scene/frame_timings.mirror`.
         //
+        // ## R1466 — the render is load-bearing, and both cheaper routes are out
+        //
+        // R1465 measured the cost and left "can this be skipped?" open. It
+        // cannot, and neither can be answered by argument:
+        //
+        // * **Skipping it when the window has already painted** (R684's gate,
+        //   restored as an experiment) leaves the whole `pinion-shell` suite
+        //   green, and every demo passing — a coverage hole that stood from
+        //   R685 to R1466. `r1466_a_click_hit_tests_against_this_dispatchs_
+        //   geometry_not_the_last_paints` is that hole closed: geometry that
+        //   moved with no dispatch and no paint behind it (an async result, an
+        //   animation, a background `Signal` write) leaves the store aiming a
+        //   fresh point at an old scene, and the click lands on nothing. The
+        //   demos stay green there because each drives its next step through
+        //   the repaint that repairs the store — which is exactly why the
+        //   deterministic unit test is the evidence and the demo suite is not.
+        // * **Reusing the scene the produce closure just built** — same state,
+        //   same viewport, already settled — is not the same scene. The
+        //   producer applies the focus ring and drag image; a stored paint
+        //   scene goes through `apply_window_overlays` (resize border, chrome
+        //   strip, raised top edge, drop-zone preview, drag image). R1188's
+        //   window-control interception hit-tests the hover target for a
+        //   CHROME tag, which exists only in the second. Reuse would silently
+        //   un-drive the window controls it depends on.
+        //
         // Why the storage-only publish:
         //
         // `update_paint_scene_for_window` calls

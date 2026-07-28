@@ -4662,6 +4662,115 @@ mod r684_headless_rpc_floating_window_finalize {
         );
     }
 
+    /// R1466 — whether the finalize's render is load-bearing, and the state
+    /// that makes it so: geometry that moved since the window last painted.
+    static TARGET_SHIFTED: AtomicBool = AtomicBool::new(false);
+
+    const SHIFT_H: u32 = 100;
+
+    struct ShiftingTargetView;
+
+    impl WidgetCore for ShiftingTargetView {
+        type State = ();
+        type Event = ();
+
+        fn tag() -> &'static str {
+            "shifting"
+        }
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(TestExternal::default())
+        }
+
+        fn read_state(_scene: &Scene) {}
+
+        fn view(_state: (), _frame: &Frame) -> Scene {
+            let sized = |h: u32| {
+                pinion_core::style::LayoutStyle::new()
+                    .with_size(pinion_core::style::Size::px(200, h))
+            };
+            let spacer =
+                Scene::Container(ContainerNode::new(Vec::new()).with_layout(sized(SHIFT_H)));
+            let target = Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_tag("target")
+                    .with_layout(sized(SHIFT_H).with_focusable(true)),
+            );
+            // The SAME two children in the other order: the target's rect is
+            // `0..SHIFT_H` unshifted and `SHIFT_H..2*SHIFT_H` shifted, so a
+            // click aimed at one lands on the other.
+            let children = if TARGET_SHIFTED.load(Ordering::SeqCst) {
+                vec![spacer, target]
+            } else {
+                vec![target, spacer]
+            };
+            Scene::Container(ContainerNode::new(children))
+        }
+
+        fn event_name(_event: ()) -> &'static str {
+            "__internal__"
+        }
+
+        fn title() -> &'static str {
+            "shifting"
+        }
+    }
+
+    impl WidgetA11y for ShiftingTargetView {}
+
+    impl WidgetView for ShiftingTargetView {
+        type Renderer = TestRenderer;
+
+        fn initial_size_strategy() -> pinion_shell::SizeStrategy {
+            pinion_shell::SizeStrategy::Fixed {
+                width: 200,
+                height: 200,
+            }
+        }
+    }
+
+    #[test]
+    fn r1466_a_click_hit_tests_against_this_dispatchs_geometry_not_the_last_paints() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        TARGET_SHIFTED.store(false, Ordering::SeqCst);
+        let mut core: ShellCore<ShiftingTargetView> = ShellCore::new();
+        core.register_window("win");
+
+        // Paint the window with the target at the TOP.
+        let req = parse_request(&snapshot_request(1, "win", 200, 200)).expect("parses");
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        assert!(core.has_last_paint_scene_for_window("win"), "it painted");
+        assert_eq!(core.focus().focused(), None, "nothing focused yet");
+
+        // The geometry moves with NO dispatch and NO paint behind it — an async
+        // command landing, an animation, a `Signal` a background task wrote.
+        // This is the state R684's finalize exists for and R685 widened it to
+        // cover, and nothing in this suite reached it until now: gating the
+        // finalize back to first-paint-only leaves every other test green.
+        TARGET_SHIFTED.store(true, Ordering::SeqCst);
+
+        // `scene/click {path}` resolves the centre from a FRESH producer run —
+        // the shifted geometry — and the deferred drain then hit-tests that
+        // point against the window's STORED scene. If the store is the stale
+        // pre-shift paint, the click lands on the spacer and focus never moves.
+        let req = parse_request(
+            r#"{"jsonrpc":"2.0","id":2,"method":"scene/click","params":{"window":"win","path":"target"}}"#,
+        )
+        .expect("parses");
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+
+        assert_eq!(
+            core.focus().focused(),
+            Some("target"),
+            "the click reached the widget it addressed. The finalize render is \
+             what makes that true — it refreshes the store to the geometry the \
+             path resolution just saw, so the drain hit-tests one scene rather \
+             than aiming with a new one and hitting an old one",
+        );
+        TARGET_SHIFTED.store(false, Ordering::SeqCst);
+    }
+
     /// R1465 §5.16 §5.12 §2 #2 — what a call costs, priced at the two paths an
     /// agent actually drives.
     ///
