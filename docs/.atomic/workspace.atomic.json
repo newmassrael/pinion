@@ -73178,6 +73178,76 @@
         "A demo that asserts about the HOST rather than about its own fixture is a class, not one bug: R1471 fixed one, R1473 shipped another one round later. Nothing enforces the distinction; the cheap check is to ask of every premise whether a CI runner could fail it while the claim still holds"
       ]
     },
+    "Round 1475": {
+      "decision_summary": "A pre-build warms a fingerprint, not a package name: cargo resolves features per invocation, so the sweep's `cargo test --workspace --no-run` produced pinion-runtime[default,vello] while the one vello-less demo needed pinion-runtime[default] — a superset in name and an empty cache in fact. The job now asks that demo which invocations to replay instead of guessing a command that looks bigger.",
+      "changes_bullets": [
+        ".github/workflows/ci.yml: the workspace-wide `cargo test --no-run` pre-build is replaced by a replay of the demo's OWN cargo invocations, read from it at job time",
+        ".github/workflows/ci.yml: a gate asserts r1447 is still the only demo shelling out to `cargo test` — R1474's carry said nothing enforced that, and the whole warm-cache design rests on it",
+        "tools/demos/r1447_font_free_tui.py: `CARGO_WARMUP` names every cargo invocation the demo makes, as data with two consumers, so a package added here cannot silently stop being pre-built",
+        "tools/demos/r1447_font_free_tui.py: `--print-warmup` prints that list rather than executing it — the job owns compiling, the demo owns measuring, and the 180s budget then measures the demo",
+        "tools/demos/r1447_font_free_tui.py: the R1472 header comment asserted \"the ordinary budget is ample\"; one run measured it false, so it is replaced by what survives",
+        "NOT changed: the demo's work, again. The measurement says the cost is an unwarmed feature variant, not the demo's own claims, so reducing them would still have no evidence behind it"
+      ],
+      "verification_bullets": [
+        "CAUSE, read off CI run 30352520291 rather than guessed (R1472's `-u` diagnostics are what made it readable): r1447 printed its FIRST line at t+123.3s, reached the pinion-tui pair at t+174.1s, and was killed at 180s in the example batteries",
+        "R1474's INFERENCE REFUTED by those numbers: it read the kill POINT (the example batteries) as the cost. 123.3s of the 180 was spent before the first diagnostic line — inside `ensure_built`, before any battery ran",
+        "CONTROL, computed from the same log's per-demo timestamps: neighbours #166-#174 took 1.7-2.7s and the sweep-wide median is 1.7s over 448 demos. The runner was not slow; this demo was",
+        "CONTROL, tighter: `r1448_app_font.py` runs immediately after (#171, 2.7s) and makes the same `ensure_built` and `fc-list` calls, so neither of those is the cost",
+        "MECHANISM measured with `cargo tree`: `--workspace` resolves pinion-runtime[default,vello] because the GUI examples enable vello, while `-p hello-button-tui` and `-p pinion-tui` resolve pinion-runtime[default]",
+        "MECHANISM measured on disk: target/release/.fingerprint holds BOTH units, [\"default\"] and [\"default\",\"vello\"], under separate fingerprint hashes. A feature set is part of a unit's identity, so a superset build warms nothing for the subset",
+        "WHY R1474 REFUTED THIS SAME HYPOTHESIS AND WAS WRONG: this developer's target dir already contains both variants from months of builds, so `-p pinion-tui --no-run` honestly measured 0 crates. CI's cache holds only what `--workspace` built. A warm dir cannot measure a cold-cache defect",
+        "NEGATIVE CONTROL: `-p hello-button` and `-p hello-app-font` resolve [default,vello]. Every demo runs a per-package `cargo build` through `ensure_built`, and the other 447 are fast precisely because their resolution is the one the workspace build already made",
+        "SECOND CAUSE REFUTED: the demo alternates FONTCONFIG_FILE between cargo calls, but no build script tracks it (yeslogic-fontconfig-sys declares only RUST_FONTCONFIG_DLOPEN), so it cannot invalidate a fingerprint",
+        "THIRD CAUSE REFUTED by reading the harness: the sweep is a sequential `for` loop, so no other demo can be holding the cargo target lock",
+        "GUARD COUNTERFACTUAL: with its `grep -v` exclusion removed the detector names r1447, so it is reading the demos rather than passing blindly",
+        "gate: python syntax clean, workflow YAML parses, `bash -n` + `shellcheck -S warning` clean on every demo-sweep run block, all 8 emitted warmup invocations execute as valid cargo commands, r1447 PASS 3.37s locally. No Rust changed",
+        "LIMIT, stated rather than hidden: a warm cache cannot be measured on a machine that already has it. Whether the replay actually lands r1447 inside its budget is answered by the next CI run, not by this round"
+      ],
+      "impact_refs": [
+        "6.1",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R1474's host-premise class is NOT cleared. r1447 and r1448 still assert the HOST has fonts, and they are not r1473's shape: there the host was incidental, here the host config IS the second arm of the comparison the demo exists to make",
+        "Converting those two to fixtures would put the shaping-dependent cargo tests (pinion-text, the parley arm) against a two-face fixture, and whether they still pass is UNMEASURED. That measurement is the next round's work, not a rename",
+        "The vello-less variants are now compiled in the job rather than inside the demo, which lengthens demo-sweep by that compile. Unmeasured on a 2-core runner until the next run",
+        "The RELEASE side is warmed only because `--print-warmup` names hello-button-tui. A future vello-less example reached by a different demo would be unwarmed again, and only the `cargo test` half is gated"
+      ],
+      "publishable_decision_summary": "A pre-build warms a fingerprint, not a package name: cargo resolves features per invocation, so the sweep's `cargo test --workspace --no-run` produced pinion-runtime[default,vello] while the one vello-less demo needed pinion-runtime[default] — a superset in name and an empty cache in fact. The job now asks that demo which invocations to replay instead of guessing a command that looks bigger.",
+      "publishable_changes_bullets": [
+        ".github/workflows/ci.yml: the workspace-wide `cargo test --no-run` pre-build is replaced by a replay of the demo's OWN cargo invocations, read from it at job time",
+        ".github/workflows/ci.yml: a gate asserts r1447 is still the only demo shelling out to `cargo test` — R1474's carry said nothing enforced that, and the whole warm-cache design rests on it",
+        "tools/demos/r1447_font_free_tui.py: `CARGO_WARMUP` names every cargo invocation the demo makes, as data with two consumers, so a package added here cannot silently stop being pre-built",
+        "tools/demos/r1447_font_free_tui.py: `--print-warmup` prints that list rather than executing it — the job owns compiling, the demo owns measuring, and the 180s budget then measures the demo",
+        "tools/demos/r1447_font_free_tui.py: the R1472 header comment asserted \"the ordinary budget is ample\"; one run measured it false, so it is replaced by what survives",
+        "NOT changed: the demo's work, again. The measurement says the cost is an unwarmed feature variant, not the demo's own claims, so reducing them would still have no evidence behind it"
+      ],
+      "publishable_verification_bullets": [
+        "CAUSE, read off CI run 30352520291 rather than guessed (R1472's `-u` diagnostics are what made it readable): r1447 printed its FIRST line at t+123.3s, reached the pinion-tui pair at t+174.1s, and was killed at 180s in the example batteries",
+        "R1474's INFERENCE REFUTED by those numbers: it read the kill POINT (the example batteries) as the cost. 123.3s of the 180 was spent before the first diagnostic line — inside `ensure_built`, before any battery ran",
+        "CONTROL, computed from the same log's per-demo timestamps: neighbours #166-#174 took 1.7-2.7s and the sweep-wide median is 1.7s over 448 demos. The runner was not slow; this demo was",
+        "CONTROL, tighter: `r1448_app_font.py` runs immediately after (#171, 2.7s) and makes the same `ensure_built` and `fc-list` calls, so neither of those is the cost",
+        "MECHANISM measured with `cargo tree`: `--workspace` resolves pinion-runtime[default,vello] because the GUI examples enable vello, while `-p hello-button-tui` and `-p pinion-tui` resolve pinion-runtime[default]",
+        "MECHANISM measured on disk: target/release/.fingerprint holds BOTH units, [\"default\"] and [\"default\",\"vello\"], under separate fingerprint hashes. A feature set is part of a unit's identity, so a superset build warms nothing for the subset",
+        "WHY R1474 REFUTED THIS SAME HYPOTHESIS AND WAS WRONG: this developer's target dir already contains both variants from months of builds, so `-p pinion-tui --no-run` honestly measured 0 crates. CI's cache holds only what `--workspace` built. A warm dir cannot measure a cold-cache defect",
+        "NEGATIVE CONTROL: `-p hello-button` and `-p hello-app-font` resolve [default,vello]. Every demo runs a per-package `cargo build` through `ensure_built`, and the other 447 are fast precisely because their resolution is the one the workspace build already made",
+        "SECOND CAUSE REFUTED: the demo alternates FONTCONFIG_FILE between cargo calls, but no build script tracks it (yeslogic-fontconfig-sys declares only RUST_FONTCONFIG_DLOPEN), so it cannot invalidate a fingerprint",
+        "THIRD CAUSE REFUTED by reading the harness: the sweep is a sequential `for` loop, so no other demo can be holding the cargo target lock",
+        "GUARD COUNTERFACTUAL: with its `grep -v` exclusion removed the detector names r1447, so it is reading the demos rather than passing blindly",
+        "gate: python syntax clean, workflow YAML parses, `bash -n` + `shellcheck -S warning` clean on every demo-sweep run block, all 8 emitted warmup invocations execute as valid cargo commands, r1447 PASS 3.37s locally. No Rust changed",
+        "LIMIT, stated rather than hidden: a warm cache cannot be measured on a machine that already has it. Whether the replay actually lands r1447 inside its budget is answered by the next CI run, not by this round"
+      ],
+      "publishable_impact_refs": [
+        "6.1",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1474's host-premise class is NOT cleared. r1447 and r1448 still assert the HOST has fonts, and they are not r1473's shape: there the host was incidental, here the host config IS the second arm of the comparison the demo exists to make",
+        "Converting those two to fixtures would put the shaping-dependent cargo tests (pinion-text, the parley arm) against a two-face fixture, and whether they still pass is UNMEASURED. That measurement is the next round's work, not a rename",
+        "The vello-less variants are now compiled in the job rather than inside the demo, which lengthens demo-sweep by that compile. Unmeasured on a 2-core runner until the next run",
+        "The RELEASE side is warmed only because `--print-warmup` names hello-button-tui. A future vello-less example reached by a different demo would be unwarmed again, and only the `cargo test` half is gated"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

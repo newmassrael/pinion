@@ -200,22 +200,41 @@ jobs:
           pactl list short sinks
       - name: Build workspace (release — sweep runs release binaries)
         run: cargo build --release --workspace
-      - name: Build test binaries (debug — the one demo that runs `cargo test`)
-        # R1472 — `r1447_font_free_tui.py` is the only demo that shells out to
-        # `cargo test` (it runs the suite under a font-less fontconfig and again
-        # under the system one, because its claim is that the two agree). The
-        # step above builds RELEASE binaries for the other 446, so nothing here
-        # had ever built the DEBUG test binaries and that demo compiled the
-        # workspace from scratch *inside* its 180s per-demo timeout. It was
-        # killed at 180.010s on the first run of this job, and — Python
-        # block-buffering a pipe — reported not one byte of why.
-        #
-        # Pre-building is the fix rather than a bigger timeout alone: a gate that
-        # measures the compiler cannot report on the thing it is gating. With the
-        # binaries present the demo measures font environments, which is its
-        # subject. `--no-run` builds without executing; the `lint-and-test` job
-        # owns actually running the workspace suite.
-        run: cargo test --workspace --no-run
+      - name: Only the pre-warmed demo may shell out to `cargo test`
+        # R1475 — closes R1474's carry: "today only one demo calls `cargo test`,
+        # but nothing enforces it". The step below warms exactly that demo's
+        # packages, so a second demo growing a `cargo test` call would compile
+        # inside its own 180s budget and be killed — the failure R1472 and R1475
+        # each spent a round diagnosing. This turns that assumption into a gate.
+        run: |
+          offenders=$(grep -ln '"cargo", *"test"' tools/demos/*.py \
+            | grep -v 'r1447_font_free_tui\.py$' || true)
+          if [ -n "$offenders" ]; then
+            echo "these demos shell out to \`cargo test\` but are not pre-warmed," >&2
+            echo "so they would compile inside the sweep's per-demo budget:" >&2
+            echo "$offenders" >&2
+            exit 1
+          fi
+      - name: Warm the units that demo actually builds (asked, not guessed)
+        # R1472 pre-built `cargo test --workspace --no-run` here and r1447 was
+        # killed at 180s anyway. R1475 measured why: cargo resolves features per
+        # invocation, so `--workspace` produced `pinion-runtime[default,vello]`
+        # (the GUI examples enable vello) while the demo's own
+        # `cargo test -p pinion-tui` wants `pinion-runtime[default]` — a unit
+        # with a different fingerprint that the workspace build never made. On
+        # run 30352520291 the demo spent 123.3s before its first diagnostic line
+        # and 50.8s more on the `pinion-tui` pair, while its neighbours in the
+        # same sweep took 1.7-2.7s. A superset is not a warm cache; the matching
+        # resolution is. The list comes from the demo (`--print-warmup`) so the
+        # two cannot drift apart again.
+        run: |
+          demo=tools/demos/r1447_font_free_tui.py
+          python3 "$demo" --print-warmup > /tmp/pinion-warmup.txt
+          cat /tmp/pinion-warmup.txt
+          while read -r cargo_args; do
+            # shellcheck disable=SC2086  # deliberate: the demo emits the args
+            cargo $cargo_args
+          done < /tmp/pinion-warmup.txt
       - name: Run full demo sweep under Xvfb
         run: |
           Xvfb :99 -screen 0 1600x1200x24 >/tmp/xvfb.log 2>&1 &

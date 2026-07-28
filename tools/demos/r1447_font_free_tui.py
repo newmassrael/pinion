@@ -43,14 +43,28 @@ Run from the workspace root:
 """
 
 # R1472 — this is the ONLY demo in the sweep that shells out to `cargo test`,
-# which makes it the only one that needs the DEBUG test binaries rather than the
-# release binary the sweep pre-builds for everyone else. Measured, because the
-# first guess was wrong: with those binaries present the whole demo runs in
-# **3.63s**; with them absent the same demo takes **89.85s** on a 16-core box,
-# and on a 2-core CI runner it blew through the sweep's 180s per-demo budget and
-# was killed at 180.010s. So its cost is compilation, not its own work — the CI
-# job now builds the test binaries up front (`cargo test --workspace --no-run`)
-# and the ordinary budget is ample.
+# which makes it the only one that needs DEBUG test binaries rather than the
+# release binary the sweep pre-builds for everyone else. Its cost is
+# compilation, not its own work: with those binaries present the whole demo runs
+# in 3.63s, and without them it was killed at the sweep's 180s budget.
+#
+# R1475 — but WHICH binaries, exactly. R1472 pre-built `cargo test --workspace
+# --no-run` and the demo was killed at 180s again, because that command does not
+# build what this demo runs. Cargo resolves features per invocation:
+# `--workspace` unifies them and yields `pinion-runtime[default,vello]` (the GUI
+# examples enable vello), while `cargo test -p pinion-tui` resolves
+# `pinion-runtime[default]` — a different unit, with a different fingerprint,
+# that the workspace build never produced. Every demo in the sweep runs a
+# per-package `cargo build` through `ensure_built`, and the other 447 are fast
+# precisely because a GUI example resolves to features the workspace build
+# already made. This one is vello-less, which is its whole point, so it alone
+# had to compile that variant from scratch inside its budget.
+#
+# Measured on CI run 30352520291: 123.3s before this demo's first diagnostic
+# line (the release build of `hello-button-tui`) and 50.8s more for the
+# `pinion-tui` pair, against 1.7-2.7s for its neighbours in the same sweep and a
+# 1.7s sweep-wide median. `CARGO_WARMUP` below is that list as data, so the job
+# warms the units this demo actually builds instead of a plausible superset.
 
 from __future__ import annotations
 
@@ -103,6 +117,21 @@ TUI_EXAMPLES = [
 
 TEST_RESULT_RE = re.compile(
     r"test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored"
+)
+
+# R1475 — every cargo invocation this demo makes, as argument lines the sweep
+# job replays before the clock starts (`--print-warmup`). One list, two
+# consumers: a package added to the demo cannot silently stop being pre-built,
+# which is how R1472's superset came to look sufficient. The RELEASE entry is
+# `ensure_built`'s build; the rest are the `cargo test` calls, each named with
+# the same single `-p` the demo uses, because that is what fixes the feature
+# resolution — pre-building them together would unify features across the group
+# and could produce yet another set of units this demo never asks for.
+CARGO_WARMUP = (
+    f"build --release -p {EXAMPLE}",
+    *(f"test --no-run -p {pkg}" for pkg in ("pinion-tui", *TUI_EXAMPLES)),
+    "test --no-run -p pinion-text",
+    "test --no-run -p pinion-runtime",
 )
 
 
@@ -397,4 +426,10 @@ def body() -> None:
 
 
 if __name__ == "__main__":
+    # R1475 — the sweep job asks the demo what to pre-build rather than keeping
+    # its own copy of the answer. Printed, not executed: the job owns compiling,
+    # the demo owns measuring, and the 180s budget then measures the demo.
+    if sys.argv[1:] == ["--print-warmup"]:
+        print("\n".join(CARGO_WARMUP))
+        raise SystemExit(0)
     sys.exit(run_demo("r1447 font-free TUI paint", body))
