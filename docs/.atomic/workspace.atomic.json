@@ -72942,6 +72942,54 @@
         "Whether other bindings resolve a device-or-network-opening Owner::cache from `view` was not swept. hello-audio-device was found because CI named it; a census of view fns that open OS resources is a separate round"
       ]
     },
+    "Round 1471": {
+      "decision_summary": "A layout test must measure layout, not the host's font inventory: the R1345 flow assertion wrapped a Hangul line, so it passed on a developer box and failed on every CI runner, which ships no CJK face.",
+      "changes_bullets": [
+        "pinion-narrative: the R1345 flow-layout test wraps an ASCII line instead of a Hangul one, so what it measures is layout flow rather than whether the host happens to ship a CJK face",
+        "pinion-narrative: the test records WHY, including the refuted rescue (registering the vendored NanumGothic returns the family but does not enter automatic script fallback, so the unnamed default style still shapes Hangul as .notdef)"
+      ],
+      "verification_bullets": [
+        "FOUND by R1470 unblocking CI: with the hello-audio-device abort gone, `cargo test --workspace` reached pinion-narrative for the first time and failed there (exit 101, not 1). Pre-existing and unrelated to R1469/R1470 — it had been unreachable behind the abort",
+        "REPRODUCED LOCALLY: a fontconfig exposing only DejaVu + Liberation (no CJK face) while KEEPING the distro generic-family aliases reproduces CI exactly — all four dialogue rects come back at single-line height, the same shape CI printed",
+        "HARNESS ARTEFACT REJECTED, not reported as a CI failure: a first, cruder config omitted the alias rules, which made `monospace` resolve to a proportional face and failed pinion-text's r1002_generic_monospace_keyword_is_fixed_pitch. With aliases restored pinion-text passes (63 ok), so that was the harness, not CI",
+        "RESCUE HYPOTHESIS REFUTED BY MEASUREMENT: registering crates/pinion-text-font/tests/fonts/NanumGothic-Regular.ttf into the test's LayoutCache does register (\"NanumGothic\" is returned) but the line still does not wrap — register_font_data makes a face selectable BY NAME and does not join automatic script fallback, exactly as its doc says",
+        "FIXED: the whole workspace under the faithful CI-like font set is 277 ok targets / 0 failures (was 1). Normal host with a CJK face: also green, so the test is now host-independent in both directions",
+        "CF: shortening the line makes the wrap assertion fail again, so it still discriminates rather than passing vacuously",
+        "gate: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc 0, pinion-narrative 80 passed"
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "The demo sweep and the GPU pixel tests still have not run. Both jobs `needs:` the workspace-test job, so they have been skipped for ~100 pushes; this round is what lets them start. Whatever they surface is the next round's subject and is not yet measured",
+        "CJK wrap in a scene built by production styling is now covered nowhere: pinion-text-font pins Hangul metrics with the vendored face because it can NAME it, but no test pins that a real Hangul VN line folds. Closing that needs either a named-family path through vn_scene or a font the shaper falls back to; both are design questions, not test edits",
+        "Whether any other test in the workspace depends on a host font was not swept by reading — it was covered empirically (the full run under the restricted font set is now clean), which is weaker than a census and stronger than nothing"
+      ],
+      "publishable_decision_summary": "A layout test must measure layout, not the host's font inventory: the R1345 flow assertion wrapped a Hangul line, so it passed on a developer box and failed on every CI runner, which ships no CJK face.",
+      "publishable_changes_bullets": [
+        "pinion-narrative: the R1345 flow-layout test wraps an ASCII line instead of a Hangul one, so what it measures is layout flow rather than whether the host happens to ship a CJK face",
+        "pinion-narrative: the test records WHY, including the refuted rescue (registering the vendored NanumGothic returns the family but does not enter automatic script fallback, so the unnamed default style still shapes Hangul as .notdef)"
+      ],
+      "publishable_verification_bullets": [
+        "FOUND by R1470 unblocking CI: with the hello-audio-device abort gone, `cargo test --workspace` reached pinion-narrative for the first time and failed there (exit 101, not 1). Pre-existing and unrelated to R1469/R1470 — it had been unreachable behind the abort",
+        "REPRODUCED LOCALLY: a fontconfig exposing only DejaVu + Liberation (no CJK face) while KEEPING the distro generic-family aliases reproduces CI exactly — all four dialogue rects come back at single-line height, the same shape CI printed",
+        "HARNESS ARTEFACT REJECTED, not reported as a CI failure: a first, cruder config omitted the alias rules, which made `monospace` resolve to a proportional face and failed pinion-text's r1002_generic_monospace_keyword_is_fixed_pitch. With aliases restored pinion-text passes (63 ok), so that was the harness, not CI",
+        "RESCUE HYPOTHESIS REFUTED BY MEASUREMENT: registering crates/pinion-text-font/tests/fonts/NanumGothic-Regular.ttf into the test's LayoutCache does register (\"NanumGothic\" is returned) but the line still does not wrap — register_font_data makes a face selectable BY NAME and does not join automatic script fallback, exactly as its doc says",
+        "FIXED: the whole workspace under the faithful CI-like font set is 277 ok targets / 0 failures (was 1). Normal host with a CJK face: also green, so the test is now host-independent in both directions",
+        "CF: shortening the line makes the wrap assertion fail again, so it still discriminates rather than passing vacuously",
+        "gate: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc 0, pinion-narrative 80 passed"
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The demo sweep and the GPU pixel tests still have not run. Both jobs `needs:` the workspace-test job, so they have been skipped for ~100 pushes; this round is what lets them start. Whatever they surface is the next round's subject and is not yet measured",
+        "CJK wrap in a scene built by production styling is now covered nowhere: pinion-text-font pins Hangul metrics with the vendored face because it can NAME it, but no test pins that a real Hangul VN line folds. Closing that needs either a named-family path through vn_scene or a font the shaper falls back to; both are design questions, not test edits",
+        "Whether any other test in the workspace depends on a host font was not swept by reading — it was covered empirically (the full run under the restricted font set is now clean), which is weaker than a census and stronger than nothing"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

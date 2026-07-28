@@ -403,10 +403,31 @@ mod tests {
 
         let owner = Owner::new();
         owner.run(|| {
+            // R1470.1 — the wrapping line is deliberately ASCII, and that is a
+            // correctness fix rather than a style choice. What this test pins is
+            // FLOW (a wrapped row pushes its neighbours down); whether a given
+            // run wraps at all depends on the text being shapeable, and a host
+            // CJK face is NOT guaranteed — every CI runner here has none, and
+            // R1448 made a font-less host a legal state on purpose. With the
+            // dialogue in Hangul this assertion therefore passed on a developer
+            // box and failed on CI, which is a host property masquerading as a
+            // layout property (and a [[zero-flake-policy]] violation).
+            //
+            // Registering the repo's vendored NanumGothic into the LayoutCache
+            // does NOT rescue it — measured, not assumed: the family registers
+            // ("NanumGothic" comes back) but `register_font_data` makes a face
+            // selectable BY NAME, and it does not enter automatic script
+            // fallback, so `vn_scene`'s unnamed default style still shapes the
+            // Hangul as .notdef and the line stays one row.
+            //
+            // Hangul metrics are pinned where the vendored face lives and can be
+            // named: `pinion_text_font`'s `wrap` / `fallback` tests.
             let state = VnState::new(VnScript::new(vec![VnStep::line(
                 "무녀",
-                "돌아오지 마라. 물때가 널 데려간다. 이 대사는 한 줄에 담기지 않을 만큼 \
-                 충분히 길어서 반드시 여러 줄로 접혀야 하며, 그 아래 행은 밀려나야 한다.",
+                "Do not come back. The tide will take you, and this line is \
+                 deliberately long enough that it cannot sit on a single \
+                 measured row at the stage width, so it must fold onto several \
+                 rows and push whatever follows it further down the column.",
             )]));
             // Reveal it: a VnState starts at `revealed_chars = 0`, so without
             // ticking the typewriter the row's content is literally "  ▌" and
