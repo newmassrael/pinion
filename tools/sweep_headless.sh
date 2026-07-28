@@ -35,6 +35,21 @@
 #     GL stays the Xvfb-mode backend). NOT the surfaceless
 #     `headless_screenshot.rs` (R637) path — these are real windowed shells.
 #
+# DEMO BUDGET (R1472). Every demo is killed after 180s, and that one number is
+# enough because a demo drives an ALREADY-BUILT binary over RPC and finishes in
+# seconds. The budget therefore measures the demo; when it fires, something is
+# genuinely stuck.
+#
+# It stays one number on evidence, not on principle. The first CI run of this
+# job killed `r1447_font_free_tui.py` at 180.010s, which read as "this demo is
+# too big for the budget" — the obvious fix being a per-demo override. Measuring
+# it refuted that: the demo needs 3.63s once the DEBUG test binaries exist and
+# 89.85s when it has to build them (it is the only demo that shells out to
+# `cargo test`). The budget was never too small; the job was making one demo
+# compile the workspace inside it. So the job pre-builds them and no override
+# exists — a per-demo budget would have bought nothing except a longer wait
+# before a genuine hang was reported.
+#
 # Usage:
 #   tools/sweep_headless.sh                 # run all demos (realgpu mode)
 #   tools/sweep_headless.sh r719 r697       # run only demos whose filename matches a substring
@@ -89,10 +104,20 @@ fi
 # shellcheck disable=SC2016  # intentional: expands in the child bash, not here
 runner='
   total=0; passed=0; n="$#"; failures=""; skipped=""; skip_count=0
+  # One number, named once: the kill and the message that reports it must not
+  # be able to disagree. They briefly did while R1472 was being written, and a
+  # counterfactual run caught the harness announcing a budget it had not used.
+  budget=180
   for f in "$@"; do
     total=$((total + 1))
     printf "[sweep %2d/%d] %s ... " "$total" "$n" "$(basename "$f")"
-    if out="$(timeout 180 python3 "$f" 2>&1)"; then
+    # R1472 — `python3 -u`: a demo killed by `timeout` dies without flushing,
+    # and Python block-buffers a pipe, so the buffered form threw away EVERY
+    # byte of the diagnostic. Measured: `timeout 2 python3 -c "print(..); sleep"`
+    # captures 0 bytes, the same call with -u captures all of it. That is why
+    # the first CI run of this sweep reported a bare `|` under its one failure
+    # and nothing else — the gate could not say why it failed.
+    if out="$(timeout "$budget" python3 -u "$f" 2>&1)"; then
       # R1333 — a demo that exits 0 is only a REAL pass if it did not SKIP a
       # phase. Several live-pixel / native-drag demos (r706 r707 r786 r794 r787
       # r806) print an uppercase "SKIP" line and return 0 when an environment
@@ -108,8 +133,26 @@ runner='
         passed=$((passed + 1)); echo "PASS"
       fi
     else
-      echo "FAIL"; failures="$failures $(basename "$f")"
-      echo "$out" | sed "s/^/    | /" >&2
+      rc="$?"
+      # R1472 — name the KIND of failure. `timeout` exits 124 when it kills the
+      # child, which is a budget verdict and not an assertion verdict: the demo
+      # was still working. Reported as a bare FAIL it looks like a broken claim,
+      # and that is how the r1447 timeout read on the first CI run of this job.
+      if [ "$rc" -eq 124 ]; then
+        echo "TIMEOUT (killed at ${budget}s)"
+        failures="$failures $(basename "$f")(timeout)"
+      else
+        echo "FAIL (exit $rc)"
+        failures="$failures $(basename "$f")"
+      fi
+      if [ -n "$out" ]; then
+        echo "$out" | sed "s/^/    | /" >&2
+      else
+        # Nothing to show is itself a finding: with -u above, a demo that wrote
+        # nothing really wrote nothing, so do not let an empty block read as a
+        # lost diagnostic.
+        echo "    | (the demo produced no output before exiting $rc)" >&2
+      fi
     fi
   done
   echo "----------------------------------------"

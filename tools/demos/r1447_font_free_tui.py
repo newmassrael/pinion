@@ -42,6 +42,16 @@ Run from the workspace root:
     python3 tools/demos/r1447_font_free_tui.py
 """
 
+# R1472 — this is the ONLY demo in the sweep that shells out to `cargo test`,
+# which makes it the only one that needs the DEBUG test binaries rather than the
+# release binary the sweep pre-builds for everyone else. Measured, because the
+# first guess was wrong: with those binaries present the whole demo runs in
+# **3.63s**; with them absent the same demo takes **89.85s** on a 16-core box,
+# and on a 2-core CI runner it blew through the sweep's 180s per-demo budget and
+# was killed at 180.010s. So its cost is compilation, not its own work — the CI
+# job now builds the test binaries up front (`cargo test --workspace --no-run`)
+# and the ordinary budget is ample.
+
 from __future__ import annotations
 
 import fcntl

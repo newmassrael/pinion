@@ -72990,6 +72990,70 @@
         "Whether any other test in the workspace depends on a host font was not swept by reading — it was covered empirically (the full run under the restricted font set is now clean), which is weaker than a census and stronger than nothing"
       ]
     },
+    "Round 1472": {
+      "decision_summary": "A failed gate must say why it failed: the demo sweep's first CI run in ~100 pushes killed one demo at its 180s budget and reported not one byte of why, so the runner no longer buffers a demo it may kill, names a timeout as a timeout, and the job pre-builds the debug test binaries the one cargo-test demo was compiling inside its own timeout.",
+      "changes_bullets": [
+        "tools/sweep_headless.sh: demos run under `python3 -u`, so a demo killed by the per-demo timeout still reports every byte it had written",
+        "tools/sweep_headless.sh: a killed demo is reported as TIMEOUT (killed at Ns) rather than a bare FAIL, and the failure list tags it (timeout); an assertion failure now prints its exit code",
+        "tools/sweep_headless.sh: an empty diagnostic is stated as such instead of printing an empty block, so \"no output\" can never again read as \"output lost\"",
+        "tools/sweep_headless.sh: the budget is one named variable used by both the kill and the message that reports it; a counterfactual caught them disagreeing while this round was being written",
+        ".github/workflows/ci.yml: the demo-sweep job pre-builds the debug test binaries (cargo test --workspace --no-run) before running the sweep",
+        ".github/workflows/ci.yml: CARGO_PROFILE_TEST_DEBUG=0 is set at JOB level so the pre-build and the demo's own cargo test share one fingerprint, and for the disk headroom R897.1 needed",
+        "tools/demos/r1447_font_free_tui.py: records the measurement — 3.63s with the test binaries present, 89.85s without — so the next reader does not re-derive why the job builds them",
+        "NO per-demo timeout override: it was written, then deleted when the measurement refuted the premise it was built on"
+      ],
+      "verification_bullets": [
+        "SCOPE, measured from CI: the first run of demo-sweep in ~100 pushes (R1470 + R1471 unblocked the job it needs) reported 446 PASS / 1 FAIL of 447. The feared backlog of rotted demos did not exist; the single failure is r1447_font_free_tui.py",
+        "THE INVISIBILITY, root-caused by reproduction not inference: `out=\"$(timeout 2 python3 -c 'print(..); sleep(30)')\"` captures 0 bytes; the same call with `python3 -u` captures all of it. `timeout` kills the child and Python's block-buffered pipe dies unflushed — which is why CI printed a bare `|` under its only failure",
+        "THE FAILURE ITSELF, from the log timestamps: 08:30:11.7168 -> 08:33:11.7268 = 180.010s. Killed by the budget, not by an assertion. Nothing in the job said so",
+        "THE CAUSE, measured and it refuted the obvious fix: the demo runs in 3.63s when the debug test binaries exist and 89.85s when it must build them (it is the only one of 447 demos that shells out to `cargo test`; verified by grep). The budget was never too small — the job made one demo compile the workspace inside it",
+        "CF on the harness (budget forced to 1s, real sweep, real demo): reports `TIMEOUT (killed at 180s)` and prints 4 lines of demo output where CI had shown none. Restored, and the same demo then PASSes through the harness",
+        "CF that caught my own defect: that run showed the message announcing 180s while the kill used 1s — two copies of one number. Now one variable feeds both",
+        "PROFILE FINGERPRINT, measured because getting it wrong would have looked fixed while changing nothing: `cargo test -p pinion-text-unicode --lib --no-run` is cached at 0.41s, and the same command with CARGO_PROFILE_TEST_DEBUG=0 recompiles (24.34s) into a different binary hash. Setting that env on the pre-build step alone would have made the demo rebuild the workspace inside its timeout again",
+        "gate: bash -n clean, shellcheck clean, the workflow parses as YAML with the new step in order, and r1447_font_free_tui.py PASSes through the real harness (89.85s cold, 3.63s warm)",
+        "NOT verified here, and it cannot be locally: that the pre-build makes the CI run fit. The demo needs ~4s of its own work against a 180s budget, so the margin is large, but the number that matters comes from the next CI run"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "The five live-pixel / native-drag demos (r706 r707 r786 r794 r787) still SKIP their pixel phase in CI because python3-pil is deliberately not installed (R1333). The sweep now says so in its summary, so the gap is honest rather than hidden, but the coverage is still vacuous and arming it needs those demos hardened first",
+        "Whether the pre-build actually lands r1447 inside the budget on a 2-core runner is unmeasured until the next CI run. If it does not, the fix to reach for is the demo's own work, not a larger number",
+        "No other demo shells out to `cargo test` today (grep over all 447). Nothing enforces that, so a future demo could reintroduce the same shape; the pre-build now covers it either way, which is why no per-demo budget mechanism was added",
+        "The sweep is still not a pre-push gate — the long-standing carry. This round makes its failures legible, which is a prerequisite for gating on it, not a substitute"
+      ],
+      "publishable_decision_summary": "A failed gate must say why it failed: the demo sweep's first CI run in ~100 pushes killed one demo at its 180s budget and reported not one byte of why, so the runner no longer buffers a demo it may kill, names a timeout as a timeout, and the job pre-builds the debug test binaries the one cargo-test demo was compiling inside its own timeout.",
+      "publishable_changes_bullets": [
+        "tools/sweep_headless.sh: demos run under `python3 -u`, so a demo killed by the per-demo timeout still reports every byte it had written",
+        "tools/sweep_headless.sh: a killed demo is reported as TIMEOUT (killed at Ns) rather than a bare FAIL, and the failure list tags it (timeout); an assertion failure now prints its exit code",
+        "tools/sweep_headless.sh: an empty diagnostic is stated as such instead of printing an empty block, so \"no output\" can never again read as \"output lost\"",
+        "tools/sweep_headless.sh: the budget is one named variable used by both the kill and the message that reports it; a counterfactual caught them disagreeing while this round was being written",
+        ".github/workflows/ci.yml: the demo-sweep job pre-builds the debug test binaries (cargo test --workspace --no-run) before running the sweep",
+        ".github/workflows/ci.yml: CARGO_PROFILE_TEST_DEBUG=0 is set at JOB level so the pre-build and the demo's own cargo test share one fingerprint, and for the disk headroom R897.1 needed",
+        "tools/demos/r1447_font_free_tui.py: records the measurement — 3.63s with the test binaries present, 89.85s without — so the next reader does not re-derive why the job builds them",
+        "NO per-demo timeout override: it was written, then deleted when the measurement refuted the premise it was built on"
+      ],
+      "publishable_verification_bullets": [
+        "SCOPE, measured from CI: the first run of demo-sweep in ~100 pushes (R1470 + R1471 unblocked the job it needs) reported 446 PASS / 1 FAIL of 447. The feared backlog of rotted demos did not exist; the single failure is r1447_font_free_tui.py",
+        "THE INVISIBILITY, root-caused by reproduction not inference: `out=\"$(timeout 2 python3 -c 'print(..); sleep(30)')\"` captures 0 bytes; the same call with `python3 -u` captures all of it. `timeout` kills the child and Python's block-buffered pipe dies unflushed — which is why CI printed a bare `|` under its only failure",
+        "THE FAILURE ITSELF, from the log timestamps: 08:30:11.7168 -> 08:33:11.7268 = 180.010s. Killed by the budget, not by an assertion. Nothing in the job said so",
+        "THE CAUSE, measured and it refuted the obvious fix: the demo runs in 3.63s when the debug test binaries exist and 89.85s when it must build them (it is the only one of 447 demos that shells out to `cargo test`; verified by grep). The budget was never too small — the job made one demo compile the workspace inside it",
+        "CF on the harness (budget forced to 1s, real sweep, real demo): reports `TIMEOUT (killed at 180s)` and prints 4 lines of demo output where CI had shown none. Restored, and the same demo then PASSes through the harness",
+        "CF that caught my own defect: that run showed the message announcing 180s while the kill used 1s — two copies of one number. Now one variable feeds both",
+        "PROFILE FINGERPRINT, measured because getting it wrong would have looked fixed while changing nothing: `cargo test -p pinion-text-unicode --lib --no-run` is cached at 0.41s, and the same command with CARGO_PROFILE_TEST_DEBUG=0 recompiles (24.34s) into a different binary hash. Setting that env on the pre-build step alone would have made the demo rebuild the workspace inside its timeout again",
+        "gate: bash -n clean, shellcheck clean, the workflow parses as YAML with the new step in order, and r1447_font_free_tui.py PASSes through the real harness (89.85s cold, 3.63s warm)",
+        "NOT verified here, and it cannot be locally: that the pre-build makes the CI run fit. The demo needs ~4s of its own work against a 180s budget, so the margin is large, but the number that matters comes from the next CI run"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The five live-pixel / native-drag demos (r706 r707 r786 r794 r787) still SKIP their pixel phase in CI because python3-pil is deliberately not installed (R1333). The sweep now says so in its summary, so the gap is honest rather than hidden, but the coverage is still vacuous and arming it needs those demos hardened first",
+        "Whether the pre-build actually lands r1447 inside the budget on a 2-core runner is unmeasured until the next CI run. If it does not, the fix to reach for is the demo's own work, not a larger number",
+        "No other demo shells out to `cargo test` today (grep over all 447). Nothing enforces that, so a future demo could reintroduce the same shape; the pre-build now covers it either way, which is why no per-demo budget mechanism was added",
+        "The sweep is still not a pre-push gate — the long-standing carry. This round makes its failures legible, which is a prerequisite for gating on it, not a substitute"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
@@ -85898,5 +85962,5 @@
   "parameter_deltas": {},
   "parameter_gates": {},
   "fact_counts": {},
-  "schema_version": 43
+  "schema_version": 44
 }

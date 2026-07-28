@@ -103,6 +103,15 @@ jobs:
       # rust-cache restores `target/`, removing the build step would silently run
       # stale binaries. Keep the build step whenever this flag is set.
       PINION_SWEEP_NO_BUILD: "1"
+      # R1472 — set at JOB level, not on the pre-build step, and that placement
+      # is the whole point: `r1447_font_free_tui.py` runs its own `cargo test`,
+      # and a profile setting that differed between the pre-build and that run
+      # would change the fingerprint and rebuild everything inside the demo —
+      # re-creating exactly the timeout this pre-build exists to remove, while
+      # looking fixed. It also buys the same disk headroom R897.1 needed in the
+      # test job: line-tables are the bulk of the test-binary footprint, and
+      # this job now links them on top of a full release build.
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -191,6 +200,22 @@ jobs:
           pactl list short sinks
       - name: Build workspace (release — sweep runs release binaries)
         run: cargo build --release --workspace
+      - name: Build test binaries (debug — the one demo that runs `cargo test`)
+        # R1472 — `r1447_font_free_tui.py` is the only demo that shells out to
+        # `cargo test` (it runs the suite under a font-less fontconfig and again
+        # under the system one, because its claim is that the two agree). The
+        # step above builds RELEASE binaries for the other 446, so nothing here
+        # had ever built the DEBUG test binaries and that demo compiled the
+        # workspace from scratch *inside* its 180s per-demo timeout. It was
+        # killed at 180.010s on the first run of this job, and — Python
+        # block-buffering a pipe — reported not one byte of why.
+        #
+        # Pre-building is the fix rather than a bigger timeout alone: a gate that
+        # measures the compiler cannot report on the thing it is gating. With the
+        # binaries present the demo measures font environments, which is its
+        # subject. `--no-run` builds without executing; the `lint-and-test` job
+        # owns actually running the workspace suite.
+        run: cargo test --workspace --no-run
       - name: Run full demo sweep under Xvfb
         run: |
           Xvfb :99 -screen 0 1600x1200x24 >/tmp/xvfb.log 2>&1 &
