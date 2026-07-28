@@ -71,7 +71,10 @@ pub fn vn_scene(state: &VnState) -> Scene {
             if !state.fully_revealed() {
                 line.push('▌');
             }
-            rows.push(text_row(format!("  {line}")));
+            // R1472 §5.36 §2#7 — the one row whose geometry is a claim: it is
+            // the prose that folds, so an agent asking "did this line wrap"
+            // needs to address it rather than count anonymous rows.
+            rows.push(tagged_text_row(format!("  {line}"), "vn.line"));
             rows.push(spaced_row(
                 "invoke tick <ms> 로 글자가 드러남 · advance 로 넘김".to_string(),
             ));
@@ -202,6 +205,11 @@ fn text_row(content: impl Into<String>) -> Scene {
     Scene::Text(TextNode::new(content, Rect::default()))
 }
 
+/// R1472 §5.36 — a dialogue row an agent can address by name over §2 #2.
+fn tagged_text_row(content: impl Into<String>, tag: &'static str) -> Scene {
+    Scene::Text(TextNode::new(content, Rect::default()).with_tag(tag))
+}
+
 /// A row that opens a new block: one blank line above it. The pre-R1345 view
 /// spelled this as a bigger jump in its `y` cursor.
 fn spaced_row(content: impl Into<String>) -> Scene {
@@ -254,6 +262,15 @@ mod tests {
     use super::*;
     use crate::vn::model::{VnOption, VnScript, VnStep};
     use pinion_core::reactive::Owner;
+    use pinion_core::style::FontFamily;
+
+    /// R1472 §5.36 — the Hangul face this crate's own binding ships, and the
+    /// family it registers as. The repo already self-hosts it as a shaping
+    /// fixture; the path is relative to this crate's root, the convention
+    /// `pinion-text`'s tests use. Kept in step with `hello-vn-tide`'s
+    /// declaration by `r1472_the_binding_declares_the_face_this_view_measures`.
+    const HANGUL_FACE: &str = "../pinion-text-font/tests/fonts/NanumGothic-Regular.ttf";
+    const HANGUL_FAMILY: &str = "NanumGothic";
 
     fn collect_text(scene: &Scene, out: &mut Vec<String>) {
         match scene {
@@ -403,31 +420,31 @@ mod tests {
 
         let owner = Owner::new();
         owner.run(|| {
-            // R1470.1 — the wrapping line is deliberately ASCII, and that is a
-            // correctness fix rather than a style choice. What this test pins is
-            // FLOW (a wrapped row pushes its neighbours down); whether a given
-            // run wraps at all depends on the text being shapeable, and a host
-            // CJK face is NOT guaranteed — every CI runner here has none, and
-            // R1448 made a font-less host a legal state on purpose. With the
-            // dialogue in Hangul this assertion therefore passed on a developer
-            // box and failed on CI, which is a host property masquerading as a
-            // layout property (and a [[zero-flake-policy]] violation).
+            // R1472 §5.36 — the dialogue is Korean again, and the fold is a
+            // layout fact on every host because this test declares the face it
+            // measures with.
             //
-            // Registering the repo's vendored NanumGothic into the LayoutCache
-            // does NOT rescue it — measured, not assumed: the family registers
-            // ("NanumGothic" comes back) but `register_font_data` makes a face
-            // selectable BY NAME, and it does not enter automatic script
-            // fallback, so `vn_scene`'s unnamed default style still shapes the
-            // Hangul as .notdef and the line stays one row.
+            // R1471 had to write the line in ASCII: whether Hangul wrapped
+            // depended on the host having a CJK face, so the assertion passed on
+            // a developer box and failed on CI — a host property masquerading as
+            // a layout property. Registering the vendored face was measured NOT
+            // to fix that: `register_font_data` makes a family selectable BY
+            // NAME, and `vn_scene` names none, so the unset style still shaped
+            // .notdef and the line stayed one row.
             //
-            // Hangul metrics are pinned where the vendored face lives and can be
-            // named: `pinion_text_font`'s `wrap` / `fallback` tests.
+            // The missing half was `set_default_font_family` (Qt's
+            // `QApplication::setFont`) — the same pair `hello-vn-tide` now makes
+            // at boot, so what this measures is what the binding ships rather
+            // than a test-only arrangement. `pinion-text`'s `font_less_host`
+            // fixture pins the resolution rule itself on a host built to have
+            // no Hangul at all.
+            let data = std::fs::read(HANGUL_FACE).unwrap_or_else(|e| {
+                panic!("the repo's vendored Hangul face {HANGUL_FACE} must be readable: {e}")
+            });
             let state = VnState::new(VnScript::new(vec![VnStep::line(
                 "무녀",
-                "Do not come back. The tide will take you, and this line is \
-                 deliberately long enough that it cannot sit on a single \
-                 measured row at the stage width, so it must fold onto several \
-                 rows and push whatever follows it further down the column.",
+                "돌아오지 마라. 물때가 널 데려간다. 이 대사는 한 줄에 담기지 않을 만큼 \
+                 충분히 길어서 반드시 여러 줄로 접혀야 하며, 그 아래 행은 밀려나야 한다.",
             )]));
             // Reveal it: a VnState starts at `revealed_chars = 0`, so without
             // ticking the typewriter the row's content is literally "  ▌" and
@@ -436,6 +453,13 @@ mod tests {
             assert!(state.fully_revealed(), "the line is on screen to wrap");
             let mut scene = vn_scene(&state);
             let mut cache = LayoutCache::new();
+            let families = cache.register_font_data(data);
+            assert!(
+                families.iter().any(|f| f == HANGUL_FAMILY),
+                "premise: the vendored face registers as {HANGUL_FAMILY}, the \
+                 family `hello-vn-tide` declares: {families:?}",
+            );
+            cache.set_default_font_family(Some(FontFamily::Named(HANGUL_FAMILY.into())));
             compute_layout(&mut scene, &mut cache, STAGE_W, 600);
 
             let mut rs = Vec::new();

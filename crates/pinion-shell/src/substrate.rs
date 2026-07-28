@@ -675,6 +675,7 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn new_with_seed_and_fonts(
         app_fonts: Vec<Vec<u8>>,
+        default_family: Option<pinion_core::style::FontFamily>,
         seed: impl FnOnce(&pinion_core::Owner),
     ) -> Self {
         let mut text_cache = LayoutCache::new();
@@ -682,6 +683,14 @@ impl<V: WidgetView> ShellCore<V> {
         for data in app_fonts {
             application_families.extend(text_cache.register_font_data(data));
         }
+        // R1472 §5.36 — declaring the faces and choosing which one unset text
+        // uses are the two halves of Qt's `addApplicationFont` +
+        // `QApplication::setFont`, and they land here together because the
+        // second is meaningless before the first: a default naming a family
+        // nobody registered resolves to the tofu fallback. Setting it on the
+        // same `text_cache` the layout and paint passes borrow is what makes
+        // measure and paint agree about it by construction.
+        text_cache.set_default_font_family(default_family.clone());
         // Probe explicitly rather than reading whatever the registrations
         // happened to leave behind. With no declared font nothing above shapes,
         // so the status would be `NotProbed` — and it would STAY that way in the
@@ -692,6 +701,7 @@ impl<V: WidgetView> ShellCore<V> {
         let report = FontSourceReport {
             system: text_cache.probe_system_fonts(),
             application_families,
+            default_family,
         };
         let core = CoreShell::<V>::new_with_seed(move |root_owner| {
             // R1448 §5.36 — the font-source fact rides the same one seeding
@@ -11027,7 +11037,11 @@ mod r1362_window_control_sink_seeding_tests {
             ),
         ] {
             RESOLVED.with(|slot| *slot.borrow_mut() = None);
-            let sc = ShellCore::<SinkCapturingFixture>::new_with_seed_and_fonts(fonts, |_owner| {});
+            let sc = ShellCore::<SinkCapturingFixture>::new_with_seed_and_fonts(
+                fonts,
+                None,
+                |_owner| {},
+            );
             let report = sc.root_owner().run(pinion_core::reactive::font_sources);
             assert_ne!(
                 report.system,
@@ -11043,7 +11057,51 @@ mod r1362_window_control_sink_seeding_tests {
                 "nothing became selectable ({label}): {:?}",
                 report.application_families,
             );
+            assert_eq!(
+                report.default_family, None,
+                "a binding that declared no default keeps the platform stack \
+                 ({label})",
+            );
         }
+    }
+
+    /// R1472 §5.36 — a declared default reaches BOTH the published report and
+    /// the cache the frame shapes with.
+    ///
+    /// The two halves are one claim: a report naming a family the render cache
+    /// does not resolve unset text to would be a status line contradicting the
+    /// pixels — the desync `new_with_seed_and_fonts` exists to make impossible,
+    /// stated for the R1472 half the way R1448 stated it for registration.
+    ///
+    /// No face is declared alongside it on purpose. Whether the name resolves
+    /// to glyphs is the shaper's business (and is measured on a host built for
+    /// it, in `pinion-text`'s `font_less_host` fixture); what the shell owes is
+    /// that the choice it was handed is the choice it installed.
+    #[test]
+    fn r1472_a_declared_default_family_reaches_the_report_and_the_render_cache() {
+        let family = pinion_core::style::FontFamily::Named("Declared At Boot".into());
+        let mut sc = ShellCore::<SinkCapturingFixture>::new_with_seed_and_fonts(
+            Vec::new(),
+            Some(family.clone()),
+            |_owner| {},
+        );
+
+        let report = sc.root_owner().run(pinion_core::reactive::font_sources);
+        assert_eq!(
+            report.default_family,
+            Some(family.clone()),
+            "the binding reads back what it declared, so it can render its own \
+             font state (§2 #7) instead of guessing",
+        );
+
+        let (cache, _engine) = sc.text_cache_and_engine();
+        assert_eq!(
+            cache.default_font_family(),
+            Some(&family),
+            "and the SAME cache the layout and paint passes borrow resolves \
+             unset text to it — a report without this is a claim about a \
+             cache nobody consulted",
+        );
     }
 
     /// An unseeded `ShellCore::new` (headless / RPC-driven tests) still BOOTS,

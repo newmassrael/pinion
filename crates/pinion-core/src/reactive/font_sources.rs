@@ -99,6 +99,16 @@ pub struct FontSourceReport {
     /// `system: Unavailable` is the interesting state: a host with no fonts
     /// where the application shipped its own and text renders anyway.
     pub application_families: Vec<String>,
+    /// R1472 §5.36 — the family an unset
+    /// [`TextStyle::font_family`](crate::style::TextStyle) resolves to, or
+    /// `None` when unset means the platform stack.
+    ///
+    /// Qt's `QApplication::font()`. Without it §2 #7 has a hole: a scene node
+    /// reports its family as `null`, and nothing anywhere says what `null`
+    /// renders as in this process — so an agent can read every node and still
+    /// not know which face drew the text. The node carries the style **as
+    /// written**; this carries how the process resolves what was left out.
+    pub default_family: Option<crate::style::FontFamily>,
 }
 
 impl FontSourceReport {
@@ -156,6 +166,7 @@ mod tests {
         FontSourceReport {
             system: SystemFontStatus::Unavailable,
             application_families: vec!["Fixture Sans".to_owned()],
+            default_family: Some(crate::style::FontFamily::Named("Fixture Sans".into())),
         }
     }
 
@@ -177,6 +188,11 @@ mod tests {
             !report.has_any_face(),
             "an unprobed process must not claim a face is available",
         );
+        assert_eq!(
+            report.default_family, None,
+            "R1472: and unset text means the platform stack until an \
+             application says otherwise",
+        );
     }
 
     /// R1448 — the state this round exists for: a host with no font database
@@ -186,6 +202,7 @@ mod tests {
         let report = FontSourceReport {
             system: SystemFontStatus::Unavailable,
             application_families: vec!["Shipped Sans".to_owned()],
+            default_family: None,
         };
         assert!(
             report.has_any_face(),
@@ -196,6 +213,7 @@ mod tests {
         let bare = FontSourceReport {
             system: SystemFontStatus::Unavailable,
             application_families: Vec::new(),
+            default_family: None,
         };
         assert!(!bare.has_any_face());
     }

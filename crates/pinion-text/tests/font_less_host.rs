@@ -32,6 +32,10 @@ use std::process::Command;
 const INNER_TEST: &str = "font_less_host_shapes_and_reports";
 const INNER_MARKER: &str = "PINION_R1448_FONT_LESS_CHILD";
 
+const DEFAULT_INNER_TEST: &str =
+    "r1472_declared_default_makes_unset_styles_shape_the_application_face";
+const DEFAULT_MARKER: &str = "PINION_R1472_APP_DEFAULT_CHILD";
+
 const RESCAN_INNER_TEST: &str = "system_scan_reruns_for_each_context";
 const RESCAN_MARKER: &str = "PINION_R1448_1_RESCAN_CHILD";
 /// Where the rescan child finds the font directory its config points at.
@@ -315,5 +319,136 @@ fn system_scan_reruns_for_each_context() {
         (width_before_again - width_before).abs() < f32::EPSILON,
         "the older context keeps the world it scanned: {width_before} then \
          {width_before_again}",
+    );
+}
+
+/// Launcher: a fontconfig over a directory holding a **Hangul-less** face.
+///
+/// Not the font-less config above, deliberately. This is the host R1471
+/// actually met: an ordinary CI runner with `DejaVu` / `Liberation` installed and
+/// no CJK face anywhere. It is the discriminating environment for the R1472
+/// claim, because a font-*less* host would let the application's registered
+/// face win as the last resort left in the collection, which would make the
+/// default-family assertion pass for a reason that has nothing to do with the
+/// default.
+#[test]
+fn hangul_less_fixture_drives_a_host_that_cannot_shape_korean() {
+    let tmp = std::env::temp_dir().join(format!("pinion-r1472-{}", std::process::id()));
+    let conf = write_font_less_config(&tmp);
+    let fonts = tmp.join("fonts");
+    std::fs::copy(NOTO_FONT, fonts.join("latin.ttf")).expect("the Hangul-less face copies in");
+
+    let exe = std::env::current_exe().expect("test binary path");
+    let status = Command::new(&exe)
+        .args([DEFAULT_INNER_TEST, "--exact", "--ignored", "--nocapture"])
+        .env("FONTCONFIG_FILE", &conf)
+        .env(DEFAULT_MARKER, "1")
+        .status()
+        .expect("re-exec of the application-default scenario");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(
+        status.success(),
+        "the application-default-font scenario failed (see the child's output above)"
+    );
+}
+
+/// R1472 §5.36 — **an application's declared face becomes what unset means.**
+///
+/// Qt applications call `QFontDatabase::addApplicationFont` and then
+/// `QApplication::setFont`; pinion had only the first half, so a face the
+/// application shipped was reachable *only* from a `TextStyle` that spelled its
+/// name. R1471 measured the consequence and could not fix it from the test
+/// side: a Hangul assertion about a production view passed on a developer box
+/// and failed on CI, because what an unset family means was a property of the
+/// **host**.
+///
+/// The three steps are one claim each, and the middle one is the one that makes
+/// the last one mean something:
+///
+///  1. **Premise** — this host has a real font database and still cannot draw
+///     U+AC00. Without this the run would be about a font-less host, where
+///     everything below would pass for the wrong reason.
+///  2. **R1471's finding, as a test** — registering the face does *not* change
+///     what an unset family resolves to. It was a comment in
+///     `pinion-narrative`; it is the reason the API needed a second half.
+///  3. **The claim** — declaring the default makes the *same unset style*
+///     shape Hangul, identically to a style that named the family outright.
+#[test]
+#[ignore = "re-exec entry for hangul_less_fixture_drives_a_host_that_cannot_shape_korean"]
+fn r1472_declared_default_makes_unset_styles_shape_the_application_face() {
+    if std::env::var_os(DEFAULT_MARKER).is_none() {
+        return;
+    }
+
+    let unset = TextStyle::new().with_size_px(32);
+    let mut cache = LayoutCache::new();
+
+    // 1. Premise: a real font database, and no Hangul in it.
+    assert_eq!(
+        cache.probe_system_fonts(),
+        SystemFontStatus::Available,
+        "premise: this config HAS a face — the CI condition, not a font-less \
+         container",
+    );
+    let latin_width = cache.layout("AB", &unset, None).width();
+    assert!(
+        latin_width > 0.0,
+        "premise: Latin shapes here, so this host is not simply empty: \
+         {latin_width}",
+    );
+    let hangul_unshapeable = cache.layout(HANGUL, &unset, None).width();
+
+    // 2. Registering is not selecting — the R1471 finding.
+    let data = std::fs::read(FIXTURE_FONT).unwrap_or_else(|e| {
+        panic!("fixture font {FIXTURE_FONT} must be readable from the crate root: {e}")
+    });
+    let families = cache.register_font_data(data);
+    let family = families
+        .first()
+        .expect("the fixture face registers")
+        .clone();
+    let after_register = cache.layout(HANGUL, &unset, None).width();
+    assert!(
+        (after_register - hangul_unshapeable).abs() < f32::EPSILON,
+        "registering a Hangul face does not change what an UNSET family means: \
+         before={hangul_unshapeable} after={after_register}. This is the half \
+         of the Qt pair pinion already had, and on its own it leaves the \
+         glyphs in memory and off the screen",
+    );
+
+    // 3. Declaring the default is selecting.
+    cache.set_default_font_family(Some(pinion_core::style::FontFamily::Named(
+        family.clone().into(),
+    )));
+    let after_default = cache.layout(HANGUL, &unset, None).width();
+    assert!(
+        after_default > after_register,
+        "the same unset style now shapes U+AC00 through the application's \
+         face: registered={after_register} declared-default={after_default}",
+    );
+
+    let named = TextStyle::new()
+        .with_size_px(32)
+        .with_font_family(family.clone());
+    let named_width = cache.layout(HANGUL, &named, None).width();
+    assert!(
+        (after_default - named_width).abs() < f32::EPSILON,
+        "and it shapes IDENTICALLY to a style that named the family outright \
+         — the default is a resolution rule, not a second rendering path: \
+         default={after_default} named={named_width}",
+    );
+
+    // The default does not overrule a style that asked for something else:
+    // an explicit family still wins, or the rule would make every pinned
+    // family in the process unpinnable.
+    let other = TextStyle::new()
+        .with_size_px(32)
+        .with_font_family("A Family No Host Has 12345");
+    let other_width = cache.layout(HANGUL, &other, None).width();
+    assert!(
+        other_width < after_default,
+        "an explicit family outranks the default even when it resolves to \
+         nothing here: explicit={other_width} default={after_default}",
     );
 }

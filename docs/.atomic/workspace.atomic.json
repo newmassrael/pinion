@@ -73054,6 +73054,76 @@
         "The sweep is still not a pre-push gate — the long-standing carry. This round makes its failures legible, which is a prerequisite for gating on it, not a substitute"
       ]
     },
+    "Round 1473": {
+      "decision_summary": "An application's declared face is what unset text uses: pinion had Qt's addApplicationFont and not its setFont, so hello-vn-tide held a Hangul face in memory while drawing tofu on any host without CJK — LayoutCache now resolves an unset family against a boot-declared default, and the binding declares one.",
+      "changes_bullets": [
+        "pinion-text: LayoutCache::set_default_font_family / default_font_family — the family an unset TextStyle::font_family resolves to (Qt's QApplication::setFont)",
+        "pinion-text: the resolution happens at the ONE site that lowers a style to parley properties, so it reaches the base style and every StyleRun alike",
+        "pinion-text: setting a DIFFERENT default clears the shape cache, because entries are keyed on the style as written and cannot tell which default shaped them; register_font_data stays non-clearing since registration is purely additive",
+        "pinion-core: FontSourceReport gains default_family, so a scene node reporting `font_family: null` has somewhere to say what null renders as",
+        "pinion-shell: ShellConfig::with_default_font_family, threaded through new_with_fonts into the same text_cache the layout and paint passes borrow",
+        "pinion-narrative: the dialogue line row carries a `vn.line` tag, so an agent can address the prose whose folding is the claim",
+        "pinion-narrative: the R1345 flow test measures Korean again, declaring the vendored face the way the binding does — R1471 had to write it in ASCII",
+        "examples/hello-vn-tide: declares the repo's NanumGothic and makes it the default, publishes its font state as a tagged row, and its opening narration is long enough to fold",
+        "tools/rpc_verify.py: write_fontconfig lifted at its third copy (r1447 / r1448 / r1473 each wrote the same XML over the same two directories)"
+      ],
+      "verification_bullets": [
+        "THE GAP, read off the code not guessed: pinion had addApplicationFont (R1448) and nothing for QApplication::setFont. cache.rs pushes no FontFamily property when style.font_family is None, so unset meant the platform stack and a shipped face was reachable only by naming it — which vn_scene never did, on any of its all-Korean rows",
+        "PREMISE measured with fc-query: the repo's vendored NanumGothic covers ac00-d7a3, so naming it is enough to shape Hangul; no new font is vendored",
+        "THE ENVIRONMENT built to match CI, not to be convenient: a fontconfig over a directory holding one Latin-only face. fc-list ':charset=ac00' counts 0 there and 85 on this host. Deliberately NOT a font-less tree, where the application's registered face would be the only one left and could win for the wrong reason",
+        "CLAIM (pinion-text, in that environment): registering the face does NOT change what an unset style resolves to (R1471's finding, now a test), and declaring the default does — the same unset style then shapes U+AC00 identically to a style that named the family, while an explicit family still outranks the default",
+        "CF-1 (one change): dropping the `.or(default_family)` resolution fails exactly the new scenario with registered=19.2 declared-default=19.2 (the tofu advance), and leaves the font-less and rescan scenarios passing",
+        "CLAIM (pinion-narrative): the R1345 flow assertion is Korean again and passes on a host with ZERO Hangul faces as well as on this one — bidirectional, which is what R1471 could not have",
+        "CF-2 (one change): removing the default-family call from that test FAILS on the Hangul-less host (all four rows 19px, no fold) and PASSES here — exactly the host-dependent split R1471 measured, reproduced and then removed",
+        "CLAIM (over the wire, demo): on the Hangul-less config the binding publishes default=NanumGothic / system=available, and scene/layout reports the narration folding to line_count=2, h=41",
+        "CF-3 (the demo's own discriminator, run every time): the same binding with its declaration suppressed reports default=(none) and the same text measures line_count=1, h=22 — same column width, so the difference is the face",
+        "OBLIGATION 3b: write_fontconfig was a THIRD mechanical copy and is lifted; the two prior demos now call it and both still pass. font_sources() has two consumers (hello-app-font, hello-vn-tide), so the paint-the-report pattern is NOT lifted yet",
+        "gate: cargo fmt --all --check clean, clippy -D pedantic 0 over the five changed crates, cargo doc --workspace --document-private-items 0, pinion-core 2739 / pinion-text 65 + 3 launchers / pinion-narrative 80 / pinion-shell 213 + 161 / hello-vn-tide 3; demos r1473 (new), r1448, r1447, hello_vn_tide all PASS"
+      ],
+      "impact_refs": [
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "The self-hosted §5.37 arm ignores font_family entirely — self_hosted_text_eligible does not consult it, and SelfHostedTextEngine measures with the one system font it loaded. So under PINION_TEXT_ENGINE=1 a named family, and now a declared default, are silently not honoured. Pre-existing and env-opt-in, so out of scope here, but it is a real divergence between the two arms",
+        "Only the FAMILY is defaultable. Qt's QApplication::setFont carries a whole font; here every other TextStyle field already has a concrete value from TextStyle::new, so nothing else has an unset state to resolve. Giving them one is a separate design question with no consumer asking",
+        "The default is boot-only by construction (ShellConfig), matching R1448's argument that a boot snapshot cannot go stale. A mid-run seam would make FontSourceReport a Signal — the round that adds it decides that, not this one",
+        "hello-vn-tide's opening narration was lengthened so a fold is observable over the wire. That is content, and it is load-bearing for the demo; a shorter script would leave the wire unable to tell Hangul from tofu, since both measure the same stretched box"
+      ],
+      "publishable_decision_summary": "An application's declared face is what unset text uses: pinion had Qt's addApplicationFont and not its setFont, so hello-vn-tide held a Hangul face in memory while drawing tofu on any host without CJK — LayoutCache now resolves an unset family against a boot-declared default, and the binding declares one.",
+      "publishable_changes_bullets": [
+        "pinion-text: LayoutCache::set_default_font_family / default_font_family — the family an unset TextStyle::font_family resolves to (Qt's QApplication::setFont)",
+        "pinion-text: the resolution happens at the ONE site that lowers a style to parley properties, so it reaches the base style and every StyleRun alike",
+        "pinion-text: setting a DIFFERENT default clears the shape cache, because entries are keyed on the style as written and cannot tell which default shaped them; register_font_data stays non-clearing since registration is purely additive",
+        "pinion-core: FontSourceReport gains default_family, so a scene node reporting `font_family: null` has somewhere to say what null renders as",
+        "pinion-shell: ShellConfig::with_default_font_family, threaded through new_with_fonts into the same text_cache the layout and paint passes borrow",
+        "pinion-narrative: the dialogue line row carries a `vn.line` tag, so an agent can address the prose whose folding is the claim",
+        "pinion-narrative: the R1345 flow test measures Korean again, declaring the vendored face the way the binding does — R1471 had to write it in ASCII",
+        "examples/hello-vn-tide: declares the repo's NanumGothic and makes it the default, publishes its font state as a tagged row, and its opening narration is long enough to fold",
+        "tools/rpc_verify.py: write_fontconfig lifted at its third copy (r1447 / r1448 / r1473 each wrote the same XML over the same two directories)"
+      ],
+      "publishable_verification_bullets": [
+        "THE GAP, read off the code not guessed: pinion had addApplicationFont (R1448) and nothing for QApplication::setFont. cache.rs pushes no FontFamily property when style.font_family is None, so unset meant the platform stack and a shipped face was reachable only by naming it — which vn_scene never did, on any of its all-Korean rows",
+        "PREMISE measured with fc-query: the repo's vendored NanumGothic covers ac00-d7a3, so naming it is enough to shape Hangul; no new font is vendored",
+        "THE ENVIRONMENT built to match CI, not to be convenient: a fontconfig over a directory holding one Latin-only face. fc-list ':charset=ac00' counts 0 there and 85 on this host. Deliberately NOT a font-less tree, where the application's registered face would be the only one left and could win for the wrong reason",
+        "CLAIM (pinion-text, in that environment): registering the face does NOT change what an unset style resolves to (R1471's finding, now a test), and declaring the default does — the same unset style then shapes U+AC00 identically to a style that named the family, while an explicit family still outranks the default",
+        "CF-1 (one change): dropping the `.or(default_family)` resolution fails exactly the new scenario with registered=19.2 declared-default=19.2 (the tofu advance), and leaves the font-less and rescan scenarios passing",
+        "CLAIM (pinion-narrative): the R1345 flow assertion is Korean again and passes on a host with ZERO Hangul faces as well as on this one — bidirectional, which is what R1471 could not have",
+        "CF-2 (one change): removing the default-family call from that test FAILS on the Hangul-less host (all four rows 19px, no fold) and PASSES here — exactly the host-dependent split R1471 measured, reproduced and then removed",
+        "CLAIM (over the wire, demo): on the Hangul-less config the binding publishes default=NanumGothic / system=available, and scene/layout reports the narration folding to line_count=2, h=41",
+        "CF-3 (the demo's own discriminator, run every time): the same binding with its declaration suppressed reports default=(none) and the same text measures line_count=1, h=22 — same column width, so the difference is the face",
+        "OBLIGATION 3b: write_fontconfig was a THIRD mechanical copy and is lifted; the two prior demos now call it and both still pass. font_sources() has two consumers (hello-app-font, hello-vn-tide), so the paint-the-report pattern is NOT lifted yet",
+        "gate: cargo fmt --all --check clean, clippy -D pedantic 0 over the five changed crates, cargo doc --workspace --document-private-items 0, pinion-core 2739 / pinion-text 65 + 3 launchers / pinion-narrative 80 / pinion-shell 213 + 161 / hello-vn-tide 3; demos r1473 (new), r1448, r1447, hello_vn_tide all PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The self-hosted §5.37 arm ignores font_family entirely — self_hosted_text_eligible does not consult it, and SelfHostedTextEngine measures with the one system font it loaded. So under PINION_TEXT_ENGINE=1 a named family, and now a declared default, are silently not honoured. Pre-existing and env-opt-in, so out of scope here, but it is a real divergence between the two arms",
+        "Only the FAMILY is defaultable. Qt's QApplication::setFont carries a whole font; here every other TextStyle field already has a concrete value from TextStyle::new, so nothing else has an unset state to resolve. Giving them one is a separate design question with no consumer asking",
+        "The default is boot-only by construction (ShellConfig), matching R1448's argument that a boot snapshot cannot go stale. A mid-run seam would make FontSourceReport a Signal — the round that adds it decides that, not this one",
+        "hello-vn-tide's opening narration was lengthened so a fold is observable over the wire. That is content, and it is load-bearing for the demo; a shorter script would leave the wire unable to tell Hangul from tofu, since both measure the same stretched box"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -63,6 +63,7 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     run_demo,
     wait_snap,
+    write_fontconfig,
 )
 
 EXAMPLE = "hello-app-font"
@@ -89,22 +90,9 @@ def font_count(fontconfig: Path | None) -> int:
 
 
 def write_font_less_config(root: Path) -> Path:
-    """A well-formed fontconfig over an empty font tree — a slim container's
-    font situation, without needing one."""
-    fonts = root / "fonts"
-    cache = root / "cache"
-    fonts.mkdir()
-    cache.mkdir()
-    conf = root / "no-fonts.conf"
-    conf.write_text(
-        '<?xml version="1.0"?>\n'
-        '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n'
-        "<fontconfig>\n"
-        f"  <dir>{fonts}</dir>\n"
-        f"  <cachedir>{cache}</cachedir>\n"
-        "</fontconfig>\n"
-    )
-    return conf
+    """A fontconfig over an empty font tree — a slim container's font
+    situation, without needing one."""
+    return write_fontconfig(root)
 
 
 def text_of(snap, tag: str) -> str:

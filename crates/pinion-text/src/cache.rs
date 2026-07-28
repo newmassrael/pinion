@@ -170,6 +170,10 @@ pub struct LayoutCache {
     /// R1448 — families made selectable by [`Self::register_font_data`], in
     /// registration order, deduplicated.
     app_families: Vec<String>,
+    /// R1472 §5.36 — the family an unset [`TextStyle::font_family`] resolves
+    /// to; `None` keeps parley's platform stack. See
+    /// [`Self::set_default_font_family`].
+    default_family: Option<PinFontFamily>,
     layout_cx: LayoutContext<Color>,
 }
 
@@ -213,6 +217,7 @@ impl LayoutCache {
             shapes: 0,
             font_status: SystemFontStatus::NotProbed,
             app_families: Vec::new(),
+            default_family: None,
             layout_cx: LayoutContext::new(),
         }
     }
@@ -434,6 +439,56 @@ impl LayoutCache {
         names
     }
 
+    /// R1472 §5.36 — set the family an unset [`TextStyle::font_family`]
+    /// resolves to. Qt's `QApplication::setFont`.
+    ///
+    /// [`Self::register_font_data`] is only half of what an application that
+    /// ships its own face needs: it makes the family selectable *by name*, and
+    /// a binding still has to name it on every [`TextStyle`] it emits. Qt
+    /// applications do not — they call `addApplicationFont` and then
+    /// `QApplication::setFont`, and every unstyled widget follows. Without the
+    /// second half, `font_family: None` means "the platform stack" and a face
+    /// the application shipped is unreachable to any node that did not spell
+    /// it out, so an application whose script the host has no face for renders
+    /// nothing while holding the glyphs in memory. That is the state R1471
+    /// measured, and it is why a layout assertion about Hangul could not be
+    /// written against a host-neutral view.
+    ///
+    /// Only the *family* is defaultable, and that is not a shortcut: every
+    /// other [`TextStyle`] field already carries a concrete value from
+    /// [`TextStyle::new`], so the family is the one axis with an "unset" state
+    /// to resolve. Making the rest defaultable would first mean giving them an
+    /// unset state, which no consumer has asked for.
+    ///
+    /// # Why this clears the shape cache, when registering does not
+    ///
+    /// Registering a face is *additive* — it can only add a way to resolve a
+    /// name nobody had resolved before, so an already-shaped entry stays
+    /// correct and [`Self::register_font_data`] deliberately keeps it.
+    /// Changing the default *re-interprets keys that already exist*: every
+    /// cached entry whose style left the family unset was shaped against the
+    /// previous answer, and the `LayoutKey` cannot tell the two apart
+    /// because it holds the style as written, not as resolved. Keeping those
+    /// entries would render the old family for the new default until they aged
+    /// out of the LRU. So the entries go.
+    ///
+    /// In the shell this runs once at boot, before anything has shaped, and
+    /// clears nothing.
+    pub fn set_default_font_family(&mut self, family: Option<PinFontFamily>) {
+        if self.default_family == family {
+            return;
+        }
+        self.default_family = family;
+        self.inner.clear();
+    }
+
+    /// R1472 §5.36 — the family an unset [`TextStyle::font_family`] resolves
+    /// to, or `None` when unset styles keep the platform stack.
+    #[must_use]
+    pub fn default_font_family(&self) -> Option<&PinFontFamily> {
+        self.default_family.as_ref()
+    }
+
     /// R1002 §5.41 — measure the resolved monospace cell at `font_size_px`.
     ///
     /// This is the real Vello font measurement the R968 `CellMetric::new`
@@ -528,6 +583,9 @@ impl LayoutCache {
         // borrows `font_cx` and `layout_cx` as disjoint fields, so the
         // builder still takes both without a second pass over `self`.
         self.shapes += 1;
+        // Bound before the `&mut` field borrows below; disjoint fields, so the
+        // resolved default rides alongside them without a second pass.
+        let default_family = self.default_family.as_ref();
         let font_cx = ensure_font_context(
             &mut self.font_cx,
             &mut self.font_status,
@@ -542,12 +600,17 @@ impl LayoutCache {
         // parley resolves overlaps last-push-wins, so list order is the
         // run priority. `runs.is_empty()` collapses to the pre-R713
         // default-only path.
-        for prop in style_properties(style) {
+        // R1472 §5.36 — the application default reaches the base style AND
+        // every styled run: a run that overrides weight while leaving the
+        // family unset is as unset as the base, and resolving only the base
+        // would make a bolded span of an application-font paragraph fall back
+        // to the platform stack mid-line.
+        for prop in style_properties(style, default_family) {
             builder.push_default(prop);
         }
         for run in runs {
             let range = run.start as usize..run.end as usize;
-            for prop in style_properties(&run.style) {
+            for prop in style_properties(&run.style, default_family) {
                 builder.push(prop, range.clone());
             }
         }
@@ -575,7 +638,10 @@ impl LayoutCache {
 /// The returned properties own their data (`'static`), so the same
 /// list pushes via `push_default` (range = whole text) or `push(_,
 /// range)` (a run) without lifetime juggling.
-fn style_properties(style: &TextStyle) -> Vec<StyleProperty<'static, Color>> {
+fn style_properties(
+    style: &TextStyle,
+    default_family: Option<&PinFontFamily>,
+) -> Vec<StyleProperty<'static, Color>> {
     // u32 → f32: font_size_px fits f32 mantissa losslessly up to 2^24
     // px, far beyond any realistic UI font size.
     #[allow(
@@ -600,8 +666,12 @@ fn style_properties(style: &TextStyle) -> Vec<StyleProperty<'static, Color>> {
         StyleProperty::Underline(style.decoration.underline),
         StyleProperty::Strikethrough(style.decoration.strikethrough),
     ];
-    // R47.6 — pinned font family override; `None` keeps parley's default font
-    // stack (system fallback). R1002 §5.36 — the family is a typed
+    // R47.6 — pinned font family override. R1472 §5.36 — an unset family is
+    // resolved against the application default (`LayoutCache::
+    // set_default_font_family`, Qt's `QApplication::setFont`) before it is
+    // allowed to mean "parley's platform stack"; with no default declared the
+    // two are the same thing and this is byte-identical to pre-R1472.
+    // R1002 §5.36 — the family is a typed
     // [`PinFontFamily`]: a CSS *generic* class routes through
     // `FontFamilyName::Generic` (a generic resolves to a real face of its
     // class — `monospace` → a fixed-pitch font — and needs no extra fallback),
@@ -609,7 +679,7 @@ fn style_properties(style: &TextStyle) -> Vec<StyleProperty<'static, Color>> {
     // fallback so a missing name does not render a "tofu" run. The named-vs-
     // generic decision is carried by the type (decided once at construction /
     // wire ingest), not re-parsed from a string here each shape pass.
-    if let Some(family) = style.font_family.as_ref() {
+    if let Some(family) = style.font_family.as_ref().or(default_family) {
         let families: Vec<FontFamilyName<'static>> = match family {
             PinFontFamily::Generic(g) => vec![FontFamilyName::Generic(map_generic_family(*g))],
             PinFontFamily::Named(name) => vec![
@@ -1165,6 +1235,74 @@ mod tests {
         assert!(
             (1.8..=2.2).contains(&ratio),
             "cell height should scale ~2x from 16→32 px (got {ratio:.3}: {m32:?} / {m16:?})",
+        );
+    }
+
+    /// R1472 §5.36 — the default is readable back, and unset by default.
+    ///
+    /// The second half is the load-bearing one: a cache that defaulted to
+    /// *some* family would change what every pre-R1472 caller shapes.
+    #[test]
+    fn r1472_default_family_round_trips_and_starts_unset() {
+        let mut cache = LayoutCache::new();
+        assert_eq!(
+            cache.default_font_family(),
+            None,
+            "a fresh cache resolves an unset family to the platform stack, as \
+             it did before R1472",
+        );
+        let family = PinFontFamily::Named("Anything".into());
+        cache.set_default_font_family(Some(family.clone()));
+        assert_eq!(cache.default_font_family(), Some(&family));
+        cache.set_default_font_family(None);
+        assert_eq!(cache.default_font_family(), None, "and it clears");
+    }
+
+    /// R1472 §5.36 — changing the default drops entries shaped against the old
+    /// one; setting the same default drops nothing.
+    ///
+    /// Cached layouts are keyed on the style **as written**, so an entry whose
+    /// style left the family unset carries no trace of what that resolved to.
+    /// Without the clear, such an entry would keep rendering the previous
+    /// family until it aged out of the LRU — the asymmetry with
+    /// [`LayoutCache::register_font_data`], which is purely additive and
+    /// deliberately keeps its entries.
+    ///
+    /// `shapes()` is the observation: a re-shape means the entry was gone.
+    /// Neither family needs to exist on this host — the key arithmetic is what
+    /// is under test, and an unmatched name resolves through the same
+    /// `SansSerif` fallback either way.
+    #[test]
+    fn r1472_changing_the_default_evicts_what_it_reinterprets() {
+        let mut cache = LayoutCache::new();
+        let _ = cache.layout("keyed with an unset family", &style(16), None);
+        let after_first = cache.shapes();
+
+        let _ = cache.layout("keyed with an unset family", &style(16), None);
+        assert_eq!(
+            cache.shapes(),
+            after_first,
+            "premise: the second call is a cache HIT, so a re-shape below can \
+             only mean the entry was evicted",
+        );
+
+        cache.set_default_font_family(Some(PinFontFamily::Named("Some Face".into())));
+        let _ = cache.layout("keyed with an unset family", &style(16), None);
+        assert_eq!(
+            cache.shapes(),
+            after_first + 1,
+            "the entry was shaped against the previous default and had to go",
+        );
+        let after_change = cache.shapes();
+
+        cache.set_default_font_family(Some(PinFontFamily::Named("Some Face".into())));
+        let _ = cache.layout("keyed with an unset family", &style(16), None);
+        assert_eq!(
+            cache.shapes(),
+            after_change,
+            "re-setting the SAME default reinterprets nothing, so it evicts \
+             nothing — a clear-on-every-set would re-shape the whole working \
+             set on a no-op boot call",
         );
     }
 }

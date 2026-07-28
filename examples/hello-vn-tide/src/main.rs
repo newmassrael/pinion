@@ -61,7 +61,7 @@ use pinion_core::external::{
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
-use pinion_core::scene::Scene;
+use pinion_core::scene::{Scene, TextNode};
 use pinion_core::storage::Storage;
 use pinion_core::{Frame, WidgetCore};
 use pinion_narrative::vn::state::{VnCursor, VnSave};
@@ -119,16 +119,23 @@ fn tide_script() -> VnScript {
         // The opening step STAGES ITSELF (R1302): the tide-flat is up and 무녀
         // stands centre, authored in the script rather than poked in by the
         // binding — script-driven staging.
-        VnStep::narration("밀물이 갯벌을 삼킨다. 등 뒤에서 목소리가 너를 부른다.").with_stage(
-            vec![
-                StageOp::Background {
-                    source: BG_ASSET.to_string(),
-                },
-                StageOp::Show {
-                    sprite: VnSprite::new("mudang", MUDANG_ASSET, SpritePos::Center, 1),
-                },
-            ],
-        ),
+        // R1473 §5.36 — the opening narration is long enough to FOLD at the
+        // stage width, and that is load-bearing rather than stylistic: whether
+        // a Korean line wraps is the one thing a §2 #2 agent can read off
+        // `scene/layout` to tell prose rendered through the application's own
+        // face from unshapeable tofu, which measures the same box either way.
+        VnStep::narration(
+            "밀물이 갯벌을 삼킨다. 검은 물이 발목을 지나 무릎으로 차오르고, 등 뒤에서 \
+             누군가 네 이름을 부른다. 돌아보아서는 안 된다고, 그렇게 배웠다.",
+        )
+        .with_stage(vec![
+            StageOp::Background {
+                source: BG_ASSET.to_string(),
+            },
+            StageOp::Show {
+                sprite: VnSprite::new("mudang", MUDANG_ASSET, SpritePos::Center, 1),
+            },
+        ]),
         VnStep::line("무녀", "돌아오지 마라. 물때가 널 데려간다."),
         VnStep::timed_choice(
             "네 이름이 다시 불린다 — 어쩔 텐가?",
@@ -312,7 +319,7 @@ impl WidgetCore for HelloVnTide {
         if real_time_enabled() {
             let _clock = use_vn_clock(VN_CLOCK_KEY, state.clone());
         }
-        vn_scene(&state)
+        with_font_state_row(vn_scene(&state))
     }
 
     fn event_name((): ()) -> &'static str {
@@ -369,21 +376,111 @@ impl WidgetView for HelloVnTide {
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
         pinion_shell::SizeStrategy::Fixed {
-            width: 800,
-            // R1345 §5.21 — MEASURED, not guessed: the 240px stage plus the
-            // dialogue band's tallest step (a TimedChoice: prompt + countdown +
-            // both options + hint) lays out to 432px at this width. The window
-            // was 320 — so before R1345 the choices simply did not fit, which
-            // went unnoticed only because the authored `rect`s never reached a
-            // pixel and every row painted at (0, 0) inside the stage.
-            // `r1345_the_window_fits_every_step` pins this against the view.
-            height: 460,
+            width: WIN_W,
+            height: WIN_H,
         }
     }
 }
 
+/// The shipping window. R1345 §5.21 — MEASURED, not guessed: the 240px stage
+/// plus the dialogue band's tallest step (a TimedChoice: prompt + countdown +
+/// both options + hint) lays out to 432px at this width. The window was 320 — so
+/// before R1345 the choices simply did not fit, which went unnoticed only
+/// because the authored `rect`s never reached a pixel and every row painted at
+/// (0, 0) inside the stage. `r1345_the_window_fits_every_step` pins this
+/// against the view.
+///
+/// R1473 — named rather than inline because the font-state row below places
+/// itself against the window too, and two copies of a window size are two
+/// things that can disagree.
+const WIN_W: u32 = 800;
+const WIN_H: u32 = 460;
+
+/// R1473 §5.36 §2#7 — append the process font state to the projected scene, as
+/// one tagged row.
+///
+/// The report is a fact a pure `view` may read
+/// ([`font_sources()`](pinion_core::reactive::font_sources())), and R1448 settled that a binding
+/// PUBLISHES it into its scene rather than the framework growing an RPC method
+/// for it: then it travels over `scene/snapshot` like any other node and needs no
+/// second surface to keep in sync.
+///
+/// It matters here specifically. Every row this binding paints is Korean, so
+/// "which face drew this" decides whether the window is readable at all — and a
+/// scene node reports its family as unset, because the resolution is a process
+/// fact. Qt answers the same question with a `qWarning` on stderr that nothing
+/// downstream can read.
+fn with_font_state_row(scene: Scene) -> Scene {
+    let report = pinion_core::reactive::font_sources();
+    let declared = report
+        .default_family
+        .as_ref()
+        .map_or_else(|| "(none)".to_owned(), |f| f.as_wire().into_owned());
+    let row = TextNode::new(
+        format!(
+            "font: default={declared} · app={} · system={}",
+            if report.application_families.is_empty() {
+                "(none)".to_owned()
+            } else {
+                report.application_families.join(",")
+            },
+            match report.system {
+                pinion_core::reactive::SystemFontStatus::Available => "available",
+                pinion_core::reactive::SystemFontStatus::Unavailable => "unavailable",
+                pinion_core::reactive::SystemFontStatus::NotProbed => "not-probed",
+            }
+        ),
+        pinion_core::scene::Rect::new(0, WIN_H - 18, WIN_W, 16),
+    )
+    .with_tag(FONT_ROW_TAG);
+    match scene {
+        Scene::Container(mut c) => {
+            c.children.push(Scene::Text(row));
+            Scene::Container(c)
+        }
+        // vn_scene projects a container today; if that ever changes, wrap rather
+        // than drop the row — a silently absent status row is the failure mode
+        // this round exists to remove.
+        other => Scene::Container(pinion_core::scene::ContainerNode::new(vec![
+            other,
+            Scene::Text(row),
+        ])),
+    }
+}
+
+/// The tag the font-state row publishes under.
+const FONT_ROW_TAG: &str = "vn.font_state";
+
+/// R1472 §5.36 — the Hangul face this binding ships, and the family name it
+/// registers as. The repo already self-hosts it as a shaping fixture; nothing
+/// new is vendored. `PINION_VN_FONT=<path>` overrides the file, matching
+/// `hello-app-font`.
+const VN_FONT: &str = "crates/pinion-text-font/tests/fonts/NanumGothic-Regular.ttf";
+const VN_FONT_FAMILY: &str = "NanumGothic";
+
 fn main() {
-    pinion_shell::run::<HelloVnTide>();
+    // R1472 §5.36 — every row this binding paints is Korean, so the face that
+    // renders Hangul is part of the application, not a host it hopes for. Qt's
+    // pair: declare the face (`addApplicationFont`) and make it what unset text
+    // uses (`QApplication::setFont`). Without the second call the glyphs sit in
+    // memory while the window draws tofu — which is exactly what a CI runner
+    // (fonts installed, no CJK face among them) showed in R1471.
+    let path = std::env::var("PINION_VN_FONT").unwrap_or_else(|_| VN_FONT.to_owned());
+    let config = match std::fs::read(&path) {
+        Ok(data) => pinion_shell::ShellConfig::new()
+            .with_application_font(data)
+            .with_default_font_family(pinion_core::style::FontFamily::Named(VN_FONT_FAMILY.into())),
+        Err(err) => {
+            // A missing asset is reported and survived, not fatal: R1448 made a
+            // font-less host a legal state on purpose, and aborting here would
+            // trade unreadable text for no window at all. The dialogue then
+            // shapes against whatever the platform offers, which is the
+            // pre-R1472 behaviour.
+            eprintln!("hello-vn-tide: no Hangul face at {path}: {err}");
+            pinion_shell::ShellConfig::new()
+        }
+    };
+    pinion_shell::run_with_config::<HelloVnTide>(config);
 }
 
 #[cfg(test)]

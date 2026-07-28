@@ -604,7 +604,7 @@ impl<V: WidgetView> AppShell<V> {
     /// `accesskit_winit::Adapter` on `resumed` (R51.62 §5.40).
     #[must_use]
     pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
-        Self::new_with_fonts(proxy, Vec::new())
+        Self::new_with_fonts(proxy, Vec::new(), None)
     }
 
     /// R1448 §5.36 — [`Self::new`] plus the faces the application declared
@@ -612,8 +612,16 @@ impl<V: WidgetView> AppShell<V> {
     /// the shell's render cache before the binding's root owner is seeded, so
     /// the first `view` both can select them and can read the resulting
     /// [`FontSourceReport`](pinion_core::reactive::FontSourceReport).
+    ///
+    /// R1472 §5.36 — `default_family` is the family unset text resolves to
+    /// ([`ShellConfig::with_default_font_family`], Qt's
+    /// `QApplication::setFont`); `None` keeps the platform stack.
     #[must_use]
-    pub fn new_with_fonts(proxy: EventLoopProxy<AppEvent>, app_fonts: Vec<Vec<u8>>) -> Self {
+    pub fn new_with_fonts(
+        proxy: EventLoopProxy<AppEvent>,
+        app_fonts: Vec<Vec<u8>>,
+        default_family: Option<pinion_core::style::FontFamily>,
+    ) -> Self {
         // R999 §5.23 / R1362 PR-65 — seed the binding's root Owner with the live
         // `EventLoopProxy`-backed boundary handles before `ShellCore::new_with_seed`
         // runs the binding factories, so a binding's `create_extra_externals` can
@@ -626,22 +634,26 @@ impl<V: WidgetView> AppShell<V> {
         // "before any read" structural, so that panic is never reached here.
         let seed_proxy = proxy.clone();
         Self {
-            core: ShellCore::new_with_seed_and_fonts(app_fonts, move |root_owner| {
-                pinion_core::REPAINT_SINK.provide(
-                    root_owner,
-                    std::sync::Arc::new(crate::ProxyRepaintSink::new(seed_proxy.clone())),
-                );
-                crate::window_control::WINDOW_CONTROL_SINK.provide(
-                    root_owner,
-                    std::sync::Arc::new(crate::ProxyWindowControlSink::new(seed_proxy.clone())),
-                );
-                // R1363 §5.55 — the app-lifecycle sink rides the same seeding
-                // window as its window-lifecycle peer.
-                pinion_core::QUIT_SINK.provide(
-                    root_owner,
-                    std::sync::Arc::new(crate::ProxyQuitSink::new(seed_proxy)),
-                );
-            }),
+            core: ShellCore::new_with_seed_and_fonts(
+                app_fonts,
+                default_family,
+                move |root_owner| {
+                    pinion_core::REPAINT_SINK.provide(
+                        root_owner,
+                        std::sync::Arc::new(crate::ProxyRepaintSink::new(seed_proxy.clone())),
+                    );
+                    crate::window_control::WINDOW_CONTROL_SINK.provide(
+                        root_owner,
+                        std::sync::Arc::new(crate::ProxyWindowControlSink::new(seed_proxy.clone())),
+                    );
+                    // R1363 §5.55 — the app-lifecycle sink rides the same seeding
+                    // window as its window-lifecycle peer.
+                    pinion_core::QUIT_SINK.provide(
+                        root_owner,
+                        std::sync::Arc::new(crate::ProxyQuitSink::new(seed_proxy)),
+                    );
+                },
+            ),
             windows: HashMap::new(),
             spec_id_to_window_id: HashMap::new(),
             primary_window_id: None,
@@ -5179,6 +5191,9 @@ pub struct ShellConfig {
     on_ingress: Option<RpcIngressHook>,
     /// R1448 §5.36 — faces the application ships, in declaration order.
     app_fonts: Vec<Vec<u8>>,
+    /// R1472 §5.36 — the family unset text resolves to; see
+    /// [`ShellConfig::with_default_font_family`].
+    default_font_family: Option<pinion_core::style::FontFamily>,
 }
 
 impl ShellConfig {
@@ -5221,6 +5236,43 @@ impl ShellConfig {
     #[must_use]
     pub fn with_application_font(mut self, data: Vec<u8>) -> Self {
         self.app_fonts.push(data);
+        self
+    }
+
+    /// R1472 §5.36 — the family text that names none of its own resolves to.
+    ///
+    /// Qt's `QApplication::setFont`, and the other half of
+    /// [`Self::with_application_font`]. Declaring a face makes it selectable
+    /// *by name*; this makes it what the binding gets without naming it, so a
+    /// view fn does not have to spell the family on every
+    /// [`TextStyle`](pinion_core::style::TextStyle) it emits — which no Qt
+    /// application does either, and which no binding reliably remembers.
+    ///
+    /// The two are separate calls for the reason Qt keeps them separate: an
+    /// application may ship several faces and default to one of them, or ship
+    /// a face used only where it is named (an icon or code face) and leave the
+    /// default alone. Folding the choice into the declaration would make the
+    /// common case shorter and the other two unreachable.
+    ///
+    /// Without this, an application whose text is in a script the host has no
+    /// face for renders nothing while holding the glyphs in memory — the state
+    /// R1471 measured, where a Hangul view passed on a developer box and drew
+    /// tofu on CI.
+    ///
+    /// Name a family that was declared here or that the host installs; a name
+    /// nothing resolves to falls back exactly as a named
+    /// [`TextStyle::font_family`](pinion_core::style::TextStyle) would, and
+    /// the resolved value is published on
+    /// [`FontSourceReport::default_family`](pinion_core::reactive::FontSourceReport)
+    /// so the binding can render what it actually got.
+    ///
+    /// Takes the typed [`FontFamily`](pinion_core::style::FontFamily) rather
+    /// than a string: whether a token is a family name or a CSS generic class
+    /// is a decision the type carries, made once at construction, and a
+    /// `&str` overload here would re-open it at every call site.
+    #[must_use]
+    pub fn with_default_font_family(mut self, family: pinion_core::style::FontFamily) -> Self {
+        self.default_font_family = Some(family);
         self
     }
 
@@ -5295,13 +5347,15 @@ pub fn run_with_config<V: WidgetView>(config: ShellConfig) {
     // consumes the rest of it; they are handed to the shell constructor, which
     // registers them into the render cache and publishes the resulting report.
     let app_fonts = config.app_fonts;
+    let default_font_family = config.default_font_family;
     let ingress: Arc<dyn RpcIngress> = Arc::new(ProxyRpcIngress::new(event_loop.create_proxy()));
     spawn_stdin_rpc_reader(Arc::clone(&ingress));
     if let Some(hook) = config.on_ingress {
         hook(Arc::clone(&ingress));
     }
 
-    let mut app = AppShell::<V>::new_with_fonts(event_loop.create_proxy(), app_fonts);
+    let mut app =
+        AppShell::<V>::new_with_fonts(event_loop.create_proxy(), app_fonts, default_font_family);
 
     // R51.159 §5.23 — when handlers are supplied, assemble the
     // CommandExecutor and inject it before the loop starts so the first

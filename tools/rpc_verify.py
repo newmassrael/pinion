@@ -86,6 +86,40 @@ def isolated_storage_dir(prefix: str) -> Iterator[Path]:
         shutil.rmtree(storage_dir, ignore_errors=True)
 
 
+def write_fontconfig(root: Path, faces: tuple[str, ...] = ()) -> Path:
+    """R1473 — a well-formed fontconfig over a directory holding exactly `faces`.
+
+    Not "a broken config": a valid one describing a host whose font inventory
+    the demo chose. With no faces that is a slim container; with a Latin-only
+    face it is an ordinary CI runner that cannot draw CJK. Both are real hosts
+    a binding meets, and both are states a demo needs to be able to construct.
+
+    Lifted here at its THIRD copy (`r1447_font_free_tui`,
+    `r1448_app_font`, `r1473_app_default_font` each wrote the same XML over the
+    same two directories). The variable part is only which faces go in, so the
+    duplication was mechanical and carried no per-demo opinion.
+
+    `root` must exist; the `fonts/` and `cache/` subdirectories are created.
+    Returns the config path, for `FONTCONFIG_FILE`.
+    """
+    fonts = root / "fonts"
+    cache = root / "cache"
+    fonts.mkdir(exist_ok=True)
+    cache.mkdir(exist_ok=True)
+    for face in faces:
+        shutil.copy(face, fonts / Path(face).name)
+    conf = root / "fontconfig.conf"
+    conf.write_text(
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n'
+        "<fontconfig>\n"
+        f"  <dir>{fonts}</dir>\n"
+        f"  <cachedir>{cache}</cachedir>\n"
+        "</fontconfig>\n"
+    )
+    return conf
+
+
 class RpcError(Exception):
     """JSON-RPC 2.0 error response or transport-level failure."""
 

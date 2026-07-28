@@ -70,7 +70,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from build_gate import ensure_built  # noqa: E402
-from rpc_verify import assert_eq, run_demo  # noqa: E402
+from rpc_verify import assert_eq, run_demo, write_fontconfig  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
@@ -116,23 +116,8 @@ def font_count(fontconfig: Path | None) -> int:
 
 def write_empty_fontconfig(root: Path) -> Path:
     """A valid fontconfig whose font directory is empty — a font-less host,
-    without needing one. `<dir>` and `<cachedir>` both point into a fresh
-    empty tree, so fontconfig finds nothing to match and every generic
-    family resolves to no font."""
-    fonts = root / "fonts"
-    cache = root / "cache"
-    fonts.mkdir()
-    cache.mkdir()
-    conf = root / "no-fonts.conf"
-    conf.write_text(
-        '<?xml version="1.0"?>\n'
-        '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n'
-        "<fontconfig>\n"
-        f"  <dir>{fonts}</dir>\n"
-        f"  <cachedir>{cache}</cachedir>\n"
-        "</fontconfig>\n"
-    )
-    return conf
+    without needing one. Every generic family then resolves to no font."""
+    return write_fontconfig(root)
 
 
 def paint_on_pty(
