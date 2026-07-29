@@ -73830,6 +73830,64 @@
         "`refused_by` deliberately does not report WHERE the walk looked when it reached nothing — a caller cannot tell \"no paint scene yet, only state was searched\" from \"both were searched\". No consumer has needed it; asserting the absence is what this round shipped instead of inventing the field."
       ]
     },
+    "Round 1486": {
+      "decision_summary": "The push gate now bounds the build cache it creates: target/'s size is reported on every push and oldest artifacts are reclaimed past a budget, after the build gates so the sweep cannot remove what they just built.",
+      "changes_bullets": [
+        "New `.githooks/lib/target-budget.sh` — `enforce_target_budget` reports `target/`'s size on every push and, when it exceeds a budget, reclaims oldest artifacts via `cargo sweep --maxsize`.",
+        "Wired into `.githooks/pre-push` as step 4, deliberately AFTER the clippy and rustdoc gates: those gates build the workspace, so their artifacts are the newest in the tree and an oldest-first sweep cannot remove them. Run before, it would delete artifacts the very next command rebuilds.",
+        "The size line prints unconditionally, over budget or not — that number is the fact whose absence let the growth run unseen.",
+        "Default budget 100 GiB, overridable with `PINION_TARGET_BUDGET_GB`; a non-integer value is rejected loudly rather than silently reverting to the default.",
+        "Never fails the push: a missing `cargo-sweep`, an unmeasurable tree, or a failed sweep all report and continue, because the commit being published is not what is unsafe.",
+        "`CLAUDE.md` gains a \"Build-cache budget\" subsection under the hooks section — the durable tracked home, since `docs/SEED_PROMPT.md` is gitignored."
+      ],
+      "verification_bullets": [
+        "Measured 2026-07-29 before any change: `target/` was 198 GiB (debug 191 GiB) and the filesystem was 100% full with 8.1 GiB free. `cargo sweep --time 1` reclaimed 165.37 GiB, and an incremental `cargo check -p pinion-rpc --all-targets` still finished in 2.3s afterwards — essentially all of it was dead weight.",
+        "The defect was invisibility, not the absence of a deleter: nothing in the repo had ever reported the size, so ~800 rounds of growth went unseen until a different session hit the full disk and asked whether cleaning was safe.",
+        "Size budget chosen over `--time N` days because what ran out was space, not age: a week-based sweep reclaims nothing during a heavy week and deletes useful artifacts during a quiet one.",
+        "`--maxsize` semantics verified both ways by dry-run before wiring: `--maxsize 200GB` on a 69 GiB tree reported \"would clean: nothing\"; `--maxsize 40GB` reported 36.63 GiB.",
+        "Every branch executed, not just the no-op one: under budget (prints the number, acts not), non-integer budget \"80GB\" and \"0\" (both rejected, default not silently substituted), missing `target/` (silent rc=0), and OVER budget for real — budget 60 GiB against a 67 GiB tree reclaimed 18.00 GiB and reported \"target/ now 50 GiB\".",
+        "The design's load-bearing claim measured directly: immediately after that 18 GiB sweep, `cargo check -p pinion-rpc --all-targets` finished in 3.7s, so the artifacts the gates had just built survived an oldest-first sweep.",
+        "The stated overshoot limit reproduced on a second data point: `--maxsize 60GB` landed at 50 GiB, as `--maxsize 40GB` had landed near 32 — `cargo sweep` converts a size budget into a timestamp cutoff, so it trims coarsely.",
+        "`du -sb` cost measured at 0.12s on a 69 GiB tree, so the unconditional report is free. `shellcheck -x` clean (0 findings) on `pre-push`, `lib/target-budget.sh` and `commit-msg`; `bash -n` clean."
+      ],
+      "impact_refs": [
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "Not a lock. A concurrently building session's artifacts are the newest in the tree, so oldest-first will not reach them, but nothing here coordinates with another process — the hazard the session that first reported the full disk correctly raised.",
+        "`cargo sweep` trims at timestamp granularity and so overshoots the budget (measured twice). Safe for this purpose — it only ever means a little more rebuilding — but it is not a precise trim.",
+        "Only pinion is bounded. Measured the same day: sprag 88G, watching-zenoh 87G, hda4-diag 62G, the-tide-that-counts 45G, scxml-core-engine 44G, mnemosyne 36G — over 360G of very likely the same accumulation. The cross-repo rule forbids a pinion session from running cargo in any of them, so each needs the same treatment from its own session.",
+        "The budget is enforced at push time only. A session that builds heavily without pushing is unbounded until its next push; a round that never pushes never reports."
+      ],
+      "publishable_decision_summary": "The push gate now bounds the build cache it creates: target/'s size is reported on every push and oldest artifacts are reclaimed past a budget, after the build gates so the sweep cannot remove what they just built.",
+      "publishable_changes_bullets": [
+        "New `.githooks/lib/target-budget.sh` — `enforce_target_budget` reports `target/`'s size on every push and, when it exceeds a budget, reclaims oldest artifacts via `cargo sweep --maxsize`.",
+        "Wired into `.githooks/pre-push` as step 4, deliberately AFTER the clippy and rustdoc gates: those gates build the workspace, so their artifacts are the newest in the tree and an oldest-first sweep cannot remove them. Run before, it would delete artifacts the very next command rebuilds.",
+        "The size line prints unconditionally, over budget or not — that number is the fact whose absence let the growth run unseen.",
+        "Default budget 100 GiB, overridable with `PINION_TARGET_BUDGET_GB`; a non-integer value is rejected loudly rather than silently reverting to the default.",
+        "Never fails the push: a missing `cargo-sweep`, an unmeasurable tree, or a failed sweep all report and continue, because the commit being published is not what is unsafe.",
+        "`CLAUDE.md` gains a \"Build-cache budget\" subsection under the hooks section — the durable tracked home, since `docs/SEED_PROMPT.md` is gitignored."
+      ],
+      "publishable_verification_bullets": [
+        "Measured 2026-07-29 before any change: `target/` was 198 GiB (debug 191 GiB) and the filesystem was 100% full with 8.1 GiB free. `cargo sweep --time 1` reclaimed 165.37 GiB, and an incremental `cargo check -p pinion-rpc --all-targets` still finished in 2.3s afterwards — essentially all of it was dead weight.",
+        "The defect was invisibility, not the absence of a deleter: nothing in the repo had ever reported the size, so ~800 rounds of growth went unseen until a different session hit the full disk and asked whether cleaning was safe.",
+        "Size budget chosen over `--time N` days because what ran out was space, not age: a week-based sweep reclaims nothing during a heavy week and deletes useful artifacts during a quiet one.",
+        "`--maxsize` semantics verified both ways by dry-run before wiring: `--maxsize 200GB` on a 69 GiB tree reported \"would clean: nothing\"; `--maxsize 40GB` reported 36.63 GiB.",
+        "Every branch executed, not just the no-op one: under budget (prints the number, acts not), non-integer budget \"80GB\" and \"0\" (both rejected, default not silently substituted), missing `target/` (silent rc=0), and OVER budget for real — budget 60 GiB against a 67 GiB tree reclaimed 18.00 GiB and reported \"target/ now 50 GiB\".",
+        "The design's load-bearing claim measured directly: immediately after that 18 GiB sweep, `cargo check -p pinion-rpc --all-targets` finished in 3.7s, so the artifacts the gates had just built survived an oldest-first sweep.",
+        "The stated overshoot limit reproduced on a second data point: `--maxsize 60GB` landed at 50 GiB, as `--maxsize 40GB` had landed near 32 — `cargo sweep` converts a size budget into a timestamp cutoff, so it trims coarsely.",
+        "`du -sb` cost measured at 0.12s on a 69 GiB tree, so the unconditional report is free. `shellcheck -x` clean (0 findings) on `pre-push`, `lib/target-budget.sh` and `commit-msg`; `bash -n` clean."
+      ],
+      "publishable_impact_refs": [
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Not a lock. A concurrently building session's artifacts are the newest in the tree, so oldest-first will not reach them, but nothing here coordinates with another process — the hazard the session that first reported the full disk correctly raised.",
+        "`cargo sweep` trims at timestamp granularity and so overshoots the budget (measured twice). Safe for this purpose — it only ever means a little more rebuilding — but it is not a precise trim.",
+        "Only pinion is bounded. Measured the same day: sprag 88G, watching-zenoh 87G, hda4-diag 62G, the-tide-that-counts 45G, scxml-core-engine 44G, mnemosyne 36G — over 360G of very likely the same accumulation. The cross-repo rule forbids a pinion session from running cargo in any of them, so each needs the same treatment from its own session.",
+        "The budget is enforced at push time only. A session that builds heavily without pushing is unbounded until its next push; a round that never pushes never reports."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

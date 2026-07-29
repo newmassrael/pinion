@@ -155,6 +155,30 @@ from here.
 
 If a hook fails, **fix the underlying issue**. Never bypass with `--no-verify` unless the user explicitly requests it.
 
+### Build-cache budget (R1486)
+
+`pre-push` ends by printing `target/`'s size and, when it exceeds a budget,
+reclaiming oldest artifacts with `cargo sweep --maxsize` (`.githooks/lib/target-budget.sh`).
+
+- **Why**: measured 2026-07-29, `target/` had reached **198 GiB** and the disk
+  was 100% full. Nothing ever reported the size, so the growth was invisible
+  for ~800 rounds until another session hit the full disk. A sweep reclaimed
+  **165 GiB** and incremental builds still ran in seconds — it was all dead
+  weight. This hook is what grows the cache (unconditional workspace clippy +
+  `cargo doc` on every push), so it is what bounds it.
+- **The size is printed every push**, over budget or not. That number is the
+  fact whose absence caused this; a bound that only speaks when it fires would
+  leave the trend unseen. Cost: one `du -sb`, ~0.12s.
+- **Size, not age**: what ran out was space. `--time N` reclaims nothing during
+  a heavy week and deletes useful artifacts during a quiet one.
+- **Runs last, after the build gates** — they build, so their artifacts are
+  newest and an oldest-first sweep cannot remove them. Verified: an 18 GiB
+  sweep left `cargo check -p pinion-rpc --all-targets` at 3.7s.
+- Default budget **100 GiB**; override with `PINION_TARGET_BUDGET_GB` (integer
+  GiB). Never fails the push — see the lib header for the stated limits
+  (timestamp-granularity overshoot; no coordination with a concurrent build).
+- Needs `cargo install cargo-sweep`; without it the hook reports and continues.
+
 ## Vendor submodule (vendor/sce)
 
 - Tracks `scxml-core-engine` on `branch=main`

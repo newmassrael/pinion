@@ -139,4 +139,17 @@ if ! cr_out="$(mnemosyne-cli validate-code-refs 2>&1)"; then
     exit 1
 fi
 
+# 4. R1486 — report and bound the build cache THIS hook creates.
+#
+# Deliberately last. The clippy and rustdoc gates above build the workspace,
+# so their artifacts are the newest in `target/` and an oldest-first sweep
+# cannot remove them; running this before them would delete artifacts the
+# very next command rebuilds. See lib/target-budget.sh for why the bound is
+# on size rather than age, and for what this does NOT guarantee.
+#
+# Never fails the push: the commit being published is not what is unsafe.
+# shellcheck source=lib/target-budget.sh
+source "$hook_dir/lib/target-budget.sh"
+enforce_target_budget "$repo_root" "pre-push"
+
 exit 0
