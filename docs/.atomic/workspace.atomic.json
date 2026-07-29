@@ -74012,6 +74012,64 @@
         "Not pushed with this commit: another session holds `crates/pinion-rpc` mid-refactor for Round 1487 and the workspace does not currently compile, so the unconditional clippy gate in pre-push would fail on work that is not this round's. Only this round's files were staged."
       ]
     },
+    "Round 1489": {
+      "decision_summary": "The build cache is bounded by construction, not by a push-time sweep: every project's target/ moved onto a fixed-size compressed volume, and the hook that measures it was repaired to follow the symlink it would otherwise have read as zero.",
+      "changes_bullets": [
+        "`.githooks/lib/target-budget.sh` now measures with `du -sbL`: R1489 made every project's `target/` a symlink onto a compressed volume, and without `-L` the gate measured the LINK (29 bytes) and reported `0 GiB`, so it could never fire again.",
+        "The hook's header and `CLAUDE.md` now say the hook is the trend line, not the bound — the hard ceiling is the fixed-size volume, and a daily user timer sweeps every project rather than only this one.",
+        "`CLAUDE.md` records the corrected root cause: the size is a per-target floor (~148 MiB independent of the example's own code) multiplied by the target structure, not the push gate's clippy/doc as R1486 stated.",
+        "Machine-level (outside the repo, recorded here because it changes what `target/` IS): `~/.buildcache.btrfs` 100 GiB btrfs image, `compress=zstd:1`, `nofail` fstab entry, every project's `target/` symlinked into it; `buildcache-sweep.timer` user timer with linger enabled."
+      ],
+      "verification_bullets": [
+        "Per-target size is independent of the example's own source: `hello-checkbox` 298 LOC = 148.3 MiB, `hello-button` 446 LOC = 148.0 MiB, `todomvc` 5,518 LOC = 154.3 MiB, `hello-node-editor` 8,998 LOC = 155.0 MiB. The binary is the framework re-linked, not the example.",
+        "`.debug_*` is 82.6 MiB of that 148.3 MiB (56%); `strip --strip-debug` gives 65.6 MiB and `--strip-all` 45.0 MiB.",
+        "Multiplier measured from `cargo metadata`: 198 bin + 25 lib + 26 test + 2 bench targets, and 190 of 197 examples carry `#[cfg(test)] mod tests`. One example's test executable built directly: 54.1 MiB. So ~200 MiB per example, ~40 GiB per complete workspace build.",
+        "R1486's stated cause is refuted by measurement: clippy/doc produce `.rmeta` 2.75 GiB + `.rlib` 5.55 GiB + doc 0.26 GiB and never link, while `target/debug` top level is 26.79 GiB of linked binaries.",
+        "Compression measured as ground truth via image growth (not `du`, which does not report btrfs compression): 457.6 MiB of real binaries grew the image by 118.8 MiB = 3.85x. Standalone zstd-1 on one binary was 4.46x at 570 MB/s, faster than the NVMe write it replaces.",
+        "Machine-wide result: 118 GiB of `target/` across six repos became 37 GiB; root free went 288 GiB to 367 GiB.",
+        "Build behaviour unchanged on the compressed volume: `cargo check -p pinion-rpc --all-targets` 0.17s warm (0.16s before), 2.84s after touching a source file, `cargo test -p pinion-rpc` 1014 passed.",
+        "The fstab entry was verified by actually unmounting and running `mount -a`, then rebuilding — not by inspection. `nofail` means a missing image cannot block boot.",
+        "The timer was verified by running the service once (`37 GiB used of 100 GiB, within budget`) rather than by registering it and assuming.",
+        "The hook fix was verified by running `enforce_target_budget` before and after: 29 bytes vs 51 GiB."
+      ],
+      "impact_refs": [
+        "6"
+      ],
+      "carry_forward_bullets": [
+        "NOT DONE, measured and deliberate: `[profile.dev] split-debuginfo = \"unpacked\"` would stop ~400 binaries each embedding a private copy of the framework's DWARF. It composes with compression rather than overlapping it (zstd is per-file, so 400 copies still cost 400 times). Untried here because it wants a full-rebuild measurement; the compression landed first because it needed no build-config change at all.",
+        "The budget number in the hook is apparent bytes while the volume stores compressed, so the two units differ by ~3.9x. A future round that wants one number should read the volume's own usage, not `du`.",
+        "The loopback image adds a device layer; measured build timings were unchanged, but no throughput benchmark was run. A dedicated partition is the eventual form.",
+        "`cargo sweep --installed` still reclaims nothing (R1488's finding stands): `rust-toolchain.toml` pins an exact 1.88.0, so no toolchain has ever rotated."
+      ],
+      "publishable_decision_summary": "The build cache is bounded by construction, not by a push-time sweep: every project's target/ moved onto a fixed-size compressed volume, and the hook that measures it was repaired to follow the symlink it would otherwise have read as zero.",
+      "publishable_changes_bullets": [
+        "`.githooks/lib/target-budget.sh` now measures with `du -sbL`: R1489 made every project's `target/` a symlink onto a compressed volume, and without `-L` the gate measured the LINK (29 bytes) and reported `0 GiB`, so it could never fire again.",
+        "The hook's header and `CLAUDE.md` now say the hook is the trend line, not the bound — the hard ceiling is the fixed-size volume, and a daily user timer sweeps every project rather than only this one.",
+        "`CLAUDE.md` records the corrected root cause: the size is a per-target floor (~148 MiB independent of the example's own code) multiplied by the target structure, not the push gate's clippy/doc as R1486 stated.",
+        "Machine-level (outside the repo, recorded here because it changes what `target/` IS): `~/.buildcache.btrfs` 100 GiB btrfs image, `compress=zstd:1`, `nofail` fstab entry, every project's `target/` symlinked into it; `buildcache-sweep.timer` user timer with linger enabled."
+      ],
+      "publishable_verification_bullets": [
+        "Per-target size is independent of the example's own source: `hello-checkbox` 298 LOC = 148.3 MiB, `hello-button` 446 LOC = 148.0 MiB, `todomvc` 5,518 LOC = 154.3 MiB, `hello-node-editor` 8,998 LOC = 155.0 MiB. The binary is the framework re-linked, not the example.",
+        "`.debug_*` is 82.6 MiB of that 148.3 MiB (56%); `strip --strip-debug` gives 65.6 MiB and `--strip-all` 45.0 MiB.",
+        "Multiplier measured from `cargo metadata`: 198 bin + 25 lib + 26 test + 2 bench targets, and 190 of 197 examples carry `#[cfg(test)] mod tests`. One example's test executable built directly: 54.1 MiB. So ~200 MiB per example, ~40 GiB per complete workspace build.",
+        "R1486's stated cause is refuted by measurement: clippy/doc produce `.rmeta` 2.75 GiB + `.rlib` 5.55 GiB + doc 0.26 GiB and never link, while `target/debug` top level is 26.79 GiB of linked binaries.",
+        "Compression measured as ground truth via image growth (not `du`, which does not report btrfs compression): 457.6 MiB of real binaries grew the image by 118.8 MiB = 3.85x. Standalone zstd-1 on one binary was 4.46x at 570 MB/s, faster than the NVMe write it replaces.",
+        "Machine-wide result: 118 GiB of `target/` across six repos became 37 GiB; root free went 288 GiB to 367 GiB.",
+        "Build behaviour unchanged on the compressed volume: `cargo check -p pinion-rpc --all-targets` 0.17s warm (0.16s before), 2.84s after touching a source file, `cargo test -p pinion-rpc` 1014 passed.",
+        "The fstab entry was verified by actually unmounting and running `mount -a`, then rebuilding — not by inspection. `nofail` means a missing image cannot block boot.",
+        "The timer was verified by running the service once (`37 GiB used of 100 GiB, within budget`) rather than by registering it and assuming.",
+        "The hook fix was verified by running `enforce_target_budget` before and after: 29 bytes vs 51 GiB."
+      ],
+      "publishable_impact_refs": [
+        "6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "NOT DONE, measured and deliberate: `[profile.dev] split-debuginfo = \"unpacked\"` would stop ~400 binaries each embedding a private copy of the framework's DWARF. It composes with compression rather than overlapping it (zstd is per-file, so 400 copies still cost 400 times). Untried here because it wants a full-rebuild measurement; the compression landed first because it needed no build-config change at all.",
+        "The budget number in the hook is apparent bytes while the volume stores compressed, so the two units differ by ~3.9x. A future round that wants one number should read the volume's own usage, not `du`.",
+        "The loopback image adds a device layer; measured build timings were unchanged, but no throughput benchmark was run. A dedicated partition is the eventual form.",
+        "`cargo sweep --installed` still reclaims nothing (R1488's finding stands): `rust-toolchain.toml` pins an exact 1.88.0, so no toolchain has ever rotated."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

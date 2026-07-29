@@ -155,20 +155,50 @@ from here.
 
 If a hook fails, **fix the underlying issue**. Never bypass with `--no-verify` unless the user explicitly requests it.
 
-### Build-cache budget (R1486)
+### Build-cache budget (R1486, corrected + bounded R1489)
 
 `pre-push` ends by printing `target/`'s size and, when it exceeds a budget,
 reclaiming oldest artifacts with `cargo sweep --maxsize` (`.githooks/lib/target-budget.sh`).
+Since R1489 that hook is the **trend line, not the bound** — see below.
 
 - **Why**: measured 2026-07-29, `target/` had reached **198 GiB** and the disk
   was 100% full. Nothing ever reported the size, so the growth was invisible
   for ~800 rounds until another session hit the full disk. A sweep reclaimed
   **165 GiB** and incremental builds still ran in seconds — it was all dead
-  weight. This hook is what grows the cache (unconditional workspace clippy +
-  `cargo doc` on every push), so it is what bounds it.
+  weight.
+- **R1489 correction — the stated cause was wrong.** R1486 said "this hook is
+  what grows the cache (unconditional workspace clippy + `cargo doc`)".
+  Measured: clippy/doc emit `.rmeta` 2.75 GiB + `.rlib` 5.55 GiB + doc 0.26 GiB,
+  and **clippy does not link at all**, while the 27 GiB at `target/debug`'s top
+  level is linked binaries. The dominant term is *linking*, from
+  `cargo test --workspace` and the demos' release builds.
+- **R1489 root cause — the size is structural, not debug-info alone.** One
+  example binary is **148 MiB whatever the example contains**: `hello-checkbox`
+  (298 LOC) 148.3 MiB vs `hello-node-editor` (8,998 LOC) 155.0 MiB. Each binary
+  statically re-links the whole framework and re-embeds its DWARF (`.debug_*` =
+  82.6 MiB, **56%**; `strip --strip-debug` takes 148.3 → 65.6 MiB). The
+  multiplier is the target structure: 198 `bin` + 25 `lib` + 26 `test` targets,
+  and **190 of 197 examples carry `#[cfg(test)] mod tests`**, each producing a
+  second linked executable (measured: 54.1 MiB for `hello-checkbox`). So one
+  complete workspace test build materialises **~40 GiB** before any staleness;
+  198 GiB was that floor times a few generations.
+- **R1489 hard bound — `target/` is now a symlink onto a compressed,
+  fixed-size volume.** Every project on the machine (`~/.buildcache.btrfs`,
+  100 GiB image, `compress=zstd:1`, `nofail` in `/etc/fstab`) holds its
+  `target/` there. Measured 3.85x compression on real artifacts, machine-wide
+  118 GiB -> 37 GiB, with `cargo check`/`cargo test` timings unchanged
+  (0.17s warm, 2.84s after a touch). Because the image size *is* the quota,
+  build caches can no longer fill the root filesystem — the 2026-07-29 incident
+  becomes impossible rather than late-detected. A user systemd timer
+  (`buildcache-sweep.timer`, daily, linger enabled) sweeps **every** project;
+  the pre-push hook only ever swept this one, and the repos without it had
+  accumulated 66 GiB between them.
 - **The size is printed every push**, over budget or not. That number is the
   fact whose absence caused this; a bound that only speaks when it fires would
-  leave the trend unseen. Cost: one `du -sb`, ~0.12s.
+  leave the trend unseen. Cost: one `du -sbL`, ~0.12s. **`-L` is load-bearing**
+  since R1489: without it `du` measures the symlink (29 bytes) and the gate
+  reports `0 GiB` forever. The budget counts *apparent* bytes while the volume
+  stores them ~3.9x smaller, so 100 GiB here is ~26 GiB of disk.
 - **Size, not age**: what ran out was space. `--time N` reclaims nothing during
   a heavy week and deletes useful artifacts during a quiet one.
 - **Dead-toolchain artifacts go first, unconditionally** (R1488, `cargo sweep

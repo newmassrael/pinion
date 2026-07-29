@@ -14,7 +14,17 @@
 #   1. THE NUMBER. The size is printed on every push, over budget or not.
 #      That is the fact whose absence let the growth run unseen; a bound
 #      that only speaks when it fires would still leave the trend invisible.
-#      Cost is one `du -sb`, measured at 0.12s on a 69 GiB tree.
+#      Cost is one `du -sbL`, measured at 0.12s on a 69 GiB tree.
+#
+#   R1489: this is no longer the HARD bound. Every project's target/ now lives
+#   in a fixed-size compressed btrfs image, so build caches cannot fill the
+#   root filesystem at all — overflow is impossible rather than detected late,
+#   which is what the 2026-07-29 incident needed (the disk hit 100% and another
+#   session ran into it before any push could report the size). What survives
+#   here is the per-repo trend line and an eager reclaim; the ceiling is the
+#   volume, and a daily user timer sweeps every project rather than only this
+#   one. Note the budget below is measured on APPARENT bytes, while the volume
+#   stores them compressed ~3.9x (measured), so 100 GiB here is ~26 GiB of disk.
 #
 #   2. A BOUND, enforced rather than documented. `[[r1470-paint-test-opened-
 #      the-speakers]]` — a prose warning is not a gate. Being over budget
@@ -121,8 +131,13 @@ enforce_target_budget() {
         return 0
     fi
 
+    # `-L` follows the link: R1489 moved every project's target/ onto a
+    # compressed btrfs volume and left a symlink behind, and without `-L` this
+    # measured the LINK — 29 bytes, so the gate reported "0 GiB" and would
+    # never have fired again. A bound that cannot fire is worse than none,
+    # because the number it prints looks like reassurance.
     local bytes
-    if ! bytes="$(du -sb "$target" 2>/dev/null | cut -f1)" || [[ -z "$bytes" ]]; then
+    if ! bytes="$(du -sbL "$target" 2>/dev/null | cut -f1)" || [[ -z "$bytes" ]]; then
         echo "$label: could not measure $target — build cache left unbounded" >&2
         return 0
     fi
@@ -147,7 +162,7 @@ enforce_target_budget() {
 
     # The after-number, so the line above is a claim with evidence rather
     # than an announcement of intent.
-    if bytes="$(du -sb "$target" 2>/dev/null | cut -f1)" && [[ -n "$bytes" ]]; then
+    if bytes="$(du -sbL "$target" 2>/dev/null | cut -f1)" && [[ -n "$bytes" ]]; then
         echo "$label: target/ now $(( bytes / 1073741824 )) GiB" >&2
     fi
     return 0

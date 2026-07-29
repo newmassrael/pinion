@@ -1,5 +1,9 @@
 # Cargo / Rust build artifacts
-/target/
+# No trailing slash: since R1489 `target` is a SYMLINK onto the compressed
+# build-cache volume, and `target/` matches directories only — the symlink
+# slipped past it and got staged by `git add -A`. A machine-specific absolute
+# path in a tracked tree would break every clone.
+/target
 **/*.rs.bk
 
 # Vendored submodule build artifacts — submodule manages its own target/.
