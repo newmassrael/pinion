@@ -88,6 +88,12 @@ IDENTITY = {
     "sizes": BOOT_W,
     "hidden": [False] * NCOLS,
     "modes": ["interactive"] * NCOLS,
+    # R1491 — the snapshot grew the sort indicator, which Qt's `saveState()`
+    # has always carried. This assertion is a WHOLE-object equality on purpose:
+    # a field added to the peer of `saveState` must be visible here rather than
+    # slipping in unremarked, which is what a field-by-field check would allow.
+    "sort_indicator": "none",
+    "sort_indicator_shown": True,
 }
 
 

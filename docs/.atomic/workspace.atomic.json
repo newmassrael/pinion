@@ -74124,6 +74124,72 @@
         "Not tried: `debug = \"line-tables-only\"`, which would drop type and variable DWARF outright. It was not measured because this round found a change that costs nothing, and that one does not."
       ]
     },
+    "Round 1491": {
+      "decision_summary": "R1491 - a header says which section it is sorted by: the Qt QHeaderView sort indicator becomes logical-keyed header state, so one strip is movable AND clickable and the arrow travels with its column instead of staying on a position",
+      "changes_bullets": [
+        "ColumnLayout owns the sort indicator: sort_indicator (logical, ascending) + sort_indicator_shown, Qt's sortIndicatorSection / sortIndicatorOrder / setSortIndicatorShown.",
+        "ColumnLayoutState carries both, so the peer of QHeaderView::saveState() no longer drops a field saveState() carries; absent decodes as the older shape (the R1452 modes rule).",
+        "release_section commits the drop and reports the clicked LOGICAL section only when the permutation came out unchanged - Qt's rule for a header that is both movable and clickable.",
+        "grid_sort_parse lifts the grid_sort_str grammar as a STRICT parse; grid_sort_from_str is now that function with its two failure cases folded together, so the leniency is a documented weakening rather than a second parser.",
+        "Wire: query sort_indicator / sort_indicator_section / sort_indicator_order / sort_indicator_shown; intervene both writable slots; invoke set_sort_indicator / cycle_sort_indicator / clear_sort_indicator, each returning the state it reached.",
+        "hello-column-reorder is the forcing consumer: the same colhdr#<visual> strip is now movable AND clickable, paints the arrow through the col_sort_dir / sort_glyph SSOTs, carries aria-sort, and projects the body row order from the indicator via grid_order_by."
+      ],
+      "verification_bullets": [
+        "pinion-core 2761 tests pass (+41 for this round); hello-column-reorder 27 pass (+7).",
+        "tools/demos/r1491_header_sort_indicator.py PASS - 49 assertions over the real wire, including a click expressed as scene/drag with both endpoints on one section.",
+        "Blast radius: r1450 / r1451 / r1452 / r1453 all PASS; r1451 pinned the whole state object by equality and was updated, which is what a whole-object assertion is for.",
+        "Counterfactual 1 (a drag also counts as a click): 3 witnesses - 1 core unit, 1 demo unit, demo assertion 17.",
+        "Counterfactual 2 (the click answers the position, not the column): 3 witnesses - 1 core unit, 1 demo unit, demo assertion 22.",
+        "Counterfactual 3 (the paint asks the glyph question by visual index): 2 witnesses - 1 demo unit, demo assertion 19.",
+        "Counterfactual 4 (no strict grammar parse): 3 witnesses - 2 core units, demo assertion 42.",
+        "Counterfactual 5 (the restore does not range-check the indicator): 2 witnesses - 1 core unit, demo assertion 47.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc --workspace --no-deps --document-private-items 0."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "The demo's data has no bare-number column, so cell_cmp's numeric branch never fires there; assertion 25 asserts the string order it actually produces and the direction bit is discriminated separately by assertion 26.",
+        "GridSortExternal::intervene(\"sort\") stays lenient on a malformed payload (the R778 contract, with existing consumers). Only ColumnLayout's two doors are strict; unifying them is a separate blast-radius decision.",
+        "A click cycles through cycle_col_sort's three states (ascending, descending, unsorted); Qt's QHeaderView cycles two. The three-state cycle is pinion's established grid vocabulary and the header now shares it rather than forking.",
+        "The header does not sort anything itself - a consumer connects the indicator to its model, as Qt connects sortIndicatorChanged to sortByColumn. hello-column-reorder projects the rows; a model-backed grid would drive its proxy.",
+        "Still open from the Qt QHeaderView surface: defaultSectionSize / minimumSectionSize / maximumSectionSize, cascadingSectionResizes, firstSectionMovable, and an explicit sectionsClickable flag (the click policy is the binding's today)."
+      ],
+      "publishable_decision_summary": "R1491 - a header says which section it is sorted by: the Qt QHeaderView sort indicator becomes logical-keyed header state, so one strip is movable AND clickable and the arrow travels with its column instead of staying on a position",
+      "publishable_changes_bullets": [
+        "ColumnLayout owns the sort indicator: sort_indicator (logical, ascending) + sort_indicator_shown, Qt's sortIndicatorSection / sortIndicatorOrder / setSortIndicatorShown.",
+        "ColumnLayoutState carries both, so the peer of QHeaderView::saveState() no longer drops a field saveState() carries; absent decodes as the older shape (the R1452 modes rule).",
+        "release_section commits the drop and reports the clicked LOGICAL section only when the permutation came out unchanged - Qt's rule for a header that is both movable and clickable.",
+        "grid_sort_parse lifts the grid_sort_str grammar as a STRICT parse; grid_sort_from_str is now that function with its two failure cases folded together, so the leniency is a documented weakening rather than a second parser.",
+        "Wire: query sort_indicator / sort_indicator_section / sort_indicator_order / sort_indicator_shown; intervene both writable slots; invoke set_sort_indicator / cycle_sort_indicator / clear_sort_indicator, each returning the state it reached.",
+        "hello-column-reorder is the forcing consumer: the same colhdr#<visual> strip is now movable AND clickable, paints the arrow through the col_sort_dir / sort_glyph SSOTs, carries aria-sort, and projects the body row order from the indicator via grid_order_by."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 2761 tests pass (+41 for this round); hello-column-reorder 27 pass (+7).",
+        "tools/demos/r1491_header_sort_indicator.py PASS - 49 assertions over the real wire, including a click expressed as scene/drag with both endpoints on one section.",
+        "Blast radius: r1450 / r1451 / r1452 / r1453 all PASS; r1451 pinned the whole state object by equality and was updated, which is what a whole-object assertion is for.",
+        "Counterfactual 1 (a drag also counts as a click): 3 witnesses - 1 core unit, 1 demo unit, demo assertion 17.",
+        "Counterfactual 2 (the click answers the position, not the column): 3 witnesses - 1 core unit, 1 demo unit, demo assertion 22.",
+        "Counterfactual 3 (the paint asks the glyph question by visual index): 2 witnesses - 1 demo unit, demo assertion 19.",
+        "Counterfactual 4 (no strict grammar parse): 3 witnesses - 2 core units, demo assertion 42.",
+        "Counterfactual 5 (the restore does not range-check the indicator): 2 witnesses - 1 core unit, demo assertion 47.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc --workspace --no-deps --document-private-items 0."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The demo's data has no bare-number column, so cell_cmp's numeric branch never fires there; assertion 25 asserts the string order it actually produces and the direction bit is discriminated separately by assertion 26.",
+        "GridSortExternal::intervene(\"sort\") stays lenient on a malformed payload (the R778 contract, with existing consumers). Only ColumnLayout's two doors are strict; unifying them is a separate blast-radius decision.",
+        "A click cycles through cycle_col_sort's three states (ascending, descending, unsorted); Qt's QHeaderView cycles two. The three-state cycle is pinion's established grid vocabulary and the header now shares it rather than forking.",
+        "The header does not sort anything itself - a consumer connects the indicator to its model, as Qt connects sortIndicatorChanged to sortByColumn. hello-column-reorder projects the rows; a model-backed grid would drive its proxy.",
+        "Still open from the Qt QHeaderView surface: defaultSectionSize / minimumSectionSize / maximumSectionSize, cascadingSectionResizes, firstSectionMovable, and an explicit sectionsClickable flag (the click policy is the binding's today)."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

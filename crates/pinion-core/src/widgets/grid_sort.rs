@@ -100,6 +100,31 @@ pub fn grid_sort_str(sort: Option<(usize, bool)>) -> String {
     }
 }
 
+/// R1491 §5.40 — the [`grid_sort_str`] grammar, parsed **strictly**: outer
+/// `None` is a malformed payload, `Some(None)` is the literal `"none"`
+/// (unsorted), and `Some(Some(..))` is a sort. It is the one home of the
+/// grammar; [`grid_sort_from_str`] is this function with the two failure
+/// cases folded together.
+///
+/// Both readings are wanted, which is why the strict one had to exist
+/// separately rather than replace the other. A *live slot* write can afford
+/// to read a bad payload as "unsorted" — the next write fixes it. A *whole-
+/// state snapshot* cannot: `ColumnLayoutState::from_json` restores order,
+/// sizes, hidden flags and modes atomically and reports a malformed field
+/// rather than dropping it, so an indicator inside that snapshot has to be
+/// able to fail the same way. Collapsing the cases there would silently
+/// unsort a header whose client merely misspelled a direction.
+#[must_use]
+pub fn grid_sort_parse(s: &str) -> Option<Option<(usize, bool)>> {
+    if s == "none" {
+        return Some(None);
+    }
+    let (col, dir) = s.split_once(':')?;
+    let col = col.parse::<usize>().ok()?;
+    let dir = sort_dir_from_str(dir)?;
+    Some(Some((col, dir)))
+}
+
 /// R778 §5.40 — parse a `(col, dir)` from its [`grid_sort_str`] form. Any
 /// string without a `"<col>:<dir>"` shape whose direction parses as
 /// ascending / descending yields `None` (unsorted) — the safe default for a
@@ -107,10 +132,7 @@ pub fn grid_sort_str(sort: Option<(usize, bool)>) -> String {
 /// [`sort_dir_from_str`]).
 #[must_use]
 pub fn grid_sort_from_str(s: &str) -> Option<(usize, bool)> {
-    let (col, dir) = s.split_once(':')?;
-    let col = col.parse::<usize>().ok()?;
-    let dir = sort_dir_from_str(dir)?;
-    Some((col, dir))
+    grid_sort_parse(s).flatten()
 }
 
 /// R997 §5.40 — the comparison a [`ColumnFacet`] applies between a row's cell

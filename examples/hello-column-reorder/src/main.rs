@@ -37,6 +37,19 @@
 //! sort. A strip whose cells ARE `colhdr#<visual>` gives the drag session real
 //! per-section hit nodes, and the body below simply paints through the order.
 //!
+//! R1491 — those two tag shapes read as an either/or until this round, and one
+//! pinion header was accordingly either movable or sortable, never both, while
+//! Qt's is both at once (`setSectionsMovable` + `setSectionsClickable`). They
+//! are not alternatives: the subindex a drop classifier needs is also enough to
+//! name the section a *click* landed on, and what separates a click from a drag
+//! is not the tag but the release —
+//! [`ColumnLayout::release_section`] commits the drop and reports the clicked
+//! **logical** section only when the permutation came out unchanged, which is
+//! Qt's own rule. So this strip now carries the sort indicator too
+//! (`sortIndicatorSection` / `sortIndicatorOrder` / `sortIndicatorShown`), keyed
+//! logically like the sizes and the hidden flags, and the arrow travels with its
+//! column instead of staying on a position.
+//!
 //! ## One projection, or the failure mode is unpaintable
 //!
 //! `order[visual] = logical` plus the logical-keyed sizes and hidden flags is
@@ -67,7 +80,7 @@
 //! same model (`[` / `]` resize, `h` hides, arrows and Space/Escape drag), so
 //! neither door can do something the other cannot.
 
-use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessNode, AccessState, AriaRole, SortDirection, WidgetA11y};
 use pinion_core::command::Command;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
@@ -84,8 +97,11 @@ use pinion_core::widgets::column_layout::{
     ColumnLayout, ColumnLayoutView, SectionPlacement, SectionResizeMode, read_column_layout,
     use_column_layout,
 };
+use pinion_core::widgets::grid_sort::col_sort_dir;
+use pinion_core::widgets::table::{cell_cmp, grid_order_by};
 use pinion_core::{Frame, Intent, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::glyph::sort_glyph;
 use std::borrow::Cow;
 use std::rc::Rc;
 
@@ -257,9 +273,13 @@ impl ColumnHeaderExternal {
     /// view fn has to publish two inputs only it knows: the measured content
     /// hints and the width a `Stretch` row divides.
     fn new() -> Self {
-        Self {
-            layout: use_column_layout(LAYOUT_KEY, || SECTION_W.to_vec()),
-        }
+        let layout = use_column_layout(LAYOUT_KEY, || SECTION_W.to_vec());
+        // R1491 — `ColumnLayout` boots with the indicator hidden, as Qt's
+        // `QHeaderView` does; a *sortable* view turns it on, which is where
+        // `QTableView::setSortingEnabled` puts the same decision. Leaving it to
+        // the header's default would paint no arrow however the grid sorted.
+        layout.set_sort_indicator_shown(true);
+        Self { layout }
     }
 }
 
@@ -292,8 +312,16 @@ impl External for ColumnHeaderExternal {
         self.layout.sections().drag_to(payload, over.as_ref());
     }
 
+    /// R1491 — the release is where a movable header becomes a *clickable* one.
+    /// Qt's `QHeaderView` sorts on a press that did not move the section, and
+    /// [`ColumnLayout::release_section`] is that rule: it commits the drop and
+    /// hands back the clicked logical section only when the permutation came
+    /// out unchanged. This binding is the `sectionsClickable` half — it decides
+    /// that a click sorts, which is a view policy, not a header one.
     fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
-        self.layout.sections().drag_release(payload, over.as_ref());
+        if let Some(logical) = self.layout.release_section(payload, over.as_ref()) {
+            self.layout.cycle_sort_indicator(logical);
+        }
     }
 }
 
@@ -318,6 +346,10 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     SchemaField::new("visible_total", "int"),
                     SchemaField::new("hidden_count", "int"),
                     SchemaField::new("resize_modes", "json"),
+                    SchemaField::new("sort_indicator", "string"),
+                    SchemaField::new("sort_indicator_section", "int"),
+                    SchemaField::new("sort_indicator_order", "string"),
+                    SchemaField::new("sort_indicator_shown", "boolean"),
                     SchemaField::new("content_widths", "json"),
                     SchemaField::new("available_width", "int"),
                     SchemaField::parametric(
@@ -367,6 +399,9 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     SchemaField::new("set_section_hidden", "string"),
                     SchemaField::new("set_resize_mode", "string"),
                     SchemaField::new("set_all_resize_modes", "string"),
+                    SchemaField::new("set_sort_indicator", "string"),
+                    SchemaField::new("cycle_sort_indicator", "int"),
+                    SchemaField::new("clear_sort_indicator", "string"),
                     SchemaField::new("grab", "boolean"),
                     SchemaField::new("grab_cancel", "string"),
                 ]
@@ -453,6 +488,11 @@ struct HeaderState {
     focused: Option<usize>,
     /// Whether an APG keyboard grab is in flight.
     grabbed: bool,
+    /// R1491 — `(logical, ascending)`: which section carries the sort arrow.
+    /// **Logical**, so it names a column rather than a place on the strip.
+    sort_indicator: Option<(usize, bool)>,
+    /// R1491 — whether the arrow is painted at all (Qt `sortIndicatorShown`).
+    sort_indicator_shown: bool,
 }
 
 impl Default for HeaderState {
@@ -468,6 +508,10 @@ impl Default for HeaderState {
             insert_at: None,
             focused: None,
             grabbed: false,
+            sort_indicator: None,
+            // The view enables it, as `QTableView::setSortingEnabled` does —
+            // this grid is sortable, so it is on from the first frame.
+            sort_indicator_shown: true,
         }
     }
 }
@@ -519,10 +563,29 @@ impl HeaderState {
         if let Ok(modes) = <[SectionResizeMode; NCOLS]>::try_from(view.state.modes.clone()) {
             self.modes = modes;
         }
+        self.sort_indicator = view.state.sort_indicator;
+        self.sort_indicator_shown = view.state.sort_indicator_shown;
         self.painted = view.placements.len().min(NCOLS);
         for (slot, p) in self.placements.iter_mut().zip(&view.placements) {
             *slot = *p;
         }
+    }
+
+    /// R1491 — the body row order the header's indicator implies: Qt's
+    /// `sortIndicatorChanged` → `sortByColumn` connection, written as a
+    /// projection rather than a second stored order.
+    ///
+    /// The rows are sorted by the **logical** column the indicator names, so
+    /// moving that column re-paints its arrow somewhere else and leaves the row
+    /// order alone — which is the correct answer, and the one a visually-keyed
+    /// indicator gets wrong.
+    fn row_order(&self) -> Vec<usize> {
+        grid_order_by(
+            NROWS,
+            self.sort_indicator,
+            |col, a, b| cell_cmp(cell_text(a, col), cell_text(b, col)),
+            |_| true,
+        )
     }
 }
 
@@ -727,8 +790,27 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
         .with_tag(format!("colhdr_label#{visual}"))
         .with_layout(LayoutStyle::new().with_absolute_position(12, 12)),
     );
+    // R1491 — the sort arrow, asked for by LOGICAL column through the same
+    // `col_sort_dir` / `sort_glyph` pair every other pinion grid header uses.
+    // It rides in this cell, so it moves when the section moves and needs no
+    // second geometry walk to find its x.
+    let mut children = vec![label];
+    if let Some(glyph) = sort_glyph(
+        state
+            .sort_indicator_shown
+            .then(|| col_sort_dir(state.sort_indicator, p.logical))
+            .flatten(),
+    ) {
+        children.push(Scene::Text(
+            TextNode::styled(glyph, Rect::default(), grid_text(ColorRole::Accent, theme))
+                .with_tag(format!("colhdr_sort#{visual}"))
+                .with_layout(
+                    LayoutStyle::new().with_absolute_position(p.size.saturating_sub(24), 12),
+                ),
+        ));
+    }
     Scene::Container(
-        ContainerNode::new(vec![label])
+        ContainerNode::new(children)
             .with_tag(section_tag(visual))
             .with_style(BoxStyle::filled(fill))
             .with_layout(
@@ -775,13 +857,19 @@ fn insertion_line(state: &HeaderState, insert_at: usize, theme: &Theme) -> Scene
     )
 }
 
-/// One body cell, tagged `colbody#<row>_<visual>` — the data at the logical
-/// column now displayed at `visual`.
-fn body_cell(row: usize, p: &SectionPlacement, theme: &Theme) -> Scene {
-    let (row_i, visual) = (row, p.visual);
+/// One body cell, tagged `colbody#<slot>_<visual>` — the data at the logical
+/// column now displayed at `visual`, for the record the sort put in `slot`.
+///
+/// R1491 — `slot` and `data_row` were one argument until the header learned to
+/// sort. Both axes now name a *place* on the paint (`slot` down, `visual`
+/// across) while the content comes from the model (`data_row`, `logical`); a
+/// tag that carried the record id instead would move under a client between
+/// sorts, which is the opposite of what a paint tag is for.
+fn body_cell(slot: usize, data_row: usize, p: &SectionPlacement, theme: &Theme) -> Scene {
+    let (row_i, visual) = (slot, p.visual);
     let label = Scene::Text(
         TextNode::styled(
-            cell_text(row, p.logical),
+            cell_text(data_row, p.logical),
             Rect::default(),
             grid_text(ColorRole::OnSurface, theme),
         )
@@ -790,7 +878,9 @@ fn body_cell(row: usize, p: &SectionPlacement, theme: &Theme) -> Scene {
     );
     Scene::Container(
         ContainerNode::new(vec![label])
-            .with_style(BoxStyle::filled(if row % 2 == 0 {
+            // Banding follows the painted slot, not the record: the stripes
+            // must stay put when the rows behind them are reordered.
+            .with_style(BoxStyle::filled(if slot % 2 == 0 {
                 theme.resolve(ColorRole::Surface)
             } else {
                 theme.resolve(ColorRole::SurfaceContainerLow)
@@ -799,7 +889,7 @@ fn body_cell(row: usize, p: &SectionPlacement, theme: &Theme) -> Scene {
                 LayoutStyle::new()
                     .with_absolute_position(
                         GRID_X + p.x,
-                        GRID_Y + HDR_H + u32::try_from(row).unwrap_or(0) * ROW_H,
+                        GRID_Y + HDR_H + u32::try_from(slot).unwrap_or(0) * ROW_H,
                     )
                     .with_size(Size::px(p.size.saturating_sub(2), ROW_H - 2)),
             ),
@@ -893,11 +983,15 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
     children.push(order_row);
     children.push(layout_row);
 
+    // R1491 — one row permutation for the whole body, computed once from the
+    // header's indicator and shared by every column, so two columns can never
+    // paint two different orderings of the same records.
+    let rows = state.row_order();
     let mut sections: Vec<Scene> = Vec::with_capacity(NCOLS);
     for p in state.placements() {
         sections.push(section_cell(p, state, &theme));
-        for row in 0..NROWS {
-            children.push(body_cell(row, p, &theme));
+        for (slot, &data_row) in rows.iter().enumerate() {
+            children.push(body_cell(slot, data_row, p, &theme));
         }
     }
     children.push(header_strip(sections, state.total_w(), &theme));
@@ -1046,14 +1140,25 @@ impl WidgetA11y for ColumnReorderView {
         // absent from the AT tree for exactly the reason it is absent from the
         // screen, and `aria-colcount` follows without a second rule.
         for p in state.placements() {
-            nodes.push(
-                AccessNode::new(section_tag(p.visual), AriaRole::ColumnHeader)
-                    .with_name(HEADERS[p.logical])
-                    .with_state(AccessState {
-                        focused: strip_focused && state.focused == Some(p.visual),
-                        ..AccessState::default()
-                    }),
-            );
+            let mut node = AccessNode::new(section_tag(p.visual), AriaRole::ColumnHeader)
+                .with_name(HEADERS[p.logical])
+                .with_state(AccessState {
+                    focused: strip_focused && state.focused == Some(p.visual),
+                    ..AccessState::default()
+                });
+            // R1491 — `aria-sort` on the section that carries the indicator,
+            // asked by LOGICAL column, so an AT hears the sort move with its
+            // column exactly as the eye sees the arrow move. Gated on `shown`
+            // for the same reason the glyph is: a hidden indicator is not
+            // something to announce.
+            if let Some(dir) = state
+                .sort_indicator_shown
+                .then(|| col_sort_dir(state.sort_indicator, p.logical))
+                .flatten()
+            {
+                node = node.with_sort(SortDirection::from_ascending(dir));
+            }
+            nodes.push(node);
         }
         nodes
     }
@@ -1663,5 +1768,253 @@ mod tests {
             ));
         });
         assert_eq!(after_bad, before, "a refused restore changed nothing");
+    }
+
+    // ----- R1491: the same strip is movable AND clickable -----
+
+    /// The scene tag of the sort arrow painted in section `visual`, if any.
+    fn arrow_visuals(scene: &Scene) -> Vec<usize> {
+        let state = read_header_state(scene);
+        let theme = Owner::new().run(|| use_theme(THEME_TAG).theme_animated());
+        state
+            .placements()
+            .iter()
+            .filter(|p| {
+                let painted = section_cell(p, &state, &theme);
+                let Scene::Container(c) = &painted else {
+                    return false;
+                };
+                c.children.iter().any(|child| {
+                    matches!(child, Scene::Text(t)
+                        if t.tag.as_deref() == Some(&format!("colhdr_sort#{}", p.visual)))
+                })
+            })
+            .map(|p| p.visual)
+            .collect()
+    }
+
+    /// Drive the drag hooks the router drives: press `visual`, then release
+    /// over `over`. `None` releases without a resolved drop point, which is
+    /// what a press-and-release in place produces.
+    fn press_release(ext: &mut ColumnHeaderExternal, visual: usize, over: Option<DropPoint>) {
+        ext.invoke(
+            "send",
+            IntrospectValue::Text(format!("{visual}:PointerDown")),
+        )
+        .expect("send accepts a pointer payload");
+        let payload = ext.begin_drag().expect("a pressed section arms a drag");
+        ext.drag_release(&payload, over);
+    }
+
+    #[test]
+    fn r1491_a_click_sorts_the_column_and_a_drag_only_moves_it() {
+        // The composition this demo could not express before: `colhdr#<visual>`
+        // gives the drop classifier its subindex AND carries a sort click. Both
+        // halves are asserted, because either alone passes an implementation
+        // that always does one of them.
+        let mut ext = fresh();
+        press_release(&mut ext, 1, None);
+        assert_eq!(
+            ext.query("sort_indicator"),
+            Some(IntrospectValue::Text("1:ascending".into())),
+            "a release in place sorted the section it pressed"
+        );
+        assert_eq!(
+            ext.query("order"),
+            Some(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
+            "and moved nothing"
+        );
+
+        press_release(
+            &mut ext,
+            0,
+            Some(DropPoint {
+                tag: section_tag(3),
+                x_rel: 0.9,
+                y_rel: 0.5,
+            }),
+        );
+        assert_eq!(
+            ext.query("order"),
+            Some(IntrospectValue::Json(serde_json::json!([1, 2, 3, 0, 4]))),
+            "the drag committed"
+        );
+        assert_eq!(
+            ext.query("sort_indicator"),
+            Some(IntrospectValue::Text("1:ascending".into())),
+            "and did NOT also sort the section it dragged"
+        );
+    }
+
+    #[test]
+    fn r1491_the_arrow_travels_with_its_section() {
+        // The reason the indicator is header state and logical-keyed. A
+        // visually-keyed one paints the arrow on whatever is now first.
+        let mut scene = boot_scene();
+        let sorted = after(&mut scene, |i| {
+            i.invoke("cycle_sort_indicator", IntrospectValue::Int(0))
+                .expect("cycle is a known action");
+        });
+        assert_eq!(sorted.sort_indicator, Some((0, true)));
+        assert_eq!(arrow_visuals(&scene), vec![0], "Name is first and arrowed");
+
+        let moved = after(&mut scene, |i| {
+            i.invoke("move_section", IntrospectValue::Text("0:3".into()))
+                .expect("move_section is a known action");
+        });
+        assert_eq!(
+            moved.sort_indicator,
+            Some((0, true)),
+            "still sorted by Name"
+        );
+        assert_eq!(
+            arrow_visuals(&scene),
+            vec![3],
+            "and the arrow is on Name's new position, not on the first section"
+        );
+    }
+
+    #[test]
+    fn r1491_a_click_after_a_move_sorts_the_column_it_landed_on() {
+        // A `release_section` that answered the visual index would sort the
+        // wrong column here — the section painted fourth IS logical 0.
+        let mut ext = fresh();
+        ext.invoke("move_section", IntrospectValue::Text("0:3".into()))
+            .expect("move_section is a known action");
+        press_release(&mut ext, 3, None);
+        assert_eq!(
+            ext.query("sort_indicator"),
+            Some(IntrospectValue::Text("0:ascending".into())),
+            "the click named the column, not the place it was clicked"
+        );
+    }
+
+    #[test]
+    fn r1491_the_body_paints_the_order_the_indicator_asks_for() {
+        // The indicator is not decoration: the rows follow it. Sizes sort
+        // numeric-aware through `cell_cmp`, so this also pins that the shared
+        // comparator is the one in use rather than a local string sort.
+        let mut scene = boot_scene();
+        let unsorted = read_header_state(&scene);
+        assert_eq!(
+            unsorted.row_order(),
+            (0..NROWS).collect::<Vec<_>>(),
+            "boots unsorted, so the body paints the source order"
+        );
+
+        let sorted = after(&mut scene, |i| {
+            i.intervene(
+                "sort_indicator",
+                IntrospectValue::Text("2:ascending".into()),
+            )
+            .expect("the compound string is the restore half");
+        });
+        let by_size: Vec<&str> = sorted
+            .row_order()
+            .iter()
+            .map(|&r| cell_text(r, 2))
+            .collect();
+        let mut ascending = by_size.clone();
+        ascending.sort_by(|a, b| cell_cmp(a, b));
+        assert_eq!(by_size, ascending, "rows ascend by the Size column");
+
+        // A section move re-aims the arrow, NOT the rows: the sort names a
+        // column, and that column's values did not change.
+        let after_move = after(&mut scene, |i| {
+            i.invoke("move_section", IntrospectValue::Text("2:0".into()))
+                .expect("move_section is a known action");
+        });
+        assert_eq!(after_move.row_order(), sorted.row_order());
+    }
+
+    #[test]
+    fn r1491_the_at_tree_announces_the_sort_on_the_section_that_carries_it() {
+        let mut scene = boot_scene();
+        let state = after(&mut scene, |i| {
+            i.invoke(
+                "set_sort_indicator",
+                IntrospectValue::Text("3:false".into()),
+            )
+            .expect("set_sort_indicator is a known action");
+        });
+        let nodes = ColumnReorderView::access_node(&state, Some(HDR_TAG));
+        let sorted: Vec<(&str, Option<SortDirection>)> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .map(|n| (n.name.as_deref().unwrap_or(""), n.sort))
+            .collect();
+        assert_eq!(
+            sorted,
+            vec![
+                ("Name", None),
+                ("Type", None),
+                ("Size", None),
+                ("Modified", Some(SortDirection::Descending)),
+                ("Owner", None),
+            ],
+            "exactly one columnheader carries aria-sort, and it is the sorted one"
+        );
+    }
+
+    #[test]
+    fn r1491_hiding_the_arrow_leaves_the_rows_where_the_sort_put_them() {
+        // Qt's split: `sortIndicatorShown` is presentation, the section is
+        // state. Conflating them would re-shuffle the body on a view toggle.
+        let mut scene = boot_scene();
+        let shown = after(&mut scene, |i| {
+            i.invoke("cycle_sort_indicator", IntrospectValue::Int(2))
+                .expect("cycle is a known action");
+        });
+        assert!(shown.sort_indicator_shown, "the view enabled sorting");
+        assert_eq!(arrow_visuals(&scene), vec![2]);
+
+        let hidden = after(&mut scene, |i| {
+            i.intervene("sort_indicator_shown", IntrospectValue::Bool(false))
+                .expect("shown is writable");
+        });
+        assert!(arrow_visuals(&scene).is_empty(), "no arrow is painted");
+        assert_eq!(
+            hidden.row_order(),
+            shown.row_order(),
+            "and the rows did not move"
+        );
+        assert_eq!(hidden.sort_indicator, Some((2, true)));
+    }
+
+    #[test]
+    fn r1491_a_saved_layout_carries_the_sort_qt_s_savestate_carries() {
+        // The gap this round closed: the snapshot claimed to be the peer of
+        // `QHeaderView::saveState()` while dropping a field it carries.
+        let mut ext = fresh();
+        ext.invoke("cycle_sort_indicator", IntrospectValue::Int(4))
+            .expect("cycle is a known action");
+        ext.invoke("move_section", IntrospectValue::Text("4:0".into()))
+            .expect("move_section is a known action");
+        let Some(IntrospectValue::Json(saved)) = ext.query("state") else {
+            panic!("state reads back as JSON");
+        };
+        assert_eq!(
+            saved
+                .get("sort_indicator")
+                .and_then(serde_json::Value::as_str),
+            Some("4:ascending"),
+            "the readable snapshot names the sorted column"
+        );
+
+        let mut restored = fresh();
+        restored
+            .intervene("state", IntrospectValue::Json(saved))
+            .expect("the snapshot restores whole");
+        assert_eq!(
+            restored.query("sort_indicator"),
+            Some(IntrospectValue::Text("4:ascending".into()))
+        );
+        assert_eq!(
+            restored.query("labels"),
+            Some(IntrospectValue::Json(serde_json::json!([
+                "Owner", "Name", "Type", "Size", "Modified"
+            ]))),
+            "along with the order it was saved with"
+        );
     }
 }

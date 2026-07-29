@@ -70,10 +70,15 @@
 use std::rc::Rc;
 
 use crate::composite_tag::parse_pair;
-use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
+use crate::external::{
+    DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+};
 use crate::reactive::{Owner, Signal};
 use crate::widgets::column_widths::ColumnWidths;
+use crate::widgets::grid_sort::{grid_sort_parse, grid_sort_str};
 use crate::widgets::reorder::{ReorderAxis, ReorderModel};
+use crate::widgets::table::cycle_col_sort;
+use crate::widgets::view_order::sort_dir_str;
 
 /// R1451 §5.27 — a whole header layout as data: the peer of Qt's
 /// `QHeaderView::saveState()` / `restoreState()`, except every field is
@@ -95,6 +100,18 @@ pub struct ColumnLayoutState {
     /// the modes too; a snapshot without them (one taken before R1452) decodes
     /// as all-`Interactive`, so an older saved layout still restores.
     pub modes: Vec<SectionResizeMode>,
+    /// R1491 — which section carries the sort indicator, and in which
+    /// direction: Qt's `sortIndicatorSection()` / `sortIndicatorOrder()`, which
+    /// `saveState()` carries and this snapshot did not until now. `true` is
+    /// ascending. Keyed by **logical** section like `sizes` and `hidden`, which
+    /// is the whole reason it belongs here: an indicator keyed by screen
+    /// position points at a different column the moment one is dragged.
+    pub sort_indicator: Option<(usize, bool)>,
+    /// R1491 — whether the indicator is painted at all: Qt's
+    /// `sortIndicatorShown`. Separate from *which* section carries it, because
+    /// Qt keeps the section while a view hides the arrow, and a restore has to
+    /// put both back.
+    pub sort_indicator_shown: bool,
 }
 
 impl ColumnLayoutState {
@@ -108,6 +125,11 @@ impl ColumnLayoutState {
             "sizes": self.sizes,
             "hidden": self.hidden,
             "modes": self.modes.iter().map(|m| m.as_wire()).collect::<Vec<_>>(),
+            // R1491 — the same `"none"` / `"<logical>:<dir>"` string the grid
+            // sort proxy speaks, so a client that already reads one sort state
+            // does not learn a second vocabulary for the header's.
+            "sort_indicator": grid_sort_str(self.sort_indicator),
+            "sort_indicator_shown": self.sort_indicator_shown,
         })
     }
 
@@ -148,11 +170,31 @@ impl ColumnLayoutState {
                 .map(|m| m.as_str()?.parse().ok())
                 .collect::<Option<_>>()?,
         };
+        // R1491 — same rule as `modes`: absent is the older snapshot shape and
+        // decodes as "no indicator, not shown"; present but not the grammar is
+        // an error. `grid_sort_parse` exists to keep those apart — the lenient
+        // `grid_sort_from_str` would restore a misspelled direction as
+        // *unsorted* and report success.
+        let (sort_indicator, sort_indicator_shown) = match value.get("sort_indicator") {
+            None => (None, false),
+            Some(v) => (
+                grid_sort_parse(v.as_str()?)?,
+                // Shown travels with the section: a snapshot old enough to lack
+                // the indicator lacks this too, and one that carries an
+                // indicator defaults to painting it.
+                match value.get("sort_indicator_shown") {
+                    None => true,
+                    Some(b) => b.as_bool()?,
+                },
+            ),
+        };
         Some(Self {
             order,
             sizes,
             hidden,
             modes,
+            sort_indicator,
+            sort_indicator_shown,
         })
     }
 }
@@ -300,6 +342,22 @@ pub struct ColumnLayout {
     /// `None` until a consumer publishes its viewport, in which case a
     /// `Stretch` section falls back to its stored size rather than collapsing.
     available_width: Signal<Option<u32>>,
+    /// R1491 — `(logical, ascending)`: Qt's `sortIndicatorSection()` paired
+    /// with `sortIndicatorOrder()`. Reactive, because a header repaints its
+    /// glyph and re-announces its `aria-sort` when the indicator moves.
+    ///
+    /// It lives with the permutation rather than in the sorting model for the
+    /// reason Qt puts it in `QHeaderView`: it is *header* state. It has to
+    /// survive `saveState` / `restoreState` with no model attached, and it has
+    /// to be keyed the way the sizes and hidden flags are keyed, so dragging a
+    /// section carries its arrow along instead of leaving it on the position.
+    /// What is sorted is still the model's answer — a consumer connects the two
+    /// exactly as Qt connects `sortIndicatorChanged` to `sortByColumn`.
+    sort_indicator: Signal<Option<(usize, bool)>>,
+    /// R1491 — Qt's `sortIndicatorShown`. Default `false`, as in Qt, where the
+    /// view turns it on (`QTableView::setSortingEnabled`) rather than the
+    /// header assuming it.
+    sort_indicator_shown: Signal<bool>,
     /// R1454 — how many rows a `ResizeToContents` consumer should measure.
     ///
     /// Reactive, and the first draft got that wrong: it was a plain `Cell` on
@@ -337,6 +395,8 @@ impl ColumnLayout {
             // keeps its width instead of collapsing to the floor.
             content_widths: Signal::new(content),
             available_width: Signal::new(None),
+            sort_indicator: Signal::new(None),
+            sort_indicator_shown: Signal::new(false),
             contents_precision: Signal::new(DEFAULT_CONTENTS_PRECISION),
         }
     }
@@ -408,6 +468,100 @@ impl ColumnLayout {
         // validated setter cannot reject it — routing through it anyway keeps
         // one write path into the order.
         self.sections.set_order(&order);
+    }
+
+    /// R1491 — which **logical** section carries the sort indicator and in
+    /// which direction (`true` ascending) — Qt's `sortIndicatorSection()` and
+    /// `sortIndicatorOrder()` in one read, because the two are never useful
+    /// apart and a pair cannot go out of step with itself.
+    ///
+    /// Pair it with
+    /// [`col_sort_dir`](crate::widgets::grid_sort::col_sort_dir) to ask the
+    /// per-header question ("does THIS section show the glyph"), which is the
+    /// same SSOT an unmoved grid header already asks.
+    #[must_use]
+    pub fn sort_indicator(&self) -> Option<(usize, bool)> {
+        self.sort_indicator.get()
+    }
+
+    /// R1491 — put the indicator on a section — Qt's `setSortIndicator()`.
+    /// Out of range is a no-op, so a stale column index cannot move the arrow
+    /// onto a section that does not exist.
+    pub fn set_sort_indicator(&self, logical: usize, ascending: bool) {
+        if logical >= self.count {
+            return;
+        }
+        self.sort_indicator.set(Some((logical, ascending)));
+    }
+
+    /// R1491 — take the indicator off every section, leaving the header
+    /// unsorted. Qt spells this `setSortIndicator(-1, …)`; a `usize` section
+    /// cannot carry that sentinel, and a named method says what the sentinel
+    /// meant.
+    pub fn clear_sort_indicator(&self) {
+        self.sort_indicator.set(None);
+    }
+
+    /// R1491 — advance one section through ascending → descending → unsorted,
+    /// which is what a click on a clickable header does. Delegates the cycle
+    /// rule to [`cycle_col_sort`] so the header and the sorting model agree on
+    /// what a repeated click means.
+    pub fn cycle_sort_indicator(&self, logical: usize) {
+        self.sort_indicator.set(cycle_col_sort(
+            self.sort_indicator.get(),
+            logical,
+            self.count,
+        ));
+    }
+
+    /// R1491 — whether the indicator is painted — Qt's `isSortIndicatorShown()`.
+    #[must_use]
+    pub fn is_sort_indicator_shown(&self) -> bool {
+        self.sort_indicator_shown.get()
+    }
+
+    /// R1491 — Qt's `setSortIndicatorShown()`. Turning it off keeps *which*
+    /// section is sorted, exactly as Qt does: the arrow stops being drawn, the
+    /// sort does not stop being the sort.
+    pub fn set_sort_indicator_shown(&self, shown: bool) {
+        self.sort_indicator_shown.set(shown);
+    }
+
+    /// R1491 — end a header drag and report whether the release was a **click**
+    /// rather than a move. Qt's rule for a header that is both
+    /// `sectionsMovable` and `sectionsClickable`: the press that reorders a
+    /// section must not also sort it, so only a release that left the
+    /// permutation untouched counts as a click.
+    ///
+    /// Returns the **logical** section that was clicked, or `None` when the
+    /// release moved something. The caller decides what a click means — this
+    /// type will not cycle its own indicator, because a header can be movable
+    /// and *not* clickable, and because the view, not the header, owns whether
+    /// a click sorts (Qt splits it the same way, through
+    /// `sectionsClickable`).
+    ///
+    /// Supersedes delegating straight to
+    /// [`sections()`](Self::sections)`.drag_release(..)`: that path cannot
+    /// answer this, having already forgotten which section was pressed.
+    pub fn release_section(
+        &self,
+        payload: &DragPayload,
+        over: Option<&DropPoint>,
+    ) -> Option<usize> {
+        // The permutation before and after is the discriminator, and it is the
+        // honest one: a drag that is dropped back into its own gap genuinely
+        // did not move the section, and Qt treats that as a click too.
+        let before = self.sections.order();
+        self.sections.drag_release(payload, over);
+        if self.sections.order() != before {
+            return None;
+        }
+        // `begin_drag_payload` carries `order[pressed]` — the logical section,
+        // already in the key space the indicator uses.
+        match payload.value {
+            IntrospectValue::Int(i) => usize::try_from(i).ok().filter(|&l| l < self.count),
+            _ => None,
+        }
     }
 
     /// R1452 — where logical section `logical` takes its size from — Qt's
@@ -722,6 +876,8 @@ impl ColumnLayout {
             sizes: (0..self.count).map(|l| self.sizes.width(l)).collect(),
             hidden: self.hidden.get(),
             modes: self.modes.get(),
+            sort_indicator: self.sort_indicator.get(),
+            sort_indicator_shown: self.sort_indicator_shown.get(),
         }
     }
 
@@ -742,12 +898,21 @@ impl ColumnLayout {
         {
             return false;
         }
+        // R1491 — an indicator on a section this header does not have is the
+        // same class of error as a wrong vector length, and is checked here
+        // with them so the restore stays atomic. `from_json` cannot make this
+        // call: it decodes a snapshot without knowing which header it is for.
+        if state.sort_indicator.is_some_and(|(l, _)| l >= self.count) {
+            return false;
+        }
         if !self.sections.set_order(&state.order) {
             return false;
         }
         self.sizes.set_widths(state.sizes.clone());
         self.hidden.set(state.hidden.clone());
         self.modes.set(state.modes.clone());
+        self.sort_indicator.set(state.sort_indicator);
+        self.sort_indicator_shown.set(state.sort_indicator_shown);
         true
     }
 
@@ -760,6 +925,8 @@ impl ColumnLayout {
     /// - `visible_sections` / `visible_widths` / `visible_total`
     /// - `placements` — the painted geometry ([`SectionPlacement`] per section)
     /// - `hidden_count`
+    /// - `sort_indicator` / `sort_indicator_section` / `sort_indicator_order` /
+    ///   `sort_indicator_shown` (R1491)
     /// - `visual_index.<logical>` / `logical_index.<visual>`
     /// - `section_size.<logical>` / `section_hidden.<logical>` /
     ///   `section_position.<logical>` / `logical_index_at.<x>`
@@ -818,6 +985,16 @@ impl ColumnLayout {
                     .collect(),
             ))),
             "content_widths" => Some(json_of(self.content_widths.get())),
+            // R1491 — the header's own sort state. `sort_indicator` is the
+            // compound string the grid proxy already speaks; `sort_indicator_
+            // section` and `_order` are Qt's two separate getters, kept because
+            // an agent filtering on "which column" should not have to parse.
+            "sort_indicator" => Some(IntrospectValue::Text(grid_sort_str(self.sort_indicator()))),
+            "sort_indicator_section" => Some(opt_int(self.sort_indicator().map(|(l, _)| l))),
+            "sort_indicator_order" => Some(IntrospectValue::Text(
+                sort_dir_str(self.sort_indicator().map(|(_, d)| d)).to_string(),
+            )),
+            "sort_indicator_shown" => Some(IntrospectValue::Bool(self.is_sort_indicator_shown())),
             "resize_contents_precision" => Some(int(self.resize_contents_precision())),
             "available_width" => Some(
                 self.available_width
@@ -866,8 +1043,9 @@ impl ColumnLayout {
 
     /// Header-layout slots for [`ExternalIntrospect::intervene`]: `state` is
     /// the restore half of the round-trip (Qt's `restoreState`, authorable),
-    /// and `sizes` / `hidden` write one vector each. `focused_index` and
-    /// `order` fall through to the embedded [`ReorderModel`].
+    /// and `sizes` / `hidden` / `sort_indicator` / `sort_indicator_shown` write
+    /// one field each. `focused_index` and `order` fall through to the embedded
+    /// [`ReorderModel`].
     ///
     /// # Errors
     ///
@@ -940,6 +1118,32 @@ impl ColumnLayout {
                 self.set_resize_contents_precision(rows);
                 Ok(())
             }
+            // R1491 — the restore half for the header's own sort, both as the
+            // compound string and as the shown flag. Strict on a malformed
+            // string, unlike the older `GridSortExternal::intervene("sort")`,
+            // which reads one as "unsorted": the two doors of THIS header must
+            // agree, and its other door (`state`) reports the error.
+            "sort_indicator" => {
+                let IntrospectValue::Text(s) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                let parsed = grid_sort_parse(s).ok_or(InterveneError::TypeMismatch)?;
+                match parsed {
+                    None => self.clear_sort_indicator(),
+                    Some((logical, _)) if logical >= self.count => {
+                        return Err(InterveneError::OutOfRange);
+                    }
+                    Some((logical, ascending)) => self.set_sort_indicator(logical, ascending),
+                }
+                Ok(())
+            }
+            "sort_indicator_shown" => {
+                let IntrospectValue::Bool(shown) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                self.set_sort_indicator_shown(*shown);
+                Ok(())
+            }
             "available_width" => {
                 // `Null` clears the published viewport — the writable peer of
                 // the `Null` this slot reads back when nothing is published.
@@ -967,6 +1171,9 @@ impl ColumnLayout {
     /// - `set_section_hidden` — `"<logical>:<bool>"`; returns the resulting
     ///   visible-section projection, so one round-trip both hides and reports
     ///   what is now painted
+    /// - `set_sort_indicator` — `"<logical>:<bool>"` (R1491) /
+    ///   `cycle_sort_indicator` — `<logical>` / `clear_sort_indicator`; each
+    ///   returns the resulting indicator string
     ///
     /// `send` / `move` / `grab` / `grab_cancel` / `move_section` fall through
     /// to the embedded [`ReorderModel`].
@@ -1035,6 +1242,39 @@ impl ColumnLayout {
                 self.set_resize_mode(logical, mode);
                 Ok(self
                     .query("visible_widths")
+                    .unwrap_or(IntrospectValue::Null))
+            }
+            // R1491 — Qt's setSortIndicator, and the cycle a header click
+            // performs. Both return the resulting indicator string rather than
+            // nothing, so one round-trip both sorts and reports — which matters
+            // most for the cycle, whose whole point is that the caller does not
+            // know the direction it lands on.
+            "set_sort_indicator" => {
+                let text = pair_text(args)?;
+                let (logical, ascending) =
+                    parse_pair::<usize, bool>(&text, ':').ok_or(InvokeError::Rejected)?;
+                if logical >= self.count {
+                    return Err(InvokeError::Rejected);
+                }
+                self.set_sort_indicator(logical, ascending);
+                Ok(self
+                    .query("sort_indicator")
+                    .unwrap_or(IntrospectValue::Null))
+            }
+            "cycle_sort_indicator" => {
+                let logical = args.as_usize().ok_or(InvokeError::TypeMismatch)?;
+                if logical >= self.count {
+                    return Err(InvokeError::Rejected);
+                }
+                self.cycle_sort_indicator(logical);
+                Ok(self
+                    .query("sort_indicator")
+                    .unwrap_or(IntrospectValue::Null))
+            }
+            "clear_sort_indicator" => {
+                self.clear_sort_indicator();
+                Ok(self
+                    .query("sort_indicator")
                     .unwrap_or(IntrospectValue::Null))
             }
             "set_all_resize_modes" => {
@@ -1132,12 +1372,17 @@ pub fn read_column_layout(intro: &dyn ExternalIntrospect) -> ColumnLayoutView {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::{
         ColumnLayout, ColumnLayoutState, DEFAULT_CONTENTS_PRECISION, SectionPlacement,
         SectionResizeMode, read_column_layout,
     };
-    use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
+    use crate::external::{
+        DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+    };
     use crate::widgets::column_widths::DEFAULT_MIN_COL_WIDTH;
+    use crate::widgets::grid_sort::col_sort_dir;
 
     /// Four sections wide enough to tell apart by width alone.
     fn layout() -> ColumnLayout {
@@ -1282,6 +1527,8 @@ mod tests {
             sizes: vec![10, 20, 30, 40],
             hidden: vec![true, true, true, true],
             modes: vec![SectionResizeMode::Stretch; 4],
+            sort_indicator: Some((0, true)),
+            sort_indicator_shown: true,
         };
         assert!(!l.restore_state(&bad_order));
         assert_eq!(l.save_state(), before, "no size or flag was written");
@@ -1292,6 +1539,8 @@ mod tests {
             sizes: vec![10, 20, 30],
             hidden: vec![true; 4],
             modes: vec![SectionResizeMode::Interactive; 4],
+            sort_indicator: None,
+            sort_indicator_shown: false,
         };
         assert!(!l.restore_state(&short));
         assert_eq!(l.save_state(), before, "the order was not applied either");
@@ -1940,5 +2189,307 @@ mod tests {
         assert_eq!(p[0].x, 0, "the first painted section starts at the edge");
         assert_eq!(p[1].x, 120, "offsets close the gap the hidden one left");
         assert_eq!(l.visible_total(), 420);
+    }
+
+    // ----- R1491: the sort indicator is header state -----
+
+    /// Press `visual` so [`ReorderModel::begin_drag_payload`] can arm a drag,
+    /// then hand back the payload the router would carry.
+    fn press(l: &ColumnLayout, visual: usize) -> DragPayload {
+        l.sections()
+            .invoke("send", &text(&format!("{visual}:PointerDown")))
+            .expect("send accepts a pointer payload");
+        l.sections()
+            .begin_drag_payload(Cow::Borrowed("col"))
+            .expect("a pressed section arms a drag")
+    }
+
+    /// A drop over the section painted at `visual`, on its trailing half — the
+    /// point the router resolves for a cursor released past that section's
+    /// midpoint.
+    fn drop_after(visual: usize) -> DropPoint {
+        DropPoint {
+            tag: format!("colhdr#{visual}"),
+            x_rel: 0.9,
+            y_rel: 0.5,
+        }
+    }
+
+    #[test]
+    fn a_moved_section_carries_its_sort_indicator() {
+        // THE claim. Qt keys `sortIndicatorSection` logically for exactly this
+        // reason, and it is why the indicator belongs to the header rather
+        // than to whatever is doing the sorting.
+        let l = layout();
+        l.set_sort_indicator(0, true);
+        l.move_section(0, 2);
+
+        assert_eq!(l.order(), vec![1, 2, 0, 3]);
+        assert_eq!(
+            l.sort_indicator(),
+            Some((0, true)),
+            "the indicator names the column, which did not change"
+        );
+        assert_eq!(l.visual_index(0), Some(2));
+        // The discriminator, and the reason a visual-keyed indicator is not
+        // merely a different spelling: it would paint the arrow on whatever
+        // section is now FIRST. Ask the placements the question a header
+        // builder asks, and the arrow has to be on the third painted one.
+        let arrowed: Vec<usize> = l
+            .visible_placements()
+            .iter()
+            .filter(|p| col_sort_dir(l.sort_indicator(), p.logical).is_some())
+            .map(|p| p.visual)
+            .collect();
+        assert_eq!(arrowed, vec![2], "the glyph travelled with its section");
+    }
+
+    #[test]
+    fn a_hidden_sort_section_keeps_the_indicator_it_stops_painting() {
+        // Qt's rule: hiding a section does not unsort the view. The indicator
+        // survives so that showing the section again restores the arrow
+        // instead of silently landing on nothing.
+        let l = layout();
+        l.set_sort_indicator(2, false);
+        l.set_section_hidden(2, true);
+
+        assert_eq!(l.sort_indicator(), Some((2, false)));
+        assert!(
+            l.visible_placements()
+                .iter()
+                .all(|p| col_sort_dir(l.sort_indicator(), p.logical).is_none()),
+            "no painted section shows the arrow while its section is hidden"
+        );
+        l.set_section_hidden(2, false);
+        assert_eq!(l.visual_index(2), Some(2), "it kept its place too");
+    }
+
+    #[test]
+    fn a_click_names_its_section_but_a_drag_does_not() {
+        // The rule that makes a header both movable and clickable: the release
+        // that reorders a section must not also sort it. Both halves are
+        // asserted here because either alone passes a broken implementation —
+        // "always Some" and "always None" each satisfy one.
+        let l = layout();
+
+        let payload = press(&l, 1);
+        assert_eq!(
+            l.release_section(&payload, None),
+            Some(1),
+            "a release that moved nothing is a click on logical 1"
+        );
+        assert_eq!(l.order(), vec![0, 1, 2, 3], "and it moved nothing");
+
+        let payload = press(&l, 0);
+        assert_eq!(
+            l.release_section(&payload, Some(&drop_after(2))),
+            None,
+            "a release that reordered is a drag, not a click"
+        );
+        assert_eq!(l.order(), vec![1, 2, 0, 3], "the drag still committed");
+    }
+
+    #[test]
+    fn a_click_on_a_moved_section_names_the_column_not_the_position() {
+        // The composition the two halves exist for: after a reorder, the
+        // section painted third IS logical 0, and clicking it has to sort
+        // logical 0. A `release_section` that returned the visual index would
+        // answer 2 here and sort the wrong column.
+        let l = layout();
+        l.move_section(0, 2);
+
+        let payload = press(&l, 2);
+        assert_eq!(l.release_section(&payload, None), Some(0));
+    }
+
+    #[test]
+    fn a_click_cycles_the_indicator_through_qt_s_three_states() {
+        let l = layout();
+        l.cycle_sort_indicator(1);
+        assert_eq!(l.sort_indicator(), Some((1, true)));
+        l.cycle_sort_indicator(1);
+        assert_eq!(l.sort_indicator(), Some((1, false)));
+        l.cycle_sort_indicator(1);
+        assert_eq!(l.sort_indicator(), None, "the third click unsorts");
+        // A different section starts its own cycle at ascending rather than
+        // continuing the previous section's.
+        l.cycle_sort_indicator(1);
+        l.cycle_sort_indicator(3);
+        assert_eq!(l.sort_indicator(), Some((3, true)));
+    }
+
+    #[test]
+    fn an_out_of_range_section_cannot_take_the_indicator() {
+        let l = layout();
+        l.set_sort_indicator(2, true);
+        l.set_sort_indicator(4, false);
+        assert_eq!(
+            l.sort_indicator(),
+            Some((2, true)),
+            "a stale column index leaves the arrow where it was"
+        );
+        l.cycle_sort_indicator(9);
+        assert_eq!(l.sort_indicator(), Some((2, true)));
+    }
+
+    #[test]
+    fn hiding_the_arrow_keeps_which_section_is_sorted() {
+        // Qt separates `sortIndicatorShown` from `sortIndicatorSection`, and a
+        // consumer that conflated them would lose the sort on a view toggle.
+        let l = layout();
+        l.set_sort_indicator(1, true);
+        l.set_sort_indicator_shown(true);
+        l.set_sort_indicator_shown(false);
+
+        assert!(!l.is_sort_indicator_shown());
+        assert_eq!(l.sort_indicator(), Some((1, true)));
+    }
+
+    #[test]
+    fn a_saved_layout_restores_the_sort_it_was_saved_with() {
+        let l = layout();
+        l.set_sort_indicator(2, false);
+        l.set_sort_indicator_shown(true);
+        l.move_section(0, 3);
+        let saved = l.save_state();
+
+        let other = layout();
+        assert!(other.restore_state(&saved));
+        assert_eq!(other.sort_indicator(), Some((2, false)));
+        assert!(other.is_sort_indicator_shown());
+        assert_eq!(other.order(), saved.order);
+    }
+
+    #[test]
+    fn a_pre_r1491_snapshot_restores_as_an_unsorted_header() {
+        // The `modes` precedent: a snapshot taken before this field existed is
+        // a valid older shape, not a malformed one.
+        let older = serde_json::json!({
+            "order": [1, 0, 2, 3],
+            "sizes": [100, 120, 140, 160],
+            "hidden": [false, false, false, false],
+            "modes": ["interactive", "interactive", "interactive", "interactive"],
+        });
+        let decoded =
+            ColumnLayoutState::from_json(&older).expect("an older snapshot still decodes");
+        assert_eq!(decoded.sort_indicator, None);
+        assert!(!decoded.sort_indicator_shown);
+    }
+
+    #[test]
+    fn a_misspelled_sort_direction_is_reported_not_swallowed() {
+        // The distinction `grid_sort_parse` exists for. The lenient
+        // `grid_sort_from_str` reads this as "unsorted", which would restore a
+        // header the client did not ask for and report success.
+        let mut state = layout().save_state().to_json();
+        state["sort_indicator"] = serde_json::json!("1:asending");
+        assert_eq!(ColumnLayoutState::from_json(&state), None);
+
+        state["sort_indicator"] = serde_json::json!("1:ascending");
+        assert_eq!(
+            ColumnLayoutState::from_json(&state).map(|s| s.sort_indicator),
+            Some(Some((1, true))),
+            "the correctly spelled one still decodes"
+        );
+    }
+
+    #[test]
+    fn a_restore_naming_a_section_this_header_lacks_changes_nothing() {
+        // Atomicity: the indicator's range check has to join the length checks
+        // ahead of the first write, or a rejected restore leaves the order
+        // moved and reports failure.
+        let l = layout();
+        l.resize_section(0, 200);
+        let before = l.save_state();
+
+        let mut bad = before.clone();
+        bad.order = vec![3, 2, 1, 0];
+        bad.sizes = vec![10, 20, 30, 40];
+        bad.sort_indicator = Some((4, true));
+
+        assert!(!l.restore_state(&bad));
+        assert_eq!(l.save_state(), before, "not one field was written");
+    }
+
+    #[test]
+    fn the_header_reads_and_writes_its_sort_over_the_wire() {
+        let l = layout();
+        assert_eq!(l.query("sort_indicator"), Some(text("none")));
+        assert_eq!(
+            l.query("sort_indicator_section"),
+            Some(IntrospectValue::Null)
+        );
+        assert_eq!(l.query("sort_indicator_order"), Some(text("none")));
+        assert_eq!(
+            l.query("sort_indicator_shown"),
+            Some(IntrospectValue::Bool(false))
+        );
+
+        // The cycle reports where it landed, which is the whole reason it
+        // returns anything: the caller does not know the direction in advance.
+        assert_eq!(
+            l.invoke("cycle_sort_indicator", &IntrospectValue::Int(2)),
+            Ok(text("2:ascending"))
+        );
+        assert_eq!(
+            l.invoke("cycle_sort_indicator", &IntrospectValue::Int(2)),
+            Ok(text("2:descending"))
+        );
+        assert_eq!(
+            l.query("sort_indicator_section"),
+            Some(IntrospectValue::Int(2))
+        );
+        assert_eq!(l.query("sort_indicator_order"), Some(text("descending")));
+
+        assert_eq!(
+            l.invoke("set_sort_indicator", &text("0:true")),
+            Ok(text("0:ascending"))
+        );
+        assert_eq!(
+            l.invoke("clear_sort_indicator", &IntrospectValue::Null),
+            Ok(text("none"))
+        );
+
+        l.intervene("sort_indicator", &text("3:descending"))
+            .expect("the compound string is the restore half");
+        assert_eq!(l.sort_indicator(), Some((3, false)));
+        l.intervene("sort_indicator_shown", &IntrospectValue::Bool(true))
+            .expect("shown is writable");
+        assert!(l.is_sort_indicator_shown());
+    }
+
+    #[test]
+    fn the_wire_refuses_a_sort_it_cannot_honour() {
+        let l = layout();
+        // Malformed: the same strictness the `state` door applies, so neither
+        // door can do something the other cannot.
+        assert_eq!(
+            l.intervene("sort_indicator", &text("1:asending")),
+            Err(InterveneError::TypeMismatch)
+        );
+        // Well-formed but not this header's section — a different error,
+        // because the client's mistake is a different mistake.
+        assert_eq!(
+            l.intervene("sort_indicator", &text("9:ascending")),
+            Err(InterveneError::OutOfRange)
+        );
+        assert_eq!(
+            l.invoke("cycle_sort_indicator", &IntrospectValue::Int(9)),
+            Err(InvokeError::Rejected)
+        );
+        assert_eq!(l.sort_indicator(), None, "no refusal moved the arrow");
+    }
+
+    #[test]
+    fn the_decoded_view_carries_the_sort_the_wire_reported() {
+        // `read_column_layout` is the deserialize peer of `query`; a slot the
+        // encoder learned and the decoder did not is exactly the drift it
+        // exists to prevent.
+        let l = layout();
+        l.set_sort_indicator(1, true);
+        l.set_sort_indicator_shown(true);
+        let view = read_column_layout(&Probe(l));
+        assert_eq!(view.state.sort_indicator, Some((1, true)));
+        assert!(view.state.sort_indicator_shown);
     }
 }
