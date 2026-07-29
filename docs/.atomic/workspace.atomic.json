@@ -74070,6 +74070,60 @@
         "`cargo sweep --installed` still reclaims nothing (R1488's finding stands): `rust-toolchain.toml` pins an exact 1.88.0, so no toolchain has ever rotated."
       ]
     },
+    "Round 1490": {
+      "decision_summary": "Dev executables stop carrying a private copy of the framework's DWARF: the debug info was always in the rlibs and only the linker's copying is removed, which measurement shows costs nothing and saves on both size and build time.",
+      "changes_bullets": [
+        "`[profile.dev] split-debuginfo = \"unpacked\"` — dev executables now carry a skeleton pointing at the rlib-resident DWARF instead of a private copy of it. `Cargo.toml` records the measured pair beside the setting.",
+        "`CLAUDE.md`'s build-cache section records the measurement and the one caveat (a dev binary is debuggable only while its `target/` is intact)."
+      ],
+      "verification_bullets": [
+        "Controlled pair: the same 20 examples (40 executables: one bin plus one `#[cfg(test)]` test binary each) built cold into two EMPTY target dirs on the same compressed volume, differing only in `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO`. Cargo.toml was untouched during the experiment so it left no trace in the tree.",
+        "Tree total 5.96 -> 4.97 GiB (-16.7%), hardlink-aware (cargo hardlinks top-level binaries into deps/, and a naive per-file sum double-counts them by 3 GiB).",
+        "Per executable 101.6 -> 74.6 MiB (-26.6%). The whole tree delta (-0.99 GiB) is accounted for by the executable delta (-1.06 GiB); everything else moved +0.07 GiB.",
+        "rlib 1.06 GiB / 346 files and rmeta 0.44 GiB / 346 files were IDENTICAL in both trees. That is the proof the DWARF was not dropped: it was always in the rlibs, and only the linker's copying stopped.",
+        "Section-level: `.debug_str` 26.2 -> 1.6 MiB and `.debug_info` 9.9 -> 1.4 MiB left the binary while `.debug_line` (25.4 MiB) stayed and a `.debug_addr` skeleton (3.7 MiB) appeared.",
+        "No capability lost: `addr2line -e <binary> -f -C <addr>` resolves the SAME file:line in both builds.",
+        "On disk, measured with `compsize` (not `du`, which does not report btrfs compression): 1.6 -> 1.4 GiB, 28% -> 29% of apparent.",
+        "Build time fell as well: `cargo build` 105s -> 91s (-13%), plus `cargo test --no-run` 133s -> 119s (-11%) — there is less for the linker to copy.",
+        "Applied to the real workspace and re-measured: `hello-badge` 137.4 -> 107.8 MiB with `.debug_*` 72.1 -> 42.5 MiB, matching the experiment; `cargo test -p pinion-rpc` 1014 passed.",
+        "Release is unaffected by construction: a release binary carries 0.0 MiB of `.debug_*` (measured), so `dev` is the only profile this setting reaches."
+      ],
+      "impact_refs": [
+        "6"
+      ],
+      "carry_forward_bullets": [
+        "The saving scales with executable COUNT, so the workspace-wide figure is an extrapolation, not a measurement: 27 MiB per executable across ~394 of them is roughly 10 GiB apparent (~2 GiB on disk after compression). Only the 20-example pair was measured directly.",
+        "A dev binary is debuggable only while its `target/` is intact. That is what a build cache is, and nothing here ships dev binaries — but a workflow that copied one elsewhere to debug would now need the rlibs too.",
+        "Compression and this setting compose rather than overlap (zstd is per-file, so N copies still cost N times), but the on-disk gain is the smaller of the two: compression already squeezes each duplicate.",
+        "Not tried: `debug = \"line-tables-only\"`, which would drop type and variable DWARF outright. It was not measured because this round found a change that costs nothing, and that one does not."
+      ],
+      "publishable_decision_summary": "Dev executables stop carrying a private copy of the framework's DWARF: the debug info was always in the rlibs and only the linker's copying is removed, which measurement shows costs nothing and saves on both size and build time.",
+      "publishable_changes_bullets": [
+        "`[profile.dev] split-debuginfo = \"unpacked\"` — dev executables now carry a skeleton pointing at the rlib-resident DWARF instead of a private copy of it. `Cargo.toml` records the measured pair beside the setting.",
+        "`CLAUDE.md`'s build-cache section records the measurement and the one caveat (a dev binary is debuggable only while its `target/` is intact)."
+      ],
+      "publishable_verification_bullets": [
+        "Controlled pair: the same 20 examples (40 executables: one bin plus one `#[cfg(test)]` test binary each) built cold into two EMPTY target dirs on the same compressed volume, differing only in `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO`. Cargo.toml was untouched during the experiment so it left no trace in the tree.",
+        "Tree total 5.96 -> 4.97 GiB (-16.7%), hardlink-aware (cargo hardlinks top-level binaries into deps/, and a naive per-file sum double-counts them by 3 GiB).",
+        "Per executable 101.6 -> 74.6 MiB (-26.6%). The whole tree delta (-0.99 GiB) is accounted for by the executable delta (-1.06 GiB); everything else moved +0.07 GiB.",
+        "rlib 1.06 GiB / 346 files and rmeta 0.44 GiB / 346 files were IDENTICAL in both trees. That is the proof the DWARF was not dropped: it was always in the rlibs, and only the linker's copying stopped.",
+        "Section-level: `.debug_str` 26.2 -> 1.6 MiB and `.debug_info` 9.9 -> 1.4 MiB left the binary while `.debug_line` (25.4 MiB) stayed and a `.debug_addr` skeleton (3.7 MiB) appeared.",
+        "No capability lost: `addr2line -e <binary> -f -C <addr>` resolves the SAME file:line in both builds.",
+        "On disk, measured with `compsize` (not `du`, which does not report btrfs compression): 1.6 -> 1.4 GiB, 28% -> 29% of apparent.",
+        "Build time fell as well: `cargo build` 105s -> 91s (-13%), plus `cargo test --no-run` 133s -> 119s (-11%) — there is less for the linker to copy.",
+        "Applied to the real workspace and re-measured: `hello-badge` 137.4 -> 107.8 MiB with `.debug_*` 72.1 -> 42.5 MiB, matching the experiment; `cargo test -p pinion-rpc` 1014 passed.",
+        "Release is unaffected by construction: a release binary carries 0.0 MiB of `.debug_*` (measured), so `dev` is the only profile this setting reaches."
+      ],
+      "publishable_impact_refs": [
+        "6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The saving scales with executable COUNT, so the workspace-wide figure is an extrapolation, not a measurement: 27 MiB per executable across ~394 of them is roughly 10 GiB apparent (~2 GiB on disk after compression). Only the 20-example pair was measured directly.",
+        "A dev binary is debuggable only while its `target/` is intact. That is what a build cache is, and nothing here ships dev binaries — but a workflow that copied one elsewhere to debug would now need the rlibs too.",
+        "Compression and this setting compose rather than overlap (zstd is per-file, so N copies still cost N times), but the on-disk gain is the smaller of the two: compression already squeezes each duplicate.",
+        "Not tried: `debug = \"line-tables-only\"`, which would drop type and variable DWARF outright. It was not measured because this round found a change that costs nothing, and that one does not."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

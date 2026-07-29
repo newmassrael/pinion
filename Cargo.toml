@@ -446,3 +446,32 @@ pedantic = { level = "deny", priority = -1 }
 # demo, whose AT-tree assertions fail loudly if this ever regresses.
 [profile.release.package.hello-dock-panels-editor]
 codegen-units = 1
+
+# R1490 — stop every dev executable carrying a private copy of the framework's
+# DWARF.
+#
+# The debug info was never duplicated at *compile* time: it lives in the rlibs,
+# and the linker copies it into each binary it links. This workspace links a lot
+# of them — 198 `bin` targets plus a test executable for each of the 190
+# examples that carry `#[cfg(test)] mod tests` — and a binary's size barely
+# depends on what the example contains (measured: 298 LOC = 148.3 MiB,
+# 8,998 LOC = 155.0 MiB). `unpacked` leaves a skeleton that points at the
+# rlib-resident DWARF instead.
+#
+# Measured on a controlled pair of cold builds of the same 20 examples
+# (40 executables) into two empty target dirs on the same volume, changing only
+# this setting:
+#
+#   tree total      5.96 -> 4.97 GiB   (-16.7%)
+#   per executable  101.6 -> 74.6 MiB  (-26.6%)
+#   rlib / rmeta    1.06 / 0.44 GiB    (IDENTICAL — nothing was dropped)
+#   on disk (zstd)  1.6 -> 1.4 GiB     (-12.5%)
+#   cargo build     105s -> 91s        (-13%; less for the linker to copy)
+#   +cargo test     133s -> 119s       (-11%)
+#
+# Nothing is lost: `addr2line` resolves the same file:line in both builds. The
+# one caveat is that a dev binary is only debuggable while its `target/` is
+# intact, which is what a build cache is — release ships no DWARF at all
+# (measured: 0.0 MiB of `.debug_*`), so this profile is the only one it touches.
+[profile.dev]
+split-debuginfo = "unpacked"

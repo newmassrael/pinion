@@ -193,6 +193,17 @@ Since R1489 that hook is the **trend line, not the bound** — see below.
   (`buildcache-sweep.timer`, daily, linger enabled) sweeps **every** project;
   the pre-push hook only ever swept this one, and the repos without it had
   accumulated 66 GiB between them.
+- **R1490 — `[profile.dev] split-debuginfo = "unpacked"`.** The DWARF was never
+  duplicated at compile time: it lives in the rlibs and the *linker* copies it
+  into every binary. Measured on a controlled pair of cold builds of the same 20
+  examples (40 executables) into empty target dirs, changing only this setting:
+  tree 5.96 -> 4.97 GiB (-16.7%), per executable 101.6 -> 74.6 MiB (-26.6%),
+  on disk 1.6 -> 1.4 GiB, `cargo build` 105s -> 91s (-13%). **rlib and rmeta
+  were byte-identical**, so nothing was dropped — only the copying stopped. And
+  `addr2line` resolves the same file:line in both, so no debugging capability is
+  lost; a dev binary is simply only debuggable while its `target/` is intact.
+  Release ships no DWARF at all (measured 0.0 MiB), so `dev` is the only profile
+  this touches. See the comment on the profile in `Cargo.toml`.
 - **The size is printed every push**, over budget or not. That number is the
   fact whose absence caused this; a bound that only speaks when it fires would
   leave the trend unseen. Cost: one `du -sbL`, ~0.12s. **`-L` is load-bearing**
