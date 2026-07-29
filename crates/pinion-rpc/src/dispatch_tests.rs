@@ -1,6 +1,7 @@
 use super::*;
 use pinion_core::external::{CountedExternal, StubExternal};
 use pinion_core::scene::ExternalNode;
+use serde_json::json;
 
 fn counted_scene(n: i64) -> Scene {
     Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -7877,4 +7878,180 @@ fn r1481_the_fallback_does_not_make_a_painted_retained_node_writable() {
     let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
     let err = resp.error.expect("a per-frame node is not writable");
     assert_eq!(err.data, Some(Value::String("NoExternalAtPath".into())));
+}
+
+// ---------------------------------------------------------------------------
+// R1482 §5.12 §2 #7 — what the answer IS, over the wire.
+//
+// Before this, the three ways an answer can arrive produced byte-identical
+// frames (measured: `result:7` from the state scene, `result:0` from a
+// per-frame copy that will not change until the next paint, and `result:99`
+// from a live driver). The value alone cannot be checked for freshness, so
+// these pin that the caller can now ask — and that not asking costs nothing.
+// ---------------------------------------------------------------------------
+
+/// The state scene holds the live model under one tag; the painted frame
+/// holds a per-frame copy under another. The shape that makes the R828
+/// fallback fire on a retained node rather than a driver.
+fn state_and_paint_disagree() -> (Scene, Scene) {
+    let state = Scene::Container(pinion_core::scene::ContainerNode::new(vec![
+        Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(7))).with_tag("live".to_owned()),
+        ),
+    ]));
+    let paint = Scene::Container(pinion_core::scene::ContainerNode::new(vec![
+        Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(0))).with_tag("copy".to_owned()),
+        ),
+    ]));
+    (state, paint)
+}
+
+fn query_origin(state: &mut Scene, paint: &Scene, path: &str) -> Value {
+    let req = format!(
+        r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"{path}","with_origin":true}},"id":1}}"#,
+    );
+    parse_response(&dispatch_with_paint(state, paint, &req).unwrap())
+        .result
+        .expect("the query answered")
+}
+
+#[test]
+fn r1482_a_per_frame_answer_says_it_is_as_of_the_frame() {
+    let (mut state, paint) = state_and_paint_disagree();
+    assert_eq!(
+        query_origin(&mut state, &paint, "/copy/external/count"),
+        json!({"value": 0, "origin": "paint_frame"}),
+    );
+}
+
+#[test]
+fn r1482_a_state_answer_says_so() {
+    let (mut state, paint) = state_and_paint_disagree();
+    assert_eq!(
+        query_origin(&mut state, &paint, "/live/external/count"),
+        json!({"value": 7, "origin": "state"}),
+    );
+}
+
+#[test]
+fn r1482_a_live_driver_answer_is_not_lumped_in_with_the_per_frame_one() {
+    // The distinction that a bare "which scene" disclosure would lose: this
+    // answer comes from the painted frame too, but its handle is the one the
+    // tick loop drives, so it is current — reporting it as `paint_frame`
+    // would understate an answer R828 opened the fallback to serve.
+    let (mut state, _) = state_and_paint_disagree();
+    let paint = paint_scene_with_driver(99);
+    assert_eq!(
+        query_origin(&mut state, &paint, "/ball/external/speed"),
+        json!({"value": 99, "origin": "paint_driver"}),
+    );
+}
+
+#[test]
+fn r1482_the_three_origins_are_distinguishable_where_the_values_were_not() {
+    // The defect in one assertion. Same method, three answers that were
+    // byte-identical in shape; now each says which of the three it is.
+    let (mut state, paint) = state_and_paint_disagree();
+    let driver_paint = paint_scene_with_driver(99);
+    let origins: Vec<Value> = [
+        query_origin(&mut state, &paint, "/live/external/count"),
+        query_origin(&mut state, &paint, "/copy/external/count"),
+        query_origin(&mut state, &driver_paint, "/ball/external/speed"),
+    ]
+    .iter()
+    .map(|v| v.get("origin").cloned().expect("origin member"))
+    .collect();
+    let words: Vec<&str> = origins.iter().filter_map(Value::as_str).collect();
+    let unique: std::collections::BTreeSet<&str> = words.iter().copied().collect();
+    assert_eq!(unique.len(), 3, "three answers, three origins: {words:?}");
+}
+
+#[test]
+fn r1482_not_asking_costs_the_existing_shape_nothing() {
+    // ~287 call sites read `result` as the value itself. The disclosure is
+    // opt-in precisely so that stays true; this asserts the bytes, not just
+    // the value, for both the state and the fallback answer.
+    let (mut state, paint) = state_and_paint_disagree();
+    for (path, expected) in [
+        (
+            "/live/external/count",
+            r#"{"jsonrpc":"2.0","result":7,"id":1}"#,
+        ),
+        (
+            "/copy/external/count",
+            r#"{"jsonrpc":"2.0","result":0,"id":1}"#,
+        ),
+    ] {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"{path}"}},"id":1}}"#,
+        );
+        assert_eq!(
+            dispatch_with_paint(&mut state, &paint, &req).unwrap(),
+            expected,
+            "path {path}",
+        );
+    }
+}
+
+#[test]
+fn r1482_with_origin_false_is_the_bare_shape() {
+    // An explicit `false` must mean the same as absent — a client that
+    // threads the flag from a config should not get a second shape by
+    // passing the default.
+    let (mut state, paint) = state_and_paint_disagree();
+    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/live/external/count","with_origin":false},"id":1}"#;
+    assert_eq!(
+        dispatch_with_paint(&mut state, &paint, req).unwrap(),
+        r#"{"jsonrpc":"2.0","result":7,"id":1}"#,
+    );
+}
+
+#[test]
+fn r1482_an_already_encoded_answer_stays_verbatim_inside_the_wrap() {
+    // R1480 proved a raw answer reaches the wire without a DOM rebuild. The
+    // wrap must not undo that. Same fixture, same two paths, so the witness
+    // is the one R1480 established: `Value`'s object is a `BTreeMap`, so a
+    // DOM round-trip SORTS these keys — the producer's declared order
+    // surviving one level down is what says the bytes were spliced.
+    //
+    // The comparison is against the WIRE TEXT, never a parsed response: this
+    // assertion first ran through `parse_response` and reported the sorted
+    // keys of its own `Value`, which is the same tree rebuild it exists to
+    // detect. A witness that is itself a DOM round-trip cannot see one.
+    let mut state = encoded_scene();
+    let paint = Scene::Container(pinion_core::scene::ContainerNode::new(vec![]));
+
+    let raw = dispatch_with_paint(
+        &mut state,
+        &paint,
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/raw","with_origin":true},"id":1}"#,
+    )
+    .expect("scene/query answers");
+    assert!(
+        raw.contains(&format!(
+            r#""result":{{"value":{PRODUCER_TEXT},"origin":"state"}}"#
+        )),
+        "the wrap must not rebuild the answer as a tree, got: {raw}",
+    );
+    assert!(
+        !raw.contains(DOM_TEXT),
+        "a tree was built and re-rendered inside the wrap: {raw}",
+    );
+
+    // The control: the same document declared as a DOM answer still renders
+    // through the tree inside the wrap, so the wrap is transparent to BOTH
+    // arms rather than forcing either one's shape on the other.
+    let dom = dispatch_with_paint(
+        &mut state,
+        &paint,
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/dom","with_origin":true},"id":1}"#,
+    )
+    .expect("scene/query answers");
+    assert!(
+        dom.contains(&format!(
+            r#""result":{{"value":{DOM_TEXT},"origin":"state"}}"#
+        )),
+        "the DOM arm must keep rendering through the tree: {dom}",
+    );
 }

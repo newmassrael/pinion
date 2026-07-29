@@ -32,6 +32,7 @@ members = [
     "examples/hello-window-focus-multi",
     "examples/hello-window-refocus",
     "examples/hello-window-chrome",
+    "examples/hello-answer-origin",
     "examples/hello-encoded-answer",
     "examples/hello-viewport-question",
     "examples/hello-app-font",

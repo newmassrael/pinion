@@ -73602,6 +73602,70 @@
         "`scene/invoke` on a painted driver is classified `HandlerKind::Mutate` and bumps the scene revision, matching what a state-scene invoke does. Whether a driver mutation SHOULD advance the retained-scene OCC token is a question the immediate-mode axis has not settled; it is bundled with the retained one today."
       ]
     },
+    "Round 1482": {
+      "decision_summary": "A scene/query answer says which surface produced it — the state scene, a live immediate-mode driver in the painted frame, or a per-frame node whose value is as of that frame — disclosed atomically with the value via opt-in params.with_origin, because a provenance fetched by a second call may describe a frame the value never came from.",
+      "changes_bullets": [
+        "`pinion-rpc` `query.rs`: new `SceneSource{State,Paint}` + `AnswerOrigin{State,PaintDriver,PaintFrame}`; `query_from` returns `(value, origin)` from the SAME walk `query` performs, and `query` becomes its origin-dropping projection so the two cannot drift.",
+        "`AnswerOrigin::of(source, driver)` is the single site combining the scene the dispatcher chose with the node kind the walker found; `to_wire` is the single enum-to-word mapping.",
+        "`dispatch.rs` `handle_scene_query`: opt-in `params.with_origin` wraps the answer as `{\"value\",\"origin\"}`; absent or `false` leaves the ratified §5.12 shape (result IS the value) byte-identical for ~287 call sites.",
+        "The wrap is encoded through `RawJson::encode`, so R1480's pre-encoded answers ride verbatim one level down instead of being undone by the envelope.",
+        "New `hello-answer-origin` example: one binding exposing all three origins at once (state-scene model / live `ImmediateModeNode` driver / per-frame retained `ExternalNode`), plus `tools/demos/r1482_answer_origin.py` (32 assertion statements).",
+        "`tools/rpc_verify.py`: `query(path, with_origin=False)` mirrors the new wire param so demos do not hand-roll the envelope."
+      ],
+      "verification_bullets": [
+        "Defect reproduced at HEAD before any edit: one dispatcher, three byte-identical frames — `result:7` (state scene), `result:0` (per-frame copy), `result:99` (live driver). The caller could not tell which contract it held.",
+        "CF-1 (collapse PaintDriver into PaintFrame = the plain \"which scene\" disclosure): exactly 4 unit failures, all driver-distinction claims; the other 968 passed. Demo failed at `★C: expected 'paint_driver', got 'paint_frame'`.",
+        "CF-2 (`with_origin` ignored): exactly 5 unit failures, all disclosure claims; every bare-shape assertion passed, so the two halves are independent. Demo failed at the envelope check.",
+        "CF-3 (wrap rebuilds a DOM instead of splicing raw): did not compile — the type system reported `OriginatedAnswer` has exactly one producer; with an allow, exactly 1 unit failure (the raw witness).",
+        "CF-D3 (paint consulted before state): demo failed at `★H: expected 'state', got 'paint_frame'`, so state-scene authority has teeth.",
+        "My own raw-path assertion first read `parse_response`'s `Value` — a `BTreeMap` round-trip, the very rebuild it exists to detect. Rewritten against the wire text.",
+        "The example's state-scene fixture first wrapped the primary in a `Container`; measured against the running app (`scene/snapshot from=state` reports a bare `{\"type\":\"External\",\"tag\":\"model\"}`) and corrected to mirror production.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 972 (+12), hello-answer-origin 6 (new). Demos PASS: r1482 (new), r1481, r1480, r828, r827, r829, r830, r1468.",
+        "Obligation 3b: the example's `line` helper is the 2nd identical copy (md5-compared against hello-encoded-answer), not the 3rd, so no lift; the `External` skeleton and read-only rule route through the existing `query_proxy_external_impl!` / `read_only_or_unknown` substrate rather than being re-typed."
+      ],
+      "impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The disclosure is opt-in, so a caller that never asks still cannot tell which surface answered. That is a stated limit, not a claim of completeness: making it unconditional would change the result shape for ~287 call sites and is the reason the ratified §5.12 shape was preserved.",
+        "Errors carry no origin. `UnknownIntrospectPath` from the painted frame and from the state scene read identically; only successful answers disclose.",
+        "`scene/invoke` does not disclose. Its fallback is driver-only (R1481), so a successful fallback invoke is always `paint_driver` — derivable, but not stated on the wire.",
+        "A tagged ROOT `External` is not addressable by its own tag (measured: `/model/external/ticks` fails while `/external/ticks` answers, for a state scene whose root carries `tag:\"model\"`). A path-resolution axis, noted and deliberately not fixed here.",
+        "`SceneSource` duplicates the vocabulary `scene/snapshot` already parses from its `from` param as bare strings; a shared parse site would need a third consumer."
+      ],
+      "publishable_decision_summary": "A scene/query answer says which surface produced it — the state scene, a live immediate-mode driver in the painted frame, or a per-frame node whose value is as of that frame — disclosed atomically with the value via opt-in params.with_origin, because a provenance fetched by a second call may describe a frame the value never came from.",
+      "publishable_changes_bullets": [
+        "`pinion-rpc` `query.rs`: new `SceneSource{State,Paint}` + `AnswerOrigin{State,PaintDriver,PaintFrame}`; `query_from` returns `(value, origin)` from the SAME walk `query` performs, and `query` becomes its origin-dropping projection so the two cannot drift.",
+        "`AnswerOrigin::of(source, driver)` is the single site combining the scene the dispatcher chose with the node kind the walker found; `to_wire` is the single enum-to-word mapping.",
+        "`dispatch.rs` `handle_scene_query`: opt-in `params.with_origin` wraps the answer as `{\"value\",\"origin\"}`; absent or `false` leaves the ratified §5.12 shape (result IS the value) byte-identical for ~287 call sites.",
+        "The wrap is encoded through `RawJson::encode`, so R1480's pre-encoded answers ride verbatim one level down instead of being undone by the envelope.",
+        "New `hello-answer-origin` example: one binding exposing all three origins at once (state-scene model / live `ImmediateModeNode` driver / per-frame retained `ExternalNode`), plus `tools/demos/r1482_answer_origin.py` (32 assertion statements).",
+        "`tools/rpc_verify.py`: `query(path, with_origin=False)` mirrors the new wire param so demos do not hand-roll the envelope."
+      ],
+      "publishable_verification_bullets": [
+        "Defect reproduced at HEAD before any edit: one dispatcher, three byte-identical frames — `result:7` (state scene), `result:0` (per-frame copy), `result:99` (live driver). The caller could not tell which contract it held.",
+        "CF-1 (collapse PaintDriver into PaintFrame = the plain \"which scene\" disclosure): exactly 4 unit failures, all driver-distinction claims; the other 968 passed. Demo failed at `★C: expected 'paint_driver', got 'paint_frame'`.",
+        "CF-2 (`with_origin` ignored): exactly 5 unit failures, all disclosure claims; every bare-shape assertion passed, so the two halves are independent. Demo failed at the envelope check.",
+        "CF-3 (wrap rebuilds a DOM instead of splicing raw): did not compile — the type system reported `OriginatedAnswer` has exactly one producer; with an allow, exactly 1 unit failure (the raw witness).",
+        "CF-D3 (paint consulted before state): demo failed at `★H: expected 'state', got 'paint_frame'`, so state-scene authority has teeth.",
+        "My own raw-path assertion first read `parse_response`'s `Value` — a `BTreeMap` round-trip, the very rebuild it exists to detect. Rewritten against the wire text.",
+        "The example's state-scene fixture first wrapped the primary in a `Container`; measured against the running app (`scene/snapshot from=state` reports a bare `{\"type\":\"External\",\"tag\":\"model\"}`) and corrected to mirror production.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 972 (+12), hello-answer-origin 6 (new). Demos PASS: r1482 (new), r1481, r1480, r828, r827, r829, r830, r1468.",
+        "Obligation 3b: the example's `line` helper is the 2nd identical copy (md5-compared against hello-encoded-answer), not the 3rd, so no lift; the `External` skeleton and read-only rule route through the existing `query_proxy_external_impl!` / `read_only_or_unknown` substrate rather than being re-typed."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The disclosure is opt-in, so a caller that never asks still cannot tell which surface answered. That is a stated limit, not a claim of completeness: making it unconditional would change the result shape for ~287 call sites and is the reason the ratified §5.12 shape was preserved.",
+        "Errors carry no origin. `UnknownIntrospectPath` from the painted frame and from the state scene read identically; only successful answers disclose.",
+        "`scene/invoke` does not disclose. Its fallback is driver-only (R1481), so a successful fallback invoke is always `paint_driver` — derivable, but not stated on the wire.",
+        "A tagged ROOT `External` is not addressable by its own tag (measured: `/model/external/ticks` fails while `/external/ticks` answers, for a state scene whose root carries `tag:\"model\"`). A path-resolution axis, noted and deliberately not fixed here.",
+        "`SceneSource` duplicates the vocabulary `scene/snapshot` already parses from its `from` param as bare strings; a shared parse site would need a third consumer."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

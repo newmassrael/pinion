@@ -55,7 +55,7 @@ use crate::preview::{
     ApplyError, ApplyOutcome, PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome,
     TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews, propose_change,
 };
-use crate::query::{QueryError, query};
+use crate::query::{QueryError, SceneSource, query_from};
 use crate::render_fidelity::{RenderFidelityError, render_fidelity};
 use crate::resize::{ResizeError, ResizeParams, resize};
 use crate::rewind::{RewindError, rewind};
@@ -2698,6 +2698,22 @@ enum HandlerKind {
     Mutate,
 }
 
+/// R1482 §5.12 §2 #7 — the disclosing result shape, requested by
+/// `params.with_origin`.
+///
+/// `value` is byte-for-byte the result the bare form returns, because it
+/// is the very same [`ResultBody`] — including the R1480 `Raw` arm, whose
+/// producer-written text `RawValue` splices verbatim even nested one level
+/// down. The wrap therefore costs the answer nothing; it only stops the
+/// caller having to guess what the answer is.
+#[derive(Serialize)]
+struct OriginatedAnswer {
+    value: ResultBody,
+    /// [`crate::AnswerOrigin::to_wire`] is the one mapping; storing the word
+    /// rather than the enum keeps that true with a plain derive.
+    origin: &'static str,
+}
+
 fn handle_scene_query(
     scene: &Scene,
     last_paint_scene: Option<&Scene>,
@@ -2709,9 +2725,18 @@ fn handle_scene_query(
             "params.path missing or not a string",
         ));
     };
+    // R1482 — absent means "answer as you always have", so every existing
+    // caller keeps the ratified §5.12 shape where the result IS the value.
+    // A caller that needs to know what the answer is opts in, and gets the
+    // origin in the SAME answer: a provenance fetched by a second call
+    // could describe a frame that has since been replaced.
+    let with_origin = params
+        .get("with_origin")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
-    match query(scene, path) {
-        Ok(value) => Ok(introspect_value_to_body(value)),
+    let (value, origin) = match query_from(scene, SceneSource::State, path) {
+        Ok(answered) => answered,
         // R828 §2 #4 §5.12 — paint-scene fallback for immediate-mode
         // drivers. `Scene::ImmediateModeNode`s live only in the per-frame
         // paint scene (the view fn emits them; they are absent from the
@@ -2724,15 +2749,38 @@ fn handle_scene_query(
         // is preserved: paint is consulted ONLY on `NoExternalAtPath`, so
         // a retained widget that opted out (`IntrospectionOptedOut`) or
         // any other resolution outcome is returned verbatim.
+        //
+        // R1482 — the retry is NOT narrowed to drivers the way the R1481
+        // write fallback is. A per-frame retained node answers correctly
+        // for any external whose value does not outlive the frame, and
+        // measurement found existing consumers relying on exactly that;
+        // what was missing was not a refusal but the caller's ability to
+        // tell which of the two it got. `AnswerOrigin` carries that.
         Err(QueryError::NoExternalAtPath) => match last_paint_scene {
-            Some(paint) => match query(paint, path) {
-                Ok(value) => Ok(introspect_value_to_body(value)),
-                Err(err) => Err(query_error_to_rpc(err)),
-            },
-            None => Err(query_error_to_rpc(QueryError::NoExternalAtPath)),
+            Some(paint) => {
+                query_from(paint, SceneSource::Paint, path).map_err(query_error_to_rpc)?
+            }
+            None => return Err(query_error_to_rpc(QueryError::NoExternalAtPath)),
         },
-        Err(err) => Err(query_error_to_rpc(err)),
+        Err(err) => return Err(query_error_to_rpc(err)),
+    };
+
+    let body = introspect_value_to_body(value);
+    if !with_origin {
+        return Ok(body);
     }
+    // Encoding the wrap through `RawJson` is one serialization pass over a
+    // body that may itself already be encoded — the R1480 fast path
+    // survives the wrap instead of being undone by it. The error arm is
+    // unreachable for the two inhabitants of `ResultBody` (a `Value` and
+    // already-valid JSON text both serialize infallibly); it is reported
+    // rather than unwrapped so a future arm cannot make it a panic.
+    RawJson::encode(&OriginatedAnswer {
+        value: body,
+        origin: origin.to_wire(),
+    })
+    .map(ResultBody::Raw)
+    .map_err(|e| RpcError::internal_error(format!("origin envelope: {e}")))
 }
 
 /// R888.1 §5.49 — the one prose source of `scene/click`'s button

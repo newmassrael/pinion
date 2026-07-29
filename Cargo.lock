@@ -1781,6 +1781,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-answer-origin"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-rpc",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-app-font"
 version = "0.0.1"
 dependencies = [

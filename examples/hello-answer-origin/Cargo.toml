@@ -1,0 +1,28 @@
+[package]
+name = "hello-answer-origin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1482 §5.12 §2 #7 — a scene/query answer says which of the three surfaces answered it"
+publish = false
+
+[[bin]]
+name = "hello-answer-origin"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1482 §5.12 — the tests resolve each surface through the same typed
+# dispatcher the wire uses, so they pin the origin the wire will report.
+pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -107,7 +107,7 @@ pub use preview::{
     SweepReport, TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews,
     propose_change,
 };
-pub use query::{QueryError, query};
+pub use query::{AnswerOrigin, QueryError, SceneSource, query, query_from};
 pub use resize::{ResizeError, ResizeOutcome, ResizeParams, resize};
 pub use resolve::{
     ResolveExternalError, introspect_at, introspect_mut_at, resolve_external_introspect,

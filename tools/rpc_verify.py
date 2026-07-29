@@ -641,8 +641,20 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 )
             return Response(id=msg.get("id"), result=msg.get("result"))
 
-    def query(self, path: str) -> Any:
-        resp = self.request("scene/query", {"path": path})
+    def query(self, path: str, *, with_origin: bool = False) -> Any:
+        """`scene/query` typed wrapper (§5.12).
+
+        `with_origin=True` (R1482) asks the answer to say which surface
+        produced it, and the result becomes `{"value": ..., "origin":
+        "state"|"paint_driver"|"paint_frame"}` instead of the bare value.
+        The flag mirrors the wire param rather than being defaulted on:
+        the bare shape is what ~287 call sites read, and the disclosure is
+        opt-in precisely so that stays true.
+        """
+        params: dict[str, Any] = {"path": path}
+        if with_origin:
+            params["with_origin"] = True
+        resp = self.request("scene/query", params)
         assert resp is not None
         return resp.result
 

@@ -116,6 +116,86 @@ fn schema_value(intro: &dyn ExternalIntrospect) -> IntrospectValue {
     IntrospectValue::Json(Value::Array(fields))
 }
 
+/// R1482 §5.12 — which of the two scenes a caller handed [`query_from`].
+///
+/// The same two words `scene/snapshot` already puts on the wire for its
+/// `from` param, because they name the same duality: the binding's
+/// retained state scene, and the last painted frame. Naming it as a type
+/// (rather than passing a `bool`) is what lets [`AnswerOrigin::of`] be
+/// the single place that decides what a hit in each scene means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneSource {
+    /// The application's retained state scene.
+    State,
+    /// The last painted frame.
+    Paint,
+}
+
+/// R1482 §5.12 §2 #7 — what a `scene/query` answer *is*, beyond its value.
+///
+/// A value alone cannot be checked for freshness, and the three ways an
+/// answer can arrive have three different freshness contracts while
+/// producing byte-identical wire results:
+///
+/// * [`State`](Self::State) — the retained state scene answered. That
+///   scene is not rebuilt per frame, so the value is the model's current
+///   one whatever node kind held it.
+/// * [`PaintDriver`](Self::PaintDriver) — an
+///   [`ImmediateModeNode`](pinion_core::scene::ImmediateModeNode) in the
+///   painted frame answered. Its `handle` is the same `Rc` the tick loop
+///   drives, so the value is current simulation state — this is the case
+///   R828 built the fallback *for*.
+/// * [`PaintFrame`](Self::PaintFrame) — a retained node in the painted
+///   frame answered. The view fn rebuilds that node every paint, so the
+///   value is the one it carried **as of the last painted frame**.
+///
+/// `PaintFrame` is a statement of provenance, not a verdict of staleness:
+/// for an external whose value does not outlive the frame it was built
+/// from, as-of-last-paint *is* the right answer, which is why the read
+/// fallback stays open to it where the R1481 write fallback does not.
+/// What the caller could not do before was tell the two apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerOrigin {
+    /// The retained state scene answered.
+    State,
+    /// A live immediate-mode driver in the painted frame answered.
+    PaintDriver,
+    /// A per-frame node in the painted frame answered.
+    PaintFrame,
+}
+
+impl AnswerOrigin {
+    /// The single site that decides what a hit means, so the scene the
+    /// dispatcher chose and the node kind the walker found cannot be
+    /// combined two different ways in two places.
+    ///
+    /// `driver` says the walk landed on an immediate-mode node. It is
+    /// deliberately ignored for [`SceneSource::State`]: the state scene
+    /// persists across frames, so neither node kind makes its answer
+    /// as-of-a-frame, and reporting a `StateDriver` would invite a caller
+    /// to treat a distinction that carries no freshness meaning as if it
+    /// did.
+    #[must_use]
+    pub fn of(source: SceneSource, driver: bool) -> Self {
+        match (source, driver) {
+            (SceneSource::State, _) => Self::State,
+            (SceneSource::Paint, true) => Self::PaintDriver,
+            (SceneSource::Paint, false) => Self::PaintFrame,
+        }
+    }
+
+    /// The wire word. One mapping, so the schema and the answer cannot
+    /// drift apart.
+    #[must_use]
+    pub fn to_wire(self) -> &'static str {
+        match self {
+            Self::State => "state",
+            Self::PaintDriver => "paint_driver",
+            Self::PaintFrame => "paint_frame",
+        }
+    }
+}
+
 /// Reasons the typed [`query`] dispatcher can fail.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +241,25 @@ impl From<ResolveExternalError> for QueryError {
 /// does not match the path shape, or the underlying `External` rejects
 /// the introspect path.
 pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryError> {
+    query_from(scene, SceneSource::State, raw_path).map(|(value, _)| value)
+}
+
+/// Resolve `raw_path` against `scene` and return the queried value together
+/// with [what the answer is](AnswerOrigin).
+///
+/// `source` names the scene the caller is handing over; the walk itself is
+/// identical either way. This is the same resolution [`query`] performs —
+/// [`query`] is the projection that drops the origin, for the callers that
+/// hold only one scene and so already know it.
+///
+/// # Errors
+///
+/// The same [`QueryError`]s [`query`] reports.
+pub fn query_from(
+    scene: &Scene,
+    source: SceneSource,
+    raw_path: &str,
+) -> Result<(IntrospectValue, AnswerOrigin), QueryError> {
     // R667 §5.34 — `/window[id]/<segs>/external/<intro>` parse into the
     // borrow-free (scene_segments, introspect_path) pair.
     let (scene_segments, introspect_path) = resolve_external_path(raw_path)?;
@@ -183,7 +282,8 @@ pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryErro
         let intro = driver
             .introspect()
             .ok_or(QueryError::IntrospectionOptedOut)?;
-        return introspect_or_schema(intro, &introspect_path);
+        let value = introspect_or_schema(intro, &introspect_path)?;
+        return Ok((value, AnswerOrigin::of(source, true)));
     }
     // §5.15 retained-`External` branch — `lookup_path_ref` +
     // `primary_external` + §5.15 introspect, lifted into
@@ -191,7 +291,8 @@ pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryErro
     // resolution so an opted-out external still reports
     // `IntrospectionOptedOut` rather than a schema.
     let intro = introspect_at(scene, &scene_segments)?;
-    introspect_or_schema(intro, &introspect_path)
+    let value = introspect_or_schema(intro, &introspect_path)?;
+    Ok((value, AnswerOrigin::of(source, false)))
 }
 
 #[cfg(test)]
@@ -589,6 +690,93 @@ mod tests {
         assert_eq!(
             query(&scene, "/external/pos").unwrap_err(),
             QueryError::IntrospectionOptedOut,
+        );
+    }
+
+    // ---- R1482 §5.12 §2 #7 — what the answer is, not just what it says ----
+
+    #[test]
+    fn r1482_a_retained_node_in_the_painted_frame_is_as_of_that_frame() {
+        // The case with no witness before R1482: the value is whatever the
+        // view fn built into a node it rebuilds every paint.
+        let scene = container_with_nested_counted("c", 3);
+        let (value, origin) = query_from(&scene, SceneSource::Paint, "/c/external/count").unwrap();
+        assert_eq!(value, IntrospectValue::Int(3));
+        assert_eq!(origin, AnswerOrigin::PaintFrame);
+    }
+
+    #[test]
+    fn r1482_a_driver_in_the_painted_frame_is_live() {
+        // The case R828 opened the fallback FOR: the handle is the `Rc` the
+        // tick loop drives, so this answer is current simulation state — and
+        // must not be reported the same way as the node above.
+        let node = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(PosDriver { pos: 0.25 }, Rect::default())
+                .with_tag("ball"),
+        );
+        let scene = Scene::Container(ContainerNode::new(vec![node]));
+        let (value, origin) = query_from(&scene, SceneSource::Paint, "/ball/external/pos").unwrap();
+        assert_eq!(value, IntrospectValue::Float(0.25));
+        assert_eq!(origin, AnswerOrigin::PaintDriver);
+    }
+
+    #[test]
+    fn r1482_the_state_scene_answers_as_state_whatever_node_kind_holds_it() {
+        // The state scene is not rebuilt per frame, so neither node kind
+        // makes its answer as-of-a-frame — the rule `AnswerOrigin::of`
+        // encodes, pinned against both kinds so a future edit cannot make
+        // the state scene report a frame word for one of them.
+        let retained = container_with_nested_counted("c", 3);
+        assert_eq!(
+            query_from(&retained, SceneSource::State, "/c/external/count")
+                .unwrap()
+                .1,
+            AnswerOrigin::State,
+        );
+        let driver = Scene::Container(ContainerNode::new(vec![Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(PosDriver { pos: 0.25 }, Rect::default())
+                .with_tag("ball"),
+        )]));
+        assert_eq!(
+            query_from(&driver, SceneSource::State, "/ball/external/pos")
+                .unwrap()
+                .1,
+            AnswerOrigin::State,
+        );
+    }
+
+    #[test]
+    fn r1482_schema_discovery_reports_the_origin_of_the_node_it_described() {
+        // `$schema` takes the same two branches as a value read, so it must
+        // report the same origin — otherwise a client discovering a contract
+        // cannot tell whether the contract it found is the live one.
+        let scene = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            PosDriver { pos: 0.0 },
+            Rect::default(),
+        ));
+        assert_eq!(
+            query_from(&scene, SceneSource::Paint, "/external/$schema")
+                .unwrap()
+                .1,
+            AnswerOrigin::PaintDriver,
+        );
+    }
+
+    #[test]
+    fn r1482_query_is_the_origin_dropping_projection_of_query_from() {
+        // `query` must stay exactly the value half of the same resolution —
+        // if it ever grew its own walk, the two would drift.
+        let scene = container_with_nested_counted("c", 42);
+        for path in ["/c/external/count", "/c/external/$schema"] {
+            assert_eq!(
+                query(&scene, path),
+                query_from(&scene, SceneSource::State, path).map(|(v, _)| v),
+                "path {path}",
+            );
+        }
+        assert_eq!(
+            query(&scene, "/ghost/external/count"),
+            query_from(&scene, SceneSource::State, "/ghost/external/count").map(|(v, _)| v),
         );
     }
 }
