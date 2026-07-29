@@ -33,6 +33,15 @@
 //! the origin therefore knows whether acting on what it just read is possible,
 //! without trying it.
 //!
+//! R1485 — the same three surfaces also **refuse** three different ways, and
+//! until now said so identically. Asking any of them for a slot it does not
+//! declare produced the byte-identical `data:"UnknownIntrospectPath"`, so a
+//! client could not tell which surface had turned it down, and therefore not
+//! which `$schema` explains the refusal. `with_origin` now covers that half
+//! too: a refusal from a reached surface names it, in the same words its
+//! answers use. A refusal that reached no surface at all — a wrong address —
+//! names none, and the absence is the report.
+//!
 //! Run it: `cargo run -p hello-answer-origin`. The window states each surface's
 //! origin and whether it is writable; the RPC half is the interesting one.
 
@@ -467,6 +476,61 @@ mod tests {
         let before = sim.query("frames");
         sim.tick(std::time::Duration::from_millis(16));
         assert_ne!(before, sim.query("frames"), "tick must be observable");
+    }
+
+    #[test]
+    fn r1485_each_surface_names_itself_when_it_refuses_too() {
+        // The peer of `r1482_the_three_surfaces_report_three_origins` on the
+        // failure channel: the same three surfaces, asked for a slot none of
+        // them declares. Before R1485 these three refusals were one wire
+        // frame; the origin is what makes them three facts again.
+        let refusal = query_from(&state_scene(), SceneSource::State, "/external/nope")
+            .expect_err("an undeclared slot is refused");
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::State));
+        let paint = paint_scene(3);
+        assert_eq!(
+            query_from(&paint, SceneSource::Paint, "/sim/external/nope")
+                .expect_err("an undeclared slot is refused")
+                .refused_by,
+            Some(AnswerOrigin::PaintDriver),
+        );
+        assert_eq!(
+            query_from(&paint, SceneSource::Paint, "/probe/external/nope")
+                .expect_err("an undeclared slot is refused")
+                .refused_by,
+            Some(AnswerOrigin::PaintFrame),
+        );
+    }
+
+    #[test]
+    fn r1485_a_refusal_points_at_the_schema_that_explains_it() {
+        // What the word is FOR. The origin a refusal reports is the origin
+        // the same surface's `$schema` reports, so "no" carries the address
+        // of the contract that says why — a next step rather than a dead
+        // end. Checked against the declaration itself: the slot really is
+        // absent from the schema the origin points at.
+        let paint = paint_scene(3);
+        for (tag, driver) in [(SIM_TAG, true), (PROBE_TAG, false)] {
+            let refused = query_from(&paint, SceneSource::Paint, &format!("/{tag}/external/nope"))
+                .expect_err("an undeclared slot is refused")
+                .refused_by
+                .expect("a reached surface names itself");
+            let (schema, described) = query_from(
+                &paint,
+                SceneSource::Paint,
+                &format!("/{tag}/external/$schema"),
+            )
+            .expect("the surface describes itself");
+            assert_eq!(refused, described, "/{tag} must name one surface");
+            assert_eq!(refused, AnswerOrigin::of(SceneSource::Paint, driver));
+            let IntrospectValue::Json(fields) = schema else {
+                panic!("$schema renders as JSON");
+            };
+            assert!(
+                !format!("{fields}").contains("nope"),
+                "/{tag} schema must not declare the slot that was refused",
+            );
+        }
     }
 
     #[test]

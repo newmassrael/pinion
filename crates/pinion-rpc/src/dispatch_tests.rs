@@ -8298,3 +8298,195 @@ fn r1484_every_rpc_walk_of_a_client_path_goes_through_the_shared_rule() {
          (route through resolve::lookup_addressed[_mut]): {offenders:?}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// R1485 §5.12 §2 #7 — a refusal says which surface refused, over the wire.
+//
+// R1482 gave an ANSWER its provenance. Measured against the running
+// `hello-answer-origin` binding at HEAD, the refusals stayed mute: three
+// different surfaces declining for three different reasons produced the
+// byte-identical `data:"UnknownIntrospectPath"`, and `with_origin:true` was
+// silently ignored on the failure channel. These pin both halves — that the
+// word arrives, and that not asking still costs nothing.
+// ---------------------------------------------------------------------------
+
+/// The disclosing refusal's `error.data`, or a panic if the call succeeded.
+fn refusal_data(state: &mut Scene, paint: &Scene, path: &str) -> Value {
+    let req = format!(
+        r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"{path}","with_origin":true}},"id":1}}"#,
+    );
+    parse_response(&dispatch_with_paint(state, paint, &req).unwrap())
+        .error
+        .expect("the query was refused")
+        .data
+        .expect("a refusal carries data")
+}
+
+#[test]
+fn r1485_a_refusal_from_the_state_scene_names_it() {
+    let (mut state, paint) = state_and_paint_disagree();
+    assert_eq!(
+        refusal_data(&mut state, &paint, "/live/external/nope"),
+        json!({"reason": "UnknownIntrospectPath", "origin": "state"}),
+    );
+}
+
+#[test]
+fn r1485_a_refusal_from_a_per_frame_node_names_it() {
+    // Reached only because the state scene had nothing at the path, so this
+    // also pins that the refusal a caller receives after a fallback is the
+    // PAINT scene's — the fact that is impossible to derive from the word.
+    let (mut state, paint) = state_and_paint_disagree();
+    assert_eq!(
+        refusal_data(&mut state, &paint, "/copy/external/nope"),
+        json!({"reason": "UnknownIntrospectPath", "origin": "paint_frame"}),
+    );
+}
+
+#[test]
+fn r1485_a_refusal_from_a_live_driver_names_it() {
+    let (mut state, _) = state_and_paint_disagree();
+    let paint = paint_scene_with_driver(99);
+    assert_eq!(
+        refusal_data(&mut state, &paint, "/ball/external/nope"),
+        json!({"reason": "UnknownIntrospectPath", "origin": "paint_driver"}),
+    );
+}
+
+#[test]
+fn r1485_three_refusals_that_were_byte_identical_are_not_now() {
+    // The defect in one assertion, mirroring R1482's for the answer channel.
+    let (mut state, paint) = state_and_paint_disagree();
+    let driver_paint = paint_scene_with_driver(99);
+    let reasons: Vec<Value> = [
+        refusal_data(&mut state, &paint, "/live/external/nope"),
+        refusal_data(&mut state, &paint, "/copy/external/nope"),
+        refusal_data(&mut state, &driver_paint, "/ball/external/nope"),
+    ]
+    .iter()
+    .map(|d| d.get("reason").cloned().expect("reason member"))
+    .collect();
+    assert!(
+        reasons
+            .iter()
+            .all(|r| r == &Value::String("UnknownIntrospectPath".into())),
+        "premise: one reason word for all three — that is what made them \
+         indistinguishable: {reasons:?}",
+    );
+    let origins: Vec<Value> = [
+        refusal_data(&mut state, &paint, "/live/external/nope"),
+        refusal_data(&mut state, &paint, "/copy/external/nope"),
+        refusal_data(&mut state, &driver_paint, "/ball/external/nope"),
+    ]
+    .iter()
+    .map(|d| d.get("origin").cloned().expect("origin member"))
+    .collect();
+    let words: Vec<&str> = origins.iter().filter_map(Value::as_str).collect();
+    let unique: std::collections::BTreeSet<&str> = words.iter().copied().collect();
+    assert_eq!(unique.len(), 3, "three refusals, three origins: {words:?}");
+}
+
+#[test]
+fn r1485_a_refusal_names_the_same_surface_its_answers_do() {
+    // The check that makes the word more than decoration, and it is against
+    // something independent: the origin a SUCCESS on the same surface
+    // reports. A refusal naming a different surface than that surface's own
+    // answers would send a client to the wrong `$schema`.
+    let (mut state, paint) = state_and_paint_disagree();
+    let driver_paint = paint_scene_with_driver(99);
+    for (paint, prefix, declared) in [
+        (&paint, "/live/external/", "count"),
+        (&paint, "/copy/external/", "count"),
+        (&driver_paint, "/ball/external/", "speed"),
+    ] {
+        let answered = query_origin(&mut state, paint, &format!("{prefix}{declared}"))
+            .get("origin")
+            .cloned()
+            .expect("origin member");
+        let refused = refusal_data(&mut state, paint, &format!("{prefix}undeclared"))
+            .get("origin")
+            .cloned()
+            .expect("origin member");
+        assert_eq!(
+            answered, refused,
+            "{prefix} must name one surface either way"
+        );
+    }
+}
+
+#[test]
+fn r1485_a_refusal_that_reached_no_surface_omits_the_origin() {
+    // Absence is the report: nothing was reached, so nothing is named. A
+    // `null` here would claim an unidentified surface, which is untrue.
+    let (mut state, paint) = state_and_paint_disagree();
+    for path in ["/ghost/external/count", "/live/count"] {
+        let data = refusal_data(&mut state, &paint, path);
+        assert!(
+            data.get("reason").is_some(),
+            "{path}: a refusal always states its reason",
+        );
+        assert!(
+            data.get("origin").is_none(),
+            "{path}: no surface was reached, so none may be named: {data}",
+        );
+    }
+}
+
+#[test]
+fn r1485_the_reason_word_is_the_one_the_bare_form_sends() {
+    // The disclosing form widens the ratified refusal shape rather than
+    // replacing it — a client matching on the word still finds the word, at
+    // `data.reason` instead of `data`.
+    let (mut state, paint) = state_and_paint_disagree();
+    for path in [
+        "/live/external/nope",
+        "/copy/external/nope",
+        "/ghost/external/count",
+        "/live/count",
+    ] {
+        let bare = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"{path}"}},"id":1}}"#,
+        );
+        let bare_word = parse_response(&dispatch_with_paint(&mut state, &paint, &bare).unwrap())
+            .error
+            .expect("refused")
+            .data
+            .expect("data");
+        assert_eq!(
+            refusal_data(&mut state, &paint, path).get("reason"),
+            Some(&bare_word),
+            "path {path}",
+        );
+    }
+}
+
+#[test]
+fn r1485_not_asking_costs_the_existing_refusal_shape_nothing() {
+    // The peer of `r1482_not_asking_costs_the_existing_shape_nothing` for
+    // the failure channel: bytes, not just the reason word, so every caller
+    // that matches `error.data` as a string keeps working.
+    let (mut state, paint) = state_and_paint_disagree();
+    for (path, expected) in [
+        (
+            "/live/external/nope",
+            r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params","data":"UnknownIntrospectPath"},"id":1}"#,
+        ),
+        (
+            "/ghost/external/count",
+            r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params","data":"NoExternalAtPath"},"id":1}"#,
+        ),
+    ] {
+        for params in [
+            format!(r#"{{"path":"{path}"}}"#),
+            format!(r#"{{"path":"{path}","with_origin":false}}"#),
+        ] {
+            let req =
+                format!(r#"{{"jsonrpc":"2.0","method":"scene/query","params":{params},"id":1}}"#);
+            assert_eq!(
+                dispatch_with_paint(&mut state, &paint, &req).unwrap(),
+                expected,
+                "path {path} params {params}",
+            );
+        }
+    }
+}

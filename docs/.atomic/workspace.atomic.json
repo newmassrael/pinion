@@ -73766,6 +73766,70 @@
         "Unchanged from R1483: whether `compose_root` should simply always wrap, and the fact that a root Container tagged the same as a descendant resolves to the descendant."
       ]
     },
+    "Round 1485": {
+      "decision_summary": "A refusal says which surface refused: scene/query's with_origin opt-in now covers the failure channel, so the three surfaces that answer differently and refused identically are distinguishable, and a refusal that reached no surface names none.",
+      "changes_bullets": [
+        "`query_from` now returns `Result<_, QueryRefusal>` — a refusal plus the surface that produced it — where its error arm previously had nowhere to carry one; `query` keeps `QueryError` by projecting the refusal.",
+        "`refused_by` is `Some` exactly when the walk reached an introspect surface (`UnknownIntrospectPath`, `IntrospectionOptedOut`) and `None` for refusals that named no node (`NoExternalAtPath`, `UnsupportedPath`, `Path`). Each stage attaches the origin where that stage knows what it reached, rather than a classifier re-deriving it from the variant.",
+        "`params.with_origin` now covers the failure channel: `error.data` widens from the bare word to `{reason, origin?}`, with `origin` ABSENT (not null) when no surface was reached.",
+        "New `query_error_reason` is the one place a `QueryError` becomes its wire word, shared by the bare and disclosing renderings; `query_error_to_rpc` fell out as dead once every query refusal routed through `refusal_to_rpc`.",
+        "New demo `tools/demos/r1485_refusal_origin.py` (46 assertion statements) drives `hello-answer-origin`; two new unit tests in that example pin the refusal origins and that a refusal points at the `$schema` lacking the slot.",
+        "Substrate lift (obligation 3b): `rpc_error_data` added to `tools/rpc_verify.py` as the capture peer of `assert_rpc_error`, migrating four hand-rolled sites (three inside `r1386_snapshot_path_error.py`, one new).",
+        "ZERO-FLAKE fix in `r1481_driver_write_parity.py`: two assertions compared a signed `velocity` a wall bounce may legitimately negate; both now assert the magnitude, which `tick` provably preserves."
+      ],
+      "verification_bullets": [
+        "Measured on the running `hello-answer-origin` binding BEFORE any edit: three different surfaces refusing for three different reasons produced the byte-identical `data:\"UnknownIntrospectPath\"` (`/external/nope` = the state model, `/sim/external/nope` = a live driver, `/probe/external/nope` = a per-frame node), and `with_origin:true` was accepted and then silently ignored on the failure channel — the with/without blocks were identical.",
+        "The fact is not derivable: the dispatcher retries the painted frame on `NoExternalAtPath` (R828), so `UnknownIntrospectPath` may come from either scene and from either node kind within the painted one.",
+        "The gap was structural, not a decision: `query_from` returned the origin BESIDE the value, so its error arm had no slot. The compiler reported exactly the three dispatcher sites when the type changed.",
+        "CF-1 (refusals never disclose = pre-R1485): exactly 7 unit failures, all new wire-disclosure claims; the bare-shape guard and the five `query_from` unit tests PASSED, which is their job.",
+        "CF-2 (`refused_by` always `None`): exactly 8 — every \"a surface was named\" claim across both layers (5 wire + 3 unit) — while the \"names nothing\" tests PASSED, so the two halves are independent.",
+        "CF-3 (a driver's refusals report the per-frame word, its answers left correct): exactly 5, the driver-distinguishing ones, including the answer/refusal cross-check; every R1482 answer assertion passed.",
+        "CF-4 (disclose unconditionally): 6 failures — the 2 new bare-shape guards plus 4 PRE-EXISTING tests, so the ratified refusal shape is guarded by the suite that predates this round.",
+        "CF-D1 first killed the demo with a `TypeError` rather than naming the defect, because the demo helper assumed the disclosing shape instead of asserting it; the helper now reports \"the disclosure was accepted and dropped\". CF-D2 (driver/frame collapse) kills the demo at C, CF-D3 (unreached refusals invent a surface) at G plus exactly the 2 absence-pinning unit tests.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 1000 (+13), hello-answer-origin 8 (+2). Demos PASS: r1485 (new), r1482, r1483, r1484, r1481, r1386."
+      ],
+      "impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "BEHAVIOUR CHANGE for opt-in callers: a caller that passes `with_origin:true` AND is refused now receives `error.data` as an object instead of a bare string. The bare (non-opt-in) refusal is byte-identical, which is what the ~287 ratified call sites use; `with_origin` itself is one round old (R1482), and the only in-repo consumer needing an update was `r1482_answer_origin.py` section J, updated here.",
+        "`scene/invoke` still does not disclose at all, on either channel. Its fallback is driver-only, so a successful invoke is always `paint_driver` and derivable — but it is not on the wire, and its refusals have the same ambiguity this round closed for `query`. Doing it would create the third consumer of the origin vocabulary and justify sharing the parse site.",
+        "The disclosure envelope now has two builders — `OriginatedAnswer` (a `Serialize` derive spliced through `RawJson`) and `refusal_to_rpc` (a `Map` built by insertion, because it must OMIT a key). They are the 2nd consumer of the concept and differ in kind, not mechanically; the lift trigger is a 3rd. Measured, not lifted.",
+        "`refused_by` deliberately does not report WHERE the walk looked when it reached nothing — a caller cannot tell \"no paint scene yet, only state was searched\" from \"both were searched\". No consumer has needed it; asserting the absence is what this round shipped instead of inventing the field."
+      ],
+      "publishable_decision_summary": "A refusal says which surface refused: scene/query's with_origin opt-in now covers the failure channel, so the three surfaces that answer differently and refused identically are distinguishable, and a refusal that reached no surface names none.",
+      "publishable_changes_bullets": [
+        "`query_from` now returns `Result<_, QueryRefusal>` — a refusal plus the surface that produced it — where its error arm previously had nowhere to carry one; `query` keeps `QueryError` by projecting the refusal.",
+        "`refused_by` is `Some` exactly when the walk reached an introspect surface (`UnknownIntrospectPath`, `IntrospectionOptedOut`) and `None` for refusals that named no node (`NoExternalAtPath`, `UnsupportedPath`, `Path`). Each stage attaches the origin where that stage knows what it reached, rather than a classifier re-deriving it from the variant.",
+        "`params.with_origin` now covers the failure channel: `error.data` widens from the bare word to `{reason, origin?}`, with `origin` ABSENT (not null) when no surface was reached.",
+        "New `query_error_reason` is the one place a `QueryError` becomes its wire word, shared by the bare and disclosing renderings; `query_error_to_rpc` fell out as dead once every query refusal routed through `refusal_to_rpc`.",
+        "New demo `tools/demos/r1485_refusal_origin.py` (46 assertion statements) drives `hello-answer-origin`; two new unit tests in that example pin the refusal origins and that a refusal points at the `$schema` lacking the slot.",
+        "Substrate lift (obligation 3b): `rpc_error_data` added to `tools/rpc_verify.py` as the capture peer of `assert_rpc_error`, migrating four hand-rolled sites (three inside `r1386_snapshot_path_error.py`, one new).",
+        "ZERO-FLAKE fix in `r1481_driver_write_parity.py`: two assertions compared a signed `velocity` a wall bounce may legitimately negate; both now assert the magnitude, which `tick` provably preserves."
+      ],
+      "publishable_verification_bullets": [
+        "Measured on the running `hello-answer-origin` binding BEFORE any edit: three different surfaces refusing for three different reasons produced the byte-identical `data:\"UnknownIntrospectPath\"` (`/external/nope` = the state model, `/sim/external/nope` = a live driver, `/probe/external/nope` = a per-frame node), and `with_origin:true` was accepted and then silently ignored on the failure channel — the with/without blocks were identical.",
+        "The fact is not derivable: the dispatcher retries the painted frame on `NoExternalAtPath` (R828), so `UnknownIntrospectPath` may come from either scene and from either node kind within the painted one.",
+        "The gap was structural, not a decision: `query_from` returned the origin BESIDE the value, so its error arm had no slot. The compiler reported exactly the three dispatcher sites when the type changed.",
+        "CF-1 (refusals never disclose = pre-R1485): exactly 7 unit failures, all new wire-disclosure claims; the bare-shape guard and the five `query_from` unit tests PASSED, which is their job.",
+        "CF-2 (`refused_by` always `None`): exactly 8 — every \"a surface was named\" claim across both layers (5 wire + 3 unit) — while the \"names nothing\" tests PASSED, so the two halves are independent.",
+        "CF-3 (a driver's refusals report the per-frame word, its answers left correct): exactly 5, the driver-distinguishing ones, including the answer/refusal cross-check; every R1482 answer assertion passed.",
+        "CF-4 (disclose unconditionally): 6 failures — the 2 new bare-shape guards plus 4 PRE-EXISTING tests, so the ratified refusal shape is guarded by the suite that predates this round.",
+        "CF-D1 first killed the demo with a `TypeError` rather than naming the defect, because the demo helper assumed the disclosing shape instead of asserting it; the helper now reports \"the disclosure was accepted and dropped\". CF-D2 (driver/frame collapse) kills the demo at C, CF-D3 (unreached refusals invent a surface) at G plus exactly the 2 absence-pinning unit tests.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 1000 (+13), hello-answer-origin 8 (+2). Demos PASS: r1485 (new), r1482, r1483, r1484, r1481, r1386."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "BEHAVIOUR CHANGE for opt-in callers: a caller that passes `with_origin:true` AND is refused now receives `error.data` as an object instead of a bare string. The bare (non-opt-in) refusal is byte-identical, which is what the ~287 ratified call sites use; `with_origin` itself is one round old (R1482), and the only in-repo consumer needing an update was `r1482_answer_origin.py` section J, updated here.",
+        "`scene/invoke` still does not disclose at all, on either channel. Its fallback is driver-only, so a successful invoke is always `paint_driver` and derivable — but it is not on the wire, and its refusals have the same ambiguity this round closed for `query`. Doing it would create the third consumer of the origin vocabulary and justify sharing the parse site.",
+        "The disclosure envelope now has two builders — `OriginatedAnswer` (a `Serialize` derive spliced through `RawJson`) and `refusal_to_rpc` (a `Map` built by insertion, because it must OMIT a key). They are the 2nd consumer of the concept and differ in kind, not mechanically; the lift trigger is a 3rd. Measured, not lifted.",
+        "`refused_by` deliberately does not report WHERE the walk looked when it reached nothing — a caller cannot tell \"no paint scene yet, only state was searched\" from \"both were searched\". No consumer has needed it; asserting the absence is what this round shipped instead of inventing the field."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

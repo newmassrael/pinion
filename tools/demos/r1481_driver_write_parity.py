@@ -80,18 +80,35 @@ def body() -> None:
         # ── (B) the write channel the driver declared is now reachable ──────
         # Pre-R1481 this call answered `NoExternalAtPath`: the refusal the
         # read on the very same path had already disproved.
+        #
+        # ZERO-FLAKE (R1485 root-cause): the SIGN is not asserted, for the
+        # same reason (A) refuses to assert `pos`. A tick that crosses a wall
+        # reflects the ball and sets `vel = ±|vel|`, so a bounce landing
+        # between this write and the read below legitimately returns the
+        # negation of what was written — observed once as `0.125` written and
+        # `-0.125` read. What a bounce can never do is change the MAGNITUDE:
+        # reflection preserves it, and nothing else in `tick` touches `vel`.
+        # The magnitude is therefore the witness that measures the write and
+        # only the write; asserting the signed value measured the write AND
+        # the simulation's timing, which is why it raced.
         chosen = 0.125
+        assert abs(vel) != chosen, (
+            f"B premise: the driver must not already hold |{chosen}| ({vel}), "
+            "or the write would be invisible"
+        )
         tf.intervene(f"{BALL}/velocity", chosen)
         assert_eq(
-            tf.query(f"{BALL}/velocity"),
+            abs(tf.query(f"{BALL}/velocity")),
             chosen,
             "★B: the write reached the driver the read reports on",
         )
 
-        # A second write, to a different value, so (B) cannot be a fixture
+        # A second write, to a different magnitude, so (B) cannot be a fixture
         # that happened to already hold `chosen`.
         tf.intervene(f"{BALL}/velocity", -0.25)
-        assert_eq(tf.query(f"{BALL}/velocity"), -0.25, "★B: and it is not a one-off")
+        assert_eq(
+            abs(tf.query(f"{BALL}/velocity")), 0.25, "★B: and it is not a one-off"
+        )
 
         # ── (C) the write landed on the LIVE driver, not a per-frame copy ───
         # The distinction the whole round turns on. A copy would be replaced
@@ -215,7 +232,7 @@ def body() -> None:
         # round rests on would show up here as a panic, not a wrong value.
         tf.intervene(f"{BALL}/velocity", 1.5)
         assert_eq(
-            tf.query(f"{BALL}/velocity"),
+            abs(tf.query(f"{BALL}/velocity")),
             1.5,
             "★I: the borrow was released every time — the driver is still writable",
         )

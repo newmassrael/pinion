@@ -25,6 +25,8 @@
 //! carrying the typed [`QueryError`] variant name so AI clients can
 //! pattern-match without parsing prose.
 
+use std::borrow::Cow;
+
 use pinion_a11y::{AccessFocus, AccessNode};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{IntrospectValue, RawJson};
@@ -55,7 +57,7 @@ use crate::preview::{
     ApplyError, ApplyOutcome, PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome,
     TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews, propose_change,
 };
-use crate::query::{QueryError, SceneSource, query_from};
+use crate::query::{QueryError, QueryRefusal, SceneSource, query_from};
 use crate::render_fidelity::{RenderFidelityError, render_fidelity};
 use crate::resize::{ResizeError, ResizeParams, resize};
 use crate::rewind::{RewindError, rewind};
@@ -2756,13 +2758,18 @@ fn handle_scene_query(
         // measurement found existing consumers relying on exactly that;
         // what was missing was not a refusal but the caller's ability to
         // tell which of the two it got. `AnswerOrigin` carries that.
-        Err(QueryError::NoExternalAtPath) => match last_paint_scene {
-            Some(paint) => {
-                query_from(paint, SceneSource::Paint, path).map_err(query_error_to_rpc)?
-            }
-            None => return Err(query_error_to_rpc(QueryError::NoExternalAtPath)),
+        //
+        // R1485 — when the retry runs, the refusal a caller receives is the
+        // PAINT scene's, not the state scene's. That is the sharper half of
+        // the asymmetry this round closed: `UnknownIntrospectPath` from here
+        // means the painted frame held the node and lacked the slot, a fact
+        // no caller could derive from the bare word.
+        Err(refusal) if refusal.error == QueryError::NoExternalAtPath => match last_paint_scene {
+            Some(paint) => query_from(paint, SceneSource::Paint, path)
+                .map_err(|r| refusal_to_rpc(&r, with_origin))?,
+            None => return Err(refusal_to_rpc(&refusal, with_origin)),
         },
-        Err(err) => return Err(query_error_to_rpc(err)),
+        Err(refusal) => return Err(refusal_to_rpc(&refusal, with_origin)),
     };
 
     let body = introspect_value_to_body(value);
@@ -7844,15 +7851,52 @@ fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
     }
 }
 
-fn query_error_to_rpc(err: QueryError) -> RpcError {
-    let variant = match err {
-        QueryError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
-        QueryError::UnsupportedPath => "UnsupportedPath",
-        QueryError::NoExternalAtPath => "NoExternalAtPath",
-        QueryError::IntrospectionOptedOut => "IntrospectionOptedOut",
-        QueryError::UnknownIntrospectPath => "UnknownIntrospectPath",
-    };
-    RpcError::invalid_params(variant)
+/// R1485 §5.12 — the one place a [`QueryError`] becomes its wire word.
+///
+/// Both the bare refusal (`error.data` = this string) and the disclosing
+/// one (`error.data.reason` = this string) render through here, so opting
+/// into provenance cannot silently rename a reason a client already
+/// matches on.
+fn query_error_reason(err: &QueryError) -> Cow<'static, str> {
+    match err {
+        QueryError::Path(inner) => inner.wire_tag(),
+        QueryError::UnsupportedPath => Cow::Borrowed("UnsupportedPath"),
+        QueryError::NoExternalAtPath => Cow::Borrowed("NoExternalAtPath"),
+        QueryError::IntrospectionOptedOut => Cow::Borrowed("IntrospectionOptedOut"),
+        QueryError::UnknownIntrospectPath => Cow::Borrowed("UnknownIntrospectPath"),
+    }
+}
+
+/// R1485 §5.12 §2 #7 — render a [`QueryRefusal`] for the wire.
+///
+/// `with_origin` is the same opt-in that governs the success shape, and it
+/// has to be: a caller that asked which surface answered is asking about
+/// the outcome, not about the half of the outcomes that succeeded. Without
+/// it the bytes are exactly what every pre-R1485 caller receives — the
+/// `data` string alone — which is why the ratified refusal shape survives
+/// this addition untouched.
+///
+/// The disclosing form widens that shape rather than replacing it:
+/// `data.reason` is the very string the bare form sends, so a client that
+/// matched the word still finds the word. `origin` is **absent**, not
+/// null, when no surface was reached — a null would read as "some surface,
+/// unidentified", which is a different and untrue claim. Building the
+/// object by insertion rather than by a `skip_serializing_if` derive keeps
+/// that absence structural and the whole rendering infallible.
+fn refusal_to_rpc(refusal: &QueryRefusal, with_origin: bool) -> RpcError {
+    let reason = query_error_reason(&refusal.error);
+    if !with_origin {
+        return RpcError::invalid_params(reason);
+    }
+    let mut data = serde_json::Map::new();
+    data.insert("reason".to_owned(), Value::String(reason.into_owned()));
+    if let Some(origin) = refusal.refused_by {
+        data.insert(
+            "origin".to_owned(),
+            Value::String(origin.to_wire().to_owned()),
+        );
+    }
+    RpcError::new(-32602, "Invalid params").with_data(Value::Object(data))
 }
 
 pub(crate) fn introspect_value_to_json(value: IntrospectValue) -> Value {

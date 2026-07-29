@@ -43,9 +43,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
-    RpcError,
     RpcSubprocess,
     assert_eq,
+    rpc_error_data,
     run_demo,
 )
 
@@ -53,41 +53,24 @@ EXAMPLE = "hello-button"
 
 
 def snapshot_data(tf: RpcSubprocess, path: str, *, source: str = "state") -> str:
-    """Send `scene/snapshot` expecting failure; return the `error.data` string.
-
-    Fails loudly if the call unexpectedly SUCCEEDS (a silent success would
-    hide a regression) or if `error.data` is not a string.
-    """
-    try:
-        tf.snapshot(path, source=source)
-    except RpcError as exc:
-        assert_eq(exc.code, -32602, f"snapshot {path!r}: JSON-RPC invalid-params code")
-        assert isinstance(exc.data, str), f"snapshot {path!r}: error.data is a string, got {exc.data!r}"
-        return exc.data
-    raise AssertionError(f"snapshot {path!r} was expected to fail, but it succeeded")
+    """Send `scene/snapshot` expecting failure; return the `error.data` string."""
+    return rpc_error_data(
+        lambda: tf.snapshot(path, source=source), label=f"snapshot {path!r}"
+    )
 
 
 def query_data(tf: RpcSubprocess, path: str) -> str:
     """Send `scene/query` expecting failure; return the `error.data` string."""
-    try:
-        tf.query(path)
-    except RpcError as exc:
-        assert_eq(exc.code, -32602, f"query {path!r}: JSON-RPC invalid-params code")
-        assert isinstance(exc.data, str), f"query {path!r}: error.data is a string, got {exc.data!r}"
-        return exc.data
-    raise AssertionError(f"query {path!r} was expected to fail, but it succeeded")
+    return rpc_error_data(lambda: tf.query(path), label=f"query {path!r}")
 
 
 def simulate_data(tf: RpcSubprocess, step_path: str) -> str:
     """Send a one-step `scene/simulate` expecting failure; return `error.data`."""
     params = {"steps": [{"path": step_path, "value": 1}]}
-    try:
-        tf.request("scene/simulate", params)
-    except RpcError as exc:
-        assert_eq(exc.code, -32602, f"simulate {step_path!r}: JSON-RPC invalid-params code")
-        assert isinstance(exc.data, str), f"simulate {step_path!r}: error.data is a string, got {exc.data!r}"
-        return exc.data
-    raise AssertionError(f"simulate step {step_path!r} was expected to fail, but it succeeded")
+    return rpc_error_data(
+        lambda: tf.request("scene/simulate", params),
+        label=f"simulate step {step_path!r}",
+    )
 
 
 def body() -> None:
@@ -135,15 +118,11 @@ def body() -> None:
         assert "(valid: main)" in d_a and "(valid: main)" in d_b, "teaches the valid set"
 
         # ── (E) regression: the sibling `params.from` error keeps context ────
-        try:
-            tf.snapshot("", source="sideways")
-        except RpcError as exc:
-            fm = exc.data
-            assert isinstance(fm, str), f"from-error data is a string, got {fm!r}"
-            assert "state" in fm and "paint" in fm, f"from error names the valid set, got {fm!r}"
-            assert "sideways" in fm, f"from error echoes the violating value, got {fm!r}"
-        else:
-            raise AssertionError("an invalid `from` was expected to fail")
+        fm = rpc_error_data(
+            lambda: tf.snapshot("", source="sideways"), label="snapshot from=sideways"
+        )
+        assert "state" in fm and "paint" in fm, f"from error names the valid set, got {fm!r}"
+        assert "sideways" in fm, f"from error echoes the violating value, got {fm!r}"
 
         # ── (F) class proof: the same fix holds on sibling methods ───────────
         # `scene/query` AND `scene/simulate` shared the identical PathError

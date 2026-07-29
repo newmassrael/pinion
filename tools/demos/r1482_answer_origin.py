@@ -193,13 +193,22 @@ def body() -> None:
         # Asking for the origin must not turn a refusal into a reply: a path
         # that is nowhere is still nowhere, and an unknown slot on a real
         # surface still reads as unknown rather than as an empty envelope.
+        #
+        # R1485 widened what a REFUSAL carries under this same opt-in: the
+        # reason word moved from `error.data` to `error.data.reason`, and a
+        # refusal that reached a surface now names it. The claim here is
+        # unchanged and so are the reason words — which is the point, and why
+        # they are still asserted verbatim. `/nosuchtag/...` reached nothing,
+        # so it names nothing; `probe` is a node the paint scene really holds,
+        # so it does. (The bare — non-`with_origin` — refusal shape is
+        # untouched; `r1485_refusal_origin.py` asserts those bytes.)
         assert_rpc_error(
             lambda: tf.query("/nosuchtag/external/x", with_origin=True),
-            data="NoExternalAtPath",
+            data={"reason": "NoExternalAtPath"},
         )
         assert_rpc_error(
             lambda: tf.query(f"{PROBE}/ghost", with_origin=True),
-            data="UnknownIntrospectPath",
+            data={"reason": "UnknownIntrospectPath", "origin": "paint_frame"},
         )
         assert_rpc_error(lambda: tf.query(f"{SIM}/ghost", with_origin=True))
 

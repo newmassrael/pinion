@@ -198,6 +198,58 @@ impl AnswerOrigin {
     }
 }
 
+/// R1485 §5.12 §2 #7 — a refusal, and the surface that produced it.
+///
+/// [`AnswerOrigin`] gave an *answer* its provenance and left a refusal
+/// with none, because the answer and the refusal did not travel the same
+/// type: [`query_from`] returned the origin beside the value, so its error
+/// arm had nowhere to carry one. That was a shape, not a decision, and it
+/// cost a caller a fact it cannot derive — the dispatcher retries the
+/// painted frame when the state scene has nothing at the path (R828), so a
+/// bare `UnknownIntrospectPath` may have come from either scene, and from
+/// either kind of node within the painted one.
+///
+/// `refused_by` is `Some` exactly when the walk **reached an introspect
+/// surface** and that surface declined:
+/// [`UnknownIntrospectPath`](QueryError::UnknownIntrospectPath) (the path
+/// is not in its schema) and
+/// [`IntrospectionOptedOut`](QueryError::IntrospectionOptedOut) (the node
+/// is there and exposes nothing). It is `None` for the refusals that name
+/// no node at all — a malformed path, an unsupported shape, or
+/// [`NoExternalAtPath`](QueryError::NoExternalAtPath). The absence is
+/// itself the statement: nothing was reached, so nothing can be named.
+///
+/// The word is checkable against something independent of itself. A
+/// refusal's origin names the same surface that surface's *successful*
+/// reads name, so it says where the matching `$schema` lives — which turns
+/// "no" into a next step rather than a dead end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryRefusal {
+    /// Why the query failed — the same reason the origin-less
+    /// [`query`] projection reports.
+    pub error: QueryError,
+    /// The surface that declined, when one was reached.
+    pub refused_by: Option<AnswerOrigin>,
+}
+
+impl QueryRefusal {
+    /// A refusal decided before any introspect surface was reached.
+    fn unreached(error: impl Into<QueryError>) -> Self {
+        Self {
+            error: error.into(),
+            refused_by: None,
+        }
+    }
+
+    /// A refusal a reached surface produced, named by `origin`.
+    fn from_surface(error: QueryError, origin: AnswerOrigin) -> Self {
+        Self {
+            error,
+            refused_by: Some(origin),
+        }
+    }
+}
+
 /// Reasons the typed [`query`] dispatcher can fail.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,7 +295,9 @@ impl From<ResolveExternalError> for QueryError {
 /// does not match the path shape, or the underlying `External` rejects
 /// the introspect path.
 pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryError> {
-    query_from(scene, SceneSource::State, raw_path).map(|(value, _)| value)
+    query_from(scene, SceneSource::State, raw_path)
+        .map(|(value, _)| value)
+        .map_err(|refusal| refusal.error)
 }
 
 /// Resolve `raw_path` against `scene` and return the queried value together
@@ -256,15 +310,23 @@ pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryErro
 ///
 /// # Errors
 ///
-/// The same [`QueryError`]s [`query`] reports.
+/// Returns a [`QueryRefusal`] carrying the same [`QueryError`] [`query`]
+/// reports, plus the surface that produced it when the walk reached one.
 pub fn query_from(
     scene: &Scene,
     source: SceneSource,
     raw_path: &str,
-) -> Result<(IntrospectValue, AnswerOrigin), QueryError> {
+) -> Result<(IntrospectValue, AnswerOrigin), QueryRefusal> {
     // R667 §5.34 — `/window[id]/<segs>/external/<intro>` parse into the
     // borrow-free (scene_segments, introspect_path) pair.
-    let (scene_segments, introspect_path) = resolve_external_path(raw_path)?;
+    //
+    // R1485 — this stage runs before the scene is touched at all, so its
+    // refusals name no surface. Each later stage attaches the origin at the
+    // point that stage *knows* what it reached, rather than a single
+    // after-the-fact classifier trying to re-derive it from the variant:
+    // the same variant can arrive with a surface reached or not.
+    let (scene_segments, introspect_path) =
+        resolve_external_path(raw_path).map_err(QueryRefusal::unreached)?;
     // R828 §2 #4 §5.12 — immediate-mode driver introspect branch. An
     // [`Scene::ImmediateModeNode`] holds its driver behind
     // `Rc<RefCell<dyn ImmediateMode>>` (interior mutability), so unlike a
@@ -280,21 +342,41 @@ pub fn query_from(
     // deferred until a consumer needs it — driver state is tick-driven,
     // read-only like the R823 tree introspect.)
     if let Some(Scene::ImmediateModeNode(node)) = lookup_addressed(scene, &scene_segments) {
+        // R1485 — the walk has landed on a driver, so every outcome from
+        // here names it, refusal included. Binding the origin once, before
+        // the branches, is what keeps a refusal and an answer from this
+        // same node reporting two different surfaces.
+        let origin = AnswerOrigin::of(source, true);
         let driver = node.handle.borrow();
         let intro = driver
             .introspect()
-            .ok_or(QueryError::IntrospectionOptedOut)?;
-        let value = introspect_or_schema(intro, &introspect_path)?;
-        return Ok((value, AnswerOrigin::of(source, true)));
+            .ok_or_else(|| QueryRefusal::from_surface(QueryError::IntrospectionOptedOut, origin))?;
+        let value = introspect_or_schema(intro, &introspect_path)
+            .map_err(|e| QueryRefusal::from_surface(e, origin))?;
+        return Ok((value, origin));
     }
     // §5.15 retained-`External` branch — `lookup_path_ref` +
     // `primary_external` + §5.15 introspect, lifted into
     // [`introspect_at`] (R667). `$schema` (R825) is intercepted after
     // resolution so an opted-out external still reports
     // `IntrospectionOptedOut` rather than a schema.
-    let intro = introspect_at(scene, &scene_segments)?;
-    let value = introspect_or_schema(intro, &introspect_path)?;
-    Ok((value, AnswerOrigin::of(source, false)))
+    let origin = AnswerOrigin::of(source, false);
+    let intro = introspect_at(scene, &scene_segments).map_err(|e| match e {
+        // R1485 — the node IS there and declined to expose a surface. That
+        // is a fact about one node in one scene, so it names it; the caller
+        // learns the address was right and the door is shut, which is not
+        // what "there is nothing here" says.
+        ResolveExternalError::IntrospectionOptedOut => {
+            QueryRefusal::from_surface(QueryError::IntrospectionOptedOut, origin)
+        }
+        // Every other resolve failure ended the walk without an introspect
+        // surface — including the `primary_external` miss, where a node was
+        // found but exposes no External head.
+        other => QueryRefusal::unreached(other),
+    })?;
+    let value = introspect_or_schema(intro, &introspect_path)
+        .map_err(|e| QueryRefusal::from_surface(e, origin))?;
+    Ok((value, origin))
 }
 
 #[cfg(test)]
@@ -772,13 +854,134 @@ mod tests {
         for path in ["/c/external/count", "/c/external/$schema"] {
             assert_eq!(
                 query(&scene, path),
-                query_from(&scene, SceneSource::State, path).map(|(v, _)| v),
+                query_from(&scene, SceneSource::State, path)
+                    .map(|(v, _)| v)
+                    .map_err(|r| r.error),
                 "path {path}",
             );
         }
         assert_eq!(
             query(&scene, "/ghost/external/count"),
-            query_from(&scene, SceneSource::State, "/ghost/external/count").map(|(v, _)| v),
+            query_from(&scene, SceneSource::State, "/ghost/external/count")
+                .map(|(v, _)| v)
+                .map_err(|r| r.error),
         );
+    }
+
+    // ---- R1485 §5.12 §2 #7 — a refusal says which surface refused ----
+
+    #[test]
+    fn r1485_a_reached_surface_names_itself_when_it_declines() {
+        // The three ways a walk can land on a surface that then says no —
+        // the same three words a successful read reports, so a client can
+        // match a refusal against the answers it already understands.
+        let retained = container_with_nested_counted("c", 3);
+        let refusal = query_from(&retained, SceneSource::State, "/c/external/nope")
+            .expect_err("an undeclared path is refused");
+        assert_eq!(refusal.error, QueryError::UnknownIntrospectPath);
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::State));
+
+        let refusal = query_from(&retained, SceneSource::Paint, "/c/external/nope")
+            .expect_err("an undeclared path is refused");
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::PaintFrame));
+
+        let driver = Scene::Container(ContainerNode::new(vec![Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(PosDriver { pos: 0.25 }, Rect::default())
+                .with_tag("ball"),
+        )]));
+        let refusal = query_from(&driver, SceneSource::Paint, "/ball/external/nope")
+            .expect_err("an undeclared path is refused");
+        assert_eq!(refusal.error, QueryError::UnknownIntrospectPath);
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::PaintDriver));
+    }
+
+    #[test]
+    fn r1485_the_same_surface_names_itself_in_both_outcomes() {
+        // The property that makes the refusal word checkable rather than
+        // decorative: a surface reports one identity, whether the slot it
+        // was asked for exists or not. A refusal that named a different
+        // surface than that surface's own answers would send a client
+        // looking for the schema in the wrong place.
+        let scenes = [
+            (
+                container_with_nested_counted("c", 3),
+                "/c/external/",
+                "count",
+            ),
+            (
+                Scene::Container(ContainerNode::new(vec![Scene::ImmediateModeNode(
+                    ImmediateModeNode::from_driver(PosDriver { pos: 0.25 }, Rect::default())
+                        .with_tag("ball"),
+                )])),
+                "/ball/external/",
+                "pos",
+            ),
+        ];
+        for (scene, prefix, declared) in scenes {
+            for source in [SceneSource::State, SceneSource::Paint] {
+                let answered = query_from(&scene, source, &format!("{prefix}{declared}"))
+                    .expect("the declared slot answers")
+                    .1;
+                let refused = query_from(&scene, source, &format!("{prefix}undeclared"))
+                    .expect_err("the undeclared slot is refused")
+                    .refused_by;
+                assert_eq!(
+                    Some(answered),
+                    refused,
+                    "{prefix} under {source:?} must name one surface in both outcomes",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn r1485_an_opted_out_node_is_reached_and_says_so() {
+        // Distinct from "nothing is here": the address was right. Before
+        // R1485 both arrived as a bare word with no way to tell a shut door
+        // from a missing one.
+        let scene = Scene::External(ExternalNode::new(Box::new(StubExternal)));
+        let refusal =
+            query_from(&scene, SceneSource::State, "/external/pos").expect_err("opted out");
+        assert_eq!(refusal.error, QueryError::IntrospectionOptedOut);
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::State));
+    }
+
+    #[test]
+    fn r1485_a_refusal_that_reached_nothing_names_nothing() {
+        // The other half, and the reason `refused_by` is an `Option` rather
+        // than a fourth word: naming a surface here would be an invention.
+        // Each of these ends the walk at a different stage — parse, shape,
+        // and scene walk — so the absence is pinned at all three.
+        let scene = container_with_nested_counted("c", 3);
+        for (path, expected) in [
+            ("/ghost/external/count", QueryError::NoExternalAtPath),
+            ("/c/count", QueryError::UnsupportedPath),
+            (
+                "/window[]/c/external/count",
+                QueryError::Path(PathError::EmptyWindowId),
+            ),
+        ] {
+            let refusal =
+                query_from(&scene, SceneSource::Paint, path).expect_err("must be refused");
+            assert_eq!(refusal.error, expected, "path {path}");
+            assert_eq!(refusal.refused_by, None, "path {path} names no surface");
+        }
+    }
+
+    #[test]
+    fn r1485_query_drops_the_refusing_surface_as_it_drops_the_origin() {
+        // `query` is the projection for callers holding one scene; it must
+        // stay exactly that on the failure channel too, so the two cannot
+        // disagree about WHY a path failed.
+        let scene = container_with_nested_counted("c", 3);
+        for path in ["/c/external/nope", "/ghost/external/count", "/c/count"] {
+            assert_eq!(
+                query(&scene, path),
+                query_from(&scene, SceneSource::State, path)
+                    .map(|(v, _)| v)
+                    .map_err(|r| r.error),
+                "path {path}",
+            );
+        }
     }
 }

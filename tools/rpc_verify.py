@@ -1490,6 +1490,43 @@ def assert_rpc_error(fn, *, code: int = -32602, data: Any = None) -> None:
     )
 
 
+def rpc_error_data(
+    fn,
+    *,
+    code: int = -32602,
+    expect: Any = str,
+    label: str = "call",
+) -> Any:
+    """Run `fn()` expecting a JSON-RPC error; return its `error.data`.
+
+    The capture peer of `assert_rpc_error`, for the demos that do not merely
+    compare the payload but go on to READ it — pick a member out of it, feed
+    it to a later assertion, compare two refusals against each other.
+    Lifted R1485 after the shape reached four hand-rolled sites (three inside
+    `r1386_snapshot_path_error.py` alone, plus `r1485_refusal_origin.py`),
+    each re-deriving the same three mechanical steps: fail loudly if the call
+    unexpectedly SUCCEEDS (a silent success hides exactly the regression
+    these demos exist to catch), check the JSON-RPC code, and confirm the
+    payload's shape before the caller indexes into it.
+
+    `expect` defaults to `str` because a bare word is the ratified §5.12
+    refusal payload; a caller that asked the wire to disclose more (R1485
+    `with_origin`) opts into `expect=dict`, mirroring the request it made.
+    A shape mismatch is reported here rather than as a `TypeError` from the
+    caller's first subscript, so a build that accepted an opt-in and dropped
+    it is named as that.
+    """
+    try:
+        fn()
+    except RpcError as exc:
+        assert_eq(exc.code, code, f"{label}: JSON-RPC error code")
+        assert isinstance(exc.data, expect), (
+            f"{label}: expected error.data as {expect.__name__}, got {exc.data!r}"
+        )
+        return exc.data
+    raise AssertionError(f"{label}: expected an RpcError, but the call succeeded")
+
+
 def wait_until(
     predicate,
     *,
