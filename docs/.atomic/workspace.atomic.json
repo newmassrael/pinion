@@ -73716,6 +73716,56 @@
         "Not addressed: whether `compose_root` should simply always wrap so the two shapes coincide. That would change the state-scene root type for every binding without extras and is a larger, separate decision."
       ]
     },
+    "Round 1484": {
+      "decision_summary": "One address is honoured by every method that takes one: scene/bbox and the preview targets join the external-path sites on a single addressing rule, closing a cross-method split the previous round created by fixing only one layer, with a source scan to keep a new handler from reopening it.",
+      "changes_bullets": [
+        "`locate.rs` `bbox` and the `SetStyle` / `ReplaceView` preview targets in `preview/kinds.rs` now resolve through `resolve::lookup_addressed` / `lookup_addressed_mut`, joining the five external-path sites R1483 covered.",
+        "`bbox` resolves the node and takes its rect, because `Scene::lookup_path` returns a rect and so cannot carry the alias itself.",
+        "New test `r1484_every_rpc_walk_of_a_client_path_goes_through_the_shared_rule` scans the crate's own sources: outside `resolve.rs` and test files, no production line may call `lookup_path`/`_ref`/`_mut` directly. It asserts its own scan reached more than 20 files so an empty scan cannot pass.",
+        "New demo `tools/demos/r1484_one_address_every_method.py` (31 assertion statements) drives `hello-answer-origin` and asserts every client-path method agrees about one name."
+      ],
+      "verification_bullets": [
+        "Measured after R1483, on the binding R1483 itself fixed: `scene/query /model/external/ticks` answered `0` while `scene/bbox /model` answered `UnknownPath`. The previous round created this split by fixing one layer, which is what made it the next round's work rather than a carry.",
+        "CF-1 (bbox reverted to the raw walk): exactly 3 unit failures — the bbox claim, the root-name/empty-path identity, and the source scan. Demo failed with `UnknownPath`.",
+        "CF-2 (one preview site reverted) FIRST KILLED ONLY THE SOURCE SCAN. `scene/propose_change` merely records a proposal and never walks the scene, so the behaviour test asserted on registration and could not see the revert. Rewritten to go through `scene/apply_preview` with a shared ledger; CF-2 rerun then killed 2.",
+        "CF-D2 (ReplaceView site reverted): demo failed with `UnknownTarget`, which is the site the first draft of the demo never exercised — SetStyle and ReplaceView are separate walks and only one was covered.",
+        "The demo asserts the two refusals apart rather than asserting success: `UnknownTarget` means the walk never found the node (the pre-R1484 answer) and `UnsupportedStyleTarget` means it reached the node and the node's type has no fill. This binding's root is an `External`, so the second is the honest answer for SetStyle there.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 987 (+5). Demos PASS: r1484 (new), r1483, r1482, r1481, hello_listbox_composite_path."
+      ],
+      "impact_refs": [
+        "5.32",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "`Scene::lookup_path_ref` / `_mut` / `lookup_path` are still unchanged, so consumers outside `pinion-rpc` — the input router's hit-test walk and `pinion_overlay::inject_highlight` — address by their own mechanisms. Neither resolves a client-supplied path (the router walks hit-test results, the overlay matches a path SUFFIX), so they are outside this rule rather than exempt from it; a future overlay method that took a client path would need it.",
+        "The source scan is a text scan of this crate only. A handler in another crate that resolved a client path would not be seen by it.",
+        "Unchanged from R1483: whether `compose_root` should simply always wrap, and the fact that a root Container tagged the same as a descendant resolves to the descendant."
+      ],
+      "publishable_decision_summary": "One address is honoured by every method that takes one: scene/bbox and the preview targets join the external-path sites on a single addressing rule, closing a cross-method split the previous round created by fixing only one layer, with a source scan to keep a new handler from reopening it.",
+      "publishable_changes_bullets": [
+        "`locate.rs` `bbox` and the `SetStyle` / `ReplaceView` preview targets in `preview/kinds.rs` now resolve through `resolve::lookup_addressed` / `lookup_addressed_mut`, joining the five external-path sites R1483 covered.",
+        "`bbox` resolves the node and takes its rect, because `Scene::lookup_path` returns a rect and so cannot carry the alias itself.",
+        "New test `r1484_every_rpc_walk_of_a_client_path_goes_through_the_shared_rule` scans the crate's own sources: outside `resolve.rs` and test files, no production line may call `lookup_path`/`_ref`/`_mut` directly. It asserts its own scan reached more than 20 files so an empty scan cannot pass.",
+        "New demo `tools/demos/r1484_one_address_every_method.py` (31 assertion statements) drives `hello-answer-origin` and asserts every client-path method agrees about one name."
+      ],
+      "publishable_verification_bullets": [
+        "Measured after R1483, on the binding R1483 itself fixed: `scene/query /model/external/ticks` answered `0` while `scene/bbox /model` answered `UnknownPath`. The previous round created this split by fixing one layer, which is what made it the next round's work rather than a carry.",
+        "CF-1 (bbox reverted to the raw walk): exactly 3 unit failures — the bbox claim, the root-name/empty-path identity, and the source scan. Demo failed with `UnknownPath`.",
+        "CF-2 (one preview site reverted) FIRST KILLED ONLY THE SOURCE SCAN. `scene/propose_change` merely records a proposal and never walks the scene, so the behaviour test asserted on registration and could not see the revert. Rewritten to go through `scene/apply_preview` with a shared ledger; CF-2 rerun then killed 2.",
+        "CF-D2 (ReplaceView site reverted): demo failed with `UnknownTarget`, which is the site the first draft of the demo never exercised — SetStyle and ReplaceView are separate walks and only one was covered.",
+        "The demo asserts the two refusals apart rather than asserting success: `UnknownTarget` means the walk never found the node (the pre-R1484 answer) and `UnsupportedStyleTarget` means it reached the node and the node's type has no fill. This binding's root is an `External`, so the second is the honest answer for SetStyle there.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 987 (+5). Demos PASS: r1484 (new), r1483, r1482, r1481, hello_listbox_composite_path."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "`Scene::lookup_path_ref` / `_mut` / `lookup_path` are still unchanged, so consumers outside `pinion-rpc` — the input router's hit-test walk and `pinion_overlay::inject_highlight` — address by their own mechanisms. Neither resolves a client-supplied path (the router walks hit-test results, the overlay matches a path SUFFIX), so they are outside this rule rather than exempt from it; a future overlay method that took a client path would need it.",
+        "The source scan is a text scan of this crate only. A handler in another crate that resolved a client path would not be seen by it.",
+        "Unchanged from R1483: whether `compose_root` should simply always wrap, and the fact that a root Container tagged the same as a descendant resolves to the descendant."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

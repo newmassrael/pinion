@@ -28,6 +28,8 @@ use pinion_core::Scene;
 use pinion_core::app::App;
 use pinion_core::scene::{HitPath, Rect};
 
+use crate::resolve::lookup_addressed;
+
 /// Successful hit-test outcome (§5.32).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocateOutcome {
@@ -133,7 +135,13 @@ pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
     let resolved = crate::path::resolve(raw_path)?;
     let _ = resolved.window; // multi-window dispatch lands later
     let segments = parse_segments(resolved.scene_path);
-    scene.lookup_path(&segments).ok_or(BboxError::UnknownPath)
+    // R1484 §5.32 §2 #2 — the same addressing rule `scene/query` uses. A
+    // client that reached a node by name must be able to ask this method
+    // about that name; `Scene::lookup_path` returns a rect rather than a
+    // node, so the alias is applied by resolving the node first.
+    lookup_addressed(scene, &segments)
+        .map(Scene::rect)
+        .ok_or(BboxError::UnknownPath)
 }
 
 /// Split a scene-path string into segments. `""`, `"/"`, and `"//"`

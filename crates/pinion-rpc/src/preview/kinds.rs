@@ -14,6 +14,7 @@ use pinion_core::Scene;
 use pinion_core::intent::Intent;
 use pinion_core::style::BoxStyle;
 
+use crate::resolve::lookup_addressed_mut;
 use crate::rewind::{RewindError, rewind};
 
 use super::{ApplyContext, Proposal, ViewBlueprint};
@@ -168,7 +169,9 @@ fn apply_replace_view(
     replacement: ViewBlueprint,
 ) -> Result<(), String> {
     let segments = scene_segments(target_path);
-    let Some(node) = scene.lookup_path_mut(&segments) else {
+    // R1484 §2 #2 — the addressing rule the read methods use, so a target a
+    // client can name is a target it can propose a change to.
+    let Some(node) = lookup_addressed_mut(scene, &segments) else {
         return Err("UnknownTarget".to_string());
     };
     *node = replacement.materialize();
@@ -177,7 +180,7 @@ fn apply_replace_view(
 
 fn apply_set_style(scene: &mut Scene, target_path: &str, style: BoxStyle) -> Result<(), String> {
     let segments = scene_segments(target_path);
-    let Some(node) = scene.lookup_path_mut(&segments) else {
+    let Some(node) = lookup_addressed_mut(scene, &segments) else {
         return Err("UnknownTarget".to_string());
     };
     match node {

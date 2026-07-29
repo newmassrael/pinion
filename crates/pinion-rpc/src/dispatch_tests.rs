@@ -8119,3 +8119,182 @@ fn r1483_the_disclosed_origin_is_unchanged_by_the_alias() {
         Some(json!({"value": 10, "origin": "paint_driver"})),
     );
 }
+
+// ---------------------------------------------------------------------------
+// R1484 §5.32 §2 #2 — one addressing rule across every method that takes a
+// client-supplied scene path.
+//
+// R1483 gave the external-path methods a root-name alias and left the others
+// on the bare walk, so `scene/query /model/external/ticks` answered while
+// `scene/bbox /model` reported `UnknownPath` — the same name, two verdicts.
+// A rule applied per-method is how a client learns an address that only some
+// of the surface honours.
+// ---------------------------------------------------------------------------
+
+/// A tagged root, the shape `CoreShell::compose_root` produces for a binding
+/// with no extra externals — and the shape whose name only some methods knew.
+fn tagged_root_scene() -> Scene {
+    let mut node = pinion_core::scene::ContainerNode::new(vec![Scene::External(
+        ExternalNode::new(Box::new(CountedExternal::new(3))).with_tag("inner".to_owned()),
+    )]);
+    node.rect = pinion_core::scene::Rect::new(0, 0, 120, 40);
+    Scene::Container(node.with_tag("model".to_owned()))
+}
+
+#[test]
+fn r1484_bbox_answers_the_name_the_read_answers() {
+    let mut scene = tagged_root_scene();
+    let read = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/model/external/count"},"id":1}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, read).unwrap());
+    assert!(resp.error.is_none(), "premise: the read answers this name");
+
+    let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/model"},"id":2}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    assert!(
+        resp.error.is_none(),
+        "a name the read answers must not be UnknownPath here: {:?}",
+        resp.error,
+    );
+    assert_eq!(
+        resp.result.and_then(|r| r.get("bbox").cloned()),
+        Some(json!({"x": 0, "y": 0, "w": 120, "h": 40})),
+        "and it must be the ROOT's rect, not a descendant's",
+    );
+}
+
+#[test]
+fn r1484_applying_a_change_targets_the_name_the_read_answers() {
+    // It has to go through APPLY: `scene/propose_change` only records the
+    // proposal and never walks the scene, so asserting on it would pass with
+    // the walk reverted — a counterfactual caught exactly that here.
+    let mut scene = tagged_root_scene();
+    // One ledger across both calls — the proposal is registered in the first
+    // and consumed by the second.
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let propose = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/model","style":{"fill":16711935}},"id":1}"#;
+    let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, propose).unwrap());
+    let preview_id = resp
+        .result
+        .as_ref()
+        .and_then(|r| r.get("preview_id"))
+        .and_then(Value::as_u64)
+        .expect("the proposal was registered");
+
+    let apply = format!(
+        r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":2}}"#
+    );
+    let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, &apply).unwrap());
+    assert!(resp.error.is_none(), "apply failed: {:?}", resp.error);
+    assert_ne!(
+        resp.result.as_ref().and_then(|r| r.get("applied")),
+        Some(&Value::Bool(false)),
+        "the walk must have reached the target named /model: {:?}",
+        resp.result,
+    );
+
+    // The change landed on the ROOT, which is what naming it meant.
+    match &scene {
+        // 0xFF00FF — the fill the proposal named, so the change landed on the
+        // ROOT rather than being silently dropped or applied elsewhere.
+        Scene::Container(c) => assert_eq!(
+            (c.style.fill.r, c.style.fill.g, c.style.fill.b),
+            (0xFF, 0x00, 0xFF),
+            "the root carries the proposed fill",
+        ),
+        other => panic!("expected the tagged Container root, got {other:?}"),
+    }
+}
+
+#[test]
+fn r1484_an_unknown_name_is_still_unknown_everywhere() {
+    // The alias must not have made any of these methods a wildcard.
+    let mut scene = tagged_root_scene();
+    for req in [
+        r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/ghost"},"id":1}"#,
+        r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/ghost/external/count"},"id":2}"#,
+    ] {
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(
+            resp.error.is_some(),
+            "a name nobody has must still refuse: {req}"
+        );
+    }
+}
+
+#[test]
+fn r1484_the_root_name_and_the_empty_path_are_the_same_node() {
+    // The root already had an address — the empty path. The alias adds a
+    // second name for it, so the two must report the same node or the scene
+    // would appear to hold two roots.
+    let mut scene = tagged_root_scene();
+    let by_name = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/model"},"id":1}"#;
+    let by_empty = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/"},"id":1}"#;
+    assert_eq!(
+        parse_response(&dispatch_t(&mut scene, by_name).unwrap()).result,
+        parse_response(&dispatch_t(&mut scene, by_empty).unwrap()).result,
+    );
+}
+
+#[test]
+fn r1484_every_rpc_walk_of_a_client_path_goes_through_the_shared_rule() {
+    // The class guard. R1483 fixed five sites and left three, which is how
+    // the methods came to disagree; this scans the crate's own source so a
+    // new handler cannot quietly reintroduce the split. `resolve.rs` is where
+    // the rule itself lives, so it is the one file allowed to call the raw
+    // walk.
+    let mut offenders = Vec::new();
+    let mut scanned = 0_usize;
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
+        .expect("crate src dir")
+        .flatten()
+    {
+        let path = entry.path();
+        let mut files = Vec::new();
+        if path.is_dir() {
+            for sub in std::fs::read_dir(&path).expect("subdir").flatten() {
+                files.push(sub.path());
+            }
+        } else {
+            files.push(path);
+        }
+        for file in files {
+            let Some(name) = file.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            // `resolve.rs` is where the rule lives, so it is the one file
+            // allowed to call the raw walk. Test files are excluded because a
+            // test may legitimately address a hand-built scene directly — the
+            // claim is about handlers, not about fixtures.
+            let is_rust = file.extension().is_some_and(|e| e == "rs");
+            if !is_rust || name == "resolve.rs" || name.contains("test") {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            scanned += 1;
+            for (i, line) in src.lines().enumerate() {
+                // Stop at the in-file test module for the same reason.
+                if line.trim_start().starts_with("#[cfg(test)]") {
+                    break;
+                }
+                let call = line.contains(".lookup_path_ref(")
+                    || line.contains(".lookup_path_mut(")
+                    || line.contains(".lookup_path(");
+                // Doc comments name these functions to explain the rule; only
+                // real calls can diverge from it.
+                if call && !line.trim_start().starts_with("//") {
+                    offenders.push(format!("{name}:{}", i + 1));
+                }
+            }
+        }
+    }
+    // A scan that reached nothing would pass for the wrong reason.
+    assert!(scanned > 20, "the scan covered only {scanned} files");
+    assert!(
+        offenders.is_empty(),
+        "these walk a path without the shared addressing rule \
+         (route through resolve::lookup_addressed[_mut]): {offenders:?}",
+    );
+}
