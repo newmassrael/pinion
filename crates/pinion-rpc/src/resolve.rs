@@ -3,7 +3,8 @@
 //! `/window[id]/<scene_segments>/external/<introspect_path>`.
 //!
 //! Lifts the inline pattern formerly repeated across
-//! [`crate::invoke`](fn@crate::invoke), [`crate::intervene`], [`crate::rewind`](fn@crate::rewind),
+//! [`crate::invoke`](fn@crate::invoke),
+//! [`crate::intervene`](fn@crate::intervene), [`crate::rewind`](fn@crate::rewind),
 //! [`crate::dry_run`](fn@crate::dry_run) (twice — apply + rollback), [`crate::query`](fn@crate::query),
 //! and four internal [`crate::simulate`](fn@crate::simulate) sites
 //! (`query_introspect_at` / Phase-2 apply / `classify_lookup_failure`
@@ -39,6 +40,7 @@
 
 use pinion_core::Scene;
 use pinion_core::external::ExternalIntrospect;
+use pinion_core::scene::ExternalNode;
 
 use crate::path::{self, PathError};
 
@@ -138,8 +140,8 @@ fn names_the_root(scene: &Scene, segments: &[String]) -> bool {
 /// `names_the_root`. It exists as one function because five sites resolve
 /// an external path (this module's two, plus the immediate-mode branches of
 /// [`crate::query`](fn@crate::query), [`crate::invoke`](fn@crate::invoke)
-/// and [`crate::intervene`]); a rule applied at four of five is how the
-/// read and write channels come to disagree about what exists.
+/// and [`crate::intervene`](fn@crate::intervene)); a rule applied at four of
+/// five is how the read and write channels come to disagree about what exists.
 #[must_use]
 pub fn lookup_addressed<'s>(scene: &'s Scene, segments: &[String]) -> Option<&'s Scene> {
     scene
@@ -207,18 +209,38 @@ pub fn introspect_at<'s>(
     scene: &'s Scene,
     scene_segments: &[String],
 ) -> Result<&'s dyn ExternalIntrospect, ResolveExternalError> {
-    let target =
-        lookup_addressed(scene, scene_segments).ok_or(ResolveExternalError::NoExternalAtPath)?;
-    let node = target
-        .primary_external()
-        .ok_or(ResolveExternalError::NoExternalAtPath)?;
-    node.handle
+    external_node_at(scene, scene_segments)
+        .ok_or(ResolveExternalError::NoExternalAtPath)?
+        .handle
         .introspect()
         .ok_or(ResolveExternalError::IntrospectionOptedOut)
 }
 
+/// R1487 §5.12 §2 #7 — *is* there a retained `External` at this address?
+///
+/// The existence half of [`introspect_at`], which is written in terms of it
+/// so the two cannot answer differently. That matters because two channels
+/// ask this question about the same address and used to answer it with two
+/// different walks: `scene/query` resolved the surface, while the R1481
+/// write fallback never looked and reported `NoExternalAtPath` — "there is
+/// no external here" — for addresses the read had just resolved. One walk,
+/// one answer ([[wire-form-read-write-symmetry]]).
+///
+/// Reached-but-opted-out still counts as reached: whether the node exposes
+/// an introspect surface is the *next* question, and answering this one
+/// with "nothing is there" would state something false about the scene
+/// (§2 #7).
+#[must_use]
+pub fn external_node_at<'s>(
+    scene: &'s Scene,
+    scene_segments: &[String],
+) -> Option<&'s ExternalNode> {
+    lookup_addressed(scene, scene_segments)?.primary_external()
+}
+
 /// Composite: string parse + scene walk in one call. Used by
-/// [`crate::invoke`](fn@crate::invoke), [`crate::intervene`], [`crate::rewind`](fn@crate::rewind), and
+/// [`crate::invoke`](fn@crate::invoke),
+/// [`crate::intervene`](fn@crate::intervene), [`crate::rewind`](fn@crate::rewind), and
 /// [`crate::dry_run`](fn@crate::dry_run) (twice — apply and rollback under separate
 /// `&mut Scene` borrows).
 ///

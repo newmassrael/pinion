@@ -39,9 +39,11 @@
 use pinion_core::Scene;
 use pinion_core::external::{InterveneError as TraitInterveneError, IntrospectValue};
 
+use crate::origin::{AnswerOrigin, Refusal, SceneSource};
 use crate::path::PathError;
 use crate::resolve::{
-    ResolveExternalError, lookup_addressed, resolve_external_introspect_mut, resolve_external_path,
+    ResolveExternalError, external_node_at, lookup_addressed, resolve_external_introspect_mut,
+    resolve_external_path,
 };
 
 /// Reasons the typed [`intervene`] dispatcher can fail.
@@ -72,7 +74,17 @@ pub enum InterveneError {
     /// The value is the right variant but its content is outside the
     /// slot's accepted range (e.g. negative caret position).
     OutOfRange,
+    /// R1487 §2 #7 — the address named a **retained** `External` reached
+    /// through the shared ([`intervene_shared`]) walk, which cannot write
+    /// to it. The peer of
+    /// [`InvokeError::RetainedNodeNotWritable`](crate::InvokeError::RetainedNodeNotWritable);
+    /// see it for why the refusal is right and the word it used to carry
+    /// was not.
+    RetainedNodeNotWritable,
 }
+
+/// A refused [`intervene_from`], and the surface that refused it.
+pub type InterveneRefusal = Refusal<InterveneError>;
 
 impl From<PathError> for InterveneError {
     fn from(err: PathError) -> Self {
@@ -129,14 +141,44 @@ pub fn intervene(
     raw_path: &str,
     value: IntrospectValue,
 ) -> Result<(), InterveneError> {
+    intervene_from(scene, SceneSource::State, raw_path, value)
+        .map(|((), _origin)| ())
+        .map_err(|refusal| refusal.error)
+}
+
+/// Resolve `raw_path` against `scene`, write `value` to the slot there, and
+/// report [which surface took the write](AnswerOrigin).
+///
+/// `source` names the scene the caller is handing over. [`intervene`] is
+/// the projection that drops the origin — the same pairing
+/// [`crate::query`](fn@crate::query) / [`crate::query_from`] have had since
+/// R1482.
+///
+/// # Errors
+///
+/// Returns an [`InterveneRefusal`] carrying the same [`InterveneError`]
+/// [`intervene`] reports, plus the surface that produced it when the walk
+/// identified one.
+pub fn intervene_from(
+    scene: &mut Scene,
+    source: SceneSource,
+    raw_path: &str,
+    value: IntrospectValue,
+) -> Result<((), AnswerOrigin), InterveneRefusal> {
     // R667 §5.34 — `/window[id]/<segs>/external/<state>` parse +
     // Container/Scroll walk + multi-widget primary descent + §5.15
     // introspect-mut lookup lifted into [`resolve_external_introspect_mut`].
-    if let Some(result) = intervene_immediate_at(scene, raw_path, &value) {
+    if let Some(result) = intervene_immediate_at(scene, source, raw_path, &value) {
         return result;
     }
-    let (intro, state_path) = resolve_external_introspect_mut(scene, raw_path)?;
-    intro.intervene(&state_path, value).map_err(Into::into)
+    // R1487 — bound once, before the branches; see [`crate::invoke_from`].
+    let origin = AnswerOrigin::of(source, false);
+    let (intro, state_path) = resolve_external_introspect_mut(scene, raw_path)
+        .map_err(|e| InterveneRefusal::from_resolve(e, origin))?;
+    intro
+        .intervene(&state_path, value)
+        .map(|()| ((), origin))
+        .map_err(|e| InterveneRefusal::from_surface(e.into(), origin))
 }
 
 /// R1481 §2 #4 §5.12 — the immediate-mode half of [`intervene`], reachable
@@ -148,23 +190,29 @@ pub fn intervene(
 /// branch rather than failing.
 fn intervene_immediate_at(
     scene: &Scene,
+    source: SceneSource,
     raw_path: &str,
     value: &IntrospectValue,
-) -> Option<Result<(), InterveneError>> {
+) -> Option<Result<((), AnswerOrigin), InterveneRefusal>> {
     let Ok((scene_segments, state_path)) = resolve_external_path(raw_path) else {
         return None;
     };
     let Some(Scene::ImmediateModeNode(node)) = lookup_addressed(scene, &scene_segments) else {
         return None;
     };
+    let origin = AnswerOrigin::of(source, true);
     let mut driver = node.handle.borrow_mut();
     let Some(intro) = driver.introspect_mut() else {
-        return Some(Err(InterveneError::IntrospectionOptedOut));
+        return Some(Err(InterveneRefusal::from_surface(
+            InterveneError::IntrospectionOptedOut,
+            origin,
+        )));
     };
     Some(
         intro
             .intervene(&state_path, value.clone())
-            .map_err(Into::into),
+            .map(|()| ((), origin))
+            .map_err(|e| InterveneRefusal::from_surface(e.into(), origin)),
     )
 }
 
@@ -181,7 +229,49 @@ pub fn intervene_shared(
     raw_path: &str,
     value: &IntrospectValue,
 ) -> Result<(), InterveneError> {
-    intervene_immediate_at(scene, raw_path, value).unwrap_or(Err(InterveneError::NoExternalAtPath))
+    intervene_shared_from(scene, SceneSource::Paint, raw_path, value)
+        .map(|((), _origin)| ())
+        .map_err(|refusal| refusal.error)
+}
+
+/// R1487 §2 #4 §5.12 §2 #7 — [`intervene_shared`] reporting [which surface
+/// took the write or refused it](AnswerOrigin).
+///
+/// Mirror of [`crate::invoke::invoke_shared_from`], including the half that
+/// stops the write channel denying an address the read resolves: a retained
+/// `External` found here refuses as
+/// [`RetainedNodeNotWritable`](InterveneError::RetainedNodeNotWritable),
+/// named by its surface, instead of as "there is no external at that path".
+///
+/// # Errors
+///
+/// See [`intervene_shared`]; the refusal additionally names the surface when
+/// the walk identified one.
+pub fn intervene_shared_from(
+    scene: &Scene,
+    source: SceneSource,
+    raw_path: &str,
+    value: &IntrospectValue,
+) -> Result<((), AnswerOrigin), InterveneRefusal> {
+    if let Some(result) = intervene_immediate_at(scene, source, raw_path, value) {
+        return result;
+    }
+    Err(retained_refusal(scene, source, raw_path))
+}
+
+/// R1487 — classify a shared-walk miss; mirror of
+/// [`crate::invoke`](mod@crate::invoke)'s.
+fn retained_refusal(scene: &Scene, source: SceneSource, raw_path: &str) -> InterveneRefusal {
+    let Ok((scene_segments, _)) = resolve_external_path(raw_path) else {
+        return InterveneRefusal::unreached(InterveneError::NoExternalAtPath);
+    };
+    if external_node_at(scene, &scene_segments).is_some() {
+        return InterveneRefusal::from_surface(
+            InterveneError::RetainedNodeNotWritable,
+            AnswerOrigin::of(source, false),
+        );
+    }
+    InterveneRefusal::unreached(InterveneError::NoExternalAtPath)
 }
 
 #[cfg(test)]
@@ -292,11 +382,70 @@ mod tests {
 
     #[test]
     fn r1481_a_path_reaching_no_driver_is_still_refused() {
+        // R1487 — the refusal stands; the word it carried did not. See the
+        // peer in [`crate::invoke`].
         let scene = counted_scene(1);
         assert_eq!(
             intervene_shared(&scene, "/external/count", &IntrospectValue::Int(2)).unwrap_err(),
-            InterveneError::NoExternalAtPath,
+            InterveneError::RetainedNodeNotWritable,
         );
+        assert!(
+            crate::query::query(&scene, "/external/count").is_ok(),
+            "the read resolves this address, so the write may not deny it exists",
+        );
+    }
+
+    #[test]
+    fn r1487_a_retained_refusal_names_the_surface_it_reached() {
+        let scene = counted_scene(1);
+        let refusal = intervene_shared_from(
+            &scene,
+            SceneSource::Paint,
+            "/external/count",
+            &IntrospectValue::Int(2),
+        )
+        .expect_err("a per-frame node cannot take a write");
+        assert_eq!(refusal.error, InterveneError::RetainedNodeNotWritable);
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::PaintFrame));
+    }
+
+    #[test]
+    fn r1487_nothing_at_the_address_still_names_nothing() {
+        let scene = Scene::Container(pinion_core::scene::ContainerNode::new(vec![]));
+        let refusal = intervene_shared_from(
+            &scene,
+            SceneSource::Paint,
+            "/ghost/external/total",
+            &IntrospectValue::Int(2),
+        )
+        .expect_err("nothing is there");
+        assert_eq!(refusal.error, InterveneError::NoExternalAtPath);
+        assert_eq!(refusal.refused_by, None);
+    }
+
+    #[test]
+    fn r1487_a_write_names_the_surface_that_took_it() {
+        // The success half — the fact R1482's origin word only *predicted*.
+        // A write that landed can now say where, in the same reply.
+        let scene = driver_scene(10, true);
+        let ((), origin) = intervene_shared_from(
+            &scene,
+            SceneSource::Paint,
+            "/ball/external/speed",
+            &IntrospectValue::Int(4),
+        )
+        .expect("a live driver takes the write");
+        assert_eq!(origin, AnswerOrigin::PaintDriver);
+
+        let mut state = counted_scene(1);
+        let ((), origin) = intervene_from(
+            &mut state,
+            SceneSource::State,
+            "/external/count",
+            IntrospectValue::Int(7),
+        )
+        .expect("the model takes the write");
+        assert_eq!(origin, AnswerOrigin::State);
     }
 
     #[test]

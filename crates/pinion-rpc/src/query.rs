@@ -26,6 +26,7 @@ use pinion_core::Scene;
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use serde_json::{Value, json};
 
+use crate::origin::{AnswerOrigin, QueryRefusal, SceneSource};
 use crate::path::PathError;
 use crate::resolve::{
     ResolveExternalError, introspect_at, lookup_addressed, resolve_external_path,
@@ -116,138 +117,6 @@ fn schema_value(intro: &dyn ExternalIntrospect) -> IntrospectValue {
         })
         .collect();
     IntrospectValue::Json(Value::Array(fields))
-}
-
-/// R1482 §5.12 — which of the two scenes a caller handed [`query_from`].
-///
-/// The same two words `scene/snapshot` already puts on the wire for its
-/// `from` param, because they name the same duality: the binding's
-/// retained state scene, and the last painted frame. Naming it as a type
-/// (rather than passing a `bool`) is what lets [`AnswerOrigin::of`] be
-/// the single place that decides what a hit in each scene means.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SceneSource {
-    /// The application's retained state scene.
-    State,
-    /// The last painted frame.
-    Paint,
-}
-
-/// R1482 §5.12 §2 #7 — what a `scene/query` answer *is*, beyond its value.
-///
-/// A value alone cannot be checked for freshness, and the three ways an
-/// answer can arrive have three different freshness contracts while
-/// producing byte-identical wire results:
-///
-/// * [`State`](Self::State) — the retained state scene answered. That
-///   scene is not rebuilt per frame, so the value is the model's current
-///   one whatever node kind held it.
-/// * [`PaintDriver`](Self::PaintDriver) — an
-///   [`ImmediateModeNode`](pinion_core::scene::ImmediateModeNode) in the
-///   painted frame answered. Its `handle` is the same `Rc` the tick loop
-///   drives, so the value is current simulation state — this is the case
-///   R828 built the fallback *for*.
-/// * [`PaintFrame`](Self::PaintFrame) — a retained node in the painted
-///   frame answered. The view fn rebuilds that node every paint, so the
-///   value is the one it carried **as of the last painted frame**.
-///
-/// `PaintFrame` is a statement of provenance, not a verdict of staleness:
-/// for an external whose value does not outlive the frame it was built
-/// from, as-of-last-paint *is* the right answer, which is why the read
-/// fallback stays open to it where the R1481 write fallback does not.
-/// What the caller could not do before was tell the two apart.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnswerOrigin {
-    /// The retained state scene answered.
-    State,
-    /// A live immediate-mode driver in the painted frame answered.
-    PaintDriver,
-    /// A per-frame node in the painted frame answered.
-    PaintFrame,
-}
-
-impl AnswerOrigin {
-    /// The single site that decides what a hit means, so the scene the
-    /// dispatcher chose and the node kind the walker found cannot be
-    /// combined two different ways in two places.
-    ///
-    /// `driver` says the walk landed on an immediate-mode node. It is
-    /// deliberately ignored for [`SceneSource::State`]: the state scene
-    /// persists across frames, so neither node kind makes its answer
-    /// as-of-a-frame, and reporting a `StateDriver` would invite a caller
-    /// to treat a distinction that carries no freshness meaning as if it
-    /// did.
-    #[must_use]
-    pub fn of(source: SceneSource, driver: bool) -> Self {
-        match (source, driver) {
-            (SceneSource::State, _) => Self::State,
-            (SceneSource::Paint, true) => Self::PaintDriver,
-            (SceneSource::Paint, false) => Self::PaintFrame,
-        }
-    }
-
-    /// The wire word. One mapping, so the schema and the answer cannot
-    /// drift apart.
-    #[must_use]
-    pub fn to_wire(self) -> &'static str {
-        match self {
-            Self::State => "state",
-            Self::PaintDriver => "paint_driver",
-            Self::PaintFrame => "paint_frame",
-        }
-    }
-}
-
-/// R1485 §5.12 §2 #7 — a refusal, and the surface that produced it.
-///
-/// [`AnswerOrigin`] gave an *answer* its provenance and left a refusal
-/// with none, because the answer and the refusal did not travel the same
-/// type: [`query_from`] returned the origin beside the value, so its error
-/// arm had nowhere to carry one. That was a shape, not a decision, and it
-/// cost a caller a fact it cannot derive — the dispatcher retries the
-/// painted frame when the state scene has nothing at the path (R828), so a
-/// bare `UnknownIntrospectPath` may have come from either scene, and from
-/// either kind of node within the painted one.
-///
-/// `refused_by` is `Some` exactly when the walk **reached an introspect
-/// surface** and that surface declined:
-/// [`UnknownIntrospectPath`](QueryError::UnknownIntrospectPath) (the path
-/// is not in its schema) and
-/// [`IntrospectionOptedOut`](QueryError::IntrospectionOptedOut) (the node
-/// is there and exposes nothing). It is `None` for the refusals that name
-/// no node at all — a malformed path, an unsupported shape, or
-/// [`NoExternalAtPath`](QueryError::NoExternalAtPath). The absence is
-/// itself the statement: nothing was reached, so nothing can be named.
-///
-/// The word is checkable against something independent of itself. A
-/// refusal's origin names the same surface that surface's *successful*
-/// reads name, so it says where the matching `$schema` lives — which turns
-/// "no" into a next step rather than a dead end.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueryRefusal {
-    /// Why the query failed — the same reason the origin-less
-    /// [`query`] projection reports.
-    pub error: QueryError,
-    /// The surface that declined, when one was reached.
-    pub refused_by: Option<AnswerOrigin>,
-}
-
-impl QueryRefusal {
-    /// A refusal decided before any introspect surface was reached.
-    fn unreached(error: impl Into<QueryError>) -> Self {
-        Self {
-            error: error.into(),
-            refused_by: None,
-        }
-    }
-
-    /// A refusal a reached surface produced, named by `origin`.
-    fn from_surface(error: QueryError, origin: AnswerOrigin) -> Self {
-        Self {
-            error,
-            refused_by: Some(origin),
-        }
-    }
 }
 
 /// Reasons the typed [`query`] dispatcher can fail.
@@ -361,19 +230,11 @@ pub fn query_from(
     // resolution so an opted-out external still reports
     // `IntrospectionOptedOut` rather than a schema.
     let origin = AnswerOrigin::of(source, false);
-    let intro = introspect_at(scene, &scene_segments).map_err(|e| match e {
-        // R1485 — the node IS there and declined to expose a surface. That
-        // is a fact about one node in one scene, so it names it; the caller
-        // learns the address was right and the door is shut, which is not
-        // what "there is nothing here" says.
-        ResolveExternalError::IntrospectionOptedOut => {
-            QueryRefusal::from_surface(QueryError::IntrospectionOptedOut, origin)
-        }
-        // Every other resolve failure ended the walk without an introspect
-        // surface — including the `primary_external` miss, where a node was
-        // found but exposes no External head.
-        other => QueryRefusal::unreached(other),
-    })?;
+    // R1485 classified this by hand; R1487 lifted the classification to
+    // [`QueryRefusal::from_resolve`] once `scene/invoke` and
+    // `scene/intervene` needed the identical split.
+    let intro =
+        introspect_at(scene, &scene_segments).map_err(|e| QueryRefusal::from_resolve(e, origin))?;
     let value = introspect_or_schema(intro, &introspect_path)
         .map_err(|e| QueryRefusal::from_surface(e, origin))?;
     Ok((value, origin))

@@ -28,6 +28,7 @@ pub mod invoke;
 pub mod layout_query;
 pub mod locate;
 pub mod methods;
+pub mod origin;
 pub mod path;
 pub mod preview;
 pub mod query;
@@ -91,7 +92,8 @@ pub use frame_timings::{
     FrameTimingsProduce, FrameTimingsWindow, frame_timings,
 };
 pub use intents::{IntentsError, drain_intents};
-pub use invoke::{InvokeError, invoke};
+pub use intervene::{InterveneError, InterveneRefusal, intervene, intervene_from};
+pub use invoke::{InvokeError, InvokeRefusal, invoke, invoke_from};
 pub use layout_query::{
     LayoutKind, LayoutNode, LayoutQueryError, LayoutQueryParams, LayoutRect, ViewportSize,
     build_layout_node, layout_query, project_layout,
@@ -100,6 +102,7 @@ pub use locate::{
     BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
 };
 pub use methods::{MethodEntry, MethodOcc, OCC_DOC, RPC_METHODS, RpcMethods, rpc_methods};
+pub use origin::{AnswerOrigin, QueryRefusal, Refusal, SceneSource};
 pub use path::{PathError, ResolvedPath, resolve};
 pub use preview::{
     ApplyContext, ApplyError, ApplyOutcome, DEFAULT_CAPACITY, DEFAULT_TTL, Entry as PreviewEntry,
@@ -107,7 +110,7 @@ pub use preview::{
     SweepReport, TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews,
     propose_change,
 };
-pub use query::{AnswerOrigin, QueryError, QueryRefusal, SceneSource, query, query_from};
+pub use query::{QueryError, query, query_from};
 pub use resize::{ResizeError, ResizeOutcome, ResizeParams, resize};
 pub use resolve::{
     ResolveExternalError, introspect_at, introspect_mut_at, resolve_external_introspect,

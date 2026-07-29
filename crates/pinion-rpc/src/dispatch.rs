@@ -46,18 +46,19 @@ use crate::export_pdf::{ExportPdfError, ExportPdfParams, export_pdf};
 use crate::font::{self, FontError, FontRegistry};
 use crate::frame_timings::{FrameTimingsError, FrameTimingsOutcome, frame_timings};
 use crate::intents::{IntentsError, drain_intents};
-use crate::intervene::{InterveneError, intervene, intervene_shared};
-use crate::invoke::{InvokeError, invoke, invoke_shared};
+use crate::intervene::{InterveneError, intervene_from, intervene_shared_from};
+use crate::invoke::{InvokeError, invoke_from, invoke_shared_from};
 use crate::layout_query::{LayoutQueryError, LayoutQueryParams, layout_query};
 use crate::locate::{
     BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
 };
 use crate::methods::rpc_methods;
+use crate::origin::{AnswerOrigin, Refusal, SceneSource};
 use crate::preview::{
     ApplyError, ApplyOutcome, PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome,
     TypedProposal, ViewBlueprint, apply_preview, cancel_preview, list_previews, propose_change,
 };
-use crate::query::{QueryError, QueryRefusal, SceneSource, query_from};
+use crate::query::{QueryError, query_from};
 use crate::render_fidelity::{RenderFidelityError, render_fidelity};
 use crate::resize::{ResizeError, ResizeParams, resize};
 use crate::rewind::{RewindError, rewind};
@@ -2727,15 +2728,7 @@ fn handle_scene_query(
             "params.path missing or not a string",
         ));
     };
-    // R1482 — absent means "answer as you always have", so every existing
-    // caller keeps the ratified §5.12 shape where the result IS the value.
-    // A caller that needs to know what the answer is opts in, and gets the
-    // origin in the SAME answer: a provenance fetched by a second call
-    // could describe a frame that has since been replaced.
-    let with_origin = params
-        .get("with_origin")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let with_origin = wants_origin(params);
 
     let (value, origin) = match query_from(scene, SceneSource::State, path) {
         Ok(answered) => answered,
@@ -2766,28 +2759,55 @@ fn handle_scene_query(
         // no caller could derive from the bare word.
         Err(refusal) if refusal.error == QueryError::NoExternalAtPath => match last_paint_scene {
             Some(paint) => query_from(paint, SceneSource::Paint, path)
-                .map_err(|r| refusal_to_rpc(&r, with_origin))?,
-            None => return Err(refusal_to_rpc(&refusal, with_origin)),
+                .map_err(|r| refusal_to_rpc(&r, query_error_reason, with_origin))?,
+            None => return Err(refusal_to_rpc(&refusal, query_error_reason, with_origin)),
         },
-        Err(refusal) => return Err(refusal_to_rpc(&refusal, with_origin)),
+        Err(refusal) => return Err(refusal_to_rpc(&refusal, query_error_reason, with_origin)),
     };
 
-    let body = introspect_value_to_body(value);
+    originated_body(introspect_value_to_body(value), origin, with_origin)
+}
+
+/// R1482 §5.12 §2 #7 — apply (or skip) the disclosing wrap on a result whose
+/// body may already be encoded.
+///
+/// Encoding the wrap through `RawJson` is one serialization pass over a body
+/// that may itself already be encoded — the R1480 fast path survives the
+/// wrap instead of being undone by it. The error arm is unreachable for the
+/// two inhabitants of [`ResultBody`] (a `Value` and already-valid JSON text
+/// both serialize infallibly); it is reported rather than unwrapped so a
+/// future arm cannot make it a panic.
+///
+/// R1487 — one site, so `scene/query` and `scene/invoke` cannot come to
+/// disagree about what an origin-disclosing success looks like.
+fn originated_body(
+    body: ResultBody,
+    origin: AnswerOrigin,
+    with_origin: bool,
+) -> Result<ResultBody, RpcError> {
     if !with_origin {
         return Ok(body);
     }
-    // Encoding the wrap through `RawJson` is one serialization pass over a
-    // body that may itself already be encoded — the R1480 fast path
-    // survives the wrap instead of being undone by it. The error arm is
-    // unreachable for the two inhabitants of `ResultBody` (a `Value` and
-    // already-valid JSON text both serialize infallibly); it is reported
-    // rather than unwrapped so a future arm cannot make it a panic.
     RawJson::encode(&OriginatedAnswer {
         value: body,
         origin: origin.to_wire(),
     })
     .map(ResultBody::Raw)
     .map_err(|e| RpcError::internal_error(format!("origin envelope: {e}")))
+}
+
+/// R1482 §5.12 — read `params.with_origin`.
+///
+/// Absent means "answer as you always have", so every existing caller keeps
+/// the ratified §5.12 shape where the result IS the value. A caller that
+/// needs to know which surface produced the outcome opts in, and gets the
+/// origin in the SAME reply: a provenance fetched by a second call could
+/// describe a frame that has since been replaced.
+fn wants_origin(params: &Value) -> bool {
+    params
+        .get("with_origin")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// R888.1 §5.49 — the one prose source of `scene/click`'s button
@@ -5548,8 +5568,10 @@ fn handle_scene_invoke(
         ));
     };
 
-    match invoke(scene, path, args.clone()) {
-        Ok(value) => Ok(introspect_value_to_body(value)),
+    let with_origin = wants_origin(params);
+
+    let (value, origin) = match invoke_from(scene, SceneSource::State, path, args.clone()) {
+        Ok(acted) => acted,
         // R1481 §2 #4 §5.12 — paint-scene fallback, the write mirror of the
         // one `handle_scene_query` has had since R828. An immediate-mode
         // driver lives ONLY in the painted frame, so a state-scene walk
@@ -5560,19 +5582,24 @@ fn handle_scene_invoke(
         //
         // State-scene authority is preserved the way the read preserves it:
         // paint is consulted ONLY on `NoExternalAtPath`, so every other
-        // outcome is returned verbatim. And only a driver answers there —
-        // `invoke_shared` refuses a retained `ExternalNode` in a painted
-        // frame, because that node is a `Box` the view fn rebuilds each
-        // frame and a write into it would vanish before the next paint.
-        Err(InvokeError::NoExternalAtPath) => match last_paint_scene {
-            Some(paint) => match invoke_shared(paint, path, &args) {
-                Ok(value) => Ok(introspect_value_to_body(value)),
-                Err(err) => Err(invoke_error_to_rpc(&err)),
-            },
-            None => Err(invoke_error_to_rpc(&InvokeError::NoExternalAtPath)),
+        // outcome is returned verbatim. And only a driver ACTS there — a
+        // retained `ExternalNode` in a painted frame is a `Box` the view fn
+        // rebuilds each frame, so an action on it would vanish before the
+        // next paint.
+        //
+        // R1487 — that retained node is now refused by name
+        // (`RetainedNodeNotWritable`, origin `paint_frame`) instead of by
+        // denying it exists. The refusal is R1481's; only the false
+        // statement about the scene is gone.
+        Err(refusal) if refusal.error == InvokeError::NoExternalAtPath => match last_paint_scene {
+            Some(paint) => invoke_shared_from(paint, SceneSource::Paint, path, &args)
+                .map_err(|r| refusal_to_rpc(&r, invoke_error_reason, with_origin))?,
+            None => return Err(refusal_to_rpc(&refusal, invoke_error_reason, with_origin)),
         },
-        Err(err) => Err(invoke_error_to_rpc(&err)),
-    }
+        Err(refusal) => return Err(refusal_to_rpc(&refusal, invoke_error_reason, with_origin)),
+    };
+
+    originated_body(introspect_value_to_body(value), origin, with_origin)
 }
 
 fn handle_scene_intents(scene: &mut Scene) -> Result<Value, RpcError> {
@@ -7517,22 +7544,26 @@ fn preview_view_to_json(view: &PreviewView, now: std::time::Instant) -> Value {
     Value::Object(obj)
 }
 
-fn invoke_error_to_rpc(err: &InvokeError) -> RpcError {
-    let variant = match err {
-        InvokeError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
-        InvokeError::UnsupportedPath => "UnsupportedPath",
-        InvokeError::NoExternalAtPath => "NoExternalAtPath",
-        InvokeError::IntrospectionOptedOut => "IntrospectionOptedOut",
-        InvokeError::UnknownInvokePath => "UnknownInvokePath",
-        InvokeError::InvokeTypeMismatch => "InvokeTypeMismatch",
-        InvokeError::InvokeRejected => "InvokeRejected",
-    };
-    RpcError::invalid_params(variant)
+/// R1487 — the wire word for an [`InvokeError`], split out of the former
+/// `invoke_error_to_rpc` so the bare and the disclosing renderings share one
+/// vocabulary (peer of [`query_error_reason`]).
+fn invoke_error_reason(err: &InvokeError) -> Cow<'static, str> {
+    match err {
+        InvokeError::Path(inner) => inner.wire_tag(),
+        InvokeError::UnsupportedPath => Cow::Borrowed("UnsupportedPath"),
+        InvokeError::NoExternalAtPath => Cow::Borrowed("NoExternalAtPath"),
+        InvokeError::IntrospectionOptedOut => Cow::Borrowed("IntrospectionOptedOut"),
+        InvokeError::UnknownInvokePath => Cow::Borrowed("UnknownInvokePath"),
+        InvokeError::InvokeTypeMismatch => Cow::Borrowed("InvokeTypeMismatch"),
+        InvokeError::InvokeRejected => Cow::Borrowed("InvokeRejected"),
+        InvokeError::RetainedNodeNotWritable => Cow::Borrowed("RetainedNodeNotWritable"),
+    }
 }
 
 /// R56.1.f.3 §5.22 — `scene/intervene` typed handler. Parses
 /// `params = {"path": str, "value": Json}` and routes through
-/// [`intervene`] for the §5.15 item 7 write-side door. Mirror of
+/// [`intervene`](fn@crate::intervene::intervene) for the §5.15 item 7
+/// write-side door. Mirror of
 /// [`handle_scene_invoke`] (the read+execute peer); the trait-level
 /// distinction is `intervene = set state slot` vs
 /// `invoke = call action`.
@@ -7556,34 +7587,58 @@ fn handle_scene_intervene(
         ));
     };
 
-    match intervene(scene, path, value.clone()) {
-        Ok(()) => Ok(Value::Null),
+    let with_origin = wants_origin(params);
+
+    let ((), origin) = match intervene_from(scene, SceneSource::State, path, value.clone()) {
+        Ok(written) => written,
         // R1481 §2 #4 §5.12 — the write mirror of `handle_scene_query`'s
         // R828 fallback; see `handle_scene_invoke` for why a driver in the
-        // painted frame may be written and a retained node may not.
-        Err(InterveneError::NoExternalAtPath) => match last_paint_scene {
-            Some(paint) => match intervene_shared(paint, path, &value) {
-                Ok(()) => Ok(Value::Null),
-                Err(err) => Err(intervene_error_to_rpc(&err)),
-            },
-            None => Err(intervene_error_to_rpc(&InterveneError::NoExternalAtPath)),
+        // painted frame may be written and a retained node may not, and for
+        // what R1487 changed about how the latter is said.
+        Err(refusal) if refusal.error == InterveneError::NoExternalAtPath => match last_paint_scene
+        {
+            Some(paint) => intervene_shared_from(paint, SceneSource::Paint, path, &value)
+                .map_err(|r| refusal_to_rpc(&r, intervene_error_reason, with_origin))?,
+            None => {
+                return Err(refusal_to_rpc(
+                    &refusal,
+                    intervene_error_reason,
+                    with_origin,
+                ));
+            }
         },
-        Err(err) => Err(intervene_error_to_rpc(&err)),
+        Err(refusal) => {
+            return Err(refusal_to_rpc(
+                &refusal,
+                intervene_error_reason,
+                with_origin,
+            ));
+        }
+    };
+
+    // R1487 — a write has no value to report, so the disclosing form states
+    // the same `null` under `value` and adds the surface that took it. The
+    // shape stays the one `scene/query` and `scene/invoke` use: a caller
+    // parsing origins parses one envelope, not three.
+    if !with_origin {
+        return Ok(Value::Null);
     }
+    Ok(serde_json::json!({ "value": Value::Null, "origin": origin.to_wire() }))
 }
 
-fn intervene_error_to_rpc(err: &InterveneError) -> RpcError {
-    let variant = match err {
-        InterveneError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
-        InterveneError::UnsupportedPath => "UnsupportedPath",
-        InterveneError::NoExternalAtPath => "NoExternalAtPath",
-        InterveneError::IntrospectionOptedOut => "IntrospectionOptedOut",
-        InterveneError::UnknownIntervenePath => "UnknownIntervenePath",
-        InterveneError::InterveneTypeMismatch => "InterveneTypeMismatch",
-        InterveneError::ReadOnly => "ReadOnly",
-        InterveneError::OutOfRange => "OutOfRange",
-    };
-    RpcError::invalid_params(variant)
+/// R1487 — peer of [`invoke_error_reason`] for the write-state channel.
+fn intervene_error_reason(err: &InterveneError) -> Cow<'static, str> {
+    match err {
+        InterveneError::Path(inner) => inner.wire_tag(),
+        InterveneError::UnsupportedPath => Cow::Borrowed("UnsupportedPath"),
+        InterveneError::NoExternalAtPath => Cow::Borrowed("NoExternalAtPath"),
+        InterveneError::IntrospectionOptedOut => Cow::Borrowed("IntrospectionOptedOut"),
+        InterveneError::UnknownIntervenePath => Cow::Borrowed("UnknownIntervenePath"),
+        InterveneError::InterveneTypeMismatch => Cow::Borrowed("InterveneTypeMismatch"),
+        InterveneError::ReadOnly => Cow::Borrowed("ReadOnly"),
+        InterveneError::OutOfRange => Cow::Borrowed("OutOfRange"),
+        InterveneError::RetainedNodeNotWritable => Cow::Borrowed("RetainedNodeNotWritable"),
+    }
 }
 
 fn handle_font_parse(
@@ -7867,7 +7922,8 @@ fn query_error_reason(err: &QueryError) -> Cow<'static, str> {
     }
 }
 
-/// R1485 §5.12 §2 #7 — render a [`QueryRefusal`] for the wire.
+/// R1485 §5.12 §2 #7 — render a refusal, and the surface that produced it,
+/// for the wire.
 ///
 /// `with_origin` is the same opt-in that governs the success shape, and it
 /// has to be: a caller that asked which surface answered is asking about
@@ -7883,8 +7939,18 @@ fn query_error_reason(err: &QueryError) -> Cow<'static, str> {
 /// unidentified", which is a different and untrue claim. Building the
 /// object by insertion rather than by a `skip_serializing_if` derive keeps
 /// that absence structural and the whole rendering infallible.
-fn refusal_to_rpc(refusal: &QueryRefusal, with_origin: bool) -> RpcError {
-    let reason = query_error_reason(&refusal.error);
+///
+/// R1487 — generic over the error type, with the per-method vocabulary
+/// passed in, because `scene/invoke` and `scene/intervene` now disclose
+/// through this same site. Three methods, one refusal shape: the third
+/// consumer is what turned a query-shaped helper into the crate's one
+/// answer to "what does a disclosing refusal look like".
+fn refusal_to_rpc<E>(
+    refusal: &Refusal<E>,
+    reason: impl Fn(&E) -> Cow<'static, str>,
+    with_origin: bool,
+) -> RpcError {
+    let reason = reason(&refusal.error);
     if !with_origin {
         return RpcError::invalid_params(reason);
     }

@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    assert_disclosed,
     assert_eq,
     assert_rpc_error,
     rpc_error_data,
@@ -100,14 +101,19 @@ def body():
             lambda: g.query(f"{SIM}/frames") is not None,
             desc="the first paint lands",
         )
-        for path in (f"{MODEL}/ticks", f"{SIM}/frames", f"{PROBE}/stamped"):
-            answered = g.query(path, with_origin=True)
-            assert_eq(sorted(answered.keys()), ["origin", "value"], f"{path} shape")
-
+        # R1487 — the envelope check is `rpc_verify.assert_disclosed`, lifted
+        # once a third demo hand-rolled it. Reading the origin THROUGH it means
+        # a build that accepted `with_origin` and ignored it is named as that,
+        # rather than dying on this line's subscript.
         answered_origin = {
-            MODEL: g.query(f"{MODEL}/ticks", with_origin=True)["origin"],
-            SIM: g.query(f"{SIM}/frames", with_origin=True)["origin"],
-            PROBE: g.query(f"{PROBE}/stamped", with_origin=True)["origin"],
+            surface: assert_disclosed(
+                g.query(f"{surface}/{slot}", with_origin=True), f"{surface}/{slot}"
+            )["origin"]
+            for surface, slot in (
+                (MODEL, "ticks"),
+                (SIM, "frames"),
+                (PROBE, "stamped"),
+            )
         }
         assert_eq(answered_origin[MODEL], "state", "model answers as state")
         assert_eq(answered_origin[SIM], "paint_driver", "sim answers as driver")
@@ -159,7 +165,9 @@ def body():
         # the refusal, and that schema really does lack the slot.
         # ---------------------------------------------------------------
         for surface in (MODEL, SIM, PROBE):
-            described = g.query(f"{surface}/$schema", with_origin=True)
+            described = assert_disclosed(
+                g.query(f"{surface}/$schema", with_origin=True), f"{surface}/$schema"
+            )
             assert_eq(
                 described["origin"],
                 refusals[surface]["origin"],
@@ -184,9 +192,25 @@ def body():
         assert_eq(g.query(f"{MODEL}/ticks"), 11, "the state write landed")
         g.intervene(f"{SIM}/speed", 7)
         assert_eq(g.query(f"{SIM}/speed"), 7, "the driver write landed")
+        # R1487 — this line used to read `data="NoExternalAtPath"`, four
+        # assertions after ★E confirmed `probe` holds a surface that describes
+        # itself. The refusal stands; the claim that nothing was there does
+        # not, and the disclosing form now names the surface that made it.
         assert_rpc_error(
             lambda: g.intervene(f"{PROBE}/stamped", 1),
-            data="NoExternalAtPath",
+            data="RetainedNodeNotWritable",
+        )
+        assert_eq(
+            rpc_error_data(
+                lambda: g.request(
+                    "scene/intervene",
+                    {"path": f"{PROBE}/stamped", "value": 1, "with_origin": True},
+                ).result,
+                expect=dict,
+                label="disclosing write refusal",
+            ),
+            {"reason": "RetainedNodeNotWritable", "origin": refusals[PROBE]["origin"]},
+            "the write refusal names the surface this round's read refusal names",
         )
 
         # ---------------------------------------------------------------

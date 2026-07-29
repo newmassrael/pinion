@@ -73888,6 +73888,80 @@
         "The budget is enforced at push time only. A session that builds heavily without pushing is unbounded until its next push; a round that never pushes never reports."
       ]
     },
+    "Round 1487": {
+      "decision_summary": "The write channel says which surface it reached: scene/invoke and scene/intervene now honour with_origin on both channels, and a painted retained node is refused by name instead of by denying it exists.",
+      "changes_bullets": [
+        "`scene/invoke` and `scene/intervene` now honour `params.with_origin` on BOTH channels: a success answers `{value, origin}` and a refusal widens `error.data` to `{reason, origin?}`, in the vocabulary and envelope `scene/query` has used since R1482.",
+        "New `invoke_from` / `invoke_shared_from` / `intervene_from` / `intervene_shared_from` return the surface beside the outcome; `invoke` / `intervene` / `*_shared` survive unchanged as the origin-dropping projections.",
+        "The shared-borrow (painted-frame) walk now LOOKS before refusing: a retained `External` at the address yields the new `RetainedNodeNotWritable` named by its surface, where it previously reported `NoExternalAtPath` about an address `scene/query` resolves and names `paint_frame`.",
+        "New `resolve::external_node_at` is the existence half of `introspect_at`, written in terms of it, so the read and the write channels cannot answer \"is there a surface here\" two different ways.",
+        "New `crates/pinion-rpc/src/origin.rs` owns `SceneSource` / `AnswerOrigin` / the generic `Refusal<E>` (`QueryRefusal` is now `Refusal<QueryError>`); its home in the read module was an accident of which round needed it first.",
+        "Substrate lifts (obligation 3b): `Refusal::from_resolve` replaces the resolve-stage classification hand-written in query / invoke / intervene; `refusal_to_rpc` became generic over the error type with the per-method vocabulary passed in, so three methods share one disclosing-refusal renderer; `originated_body` and `wants_origin` are one site each.",
+        "`tools/rpc_verify.py` gains `assert_disclosed` (lifted at its third demo, migrating r1482 and r1485) and `with_origin` kwargs on the `invoke` / `intervene` wrappers.",
+        "New demo `tools/demos/r1487_write_origin.py` (48 assertion statements plus loops) drives `hello-answer-origin`, whose three surfaces each gained a declared, run-counting action."
+      ],
+      "verification_bullets": [
+        "Measured on the running bindings BEFORE any edit: `with_origin:true` was accepted and silently ignored by `scene/invoke` on both channels, and two reached surfaces refused byte-identically (`/external/nope` state model and `/sim/external/nope` live driver both `UnknownInvokePath`).",
+        "The sharper measured defect: `invoke` / `intervene` on `/probe/external/*` answered `NoExternalAtPath` while `scene/query` answered the same address and named it `paint_frame` — the wire denying an external the read had just resolved.",
+        "R1481 wrote that rule and applied it to one of the two painted node kinds: `dispatch_tests.rs` asserts \"the read just proved an external is there\" for a driver, and four lines later asserted `NoExternalAtPath` for a per-frame node. R1485's own demo pinned the false word too.",
+        "Changing the walk broke exactly 3 of 1014 pinion-rpc tests, and all three were the ones asserting that word; every other test passed untouched.",
+        "CF-1 (write channel never discloses = pre-R1487): exactly 3 unit failures, all new wire claims; the demo names it (\"asked the wire to disclose the origin and got the bare answer instead: 105\").",
+        "CF-2 (`refused_by` always None): 13 failures, 8 of them PRE-EXISTING R1485 tests, so the write disclosure rides the mechanism the read channel already guards.",
+        "CF-3 (revert to denying a per-frame node exists): exactly 6 — the 3 R1481 tests updated here plus 3 new ones — and the demo names the claim that moved.",
+        "CF-4 (disclose unconditionally): 11 failures, 8 PRE-EXISTING, so the ratified bare shape is guarded by tests older than this round.",
+        "CF-5 (claim a surface at every missed address): exactly 3, all \"nothing reached names nothing\" guards, plus the demo's absence assertions.",
+        "CF-1, CF-2 and CF-3 each first killed the demo WITHOUT naming the defect (AttributeError / KeyError); that is why `assert_disclosed` was lifted and why the refusal-origin claim is stated as a group before any origin is read.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 1014 (+14), hello-answer-origin 10 (+2). Demos PASS: r1487 (new), r1482, r1485, r1481, r1483, r1484, r1480, r828, hello-no-primary."
+      ],
+      "impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "WIRE WORD CHANGE: a write to a retained `External` reachable only through the painted frame now reports `RetainedNodeNotWritable` instead of `NoExternalAtPath`. The refusal itself is R1481's and unchanged; only the false claim about the scene is gone. In-repo consumers updated: r1482 and r1485 demos plus three unit tests. The full demo sweep runs in CI.",
+        "BEHAVIOUR CHANGE for opt-in callers: `with_origin:true` on `scene/invoke` / `scene/intervene` changes the success result shape and the `error.data` type. Both were previously ignored, so no caller can have depended on them; the bare form is byte-identical.",
+        "`retained_refusal` is duplicated in `invoke.rs` and `intervene.rs` — 8 lines each, differing only in which enum's `RetainedNodeNotWritable` they name, which no `From` impl can supply. Two consumers; the lift trigger is a third write channel.",
+        "`invoke_shared_from` / `intervene_shared_from` take a `SceneSource` that production only ever passes `Paint`, mirroring `query_from`. A caller that passed `State` would get a coherent origin but a `RetainedNodeNotWritable` reason naming a route it did not take.",
+        "An unreached refusal still does not report WHERE the walk looked — unchanged from R1485, and still with no consumer asking.",
+        "`scene/rewind`, `scene/dry_run` and `scene/simulate` have no paint fallback and so no origin to report; if one ever gains a fallback it inherits this round's shape rather than inventing another."
+      ],
+      "publishable_decision_summary": "The write channel says which surface it reached: scene/invoke and scene/intervene now honour with_origin on both channels, and a painted retained node is refused by name instead of by denying it exists.",
+      "publishable_changes_bullets": [
+        "`scene/invoke` and `scene/intervene` now honour `params.with_origin` on BOTH channels: a success answers `{value, origin}` and a refusal widens `error.data` to `{reason, origin?}`, in the vocabulary and envelope `scene/query` has used since R1482.",
+        "New `invoke_from` / `invoke_shared_from` / `intervene_from` / `intervene_shared_from` return the surface beside the outcome; `invoke` / `intervene` / `*_shared` survive unchanged as the origin-dropping projections.",
+        "The shared-borrow (painted-frame) walk now LOOKS before refusing: a retained `External` at the address yields the new `RetainedNodeNotWritable` named by its surface, where it previously reported `NoExternalAtPath` about an address `scene/query` resolves and names `paint_frame`.",
+        "New `resolve::external_node_at` is the existence half of `introspect_at`, written in terms of it, so the read and the write channels cannot answer \"is there a surface here\" two different ways.",
+        "New `crates/pinion-rpc/src/origin.rs` owns `SceneSource` / `AnswerOrigin` / the generic `Refusal<E>` (`QueryRefusal` is now `Refusal<QueryError>`); its home in the read module was an accident of which round needed it first.",
+        "Substrate lifts (obligation 3b): `Refusal::from_resolve` replaces the resolve-stage classification hand-written in query / invoke / intervene; `refusal_to_rpc` became generic over the error type with the per-method vocabulary passed in, so three methods share one disclosing-refusal renderer; `originated_body` and `wants_origin` are one site each.",
+        "`tools/rpc_verify.py` gains `assert_disclosed` (lifted at its third demo, migrating r1482 and r1485) and `with_origin` kwargs on the `invoke` / `intervene` wrappers.",
+        "New demo `tools/demos/r1487_write_origin.py` (48 assertion statements plus loops) drives `hello-answer-origin`, whose three surfaces each gained a declared, run-counting action."
+      ],
+      "publishable_verification_bullets": [
+        "Measured on the running bindings BEFORE any edit: `with_origin:true` was accepted and silently ignored by `scene/invoke` on both channels, and two reached surfaces refused byte-identically (`/external/nope` state model and `/sim/external/nope` live driver both `UnknownInvokePath`).",
+        "The sharper measured defect: `invoke` / `intervene` on `/probe/external/*` answered `NoExternalAtPath` while `scene/query` answered the same address and named it `paint_frame` — the wire denying an external the read had just resolved.",
+        "R1481 wrote that rule and applied it to one of the two painted node kinds: `dispatch_tests.rs` asserts \"the read just proved an external is there\" for a driver, and four lines later asserted `NoExternalAtPath` for a per-frame node. R1485's own demo pinned the false word too.",
+        "Changing the walk broke exactly 3 of 1014 pinion-rpc tests, and all three were the ones asserting that word; every other test passed untouched.",
+        "CF-1 (write channel never discloses = pre-R1487): exactly 3 unit failures, all new wire claims; the demo names it (\"asked the wire to disclose the origin and got the bare answer instead: 105\").",
+        "CF-2 (`refused_by` always None): 13 failures, 8 of them PRE-EXISTING R1485 tests, so the write disclosure rides the mechanism the read channel already guards.",
+        "CF-3 (revert to denying a per-frame node exists): exactly 6 — the 3 R1481 tests updated here plus 3 new ones — and the demo names the claim that moved.",
+        "CF-4 (disclose unconditionally): 11 failures, 8 PRE-EXISTING, so the ratified bare shape is guarded by tests older than this round.",
+        "CF-5 (claim a surface at every missed address): exactly 3, all \"nothing reached names nothing\" guards, plus the demo's absence assertions.",
+        "CF-1, CF-2 and CF-3 each first killed the demo WITHOUT naming the defect (AttributeError / KeyError); that is why `assert_disclosed` was lifted and why the refusal-origin claim is stated as a group before any origin is read.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 1014 (+14), hello-answer-origin 10 (+2). Demos PASS: r1487 (new), r1482, r1485, r1481, r1483, r1484, r1480, r828, hello-no-primary."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "WIRE WORD CHANGE: a write to a retained `External` reachable only through the painted frame now reports `RetainedNodeNotWritable` instead of `NoExternalAtPath`. The refusal itself is R1481's and unchanged; only the false claim about the scene is gone. In-repo consumers updated: r1482 and r1485 demos plus three unit tests. The full demo sweep runs in CI.",
+        "BEHAVIOUR CHANGE for opt-in callers: `with_origin:true` on `scene/invoke` / `scene/intervene` changes the success result shape and the `error.data` type. Both were previously ignored, so no caller can have depended on them; the bare form is byte-identical.",
+        "`retained_refusal` is duplicated in `invoke.rs` and `intervene.rs` — 8 lines each, differing only in which enum's `RetainedNodeNotWritable` they name, which no `From` impl can supply. Two consumers; the lift trigger is a third write channel.",
+        "`invoke_shared_from` / `intervene_shared_from` take a `SceneSource` that production only ever passes `Paint`, mirroring `query_from`. A caller that passed `State` would get a coherent origin but a `RetainedNodeNotWritable` reason naming a route it did not take.",
+        "An unreached refusal still does not report WHERE the walk looked — unchanged from R1485, and still with no consumer asking.",
+        "`scene/rewind`, `scene/dry_run` and `scene/simulate` have no paint fallback and so no origin to report; if one ever gains a fallback it inherits this round's shape rather than inventing another."
+      ]
+    },
     "Round 1488": {
       "decision_summary": "Dead-toolchain artifacts are dropped unconditionally before the build cache is measured: that removal is provably free, so gating it on a size budget would carry dead weight whenever the tree happens to fit.",
       "changes_bullets": [

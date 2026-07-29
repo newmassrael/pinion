@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    assert_disclosed,
     assert_eq,
     assert_rpc_error,
     run_demo,
@@ -62,11 +63,12 @@ PROBE = "/probe/external"
 
 
 def origin_of(tf: RpcSubprocess, path: str) -> str:
-    """The origin word from a disclosing read, with the envelope checked."""
-    answer = tf.query(path, with_origin=True)
-    assert isinstance(answer, dict), f"{path}: disclosing read returns an object, got {answer!r}"
-    assert set(answer) == {"value", "origin"}, f"{path}: envelope members {sorted(answer)}"
-    return str(answer["origin"])
+    """The origin word from a disclosing read, with the envelope checked.
+
+    R1487 lifted the envelope check to `rpc_verify.assert_disclosed` once a
+    third demo needed it; the shape it enforces is unchanged.
+    """
+    return str(assert_disclosed(tf.query(path, with_origin=True), path)["origin"])
 
 
 def body() -> None:
@@ -123,9 +125,13 @@ def body() -> None:
         assert_eq(
             tf.query(f"{SIM}/speed"), 7, "★E: a `paint_driver` answer names a writable surface"
         )
+        # R1487 — the refusal is the same one R1481 settled; the WORD is not.
+        # It used to be `NoExternalAtPath`, which claimed there was nothing at
+        # an address this demo reads two lines below. It now says what is
+        # actually true of the surface it reached.
         assert_rpc_error(
             lambda: tf.intervene(f"{PROBE}/stamped", 7),
-            data="NoExternalAtPath",
+            data="RetainedNodeNotWritable",
         )
         assert_eq(
             tf.query(f"{PROBE}/stamped") is not None,
@@ -157,7 +163,9 @@ def body() -> None:
         # it is the one where the two shapes are exactly comparable.
         assert_eq(
             tf.query(f"{MODEL}/ticks"),
-            tf.query(f"{MODEL}/ticks", with_origin=True)["value"],
+            assert_disclosed(
+                tf.query(f"{MODEL}/ticks", with_origin=True), f"{MODEL}/ticks"
+            )["value"],
             "★G: the wrapped value is the same answer, not a different read",
         )
 

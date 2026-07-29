@@ -42,6 +42,22 @@
 //! answers use. A refusal that reached no surface at all — a wrong address —
 //! names none, and the absence is the report.
 //!
+//! R1487 — the same disclosure, on the **write** channel. `scene/invoke` and
+//! `scene/intervene` accepted `with_origin` and ignored it, so an action that
+//! ran on the live simulation and one that ran on the retained model produced
+//! byte-identical replies. Each surface here now declares an action (`bump`,
+//! `boost`, `restamp`) whose run count is itself queryable, so the origin a
+//! write reports is checkable against what the write did.
+//!
+//! The third surface is the sharp one. `probe` declares `restamp` and
+//! implements it — the object can act — yet the wire refuses it, because the
+//! node it would act on is discarded by the next paint. R1481 got that refusal
+//! right and gave it the wrong word: `NoExternalAtPath`, "there is no external
+//! at that path", about the address `scene/query` answers and names
+//! `paint_frame`. It now refuses as `RetainedNodeNotWritable` and names the
+//! surface, so the read and the write agree about what the scene contains and
+//! disagree only about what may be done to it.
+//!
 //! Run it: `cargo run -p hello-answer-origin`. The window states each surface's
 //! origin and whether it is writable; the RPC half is the interesting one.
 
@@ -51,8 +67,8 @@ use std::time::Duration;
 
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
-    External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, SchemaField,
-    query_proxy_external_impl, read_only_or_unknown,
+    External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    SchemaField, query_proxy_external_impl, read_only_or_unknown,
 };
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{
@@ -93,17 +109,32 @@ const CANVAS_H: u32 = 48;
 #[derive(Debug, Default)]
 struct Model {
     ticks: i64,
+    /// How many times `bump` has run here. Declared and queryable, so the
+    /// action's effect is observable rather than merely reported — R1487's
+    /// origin word for a write is checkable against what the write did.
+    bumps: i64,
 }
 
 query_proxy_external_impl!(Model);
 
 impl ExternalIntrospect for Model {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(const { &[SchemaField::new("ticks", "int")] })
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("ticks", "int"),
+                    SchemaField::new("bump", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
-        (path == "ticks").then_some(IntrospectValue::Int(self.ticks))
+        match path {
+            "ticks" => Some(IntrospectValue::Int(self.ticks)),
+            "bump" => Some(IntrospectValue::Int(self.bumps)),
+            _ => None,
+        }
     }
 
     /// Writable — which is half of what the `state` origin word promises.
@@ -115,6 +146,24 @@ impl ExternalIntrospect for Model {
             }
             ("ticks", _) => Err(InterveneError::TypeMismatch),
             _ => Err(read_only_or_unknown(&self.schema(), path)),
+        }
+    }
+
+    /// R1487 — the action channel, so the third method can report an origin
+    /// from this surface too.
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match (path, args) {
+            ("bump", IntrospectValue::Int(n)) => {
+                self.bumps += 1;
+                self.ticks += n;
+                Ok(IntrospectValue::Int(self.ticks))
+            }
+            ("bump", _) => Err(InvokeError::TypeMismatch),
+            _ => Err(InvokeError::UnknownPath),
         }
     }
 }
@@ -134,6 +183,10 @@ struct Sim {
     /// Writable, so the demo can prove a `paint_driver` answer names a
     /// surface a write actually reaches.
     speed: i64,
+    /// How many times `boost` has run on the live driver — the same
+    /// observable-effect witness [`Model::bumps`] provides for the state
+    /// scene, on the surface the tick loop owns.
+    boosts: i64,
     fill: Color,
 }
 
@@ -169,6 +222,7 @@ impl ExternalIntrospect for Sim {
                 &[
                     SchemaField::new("frames", "int"),
                     SchemaField::new("speed", "int"),
+                    SchemaField::new("boost", "int"),
                 ]
             },
         )
@@ -178,6 +232,7 @@ impl ExternalIntrospect for Sim {
         match path {
             "frames" => Some(IntrospectValue::Int(self.frames)),
             "speed" => Some(IntrospectValue::Int(self.speed)),
+            "boost" => Some(IntrospectValue::Int(self.boosts)),
             _ => None,
         }
     }
@@ -190,6 +245,25 @@ impl ExternalIntrospect for Sim {
             }
             ("speed", _) => Err(InterveneError::TypeMismatch),
             _ => Err(read_only_or_unknown(&self.schema(), path)),
+        }
+    }
+
+    /// R1487 — an action on the object the tick loop is advancing, so a
+    /// `paint_driver` origin on the write channel names a surface that
+    /// really did act.
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match (path, args) {
+            ("boost", IntrospectValue::Int(n)) => {
+                self.boosts += 1;
+                self.speed += n;
+                Ok(IntrospectValue::Int(self.speed))
+            }
+            ("boost", _) => Err(InvokeError::TypeMismatch),
+            _ => Err(InvokeError::UnknownPath),
         }
     }
 }
@@ -212,17 +286,53 @@ fn use_sim() -> Rc<RefCell<Sim>> {
 struct Probe {
     /// The value the view fn stamped in when it built this node.
     stamped: i64,
+    /// How many times `restamp` has run on THIS node. Always 0 over the
+    /// wire, and that is the point: the action below works when this object
+    /// is held directly, so the wire's refusal is a fact about the route,
+    /// not about the surface's capability.
+    restamps: i64,
 }
 
 query_proxy_external_impl!(Probe);
 
 impl ExternalIntrospect for Probe {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(const { &[SchemaField::new("stamped", "int")] })
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("stamped", "int"),
+                    SchemaField::new("restamp", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
-        (path == "stamped").then_some(IntrospectValue::Int(self.stamped))
+        match path {
+            "stamped" => Some(IntrospectValue::Int(self.stamped)),
+            "restamp" => Some(IntrospectValue::Int(self.restamps)),
+            _ => None,
+        }
+    }
+
+    /// R1487 — declared and implemented, and still unreachable over the
+    /// wire. `scene/invoke` refuses it with `RetainedNodeNotWritable` before
+    /// this method is consulted, because the node it would run on is a `Box`
+    /// the next paint discards. Pre-R1487 that refusal said
+    /// `NoExternalAtPath` — that there was nothing here — about the very
+    /// address `scene/query` answers and names `paint_frame`.
+    fn invoke(
+        &mut self,
+        path: &str,
+        _args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "restamp" => {
+                self.restamps += 1;
+                Ok(IntrospectValue::Int(self.restamps))
+            }
+            _ => Err(InvokeError::UnknownPath),
+        }
     }
 
     /// Declared read-only, but that is not what makes it unwritable over the
@@ -291,7 +401,11 @@ fn view(_state: ButtonState, _frame: &PaintFrame) -> Scene {
                     .with_layout(LayoutStyle::new().with_size(Size::px(CANVAS_W, CANVAS_H))),
             ),
             Scene::External(
-                ExternalNode::new(Box::new(Probe { stamped })).with_tag(PROBE_TAG.to_owned()),
+                ExternalNode::new(Box::new(Probe {
+                    stamped,
+                    restamps: 0,
+                }))
+                .with_tag(PROBE_TAG.to_owned()),
             ),
         ])
         .with_style(BoxStyle::filled(Color::rgb(0xFA, 0xFA, 0xFA)))
@@ -395,8 +509,11 @@ mod tests {
                 ImmediateModeNode::new(handle, Rect::default()).with_tag(SIM_TAG),
             ),
             Scene::External(
-                ExternalNode::new(Box::new(Probe { stamped: frames }))
-                    .with_tag(PROBE_TAG.to_owned()),
+                ExternalNode::new(Box::new(Probe {
+                    stamped: frames,
+                    restamps: 0,
+                }))
+                .with_tag(PROBE_TAG.to_owned()),
             ),
         ]))
     }
@@ -450,7 +567,10 @@ mod tests {
         assert!(model.intervene("ticks", IntrospectValue::Int(5)).is_ok());
         let mut sim = Sim::default();
         assert!(sim.intervene("speed", IntrospectValue::Int(5)).is_ok());
-        let mut probe = Probe { stamped: 0 };
+        let mut probe = Probe {
+            stamped: 0,
+            restamps: 0,
+        };
         assert!(probe.intervene("stamped", IntrospectValue::Int(5)).is_err());
     }
 
@@ -459,7 +579,10 @@ mod tests {
         // What `paint_frame` means, pinned on the type: the node owns a plain
         // value with no path back to the driver, so nothing but building a new
         // node can change what it answers.
-        let probe = Probe { stamped: 7 };
+        let probe = Probe {
+            stamped: 7,
+            restamps: 0,
+        };
         assert_eq!(probe.query("stamped"), Some(IntrospectValue::Int(7)));
         assert_eq!(
             probe.query("stamped"),
@@ -534,6 +657,46 @@ mod tests {
     }
 
     #[test]
+    fn r1487_the_per_frame_surface_can_act_when_it_is_reached() {
+        // What makes the wire's refusal a fact about the ROUTE and not about
+        // this type: held directly, `restamp` runs. The demo's
+        // `RetainedNodeNotWritable` therefore reports the frame contract, not
+        // a missing capability — and the two claims are checked against each
+        // other rather than each being asserted on its own.
+        let mut probe = Probe {
+            stamped: 3,
+            restamps: 0,
+        };
+        assert_eq!(
+            probe.invoke("restamp", IntrospectValue::Null),
+            Ok(IntrospectValue::Int(1)),
+        );
+        assert_eq!(probe.query("restamp"), Some(IntrospectValue::Int(1)));
+    }
+
+    #[test]
+    fn r1487_each_writable_surface_reports_what_its_action_did() {
+        // The origin word for a write is only worth having if the write is
+        // real. Both writable surfaces return the new value AND count the
+        // run, so the demo can cross-check the reported origin against an
+        // effect it observes through a separate read.
+        let mut model = Model::default();
+        assert_eq!(
+            model.invoke("bump", IntrospectValue::Int(4)),
+            Ok(IntrospectValue::Int(4)),
+        );
+        assert_eq!(model.query("bump"), Some(IntrospectValue::Int(1)));
+        assert_eq!(model.query("ticks"), Some(IntrospectValue::Int(4)));
+
+        let mut sim = Sim::default();
+        assert_eq!(
+            sim.invoke("boost", IntrospectValue::Int(2)),
+            Ok(IntrospectValue::Int(2)),
+        );
+        assert_eq!(sim.query("boost"), Some(IntrospectValue::Int(1)));
+    }
+
+    #[test]
     fn r1482_every_declared_slot_answers() {
         // A schema that names a path the surface cannot answer would make the
         // demo's discovery step report a contract that is not real (§2 #7).
@@ -545,7 +708,10 @@ mod tests {
         for f in sim.schema().fields {
             assert!(sim.query(f.path).is_some(), "sim/{}", f.path);
         }
-        let probe = Probe { stamped: 0 };
+        let probe = Probe {
+            stamped: 0,
+            restamps: 0,
+        };
         for f in probe.schema().fields {
             assert!(probe.query(f.path).is_some(), "probe/{}", f.path);
         }

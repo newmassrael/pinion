@@ -7868,6 +7868,12 @@ fn r1481_the_fallback_does_not_make_a_painted_retained_node_writable() {
     // A retained `ExternalNode` in a painted frame is a `Box` the view fn
     // rebuilds every frame, so a write into it would vanish. Refusing is the
     // truthful answer — and it keeps the fallback from becoming a wildcard.
+    //
+    // R1487 — the refusal is R1481's and stands. The word is not: the test
+    // directly above pins that a readable path may not be answered with
+    // "there is no external there", and this one sat four lines away
+    // asserting exactly that for the other painted node kind. The rule was
+    // right; it had been applied to one of the two shapes it covers.
     let mut state = Scene::Container(pinion_core::scene::ContainerNode::new(vec![]));
     let paint = Scene::Container(pinion_core::scene::ContainerNode::new(vec![
         Scene::External(
@@ -7877,7 +7883,139 @@ fn r1481_the_fallback_does_not_make_a_painted_retained_node_writable() {
     let req = r#"{"jsonrpc":"2.0","method":"scene/intervene","params":{"path":"/counted/external/count","value":9},"id":1}"#;
     let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
     let err = resp.error.expect("a per-frame node is not writable");
-    assert_eq!(err.data, Some(Value::String("NoExternalAtPath".into())));
+    assert_eq!(
+        err.data,
+        Some(Value::String("RetainedNodeNotWritable".into()))
+    );
+
+    // The premise that makes the new word the true one: the read reaches
+    // this very address and names the surface the refusal names.
+    let read = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/counted/external/count","with_origin":true},"id":2}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, read).unwrap());
+    assert_eq!(
+        resp.result.expect("the read answers")["origin"],
+        Value::String("paint_frame".into()),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R1487 §5.12 §2 #7 — the write channel says which surface acted or refused.
+//
+// R1482 gave `scene/query`'s answers a provenance and R1485 gave its refusals
+// one. `scene/invoke` and `scene/intervene` accepted `with_origin` and
+// silently ignored it on BOTH channels (measured at HEAD against
+// `hello-answer-origin`: three surfaces, byte-identical frames, with and
+// without the flag). These pin the parity, and the truthful refusal that
+// naming a surface at all required.
+// ---------------------------------------------------------------------------
+
+/// The two painted surfaces plus a state model, in one fixture, so a wire
+/// test can compare what the three report for the same request shape.
+fn r1487_paint_scene() -> Scene {
+    Scene::Container(pinion_core::scene::ContainerNode::new(vec![
+        Scene::ImmediateModeNode(
+            pinion_core::scene::ImmediateModeNode::from_driver(
+                SpeedDriver(8),
+                pinion_core::scene::Rect::default(),
+            )
+            .with_tag("driver".to_owned()),
+        ),
+        Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(1))).with_tag("frame".to_owned()),
+        ),
+    ]))
+}
+
+#[test]
+fn r1487_invoke_discloses_which_surface_acted() {
+    let mut state = counted_scene(5);
+    let paint = r1487_paint_scene();
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/increment","args":3,"with_origin":true},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    let result = resp.result.expect("the model acts");
+    assert_eq!(result["value"], Value::Number(8.into()));
+    assert_eq!(result["origin"], Value::String("state".into()));
+
+    // The other surface, same request shape, different contract.
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/driver/external/halve","args":null,"with_origin":true},"id":2}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    let result = resp.result.expect("the driver acts");
+    assert_eq!(result["origin"], Value::String("paint_driver".into()));
+}
+
+#[test]
+fn r1487_not_asking_leaves_the_ratified_invoke_shape_untouched() {
+    // The opt-in R1482 established, now covering the write channel: the
+    // result IS the value for every caller that does not ask.
+    let mut state = counted_scene(5);
+    let paint = r1487_paint_scene();
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/increment","args":3},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    assert_eq!(resp.result, Some(Value::Number(8.into())));
+}
+
+#[test]
+fn r1487_intervene_discloses_which_surface_took_the_write() {
+    let mut state = counted_scene(5);
+    let paint = r1487_paint_scene();
+    let req = r#"{"jsonrpc":"2.0","method":"scene/intervene","params":{"path":"/external/count","value":9,"with_origin":true},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    let result = resp.result.expect("the model takes the write");
+    assert_eq!(result["value"], Value::Null);
+    assert_eq!(result["origin"], Value::String("state".into()));
+
+    // And not asking still yields the ratified bare `null`.
+    let req = r#"{"jsonrpc":"2.0","method":"scene/intervene","params":{"path":"/external/count","value":9},"id":2}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    assert_eq!(resp.result, Some(Value::Null));
+}
+
+#[test]
+fn r1487_three_write_refusals_report_three_facts() {
+    // The measured defect: a reached driver, a reached per-frame node, and
+    // an address with nothing at it produced refusals a client could not
+    // tell apart on the write channel.
+    let mut state = Scene::Container(pinion_core::scene::ContainerNode::new(vec![]));
+    let paint = r1487_paint_scene();
+
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/driver/external/nope","args":null,"with_origin":true},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    let data = resp.error.expect("undeclared").data.expect("disclosing");
+    assert_eq!(data["reason"], Value::String("UnknownInvokePath".into()));
+    assert_eq!(data["origin"], Value::String("paint_driver".into()));
+
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/frame/external/increment","args":1,"with_origin":true},"id":2}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    let data = resp.error.expect("per-frame").data.expect("disclosing");
+    assert_eq!(
+        data["reason"],
+        Value::String("RetainedNodeNotWritable".into())
+    );
+    assert_eq!(data["origin"], Value::String("paint_frame".into()));
+
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/ghost/external/increment","args":1,"with_origin":true},"id":3}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    let data = resp.error.expect("absent").data.expect("disclosing");
+    assert_eq!(data["reason"], Value::String("NoExternalAtPath".into()));
+    assert!(
+        data.get("origin").is_none(),
+        "nothing was reached, so nothing may be named: {data}",
+    );
+}
+
+#[test]
+fn r1487_a_bare_write_refusal_is_the_word_alone() {
+    // The disclosing form widens the ratified shape rather than replacing
+    // it: without the flag, `error.data` is the same bare string every
+    // pre-R1487 client matches on.
+    let mut state = Scene::Container(pinion_core::scene::ContainerNode::new(vec![]));
+    let paint = r1487_paint_scene();
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/driver/external/nope","args":null},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    assert_eq!(
+        resp.error.expect("undeclared").data,
+        Some(Value::String("UnknownInvokePath".into())),
+    );
 }
 
 // ---------------------------------------------------------------------------

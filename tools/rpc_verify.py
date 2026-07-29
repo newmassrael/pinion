@@ -658,12 +658,23 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None
         return resp.result
 
-    def invoke(self, path: str, args: Any) -> Any:
-        resp = self.request("scene/invoke", {"path": path, "args": args})
+    def invoke(self, path: str, args: Any, *, with_origin: bool = False) -> Any:
+        """`scene/invoke` typed wrapper (§5.12 item 8).
+
+        `with_origin=True` (R1487) is the same opt-in `query` has carried
+        since R1482, now covering the action channel: the result becomes
+        `{"value": ..., "origin": "state"|"paint_driver"}` so a caller can
+        tell an action that ran on the live simulation from one that ran on
+        the retained model.
+        """
+        params: dict[str, Any] = {"path": path, "args": args}
+        if with_origin:
+            params["with_origin"] = True
+        resp = self.request("scene/invoke", params)
         assert resp is not None
         return resp.result
 
-    def intervene(self, path: str, value: Any) -> None:
+    def intervene(self, path: str, value: Any, *, with_origin: bool = False) -> Any:
         """`scene/intervene` typed wrapper (R56.1.f.3 §5.22).
 
         Mirrors `invoke` shape — `{"path": str, "value": Any}` —
@@ -671,9 +682,17 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         instead of the §5.15 item 8 action channel. `value=None`
         sends a JSON `null`, which `TextFieldExternal::intervene`
         treats as "clear selection" on the `selection` slot.
+
+        `with_origin=True` (R1487) reports which surface took the write, in
+        the same envelope `query` and `invoke` use: `{"value": null,
+        "origin": ...}`. Bare, the result stays the ratified `null`.
         """
-        resp = self.request("scene/intervene", {"path": path, "value": value})
+        params: dict[str, Any] = {"path": path, "value": value}
+        if with_origin:
+            params["with_origin"] = True
+        resp = self.request("scene/intervene", params)
         assert resp is not None
+        return resp.result
 
     def snapshot(
         self,
@@ -1525,6 +1544,28 @@ def rpc_error_data(
         )
         return exc.data
     raise AssertionError(f"{label}: expected an RpcError, but the call succeeded")
+
+
+def assert_disclosed(result: Any, label: str = "call") -> dict:
+    """Assert `result` is an origin-disclosing envelope; return it.
+
+    The success-channel peer of `rpc_error_data`'s `expect=dict`. A wire that
+    accepts `with_origin` and then ignores it answers with the bare value, so
+    the caller's first `result["origin"]` dies as a `TypeError` /
+    `AttributeError` about `int` — the defect goes unnamed at exactly the
+    moment a counterfactual is asking whether the guard can name it (measured
+    R1487: reverting the disclosure produced `'int' object has no attribute
+    'keys'`).
+
+    Lifted R1487 after the shape reached a third demo: `r1482_answer_origin`
+    and `r1485_refusal_origin` each hand-rolled the same `sorted(x.keys()) ==
+    ["origin", "value"]` check before reading the envelope.
+    """
+    assert isinstance(result, dict) and sorted(result) == ["origin", "value"], (
+        f"{label}: asked the wire to disclose the origin and got the bare "
+        f"answer instead: {result!r}"
+    )
+    return result
 
 
 def wait_until(

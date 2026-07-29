@@ -35,9 +35,11 @@
 use pinion_core::Scene;
 use pinion_core::external::{IntrospectValue, InvokeError as TraitInvokeError};
 
+use crate::origin::{AnswerOrigin, Refusal, SceneSource};
 use crate::path::PathError;
 use crate::resolve::{
-    ResolveExternalError, lookup_addressed, resolve_external_introspect_mut, resolve_external_path,
+    ResolveExternalError, external_node_at, lookup_addressed, resolve_external_introspect_mut,
+    resolve_external_path,
 };
 
 /// Reasons the typed [`invoke`] dispatcher can fail.
@@ -60,7 +62,21 @@ pub enum InvokeError {
     InvokeTypeMismatch,
     /// The action declined to fire (preconditions unmet, etc.).
     InvokeRejected,
+    /// R1487 §2 #7 — the address named a **retained** `External` reached
+    /// through the shared ([`invoke_shared`]) walk, which cannot act on it.
+    ///
+    /// R1481 already refused this case and refused it correctly: in a
+    /// painted frame a retained node is a `Box` the view fn rebuilds every
+    /// paint, so an action taken on it would be discarded before the next
+    /// one. What it reported was `NoExternalAtPath` — "there is no external
+    /// at that path" — about an address `scene/query` resolves and names.
+    /// The refusal survives; the false statement about the scene does not
+    /// ([[wire-form-read-write-symmetry]]).
+    RetainedNodeNotWritable,
 }
+
+/// A refused [`invoke_from`], and the surface that refused it.
+pub type InvokeRefusal = Refusal<InvokeError>;
 
 impl From<PathError> for InvokeError {
     fn from(err: PathError) -> Self {
@@ -109,16 +125,51 @@ pub fn invoke(
     raw_path: &str,
     args: IntrospectValue,
 ) -> Result<IntrospectValue, InvokeError> {
+    invoke_from(scene, SceneSource::State, raw_path, args)
+        .map(|(value, _)| value)
+        .map_err(|refusal| refusal.error)
+}
+
+/// Resolve `raw_path` against `scene`, invoke the action there with `args`,
+/// and report [which surface acted](AnswerOrigin).
+///
+/// `source` names the scene the caller is handing over; the walk itself is
+/// identical either way. [`invoke`] is the projection that drops the origin,
+/// for the callers that hold only one scene and so already know it — the
+/// same pairing [`crate::query`](fn@crate::query) / [`crate::query_from`]
+/// have had since R1482.
+///
+/// # Errors
+///
+/// Returns an [`InvokeRefusal`] carrying the same [`InvokeError`] [`invoke`]
+/// reports, plus the surface that produced it when the walk identified one.
+pub fn invoke_from(
+    scene: &mut Scene,
+    source: SceneSource,
+    raw_path: &str,
+    args: IntrospectValue,
+) -> Result<(IntrospectValue, AnswerOrigin), InvokeRefusal> {
     // R667 §5.34 — `/window[id]/<segs>/external/<action>` parse +
     // Container/Scroll walk + multi-widget primary descent + §5.15
     // introspect-mut lookup lifted into [`resolve_external_introspect_mut`].
     // `action_path` is owned (String) so the `&mut dyn ExternalIntrospect`
     // borrow on `scene` can outlive `raw_path`'s lifetime.
-    if let Some(result) = invoke_immediate_at(scene, raw_path, &args) {
+    if let Some(result) = invoke_immediate_at(scene, source, raw_path, &args) {
         return result;
     }
-    let (intro, action_path) = resolve_external_introspect_mut(scene, raw_path)?;
-    intro.invoke(&action_path, args).map_err(Into::into)
+    // R1487 — the origin is bound once, before the branches, so an action
+    // and a refusal from this same node cannot report two different
+    // surfaces. Each stage then attaches it where that stage *knows* what
+    // it reached, rather than a later classifier re-deriving it from the
+    // error variant: the same variant arrives with a surface identified and
+    // without one.
+    let origin = AnswerOrigin::of(source, false);
+    let (intro, action_path) = resolve_external_introspect_mut(scene, raw_path)
+        .map_err(|e| InvokeRefusal::from_resolve(e, origin))?;
+    intro
+        .invoke(&action_path, args)
+        .map(|value| (value, origin))
+        .map_err(|e| InvokeRefusal::from_surface(e.into(), origin))
 }
 
 /// R1481 §2 #4 §5.12 — the immediate-mode half of [`invoke`], reachable
@@ -143,20 +194,32 @@ pub fn invoke(
 /// failure.
 fn invoke_immediate_at(
     scene: &Scene,
+    source: SceneSource,
     raw_path: &str,
     args: &IntrospectValue,
-) -> Option<Result<IntrospectValue, InvokeError>> {
+) -> Option<Result<(IntrospectValue, AnswerOrigin), InvokeRefusal>> {
     let Ok((scene_segments, action_path)) = resolve_external_path(raw_path) else {
         return None;
     };
     let Some(Scene::ImmediateModeNode(node)) = lookup_addressed(scene, &scene_segments) else {
         return None;
     };
+    // R1487 — the walk has landed on a driver, so every outcome from here
+    // names it, refusal included.
+    let origin = AnswerOrigin::of(source, true);
     let mut driver = node.handle.borrow_mut();
     let Some(intro) = driver.introspect_mut() else {
-        return Some(Err(InvokeError::IntrospectionOptedOut));
+        return Some(Err(InvokeRefusal::from_surface(
+            InvokeError::IntrospectionOptedOut,
+            origin,
+        )));
     };
-    Some(intro.invoke(&action_path, args.clone()).map_err(Into::into))
+    Some(
+        intro
+            .invoke(&action_path, args.clone())
+            .map(|value| (value, origin))
+            .map_err(|e| InvokeRefusal::from_surface(e.into(), origin)),
+    )
 }
 
 /// R1481 §2 #4 §5.12 — invoke against a scene held by shared reference.
@@ -179,7 +242,55 @@ pub fn invoke_shared(
     raw_path: &str,
     args: &IntrospectValue,
 ) -> Result<IntrospectValue, InvokeError> {
-    invoke_immediate_at(scene, raw_path, args).unwrap_or(Err(InvokeError::NoExternalAtPath))
+    invoke_shared_from(scene, SceneSource::Paint, raw_path, args)
+        .map(|(value, _)| value)
+        .map_err(|refusal| refusal.error)
+}
+
+/// R1487 §2 #4 §5.12 §2 #7 — [`invoke_shared`] reporting [which surface
+/// acted or refused](AnswerOrigin).
+///
+/// The origin-disclosing peer of [`invoke_from`] on the shared-borrow side,
+/// and the site where the write channel stops denying what the read
+/// resolves: when no immediate-mode driver is at the address, the walk now
+/// **looks** for a retained `External` there — with
+/// [`crate::resolve::external_node_at`], the same
+/// resolution `scene/query` uses, so the two channels cannot disagree about
+/// what exists. Finding one yields
+/// [`RetainedNodeNotWritable`](InvokeError::RetainedNodeNotWritable) named
+/// by its surface; finding nothing yields the unreached
+/// [`NoExternalAtPath`](InvokeError::NoExternalAtPath) that word has always
+/// meant.
+///
+/// # Errors
+///
+/// See [`invoke_shared`]; the refusal additionally names the surface when
+/// the walk identified one.
+pub fn invoke_shared_from(
+    scene: &Scene,
+    source: SceneSource,
+    raw_path: &str,
+    args: &IntrospectValue,
+) -> Result<(IntrospectValue, AnswerOrigin), InvokeRefusal> {
+    if let Some(result) = invoke_immediate_at(scene, source, raw_path, args) {
+        return result;
+    }
+    Err(retained_refusal(scene, source, raw_path))
+}
+
+/// R1487 — classify a shared-walk miss: a retained surface that cannot be
+/// acted on, or genuinely nothing at the address.
+fn retained_refusal(scene: &Scene, source: SceneSource, raw_path: &str) -> InvokeRefusal {
+    let Ok((scene_segments, _)) = resolve_external_path(raw_path) else {
+        return InvokeRefusal::unreached(InvokeError::NoExternalAtPath);
+    };
+    if external_node_at(scene, &scene_segments).is_some() {
+        return InvokeRefusal::from_surface(
+            InvokeError::RetainedNodeNotWritable,
+            AnswerOrigin::of(source, false),
+        );
+    }
+    InvokeRefusal::unreached(InvokeError::NoExternalAtPath)
 }
 
 #[cfg(test)]
@@ -288,10 +399,122 @@ mod tests {
         // The shared entry point does NOT fall back to retained externals:
         // a painted `ExternalNode` is a per-frame `Box`, so a write into it
         // would be discarded before the next paint.
+        //
+        // R1487 — the refusal is unchanged; the WORD is. Pre-R1487 this read
+        // `NoExternalAtPath` about an address the read below resolves, which
+        // is a statement about the scene that is not true (§2 #7).
         let scene = counted_scene(1);
         let err =
             invoke_shared(&scene, "/external/increment", &IntrospectValue::Int(1)).unwrap_err();
-        assert_eq!(err, InvokeError::NoExternalAtPath);
+        assert_eq!(err, InvokeError::RetainedNodeNotWritable);
+        assert!(
+            crate::query::query(&scene, "/external/count").is_ok(),
+            "the read resolves this address, so the write may not deny it exists",
+        );
+    }
+
+    #[test]
+    fn r1487_a_retained_refusal_names_the_surface_it_reached() {
+        // The other half of the same fact: the refusal is attributable. A
+        // caller that asked which surface turned it down learns `paint_frame`
+        // — the very word the READ reports for this node — instead of
+        // learning nothing.
+        let scene = counted_scene(1);
+        let refusal = invoke_shared_from(
+            &scene,
+            SceneSource::Paint,
+            "/external/increment",
+            &IntrospectValue::Int(1),
+        )
+        .expect_err("a per-frame node cannot act");
+        assert_eq!(refusal.error, InvokeError::RetainedNodeNotWritable);
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::PaintFrame));
+        assert_eq!(
+            crate::query::query_from(&scene, SceneSource::Paint, "/external/count")
+                .expect("the read answers")
+                .1,
+            AnswerOrigin::PaintFrame,
+            "the refusal names the same surface the answer does",
+        );
+    }
+
+    #[test]
+    fn r1487_nothing_at_the_address_still_names_nothing() {
+        // The counterpart that keeps `RetainedNodeNotWritable` meaning
+        // something: an address with no external really does report
+        // `NoExternalAtPath`, and names no surface. Without this, "the walk
+        // found a surface" would be an unfalsifiable claim.
+        let scene = Scene::Container(pinion_core::scene::ContainerNode::new(vec![]));
+        let refusal = invoke_shared_from(
+            &scene,
+            SceneSource::Paint,
+            "/ghost/external/increment",
+            &IntrospectValue::Int(1),
+        )
+        .expect_err("nothing is there");
+        assert_eq!(refusal.error, InvokeError::NoExternalAtPath);
+        assert_eq!(refusal.refused_by, None);
+    }
+
+    #[test]
+    fn r1487_a_driver_action_names_the_driver() {
+        // The success half. `invoke` had no way to say which of the two
+        // surfaces acted, so an agent could not tell an action on the live
+        // simulation from one on a copy the next paint discards.
+        let scene = driver_scene(10, true);
+        let (value, origin) = invoke_shared_from(
+            &scene,
+            SceneSource::Paint,
+            "/ball/external/halve",
+            &IntrospectValue::Null,
+        )
+        .expect("a live driver acts");
+        assert_eq!(value, IntrospectValue::Int(5));
+        assert_eq!(origin, AnswerOrigin::PaintDriver);
+    }
+
+    #[test]
+    fn r1487_a_state_scene_action_names_the_state_scene() {
+        let mut scene = counted_scene(5);
+        let (value, origin) = invoke_from(
+            &mut scene,
+            SceneSource::State,
+            "/external/increment",
+            IntrospectValue::Int(3),
+        )
+        .expect("the model acts");
+        assert_eq!(value, IntrospectValue::Int(8));
+        assert_eq!(origin, AnswerOrigin::State);
+    }
+
+    #[test]
+    fn r1487_an_opted_out_driver_names_itself_when_it_refuses() {
+        // Reached-and-declined is a different fact from not-reached, and the
+        // origin is what carries it.
+        let scene = driver_scene(10, false);
+        let refusal = invoke_shared_from(
+            &scene,
+            SceneSource::Paint,
+            "/ball/external/halve",
+            &IntrospectValue::Null,
+        )
+        .expect_err("the driver exposes nothing");
+        assert_eq!(refusal.error, InvokeError::IntrospectionOptedOut);
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::PaintDriver));
+    }
+
+    #[test]
+    fn r1487_an_undeclared_action_on_a_reached_surface_names_it() {
+        let mut scene = counted_scene(1);
+        let refusal = invoke_from(
+            &mut scene,
+            SceneSource::State,
+            "/external/nope",
+            IntrospectValue::Null,
+        )
+        .expect_err("the action is not declared");
+        assert_eq!(refusal.error, InvokeError::UnknownInvokePath);
+        assert_eq!(refusal.refused_by, Some(AnswerOrigin::State));
     }
 
     #[test]
