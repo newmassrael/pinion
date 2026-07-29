@@ -98,6 +98,71 @@ pub fn resolve_external_path(
     Ok((scene_segments, introspect_path))
 }
 
+/// R1483 §5.34 §5.45 §2 #2 — does this segment chain name the scene
+/// root itself?
+///
+/// A node's tag becomes a path segment because its **parent** lists it
+/// among its children ([`Scene::lookup_path_ref`] matches children only,
+/// which round-trips with the `HitPath::segments` its own producer emits:
+/// there, the root's path is the empty chain). A root has no parent, so
+/// its tag was never a segment — consistently, but not harmlessly.
+///
+/// `CoreShell::compose_root` gives a binding's primary External the
+/// `WidgetCore::tag()` and then puts it at the **root** when the binding
+/// has no extra externals, or inside a `Container` when it has some.
+/// Measured, on the same tag naming the same logical surface:
+///
+/// ```text
+/// extras = 0  ->  /model/external/count = NoExternalAtPath
+/// extras = 1  ->  /model/external/count = Ok(1)
+/// ```
+///
+/// So whether a binding's primary answered to its own name depended on a
+/// composition detail no client can see — and since R688 made the external
+/// set a reactive projection of state, `reconcile_externals` re-composes at
+/// runtime, so a working address could stop working when an unrelated extra
+/// surface appeared or went away. That is the §2 #2 stable-address contract
+/// failing, not a walker bug.
+///
+/// The alias is deliberately a **fallback**: a descendant that matches is
+/// still preferred, so every path that resolves today keeps its present
+/// meaning and this can only turn a former `NoExternalAtPath` into an
+/// answer. It is one segment, because the root is one node.
+fn names_the_root(scene: &Scene, segments: &[String]) -> bool {
+    matches!(segments, [only] if scene.tag() == Some(only.as_str()))
+}
+
+/// R1483 §5.34 — the addressing walk every §5.12 external path uses.
+///
+/// [`Scene::lookup_path_ref`] plus the root-name alias described on
+/// `names_the_root`. It exists as one function because five sites resolve
+/// an external path (this module's two, plus the immediate-mode branches of
+/// [`crate::query`](fn@crate::query), [`crate::invoke`](fn@crate::invoke)
+/// and [`crate::intervene`]); a rule applied at four of five is how the
+/// read and write channels come to disagree about what exists.
+#[must_use]
+pub fn lookup_addressed<'s>(scene: &'s Scene, segments: &[String]) -> Option<&'s Scene> {
+    scene
+        .lookup_path_ref(segments)
+        .or_else(|| names_the_root(scene, segments).then_some(scene))
+}
+
+/// Mutable sibling of [`lookup_addressed`].
+///
+/// The descendant lookup is probed through the shared reference first so the
+/// mutable borrow is taken once — which also keeps the precedence identical
+/// to the read path by construction rather than by two matching edits.
+#[must_use]
+pub fn lookup_addressed_mut<'s>(
+    scene: &'s mut Scene,
+    segments: &[String],
+) -> Option<&'s mut Scene> {
+    if scene.lookup_path_ref(segments).is_none() {
+        return names_the_root(scene, segments).then_some(scene);
+    }
+    scene.lookup_path_mut(segments)
+}
+
 /// Walk `scene` via `scene_segments`, descend to the primary
 /// External, and reach its `&mut dyn ExternalIntrospect` surface.
 ///
@@ -118,8 +183,7 @@ pub fn introspect_mut_at<'s>(
     scene: &'s mut Scene,
     scene_segments: &[String],
 ) -> Result<&'s mut dyn ExternalIntrospect, ResolveExternalError> {
-    let target = scene
-        .lookup_path_mut(scene_segments)
+    let target = lookup_addressed_mut(scene, scene_segments)
         .ok_or(ResolveExternalError::NoExternalAtPath)?;
     let node = target
         .primary_external_mut()
@@ -143,9 +207,8 @@ pub fn introspect_at<'s>(
     scene: &'s Scene,
     scene_segments: &[String],
 ) -> Result<&'s dyn ExternalIntrospect, ResolveExternalError> {
-    let target = scene
-        .lookup_path_ref(scene_segments)
-        .ok_or(ResolveExternalError::NoExternalAtPath)?;
+    let target =
+        lookup_addressed(scene, scene_segments).ok_or(ResolveExternalError::NoExternalAtPath)?;
     let node = target
         .primary_external()
         .ok_or(ResolveExternalError::NoExternalAtPath)?;
@@ -311,5 +374,169 @@ mod tests {
         let (intro, intro_path) =
             resolve_external_introspect(&scene, "/window[main]/counter/external/count").unwrap();
         assert_eq!(intro.query(&intro_path), Some(IntrospectValue::Int(13)));
+    }
+
+    // ---- R1483 §5.34 §2 #2 — one name for one surface, both compositions ----
+
+    /// The two shapes `CoreShell::compose_root` produces for the SAME
+    /// binding: the primary alone when it has no extra externals, wrapped in
+    /// a `Container` when it has some. The primary carries `WidgetCore::tag()`
+    /// either way, which is the whole point — one tag, one logical surface.
+    fn bare_root_primary(tag: &'static str, count: i64) -> Scene {
+        Scene::External(ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag))
+    }
+
+    fn wrapped_primary(tag: &'static str, count: i64) -> Scene {
+        let primary =
+            Scene::External(ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag));
+        let extra =
+            Scene::External(ExternalNode::new(Box::new(CountedExternal::new(999))).with_tag("aux"));
+        let mut c = ContainerNode::new(vec![primary, extra]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn r1483_one_tag_reaches_the_primary_in_both_compositions() {
+        // The defect in one assertion. Measured before the fix:
+        //   extras = 0  ->  NoExternalAtPath
+        //   extras = 1  ->  Ok(1)
+        // …for the same tag naming the same surface, decided by a
+        // composition detail no client can observe.
+        for (what, scene) in [
+            (
+                "no extras (primary is the root)",
+                bare_root_primary("model", 1),
+            ),
+            (
+                "one extra (primary is a child)",
+                wrapped_primary("model", 1),
+            ),
+        ] {
+            let intro = introspect_at(&scene, &["model".to_string()])
+                .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+            assert_eq!(
+                intro.query("count"),
+                Some(IntrospectValue::Int(1)),
+                "{what}: the tag must reach the primary",
+            );
+        }
+    }
+
+    #[test]
+    fn r1483_the_bare_shorthand_still_reaches_the_primary_in_both() {
+        // The address that already worked in both shapes must keep working —
+        // the alias is added beside it, not instead of it.
+        for scene in [bare_root_primary("model", 4), wrapped_primary("model", 4)] {
+            let intro = introspect_at(&scene, &[]).expect("bare /external resolves");
+            assert_eq!(intro.query("count"), Some(IntrospectValue::Int(4)));
+        }
+    }
+
+    /// A root tagged `dup` whose SECOND child is also tagged `dup`, with a
+    /// different external ahead of it. The two orderings then reach different
+    /// externals — `primary_external` descends a container to its FIRST
+    /// external, so a root-first walk answers `1` and a descendant-first walk
+    /// answers `7`. Without that gap the fixture cannot tell them apart: the
+    /// first version of this test held one child and passed under BOTH
+    /// orderings, because both descended to the same node.
+    fn root_shadowing_a_descendant() -> Scene {
+        let decoy =
+            Scene::External(ExternalNode::new(Box::new(CountedExternal::new(1))).with_tag("decoy"));
+        let named =
+            Scene::External(ExternalNode::new(Box::new(CountedExternal::new(7))).with_tag("dup"));
+        let mut c = ContainerNode::new(vec![decoy, named]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c.with_tag("dup".to_owned()))
+    }
+
+    #[test]
+    fn r1483_a_descendant_still_wins_over_the_root_name() {
+        // Precedence guard: the alias is a FALLBACK, so a path that resolves
+        // today keeps its present meaning. Paint-scene roots really are
+        // tagged, so this collision is reachable, not hypothetical.
+        let scene = root_shadowing_a_descendant();
+        let intro = introspect_at(&scene, &["dup".to_string()]).expect("resolves");
+        assert_eq!(
+            intro.query("count"),
+            Some(IntrospectValue::Int(7)),
+            "the child named `dup`, not the root's first external",
+        );
+    }
+
+    #[test]
+    fn r1483_the_alias_names_one_node_not_a_prefix() {
+        // The root is one node, so it consumes one segment. A longer chain
+        // beginning with the root's name must not resolve through the alias —
+        // that would make the root's tag a silent path prefix.
+        let scene = bare_root_primary("model", 1);
+        let err = expect_err(introspect_at(
+            &scene,
+            &["model".to_string(), "deeper".to_string()],
+        ));
+        assert_eq!(err, ResolveExternalError::NoExternalAtPath);
+    }
+
+    #[test]
+    fn r1483_an_untagged_root_is_not_reachable_by_any_name() {
+        // The alias keys on the root's OWN tag; an untagged root still has
+        // only the empty path, so a wrong name is still an honest refusal.
+        let scene = counted_scene(1);
+        let err = expect_err(introspect_at(&scene, &["model".to_string()]));
+        assert_eq!(err, ResolveExternalError::NoExternalAtPath);
+    }
+
+    #[test]
+    fn r1483_the_write_channel_resolves_the_same_addresses_as_the_read() {
+        // R1481's lesson as a test: a rule applied to the read and not the
+        // write is how the two channels come to disagree about what exists.
+        // Both shapes, both channels, one loop.
+        for (what, mut scene) in [
+            ("no extras", bare_root_primary("model", 1)),
+            ("one extra", wrapped_primary("model", 1)),
+        ] {
+            let segs = ["model".to_string()];
+            let readable = introspect_at(&scene, &segs).is_ok();
+            let writable = introspect_mut_at(&mut scene, &segs).is_ok();
+            assert!(readable, "{what}: the read reaches it");
+            assert_eq!(
+                readable, writable,
+                "{what}: the write channel must resolve what the read resolved",
+            );
+        }
+    }
+
+    #[test]
+    fn r1483_lookup_addressed_and_its_mut_sibling_agree() {
+        // The two entry points are separate functions, so their agreement is
+        // asserted rather than assumed. It compares WHICH node each reached
+        // (by the count its external answers), not merely that each found
+        // one — the shadowing case resolves under either precedence, so a
+        // presence-only comparison could not see a divergence there.
+        fn reached(scene: &Scene, name: &str) -> Option<IntrospectValue> {
+            introspect_at(scene, &[name.to_string()])
+                .ok()
+                .and_then(|i| i.query("count"))
+        }
+        fn reached_mut(scene: &mut Scene, name: &str) -> Option<IntrospectValue> {
+            introspect_mut_at(scene, &[name.to_string()])
+                .ok()
+                .and_then(|i| i.query("count"))
+        }
+        let cases = [
+            ("bare root", bare_root_primary("model", 1)),
+            ("wrapped", wrapped_primary("model", 1)),
+            ("shadowing", root_shadowing_a_descendant()),
+            ("untagged root", counted_scene(1)),
+        ];
+        for (what, mut scene) in cases {
+            for name in ["model", "dup", "decoy", "ghost"] {
+                assert_eq!(
+                    reached(&scene, name),
+                    reached_mut(&mut scene, name),
+                    "{what} / {name}: the channels reached different nodes",
+                );
+            }
+        }
     }
 }

@@ -27,7 +27,9 @@ use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use serde_json::{Value, json};
 
 use crate::path::PathError;
-use crate::resolve::{ResolveExternalError, introspect_at, resolve_external_path};
+use crate::resolve::{
+    ResolveExternalError, introspect_at, lookup_addressed, resolve_external_path,
+};
 
 /// R825 §5.12 — reserved introspect path that returns an external's
 /// **declared schema** (every queryable path + its type tag) instead of a
@@ -277,7 +279,7 @@ pub fn query_from(
     // *does* need to outlive resolution, so immediate-mode mutation stays
     // deferred until a consumer needs it — driver state is tick-driven,
     // read-only like the R823 tree introspect.)
-    if let Some(Scene::ImmediateModeNode(node)) = scene.lookup_path_ref(&scene_segments) {
+    if let Some(Scene::ImmediateModeNode(node)) = lookup_addressed(scene, &scene_segments) {
         let driver = node.handle.borrow();
         let intro = driver
             .introspect()

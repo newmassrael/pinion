@@ -8055,3 +8055,67 @@ fn r1482_an_already_encoded_answer_stays_verbatim_inside_the_wrap() {
         "the DOM arm must keep rendering through the tree: {dom}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// R1483 §5.34 §2 #2 — the root-name alias reaches dispatch, on all channels.
+//
+// `resolve.rs` unit-tests the rule; what those cannot see is whether the three
+// immediate-mode branches (query / invoke / intervene) route through it. R1481
+// closed exactly this hole for the paint-scene fallback and found two sites the
+// unit tests never reached.
+// ---------------------------------------------------------------------------
+
+/// A driver at the ROOT of the painted frame, carrying its own tag — the shape
+/// whose name had no address.
+fn root_driver_paint(speed: i64) -> Scene {
+    Scene::ImmediateModeNode(
+        pinion_core::scene::ImmediateModeNode::from_driver(
+            SpeedDriver(speed),
+            pinion_core::scene::Rect::default(),
+        )
+        .with_tag("ball".to_owned()),
+    )
+}
+
+#[test]
+fn r1483_a_root_driver_answers_reads_by_its_own_tag() {
+    let mut state = counted_scene(0);
+    let paint = root_driver_paint(10);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/ball/external/speed"},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    assert_eq!(resp.result, Some(Value::Number(10.into())));
+}
+
+#[test]
+fn r1483_the_write_channels_reach_a_root_driver_by_the_same_name() {
+    // Read and write must resolve the same addresses, or the wire reports
+    // that a path both exists and does not.
+    let mut state = counted_scene(0);
+    let paint = root_driver_paint(10);
+
+    let write = r#"{"jsonrpc":"2.0","method":"scene/intervene","params":{"path":"/ball/external/speed","value":42},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, write).unwrap());
+    assert!(resp.error.is_none(), "intervene: {:?}", resp.error);
+
+    let action = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/ball/external/halve","args":null},"id":2}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, action).unwrap());
+    assert_eq!(
+        resp.result,
+        Some(Value::Number(21.into())),
+        "the action ran on the value the write had just placed",
+    );
+}
+
+#[test]
+fn r1483_the_disclosed_origin_is_unchanged_by_the_alias() {
+    // The alias changes which paths resolve, not what an answer IS: a driver
+    // reached by the root name is still a live driver (R1482).
+    let mut state = counted_scene(0);
+    let paint = root_driver_paint(10);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/ball/external/speed","with_origin":true},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    assert_eq!(
+        resp.result,
+        Some(json!({"value": 10, "origin": "paint_driver"})),
+    );
+}

@@ -37,7 +37,7 @@ use pinion_core::external::{IntrospectValue, InvokeError as TraitInvokeError};
 
 use crate::path::PathError;
 use crate::resolve::{
-    ResolveExternalError, resolve_external_introspect_mut, resolve_external_path,
+    ResolveExternalError, lookup_addressed, resolve_external_introspect_mut, resolve_external_path,
 };
 
 /// Reasons the typed [`invoke`] dispatcher can fail.
@@ -149,7 +149,7 @@ fn invoke_immediate_at(
     let Ok((scene_segments, action_path)) = resolve_external_path(raw_path) else {
         return None;
     };
-    let Some(Scene::ImmediateModeNode(node)) = scene.lookup_path_ref(&scene_segments) else {
+    let Some(Scene::ImmediateModeNode(node)) = lookup_addressed(scene, &scene_segments) else {
         return None;
     };
     let mut driver = node.handle.borrow_mut();

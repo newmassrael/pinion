@@ -73666,6 +73666,56 @@
         "`SceneSource` duplicates the vocabulary `scene/snapshot` already parses from its `from` param as bare strings; a shared parse site would need a third consumer."
       ]
     },
+    "Round 1483": {
+      "decision_summary": "One name reaches one surface in both compositions: a binding's primary External answers to its own tag whether compose_root left it at the scene root or wrapped it beside extras, closing a stable-address gap that a reactive external set could open and close at runtime.",
+      "changes_bullets": [
+        "`pinion-rpc` `resolve.rs`: new `lookup_addressed` / `lookup_addressed_mut` — `Scene::lookup_path_ref/_mut` plus a root-name alias, guarded by the private `names_the_root`.",
+        "All five external-path resolution sites now route through it: `introspect_at`, `introspect_mut_at`, and the immediate-mode branches of `query`, `invoke`, `intervene`.",
+        "The alias is a FALLBACK, so a descendant that matches still wins and every path resolving before this round keeps its meaning; it consumes exactly one segment, so a root's tag cannot become a silent path prefix.",
+        "New demo `tools/demos/r1483_stable_tag_address.py` (31 assertion statements) drives one binding of each composition — `hello-answer-origin` (bare root) and `hello-listbox` (wrapped) — over a real wire."
+      ],
+      "verification_bullets": [
+        "Root cause re-framed by measurement, not carried forward as written: R1482's carry called this a path-resolution defect. `Scene::lookup_path_ref` in fact round-trips with its own producer — `hit_test` emits the root's path as the EMPTY chain — so the walker is correct. The defect is that `CoreShell::compose_root` makes the primary External the root when the binding has no extras and a child when it has some, while giving it `WidgetCore::tag()` in both cases.",
+        "Measured on one tag naming one logical surface: extras=0 gives `/model/external/count = NoExternalAtPath`, extras=1 gives `Ok(1)`. Since R688 made the external set a reactive projection of state, `reconcile_externals` re-composes at runtime, so a working address could stop working when an unrelated extra appeared or went away.",
+        "CF-1 (alias removed = pre-R1483): exactly 5 failures, all new claims; the guards (precedence, one-segment, untagged root, bare shorthand) all passed, which is their job. Demo failed with `NoExternalAtPath`.",
+        "CF-2 (precedence inverted so the root shadows a descendant) FIRST PASSED ALL 982 TESTS. The precedence guard held one child, so both orderings descended to the same external and the assertion could not tell them apart. Refixtured with a decoy ahead of the named child so the two orderings answer 1 vs 7; CF-2 rerun then killed exactly 1 — the guard.",
+        "CF-3 (alias on the read but not the write, the R1481 divergence class): exactly 2 failures, both channel-parity claims.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 982 (+10). Demos PASS: r1483 (new), r1482, r1481, r1480, hello_listbox_composite_path, r828, r795."
+      ],
+      "impact_refs": [
+        "5.34",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The alias is scoped to `pinion-rpc`'s external-path resolution. `Scene::lookup_path_ref` itself is unchanged, so `scene/locate`, layout queries, overlay highlight and the input router still address the root only by the empty path — deliberate, because that walker round-trips with `hit_test`'s own segment producer and changing it would break that pairing.",
+        "A root Container tagged the same as one of its descendants resolves to the descendant. That is the pre-existing meaning preserved on purpose, but it means one segment can name two different nodes depending on the tree.",
+        "Not addressed: whether `compose_root` should simply always wrap so the two shapes coincide. That would change the state-scene root type for every binding without extras and is a larger, separate decision."
+      ],
+      "publishable_decision_summary": "One name reaches one surface in both compositions: a binding's primary External answers to its own tag whether compose_root left it at the scene root or wrapped it beside extras, closing a stable-address gap that a reactive external set could open and close at runtime.",
+      "publishable_changes_bullets": [
+        "`pinion-rpc` `resolve.rs`: new `lookup_addressed` / `lookup_addressed_mut` — `Scene::lookup_path_ref/_mut` plus a root-name alias, guarded by the private `names_the_root`.",
+        "All five external-path resolution sites now route through it: `introspect_at`, `introspect_mut_at`, and the immediate-mode branches of `query`, `invoke`, `intervene`.",
+        "The alias is a FALLBACK, so a descendant that matches still wins and every path resolving before this round keeps its meaning; it consumes exactly one segment, so a root's tag cannot become a silent path prefix.",
+        "New demo `tools/demos/r1483_stable_tag_address.py` (31 assertion statements) drives one binding of each composition — `hello-answer-origin` (bare root) and `hello-listbox` (wrapped) — over a real wire."
+      ],
+      "publishable_verification_bullets": [
+        "Root cause re-framed by measurement, not carried forward as written: R1482's carry called this a path-resolution defect. `Scene::lookup_path_ref` in fact round-trips with its own producer — `hit_test` emits the root's path as the EMPTY chain — so the walker is correct. The defect is that `CoreShell::compose_root` makes the primary External the root when the binding has no extras and a child when it has some, while giving it `WidgetCore::tag()` in both cases.",
+        "Measured on one tag naming one logical surface: extras=0 gives `/model/external/count = NoExternalAtPath`, extras=1 gives `Ok(1)`. Since R688 made the external set a reactive projection of state, `reconcile_externals` re-composes at runtime, so a working address could stop working when an unrelated extra appeared or went away.",
+        "CF-1 (alias removed = pre-R1483): exactly 5 failures, all new claims; the guards (precedence, one-segment, untagged root, bare shorthand) all passed, which is their job. Demo failed with `NoExternalAtPath`.",
+        "CF-2 (precedence inverted so the root shadows a descendant) FIRST PASSED ALL 982 TESTS. The precedence guard held one child, so both orderings descended to the same external and the assertion could not tell them apart. Refixtured with a decoy ahead of the named child so the two orderings answer 1 vs 7; CF-2 rerun then killed exactly 1 — the guard.",
+        "CF-3 (alias on the read but not the write, the R1481 divergence class): exactly 2 failures, both channel-parity claims.",
+        "Gates: `cargo fmt --all --check` clean, clippy `-D pedantic` 0, `cargo doc --workspace --no-deps --document-private-items` 0, pinion-rpc 982 (+10). Demos PASS: r1483 (new), r1482, r1481, r1480, hello_listbox_composite_path, r828, r795."
+      ],
+      "publishable_impact_refs": [
+        "5.34",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The alias is scoped to `pinion-rpc`'s external-path resolution. `Scene::lookup_path_ref` itself is unchanged, so `scene/locate`, layout queries, overlay highlight and the input router still address the root only by the empty path — deliberate, because that walker round-trips with `hit_test`'s own segment producer and changing it would break that pairing.",
+        "A root Container tagged the same as one of its descendants resolves to the descendant. That is the pre-existing meaning preserved on purpose, but it means one segment can name two different nodes depending on the tree.",
+        "Not addressed: whether `compose_root` should simply always wrap so the two shapes coincide. That would change the state-scene root type for every binding without extras and is a larger, separate decision."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
