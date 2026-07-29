@@ -74406,6 +74406,74 @@
         "Still open from the Qt QHeaderView surface: firstSectionMovable and an explicit sectionsClickable flag, both currently binding policy rather than header state."
       ]
     },
+    "Round 1495": {
+      "decision_summary": "R1495 - the push gate knows what the last push did: stop-the-line becomes a mechanical refusal to publish onto a red base, and the hook libraries get the first tests any of them have had",
+      "changes_bullets": [
+        "pre-push refuses to publish onto a base whose last COMPLETED CI run failed (.githooks/lib/ci-status.sh). Stop-the-line is a ratified rule whose only enforcement was a sentence in docs/SEED_PROMPT.md - a gitignored file, read by whoever remembers to.",
+        "It reads CI's verdict; it never reproduces it. One gh call, no build. Running the full suite or the demo sweep locally is against a standing instruction, so the gate does the one thing that instruction leaves room for.",
+        "Fails open on a missing gh, no network, or no auth - infrastructure absence is not evidence of breakage - but always prints, because the failure mode it prevents is a check that silently stopped happening.",
+        "PINION_PUSH_ON_RED=1 publishes anyway, loudly. A stop-the-line rule with no way to push the fix stops the line permanently. The override is armed by the exact value only, so a stray 0 in a shell profile cannot disarm it.",
+        "Any completed conclusion other than success is red - cancelled, timed_out, startup_failure and action_required are not verdicts to build on unexamined.",
+        "tools/test_hooks.sh: the first tests any githook library has had. pre-push runs it before trusting the libs it decides with; it takes milliseconds, so the gate proves itself every time rather than being trusted because it used to work.",
+        "commit-msg-lint.sh gets coverage for the two rules that actually rejected commits this session: a subject over 72 bytes, and an indented continuation line.",
+        "CLAUDE.md records the gate, the fail-open choice, the override, and the gh-version constraint."
+      ],
+      "verification_bullets": [
+        "tools/test_hooks.sh: 22 assertions pass. shellcheck -x clean on pre-push, ci-status.sh and test_hooks.sh (only SC1091 source-following notices).",
+        "Verified against live CI, not only stubs: the gate reads run 30453669488 on main as SUCCESS and permits, and reports \"nothing to inherit\" for a branch with no runs.",
+        "Counterfactual 1 (only a literal 'failure' conclusion is red): 4 witnesses.",
+        "Counterfactual 2 (in-progress rows are not skipped): 8 witnesses.",
+        "Counterfactual 3 (an empty listing claims green): 2 witnesses.",
+        "Counterfactual 4 (the override is armed by any value): 1 witness.",
+        "Counterfactual 5 (fail closed when gh is absent): 1 witness.",
+        "Counterfactual 6 (reintroduce the --branch flag the real gh lacks): 2 witnesses - and this one only kills AFTER the stub was hardened, which is the finding below.",
+        "No Rust changed this round, so the Rust gates are unchanged from R1494: pinion-core 2789, hello-column-reorder 32.",
+        "mnemosyne-cli validate-workspace: T1 orphan total=0, entries 1472 before this round's entry."
+      ],
+      "impact_refs": [
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "The round's own gate was broken when first written, and its own tests certified it. gh 2.4.0 has no `gh run list --branch`; it answers usage text with exit 0 and no rows, which the caller cannot tell from \"no runs yet\", so the gate would have fail-opened on every push forever. It was caught by running the function against the real repo rather than the stub. The stub had accepted any arguments, so it was more permissive than the thing it stood in for, and a stub more permissive than reality tests the stub rather than the caller. The stub now rejects flags it was not taught, and CF-6 confirms the original defect now dies.",
+        "target-budget.sh is still untested. It needs a filesystem fixture (a target/ of a known size) rather than a text fixture, which is a different harness shape; recorded rather than half-built.",
+        "The gate reads the LAST COMPLETED run, so a push made while the previous run is still in flight inherits the verdict before it. That is the honest answer - an in-progress run has judged nothing - but it means two pushes in quick succession can both land before the first is judged. Blocking until a run completes would mean waiting ~50 minutes at the push gate, which is not a trade this project should make.",
+        "The gate is per branch and this project works on main only ([[always-work-on-main-no-branches]]), so the branch filter is currently exercised only by tests.",
+        "CI's demo-sweep and gpu-tests are still `needs:`-gated behind lint-and-test, so a red lint still zeroes demo coverage for that run. This gate covers the consequence - the next push is refused - rather than the topology. Decoupling the jobs is a separate question about CI minutes."
+      ],
+      "publishable_decision_summary": "R1495 - the push gate knows what the last push did: stop-the-line becomes a mechanical refusal to publish onto a red base, and the hook libraries get the first tests any of them have had",
+      "publishable_changes_bullets": [
+        "pre-push refuses to publish onto a base whose last COMPLETED CI run failed (.githooks/lib/ci-status.sh). Stop-the-line is a ratified rule whose only enforcement was a sentence in docs/SEED_PROMPT.md - a gitignored file, read by whoever remembers to.",
+        "It reads CI's verdict; it never reproduces it. One gh call, no build. Running the full suite or the demo sweep locally is against a standing instruction, so the gate does the one thing that instruction leaves room for.",
+        "Fails open on a missing gh, no network, or no auth - infrastructure absence is not evidence of breakage - but always prints, because the failure mode it prevents is a check that silently stopped happening.",
+        "PINION_PUSH_ON_RED=1 publishes anyway, loudly. A stop-the-line rule with no way to push the fix stops the line permanently. The override is armed by the exact value only, so a stray 0 in a shell profile cannot disarm it.",
+        "Any completed conclusion other than success is red - cancelled, timed_out, startup_failure and action_required are not verdicts to build on unexamined.",
+        "tools/test_hooks.sh: the first tests any githook library has had. pre-push runs it before trusting the libs it decides with; it takes milliseconds, so the gate proves itself every time rather than being trusted because it used to work.",
+        "commit-msg-lint.sh gets coverage for the two rules that actually rejected commits this session: a subject over 72 bytes, and an indented continuation line.",
+        "CLAUDE.md records the gate, the fail-open choice, the override, and the gh-version constraint."
+      ],
+      "publishable_verification_bullets": [
+        "tools/test_hooks.sh: 22 assertions pass. shellcheck -x clean on pre-push, ci-status.sh and test_hooks.sh (only SC1091 source-following notices).",
+        "Verified against live CI, not only stubs: the gate reads run 30453669488 on main as SUCCESS and permits, and reports \"nothing to inherit\" for a branch with no runs.",
+        "Counterfactual 1 (only a literal 'failure' conclusion is red): 4 witnesses.",
+        "Counterfactual 2 (in-progress rows are not skipped): 8 witnesses.",
+        "Counterfactual 3 (an empty listing claims green): 2 witnesses.",
+        "Counterfactual 4 (the override is armed by any value): 1 witness.",
+        "Counterfactual 5 (fail closed when gh is absent): 1 witness.",
+        "Counterfactual 6 (reintroduce the --branch flag the real gh lacks): 2 witnesses - and this one only kills AFTER the stub was hardened, which is the finding below.",
+        "No Rust changed this round, so the Rust gates are unchanged from R1494: pinion-core 2789, hello-column-reorder 32.",
+        "mnemosyne-cli validate-workspace: T1 orphan total=0, entries 1472 before this round's entry."
+      ],
+      "publishable_impact_refs": [
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The round's own gate was broken when first written, and its own tests certified it. gh 2.4.0 has no `gh run list --branch`; it answers usage text with exit 0 and no rows, which the caller cannot tell from \"no runs yet\", so the gate would have fail-opened on every push forever. It was caught by running the function against the real repo rather than the stub. The stub had accepted any arguments, so it was more permissive than the thing it stood in for, and a stub more permissive than reality tests the stub rather than the caller. The stub now rejects flags it was not taught, and CF-6 confirms the original defect now dies.",
+        "target-budget.sh is still untested. It needs a filesystem fixture (a target/ of a known size) rather than a text fixture, which is a different harness shape; recorded rather than half-built.",
+        "The gate reads the LAST COMPLETED run, so a push made while the previous run is still in flight inherits the verdict before it. That is the honest answer - an in-progress run has judged nothing - but it means two pushes in quick succession can both land before the first is judged. Blocking until a run completes would mean waiting ~50 minutes at the push gate, which is not a trade this project should make.",
+        "The gate is per branch and this project works on main only ([[always-work-on-main-no-branches]]), so the branch filter is currently exercised only by tests.",
+        "CI's demo-sweep and gpu-tests are still `needs:`-gated behind lint-and-test, so a red lint still zeroes demo coverage for that run. This gate covers the consequence - the next push is refused - rather than the topology. Decoupling the jobs is a separate question about CI minutes."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

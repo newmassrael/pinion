@@ -62,6 +62,21 @@ cd "$repo_root"
 hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/commit-msg-lint.sh
 source "$hook_dir/lib/commit-msg-lint.sh"
+# shellcheck source=lib/ci-status.sh
+source "$hook_dir/lib/ci-status.sh"
+
+# --- R1495. The libraries this hook decides with, verified first ---
+#
+# These libs are what stands between a working tree and a remote, and until
+# R1495 nothing checked any of them. They run in milliseconds, so the gate can
+# afford to prove itself every time rather than being trusted because it used
+# to work. Failing here fails the push: a gate that cannot pass its own tests
+# is not evidence about anything else.
+echo "pre-push: hook library tests ..." >&2
+if ! bash "$repo_root/tools/test_hooks.sh" >&2; then
+    echo "pre-push: the hook libraries failed their own tests" >&2
+    exit 1
+fi
 
 msg_gate_failed=0
 tmp_msg="$(mktemp)"
@@ -94,6 +109,17 @@ done
 if [[ "$msg_gate_failed" -ne 0 ]]; then
     echo "pre-push: one or more pushed commit messages violate COMMIT_FORMAT.md" >&2
     echo "pre-push: reword with 'git rebase -i', then re-push" >&2
+    exit 1
+fi
+
+# --- R1495. Do not publish onto a base the last CI run said was broken ---
+#
+# The ratified rule is stop-the-line, and until now its only enforcement was a
+# sentence in a gitignored file telling the next session to look. Runs before
+# the build gates because it costs one `gh` call and refusing here saves the
+# two minutes of clippy and rustdoc below. See lib/ci-status.sh for why it
+# fails open on a missing `gh`, and for the override.
+if ! check_last_ci_run "$(git rev-parse --abbrev-ref HEAD)" "pre-push"; then
     exit 1
 fi
 

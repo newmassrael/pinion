@@ -155,6 +155,38 @@ from here.
 
 If a hook fails, **fix the underlying issue**. Never bypass with `--no-verify` unless the user explicitly requests it.
 
+### Stop-the-line at the push gate (R1495)
+
+`pre-push` refuses to publish onto a base whose **last completed CI run
+failed** (`.githooks/lib/ci-status.sh`), and runs the hook libraries' own
+tests (`tools/test_hooks.sh`) before trusting them.
+
+- **Why**: stop-the-line is a ratified rule ([[zero-flake-policy]], R882.2),
+  and its only enforcement was a sentence in `docs/SEED_PROMPT.md` — a file
+  that is `.gitignore`d, so a fresh clone does not have it, read by whoever
+  remembers to. R1470 is the case: a red `lint-and-test` kept the
+  `needs:`-gated `demo-sweep` from running for **99 consecutive pushes**, and
+  the round that found it wrote down "a prose warning is not a gate" while
+  leaving this defence as prose.
+- **It does not run the tests.** The full suite and the demo sweep are CI's
+  job (2026-07-21 directive: local gates cover only the crates a round
+  touched). This reads CI's verdict — one `gh` call, no build.
+- **Fails open** on a missing `gh`, no network, or no auth — infrastructure
+  absence is not evidence of breakage — but always prints, because the
+  failure mode it exists to prevent is a check that silently stopped
+  happening.
+- **Override**: `PINION_PUSH_ON_RED=1 git push`, for publishing the fix. A
+  stop-the-line rule with no way to push the fix stops the line permanently.
+- **No `--branch` flag**: gh 2.4.0 (what Ubuntu ships, and what is on this
+  machine) does not have it, and answers usage text with exit 0 and no rows —
+  indistinguishable from "no runs yet". The branch is filtered in the parse.
+  The first draft used the flag and would have fail-opened forever; the unit
+  tests missed it because the `gh` stub accepted any argument. The stub now
+  rejects flags it was not taught.
+- **The hook libs are tested** (`tools/test_hooks.sh`, plain bash, runs in
+  milliseconds inside `pre-push`). Before R1495 nothing verified any of them —
+  including `commit-msg-lint.sh`, which gates every commit message.
+
 ### Build-cache budget (R1486, corrected + bounded R1489)
 
 `pre-push` ends by printing `target/`'s size and, when it exceeds a budget,
