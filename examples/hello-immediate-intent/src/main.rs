@@ -731,6 +731,9 @@ mod r827_immediate_intent_tests {
                 SchemaField::new("velocity", "float"),
                 SchemaField::new("bounces", "int"),
                 SchemaField::new("clicked", "bool"),
+                // R1481 — the action channel is declared, not just implemented:
+                // a channel an agent cannot discover is one it cannot use.
+                SchemaField::new("reset", "int"),
                 SchemaField::new("last_click_x", "float"),
                 SchemaField::new("last_click_y", "float"),
             ],
@@ -738,7 +741,12 @@ mod r827_immediate_intent_tests {
     }
 
     #[test]
-    fn r828_driver_introspect_intervene_is_read_only() {
+    fn r828_driver_introspect_intervene_is_read_only_except_velocity() {
+        // R1481 — `velocity` became writable (an agent nudging a live driver
+        // is the §2 #2 case the immediate-mode axis exists for). Everything
+        // else stays read-only, and an undeclared path says so distinctly:
+        // an agent told `ReadOnly` for a path that is not there learns
+        // something false about the surface.
         let mut driver = BouncingBallDriver::default();
         let intro = driver
             .introspect_mut()
@@ -746,6 +754,43 @@ mod r827_immediate_intent_tests {
         assert!(matches!(
             intro.intervene("pos", IntrospectValue::Float(0.5)),
             Err(InterveneError::ReadOnly),
+        ));
+        assert!(matches!(
+            intro.intervene("ghost", IntrospectValue::Float(0.5)),
+            Err(InterveneError::UnknownPath),
+        ));
+        assert!(matches!(
+            intro.intervene("velocity", IntrospectValue::Text("x".to_owned())),
+            Err(InterveneError::TypeMismatch),
+        ));
+        intro
+            .intervene("velocity", IntrospectValue::Float(0.75))
+            .expect("velocity is writable");
+        assert_eq!(
+            intro.query("velocity"),
+            Some(IntrospectValue::Float(0.75)),
+            "the write must be readable back through the same surface",
+        );
+    }
+
+    #[test]
+    fn r1481_driver_reset_clears_the_count_it_reports() {
+        let mut driver = BouncingBallDriver::default();
+        driver.tick(Duration::from_secs_f32(1.0 / BALL_SPEED + 0.1));
+        let bounced = driver.bounces;
+        assert!(bounced >= 1, "premise: the ball has bounced");
+        let intro = driver
+            .introspect_mut()
+            .expect("driver opts into introspection");
+        assert_eq!(
+            intro.invoke("reset", IntrospectValue::Null),
+            Ok(IntrospectValue::Int(i64::from(bounced))),
+            "the action reports what it cleared",
+        );
+        assert_eq!(intro.query("bounces"), Some(IntrospectValue::Int(0)));
+        assert!(matches!(
+            intro.invoke("ghost", IntrospectValue::Null),
+            Err(InvokeError::UnknownPath),
         ));
     }
 
