@@ -74,7 +74,7 @@ use crate::external::{
     DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
 };
 use crate::reactive::{Owner, Signal};
-use crate::widgets::column_widths::ColumnWidths;
+use crate::widgets::column_widths::{ColumnWidths, DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
 use crate::widgets::grid_sort::{grid_sort_parse, grid_sort_str};
 use crate::widgets::reorder::{ReorderAxis, ReorderModel};
 use crate::widgets::table::cycle_col_sort;
@@ -88,7 +88,7 @@ use crate::widgets::view_order::sort_dir_str;
 /// **logical** section, which is what makes the snapshot survive a reorder —
 /// restoring it into a layout whose columns have since been moved puts each
 /// section's size and visibility back on the section, not on the position.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ColumnLayoutState {
     /// The visual permutation (`order[visual] = logical`).
     pub order: Vec<usize>,
@@ -112,6 +112,19 @@ pub struct ColumnLayoutState {
     /// Qt keeps the section while a view hides the arrow, and a restore has to
     /// put both back.
     pub sort_indicator_shown: bool,
+    /// R1493 — the size a section takes when nothing else determined it: Qt's
+    /// `defaultSectionSize`, which `saveState()` carries. Scalar, not per
+    /// section: it is the header's rule, and the per-section outcome is already
+    /// in [`sizes`](Self::sizes).
+    pub default_section_size: u32,
+    /// R1493 — the resize floor: Qt's `minimumSectionSize`, another field
+    /// `saveState()` carries and R1492 added to the header without adding here.
+    /// A snapshot that restored sizes but not the bounds that shape them could
+    /// hand back widths the restored header immediately re-clamps.
+    pub min_section_size: u32,
+    /// R1493 — the resize ceiling: Qt's `maximumSectionSize`, the peer of
+    /// [`min_section_size`](Self::min_section_size).
+    pub max_section_size: u32,
 }
 
 impl ColumnLayoutState {
@@ -130,6 +143,13 @@ impl ColumnLayoutState {
             // does not learn a second vocabulary for the header's.
             "sort_indicator": grid_sort_str(self.sort_indicator),
             "sort_indicator_shown": self.sort_indicator_shown,
+            // R1493 — the three scalars that shape every size in `sizes`.
+            // Without them a restore replays the outcomes and drops the rule
+            // that produced them, so the next resize in the restored header
+            // obeys a different one.
+            "default_section_size": self.default_section_size,
+            "min_section_size": self.min_section_size,
+            "max_section_size": self.max_section_size,
         })
     }
 
@@ -188,6 +208,16 @@ impl ColumnLayoutState {
                 },
             ),
         };
+        // R1493 — same absent-is-the-older-shape rule the three fields above
+        // use: a snapshot taken before this round carries no bounds and no
+        // default, and decodes to the constants rather than to zero. Present
+        // but not a `u32` is still an error.
+        let scalar = |key: &str, fallback: u32| -> Option<u32> {
+            match value.get(key) {
+                None => Some(fallback),
+                Some(v) => u32::try_from(v.as_u64()?).ok(),
+            }
+        };
         Some(Self {
             order,
             sizes,
@@ -195,7 +225,30 @@ impl ColumnLayoutState {
             modes,
             sort_indicator,
             sort_indicator_shown,
+            default_section_size: scalar("default_section_size", DEFAULT_SECTION_SIZE)?,
+            min_section_size: scalar("min_section_size", DEFAULT_MIN_COL_WIDTH)?,
+            max_section_size: scalar("max_section_size", DEFAULT_MAX_COL_WIDTH)?,
         })
+    }
+}
+
+impl Default for ColumnLayoutState {
+    /// The empty header — no sections, and the three scalar rules at their
+    /// constants. Deriving this would put **zero** in the bounds, which is a
+    /// header whose sections may be zero-wide and at most zero-wide; the
+    /// vectors are the only fields whose empty value is their default.
+    fn default() -> Self {
+        Self {
+            order: Vec::new(),
+            sizes: Vec::new(),
+            hidden: Vec::new(),
+            modes: Vec::new(),
+            sort_indicator: None,
+            sort_indicator_shown: false,
+            default_section_size: DEFAULT_SECTION_SIZE,
+            min_section_size: DEFAULT_MIN_COL_WIDTH,
+            max_section_size: DEFAULT_MAX_COL_WIDTH,
+        }
     }
 }
 
@@ -222,6 +275,18 @@ pub struct SectionPlacement {
     /// The section's painted width.
     pub size: u32,
 }
+
+/// R1493 §5.27 — the size a section takes when nothing else determined it:
+/// Qt's `QHeaderView::defaultSectionSize`, whose own default is style-derived
+/// and lands at 100 logical pixels in Qt's common styles.
+///
+/// It is the fourth way a section acquires a size, and the one that was
+/// missing. The other three — a stored width, a `ResizeToContents` hint, a
+/// `Stretch` share — all answer "how wide is this section *now*"; this one
+/// answers "how wide before anyone said". Without it a header could not be
+/// reset, and a section that had never been sized was indistinguishable from
+/// one deliberately set to the floor.
+pub const DEFAULT_SECTION_SIZE: u32 = 100;
 
 /// R1454 §5.36 — how many rows a `ResizeToContents` consumer measures by
 /// default, matching Qt's `QHeaderView::resizeContentsPrecision` default.
@@ -367,6 +432,18 @@ pub struct ColumnLayout {
     /// view could not reach the hints at all. The demo caught it: the knob read
     /// back its new value and every content width stayed put.
     contents_precision: Signal<usize>,
+    /// R1493 — Qt's `defaultSectionSize`: the size a section takes when
+    /// nothing else determined it.
+    ///
+    /// Stored raw and clamped **at read**
+    /// ([`default_section_size`](Self::default_section_size)) rather than on
+    /// write, so moving a bound moves the default with it and there is no
+    /// second write path to forget — the [[r1449-completion-model]] rule this
+    /// module already follows for every derived answer. The alternative,
+    /// re-clamping it from `ColumnWidths::set_min_width`, cannot even be
+    /// written: the bounds live in the shared width model, which does not know
+    /// this layout exists.
+    default_size: Signal<u32>,
 }
 
 impl ColumnLayout {
@@ -398,6 +475,7 @@ impl ColumnLayout {
             sort_indicator: Signal::new(None),
             sort_indicator_shown: Signal::new(false),
             contents_precision: Signal::new(DEFAULT_CONTENTS_PRECISION),
+            default_size: Signal::new(DEFAULT_SECTION_SIZE),
         }
     }
 
@@ -583,8 +661,9 @@ impl ColumnLayout {
 
     /// R1492 — the largest any section may be — Qt's
     /// `QHeaderView::maximumSectionSize()`.
-    /// [`DEFAULT_MAX_COL_WIDTH`](crate::widgets::column_widths::DEFAULT_MAX_COL_WIDTH)
-    /// means unbounded, which is what every pinion header was before this.
+    /// [`DEFAULT_MAX_COL_WIDTH`] means unbounded, which is what every pinion
+    /// header was before this. (R1493 brought the constant into scope here, so
+    /// the explicit link target it used to need is now redundant.)
     #[must_use]
     pub fn maximum_section_size(&self) -> u32 {
         self.sizes.max_width()
@@ -701,14 +780,41 @@ impl ColumnLayout {
         if logical >= self.count {
             return 0;
         }
-        if let Some(p) = self
-            .visible_placements()
-            .iter()
-            .find(|p| p.logical == logical)
-        {
-            return p.size;
+        self.section_sizes()[logical]
+    }
+
+    /// R1493 — every section's **effective** size, keyed by logical section:
+    /// the plural of [`section_size`](Self::section_size), and the number the
+    /// header actually paints.
+    ///
+    /// This is not [`save_state`](Self::save_state)'s `sizes`, and the
+    /// difference is the whole reason it exists. A section has a size it was
+    /// *given* (stored, restorable, what `saveState` carries) and a size it
+    /// *has* (resolved through its [`SectionResizeMode`]). Under `Interactive`
+    /// and `Fixed` the two are equal; under `Stretch` and `ResizeToContents`
+    /// they are not, and before this round the only logical-keyed plural on the
+    /// wire was the stored one. A client reading it under a stretch header was
+    /// handed `[150, 90, …]` for a row painting `[128, 128, …]` — the exact
+    /// thing [`resize_section`](Self::resize_section) already promises never to
+    /// do ("the return is the size the section actually has, so a client is
+    /// never told a number the grid is not painting"). The single-section write
+    /// path kept that promise; the plural read path did not.
+    ///
+    /// Qt keeps one number per section and re-derives on relayout, so it needs
+    /// no such pair; pinion keeps the size you asked for across a mode switch,
+    /// and having kept two numbers must say which one it is handing you.
+    ///
+    /// Hidden sections are painted nowhere, so they report the size they bring
+    /// to the division — the same fallback the singular has always used.
+    #[must_use]
+    pub fn section_sizes(&self) -> Vec<u32> {
+        let mut out: Vec<u32> = (0..self.count)
+            .map(|l| self.base_size(l, self.resize_mode(l)))
+            .collect();
+        for p in self.visible_placements() {
+            out[p.logical] = p.size;
         }
-        self.base_size(logical, self.resize_mode(logical))
+        out
     }
 
     /// The size a section brings to the division: the stored one, or the
@@ -744,6 +850,49 @@ impl ColumnLayout {
         }
         self.sizes.set_width(logical, size);
         self.section_size(logical)
+    }
+
+    /// R1493 — the size a section takes when nothing else determined it —
+    /// Qt's `defaultSectionSize`.
+    ///
+    /// Clamped into the R1492 bounds on the way out, so it can never name a
+    /// size the header would refuse: lower the ceiling under the default and
+    /// the default comes down with it, with no write path that could have
+    /// forgotten to. Subscribes when read inside a view-fn.
+    #[must_use]
+    pub fn default_section_size(&self) -> u32 {
+        self.sizes.clamp(self.default_size.get())
+    }
+
+    /// R1493 — set the default and apply it — Qt's `setDefaultSectionSize()`,
+    /// which does both: the new default governs sections acquired later, *and*
+    /// every section already there takes it now.
+    ///
+    /// Hidden sections keep their size, which is Qt's rule and already this
+    /// module's ("the section keeps its visual place and its size while
+    /// hidden") — a bulk resize a user cannot see is a resize they cannot
+    /// undo.
+    ///
+    /// Returns the applied default after the bound clamp, so a client learns
+    /// the outcome in the round-trip it asked for the change.
+    pub fn set_default_section_size(&self, size: u32) -> u32 {
+        self.default_size.set(size);
+        let applied = self.default_section_size();
+        let hidden = self.hidden.get();
+        for logical in 0..self.count {
+            if !hidden.get(logical).copied().unwrap_or(false) {
+                self.sizes.set_width(logical, applied);
+            }
+        }
+        applied
+    }
+
+    /// R1493 — back to [`DEFAULT_SECTION_SIZE`] — Qt's
+    /// `resetDefaultSectionSize()`. Qt needs the separate call because its
+    /// default is style-derived and a caller cannot name it; the same holds
+    /// here for a caller that never learned the constant.
+    pub fn reset_default_section_size(&self) -> u32 {
+        self.set_default_section_size(DEFAULT_SECTION_SIZE)
     }
 
     /// Whether logical section `logical` is hidden — Qt's
@@ -919,6 +1068,13 @@ impl ColumnLayout {
             modes: self.modes.get(),
             sort_indicator: self.sort_indicator.get(),
             sort_indicator_shown: self.sort_indicator_shown.get(),
+            // R1493 — the rules, saved beside the outcomes they produced. The
+            // clamped default, for the same reason `sizes` are the clamped
+            // widths: a snapshot records what the header will do, not what it
+            // was asked for.
+            default_section_size: self.default_section_size(),
+            min_section_size: self.sizes.min_width(),
+            max_section_size: self.sizes.max_width(),
         }
     }
 
@@ -946,9 +1102,25 @@ impl ColumnLayout {
         if state.sort_indicator.is_some_and(|(l, _)| l >= self.count) {
             return false;
         }
+        // R1493 — an inverted bound pair describes no header, and is refused
+        // here with the other shape errors rather than repaired on the way in.
+        // Repairing it would make the restore order-dependent: the two setters
+        // drag each other to stay ordered, so applying a crossed pair floor-
+        // first and ceiling-first land on different bounds. A restore that
+        // depends on the order its own fields are written is not a restore.
+        if state.min_section_size > state.max_section_size {
+            return false;
+        }
         if !self.sections.set_order(&state.order) {
             return false;
         }
+        // The bounds go in BEFORE the widths they shape. The other order
+        // clamps the restored sizes through the *outgoing* header's bounds and
+        // loses whatever fell outside them — the incoming ceiling can no longer
+        // widen a width that was already truncated to the old one.
+        self.sizes.set_min_width(state.min_section_size);
+        self.sizes.set_max_width(state.max_section_size);
+        self.default_size.set(state.default_section_size);
         self.sizes.set_widths(state.sizes.clone());
         self.hidden.set(state.hidden.clone());
         self.modes.set(state.modes.clone());
@@ -962,7 +1134,12 @@ impl ColumnLayout {
     /// which fall through to the embedded [`ReorderModel`]:
     ///
     /// - `state` — the whole [`ColumnLayoutState`] (Qt `saveState`, readable)
-    /// - `sizes` / `hidden` — the logical-keyed vectors
+    /// - `sizes` / `hidden` — the logical-keyed vectors. `sizes` is the
+    ///   **stored** size — the one a restore replays; `section_sizes` (R1493)
+    ///   is the **effective** one the header paints, and under `Stretch` /
+    ///   `ResizeToContents` the two differ
+    /// - `section_sizes` — the effective plural (R1493)
+    /// - `default_section_size` (R1493)
     /// - `visible_sections` / `visible_widths` / `visible_total`
     /// - `placements` — the painted geometry ([`SectionPlacement`] per section)
     /// - `hidden_count`
@@ -993,7 +1170,14 @@ impl ColumnLayout {
 
         match path {
             "state" => Some(IntrospectValue::Json(self.save_state().to_json())),
+            // The STORED sizes — what a restore replays. Its effective peer is
+            // `section_sizes`, and a client that wants the painted row wants
+            // that one (R1493).
             "sizes" => Some(json_of((0..self.count).map(|l| self.sizes.width(l)))),
+            "section_sizes" => Some(json_of(self.section_sizes())),
+            "default_section_size" => {
+                Some(IntrospectValue::Int(i64::from(self.default_section_size())))
+            }
             "hidden" => Some(json_of(self.hidden.get())),
             "visible_sections" => Some(json_of(self.visible_sections())),
             "visible_widths" => Some(json_of(self.visible_widths())),
@@ -1095,6 +1279,27 @@ impl ColumnLayout {
         .or_else(|| self.sections.query(path))
     }
 
+    /// One `count`-long width vector off the wire, for the two slots that take
+    /// one (`sizes` and `content_widths`).
+    ///
+    /// (R1493) Extracted because the two arms were byte-identical but for the
+    /// signal they wrote — the same "a wrong length is `OutOfRange`, a wrong
+    /// shape is `TypeMismatch`" decision made twice. Two copies of a wire
+    /// contract are two places for it to drift, and the second one is always
+    /// the one that does not learn the next correction.
+    fn width_vector(&self, value: &IntrospectValue) -> Result<Vec<u32>, InterveneError> {
+        let widths: Vec<u32> = json_u64_array(value)
+            .ok_or(InterveneError::TypeMismatch)?
+            .into_iter()
+            .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+            .collect();
+        if widths.len() == self.count {
+            Ok(widths)
+        } else {
+            Err(InterveneError::OutOfRange)
+        }
+    }
+
     /// Header-layout slots for [`ExternalIntrospect::intervene`]: `state` is
     /// the restore half of the round-trip (Qt's `restoreState`, authorable),
     /// and `sizes` / `hidden` / `sort_indicator` / `sort_indicator_shown` write
@@ -1123,15 +1328,7 @@ impl ColumnLayout {
                 }
             }
             "sizes" => {
-                let sizes: Vec<u32> = json_u64_array(value)
-                    .ok_or(InterveneError::TypeMismatch)?
-                    .into_iter()
-                    .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
-                    .collect();
-                if sizes.len() != self.count {
-                    return Err(InterveneError::OutOfRange);
-                }
-                self.sizes.set_widths(sizes);
+                self.sizes.set_widths(self.width_vector(value)?);
                 Ok(())
             }
             "hidden" => {
@@ -1153,15 +1350,7 @@ impl ColumnLayout {
             // its measured content and its viewport here; over the wire an
             // agent can do the same to explore a layout without a real grid.
             "content_widths" => {
-                let widths: Vec<u32> = json_u64_array(value)
-                    .ok_or(InterveneError::TypeMismatch)?
-                    .into_iter()
-                    .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
-                    .collect();
-                if widths.len() != self.count {
-                    return Err(InterveneError::OutOfRange);
-                }
-                self.content_widths.set(widths);
+                self.content_widths.set(self.width_vector(value)?);
                 Ok(())
             }
             // R1492 — Qt's two setters. Writable for the same reason the modes
@@ -1173,6 +1362,13 @@ impl ColumnLayout {
             }
             "max_section_size" => {
                 self.set_maximum_section_size(px_bound(value)?);
+                Ok(())
+            }
+            // R1493 — Qt's `setDefaultSectionSize`, through the same door its
+            // two bound siblings use, because it is the same kind of thing: a
+            // scalar rule that shapes every section's size.
+            "default_section_size" => {
+                self.set_default_section_size(px_bound(value)?);
                 Ok(())
             }
             // R1454 — the row-sampling bound a `ResizeToContents` consumer
@@ -1353,6 +1549,18 @@ impl ColumnLayout {
                     .query("visible_widths")
                     .unwrap_or(IntrospectValue::Null))
             }
+            // R1493 — Qt's `resetDefaultSectionSize()`. An `invoke` rather than
+            // a second `intervene` slot because it carries no value: the point
+            // is to reach the constant WITHOUT naming it, which is exactly the
+            // caller who does not know what it is.
+            //
+            // Answers `section_sizes`, not the default it just applied — a
+            // bulk resize's outcome is the row, and under a `Stretch` header
+            // the row is not the number that was written.
+            "reset_default_section_size" => {
+                self.reset_default_section_size();
+                Ok(self.query("section_sizes").unwrap_or(IntrospectValue::Null))
+            }
             _ => self.sections.invoke(method, args),
         }
     }
@@ -1449,8 +1657,8 @@ mod tests {
     use std::borrow::Cow;
 
     use super::{
-        ColumnLayout, ColumnLayoutState, DEFAULT_CONTENTS_PRECISION, SectionPlacement,
-        SectionResizeMode, read_column_layout,
+        ColumnLayout, ColumnLayoutState, DEFAULT_CONTENTS_PRECISION, DEFAULT_SECTION_SIZE,
+        SectionPlacement, SectionResizeMode, read_column_layout,
     };
     use crate::external::{
         DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
@@ -1603,6 +1811,10 @@ mod tests {
             modes: vec![SectionResizeMode::Stretch; 4],
             sort_indicator: Some((0, true)),
             sort_indicator_shown: true,
+            // R1493 — the scalar rules are well-formed here on purpose: this
+            // fixture is about the permutation, so the bound check must not be
+            // what rejects it.
+            ..ColumnLayoutState::default()
         };
         assert!(!l.restore_state(&bad_order));
         assert_eq!(l.save_state(), before, "no size or flag was written");
@@ -1615,6 +1827,7 @@ mod tests {
             modes: vec![SectionResizeMode::Interactive; 4],
             sort_indicator: None,
             sort_indicator_shown: false,
+            ..ColumnLayoutState::default()
         };
         assert!(!l.restore_state(&short));
         assert_eq!(l.save_state(), before, "the order was not applied either");
@@ -2676,5 +2889,246 @@ mod tests {
         let view = read_column_layout(&Probe(l));
         assert_eq!(view.state.sort_indicator, Some((1, true)));
         assert!(view.state.sort_indicator_shown);
+    }
+
+    // ----- R1493: the size a section was given vs the size it has -----
+
+    #[test]
+    fn r1493_the_stored_plural_and_the_effective_plural_are_different_reads() {
+        // The measurement this round entered on. Under `Interactive` the two
+        // agree, which is why one name sufficed for 42 rounds; under `Stretch`
+        // they do not, and only one of them is on screen.
+        let l = layout();
+        l.set_available_width(Some(600));
+        assert_eq!(
+            ints(&l.query("sizes").expect("sizes")),
+            vec![100, 120, 140, 160]
+        );
+        assert_eq!(
+            ints(&l.query("section_sizes").expect("section_sizes")),
+            vec![100, 120, 140, 160],
+            "interactive: the two reads agree, so neither is wrong yet"
+        );
+
+        l.set_all_resize_modes(SectionResizeMode::Stretch);
+        assert_eq!(
+            ints(&l.query("sizes").expect("sizes")),
+            vec![100, 120, 140, 160],
+            "the stored sizes survive the mode switch — that is what they are for"
+        );
+        assert_eq!(
+            ints(&l.query("section_sizes").expect("section_sizes")),
+            vec![150, 150, 150, 150],
+            "and the effective plural reports the shares the header paints"
+        );
+        // The two plurals now disagree, and the effective one is the one the
+        // painted walk produced.
+        assert_eq!(
+            l.section_sizes(),
+            l.visible_placements()
+                .iter()
+                .map(|p| p.size)
+                .collect::<Vec<_>>(),
+            "the effective plural IS the painted geometry, not a second derivation"
+        );
+        // Singular and plural cannot disagree: the singular reads the plural.
+        for logical in 0..l.count() {
+            assert_eq!(l.section_size(logical), l.section_sizes()[logical]);
+        }
+    }
+
+    #[test]
+    fn r1493_a_hidden_section_reports_the_size_it_would_bring() {
+        // A hidden section is painted nowhere, so it has no share; it reports
+        // its stored size, which is the fallback the singular always used.
+        let l = layout();
+        l.set_available_width(Some(600));
+        l.set_all_resize_modes(SectionResizeMode::Stretch);
+        l.set_section_hidden(3, true);
+        let sizes = l.section_sizes();
+        assert_eq!(
+            sizes.len(),
+            4,
+            "a hidden section keeps its slot in the plural"
+        );
+        assert_eq!(&sizes[..3], &[200, 200, 200], "three shares, not four");
+        assert_eq!(sizes[3], 160, "and the hidden one reports its stored size");
+    }
+
+    #[test]
+    fn r1493_the_default_governs_every_shown_section_and_spares_the_hidden() {
+        // Qt's `setDefaultSectionSize`: the new default applies now, to the
+        // sections a user can see it happen to.
+        let l = layout();
+        assert_eq!(l.default_section_size(), DEFAULT_SECTION_SIZE);
+        l.set_section_hidden(2, true);
+        assert_eq!(l.set_default_section_size(90), 90, "the applied default");
+        assert_eq!(
+            l.save_state().sizes,
+            vec![90, 90, 140, 90],
+            "the hidden section kept the size it will come back at"
+        );
+        assert_eq!(l.reset_default_section_size(), DEFAULT_SECTION_SIZE);
+        assert_eq!(l.save_state().sizes, vec![100, 100, 140, 100]);
+    }
+
+    #[test]
+    fn r1493_the_default_cannot_name_a_size_the_header_would_refuse() {
+        // Derived at read rather than clamped at write, so a bound that moves
+        // afterwards takes the default with it — there is no second write path
+        // that could have been forgotten.
+        let l = layout();
+        l.set_default_section_size(300);
+        assert_eq!(l.default_section_size(), 300);
+        l.set_maximum_section_size(120);
+        assert_eq!(
+            l.default_section_size(),
+            120,
+            "the ceiling moved after the default was set, and the default followed"
+        );
+        l.set_minimum_section_size(200);
+        assert_eq!(
+            l.default_section_size(),
+            200,
+            "and the floor does the same, from the other side"
+        );
+        // The raw value is not lost: widen the bounds and it is back.
+        l.set_minimum_section_size(40);
+        l.set_maximum_section_size(DEFAULT_MAX_COL_WIDTH);
+        assert_eq!(l.default_section_size(), 300);
+    }
+
+    #[test]
+    fn r1493_a_snapshot_carries_the_rules_that_shaped_its_sizes() {
+        // `ColumnLayoutState` calls itself the peer of Qt's `saveState()`, and
+        // `saveState()` carries these three. Restoring outcomes without the
+        // rules that produced them means the next resize obeys a different one.
+        let l = layout();
+        l.set_minimum_section_size(60);
+        l.set_maximum_section_size(150);
+        l.set_default_section_size(80);
+        let saved = l.save_state();
+        assert_eq!(saved.min_section_size, 60);
+        assert_eq!(saved.max_section_size, 150);
+        assert_eq!(saved.default_section_size, 80);
+
+        let other = layout();
+        assert!(other.restore_state(&saved));
+        assert_eq!(
+            other.query("min_section_size"),
+            Some(IntrospectValue::Int(60))
+        );
+        assert_eq!(
+            other.query("max_section_size"),
+            Some(IntrospectValue::Int(150))
+        );
+        assert_eq!(
+            other.query("default_section_size"),
+            Some(IntrospectValue::Int(80))
+        );
+        assert_eq!(
+            other.save_state(),
+            saved,
+            "the restore is total: the whole snapshot came back, rules included"
+        );
+        // And because the rule arrived, the restored header refuses the same
+        // widths the saved one did.
+        assert_eq!(other.resize_section(0, 9999), 150);
+    }
+
+    #[test]
+    fn r1493_a_restore_widens_past_the_outgoing_ceiling() {
+        // The ordering assertion: bounds before widths. Restoring a wide
+        // layout into a narrowly-bounded header must apply the INCOMING
+        // ceiling — the other order truncates each width on the way in and no
+        // later bound can widen it back.
+        let wide = layout();
+        wide.resize_section(0, 400);
+        let saved = wide.save_state();
+        assert_eq!(saved.sizes[0], 400);
+
+        let narrow = layout();
+        narrow.set_maximum_section_size(110);
+        assert_eq!(narrow.save_state().sizes, vec![100, 110, 110, 110]);
+        assert!(narrow.restore_state(&saved));
+        assert_eq!(
+            narrow.section_size(0),
+            400,
+            "the incoming ceiling governs, so the width survived the restore"
+        );
+        assert_eq!(narrow.save_state(), saved);
+    }
+
+    #[test]
+    fn r1493_an_inverted_bound_pair_describes_no_header() {
+        // Refused with the other shape errors rather than repaired, because
+        // repairing it is order-dependent: the two setters drag each other.
+        let l = layout();
+        let before = l.save_state();
+        let mut crossed = before.clone();
+        crossed.min_section_size = 200;
+        crossed.max_section_size = 100;
+        assert!(!l.restore_state(&crossed));
+        assert_eq!(l.save_state(), before, "and nothing at all was written");
+    }
+
+    #[test]
+    fn r1493_an_older_snapshot_decodes_to_the_constants_not_to_zero() {
+        // Absent means "taken before this round", the rule `modes` and
+        // `sort_indicator` already use. Zero bounds would be a header whose
+        // sections must be at most zero wide.
+        let older = serde_json::json!({
+            "order": [0, 1, 2, 3],
+            "sizes": [100, 120, 140, 160],
+            "hidden": [false, false, false, false],
+        });
+        let decoded = ColumnLayoutState::from_json(&older).expect("older shape decodes");
+        assert_eq!(decoded.default_section_size, DEFAULT_SECTION_SIZE);
+        assert_eq!(decoded.min_section_size, DEFAULT_MIN_COL_WIDTH);
+        assert_eq!(decoded.max_section_size, DEFAULT_MAX_COL_WIDTH);
+        // Present but not a number is still an error — a client that meant to
+        // set a bound and mistyped it is told so.
+        let mut malformed = older.clone();
+        malformed["max_section_size"] = serde_json::json!("wide");
+        assert_eq!(ColumnLayoutState::from_json(&malformed), None);
+        // And `Default` is the same shape, not a derived zero.
+        let d = ColumnLayoutState::default();
+        assert_eq!(d.min_section_size, DEFAULT_MIN_COL_WIDTH);
+        assert_eq!(d.max_section_size, DEFAULT_MAX_COL_WIDTH);
+        assert_eq!(d.default_section_size, DEFAULT_SECTION_SIZE);
+    }
+
+    #[test]
+    fn r1493_the_bulk_reset_answers_the_row_it_produced() {
+        // Under a stretch header the number written is not the number painted,
+        // so the reset reports `section_sizes` — the outcome, not the input.
+        let l = layout();
+        l.set_available_width(Some(600));
+        l.set_all_resize_modes(SectionResizeMode::Stretch);
+        let out = l
+            .invoke("reset_default_section_size", &IntrospectValue::Null)
+            .expect("reset is invokable");
+        assert_eq!(
+            ints(&out),
+            vec![150, 150, 150, 150],
+            "the row it produced, not the 100 it wrote"
+        );
+        assert_eq!(
+            ints(&l.query("sizes").expect("sizes")),
+            vec![100, 100, 100, 100],
+            "and the stored sizes did take the default"
+        );
+        // The intervene door is the value setter, and reports through the same
+        // read-back.
+        l.intervene("default_section_size", &IntrospectValue::Int(70))
+            .expect("the default is writable");
+        assert_eq!(
+            l.query("default_section_size"),
+            Some(IntrospectValue::Int(70))
+        );
+        assert_eq!(
+            l.intervene("default_section_size", &text("wide")),
+            Err(InterveneError::TypeMismatch)
+        );
     }
 }

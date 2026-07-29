@@ -94,6 +94,14 @@ IDENTITY = {
     # slipping in unremarked, which is what a field-by-field check would allow.
     "sort_indicator": "none",
     "sort_indicator_shown": True,
+    # R1493 — and again, for the three scalar rules `saveState()` carries: the
+    # default section size and both bounds. This demo caught their arrival on
+    # the round that added them, which is exactly what the whole-object form is
+    # for; the round then had to say so here rather than quietly widen a
+    # per-field check.
+    "default_section_size": 100,
+    "min_section_size": 40,
+    "max_section_size": 2**32 - 1,
 }
 
 

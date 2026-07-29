@@ -74252,6 +74252,80 @@
         "Still open from the Qt QHeaderView surface: defaultSectionSize, cascadingSectionResizes, firstSectionMovable, and an explicit sectionsClickable flag."
       ]
     },
+    "Round 1493": {
+      "decision_summary": "R1493 - the size a section was given and the size it has: Qt QHeaderView's defaultSectionSize lands, and with it the effective per-logical plural the wire never had, so a header stops reporting a number nothing on screen holds",
+      "changes_bullets": [
+        "ColumnLayout gains Qt's defaultSectionSize: DEFAULT_SECTION_SIZE (100), readable, writable, and resettable without the caller naming the constant. It is the fourth way a section acquires a size and the one that was missing.",
+        "setDefaultSectionSize applies the new default to every SHOWN section and spares the hidden ones, which is Qt's rule and already this module's: a hidden section keeps its size, so a bulk resize a user cannot see is one they cannot undo.",
+        "The default is clamped where it is READ, not where it is written, so a bound moved afterwards carries it along and there is no second write path to forget. The raw value survives, so widening the bounds brings back the size asked for.",
+        "section_sizes is the effective logical-keyed plural: the number the header paints. sizes stays the stored plural a restore replays. Under Interactive and Fixed the two agree, which is why one name sufficed for 42 rounds; under Stretch and ResizeToContents they do not, and only one of them is on screen.",
+        "section_size(logical) now reads section_sizes rather than repeating the walk, so the singular and the plural cannot answer differently.",
+        "ColumnLayoutState carries default_section_size, min_section_size and max_section_size - three fields Qt's saveState carries and R1492 added to the header without adding here. A restore replays the rule, not only its result.",
+        "restore_state writes the bounds BEFORE the widths they shape, and refuses an inverted bound pair outright instead of repairing it, because the two setters drag each other and a repaired restore would depend on the order its own fields are written.",
+        "ColumnLayoutState::Default is hand-written: deriving it put zero in both bounds, a header whose sections must be at most zero wide.",
+        "hello-column-reorder's readout leads with the painted size, names the stored one only when they differ, and names the default. It used to print the stored sizes directly beneath sections painted at other widths.",
+        "width_vector extracted: the sizes and content_widths intervene arms were byte-identical but for the signal they wrote, so one wire contract had two homes."
+      ],
+      "verification_bullets": [
+        "pinion-core 2779 tests pass (+9); hello-column-reorder 31 pass (+2).",
+        "tools/demos/r1493_section_default_size.py PASS - 41 assertions over the real wire, replaying the pre-round measurement call for call.",
+        "Blast radius: r1450 / r1452 / r1453 / r1491 / r1492 all PASS. r1451 FAILED first and was updated: its whole-object equality on the saveState peer caught the three new fields arriving, which is exactly what that assertion form is for.",
+        "Counterfactual 1 (the effective plural collapses to the stored one): 7 witnesses - 5 core units of which 2 are older than this round, 1 demo unit, demo assertion 8.",
+        "Counterfactual 2 (the bulk default reaches hidden sections too): 3 witnesses - 1 core unit, 1 demo unit, demo assertion 19.",
+        "Counterfactual 3 (the default is not clamped at read): 2 witnesses - 1 core unit, demo assertion 26.",
+        "Counterfactual 4 (widths restored before the bounds that shape them): 2 witnesses - 1 core unit, demo assertion 39.",
+        "Counterfactual 5 (an absent field decodes to zero): 3 witnesses - 2 core units of which 1 is older than this round, demo assertion 34.",
+        "Counterfactual 6 (no inverted-pair guard): 2 witnesses - 1 core unit, demo assertion 37.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc --workspace --no-deps --document-private-items 0."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "CF-1, CF-3 and CF-5 each exposed a gap in this round's own tests. CF-1 passed the example suite because the binding derives the effective sizes from the placements and never read the wire slot; an assertion that the two producers agree was added. CF-3 and CF-5 passed the demo because it never moved a bound after setting the default, and never restored a blob of the older shape; both scenarios were added.",
+        "Still open from the Qt QHeaderView surface: cascadingSectionResizes, firstSectionMovable, and an explicit sectionsClickable flag. Measured this round: resize_section 0:300 on the boot header takes visible_total to 720 against an available_width of 640, and nothing pushes back - that is the cascading rule's absence, and it is a separate mechanism from this round's.",
+        "A hidden section's entry in section_sizes is the size it brings to the division, not a painted width, because it has none. Asserted, not assumed.",
+        "ColumnWidths still has no default of its own. The value lives in ColumnLayout because the bulk apply needs the hidden flags, which the shared width model does not know about; a grid using ColumnWidths without a layout therefore has bounds but no default.",
+        "The readout shows the stored sizes only when they differ from the painted ones, so a client scraping the row cannot rely on the field being present. The wire carries both unconditionally, which is the surface an agent should read."
+      ],
+      "publishable_decision_summary": "R1493 - the size a section was given and the size it has: Qt QHeaderView's defaultSectionSize lands, and with it the effective per-logical plural the wire never had, so a header stops reporting a number nothing on screen holds",
+      "publishable_changes_bullets": [
+        "ColumnLayout gains Qt's defaultSectionSize: DEFAULT_SECTION_SIZE (100), readable, writable, and resettable without the caller naming the constant. It is the fourth way a section acquires a size and the one that was missing.",
+        "setDefaultSectionSize applies the new default to every SHOWN section and spares the hidden ones, which is Qt's rule and already this module's: a hidden section keeps its size, so a bulk resize a user cannot see is one they cannot undo.",
+        "The default is clamped where it is READ, not where it is written, so a bound moved afterwards carries it along and there is no second write path to forget. The raw value survives, so widening the bounds brings back the size asked for.",
+        "section_sizes is the effective logical-keyed plural: the number the header paints. sizes stays the stored plural a restore replays. Under Interactive and Fixed the two agree, which is why one name sufficed for 42 rounds; under Stretch and ResizeToContents they do not, and only one of them is on screen.",
+        "section_size(logical) now reads section_sizes rather than repeating the walk, so the singular and the plural cannot answer differently.",
+        "ColumnLayoutState carries default_section_size, min_section_size and max_section_size - three fields Qt's saveState carries and R1492 added to the header without adding here. A restore replays the rule, not only its result.",
+        "restore_state writes the bounds BEFORE the widths they shape, and refuses an inverted bound pair outright instead of repairing it, because the two setters drag each other and a repaired restore would depend on the order its own fields are written.",
+        "ColumnLayoutState::Default is hand-written: deriving it put zero in both bounds, a header whose sections must be at most zero wide.",
+        "hello-column-reorder's readout leads with the painted size, names the stored one only when they differ, and names the default. It used to print the stored sizes directly beneath sections painted at other widths.",
+        "width_vector extracted: the sizes and content_widths intervene arms were byte-identical but for the signal they wrote, so one wire contract had two homes."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 2779 tests pass (+9); hello-column-reorder 31 pass (+2).",
+        "tools/demos/r1493_section_default_size.py PASS - 41 assertions over the real wire, replaying the pre-round measurement call for call.",
+        "Blast radius: r1450 / r1452 / r1453 / r1491 / r1492 all PASS. r1451 FAILED first and was updated: its whole-object equality on the saveState peer caught the three new fields arriving, which is exactly what that assertion form is for.",
+        "Counterfactual 1 (the effective plural collapses to the stored one): 7 witnesses - 5 core units of which 2 are older than this round, 1 demo unit, demo assertion 8.",
+        "Counterfactual 2 (the bulk default reaches hidden sections too): 3 witnesses - 1 core unit, 1 demo unit, demo assertion 19.",
+        "Counterfactual 3 (the default is not clamped at read): 2 witnesses - 1 core unit, demo assertion 26.",
+        "Counterfactual 4 (widths restored before the bounds that shape them): 2 witnesses - 1 core unit, demo assertion 39.",
+        "Counterfactual 5 (an absent field decodes to zero): 3 witnesses - 2 core units of which 1 is older than this round, demo assertion 34.",
+        "Counterfactual 6 (no inverted-pair guard): 2 witnesses - 1 core unit, demo assertion 37.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc --workspace --no-deps --document-private-items 0."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CF-1, CF-3 and CF-5 each exposed a gap in this round's own tests. CF-1 passed the example suite because the binding derives the effective sizes from the placements and never read the wire slot; an assertion that the two producers agree was added. CF-3 and CF-5 passed the demo because it never moved a bound after setting the default, and never restored a blob of the older shape; both scenarios were added.",
+        "Still open from the Qt QHeaderView surface: cascadingSectionResizes, firstSectionMovable, and an explicit sectionsClickable flag. Measured this round: resize_section 0:300 on the boot header takes visible_total to 720 against an available_width of 640, and nothing pushes back - that is the cascading rule's absence, and it is a separate mechanism from this round's.",
+        "A hidden section's entry in section_sizes is the size it brings to the division, not a painted width, because it has none. Asserted, not assumed.",
+        "ColumnWidths still has no default of its own. The value lives in ColumnLayout because the bulk apply needs the hidden flags, which the shared width model does not know about; a grid using ColumnWidths without a layout therefore has bounds but no default.",
+        "The readout shows the stored sizes only when they differ from the painted ones, so a client scraping the row cannot rely on the field being present. The wire carries both unconditionally, which is the surface an agent should read."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

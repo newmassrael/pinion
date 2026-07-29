@@ -94,8 +94,8 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::column_layout::{
-    ColumnLayout, ColumnLayoutView, SectionPlacement, SectionResizeMode, read_column_layout,
-    use_column_layout,
+    ColumnLayout, ColumnLayoutView, DEFAULT_SECTION_SIZE, SectionPlacement, SectionResizeMode,
+    read_column_layout, use_column_layout,
 };
 use pinion_core::widgets::column_widths::{DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
 use pinion_core::widgets::grid_sort::col_sort_dir;
@@ -340,6 +340,12 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     SchemaField::new("state", "json"),
                     SchemaField::new("order", "json"),
                     SchemaField::new("sizes", "json"),
+                    // R1493 — the effective peer of `sizes`. Declared next to
+                    // it because the pair is the point: `sizes` is what a
+                    // restore replays, this is what the strip paints, and under
+                    // `Stretch` / `ResizeToContents` they differ.
+                    SchemaField::new("section_sizes", "json"),
+                    SchemaField::new("default_section_size", "int"),
                     SchemaField::new("hidden", "json"),
                     SchemaField::new("placements", "json"),
                     SchemaField::new("visible_sections", "json"),
@@ -500,6 +506,21 @@ struct HeaderState {
     /// readout because a clamp a reader cannot see the rule for looks like a
     /// bug: without these, "I dragged and it stopped" has no visible cause.
     bounds: (u32, u32),
+    /// R1493 — the **effective** size of each logical section: what the strip
+    /// actually paints, as distinct from [`sizes`](Self::sizes), which is what
+    /// a restore replays.
+    ///
+    /// The readout row used to print the stored sizes and call them "sizes",
+    /// which under `Stretch` or `ResizeToContents` contradicted the strip
+    /// directly above it — the readout said `Name=150` over a section painted
+    /// 128 wide. Derived from the placements rather than read as its own slot,
+    /// because a view that held both could disagree with itself (the reason
+    /// `ColumnLayoutView` carries the placements and no width vector).
+    section_sizes: [u32; NCOLS],
+    /// R1493 — Qt's `defaultSectionSize`: the size a section takes when nothing
+    /// else determined it, and the size `reset_default_section_size` returns
+    /// every shown section to.
+    default_size: u32,
 }
 
 impl Default for HeaderState {
@@ -520,6 +541,8 @@ impl Default for HeaderState {
             // this grid is sortable, so it is on from the first frame.
             sort_indicator_shown: true,
             bounds: (DEFAULT_MIN_COL_WIDTH, DEFAULT_MAX_COL_WIDTH),
+            section_sizes: SECTION_W,
+            default_size: DEFAULT_SECTION_SIZE,
         }
     }
 }
@@ -577,6 +600,15 @@ impl HeaderState {
         for (slot, p) in self.placements.iter_mut().zip(&view.placements) {
             *slot = *p;
         }
+        // R1493 — the effective sizes, from the one geometry walk. A section
+        // that is not painted has no place in the division, so it reports the
+        // size it was given, which is also the size it will come back at.
+        self.section_sizes = self.sizes;
+        for p in &view.placements {
+            if let Some(slot) = self.section_sizes.get_mut(p.logical) {
+                *slot = p.size;
+            }
+        }
     }
 
     /// R1491 — the body row order the header's indicator implies: Qt's
@@ -632,6 +664,12 @@ fn read_header_state(scene: &Scene) -> HeaderState {
             u32::try_from(lo).unwrap_or(DEFAULT_MIN_COL_WIDTH),
             u32::try_from(hi).unwrap_or(DEFAULT_MAX_COL_WIDTH),
         );
+    }
+    // R1493 — the third scalar rule, harvested the same way for the same
+    // reason: the readout names it, so it must be the wire's value and not a
+    // constant this binding remembers.
+    if let Some(IntrospectValue::Int(d)) = intro.query("default_section_size") {
+        out.default_size = u32::try_from(d).unwrap_or(DEFAULT_SECTION_SIZE);
     }
     out
 }
@@ -915,6 +953,62 @@ fn body_cell(slot: usize, data_row: usize, p: &SectionPlacement, theme: &Theme) 
     )
 }
 
+/// R1451 — the header axes the order row cannot show: the LOGICAL-keyed sizes
+/// (so a reader can see which section owns a width, not which position), the
+/// hidden set, the modes, and (R1492 / R1493) the three scalar rules that shape
+/// every size.
+///
+/// R1493 — a section has a size it was **given** and a size it **has**. This
+/// leads with the one on screen, and names the other only when they differ,
+/// which is exactly when a reader needs to be told there are two. Printing the
+/// stored size under a `Stretch` header, as this row used to, put a number
+/// directly beneath a section painted at a different width.
+fn layout_readout_text(state: &HeaderState) -> String {
+    let hidden: Vec<&str> = state
+        .hidden
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| **h)
+        .map(|(l, _)| HEADERS[l])
+        .collect();
+    let keyed = |sizes: &[u32; NCOLS]| {
+        sizes
+            .iter()
+            .enumerate()
+            .map(|(l, w)| format!("{}={w}", HEADERS[l]))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let stored = if state.section_sizes == state.sizes {
+        String::new()
+    } else {
+        format!(" | stored {}", keyed(&state.sizes))
+    };
+    format!(
+        "sizes {}{stored} | hidden {} | modes {} | default {} | bounds {}..{}",
+        keyed(&state.section_sizes),
+        if hidden.is_empty() {
+            "-".to_string()
+        } else {
+            hidden.join(" ")
+        },
+        state
+            .modes
+            .iter()
+            .map(|m| mode_code(*m))
+            .collect::<String>(),
+        state.default_size,
+        state.bounds.0,
+        // R1492 — the unbounded default reads as `-`, because printing
+        // 4294967295 would look like a limit somebody chose.
+        if state.bounds.1 == DEFAULT_MAX_COL_WIDTH {
+            "-".to_string()
+        } else {
+            state.bounds.1.to_string()
+        },
+    )
+}
+
 // The `&Frame` is the shape `WidgetCore::view` hands over; the state is now a
 // multi-array `Copy` struct, so it is the frame this lint is about.
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -958,46 +1052,9 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
         .with_tag(ORDER_TAG)
         .with_layout(LayoutStyle::new().with_absolute_position(GRID_X, 55)),
     );
-    // R1451 — the two axes the order row cannot show: the LOGICAL-keyed sizes
-    // (so a reader can see which section owns a width, not which position) and
-    // the hidden set.
-    let hidden: Vec<&str> = state
-        .hidden
-        .iter()
-        .enumerate()
-        .filter(|(_, h)| **h)
-        .map(|(l, _)| HEADERS[l])
-        .collect();
     let layout_row = Scene::Text(
         TextNode::styled(
-            format!(
-                "sizes {} | hidden {} | modes {} | bounds {}..{}",
-                state
-                    .sizes
-                    .iter()
-                    .enumerate()
-                    .map(|(l, w)| format!("{}={w}", HEADERS[l]))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                if hidden.is_empty() {
-                    "-".to_string()
-                } else {
-                    hidden.join(" ")
-                },
-                state
-                    .modes
-                    .iter()
-                    .map(|m| mode_code(*m))
-                    .collect::<String>(),
-                state.bounds.0,
-                // R1492 — the unbounded default reads as `-`, because printing
-                // 4294967295 would look like a limit somebody chose.
-                if state.bounds.1 == DEFAULT_MAX_COL_WIDTH {
-                    "-".to_string()
-                } else {
-                    state.bounds.1.to_string()
-                },
-            ),
+            layout_readout_text(state),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(13)
@@ -2085,6 +2142,148 @@ mod tests {
             bounded.placements().iter().all(|p| p.size == 80),
             "every stretch share obeys the ceiling: {:?}",
             bounded.placements()
+        );
+    }
+
+    // ----- R1493: the size a section was given vs the size it has -----
+
+    /// The `section_sizes` slot as an agent reads it — the other producer of
+    /// the effective sizes this binding derives from the placements.
+    fn wire_section_sizes(scene: &Scene) -> Vec<u32> {
+        let intro = scene
+            .find_external_with_tag(HDR_TAG)
+            .and_then(|n| n.handle.introspect())
+            .expect("the header external is in the scene");
+        let Some(IntrospectValue::Json(serde_json::Value::Array(a))) = intro.query("section_sizes")
+        else {
+            panic!("section_sizes reads back as a JSON array");
+        };
+        a.iter()
+            .filter_map(|v| u32::try_from(v.as_u64()?).ok())
+            .collect()
+    }
+
+    /// The painted readout row, for the assertions that it agrees with the
+    /// strip above it.
+    fn layout_readout(state: &HeaderState) -> String {
+        let painted = Owner::new().run(|| view(state, &Frame::default()));
+        let Scene::Container(root) = painted else {
+            panic!("the view paints a container");
+        };
+        root.children
+            .iter()
+            .find_map(|c| match c {
+                Scene::Text(t) if t.tag.as_deref() == Some(LAYOUT_TAG) => Some(t.content.clone()),
+                _ => None,
+            })
+            .expect("the layout readout is painted")
+    }
+
+    #[test]
+    fn r1493_the_readout_stops_contradicting_the_strip_above_it() {
+        // The measured defect, on screen rather than on the wire: under a
+        // stretch header the readout printed the STORED sizes and called them
+        // "sizes", directly above sections painted at the shares. A reader
+        // comparing the two rows was told the header was lying.
+        let mut scene = boot_scene();
+        let boot = read_header_state(&scene);
+        assert_eq!(
+            boot.section_sizes, boot.sizes,
+            "interactive: the two agree, which is why one name sufficed"
+        );
+        assert!(
+            !layout_readout(&boot).contains("| stored "),
+            "and with nothing to tell apart the readout says it once"
+        );
+
+        let stretched = after(&mut scene, |i| {
+            i.intervene(
+                "available_width",
+                IntrospectValue::Int(i64::from(AVAILABLE_W)),
+            )
+            .expect("the viewport is publishable over the wire");
+            i.invoke(
+                "set_all_resize_modes",
+                IntrospectValue::Text("stretch".into()),
+            )
+            .expect("set_all_resize_modes is a known action");
+        });
+        assert_ne!(
+            stretched.section_sizes, stretched.sizes,
+            "stretch: the size given and the size had have parted"
+        );
+        // The readout's first number is now the painted one, section by
+        // section — the assertion the old readout failed.
+        for p in stretched.placements() {
+            assert_eq!(
+                stretched.section_sizes[p.logical], p.size,
+                "the readout's size for {} is the rect the strip paints",
+                HEADERS[p.logical]
+            );
+        }
+        // The binding derives the effective sizes from the placements, and the
+        // wire publishes them as their own slot. Two producers of one fact, so
+        // assert they are the same fact — the drift the encoder/decoder rule
+        // exists to prevent, one layer up.
+        assert_eq!(
+            wire_section_sizes(&scene),
+            stretched.section_sizes.to_vec(),
+            "the slot an agent reads and the numbers this binding paints agree"
+        );
+        let readout = layout_readout(&stretched);
+        assert!(
+            readout.starts_with(&format!("sizes Name={}", stretched.placements()[0].size)),
+            "the readout leads with what is on screen: {readout}"
+        );
+        assert!(
+            readout.contains(&format!("| stored Name={}", stretched.sizes[0])),
+            "and still shows the size a restore would replay: {readout}"
+        );
+    }
+
+    #[test]
+    fn r1493_the_default_resets_the_row_and_the_readout_names_it() {
+        // Qt's `defaultSectionSize` / `resetDefaultSectionSize`, through the
+        // wire, with the readout naming the rule it applied.
+        let mut scene = boot_scene();
+        assert!(
+            layout_readout(&read_header_state(&scene))
+                .contains(&format!("| default {DEFAULT_SECTION_SIZE} |")),
+            "the boot default is painted"
+        );
+
+        let hidden_kept = after(&mut scene, |i| {
+            i.invoke("set_section_hidden", IntrospectValue::Text("2:true".into()))
+                .expect("set_section_hidden is a known action");
+            i.intervene("default_section_size", IntrospectValue::Int(70))
+                .expect("Qt's setDefaultSectionSize has a wire peer");
+        });
+        assert_eq!(hidden_kept.default_size, 70);
+        assert_eq!(
+            hidden_kept.sizes.to_vec(),
+            vec![70, 70, SECTION_W[2], 70, 70],
+            "every shown section took the default; the hidden one kept its size"
+        );
+        assert!(
+            layout_readout(&hidden_kept).contains("| default 70 |"),
+            "and the readout names the rule that moved them"
+        );
+
+        let reset = after(&mut scene, |i| {
+            i.invoke("reset_default_section_size", IntrospectValue::Null)
+                .expect("reset is a known action");
+        });
+        assert_eq!(reset.default_size, DEFAULT_SECTION_SIZE);
+        assert_eq!(
+            reset.sizes.to_vec(),
+            vec![
+                DEFAULT_SECTION_SIZE,
+                DEFAULT_SECTION_SIZE,
+                SECTION_W[2],
+                DEFAULT_SECTION_SIZE,
+                DEFAULT_SECTION_SIZE
+            ],
+            "the reset reaches the constant without the caller naming it"
         );
     }
 
