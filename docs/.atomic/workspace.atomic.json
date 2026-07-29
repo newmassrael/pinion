@@ -74574,6 +74574,62 @@
         "r794_file_drag_move failed once and passed on rerun. The failure was a 6s wait_until timeout during a sweep that ran alongside cargo builds and other demos; the quiet rerun passed. Recorded rather than dismissed: its verdict reaches the sweep for the first time from this round, so if that timeout is real rather than contention, CI is where it will now say so."
       ]
     },
+    "Round 1497": {
+      "decision_summary": "A pointer target is a node that can receive the event: pointer resolution climbs past tagged decoration to the widget behind it (Qt WA_TransparentForMouseEvents / CSS pointer-events:none parity), because a tag is a name and only an External is a target.",
+      "changes_bullets": [
+        "Pointer resolution answers the deepest node that can RECEIVE the event: resolve_pointer_tag walks the hit path deepest-first and returns the first tag whose primary half resolves to an External, falling back to the deepest tag when none does (window chrome).",
+        "refresh_hover, cursor_over_tag and resolve_drop_point's fallback all read that one answer, so hover cannot arm a tag the dispatch discards and a capture release cannot read off-target over the widget's own label.",
+        "Retired the router's private find_external_by_tag / tag_matches / widget_flag_walk walks for pinion_core::Scene::find_external_with_tag, whose own doc had called itself a mirror of them since R55.D.5; the R1497 predicate would have been a fourth copy.",
+        "The core walk descends Scroll.content, so an External the state scene wraps in a Scene::Scroll is now addressable by every dispatch site.",
+        "DragCaptureExternal's four bool opt-in flags became one OptIns set (clippy::struct_excessive_bools was right: they were never independent)."
+      ],
+      "verification_bullets": [
+        "Measured over the real wire before any change: scene/click on colhdr#3 and colhdr#4 lost 100%, colhdr#0/1/2 landed, and the discriminator was exactly centre-in-label-rect, 5 of 5.",
+        "7 counterfactuals one at a time: pre-R1497 resolution=4 dead, no fallback=5 (4 older than this round), no composite split=7 (2 older), cursor_over_tag alone=1, drop fallback alone=1, shallowest-first=9 (4 older), Container-only walk=1.",
+        "CF-6 first passed 2 of my own tests: the fixture lacked the addressable strip container the real consumer has, so it could not discriminate walk direction. Strengthened, then CF-6 killed 9.",
+        "pinion-runtime 577 tests (+7), tools/demos/r1497_pointer_target.py 40 assertions PASS and FAIL before the fix (exit 1).",
+        "fmt clean, clippy -D pedantic clean, cargo doc --workspace --document-private-items clean, cargo check --workspace clean.",
+        "Re-ran the column-reorder family (r1450/1451/1452/1491/1492/1493/1494/1496) plus router-heavy r707_table, r719_pointer_leave, r729_tooltip_rich, r1096/r1097 dock, r1159 drop resolution: all PASS."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.51",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "R1496's two recorded router defects were one defect and neither description was right; both notes are corrected in tools/demos/r1496_section_permissions.py. pointer_up's free-release branch is correct to omit refresh_hover.",
+        "Resolution now costs one state-scene walk per tagged node on the hit path, on every cursor move. Not measured; scene/frame_timings and the R925 jank profiler are the instruments if it ever shows.",
+        "R1496 leftovers untouched: remaining QHeaderView saveState fields (highlightSelected, stretchLastSection, defaultAlignment) and firstSectionMovable.",
+        "R1495 leftovers untouched: target-budget.sh still has no filesystem-fixture test; the push gate reads the last COMPLETED run so two pushes can land before a verdict; CI's demo-sweep is still needs:-gated behind lint-and-test."
+      ],
+      "publishable_decision_summary": "A pointer target is a node that can receive the event: pointer resolution climbs past tagged decoration to the widget behind it (Qt WA_TransparentForMouseEvents / CSS pointer-events:none parity), because a tag is a name and only an External is a target.",
+      "publishable_changes_bullets": [
+        "Pointer resolution answers the deepest node that can RECEIVE the event: resolve_pointer_tag walks the hit path deepest-first and returns the first tag whose primary half resolves to an External, falling back to the deepest tag when none does (window chrome).",
+        "refresh_hover, cursor_over_tag and resolve_drop_point's fallback all read that one answer, so hover cannot arm a tag the dispatch discards and a capture release cannot read off-target over the widget's own label.",
+        "Retired the router's private find_external_by_tag / tag_matches / widget_flag_walk walks for pinion_core::Scene::find_external_with_tag, whose own doc had called itself a mirror of them since R55.D.5; the R1497 predicate would have been a fourth copy.",
+        "The core walk descends Scroll.content, so an External the state scene wraps in a Scene::Scroll is now addressable by every dispatch site.",
+        "DragCaptureExternal's four bool opt-in flags became one OptIns set (clippy::struct_excessive_bools was right: they were never independent)."
+      ],
+      "publishable_verification_bullets": [
+        "Measured over the real wire before any change: scene/click on colhdr#3 and colhdr#4 lost 100%, colhdr#0/1/2 landed, and the discriminator was exactly centre-in-label-rect, 5 of 5.",
+        "7 counterfactuals one at a time: pre-R1497 resolution=4 dead, no fallback=5 (4 older than this round), no composite split=7 (2 older), cursor_over_tag alone=1, drop fallback alone=1, shallowest-first=9 (4 older), Container-only walk=1.",
+        "CF-6 first passed 2 of my own tests: the fixture lacked the addressable strip container the real consumer has, so it could not discriminate walk direction. Strengthened, then CF-6 killed 9.",
+        "pinion-runtime 577 tests (+7), tools/demos/r1497_pointer_target.py 40 assertions PASS and FAIL before the fix (exit 1).",
+        "fmt clean, clippy -D pedantic clean, cargo doc --workspace --document-private-items clean, cargo check --workspace clean.",
+        "Re-ran the column-reorder family (r1450/1451/1452/1491/1492/1493/1494/1496) plus router-heavy r707_table, r719_pointer_leave, r729_tooltip_rich, r1096/r1097 dock, r1159 drop resolution: all PASS."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.51",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1496's two recorded router defects were one defect and neither description was right; both notes are corrected in tools/demos/r1496_section_permissions.py. pointer_up's free-release branch is correct to omit refresh_hover.",
+        "Resolution now costs one state-scene walk per tagged node on the hit path, on every cursor move. Not measured; scene/frame_timings and the R925 jank profiler are the instruments if it ever shows.",
+        "R1496 leftovers untouched: remaining QHeaderView saveState fields (highlightSelected, stretchLastSection, defaultAlignment) and firstSectionMovable.",
+        "R1495 leftovers untouched: target-budget.sh still has no filesystem-fixture test; the push gate reads the last COMPLETED run so two pushes can land before a verdict; CI's demo-sweep is still needs:-gated behind lint-and-test."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

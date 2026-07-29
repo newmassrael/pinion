@@ -58,19 +58,23 @@ What this asserts:
       the pre-R1496 shape, and decodes to the header that shape came from.
   (J) PRESS HERE, RELEASE THERE — Qt's same-section rule: neither is activated.
 
-Two router behaviours measured while writing this, both PRE-EXISTING and both
-outside what this round changes — recorded so the next reader does not rediscover
-them as mysteries:
+R1497 CORRECTION. This file used to record two "pre-existing router defects"
+here — that `scene/click` reached this External not at all, and that a
+session-less release left hover un-restored. Both descriptions were wrong, and
+they were one defect: `resolve_hover_tag` answered the deepest TAG under the
+cursor, so a press whose coordinate fell on a section's own `colhdr_label#<n>`
+was dispatched to a tag with no `External` behind it and discarded in silence.
+`scene/click {path}` presses a node's rect CENTRE, and the labels of sections 3
+and 4 cover theirs — which is why "every click" looked lost while sections 0-2
+worked. The missing `PointerEnter` was the enter landing on that same label;
+`pointer_up`'s free-release branch is correct to omit `refresh_hover`, because
+unlike the DnD and capture branches it never pinned hover and so has nothing to
+restore. R1497 moved the resolution to the deepest node that can RECEIVE the
+event; `tools/demos/r1497_pointer_target.py` is the witness.
 
-  * `scene/click` reaches this External not at all — zero `send` payloads, by
-    path or by coordinate, repeated. Every click here therefore goes through
-    `scene/drag` with both ends on one section, which is what R1491 did too.
-  * after a gesture that opened NO drag session, moving the cursor to a
-    different section dispatches the `PointerLeave` and no matching
-    `PointerEnter`, so the next press lands nowhere. `pointer_up`'s DnD and
-    capture branches both end with `refresh_hover`; its free-release branch does
-    not. (E) presses the section the cursor already rests on for that reason,
-    and says so at the call.
+The `_send` seam calls below are therefore no longer forced — they are kept
+because they exercise the model's own decode directly, which is a different
+thing from the wire arc (B), (C) and (D) drive.
 
 ZERO-FLAKE: every action->assert edge polls published state; no wall-clock
 sleeps.
@@ -142,13 +146,13 @@ def _send(tf, visual: int, event: str):
     """One pointer edge, at the router's own delivery point.
 
     `dispatch_send` composes exactly this payload and calls exactly this
-    method, so driving it is driving the wire — not a back door. It is used
-    wherever the synthetic ARC cannot be delivered: after a gesture that opened
-    no drag session the router drops the hover and does not restore it, so a
-    following `scene/drag` on another section presses nothing (measured — see
-    the note at the top of this file). Assertions that must discriminate cannot
-    rest on an event that may never arrive; (B), (C) and (D) drive the whole arc
-    and prove it reaches this seam.
+    method, so driving it is driving the wire — not a back door. R1497
+    correction: this was introduced because a following gesture on another
+    section "presses nothing", which was true but not for the stated reason —
+    the press was being resolved onto a section's own label and discarded (see
+    the note at the top of this file). It is kept because a decode assertion
+    made at the seam is a different, sharper claim than the whole-arc ones (B),
+    (C) and (D) make.
     """
     return tf.invoke("/external/send", f"{visual}:{event}")
 

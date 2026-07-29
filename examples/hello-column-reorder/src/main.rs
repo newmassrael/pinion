@@ -57,6 +57,18 @@
 //! ([`ColumnLayout::sections_movable`] off) is still sortable, which it could
 //! not be while its click was a by-product of a drag.
 //!
+//! R1497 — and the per-section *label* inside each cell is tagged too
+//! (`colhdr_label#<visual>`), for the snapshot assertions and the a11y walk. That
+//! made this binding the forcing consumer for a framework rule: a tag is a name,
+//! not an event target, so a press resolved onto one with no `External` behind it
+//! used to be discarded in silence. Since the label is centred, it covered the
+//! rect centre `scene/click {path}` presses on two of the five sections, and
+//! exactly those two could not be clicked. The router now resolves the deepest
+//! node that can RECEIVE the event, so a widget may tag its own decoration
+//! without stealing its own input — which is why the eager table can keep its
+//! presentational `{tag}_ch{col}` on the OUTER container instead of having to
+//! bury a dispatchable tag deeper than its own name.
+//!
 //! ## One projection, or the failure mode is unpaintable
 //!
 //! `order[visual] = logical` plus the logical-keyed sizes and hidden flags is
