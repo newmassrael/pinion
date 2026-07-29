@@ -102,6 +102,11 @@ IDENTITY = {
     "default_section_size": 100,
     "min_section_size": 40,
     "max_section_size": 2**32 - 1,
+    # R1494 — and again for Qt's `cascadingSectionResizes`, which `saveState()`
+    # carries. Three rounds running, this assertion has been the thing that
+    # made a field's arrival visible instead of letting it in unremarked; the
+    # cost of updating it is the price of that, and it is cheap.
+    "cascading_section_resizes": False,
 }
 
 

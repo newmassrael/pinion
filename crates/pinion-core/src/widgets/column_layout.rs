@@ -125,6 +125,11 @@ pub struct ColumnLayoutState {
     /// R1493 — the resize ceiling: Qt's `maximumSectionSize`, the peer of
     /// [`min_section_size`](Self::min_section_size).
     pub max_section_size: u32,
+    /// R1494 — whether an interactive resize takes its space from the
+    /// following sections: Qt's `cascadingSectionResizes`, which `saveState()`
+    /// carries too. The cascade *in flight* is not here and should not be —
+    /// that is gesture state, not layout state, and Qt does not save it either.
+    pub cascading_section_resizes: bool,
 }
 
 impl ColumnLayoutState {
@@ -150,6 +155,7 @@ impl ColumnLayoutState {
             "default_section_size": self.default_section_size,
             "min_section_size": self.min_section_size,
             "max_section_size": self.max_section_size,
+            "cascading_section_resizes": self.cascading_section_resizes,
         })
     }
 
@@ -228,6 +234,13 @@ impl ColumnLayoutState {
             default_section_size: scalar("default_section_size", DEFAULT_SECTION_SIZE)?,
             min_section_size: scalar("min_section_size", DEFAULT_MIN_COL_WIDTH)?,
             max_section_size: scalar("max_section_size", DEFAULT_MAX_COL_WIDTH)?,
+            // R1494 — same absent-is-the-older-shape rule; Qt's own default is
+            // `false`, so an older snapshot decodes to a header that does not
+            // cascade.
+            cascading_section_resizes: match value.get("cascading_section_resizes") {
+                None => false,
+                Some(v) => v.as_bool()?,
+            },
         })
     }
 }
@@ -248,6 +261,7 @@ impl Default for ColumnLayoutState {
             default_section_size: DEFAULT_SECTION_SIZE,
             min_section_size: DEFAULT_MIN_COL_WIDTH,
             max_section_size: DEFAULT_MAX_COL_WIDTH,
+            cascading_section_resizes: false,
         }
     }
 }
@@ -372,6 +386,20 @@ impl std::fmt::Display for SectionResizeMode {
     }
 }
 
+/// R1494 §5.27 — one interactive resize gesture's debt to the sections that
+/// paid for it.
+///
+/// `anchor` is the **logical** section being resized; `victims` are the
+/// followers that gave up width, in the visual order they were taken from,
+/// each with the size it held *before* it paid. Repaying walks the vector
+/// backwards, so the last section to be squeezed is the first to be let go —
+/// the order that makes a drag out and back land exactly where it started.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Cascade {
+    anchor: usize,
+    victims: Vec<(usize, u32)>,
+}
+
 /// R1451 §5.27 §5.51 — order × size × visibility for one grid's columns,
 /// keyed as `QHeaderView` keys them. See the [module docs](self) for the
 /// ownership split; construct one per grid and let the header `External`
@@ -432,6 +460,21 @@ pub struct ColumnLayout {
     /// view could not reach the hints at all. The demo caught it: the knob read
     /// back its new value and every content width stayed put.
     contents_precision: Signal<usize>,
+    /// R1494 — Qt's `cascadingSectionResizes`. Default `false`, as in Qt.
+    cascading: Signal<bool>,
+    /// R1494 — the cascade currently in flight, if any.
+    ///
+    /// A cascade has to be *undoable* or it is not a drag: pulling a section
+    /// wide and back must leave the row where it started, which means
+    /// remembering what each follower was before it paid. Qt keeps the same
+    /// memory (`cascadingSectionSize`) and clears it when the drag ends.
+    ///
+    /// pinion has no drag session on this widget (the pointer grabber is a
+    /// different binding — see [`interactive_resize_section`](ColumnLayout::interactive_resize_section)),
+    /// so the anchor stands in for one: resizing a different section is a new
+    /// gesture and drops the old memory, as does any write that invalidates the
+    /// sizes it remembers.
+    cascade: Signal<Option<Cascade>>,
     /// R1493 — Qt's `defaultSectionSize`: the size a section takes when
     /// nothing else determined it.
     ///
@@ -476,6 +519,8 @@ impl ColumnLayout {
             sort_indicator_shown: Signal::new(false),
             contents_precision: Signal::new(DEFAULT_CONTENTS_PRECISION),
             default_size: Signal::new(DEFAULT_SECTION_SIZE),
+            cascading: Signal::new(false),
+            cascade: Signal::new(None),
         }
     }
 
@@ -848,6 +893,11 @@ impl ColumnLayout {
         if logical >= self.count {
             return 0;
         }
+        // R1494 — a programmatic resize is not part of a gesture, and it can
+        // move a section the cascade remembers, which would make the
+        // remembered size a lie. Ending the gesture is cheaper and more honest
+        // than tracking which writes invalidate which entry.
+        self.cascade.set(None);
         self.sizes.set_width(logical, size);
         self.section_size(logical)
     }
@@ -876,6 +926,8 @@ impl ColumnLayout {
     /// Returns the applied default after the bound clamp, so a client learns
     /// the outcome in the round-trip it asked for the change.
     pub fn set_default_section_size(&self, size: u32) -> u32 {
+        // R1494 — a bulk write past every remembered size (see `resize_section`).
+        self.cascade.set(None);
         self.default_size.set(size);
         let applied = self.default_section_size();
         let hidden = self.hidden.get();
@@ -893,6 +945,153 @@ impl ColumnLayout {
     /// here for a caller that never learned the constant.
     pub fn reset_default_section_size(&self) -> u32 {
         self.set_default_section_size(DEFAULT_SECTION_SIZE)
+    }
+
+    /// R1494 — whether an interactive resize takes its space from the
+    /// following sections instead of from the row's width — Qt's
+    /// `cascadingSectionResizes`. `false` by default, as in Qt.
+    #[must_use]
+    pub fn cascading_section_resizes(&self) -> bool {
+        self.cascading.get()
+    }
+
+    /// R1494 — turn cascading on or off. Turning it **off** also drops the
+    /// cascade in flight: the memory exists to repay followers during a
+    /// gesture, and a gesture that is no longer cascading has no debt to
+    /// settle. Leaving it would repay on the next resize, long after the rule
+    /// that incurred it was withdrawn.
+    pub fn set_cascading_section_resizes(&self, on: bool) {
+        self.cascading.set(on);
+        if !on {
+            self.cascade.set(None);
+        }
+    }
+
+    /// Whether logical section `logical` can be squeezed to pay for a
+    /// neighbour's growth: Qt takes only from `Interactive` sections, and a
+    /// hidden section is painted nowhere so it has no width to give.
+    fn is_cascadable(&self, logical: usize) -> bool {
+        self.resize_mode(logical) == SectionResizeMode::Interactive
+            && !self.is_section_hidden(logical)
+    }
+
+    /// R1494 — resize a section the way a **drag** does — Qt's interactive
+    /// resize, which is where `cascadingSectionResizes` applies.
+    ///
+    /// With cascading off this is exactly [`resize_section`](Self::resize_section),
+    /// which is also Qt: `resizeSection()` never cascades, and the property
+    /// governs "interactive resizing" only. With it on, the space comes from
+    /// the **following** sections rather than from the row's total width —
+    /// growing a section squeezes the ones after it, each down to the floor, in
+    /// visual order; shrinking it hands that space back to the same sections,
+    /// most-recently-squeezed first, never past what they held before they
+    /// paid.
+    ///
+    /// Only `Interactive`, visible sections pay. A `Fixed` section is fixed
+    /// against a neighbour's drag as much as against its own, a `Stretch` or
+    /// `ResizeToContents` section derives its size and has no stored width to
+    /// give, and a hidden section is painted nowhere.
+    ///
+    /// The followers pay **as far as they can**. When they are all at the
+    /// floor the section still grows and the row grows with it, which is
+    /// honest rather than silently refusing a resize the user asked for;
+    /// [`visible_total`](Self::visible_total) reports the result either way.
+    ///
+    /// Returns the size the anchor actually has afterwards, the same
+    /// read-outcome contract [`resize_section`](Self::resize_section) has.
+    ///
+    /// This mirrors the *documented* behaviour of Qt's property — the space a
+    /// resize needs is taken from the following sections — not Qt's private
+    /// multi-anchor bookkeeping, which pinion has no gesture to exercise.
+    pub fn interactive_resize_section(&self, logical: usize, size: u32) -> u32 {
+        if logical >= self.count {
+            return 0;
+        }
+        if !self.cascading.get() {
+            return self.resize_section(logical, size);
+        }
+        let before = self.sizes.width(logical);
+        let target = self.sizes.clamp(size);
+        // A different anchor is a different gesture: the old debt belonged to
+        // the section that incurred it, and repaying it out of this one's
+        // travel would move sections the user is no longer touching.
+        let mut cascade = match self.cascade.get() {
+            Some(c) if c.anchor == logical => c,
+            _ => Cascade {
+                anchor: logical,
+                victims: Vec::new(),
+            },
+        };
+        match target.cmp(&before) {
+            core::cmp::Ordering::Greater => {
+                self.take_from_followers(logical, target - before, &mut cascade);
+            }
+            core::cmp::Ordering::Less => {
+                self.repay_followers(before - target, &mut cascade);
+            }
+            core::cmp::Ordering::Equal => {}
+        }
+        self.sizes.set_width(logical, target);
+        self.cascade.set(Some(cascade));
+        self.section_size(logical)
+    }
+
+    /// Squeeze `owed` pixels out of the sections after `anchor`, in visual
+    /// order, each down to the floor, recording what every one of them held
+    /// before it paid. Stops as soon as the debt is covered.
+    fn take_from_followers(&self, anchor: usize, owed: u32, cascade: &mut Cascade) {
+        let Some(from) = self.visual_index(anchor) else {
+            return;
+        };
+        let floor = self.sizes.min_width();
+        let order = self.sections.order();
+        let mut owed = owed;
+        for &victim in order.iter().skip(from + 1) {
+            if owed == 0 {
+                break;
+            }
+            if !self.is_cascadable(victim) {
+                continue;
+            }
+            let held = self.sizes.width(victim);
+            let can_give = held.saturating_sub(floor);
+            if can_give == 0 {
+                continue;
+            }
+            let given = can_give.min(owed);
+            // Remember the FIRST size this section held in this gesture. A
+            // second squeeze must not overwrite the original with the
+            // already-reduced one, or the repayment would stop short of where
+            // the drag began.
+            if !cascade.victims.iter().any(|(l, _)| *l == victim) {
+                cascade.victims.push((victim, held));
+            }
+            self.sizes.set_width(victim, held - given);
+            owed -= given;
+        }
+    }
+
+    /// Hand `freed` pixels back to the sections that paid, most-recently
+    /// squeezed first, none of them past the size it held before it paid.
+    fn repay_followers(&self, freed: u32, cascade: &mut Cascade) {
+        let mut freed = freed;
+        while freed > 0 {
+            let Some(&(victim, owed_size)) = cascade.victims.last() else {
+                break;
+            };
+            let held = self.sizes.width(victim);
+            let wanted = owed_size.saturating_sub(held);
+            if wanted == 0 {
+                cascade.victims.pop();
+                continue;
+            }
+            let given = wanted.min(freed);
+            self.sizes.set_width(victim, held + given);
+            freed -= given;
+            if given == wanted {
+                cascade.victims.pop();
+            }
+        }
     }
 
     /// Whether logical section `logical` is hidden — Qt's
@@ -1075,6 +1274,7 @@ impl ColumnLayout {
             default_section_size: self.default_section_size(),
             min_section_size: self.sizes.min_width(),
             max_section_size: self.sizes.max_width(),
+            cascading_section_resizes: self.cascading.get(),
         }
     }
 
@@ -1121,6 +1321,12 @@ impl ColumnLayout {
         self.sizes.set_min_width(state.min_section_size);
         self.sizes.set_max_width(state.max_section_size);
         self.default_size.set(state.default_section_size);
+        // R1494 — through the setter, so turning cascading off here drops the
+        // cascade in flight the same way it does anywhere else. The sizes it
+        // remembered are being replaced wholesale regardless, so it is cleared
+        // either way.
+        self.set_cascading_section_resizes(state.cascading_section_resizes);
+        self.cascade.set(None);
         self.sizes.set_widths(state.sizes.clone());
         self.hidden.set(state.hidden.clone());
         self.modes.set(state.modes.clone());
@@ -1177,6 +1383,9 @@ impl ColumnLayout {
             "section_sizes" => Some(json_of(self.section_sizes())),
             "default_section_size" => {
                 Some(IntrospectValue::Int(i64::from(self.default_section_size())))
+            }
+            "cascading_section_resizes" => {
+                Some(IntrospectValue::Bool(self.cascading_section_resizes()))
             }
             "hidden" => Some(json_of(self.hidden.get())),
             "visible_sections" => Some(json_of(self.visible_sections())),
@@ -1244,39 +1453,52 @@ impl ColumnLayout {
             // NB: no `?` in this arm — an early return here would skip the
             // reorder fall-through below, which is exactly how `order` first
             // came back `None` from a layout that holds one.
-            _ => match path.split_once('.') {
-                Some((head, arg)) => match head {
-                    "visual_index" => arg.parse().ok().map(|l| opt_int(self.visual_index(l))),
-                    "logical_index" => arg.parse().ok().map(|v| opt_int(self.logical_index(v))),
-                    "section_size" => arg
-                        .parse()
-                        .ok()
-                        .map(|l| IntrospectValue::Int(i64::from(self.section_size(l)))),
-                    "section_hidden" => arg
-                        .parse()
-                        .ok()
-                        .map(|l| IntrospectValue::Bool(self.is_section_hidden(l))),
-                    "section_position" => arg.parse().ok().map(|l| {
-                        self.section_position(l).map_or(IntrospectValue::Null, |x| {
-                            IntrospectValue::Int(i64::from(x))
-                        })
-                    }),
-                    "logical_index_at" => {
-                        arg.parse().ok().map(|x| opt_int(self.logical_index_at(x)))
-                    }
-                    "resize_mode" => arg.parse().ok().map(|l: usize| {
-                        IntrospectValue::Text(self.resize_mode(l).as_wire().to_string())
-                    }),
-                    "content_width" => arg
-                        .parse()
-                        .ok()
-                        .map(|l| IntrospectValue::Int(i64::from(self.content_width(l)))),
-                    _ => None,
-                },
-                None => None,
-            },
+            _ => self.query_parametric(path),
         }
         .or_else(|| self.sections.query(path))
+    }
+
+    /// The `<slot>.<arg>` half of [`query`](Self::query) — every per-section
+    /// read, each one `<head>.<index>`.
+    ///
+    /// (R1494) Split out because the two halves answer different shapes of
+    /// question and only one of them grows when a per-section fact is added.
+    /// `None` for an unknown head or an unparsable argument, so the caller's
+    /// reorder fall-through still runs.
+    fn query_parametric(&self, path: &str) -> Option<IntrospectValue> {
+        fn opt_int(v: Option<usize>) -> IntrospectValue {
+            v.map_or(IntrospectValue::Null, |n| {
+                IntrospectValue::Int(i64::try_from(n).unwrap_or(0))
+            })
+        }
+        let (head, arg) = path.split_once('.')?;
+        match head {
+            "visual_index" => arg.parse().ok().map(|l| opt_int(self.visual_index(l))),
+            "logical_index" => arg.parse().ok().map(|v| opt_int(self.logical_index(v))),
+            "section_size" => arg
+                .parse()
+                .ok()
+                .map(|l| IntrospectValue::Int(i64::from(self.section_size(l)))),
+            "section_hidden" => arg
+                .parse()
+                .ok()
+                .map(|l| IntrospectValue::Bool(self.is_section_hidden(l))),
+            "section_position" => arg.parse().ok().map(|l| {
+                self.section_position(l).map_or(IntrospectValue::Null, |x| {
+                    IntrospectValue::Int(i64::from(x))
+                })
+            }),
+            "logical_index_at" => arg.parse().ok().map(|x| opt_int(self.logical_index_at(x))),
+            "resize_mode" => arg
+                .parse()
+                .ok()
+                .map(|l: usize| IntrospectValue::Text(self.resize_mode(l).as_wire().to_string())),
+            "content_width" => arg
+                .parse()
+                .ok()
+                .map(|l| IntrospectValue::Int(i64::from(self.content_width(l)))),
+            _ => None,
+        }
     }
 
     /// One `count`-long width vector off the wire, for the two slots that take
@@ -1287,6 +1509,23 @@ impl ColumnLayout {
     /// shape is `TypeMismatch`" decision made twice. Two copies of a wire
     /// contract are two places for it to drift, and the second one is always
     /// the one that does not learn the next correction.
+    /// A `"<logical>:<px>"` resize payload, range-checked against this header.
+    ///
+    /// (R1494) The two resize methods — the programmatic one and the
+    /// interactive one cascading governs — differ only in which method they
+    /// then call, so they take their argument through one parser. A second
+    /// copy is a second place for `Rejected` to become `TypeMismatch`.
+    fn section_and_size(&self, args: &IntrospectValue) -> Result<(usize, u32), InvokeError> {
+        let IntrospectValue::Text(text) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let (logical, size) = parse_pair::<usize, u32>(text, ':').ok_or(InvokeError::Rejected)?;
+        if logical >= self.count {
+            return Err(InvokeError::Rejected);
+        }
+        Ok((logical, size))
+    }
+
     fn width_vector(&self, value: &IntrospectValue) -> Result<Vec<u32>, InterveneError> {
         let widths: Vec<u32> = json_u64_array(value)
             .ok_or(InterveneError::TypeMismatch)?
@@ -1369,6 +1608,15 @@ impl ColumnLayout {
             // scalar rule that shapes every section's size.
             "default_section_size" => {
                 self.set_default_section_size(px_bound(value)?);
+                Ok(())
+            }
+            // R1494 — Qt's `cascadingSectionResizes`, writable like the modes
+            // and the bounds: an agent explores a layout by moving the rule.
+            "cascading_section_resizes" => {
+                let IntrospectValue::Bool(on) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                self.set_cascading_section_resizes(*on);
                 Ok(())
             }
             // R1454 — the row-sampling bound a `ResizeToContents` consumer
@@ -1467,14 +1715,19 @@ impl ColumnLayout {
                 Ok(self.query("order").unwrap_or(IntrospectValue::Null))
             }
             "resize_section" => {
-                let text = pair_text(args)?;
-                let (logical, size) =
-                    parse_pair::<usize, u32>(&text, ':').ok_or(InvokeError::Rejected)?;
-                if logical >= self.count {
-                    return Err(InvokeError::Rejected);
-                }
+                let (logical, size) = self.section_and_size(args)?;
                 Ok(IntrospectValue::Int(i64::from(
                     self.resize_section(logical, size),
+                )))
+            }
+            // R1494 — the drag's resize, as distinct from the programmatic one
+            // above: this is the entry point `cascading_section_resizes`
+            // governs, because in Qt the property applies to interactive
+            // resizing and `resizeSection()` never cascades.
+            "interactive_resize_section" => {
+                let (logical, size) = self.section_and_size(args)?;
+                Ok(IntrospectValue::Int(i64::from(
+                    self.interactive_resize_section(logical, size),
                 )))
             }
             "set_section_hidden" => {
@@ -3129,6 +3382,264 @@ mod tests {
         assert_eq!(
             l.intervene("default_section_size", &text("wide")),
             Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    // ----- R1494: a resize pays the sections after it -----
+
+    /// Boot widths of [`layout`], for the round-trip assertions.
+    const BOOT: [u32; 4] = [100, 120, 140, 160];
+
+    #[test]
+    fn r1494_off_by_default_and_off_means_the_plain_resize() {
+        // Qt's default, and Qt's split: `resizeSection()` never cascades, so
+        // with the property off the interactive path must be the same call.
+        let l = layout();
+        assert!(!l.cascading_section_resizes(), "off, as in Qt");
+        assert_eq!(l.interactive_resize_section(0, 200), 200);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![200, 120, 140, 160],
+            "nobody else paid: the row simply grew"
+        );
+        assert_eq!(
+            l.visible_total(),
+            620,
+            "which is the measurement this round entered on"
+        );
+    }
+
+    #[test]
+    fn r1494_a_grow_is_paid_for_by_the_sections_after_it() {
+        let l = layout();
+        l.set_cascading_section_resizes(true);
+        let before = l.visible_total();
+        assert_eq!(l.interactive_resize_section(0, 200), 200);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![200, 40, 120, 160],
+            "the follower nearest paid first, down to the floor, then the next"
+        );
+        assert_eq!(
+            l.visible_total(),
+            before,
+            "so the row is exactly as wide as it was — the point of the property"
+        );
+    }
+
+    #[test]
+    fn r1494_a_drag_out_and_back_lands_where_it_started() {
+        // Without the memory a cascade is destructive, and a drag that returns
+        // to its start would leave the followers squeezed.
+        let l = layout();
+        l.set_cascading_section_resizes(true);
+        l.interactive_resize_section(0, 200);
+        assert_ne!(l.save_state().sizes, BOOT.to_vec(), "the row did move");
+        l.interactive_resize_section(0, 100);
+        assert_eq!(
+            l.save_state().sizes,
+            BOOT.to_vec(),
+            "and came back to the exact widths it left"
+        );
+        // Half way back returns the most-recently-squeezed section first.
+        l.interactive_resize_section(0, 200);
+        l.interactive_resize_section(0, 180);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![180, 40, 140, 160],
+            "the last section to be squeezed is the first to be let go"
+        );
+    }
+
+    #[test]
+    fn r1494_only_interactive_visible_sections_pay() {
+        // A `Fixed` section is fixed against a neighbour's drag as much as
+        // against its own; a `Stretch` one has no stored width to give; a
+        // hidden one is painted nowhere.
+        let l = layout();
+        l.set_cascading_section_resizes(true);
+        l.set_resize_mode(1, SectionResizeMode::Fixed);
+        l.interactive_resize_section(0, 200);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![200, 120, 40, 160],
+            "the Fixed follower was skipped and the next one paid instead"
+        );
+
+        let h = layout();
+        h.set_cascading_section_resizes(true);
+        h.set_section_hidden(1, true);
+        h.interactive_resize_section(0, 200);
+        assert_eq!(
+            h.save_state().sizes,
+            vec![200, 120, 40, 160],
+            "and a hidden follower keeps its width too"
+        );
+    }
+
+    #[test]
+    fn r1494_when_the_followers_are_spent_the_row_grows_and_says_so() {
+        // The honest limit: the followers pay as far as they can. Refusing the
+        // resize instead would be a user asking for a width and not getting
+        // it, with nothing to say why.
+        let l = layout();
+        l.set_cascading_section_resizes(true);
+        let floor = l.minimum_section_size();
+        let slack: u32 = BOOT[1..].iter().map(|w| w - floor).sum();
+        assert_eq!(slack, 300, "what the three followers can give between them");
+
+        assert_eq!(l.interactive_resize_section(0, BOOT[0] + slack), 400);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![400, 40, 40, 40],
+            "exactly spent — every follower at the floor"
+        );
+        assert_eq!(l.visible_total(), 520, "and the row still has not grown");
+
+        assert_eq!(
+            l.interactive_resize_section(0, 500),
+            500,
+            "one pixel further"
+        );
+        assert_eq!(
+            l.save_state().sizes,
+            vec![500, 40, 40, 40],
+            "nobody could pay, so the section grew alone"
+        );
+        assert_eq!(
+            l.visible_total(),
+            620,
+            "and visible_total reports the row that is actually painted"
+        );
+    }
+
+    #[test]
+    fn r1494_a_different_section_is_a_different_gesture() {
+        // The debt belongs to the section that incurred it. Repaying it out of
+        // another section's travel would move sections the user is not
+        // touching.
+        let l = layout();
+        l.set_cascading_section_resizes(true);
+        l.interactive_resize_section(0, 200);
+        assert_eq!(l.save_state().sizes, vec![200, 40, 120, 160]);
+        // Now shrink a DIFFERENT section. Section 0's victims must not be
+        // repaid out of it.
+        l.interactive_resize_section(2, 100);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![200, 40, 100, 160],
+            "only the new anchor moved"
+        );
+        // And shrinking section 0 now has no memory to repay, because the
+        // gesture that built it ended.
+        l.interactive_resize_section(0, 100);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![100, 40, 100, 160],
+            "the old debt did not follow the new gesture"
+        );
+    }
+
+    #[test]
+    fn r1494_a_programmatic_resize_ends_the_gesture() {
+        // `resize_section` can move a section the cascade remembers, which
+        // would make the remembered size a lie.
+        let l = layout();
+        l.set_cascading_section_resizes(true);
+        l.interactive_resize_section(0, 200);
+        l.resize_section(1, 90);
+        l.interactive_resize_section(0, 100);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![100, 90, 120, 160],
+            "no stale repayment overwrote the width just written"
+        );
+    }
+
+    #[test]
+    fn r1494_turning_it_off_drops_the_debt_it_created() {
+        let l = layout();
+        l.set_cascading_section_resizes(true);
+        l.interactive_resize_section(0, 200);
+        l.set_cascading_section_resizes(false);
+        l.set_cascading_section_resizes(true);
+        l.interactive_resize_section(0, 100);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![100, 40, 120, 160],
+            "the followers were not repaid by a rule that had been withdrawn"
+        );
+    }
+
+    #[test]
+    fn r1494_the_rule_is_readable_writable_and_saved() {
+        let l = layout();
+        assert_eq!(
+            l.query("cascading_section_resizes"),
+            Some(IntrospectValue::Bool(false))
+        );
+        l.intervene("cascading_section_resizes", &IntrospectValue::Bool(true))
+            .expect("Qt's property has a wire peer");
+        assert!(l.cascading_section_resizes());
+        assert!(
+            l.save_state().cascading_section_resizes,
+            "and saveState carries it"
+        );
+        assert_eq!(
+            l.intervene("cascading_section_resizes", &IntrospectValue::Int(1)),
+            Err(InterveneError::TypeMismatch)
+        );
+
+        // Restore into a header that does not cascade, and the rule travels.
+        let saved = l.save_state();
+        let other = layout();
+        assert!(!other.cascading_section_resizes());
+        assert!(other.restore_state(&saved));
+        assert!(
+            other.cascading_section_resizes(),
+            "a restore replays the rule, not only the widths it produced"
+        );
+        // An older snapshot has no such field and decodes to Qt's default.
+        let older = serde_json::json!({
+            "order": [0, 1, 2, 3],
+            "sizes": BOOT,
+            "hidden": [false, false, false, false],
+        });
+        let decoded = ColumnLayoutState::from_json(&older).expect("older shape decodes");
+        assert!(!decoded.cascading_section_resizes);
+    }
+
+    #[test]
+    fn r1494_the_wire_tells_the_two_resizes_apart() {
+        // The same payload through the two methods, one cascading and one not,
+        // is the assertion that they are genuinely different entry points.
+        let l = layout();
+        l.set_cascading_section_resizes(true);
+        assert_eq!(
+            l.invoke("resize_section", &text("0:200")),
+            Ok(IntrospectValue::Int(200))
+        );
+        assert_eq!(
+            l.save_state().sizes,
+            vec![200, 120, 140, 160],
+            "the programmatic one never cascades, cascading on or not"
+        );
+
+        let c = layout();
+        c.set_cascading_section_resizes(true);
+        assert_eq!(
+            c.invoke("interactive_resize_section", &text("0:200")),
+            Ok(IntrospectValue::Int(200))
+        );
+        assert_eq!(
+            c.save_state().sizes,
+            vec![200, 40, 120, 160],
+            "and the interactive one does"
+        );
+        assert_eq!(
+            c.invoke("interactive_resize_section", &text("9:200")),
+            Err(InvokeError::Rejected),
+            "an out-of-range section is refused by both, through one parser"
         );
     }
 }

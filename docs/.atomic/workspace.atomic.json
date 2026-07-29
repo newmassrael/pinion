@@ -74326,6 +74326,86 @@
         "The readout shows the stored sizes only when they differ from the painted ones, so a client scraping the row cannot rely on the field being present. The wire carries both unconditionally, which is the surface an agent should read."
       ]
     },
+    "Round 1494": {
+      "decision_summary": "R1494 - a resize is paid for by the sections after it: Qt QHeaderView's cascadingSectionResizes lands as a per-header rule with the undo memory that makes a cascade a drag rather than a destruction, on an interactive resize entry point distinct from the programmatic one",
+      "changes_bullets": [
+        "ColumnLayout gains Qt's cascadingSectionResizes: readable, writable, carried by saveState, and false by default as in Qt.",
+        "interactive_resize_section is the entry point the property governs, distinct from resize_section. That split is Qt's: the property applies to interactive resizing and resizeSection() never cascades. With cascading off the two are the same call.",
+        "With it on, growing a section takes the space from the sections AFTER it, in visual order, each down to the floor; shrinking it hands that space back, most-recently-squeezed first, never past what each held before it paid.",
+        "The cascade remembers what every follower held before it paid, because a cascade that cannot be undone is not a drag. Qt keeps the same memory and clears it when the drag ends; this widget has no drag session, so the anchor stands in for one.",
+        "Only Interactive, visible sections pay: a Fixed section is fixed against a neighbour's drag as much as its own, a Stretch or ResizeToContents section derives its size and has no stored width to give, a hidden section is painted nowhere.",
+        "The followers pay as far as they can. When they are all at the floor the section still grows and visible_total reports the row actually painted, rather than refusing a resize with nothing to say why.",
+        "The gesture ends on a different anchor, on any programmatic resize, on a bulk default write, and when the rule itself is withdrawn - each of those can make a remembered size a lie.",
+        "hello-column-reorder's [ / ] gesture now calls interactive_resize_section. It was gated like an interactive resize (it refuses a Fixed section) while writing like a programmatic one. This binding has no pointer grabber, so the keyboard is its interactive resize.",
+        "The readout names the rule (\"cascade on\" / \"cascade off\"), because the same keystroke does two visibly different things depending on it.",
+        "section_and_size extracted: the two resize arms differ only in which method they call, so one parser decides for both whether a payload is Rejected or TypeMismatch.",
+        "query_parametric split out: the scalar and per-section halves answer different shapes of question and only one of them grows when a per-section fact is added."
+      ],
+      "verification_bullets": [
+        "pinion-core 2789 tests pass (+10); hello-column-reorder 32 pass (+1).",
+        "tools/demos/r1494_cascading_section_resizes.py PASS - 41 assertions over the real wire, replaying the pre-round measurement call for call.",
+        "Blast radius: r1450 / r1452 / r1453 / r1491 / r1492 / r1493 all PASS. r1451 FAILED first and was updated - the third round running that its whole-object equality on the saveState peer has made a new field's arrival visible instead of letting it in unremarked.",
+        "Counterfactual 1 (the cascade remembers nothing): 2 witnesses - 1 core unit, demo assertion 12. A drag out and back leaves the followers squeezed.",
+        "Counterfactual 2 (any section can be squeezed, whatever its mode or visibility): 2 witnesses - 1 core unit, demo assertion 15.",
+        "Counterfactual 3 (the debt follows whatever section is resized next): 2 witnesses - 1 core unit, demo assertion 33.",
+        "Counterfactual 4 (repayment walks forwards instead of backwards): 2 witnesses - 1 core unit, demo assertion 14. A full out-and-back returns either way, so only the partial repayment discriminates.",
+        "Counterfactual 5 (resize_section cascades too, removing Qt's split): 3 witnesses - 2 core units, demo assertion 27.",
+        "Counterfactual 6 (withdrawing the rule leaves the debt behind): 2 witnesses - 1 core unit, plus the demo scenario added for it.",
+        "Counterfactual 7 (a programmatic write does not end the gesture): 2 witnesses - 1 core unit, demo assertion 34.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc --workspace --no-deps --document-private-items 0."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "CF-6 exposed a gap in this round's own demo: it never withdrew the rule mid-gesture, so a cascade whose debt outlived its rule passed every wire assertion. The scenario was added. Third round running that a counterfactual has found a hole in the round's own tests rather than in the code.",
+        "The pointer drag-resize does not cascade, and cannot yet: ColumnResizeExternal holds an Rc<ColumnWidths> and no layout, so it cannot ask which sections are Interactive, hidden, or where they sit in the permutation - the three facts the rule needs. Measured: the two live in different bindings today (the grabber in hello-grid-hscroll over a layout-less ColumnWidths, the layout in hello-column-reorder with a keyboard resize), so there is no binding where the gap is reachable. Giving the grabber the layout is a consumer-forced seam with no consumer yet.",
+        "This mirrors the documented behaviour of Qt's property - the space a resize needs comes from the following sections - not Qt's private multi-anchor bookkeeping, which restores sections BEFORE the anchor as well. pinion has no gesture that produces that state.",
+        "The cascade in flight is deliberately not in saveState. It is gesture state, not layout state, and Qt does not save it either.",
+        "A row whose followers are all at the floor grows past its viewport, and visible_total says so. That is the same honest-shortfall shape R1492 recorded for a bounded Stretch row.",
+        "Still open from the Qt QHeaderView surface: firstSectionMovable and an explicit sectionsClickable flag, both currently binding policy rather than header state."
+      ],
+      "publishable_decision_summary": "R1494 - a resize is paid for by the sections after it: Qt QHeaderView's cascadingSectionResizes lands as a per-header rule with the undo memory that makes a cascade a drag rather than a destruction, on an interactive resize entry point distinct from the programmatic one",
+      "publishable_changes_bullets": [
+        "ColumnLayout gains Qt's cascadingSectionResizes: readable, writable, carried by saveState, and false by default as in Qt.",
+        "interactive_resize_section is the entry point the property governs, distinct from resize_section. That split is Qt's: the property applies to interactive resizing and resizeSection() never cascades. With cascading off the two are the same call.",
+        "With it on, growing a section takes the space from the sections AFTER it, in visual order, each down to the floor; shrinking it hands that space back, most-recently-squeezed first, never past what each held before it paid.",
+        "The cascade remembers what every follower held before it paid, because a cascade that cannot be undone is not a drag. Qt keeps the same memory and clears it when the drag ends; this widget has no drag session, so the anchor stands in for one.",
+        "Only Interactive, visible sections pay: a Fixed section is fixed against a neighbour's drag as much as its own, a Stretch or ResizeToContents section derives its size and has no stored width to give, a hidden section is painted nowhere.",
+        "The followers pay as far as they can. When they are all at the floor the section still grows and visible_total reports the row actually painted, rather than refusing a resize with nothing to say why.",
+        "The gesture ends on a different anchor, on any programmatic resize, on a bulk default write, and when the rule itself is withdrawn - each of those can make a remembered size a lie.",
+        "hello-column-reorder's [ / ] gesture now calls interactive_resize_section. It was gated like an interactive resize (it refuses a Fixed section) while writing like a programmatic one. This binding has no pointer grabber, so the keyboard is its interactive resize.",
+        "The readout names the rule (\"cascade on\" / \"cascade off\"), because the same keystroke does two visibly different things depending on it.",
+        "section_and_size extracted: the two resize arms differ only in which method they call, so one parser decides for both whether a payload is Rejected or TypeMismatch.",
+        "query_parametric split out: the scalar and per-section halves answer different shapes of question and only one of them grows when a per-section fact is added."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 2789 tests pass (+10); hello-column-reorder 32 pass (+1).",
+        "tools/demos/r1494_cascading_section_resizes.py PASS - 41 assertions over the real wire, replaying the pre-round measurement call for call.",
+        "Blast radius: r1450 / r1452 / r1453 / r1491 / r1492 / r1493 all PASS. r1451 FAILED first and was updated - the third round running that its whole-object equality on the saveState peer has made a new field's arrival visible instead of letting it in unremarked.",
+        "Counterfactual 1 (the cascade remembers nothing): 2 witnesses - 1 core unit, demo assertion 12. A drag out and back leaves the followers squeezed.",
+        "Counterfactual 2 (any section can be squeezed, whatever its mode or visibility): 2 witnesses - 1 core unit, demo assertion 15.",
+        "Counterfactual 3 (the debt follows whatever section is resized next): 2 witnesses - 1 core unit, demo assertion 33.",
+        "Counterfactual 4 (repayment walks forwards instead of backwards): 2 witnesses - 1 core unit, demo assertion 14. A full out-and-back returns either way, so only the partial repayment discriminates.",
+        "Counterfactual 5 (resize_section cascades too, removing Qt's split): 3 witnesses - 2 core units, demo assertion 27.",
+        "Counterfactual 6 (withdrawing the rule leaves the debt behind): 2 witnesses - 1 core unit, plus the demo scenario added for it.",
+        "Counterfactual 7 (a programmatic write does not end the gesture): 2 witnesses - 1 core unit, demo assertion 34.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc --workspace --no-deps --document-private-items 0."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CF-6 exposed a gap in this round's own demo: it never withdrew the rule mid-gesture, so a cascade whose debt outlived its rule passed every wire assertion. The scenario was added. Third round running that a counterfactual has found a hole in the round's own tests rather than in the code.",
+        "The pointer drag-resize does not cascade, and cannot yet: ColumnResizeExternal holds an Rc<ColumnWidths> and no layout, so it cannot ask which sections are Interactive, hidden, or where they sit in the permutation - the three facts the rule needs. Measured: the two live in different bindings today (the grabber in hello-grid-hscroll over a layout-less ColumnWidths, the layout in hello-column-reorder with a keyboard resize), so there is no binding where the gap is reachable. Giving the grabber the layout is a consumer-forced seam with no consumer yet.",
+        "This mirrors the documented behaviour of Qt's property - the space a resize needs comes from the following sections - not Qt's private multi-anchor bookkeeping, which restores sections BEFORE the anchor as well. pinion has no gesture that produces that state.",
+        "The cascade in flight is deliberately not in saveState. It is gesture state, not layout state, and Qt does not save it either.",
+        "A row whose followers are all at the floor grows past its viewport, and visible_total says so. That is the same honest-shortfall shape R1492 recorded for a bounded Stretch row.",
+        "Still open from the Qt QHeaderView surface: firstSectionMovable and an explicit sectionsClickable flag, both currently binding policy rather than header state."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

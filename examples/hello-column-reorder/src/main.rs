@@ -346,6 +346,11 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     // `Stretch` / `ResizeToContents` they differ.
                     SchemaField::new("section_sizes", "json"),
                     SchemaField::new("default_section_size", "int"),
+                    // R1494 — Qt's `cascadingSectionResizes`, and the resize it
+                    // governs. `resize_section` is declared by the layout model
+                    // beside it; the two are separate methods on purpose.
+                    SchemaField::new("cascading_section_resizes", "boolean"),
+                    SchemaField::new("interactive_resize_section", "string"),
                     SchemaField::new("hidden", "json"),
                     SchemaField::new("placements", "json"),
                     SchemaField::new("visible_sections", "json"),
@@ -521,6 +526,11 @@ struct HeaderState {
     /// else determined it, and the size `reset_default_section_size` returns
     /// every shown section to.
     default_size: u32,
+    /// R1494 — Qt's `cascadingSectionResizes`: whether the `[` / `]` gesture
+    /// takes its space from the following sections or from the row's width.
+    /// Painted, because the same keystroke does two visibly different things
+    /// depending on it.
+    cascading: bool,
 }
 
 impl Default for HeaderState {
@@ -543,6 +553,7 @@ impl Default for HeaderState {
             bounds: (DEFAULT_MIN_COL_WIDTH, DEFAULT_MAX_COL_WIDTH),
             section_sizes: SECTION_W,
             default_size: DEFAULT_SECTION_SIZE,
+            cascading: false,
         }
     }
 }
@@ -671,6 +682,9 @@ fn read_header_state(scene: &Scene) -> HeaderState {
     if let Some(IntrospectValue::Int(d)) = intro.query("default_section_size") {
         out.default_size = u32::try_from(d).unwrap_or(DEFAULT_SECTION_SIZE);
     }
+    if let Some(IntrospectValue::Bool(c)) = intro.query("cascading_section_resizes") {
+        out.cascading = c;
+    }
     out
 }
 
@@ -784,6 +798,15 @@ fn cycle_mode_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> b
 /// the mode that refuses this while still accepting the programmatic
 /// `resize_section`, so the gate is the mode's own predicate rather than a
 /// second rule stated here.
+///
+/// R1494 — and because this IS the user's resize, it goes through
+/// `interactive_resize_section`, the entry point Qt's `cascadingSectionResizes`
+/// governs. It used to call the programmatic `resize_section`, which the very
+/// doc above says is the one a `Fixed` section still accepts: this gesture was
+/// gated like an interactive resize while writing like a programmatic one.
+/// This binding has no pointer grabber (`column_resize_externals` lives in
+/// `hello-grid-hscroll`, over a `ColumnWidths` with no layout), so the keyboard
+/// is its interactive resize.
 fn nudge_size_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>, grow: bool) -> bool {
     let Some(logical) = logical_at(&*intro, cursor) else {
         return false;
@@ -802,7 +825,7 @@ fn nudge_size_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>, grow
     };
     intro
         .invoke(
-            "resize_section",
+            "interactive_resize_section",
             IntrospectValue::Text(format!("{logical}:{next}")),
         )
         .is_ok()
@@ -985,7 +1008,7 @@ fn layout_readout_text(state: &HeaderState) -> String {
         format!(" | stored {}", keyed(&state.sizes))
     };
     format!(
-        "sizes {}{stored} | hidden {} | modes {} | default {} | bounds {}..{}",
+        "sizes {}{stored} | hidden {} | modes {} | default {} | cascade {} | bounds {}..{}",
         keyed(&state.section_sizes),
         if hidden.is_empty() {
             "-".to_string()
@@ -998,6 +1021,7 @@ fn layout_readout_text(state: &HeaderState) -> String {
             .map(|m| mode_code(*m))
             .collect::<String>(),
         state.default_size,
+        if state.cascading { "on" } else { "off" },
         state.bounds.0,
         // R1492 — the unbounded default reads as `-`, because printing
         // 4294967295 would look like a limit somebody chose.
@@ -2284,6 +2308,82 @@ mod tests {
                 DEFAULT_SECTION_SIZE
             ],
             "the reset reaches the constant without the caller naming it"
+        );
+    }
+
+    // ----- R1494: the keyboard resize is the user's resize -----
+
+    #[test]
+    fn r1494_the_same_keystroke_reads_the_rule_the_readout_names() {
+        // The forcing consumer: `[` / `]` is this binding's interactive
+        // resize (it has no pointer grabber), so it is the gesture Qt's
+        // property governs. The same keystroke must do two visibly different
+        // things depending on a rule the user can see.
+        let mut scene = boot_scene();
+        let boot = read_header_state(&scene);
+        assert!(!boot.cascading, "off by default, as in Qt");
+        assert!(
+            layout_readout(&boot).contains("| cascade off |"),
+            "and the readout says so: {}",
+            layout_readout(&boot)
+        );
+
+        // Cursor onto section 0, then grow it.
+        let plain = after(&mut scene, |i| {
+            i.intervene("focused_index", IntrospectValue::Int(0))
+                .expect("the cursor is placeable");
+        });
+        assert_eq!(plain.focused, Some(0));
+        let grown = after(&mut scene, |i| {
+            assert!(nudge_size_at(i, Some(0), true), "the grow gesture ran");
+        });
+        assert_eq!(
+            grown.sizes.to_vec(),
+            vec![
+                SECTION_W[0] + RESIZE_STEP,
+                SECTION_W[1],
+                SECTION_W[2],
+                SECTION_W[3],
+                SECTION_W[4]
+            ],
+            "cascading off: nobody else paid"
+        );
+        let widened_total: u32 = grown.sizes.iter().sum();
+
+        // Same keystroke, rule on.
+        let mut scene = boot_scene();
+        let on = after(&mut scene, |i| {
+            i.intervene("cascading_section_resizes", IntrospectValue::Bool(true))
+                .expect("Qt's property has a wire peer");
+        });
+        assert!(on.cascading);
+        assert!(
+            layout_readout(&on).contains("| cascade on |"),
+            "the readout names the rule that is now in force: {}",
+            layout_readout(&on)
+        );
+        let cascaded = after(&mut scene, |i| {
+            assert!(nudge_size_at(i, Some(0), true), "the same gesture ran");
+        });
+        assert_eq!(
+            cascaded.sizes[0],
+            SECTION_W[0] + RESIZE_STEP,
+            "the anchor grew by the same step"
+        );
+        assert_eq!(
+            cascaded.sizes[1],
+            SECTION_W[1] - RESIZE_STEP,
+            "but the follower paid for it"
+        );
+        let cascaded_total: u32 = cascaded.sizes.iter().sum();
+        assert_eq!(
+            cascaded_total,
+            SECTION_W.iter().sum::<u32>(),
+            "so the row is exactly as wide as it was"
+        );
+        assert!(
+            cascaded_total < widened_total,
+            "which the non-cascading gesture was not: {cascaded_total} vs {widened_total}"
         );
     }
 
