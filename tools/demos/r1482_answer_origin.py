@@ -243,4 +243,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R1482 answer origin", body)
+    sys.exit(run_demo("R1482 answer origin", body))

@@ -131,4 +131,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R846 §5.27 §5.40 — sortable grouped data grid", body)
+    sys.exit(run_demo("R846 §5.27 §5.40 — sortable grouped data grid", body))

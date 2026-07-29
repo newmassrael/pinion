@@ -203,4 +203,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R1484 one address, every method", body)
+    sys.exit(run_demo("R1484 one address, every method", body))

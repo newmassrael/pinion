@@ -200,4 +200,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R1467 the produce path dresses the window", body)
+    sys.exit(run_demo("R1467 the produce path dresses the window", body))

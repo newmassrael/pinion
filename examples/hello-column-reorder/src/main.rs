@@ -42,13 +42,20 @@
 //! Qt's is both at once (`setSectionsMovable` + `setSectionsClickable`). They
 //! are not alternatives: the subindex a drop classifier needs is also enough to
 //! name the section a *click* landed on, and what separates a click from a drag
-//! is not the tag but the release —
-//! [`ColumnLayout::release_section`] commits the drop and reports the clicked
-//! **logical** section only when the permutation came out unchanged, which is
-//! Qt's own rule. So this strip now carries the sort indicator too
-//! (`sortIndicatorSection` / `sortIndicatorOrder` / `sortIndicatorShown`), keyed
-//! logically like the sizes and the hidden flags, and the arrow travels with its
-//! column instead of staying on a position.
+//! is not the tag but the release. So this strip now carries the sort indicator
+//! too (`sortIndicatorSection` / `sortIndicatorOrder` / `sortIndicatorShown`),
+//! keyed logically like the sizes and the hidden flags, and the arrow travels
+//! with its column instead of staying on a position.
+//!
+//! R1496 — and the release that separates them is the router's, not this
+//! widget's. R1491 read the click off the drop commit ("the permutation came
+//! out unchanged"); R794 §5.51 already owns click-vs-drag and withholds the
+//! trailing `PointerUp` after a gesture that travelled, so the click arrives
+//! there ([`ColumnLayout::handle_send`]) and [`ColumnLayout::end_section_drag`]
+//! only commits the drop. That is also what lets Qt's two permissions be
+//! independent here: a header that opens no drag session
+//! ([`ColumnLayout::sections_movable`] off) is still sortable, which it could
+//! not be while its click was a by-product of a drag.
 //!
 //! ## One projection, or the failure mode is unpaintable
 //!
@@ -95,7 +102,7 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::column_layout::{
     ColumnLayout, ColumnLayoutView, DEFAULT_SECTION_SIZE, SectionPlacement, SectionResizeMode,
-    read_column_layout, use_column_layout,
+    read_column_layout, use_column_layout_with,
 };
 use pinion_core::widgets::column_widths::{DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
 use pinion_core::widgets::grid_sort::col_sort_dir;
@@ -274,14 +281,36 @@ impl ColumnHeaderExternal {
     /// view fn has to publish two inputs only it knows: the measured content
     /// hints and the width a `Stretch` row divides.
     fn new() -> Self {
-        let layout = use_column_layout(LAYOUT_KEY, || SECTION_W.to_vec());
-        // R1491 — `ColumnLayout` boots with the indicator hidden, as Qt's
-        // `QHeaderView` does; a *sortable* view turns it on, which is where
-        // `QTableView::setSortingEnabled` puts the same decision. Leaving it to
-        // the header's default would paint no arrow however the grid sorted.
-        layout.set_sort_indicator_shown(true);
-        Self { layout }
+        Self {
+            layout: use_column_layout_with(LAYOUT_KEY, boot_layout),
+        }
     }
+}
+
+/// The header this app declares, built once — everything a `QHeaderView`
+/// consumer sets right after constructing one.
+///
+/// It is a free function, not two copies inside the two `use_column_layout_with`
+/// call sites, because `Owner::cache` builds on whichever pass reaches it
+/// first: the `External` factory or the view fn. Configuring it at only one of
+/// them would make the header's rules depend on which ran — and R1491 shipped
+/// exactly that, with `set_sort_indicator_shown(true)` living in the `External`
+/// alone.
+fn boot_layout() -> ColumnLayout {
+    let layout = ColumnLayout::new(SECTION_W.to_vec());
+    // R1491 — `ColumnLayout` boots with the indicator hidden, as Qt's
+    // `QHeaderView` does; a *sortable* view turns it on, which is where
+    // `QTableView::setSortingEnabled` puts the same decision. Leaving it to
+    // the header's default would paint no arrow however the grid sorted.
+    layout.set_sort_indicator_shown(true);
+    // R1496 — and the same `setSortingEnabled` is what turns Qt's
+    // `sectionsClickable` on, because a click that sorts nothing is not a
+    // click. `sectionsMovable` is this app's own affordance: the caption says
+    // "drag a header to move it", so it says so to the header too. Both default
+    // to `false`, as in Qt, which is why an app that wants them declares them.
+    layout.set_sections_clickable(true);
+    layout.set_sections_movable(true);
+    layout
 }
 
 impl External for ColumnHeaderExternal {
@@ -303,26 +332,25 @@ impl External for ColumnHeaderExternal {
 
     /// The three R742 drag hooks delegate straight to the model — a section
     /// drag is mechanically the tab-strip drag with a different paint.
+    ///
+    /// R1496 — through [`ColumnLayout::begin_section_drag`] rather than the
+    /// reorder model's own arm, so a header that is not movable opens no
+    /// session at all: nothing previews a drop it would refuse to commit.
     fn begin_drag(&self) -> Option<DragPayload> {
-        self.layout
-            .sections()
-            .begin_drag_payload(Cow::Borrowed(DRAG_KIND))
+        self.layout.begin_section_drag(Cow::Borrowed(DRAG_KIND))
     }
 
     fn drag_to(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
         self.layout.sections().drag_to(payload, over.as_ref());
     }
 
-    /// R1491 — the release is where a movable header becomes a *clickable* one.
-    /// Qt's `QHeaderView` sorts on a press that did not move the section, and
-    /// [`ColumnLayout::release_section`] is that rule: it commits the drop and
-    /// hands back the clicked logical section only when the permutation came
-    /// out unchanged. This binding is the `sectionsClickable` half — it decides
-    /// that a click sorts, which is a view policy, not a header one.
+    /// R1496 — the release commits the drop and nothing else. The click is no
+    /// longer derived from it: it arrives as the trailing `PointerUp` the R794
+    /// router synthesizes only for a press-release that never became a drag,
+    /// which is the framework's own click-vs-drag determination and the one
+    /// `file_browser` already takes its row activation from.
     fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
-        if let Some(logical) = self.layout.release_section(payload, over.as_ref()) {
-            self.layout.cycle_sort_indicator(logical);
-        }
+        self.layout.end_section_drag(payload, over.as_ref());
     }
 }
 
@@ -351,6 +379,11 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     // beside it; the two are separate methods on purpose.
                     SchemaField::new("cascading_section_resizes", "boolean"),
                     SchemaField::new("interactive_resize_section", "string"),
+                    // R1496 — Qt's two interaction permissions. Declared beside
+                    // the resize rule above because they are the same kind of
+                    // thing: what the header lets a gesture do.
+                    SchemaField::new("sections_movable", "boolean"),
+                    SchemaField::new("sections_clickable", "boolean"),
                     SchemaField::new("hidden", "json"),
                     SchemaField::new("placements", "json"),
                     SchemaField::new("visible_sections", "json"),
@@ -464,7 +497,28 @@ impl ExternalIntrospect for ColumnHeaderExternal {
     ) -> Result<IntrospectValue, InvokeError> {
         // Qt's whole section vocabulary, all of it the model's; this binding
         // adds no action of its own, which is the point of the lift.
-        self.layout.invoke(path, &args)
+        let out = self.layout.invoke(path, &args)?;
+        // R1496 — except this one, which is not an action but a *policy*: what
+        // a click means. The header reports WHICH section was clicked (`Null`
+        // when the release was not one, or when the header is not clickable);
+        // deciding that it sorts is the view's call, exactly as Qt leaves it to
+        // whoever connects `sectionClicked` / `sortIndicatorChanged`.
+        //
+        // It reads the value returned by its own delegation rather than a
+        // latch, because the router discards the OUTER return on the real
+        // pointer path — a click that only an RPC caller could see would not be
+        // a click.
+        if let IntrospectValue::Int(logical) = out {
+            if path == "send" {
+                self.layout
+                    .cycle_sort_indicator(usize::try_from(logical).unwrap_or(0));
+                return Ok(self
+                    .layout
+                    .query("sort_indicator")
+                    .unwrap_or(IntrospectValue::Null));
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -531,6 +585,12 @@ struct HeaderState {
     /// Painted, because the same keystroke does two visibly different things
     /// depending on it.
     cascading: bool,
+    /// R1496 — Qt's `sectionsMovable` / `sectionsClickable`: whether a drag on
+    /// the strip moves anything, and whether a press-release sorts.
+    ///
+    /// Painted for the R1492 reason the bounds are: a gesture that does nothing
+    /// looks like a broken widget unless the rule that refused it is on screen.
+    permissions: (bool, bool),
 }
 
 impl Default for HeaderState {
@@ -554,6 +614,9 @@ impl Default for HeaderState {
             section_sizes: SECTION_W,
             default_size: DEFAULT_SECTION_SIZE,
             cascading: false,
+            // This app declares both (`boot_layout`), so the boot posture the
+            // first frame paints is the one the header will report.
+            permissions: (true, true),
         }
     }
 }
@@ -684,6 +747,14 @@ fn read_header_state(scene: &Scene) -> HeaderState {
     }
     if let Some(IntrospectValue::Bool(c)) = intro.query("cascading_section_resizes") {
         out.cascading = c;
+    }
+    // R1496 — the two permissions, off the wire for the same reason: the strip
+    // paints them, so what it paints has to be what an agent is told.
+    if let (Some(IntrospectValue::Bool(m)), Some(IntrospectValue::Bool(k))) = (
+        intro.query("sections_movable"),
+        intro.query("sections_clickable"),
+    ) {
+        out.permissions = (m, k);
     }
     out
 }
@@ -1007,8 +1078,17 @@ fn layout_readout_text(state: &HeaderState) -> String {
     } else {
         format!(" | stored {}", keyed(&state.sizes))
     };
+    // R1496 — one word for the pair, because they are read together: what this
+    // header lets a hand do to it.
+    let allows = match state.permissions {
+        (true, true) => "move+click",
+        (true, false) => "move",
+        (false, true) => "click",
+        (false, false) => "-",
+    };
     format!(
-        "sizes {}{stored} | hidden {} | modes {} | default {} | cascade {} | bounds {}..{}",
+        "sizes {}{stored} | hidden {} | modes {} | default {} | cascade {} | \
+         bounds {}..{} | allows {allows}",
         keyed(&state.section_sizes),
         if hidden.is_empty() {
             "-".to_string()
@@ -1044,7 +1124,7 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
     // only the very first frame paints before them (the measure-then-settle
     // warmup every measured seam in the tree has); a grid whose content
     // changes republishes here each frame for the same reason.
-    let layout = use_column_layout(LAYOUT_KEY, || SECTION_W.to_vec());
+    let layout = use_column_layout_with(LAYOUT_KEY, boot_layout);
     layout.set_available_width(Some(AVAILABLE_W));
     if let Some(hints) = content_hints(&theme, layout.resize_contents_precision()) {
         layout.set_content_widths(hints);
@@ -1901,17 +1981,49 @@ mod tests {
             .collect()
     }
 
-    /// Drive the drag hooks the router drives: press `visual`, then release
-    /// over `over`. `None` releases without a resolved drop point, which is
-    /// what a press-and-release in place produces.
-    fn press_release(ext: &mut ColumnHeaderExternal, visual: usize, over: Option<DropPoint>) {
+    /// Drive one whole gesture exactly as the R794 router drives it: the
+    /// `PointerDown`, the arm, the drop commit, and — **only when the cursor
+    /// never travelled far enough to become a drag** — the trailing
+    /// `PointerUp`.
+    ///
+    /// R1496 — `became_drag` is the router's own variable, and it is a
+    /// parameter rather than something derived here because that determination
+    /// is made from cursor travel against `DRAG_CLICK_THRESHOLD_PX`, which a
+    /// unit test has no cursor for. Before this round the helper simply never
+    /// dispatched the release, which let R1491's permutation-derived click pass
+    /// while modelling a router that does not exist.
+    fn gesture(
+        ext: &mut ColumnHeaderExternal,
+        visual: usize,
+        over: Option<DropPoint>,
+        became_drag: bool,
+    ) {
         ext.invoke(
             "send",
             IntrospectValue::Text(format!("{visual}:PointerDown")),
         )
         .expect("send accepts a pointer payload");
         let payload = ext.begin_drag().expect("a pressed section arms a drag");
+        let released_over = over.as_ref().map(|o| o.tag.clone());
         ext.drag_release(&payload, over);
+        if !became_drag {
+            // The router aims the release at the tag under the cursor, which
+            // for a press-release in place is the section that was pressed.
+            let tag = released_over.unwrap_or_else(|| section_tag(visual));
+            let sub = tag.rsplit('#').next().unwrap_or_default().to_string();
+            ext.invoke("send", IntrospectValue::Text(format!("{sub}:PointerUp")))
+                .expect("send accepts a pointer payload");
+        }
+    }
+
+    /// A press-release in place — the gesture that is a click.
+    fn click_section(ext: &mut ColumnHeaderExternal, visual: usize) {
+        gesture(ext, visual, None, false);
+    }
+
+    /// A drag that travelled: it commits its drop and is not a click.
+    fn drag_section(ext: &mut ColumnHeaderExternal, visual: usize, over: DropPoint) {
+        gesture(ext, visual, Some(over), true);
     }
 
     #[test]
@@ -1921,7 +2033,7 @@ mod tests {
         // halves are asserted, because either alone passes an implementation
         // that always does one of them.
         let mut ext = fresh();
-        press_release(&mut ext, 1, None);
+        click_section(&mut ext, 1);
         assert_eq!(
             ext.query("sort_indicator"),
             Some(IntrospectValue::Text("1:ascending".into())),
@@ -1933,14 +2045,14 @@ mod tests {
             "and moved nothing"
         );
 
-        press_release(
+        drag_section(
             &mut ext,
             0,
-            Some(DropPoint {
+            DropPoint {
                 tag: section_tag(3),
                 x_rel: 0.9,
                 y_rel: 0.5,
-            }),
+            },
         );
         assert_eq!(
             ext.query("order"),
@@ -1951,6 +2063,88 @@ mod tests {
             ext.query("sort_indicator"),
             Some(IntrospectValue::Text("1:ascending".into())),
             "and did NOT also sort the section it dragged"
+        );
+    }
+
+    #[test]
+    fn r1496_a_drag_back_into_its_own_gap_is_still_not_a_click() {
+        // THE regression R1491 shipped, and the reason the click moved off the
+        // drop commit. Its rule was "the permutation came out unchanged, so it
+        // was a click" — which is exactly what a user does when they pick a
+        // column up, change their mind, and put it back. That sorted the column
+        // they had just decided not to move.
+        let mut ext = fresh();
+        drag_section(
+            &mut ext,
+            1,
+            DropPoint {
+                tag: section_tag(1),
+                x_rel: 0.1,
+                y_rel: 0.5,
+            },
+        );
+        assert_eq!(
+            ext.query("order"),
+            Some(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
+            "the section went back where it came from"
+        );
+        assert_eq!(
+            ext.query("sort_indicator"),
+            Some(IntrospectValue::Text("none".into())),
+            "and changing your mind is not a sort"
+        );
+    }
+
+    #[test]
+    fn r1496_a_pinned_header_still_sorts() {
+        // Qt's two permissions are independent, and this is the shape that
+        // proves it end to end: `setSectionsMovable(false)` +
+        // `setSectionsClickable(true)` is the ordinary sortable table.
+        let mut ext = fresh();
+        ext.intervene("sections_movable", IntrospectValue::Bool(false))
+            .expect("the permission is writable");
+
+        ext.invoke("send", IntrospectValue::Text("1:PointerDown".into()))
+            .expect("send accepts a pointer payload");
+        assert!(
+            ext.begin_drag().is_none(),
+            "a pinned header opens no drag session, so nothing previews a drop"
+        );
+        ext.invoke("send", IntrospectValue::Text("1:PointerUp".into()))
+            .expect("send accepts a pointer payload");
+        assert_eq!(
+            ext.query("sort_indicator"),
+            Some(IntrospectValue::Text("1:ascending".into())),
+            "and the press it refused to drag still sorted"
+        );
+        assert_eq!(
+            ext.query("order"),
+            Some(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
+            "with nothing moved"
+        );
+    }
+
+    #[test]
+    fn r1496_the_readout_names_what_the_header_allows() {
+        // R1492's rule: a gesture that does nothing looks like a broken widget
+        // unless the rule that refused it is on screen.
+        let mut scene = boot_scene();
+        let boot = read_header_state(&scene);
+        assert_eq!(boot.permissions, (true, true), "this app declares both");
+
+        let pinned = after(&mut scene, |i| {
+            i.intervene("sections_movable", IntrospectValue::Bool(false))
+                .expect("the permission is writable");
+        });
+        assert_eq!(pinned.permissions, (false, true));
+        assert!(
+            layout_readout_text(&pinned).ends_with("| allows click"),
+            "the painted rule: {}",
+            layout_readout_text(&pinned)
+        );
+        assert!(
+            layout_readout_text(&boot).ends_with("| allows move+click"),
+            "and the boot posture names both"
         );
     }
 
@@ -1984,12 +2178,12 @@ mod tests {
 
     #[test]
     fn r1491_a_click_after_a_move_sorts_the_column_it_landed_on() {
-        // A `release_section` that answered the visual index would sort the
-        // wrong column here — the section painted fourth IS logical 0.
+        // A click that answered the visual index would sort the wrong column
+        // here — the section painted fourth IS logical 0.
         let mut ext = fresh();
         ext.invoke("move_section", IntrospectValue::Text("0:3".into()))
             .expect("move_section is a known action");
-        press_release(&mut ext, 3, None);
+        click_section(&mut ext, 3);
         assert_eq!(
             ext.query("sort_indicator"),
             Some(IntrospectValue::Text("0:ascending".into())),
@@ -2124,7 +2318,7 @@ mod tests {
             })
             .expect("the layout readout is painted");
         assert!(
-            readout.ends_with("| bounds 40..130"),
+            readout.contains("| bounds 40..130 |"),
             "the painted rule names both ends: {readout}"
         );
     }

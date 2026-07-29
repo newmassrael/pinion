@@ -273,4 +273,4 @@ def capture_screenshot() -> Path:
 
 
 if __name__ == "__main__":
-    run_demo("R1360 layout-native chart (fills its slot)", body)
+    sys.exit(run_demo("R1360 layout-native chart (fills its slot)", body))

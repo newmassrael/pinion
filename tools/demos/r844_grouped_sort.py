@@ -171,4 +171,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R844 §5.27 §5.40 — stacked proxies: filter -> sort -> group", body)
+    sys.exit(run_demo("R844 §5.27 §5.40 — stacked proxies: filter -> sort -> group", body))

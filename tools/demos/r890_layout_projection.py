@@ -174,4 +174,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("r890_layout_projection", body)
+    sys.exit(run_demo("r890_layout_projection", body))

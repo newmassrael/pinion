@@ -74474,6 +74474,106 @@
         "CI's demo-sweep and gpu-tests are still `needs:`-gated behind lint-and-test, so a red lint still zeroes demo coverage for that run. This gate covers the consequence - the next push is refused - rather than the topology. Decoupling the jobs is a separate question about CI minutes."
       ]
     },
+    "Round 1496": {
+      "decision_summary": "R1496 - a header says who may touch it: Qt QHeaderView's sectionsMovable and sectionsClickable land as header state that saveState carries, and the click stops being a by-product of a drag so the two permissions can be independent",
+      "changes_bullets": [
+        "ColumnLayout gains Qt's sectionsMovable and sectionsClickable: readable, writable, carried by saveState, and false by default as in Qt, where a view opts in (setSectionsMovable / setSortingEnabled).",
+        "The two are independent, which is the reason both exist rather than one: a header may be sortable and pinned - the commoner shape - or reorderable and inert.",
+        "begin_section_drag is the movable-gated arm. A header that is not movable returns no payload, so the router opens no session: nothing previews a drop it would refuse to commit.",
+        "The programmatic move ignores the rule. Qt's moveSection() reorders a header the user cannot drag, and so do move_section and swap_sections here - the same split R1494 drew between resize_section and interactive_resize_section.",
+        "The click moves off the drop commit and onto the router's release. R1491's release_section derived it from the permutation; end_section_drag replaces it and only commits.",
+        "handle_send decodes the pointer edges: PointerDown records the pressed visual, PointerUp reports the clicked logical section when the release was on the same one, PointerLeave and PointerCancel end the press without activating it.",
+        "The press is remembered on the layout as well as on the reorder model. The model's copy is consumed by the drag - drag_release clears it before the router dispatches the release - so it cannot answer which section was pressed.",
+        "ColumnLayoutState carries the two permissions and resize_contents_precision, all three of which QHeaderViewPrivate::write() serialises.",
+        "That reverses R1454, which held the sampling bound was \"what a consumer MEASURES, not what the header IS\". R1454 had already abandoned that line once, making the field a Signal because the bound is an input to a painted result; the same argument saves it.",
+        "An absent permission decodes as true, not as Qt's false: the only fallback in this decoder that is not a Qt default. A pre-R1496 header had no such rule and was unconditionally movable and clickable, so true is what an older snapshot describes.",
+        "use_column_layout_with is the general form of use_column_layout, for a header that needs configuring at construction. A view fn cannot declare a permission: it runs every pass and would overwrite what the user or an agent had since written.",
+        "hello-column-reorder declares both permissions in one shared factory. R1491 put set_sort_indicator_shown in the External alone, so the header's rules depended on whether the External or the view fn reached Owner::cache first.",
+        "The readout names what the header allows, for the R1492 reason the bounds are painted: a gesture that does nothing looks like a broken widget unless the rule that refused it is on screen.",
+        "bool_rule lifted beside px_bound on its third writer, so a flag cannot accept 1 on one path and refuse it on another.",
+        "27 demo scripts called run_demo without propagating its return, so they exited 0 whatever they asserted and the CI sweep counted them green. A test that cannot fail is not a test."
+      ],
+      "verification_bullets": [
+        "Entry measurement over the real wire, before any edit: sections_movable and sections_clickable both UnknownIntrospectPath; a drag reordered the header and a release in place sorted it, with no rule able to refuse either; resize_contents_precision read 1000 while state carried 10 keys without it, and save-then-restore left it at 7.",
+        "pinion-core 2799 tests pass (+10); hello-column-reorder 35 pass (+3).",
+        "tools/demos/r1496_section_permissions.py PASS - 46 assertions over the real wire.",
+        "Blast radius: r1450 / r1452 / r1453 / r1491 / r1493 / r1494 PASS unchanged. r1451 FAILED first and was updated - the fourth round running that its whole-object equality on the saveState peer has made a new field's arrival visible. r1492 FAILED on two readout tail assertions and was updated to contiguous-substring form.",
+        "Counterfactual 1 (the movable permission is inert) killed 1 core unit, 1 demo unit, and the demo script, which failed at assertion 19 (\"a pinned header refused the drag\").",
+        "Counterfactual 2 (the clickable permission is inert) killed 1 core unit and the demo script, which failed at assertion 28 (\"a click on an unclickable header is not a click\").",
+        "Counterfactual 3 (the same-section rule is dropped) killed 1 core unit and the demo script.",
+        "Counterfactual 4 (a leave or cancel no longer ends the press) killed 1 core unit and the demo script.",
+        "Counterfactual 5 (the first draft's rule: every unrecognised event ends the press) killed 1 core unit and the demo script.",
+        "Counterfactual 6 (saveState drops the permissions again) killed 1 core unit and the demo script.",
+        "Counterfactual 7 (an absent permission decodes as Qt's false) killed 1 core unit and the demo script.",
+        "Counterfactual 8 (restore ignores the sampling bound, R1454's decision restored) killed 1 core unit and the demo script.",
+        "Counterfactual 9 (R1491's rule restored: the drop commit reports a click) killed 1 core unit, 3 demo units, and the demo script.",
+        "The 27 verdict-dropping scripts were run before the fix and again after: all 27 exit 0. Their verdicts now reach the sweep.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0 on both changed crates, cargo doc --no-deps --document-private-items 0."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "Counterfactuals 1, 2, 3 and 5 each first left the demo script ALIVE, and each time the hole was in the script rather than the code. Fourth round running that a counterfactual has found a gap in the round's own tests.",
+        "The worst of those was self-inflicted: this round's script omitted sys.exit(run_demo(...)), so it exited 0 while failing. The counterfactual harness is what exposed it, by reporting ALIVE for a break that had visibly killed the run.",
+        "The first draft of handle_send dropped the press on every event it did not recognise, and the wire had one it had not enumerated: a second in-place gesture arrives as PointerDown, DoubleClick, PointerUp, so every other click was swallowed. Found by instrumenting the binding and reading the payloads, after reasoning about the router had failed twice.",
+        "scene/click reaches this External not at all - zero send payloads, by path or by coordinate, repeated. Pre-existing and unrelated to this round, but it means every click here goes through scene/drag. Worth its own round: an AI that cannot click a header is a Sec2 #2 gap.",
+        "After a gesture that opened no drag session, moving the cursor to another section dispatches the PointerLeave and no matching PointerEnter, so the next press lands nowhere. pointer_up's DnD and capture branches both end with refresh_hover; its free-release branch does not. Also pre-existing, and it is why parts of the demo script drive the send seam rather than the arc.",
+        "firstSectionMovable is still absent. Qt does not carry it in saveState either, and it needs the drop side gated as well as the arm, which reaches into ReorderModel's slot arithmetic. A half of it would be worse than none.",
+        "Qt's saveState carries highlightSelected, stretchLastSection and defaultAlignment too. None of them is header state pinion has yet.",
+        "r794_file_drag_move failed once and passed on rerun. The failure was a 6s wait_until timeout during a sweep that ran alongside cargo builds and other demos; the quiet rerun passed. Recorded rather than dismissed: its verdict reaches the sweep for the first time from this round, so if that timeout is real rather than contention, CI is where it will now say so."
+      ],
+      "publishable_decision_summary": "R1496 - a header says who may touch it: Qt QHeaderView's sectionsMovable and sectionsClickable land as header state that saveState carries, and the click stops being a by-product of a drag so the two permissions can be independent",
+      "publishable_changes_bullets": [
+        "ColumnLayout gains Qt's sectionsMovable and sectionsClickable: readable, writable, carried by saveState, and false by default as in Qt, where a view opts in (setSectionsMovable / setSortingEnabled).",
+        "The two are independent, which is the reason both exist rather than one: a header may be sortable and pinned - the commoner shape - or reorderable and inert.",
+        "begin_section_drag is the movable-gated arm. A header that is not movable returns no payload, so the router opens no session: nothing previews a drop it would refuse to commit.",
+        "The programmatic move ignores the rule. Qt's moveSection() reorders a header the user cannot drag, and so do move_section and swap_sections here - the same split R1494 drew between resize_section and interactive_resize_section.",
+        "The click moves off the drop commit and onto the router's release. R1491's release_section derived it from the permutation; end_section_drag replaces it and only commits.",
+        "handle_send decodes the pointer edges: PointerDown records the pressed visual, PointerUp reports the clicked logical section when the release was on the same one, PointerLeave and PointerCancel end the press without activating it.",
+        "The press is remembered on the layout as well as on the reorder model. The model's copy is consumed by the drag - drag_release clears it before the router dispatches the release - so it cannot answer which section was pressed.",
+        "ColumnLayoutState carries the two permissions and resize_contents_precision, all three of which QHeaderViewPrivate::write() serialises.",
+        "That reverses R1454, which held the sampling bound was \"what a consumer MEASURES, not what the header IS\". R1454 had already abandoned that line once, making the field a Signal because the bound is an input to a painted result; the same argument saves it.",
+        "An absent permission decodes as true, not as Qt's false: the only fallback in this decoder that is not a Qt default. A pre-R1496 header had no such rule and was unconditionally movable and clickable, so true is what an older snapshot describes.",
+        "use_column_layout_with is the general form of use_column_layout, for a header that needs configuring at construction. A view fn cannot declare a permission: it runs every pass and would overwrite what the user or an agent had since written.",
+        "hello-column-reorder declares both permissions in one shared factory. R1491 put set_sort_indicator_shown in the External alone, so the header's rules depended on whether the External or the view fn reached Owner::cache first.",
+        "The readout names what the header allows, for the R1492 reason the bounds are painted: a gesture that does nothing looks like a broken widget unless the rule that refused it is on screen.",
+        "bool_rule lifted beside px_bound on its third writer, so a flag cannot accept 1 on one path and refuse it on another.",
+        "27 demo scripts called run_demo without propagating its return, so they exited 0 whatever they asserted and the CI sweep counted them green. A test that cannot fail is not a test."
+      ],
+      "publishable_verification_bullets": [
+        "Entry measurement over the real wire, before any edit: sections_movable and sections_clickable both UnknownIntrospectPath; a drag reordered the header and a release in place sorted it, with no rule able to refuse either; resize_contents_precision read 1000 while state carried 10 keys without it, and save-then-restore left it at 7.",
+        "pinion-core 2799 tests pass (+10); hello-column-reorder 35 pass (+3).",
+        "tools/demos/r1496_section_permissions.py PASS - 46 assertions over the real wire.",
+        "Blast radius: r1450 / r1452 / r1453 / r1491 / r1493 / r1494 PASS unchanged. r1451 FAILED first and was updated - the fourth round running that its whole-object equality on the saveState peer has made a new field's arrival visible. r1492 FAILED on two readout tail assertions and was updated to contiguous-substring form.",
+        "Counterfactual 1 (the movable permission is inert) killed 1 core unit, 1 demo unit, and the demo script, which failed at assertion 19 (\"a pinned header refused the drag\").",
+        "Counterfactual 2 (the clickable permission is inert) killed 1 core unit and the demo script, which failed at assertion 28 (\"a click on an unclickable header is not a click\").",
+        "Counterfactual 3 (the same-section rule is dropped) killed 1 core unit and the demo script.",
+        "Counterfactual 4 (a leave or cancel no longer ends the press) killed 1 core unit and the demo script.",
+        "Counterfactual 5 (the first draft's rule: every unrecognised event ends the press) killed 1 core unit and the demo script.",
+        "Counterfactual 6 (saveState drops the permissions again) killed 1 core unit and the demo script.",
+        "Counterfactual 7 (an absent permission decodes as Qt's false) killed 1 core unit and the demo script.",
+        "Counterfactual 8 (restore ignores the sampling bound, R1454's decision restored) killed 1 core unit and the demo script.",
+        "Counterfactual 9 (R1491's rule restored: the drop commit reports a click) killed 1 core unit, 3 demo units, and the demo script.",
+        "The 27 verdict-dropping scripts were run before the fix and again after: all 27 exit 0. Their verdicts now reach the sweep.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0 on both changed crates, cargo doc --no-deps --document-private-items 0."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Counterfactuals 1, 2, 3 and 5 each first left the demo script ALIVE, and each time the hole was in the script rather than the code. Fourth round running that a counterfactual has found a gap in the round's own tests.",
+        "The worst of those was self-inflicted: this round's script omitted sys.exit(run_demo(...)), so it exited 0 while failing. The counterfactual harness is what exposed it, by reporting ALIVE for a break that had visibly killed the run.",
+        "The first draft of handle_send dropped the press on every event it did not recognise, and the wire had one it had not enumerated: a second in-place gesture arrives as PointerDown, DoubleClick, PointerUp, so every other click was swallowed. Found by instrumenting the binding and reading the payloads, after reasoning about the router had failed twice.",
+        "scene/click reaches this External not at all - zero send payloads, by path or by coordinate, repeated. Pre-existing and unrelated to this round, but it means every click here goes through scene/drag. Worth its own round: an AI that cannot click a header is a Sec2 #2 gap.",
+        "After a gesture that opened no drag session, moving the cursor to another section dispatches the PointerLeave and no matching PointerEnter, so the next press lands nowhere. pointer_up's DnD and capture branches both end with refresh_hover; its free-release branch does not. Also pre-existing, and it is why parts of the demo script drive the send seam rather than the arc.",
+        "firstSectionMovable is still absent. Qt does not carry it in saveState either, and it needs the drop side gated as well as the arm, which reaches into ReorderModel's slot arithmetic. A half of it would be worse than none.",
+        "Qt's saveState carries highlightSelected, stretchLastSection and defaultAlignment too. None of them is header state pinion has yet.",
+        "r794_file_drag_move failed once and passed on rerun. The failure was a 6s wait_until timeout during a sweep that ran alongside cargo builds and other demos; the quiet rerun passed. Recorded rather than dismissed: its verdict reaches the sweep for the first time from this round, so if that timeout is real rather than contention, CI is where it will now say so."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

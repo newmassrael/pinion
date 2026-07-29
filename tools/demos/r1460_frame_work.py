@@ -237,4 +237,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R1460 per-frame + per-produce work counts, both backends", body)
+    sys.exit(run_demo("R1460 per-frame + per-produce work counts, both backends", body))

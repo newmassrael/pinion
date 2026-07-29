@@ -394,4 +394,4 @@ def _count_accent(png: Path, region: tuple[int, int, int, int], tol: int = 40) -
 
 
 if __name__ == "__main__":
-    run_demo("r794_file_drag_move", body)
+    sys.exit(run_demo("r794_file_drag_move", body))

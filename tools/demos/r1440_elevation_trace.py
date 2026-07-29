@@ -283,4 +283,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("r1440_elevation_trace", body)
+    sys.exit(run_demo("r1440_elevation_trace", body))

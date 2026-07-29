@@ -177,4 +177,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R1483 stable tag address", body)
+    sys.exit(run_demo("R1483 stable tag address", body))

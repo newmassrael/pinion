@@ -302,4 +302,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("r1443_untangle", body)
+    sys.exit(run_demo("r1443_untangle", body))

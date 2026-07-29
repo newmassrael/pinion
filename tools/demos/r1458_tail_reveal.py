@@ -281,4 +281,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R1458 layout-settled tail reveal (hello-tail-reveal)", body)
+    sys.exit(run_demo("R1458 layout-settled tail reveal (hello-tail-reveal)", body))

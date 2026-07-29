@@ -176,4 +176,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R882 Space-hold left-drag pan", body)
+    sys.exit(run_demo("R882 Space-hold left-drag pan", body))

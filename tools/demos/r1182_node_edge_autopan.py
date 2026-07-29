@@ -256,4 +256,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("r1182_node_edge_autopan", body)
+    sys.exit(run_demo("r1182_node_edge_autopan", body))

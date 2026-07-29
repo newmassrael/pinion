@@ -202,4 +202,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R747 §5.27 §5.40 — sort/filter on a virtualized list", body)
+    sys.exit(run_demo("R747 §5.27 §5.40 — sort/filter on a virtualized list", body))

@@ -187,4 +187,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("r889_window_known_gate", body)
+    sys.exit(run_demo("r889_window_known_gate", body))

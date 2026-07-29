@@ -67,12 +67,15 @@
 //! `move_section` / `swap_sections` / `resize_section` /
 //! `set_section_hidden`.
 
+use std::borrow::Cow;
+use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::composite_tag::parse_pair;
+use crate::composite_tag::{parse_pair, split_send_payload};
 use crate::external::{
     DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
 };
+use crate::input::PointerWireEvent;
 use crate::reactive::{Owner, Signal};
 use crate::widgets::column_widths::{ColumnWidths, DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
 use crate::widgets::grid_sort::{grid_sort_parse, grid_sort_str};
@@ -88,7 +91,17 @@ use crate::widgets::view_order::sort_dir_str;
 /// **logical** section, which is what makes the snapshot survive a reorder —
 /// restoring it into a layout whose columns have since been moved puts each
 /// section's size and visibility back on the section, not on the position.
+///
+/// `clippy::struct_excessive_bools` is intentionally suppressed, for the reason
+/// [`Modifiers`](crate::input::Modifiers) suppresses it: the field set is not
+/// ours to shape. This is the peer of a specific external serialisation, and
+/// `QHeaderViewPrivate::write()` carries `sortIndicatorShown`,
+/// `movableSections`, `clickableSections` and `cascadingResizing` as four
+/// independent booleans. Bundling them into sub-structs would make this type
+/// stop looking like the thing it is the peer of, and would put a shape between
+/// `to_json` and the flat wire object it has to produce.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ColumnLayoutState {
     /// The visual permutation (`order[visual] = logical`).
     pub order: Vec<usize>,
@@ -130,6 +143,24 @@ pub struct ColumnLayoutState {
     /// carries too. The cascade *in flight* is not here and should not be —
     /// that is gesture state, not layout state, and Qt does not save it either.
     pub cascading_section_resizes: bool,
+    /// R1496 — whether the user may drag a section to a new position: Qt's
+    /// `sectionsMovable`, which `QHeaderViewPrivate::write()` serialises as
+    /// `movableSections`. A saved layout that restored the permutation but not
+    /// the permission hands back an order the restored header would never have
+    /// let the user reach.
+    pub sections_movable: bool,
+    /// R1496 — whether a press-release on a section is reported as a click:
+    /// Qt's `sectionsClickable`, serialised as `clickableSections`. Independent
+    /// of [`sections_movable`](Self::sections_movable) in Qt and here, which is
+    /// the whole reason both are needed: a header can be sortable and pinned,
+    /// or reorderable and inert.
+    pub sections_clickable: bool,
+    /// R1496 — how many rows a `ResizeToContents` consumer should measure:
+    /// Qt's `resizeContentsPrecision`, which `saveState()` carries. R1454 put
+    /// it on the header and did not put it here, so a restore replayed every
+    /// content-fitted width while dropping the sampling bound that produced
+    /// them — the same omission R1493 found for the size bounds.
+    pub resize_contents_precision: usize,
 }
 
 impl ColumnLayoutState {
@@ -156,6 +187,13 @@ impl ColumnLayoutState {
             "min_section_size": self.min_section_size,
             "max_section_size": self.max_section_size,
             "cascading_section_resizes": self.cascading_section_resizes,
+            // R1496 — the two permissions and the sampling bound Qt's
+            // `saveState()` carries and this snapshot did not. Without them a
+            // restore hands back a permutation the restored header may forbid,
+            // and content widths measured under a bound it no longer has.
+            "sections_movable": self.sections_movable,
+            "sections_clickable": self.sections_clickable,
+            "resize_contents_precision": self.resize_contents_precision,
         })
     }
 
@@ -241,6 +279,29 @@ impl ColumnLayoutState {
                 None => false,
                 Some(v) => v.as_bool()?,
             },
+            // R1496 — absent decodes to **`true`**, which is deliberately NOT
+            // the construction default. The other absent-field fallbacks above
+            // all name a Qt default because that is also what the older header
+            // did; here the two diverge. A pre-R1496 header had no such rule
+            // and was unconditionally movable and clickable — measured over the
+            // wire before the round — so `true` is what the snapshot describes.
+            // Decoding it as Qt's `false` would silently strip interaction from
+            // every layout saved before this round.
+            sections_movable: match value.get("sections_movable") {
+                None => true,
+                Some(v) => v.as_bool()?,
+            },
+            sections_clickable: match value.get("sections_clickable") {
+                None => true,
+                Some(v) => v.as_bool()?,
+            },
+            // R1496 — absent is the pre-R1454 shape and decodes to the
+            // constant, like the three `scalar` fields; it is `usize` rather
+            // than `u32`, which is why it does not go through that closure.
+            resize_contents_precision: match value.get("resize_contents_precision") {
+                None => DEFAULT_CONTENTS_PRECISION,
+                Some(v) => usize::try_from(v.as_u64()?).ok()?,
+            },
         })
     }
 }
@@ -262,6 +323,13 @@ impl Default for ColumnLayoutState {
             min_section_size: DEFAULT_MIN_COL_WIDTH,
             max_section_size: DEFAULT_MAX_COL_WIDTH,
             cascading_section_resizes: false,
+            // R1496 — Qt's defaults, and the ones a fresh `ColumnLayout` has.
+            // `from_json` decodes an ABSENT field as `true` instead; the two
+            // answer different questions — this is the state of a new header,
+            // that is the state of an old one.
+            sections_movable: false,
+            sections_clickable: false,
+            resize_contents_precision: DEFAULT_CONTENTS_PRECISION,
         }
     }
 }
@@ -487,6 +555,31 @@ pub struct ColumnLayout {
     /// written: the bounds live in the shared width model, which does not know
     /// this layout exists.
     default_size: Signal<u32>,
+    /// R1496 — Qt's `sectionsMovable`. Default `false`, as in Qt, where the
+    /// view opts in (`QTableView` does not; a reorderable header is a
+    /// deliberate affordance, not the baseline).
+    ///
+    /// Reactive because a header that stops being movable paints differently —
+    /// the readout naming the rule, and anything that dresses a draggable
+    /// section — and because a write arriving over the wire has to reach the
+    /// view that reads it (the R1454 lesson: a rule read inside a view fn is
+    /// an input to a painted result, not "policy").
+    movable: Signal<bool>,
+    /// R1496 — Qt's `sectionsClickable`. Default `false`, as in Qt, where
+    /// `QTableView::setSortingEnabled(true)` is what turns it on.
+    clickable: Signal<bool>,
+    /// R1496 — the **visual** section a `PointerDown` last landed on, held
+    /// until the matching release so the click can test Qt's rule that a press
+    /// and its release must be on the same section.
+    ///
+    /// The [`ReorderModel`]'s own `pressed` cannot answer this: the drag
+    /// machinery consumes it, clearing it in `drag_release` — which the router
+    /// calls BEFORE it dispatches the trailing `PointerUp` — so by the time the
+    /// click arrives the model has already forgotten. It is a plain `Cell`
+    /// rather than a `Signal` because nothing paints from it; a press that
+    /// invalidated the view would repaint the whole strip for a value no view
+    /// fn reads.
+    pressed_section: Cell<Option<usize>>,
 }
 
 impl ColumnLayout {
@@ -521,6 +614,9 @@ impl ColumnLayout {
             default_size: Signal::new(DEFAULT_SECTION_SIZE),
             cascading: Signal::new(false),
             cascade: Signal::new(None),
+            movable: Signal::new(false),
+            clickable: Signal::new(false),
+            pressed_section: Cell::new(None),
         }
     }
 
@@ -650,41 +746,156 @@ impl ColumnLayout {
         self.sort_indicator_shown.set(shown);
     }
 
-    /// R1491 — end a header drag and report whether the release was a **click**
-    /// rather than a move. Qt's rule for a header that is both
-    /// `sectionsMovable` and `sectionsClickable`: the press that reorders a
-    /// section must not also sort it, so only a release that left the
-    /// permutation untouched counts as a click.
+    /// R1496 — whether the user may drag a section to a new position — Qt's
+    /// `QHeaderView::sectionsMovable()`.
+    #[must_use]
+    pub fn sections_movable(&self) -> bool {
+        self.movable.get()
+    }
+
+    /// R1496 — Qt's `setSectionsMovable()`. Governs the **interactive** move
+    /// only: [`move_section`](Self::move_section) and `swap_sections` keep
+    /// working, exactly as Qt's `moveSection()` does on a header the user
+    /// cannot drag. The split is the one R1494 already drew between
+    /// `resize_section` and `interactive_resize_section` — a permission is
+    /// about the gesture, not about the model.
+    pub fn set_sections_movable(&self, movable: bool) {
+        self.movable.set(movable);
+    }
+
+    /// R1496 — whether a press-release on a section is reported as a click —
+    /// Qt's `QHeaderView::sectionsClickable()`.
+    #[must_use]
+    pub fn sections_clickable(&self) -> bool {
+        self.clickable.get()
+    }
+
+    /// R1496 — Qt's `setSectionsClickable()`. Independent of
+    /// [`set_sections_movable`](Self::set_sections_movable): a header may be
+    /// clickable and pinned (the common sortable table) or movable and inert.
+    pub fn set_sections_clickable(&self, clickable: bool) {
+        self.clickable.set(clickable);
+    }
+
+    /// R1496 — arm a section drag, or refuse — the movable-gated peer of
+    /// [`ReorderModel::begin_drag_payload`], and what an owning `External`'s
+    /// `begin_drag` should call.
     ///
-    /// Returns the **logical** section that was clicked, or `None` when the
-    /// release moved something. The caller decides what a click means — this
-    /// type will not cycle its own indicator, because a header can be movable
-    /// and *not* clickable, and because the view, not the header, owns whether
-    /// a click sorts (Qt splits it the same way, through
-    /// `sectionsClickable`).
-    ///
-    /// Supersedes delegating straight to
-    /// [`sections()`](Self::sections)`.drag_release(..)`: that path cannot
-    /// answer this, having already forgotten which section was pressed.
-    pub fn release_section(
-        &self,
-        payload: &DragPayload,
-        over: Option<&DropPoint>,
-    ) -> Option<usize> {
-        // The permutation before and after is the discriminator, and it is the
-        // honest one: a drag that is dropped back into its own gap genuinely
-        // did not move the section, and Qt treats that as a click too.
-        let before = self.sections.order();
-        self.sections.drag_release(payload, over);
-        if self.sections.order() != before {
+    /// `None` on a header that is not movable, which is what makes the refusal
+    /// real: with no payload the router opens no session, so nothing previews a
+    /// drop and nothing commits one. The press is still recorded, so the
+    /// release is still a click — Qt keeps those two independent and so does
+    /// this.
+    #[must_use]
+    pub fn begin_section_drag(&self, kind: Cow<'static, str>) -> Option<DragPayload> {
+        if !self.sections_movable() {
             return None;
         }
-        // `begin_drag_payload` carries `order[pressed]` — the logical section,
-        // already in the key space the indicator uses.
-        match payload.value {
-            IntrospectValue::Int(i) => usize::try_from(i).ok().filter(|&l| l < self.count),
-            _ => None,
+        self.sections.begin_drag_payload(kind)
+    }
+
+    /// R1496 — commit a section drop. Supersedes R1491's `release_section`,
+    /// which also reported the **click**; that half was wrong twice over.
+    ///
+    /// It re-derived a determination the framework already owns. R794 §5.51 is
+    /// the click-vs-drag SSOT — it withholds the trailing `PointerUp` after a
+    /// drag that travelled past `DRAG_CLICK_THRESHOLD_PX`, and says in as many
+    /// words that no drag source re-derives this per binding. R1491 re-derived
+    /// it, from the permutation, and got a different answer: a section dragged
+    /// across the strip and dropped back into its own gap leaves the
+    /// permutation untouched, so that rule called it a click and sorted the
+    /// column the user had just decided not to move. Qt calls it a move, by the
+    /// same `startDragDistance` the router already applies here.
+    ///
+    /// So the click now arrives where every other draggable-and-clickable
+    /// widget in this workspace takes it — the trailing `PointerUp`, decoded in
+    /// [`handle_send`](Self::handle_send) — and this method only commits the
+    /// drop.
+    pub fn end_section_drag(&self, payload: &DragPayload, over: Option<&DropPoint>) {
+        self.sections.drag_release(payload, over);
+    }
+
+    /// R1496 — the `send` arm of [`invoke`](Self::invoke): decode the pointer
+    /// edge here and then hand it DOWN, so the reorder model still records the
+    /// press its `begin_drag_payload` reads.
+    ///
+    /// The press is remembered on both sides on purpose: the model's copy arms
+    /// the drag and is consumed by it, this one outlives the drag so the
+    /// release can still be a click.
+    ///
+    /// Answers the **logical** section a click landed on — `Null` otherwise —
+    /// because the router discards this return on the real pointer path. A
+    /// binding therefore acts on what it gets back from *this* call, inside its
+    /// own `invoke`, and an RPC client driving the same edges is told the same
+    /// thing.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::TypeMismatch`] when the argument is not text.
+    fn invoke_send(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(payload) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let clicked = self.handle_send(payload);
+        self.sections.invoke("send", args)?;
+        Ok(match clicked {
+            Some(logical) => IntrospectValue::Int(i64::try_from(logical).unwrap_or(0)),
+            None => IntrospectValue::Null,
+        })
+    }
+
+    /// R1496 — decode a `send` payload's pointer edge and report a **click**.
+    ///
+    /// Returns the **logical** section a press-release landed on, or `None`.
+    /// The caller decides what a click means — this type will not cycle its own
+    /// indicator, because what is sorted is the model's answer and a header can
+    /// be clickable without a sort attached (Qt splits it the same way, through
+    /// `sortIndicatorChanged`).
+    ///
+    /// Two rules, both Qt's:
+    ///
+    /// - the press and the release must be on the **same** section, so a press
+    ///   that slid onto a neighbour activates nothing;
+    /// - a moved drag is not a click — which needs no code here, because R794
+    ///   does not dispatch the release at all in that case.
+    ///
+    /// `PointerUp` only, not the broader [`is_activation_event`](crate::input::is_activation_event):
+    /// the header's click is a press-release *pair*, and the pair is what the
+    /// same-section rule tests. A keyboard activation has no press to pair
+    /// with, and Qt has no keyboard peer of `sectionClicked` to copy.
+    #[must_use]
+    pub fn handle_send(&self, payload: &str) -> Option<usize> {
+        let (sub, event, _mods) = split_send_payload(payload)?;
+        let visual: usize = sub.parse().ok()?;
+        if event == PointerWireEvent::Down.as_wire_name() {
+            if visual < self.count {
+                self.pressed_section.set(Some(visual));
+            }
+            return None;
         }
+        // The two edges that end a press WITHOUT activating it, named rather
+        // than assumed: a stray that wanders off the strip must not sort on
+        // some later release. The first draft inverted this — it dropped the
+        // press on every event it did not recognise — and the wire had one it
+        // had not enumerated. A second in-place gesture on the same section
+        // arrives as `PointerDown`, **`DoubleClick`**, `PointerUp`, so every
+        // other click was silently discarded. `DoubleClick` is not an
+        // abandonment; it is a second notification about the very press that is
+        // in flight.
+        if event == PointerWireEvent::Leave.as_wire_name()
+            || event == PointerWireEvent::Cancel.as_wire_name()
+        {
+            self.pressed_section.set(None);
+            return None;
+        }
+        if event != PointerWireEvent::Up.as_wire_name() {
+            return None;
+        }
+        let pressed = self.pressed_section.replace(None)?;
+        if pressed != visual || !self.sections_clickable() {
+            return None;
+        }
+        self.logical_index(visual)
     }
 
     /// R1492 — the smallest any section may be — Qt's
@@ -775,6 +986,13 @@ impl ColumnLayout {
     /// `intervene`) rather than a constant buried in a binding. The *consumer*
     /// honours it, exactly as it supplies the hints themselves — and reads it
     /// inside its view fn, which is why it subscribes.
+    ///
+    /// R1496 — and why it is saved. R1454 held that it "decides what a consumer
+    /// MEASURES, not what the header IS" and kept it out of
+    /// [`save_state`](Self::save_state); Qt serialises it
+    /// (`QHeaderViewPrivate::write()`), and the argument that made it a
+    /// `Signal` is the argument that saves it — a bound that is an input to a
+    /// painted width belongs with the widths it produced.
     #[must_use]
     pub fn resize_contents_precision(&self) -> usize {
         self.contents_precision.get()
@@ -1275,6 +1493,12 @@ impl ColumnLayout {
             min_section_size: self.sizes.min_width(),
             max_section_size: self.sizes.max_width(),
             cascading_section_resizes: self.cascading.get(),
+            // R1496 — the permissions travel with the layout they permit. The
+            // press in flight does not: that is gesture state, like the
+            // cascade above, and Qt saves neither.
+            sections_movable: self.movable.get(),
+            sections_clickable: self.clickable.get(),
+            resize_contents_precision: self.contents_precision.get(),
         }
     }
 
@@ -1332,6 +1556,15 @@ impl ColumnLayout {
         self.modes.set(state.modes.clone());
         self.sort_indicator.set(state.sort_indicator);
         self.sort_indicator_shown.set(state.sort_indicator_shown);
+        // R1496 — through the setter, so a restore that revokes the sampling
+        // bound cannot install a zero the header would never accept from a
+        // caller.
+        self.set_resize_contents_precision(state.resize_contents_precision);
+        self.movable.set(state.sections_movable);
+        self.clickable.set(state.sections_clickable);
+        // A restore replaces the layout wholesale, so a press taken against the
+        // outgoing one has nothing left to activate.
+        self.pressed_section.set(None);
         true
     }
 
@@ -1352,6 +1585,8 @@ impl ColumnLayout {
     /// - `sort_indicator` / `sort_indicator_section` / `sort_indicator_order` /
     ///   `sort_indicator_shown` (R1491)
     /// - `min_section_size` / `max_section_size` (R1492)
+    /// - `sections_movable` / `sections_clickable` (R1496) — Qt's two
+    ///   interaction permissions, both of which `saveState()` carries
     /// - `visual_index.<logical>` / `logical_index.<visual>`
     /// - `section_size.<logical>` / `section_hidden.<logical>` /
     ///   `section_position.<logical>` / `logical_index_at.<x>`
@@ -1387,6 +1622,10 @@ impl ColumnLayout {
             "cascading_section_resizes" => {
                 Some(IntrospectValue::Bool(self.cascading_section_resizes()))
             }
+            // R1496 — the two permissions, readable so a client can tell a
+            // header that refused a drag from one that has no drag to give.
+            "sections_movable" => Some(IntrospectValue::Bool(self.sections_movable())),
+            "sections_clickable" => Some(IntrospectValue::Bool(self.sections_clickable())),
             "hidden" => Some(json_of(self.hidden.get())),
             "visible_sections" => Some(json_of(self.visible_sections())),
             "visible_widths" => Some(json_of(self.visible_widths())),
@@ -1613,10 +1852,18 @@ impl ColumnLayout {
             // R1494 — Qt's `cascadingSectionResizes`, writable like the modes
             // and the bounds: an agent explores a layout by moving the rule.
             "cascading_section_resizes" => {
-                let IntrospectValue::Bool(on) = value else {
-                    return Err(InterveneError::TypeMismatch);
-                };
-                self.set_cascading_section_resizes(*on);
+                self.set_cascading_section_resizes(bool_rule(value)?);
+                Ok(())
+            }
+            // R1496 — Qt's `setSectionsMovable` / `setSectionsClickable`. Both
+            // writable for the reason the rules above are: a permission an
+            // agent can read but not move is one it cannot explore.
+            "sections_movable" => {
+                self.set_sections_movable(bool_rule(value)?);
+                Ok(())
+            }
+            "sections_clickable" => {
+                self.set_sections_clickable(bool_rule(value)?);
                 Ok(())
             }
             // R1454 — the row-sampling bound a `ResizeToContents` consumer
@@ -1684,8 +1931,13 @@ impl ColumnLayout {
     ///   `cycle_sort_indicator` — `<logical>` / `clear_sort_indicator`; each
     ///   returns the resulting indicator string
     ///
-    /// `send` / `move` / `grab` / `grab_cancel` / `move_section` fall through
-    /// to the embedded [`ReorderModel`].
+    /// - `send` — `"<visual>:<PointerEvent>"` (R1496); handled here for the
+    ///   click and then passed down, so the reorder model still records the
+    ///   press. Returns the **logical** section a press-release landed on,
+    ///   `Null` otherwise
+    ///
+    /// `move` / `grab` / `grab_cancel` / `move_section` fall through to the
+    /// embedded [`ReorderModel`].
     ///
     /// # Errors
     ///
@@ -1814,6 +2066,7 @@ impl ColumnLayout {
                 self.reset_default_section_size();
                 Ok(self.query("section_sizes").unwrap_or(IntrospectValue::Null))
             }
+            "send" => self.invoke_send(args),
             _ => self.sections.invoke(method, args),
         }
     }
@@ -1839,15 +2092,49 @@ impl ColumnLayout {
 /// factory both run inside one).
 #[must_use]
 pub fn use_column_layout(key: &'static str, sizes: impl FnOnce() -> Vec<u32>) -> Rc<ColumnLayout> {
+    use_column_layout_with(key, || ColumnLayout::new(sizes()))
+}
+
+/// R1496 §5.27 — [`use_column_layout`] for a header that needs configuring at
+/// **construction**: the general form, with the sizes-only one defined on top
+/// of it.
+///
+/// The permissions R1496 added ([`set_sections_movable`](ColumnLayout::set_sections_movable),
+/// [`set_sections_clickable`](ColumnLayout::set_sections_clickable)) are the
+/// reason it exists. They default to Qt's `false`, so a header that wants them
+/// has to say so — and it cannot say so from inside a view fn, because that
+/// runs on every pass and would overwrite whatever the user or an agent had
+/// since written. `build` runs once, on the pass that creates the layout.
+///
+/// # Panics
+///
+/// When called outside an active [`Owner`] scope, like [`use_column_layout`].
+#[must_use]
+pub fn use_column_layout_with(
+    key: &'static str,
+    build: impl FnOnce() -> ColumnLayout,
+) -> Rc<ColumnLayout> {
     Owner::current()
         .expect("use_column_layout requires an active Owner scope")
-        .cache(key, || ColumnLayout::new(sizes()))
+        .cache(key, build)
 }
 
 /// R1492 — decode a pixel bound written over the wire. The two size bounds are
 /// the same decode, and separating the *shape* error from the *value* error is
 /// the part worth having once: a client that sent a string learns something
 /// different from one that sent a number no width could be.
+/// R1496 — decode a boolean header rule written over the wire. The peer of
+/// [`px_bound`] for the flags, lifted on its third writer
+/// (`cascading_section_resizes` + the two permissions): a rule that silently
+/// accepted `1` on one path and refused it on another would be a wire the
+/// client cannot learn.
+fn bool_rule(value: &IntrospectValue) -> Result<bool, InterveneError> {
+    match value {
+        IntrospectValue::Bool(on) => Ok(*on),
+        _ => Err(InterveneError::TypeMismatch),
+    }
+}
+
 fn px_bound(value: &IntrospectValue) -> Result<u32, InterveneError> {
     let px = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
     u32::try_from(px).map_err(|_| InterveneError::OutOfRange)
@@ -2045,6 +2332,84 @@ mod tests {
         assert_eq!(l.section_size(2), 250);
         assert!(l.is_section_hidden(3));
         assert!(!l.is_section_hidden(0));
+    }
+
+    #[test]
+    fn a_restore_replays_the_permissions_and_the_sampling_bound() {
+        // R1496 — the three fields Qt's `QHeaderViewPrivate::write()` carries
+        // and this snapshot did not. Measured over the wire before the round:
+        // the header answered `resize_contents_precision` = 1000, saved a
+        // state, was moved to 7, restored — and stayed at 7. A snapshot that
+        // replays every content-fitted width while dropping the bound that
+        // produced them describes a header that never existed.
+        let l = interactive_layout();
+        l.set_resize_contents_precision(1000);
+        let saved = l.save_state();
+
+        l.set_sections_movable(false);
+        l.set_sections_clickable(false);
+        l.set_resize_contents_precision(7);
+        assert!(l.restore_state(&saved));
+
+        assert!(l.sections_movable(), "the permission came back");
+        assert!(l.sections_clickable(), "and so did the other one");
+        assert_eq!(l.resize_contents_precision(), 1000, "and the bound");
+        assert_eq!(l.save_state(), saved, "the whole object round-trips");
+    }
+
+    #[test]
+    fn a_restore_drops_a_press_taken_against_the_outgoing_layout() {
+        // R1496 — a restore replaces the permutation wholesale, so the section
+        // the press named may not be the section that is there now. Holding it
+        // would let the next release sort whatever landed in that position.
+        let l = interactive_layout();
+        let saved = l.save_state();
+        press(&l, 1);
+        assert!(l.restore_state(&saved));
+        assert_eq!(release(&l, 1), None, "the press did not survive");
+    }
+
+    #[test]
+    fn an_older_snapshot_restores_a_header_that_still_interacts() {
+        // R1496 — the one absent-field fallback in this decoder that is NOT a
+        // Qt default. A layout saved before this round came from a header with
+        // no such rule, which was unconditionally movable and clickable;
+        // decoding the absence as Qt's `false` would silently strip the
+        // interaction out of every layout anyone had already saved.
+        let mut older = interactive_layout().save_state().to_json();
+        for key in [
+            "sections_movable",
+            "sections_clickable",
+            "resize_contents_precision",
+        ] {
+            older.as_object_mut().expect("a json object").remove(key);
+        }
+
+        let decoded = ColumnLayoutState::from_json(&older).expect("the older shape still decodes");
+        assert!(
+            decoded.sections_movable,
+            "not Qt's default: the old header's"
+        );
+        assert!(decoded.sections_clickable);
+        assert_eq!(
+            decoded.resize_contents_precision, DEFAULT_CONTENTS_PRECISION,
+            "the bound falls back to the constant, like the other scalars"
+        );
+    }
+
+    #[test]
+    fn a_fresh_header_and_a_defaulted_state_agree_on_the_permissions() {
+        // The other side of the asymmetry above: `Default` is the state of a
+        // NEW header, so it has to be what one actually reports — or a consumer
+        // that diffs against it sees a change nobody made.
+        let fresh = layout().save_state();
+        let d = ColumnLayoutState::default();
+        assert_eq!(
+            (fresh.sections_movable, fresh.sections_clickable),
+            (d.sections_movable, d.sections_clickable),
+        );
+        assert!(!d.sections_movable, "and both are Qt's `false`");
+        assert!(!d.sections_clickable);
     }
 
     #[test]
@@ -2650,9 +3015,22 @@ mod tests {
             50,
             "the refusal changed nothing"
         );
-        // It does not touch the saved layout — it decides what a consumer
-        // MEASURES, not what the header IS.
-        assert_eq!(l.save_state(), layout().save_state());
+        // R1496 REVERSES R1454 here. This assertion read
+        // `assert_eq!(l.save_state(), layout().save_state())` — "it does not
+        // touch the saved layout; it decides what a consumer MEASURES, not what
+        // the header IS" — and that line does not hold. Qt saves it:
+        // `QHeaderViewPrivate::write()` serialises `resizeContentsPrecision`
+        // beside the section items, and reads it back conditionally so older
+        // streams still load, which is the same absent-is-the-older-shape rule
+        // this decoder already follows.
+        //
+        // R1454 had in fact already abandoned "policy, not state" once — it
+        // made this field a `Signal` on the grounds that the bound is an INPUT
+        // to a painted result — and kept the half that persistence depended on.
+        // A snapshot that replays every content-fitted width while dropping the
+        // rule that sized them restores an outcome without its cause.
+        assert_ne!(l.save_state(), layout().save_state());
+        assert_eq!(l.save_state().resize_contents_precision, 50);
         // But it is reactive, because a consumer reads it in its view fn: a
         // write that did not re-run the view could never reach the hints.
         // (The first draft used a plain `Cell` and the demo caught exactly
@@ -2735,13 +3113,35 @@ mod tests {
 
     /// Press `visual` so [`ReorderModel::begin_drag_payload`] can arm a drag,
     /// then hand back the payload the router would carry.
+    /// R1496 — a header with Qt's two permissions turned on, the posture a
+    /// reorderable, sortable view configures. `layout()` keeps Qt's defaults
+    /// (both off) so that the tests below which assert a refusal are asserting
+    /// the *boot* header rather than one this helper disarmed.
+    fn interactive_layout() -> ColumnLayout {
+        let l = layout();
+        l.set_sections_movable(true);
+        l.set_sections_clickable(true);
+        l
+    }
+
+    /// R1496 — a `PointerDown` on the section painted at `visual`, through the
+    /// layout's own `invoke` so BOTH presses are recorded: the reorder model's,
+    /// which the drag consumes, and the layout's, which outlives it.
     fn press(l: &ColumnLayout, visual: usize) -> DragPayload {
-        l.sections()
-            .invoke("send", &text(&format!("{visual}:PointerDown")))
+        l.invoke("send", &text(&format!("{visual}:PointerDown")))
             .expect("send accepts a pointer payload");
-        l.sections()
-            .begin_drag_payload(Cow::Borrowed("col"))
-            .expect("a pressed section arms a drag")
+        l.begin_section_drag(Cow::Borrowed("col"))
+            .expect("a pressed section of a movable header arms a drag")
+    }
+
+    /// R1496 — the trailing `PointerUp` the R794 router synthesizes for a
+    /// press-release that never became a drag. Answers the clicked **logical**
+    /// section, or `None`.
+    fn release(l: &ColumnLayout, visual: usize) -> Option<usize> {
+        match l.invoke("send", &text(&format!("{visual}:PointerUp"))) {
+            Ok(IntrospectValue::Int(logical)) => usize::try_from(logical).ok(),
+            _ => None,
+        }
     }
 
     /// A drop over the section painted at `visual`, on its trailing half — the
@@ -2805,41 +3205,160 @@ mod tests {
     }
 
     #[test]
-    fn a_click_names_its_section_but_a_drag_does_not() {
-        // The rule that makes a header both movable and clickable: the release
-        // that reorders a section must not also sort it. Both halves are
-        // asserted here because either alone passes a broken implementation —
+    fn a_click_is_a_press_and_a_release_on_the_same_section() {
+        // R1496 — Qt's rule (`logicalIndexAt(pos) == d->pressed`). Both halves
+        // are asserted because either alone passes a broken implementation —
         // "always Some" and "always None" each satisfy one.
-        let l = layout();
+        let l = interactive_layout();
 
-        let payload = press(&l, 1);
+        press(&l, 1);
         assert_eq!(
-            l.release_section(&payload, None),
+            release(&l, 1),
             Some(1),
-            "a release that moved nothing is a click on logical 1"
+            "released on the section it was pressed on: a click on logical 1"
         );
         assert_eq!(l.order(), vec![0, 1, 2, 3], "and it moved nothing");
 
-        let payload = press(&l, 0);
+        press(&l, 0);
         assert_eq!(
-            l.release_section(&payload, Some(&drop_after(2))),
+            release(&l, 2),
             None,
-            "a release that reordered is a drag, not a click"
+            "a press that slid onto a neighbour activates neither of them"
         );
-        assert_eq!(l.order(), vec![1, 2, 0, 3], "the drag still committed");
+    }
+
+    #[test]
+    fn a_drag_release_reports_no_click_of_its_own() {
+        // R1496 — the regression R1491 shipped. Its `release_section` derived
+        // the click from the permutation, so a section dragged across the strip
+        // and dropped back into its own gap read as a click and sorted the
+        // column the user had just decided not to move. Qt calls that a move,
+        // by `startDragDistance`; so does this workspace, in ONE place (R794
+        // withholds the trailing `PointerUp`). The drop commit therefore has no
+        // click to report — it cannot, because it does not know how far the
+        // cursor travelled, which is exactly why it must not be asked.
+        let l = interactive_layout();
+
+        let payload = press(&l, 0);
+        l.end_section_drag(&payload, Some(&drop_after(2)));
+        assert_eq!(l.order(), vec![1, 2, 0, 3], "the drag committed");
+
+        let payload = press(&l, 0);
+        l.end_section_drag(&payload, None);
+        assert_eq!(
+            l.order(),
+            vec![1, 2, 0, 3],
+            "and a drop back into its own gap commits nothing"
+        );
+        assert_eq!(
+            l.sort_indicator(),
+            None,
+            "neither release sorted anything: the drop commit is not a click"
+        );
     }
 
     #[test]
     fn a_click_on_a_moved_section_names_the_column_not_the_position() {
         // The composition the two halves exist for: after a reorder, the
         // section painted third IS logical 0, and clicking it has to sort
-        // logical 0. A `release_section` that returned the visual index would
-        // answer 2 here and sort the wrong column.
-        let l = layout();
+        // logical 0. A click that answered the visual index would answer 2
+        // here and sort the wrong column.
+        let l = interactive_layout();
         l.move_section(0, 2);
 
-        let payload = press(&l, 2);
-        assert_eq!(l.release_section(&payload, None), Some(0));
+        press(&l, 2);
+        assert_eq!(release(&l, 2), Some(0));
+    }
+
+    #[test]
+    fn the_two_permissions_are_independent() {
+        // R1496 — THE claim, and the reason both properties exist rather than
+        // one. Qt keeps `sectionsMovable` and `sectionsClickable` apart, and a
+        // sortable-but-pinned header is the commoner of the two shapes.
+        let l = layout();
+        assert!(!l.sections_movable(), "off by default, as in Qt");
+        assert!(!l.sections_clickable(), "off by default, as in Qt");
+
+        l.set_sections_clickable(true);
+        l.invoke("send", &text("1:PointerDown"))
+            .expect("send accepts a pointer payload");
+        assert!(
+            l.begin_section_drag(Cow::Borrowed("col")).is_none(),
+            "a header that is not movable arms no drag session at all"
+        );
+        assert_eq!(
+            release(&l, 1),
+            Some(1),
+            "and the press it refused to drag is still a click"
+        );
+
+        let l = layout();
+        l.set_sections_movable(true);
+        press(&l, 1);
+        assert_eq!(
+            release(&l, 1),
+            None,
+            "the mirror: a movable header that is not clickable reports no click"
+        );
+    }
+
+    #[test]
+    fn the_programmatic_move_ignores_the_movable_rule() {
+        // R1496 — the R1494 split, applied to the other gesture: the property
+        // governs what a HAND may do. Qt's `moveSection()` reorders a header
+        // the user cannot drag, and so does this.
+        let l = layout();
+        assert!(!l.sections_movable());
+        l.move_section(0, 2);
+        assert_eq!(
+            l.order(),
+            vec![1, 2, 0, 3],
+            "moveSection is not the gesture"
+        );
+        l.swap_sections(0, 1);
+        assert_eq!(l.order(), vec![2, 1, 0, 3], "nor is swapSections");
+    }
+
+    #[test]
+    fn a_press_that_wanders_off_the_strip_activates_nothing() {
+        // R1496 — a leave or a cancel ends the press. Without this the pressed
+        // section outlives the gesture and the NEXT release anywhere on the
+        // strip sorts it.
+        let l = interactive_layout();
+
+        press(&l, 1);
+        l.invoke("send", &text("1:PointerLeave"))
+            .expect("send accepts a pointer payload");
+        assert_eq!(release(&l, 1), None, "the press was abandoned");
+
+        press(&l, 1);
+        l.invoke("send", &text("1:PointerCancel"))
+            .expect("send accepts a pointer payload");
+        assert_eq!(release(&l, 1), None, "and cancel abandons it too");
+    }
+
+    #[test]
+    fn a_second_click_in_place_is_not_swallowed_by_the_double_click_edge() {
+        // Measured on the real router: the SECOND in-place gesture on one
+        // section arrives as `PointerDown`, `DoubleClick`, `PointerUp`. The
+        // first draft of `handle_send` dropped the press on any event it did
+        // not recognise, so every other click vanished and the indicator could
+        // never be cycled past `ascending` by hand.
+        let l = interactive_layout();
+
+        press(&l, 1);
+        assert_eq!(release(&l, 1), Some(1));
+        l.cycle_sort_indicator(1);
+        assert_eq!(l.sort_indicator(), Some((1, true)));
+
+        press(&l, 1);
+        l.invoke("send", &text("1:DoubleClick"))
+            .expect("send accepts a pointer payload");
+        assert_eq!(
+            release(&l, 1),
+            Some(1),
+            "the second notification about a live press does not end it"
+        );
     }
 
     #[test]
@@ -2914,6 +3433,40 @@ mod tests {
             ColumnLayoutState::from_json(&older).expect("an older snapshot still decodes");
         assert_eq!(decoded.sort_indicator, None);
         assert!(!decoded.sort_indicator_shown);
+    }
+
+    #[test]
+    fn the_header_reads_and_writes_its_permissions_over_the_wire() {
+        // R1496 — measured absent before the round: both paths answered
+        // `UnknownIntrospectPath`, so a client could not tell a header that
+        // refused a drag from one that had no drag to give.
+        let l = layout();
+        assert_eq!(
+            l.query("sections_movable"),
+            Some(IntrospectValue::Bool(false))
+        );
+        assert_eq!(
+            l.query("sections_clickable"),
+            Some(IntrospectValue::Bool(false))
+        );
+
+        l.intervene("sections_movable", &IntrospectValue::Bool(true))
+            .expect("the permission is writable");
+        assert!(l.sections_movable());
+        assert!(
+            !l.sections_clickable(),
+            "and the write hit only one of them"
+        );
+
+        l.intervene("sections_clickable", &IntrospectValue::Bool(true))
+            .expect("so is the other");
+        assert!(l.sections_clickable());
+
+        assert_eq!(
+            l.intervene("sections_movable", &IntrospectValue::Int(1)),
+            Err(InterveneError::TypeMismatch),
+            "a permission is a boolean, and a client that sent 1 is told so"
+        );
     }
 
     #[test]

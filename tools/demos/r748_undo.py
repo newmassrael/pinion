@@ -154,4 +154,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R748 §5.52 — undo/redo command stack", body)
+    sys.exit(run_demo("R748 §5.52 — undo/redo command stack", body))

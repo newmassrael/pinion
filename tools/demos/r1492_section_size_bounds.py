@@ -239,11 +239,14 @@ is that request clamped")                                                       
         # A clamp whose rule is invisible reads as a bug: "I dragged and it
         # stopped" needs a visible cause.
         readout = find_by_tag(_paint(tf), LAYOUT_TAG)["content"]
-        assert readout.endswith("| bounds 40..-"), \
+        # R1496 appended the permissions to this row, so the bounds are no
+        # longer its tail; they are still one contiguous claim, which is what
+        # this checks.
+        assert "| bounds 40..- |" in readout, \
             f"the unbounded default reads as '-', not as 4294967295: {readout}"   # 32
         tf.intervene("/external/max_section_size", 130)
-        wait_until(lambda: find_by_tag(_paint(tf), LAYOUT_TAG)["content"]
-                   .endswith("| bounds 40..130"),
+        wait_until(lambda: "| bounds 40..130 |"
+                   in find_by_tag(_paint(tf), LAYOUT_TAG)["content"],
                    desc="the painted rule names both ends")                       # 33
         assert_eq(_h(tf, "sizes"), [130, 90, 100, 130, 100],
                   "and the sections over the ceiling came down to it")            # 34

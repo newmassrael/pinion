@@ -225,4 +225,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("r877_node_canvas_viewport", body)
+    sys.exit(run_demo("r877_node_canvas_viewport", body))

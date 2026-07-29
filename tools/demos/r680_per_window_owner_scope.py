@@ -370,7 +370,7 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo(
+    sys.exit(run_demo(
         "R680 §5.16 §5.28 §5.41 — per-window Owner scope substrate",
         body,
-    )
+    ))

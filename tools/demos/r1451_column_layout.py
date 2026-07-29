@@ -107,6 +107,17 @@ IDENTITY = {
     # made a field's arrival visible instead of letting it in unremarked; the
     # cost of updating it is the price of that, and it is cheap.
     "cascading_section_resizes": False,
+    # R1496 — a fourth time, and the largest addition yet: Qt's two interaction
+    # permissions (`movableSections` / `clickableSections`) and the sampling
+    # bound (`resizeContentsPrecision`), all three of which
+    # `QHeaderViewPrivate::write()` serialises. The bound is the interesting
+    # one: R1454 put it on the header and DECIDED to keep it out of the
+    # snapshot, so this equality had been agreeing with a stated decision rather
+    # than with Qt. `True` for both permissions is this app's declaration, not
+    # `ColumnLayout`'s default, which is Qt's `false`.
+    "sections_movable": True,
+    "sections_clickable": True,
+    "resize_contents_precision": 1000,
 }
 
 

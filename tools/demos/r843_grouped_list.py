@@ -196,4 +196,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R843 §5.27 §5.40 — group-by on a virtualized list", body)
+    sys.exit(run_demo("R843 §5.27 §5.40 — group-by on a virtualized list", body))

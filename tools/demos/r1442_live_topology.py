@@ -274,4 +274,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("r1442_live_topology", body)
+    sys.exit(run_demo("r1442_live_topology", body))

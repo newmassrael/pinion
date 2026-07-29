@@ -139,4 +139,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R845 §5.27 §5.40 — grouped multi-column data grid", body)
+    sys.exit(run_demo("R845 §5.27 §5.40 — grouped multi-column data grid", body))

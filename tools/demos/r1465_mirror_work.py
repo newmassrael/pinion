@@ -244,4 +244,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    run_demo("R1465 the stored mirror settles and reports (hello-tail-reveal)", body)
+    sys.exit(run_demo("R1465 the stored mirror settles and reports (hello-tail-reveal)", body))
