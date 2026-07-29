@@ -171,6 +171,12 @@ reclaiming oldest artifacts with `cargo sweep --maxsize` (`.githooks/lib/target-
   leave the trend unseen. Cost: one `du -sb`, ~0.12s.
 - **Size, not age**: what ran out was space. `--time N` reclaims nothing during
   a heavy week and deletes useful artifacts during a quiet one.
+- **Dead-toolchain artifacts go first, unconditionally** (R1488, `cargo sweep
+  --installed`): a toolchain rustup no longer has cannot build anything, so
+  that removal is provably free and is not budget-gated. Measured today it
+  reclaims **nothing** — `rust-toolchain.toml` pins an exact `1.88.0`, so the
+  project has never rotated toolchains and the 198 GiB was entirely
+  same-toolchain accretion. It earns its place when that pin moves.
 - **Runs last, after the build gates** — they build, so their artifacts are
   newest and an oldest-first sweep cannot remove them. Verified: an 18 GiB
   sweep left `cargo check -p pinion-rpc --all-targets` at 3.7s.

@@ -73888,6 +73888,56 @@
         "The budget is enforced at push time only. A session that builds heavily without pushing is unbounded until its next push; a round that never pushes never reports."
       ]
     },
+    "Round 1488": {
+      "decision_summary": "Dead-toolchain artifacts are dropped unconditionally before the build cache is measured: that removal is provably free, so gating it on a size budget would carry dead weight whenever the tree happens to fit.",
+      "changes_bullets": [
+        "`enforce_target_budget` now calls a new `sweep_uninstalled_toolchains` first: `cargo sweep --installed` drops artifacts built by a toolchain rustup no longer has.",
+        "Unconditional, unlike the size sweep — a toolchain that is not installed cannot build anything, so nothing it produced can ever be reused and removing it costs no rebuild. Budget-gating a free removal would carry dead weight whenever the tree is under budget.",
+        "Runs BEFORE the size is measured, so dead-toolchain bytes are not counted toward a budget the workspace is not actually using.",
+        "Silent when it reclaims nothing, which is this repo's normal outcome; only a non-empty reclaim prints.",
+        "`CLAUDE.md` records the step and, more importantly, why it reclaims nothing here today."
+      ],
+      "verification_bullets": [
+        "Measured before implementing: `cargo sweep --installed --dry-run` reports \"Would clean: nothing\" on the 50 GiB tree. The reason is structural, not incidental — `rust-toolchain.toml` pins `channel = \"1.88.0\"`, an exact version rather than `stable`, so every build in the project's history used one rustc which is still installed. There has never been a toolchain rotation, so there is no rotation debris: the 198 GiB R1486 addressed was entirely SAME-toolchain accretion.",
+        "Kept anyway on a measured cost of 0.33s (`du -sb` on the same tree is 0.18s) and a foreseen trigger: `rust-toolchain.toml` states that bumping past 1.88 is expected on a workspace-dep trigger, and at that moment the tree can hold two toolchains' artifacts while still under budget, so the size sweep would not fire and the dead half would be carried indefinitely.",
+        "Four paths executed. Real no-reclaim: silent. Reclaim: verified against a PATH stub reproducing cargo-sweep's observed output shape — prints one line, suppressing the tool's installed-toolchain list. Full function: unchanged budget behaviour (\"target/ is 51 GiB (budget 100 GiB)\"). Missing `cargo-sweep`: silent rc=0.",
+        "The reclaim test caught a defect in the first draft: a real `cargo sweep` prints `Cleaned nothing` rather than staying silent when there is nothing to reclaim, which a DRY RUN never shows (it prints `Would clean: nothing` instead). The filter had been written against dry-run output and would have printed a meaningless line on every push, diluting the size report. Fixed and re-verified.",
+        "Also measured and REJECTED this round: the `--stamp` / `--file` build-aware flow. After a fully warm `cargo clippy --workspace --all-targets --features pinion-runtime/vello` plus `cargo doc --workspace` that rebuilt nothing, `--file` would remove 26.16 GiB of 50 GiB, including all 2539 `target/release` entries (5.0 GiB of demo example binaries the next round rebuilds). Its precision is relative to the build set bracketed by the stamp, and this repo's push gate runs only one of the several configurations a round cycles through — the same fact `ci.yml` already records from R1475 (\"cargo resolves features per invocation ... a superset is not a warm cache\").",
+        "`shellcheck -x` clean on `lib/target-budget.sh` and `pre-push`."
+      ],
+      "impact_refs": [
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "Reclaims nothing until `rust-toolchain.toml`'s pin moves. That is a measured statement about today, not a claim that the step is inert: the pin is documented as movable on a workspace-dep trigger.",
+        "Everything R1486 carried still holds — not a lock against a concurrent build, timestamp-granularity overshoot in the size sweep, push-time enforcement only, and pinion alone being bounded while sibling repos hold 360G+ of very likely the same accretion.",
+        "Not pushed with this commit: another session holds `crates/pinion-rpc` mid-refactor for Round 1487 and the workspace does not currently compile, so the unconditional clippy gate in pre-push would fail on work that is not this round's. Only this round's files were staged."
+      ],
+      "publishable_decision_summary": "Dead-toolchain artifacts are dropped unconditionally before the build cache is measured: that removal is provably free, so gating it on a size budget would carry dead weight whenever the tree happens to fit.",
+      "publishable_changes_bullets": [
+        "`enforce_target_budget` now calls a new `sweep_uninstalled_toolchains` first: `cargo sweep --installed` drops artifacts built by a toolchain rustup no longer has.",
+        "Unconditional, unlike the size sweep — a toolchain that is not installed cannot build anything, so nothing it produced can ever be reused and removing it costs no rebuild. Budget-gating a free removal would carry dead weight whenever the tree is under budget.",
+        "Runs BEFORE the size is measured, so dead-toolchain bytes are not counted toward a budget the workspace is not actually using.",
+        "Silent when it reclaims nothing, which is this repo's normal outcome; only a non-empty reclaim prints.",
+        "`CLAUDE.md` records the step and, more importantly, why it reclaims nothing here today."
+      ],
+      "publishable_verification_bullets": [
+        "Measured before implementing: `cargo sweep --installed --dry-run` reports \"Would clean: nothing\" on the 50 GiB tree. The reason is structural, not incidental — `rust-toolchain.toml` pins `channel = \"1.88.0\"`, an exact version rather than `stable`, so every build in the project's history used one rustc which is still installed. There has never been a toolchain rotation, so there is no rotation debris: the 198 GiB R1486 addressed was entirely SAME-toolchain accretion.",
+        "Kept anyway on a measured cost of 0.33s (`du -sb` on the same tree is 0.18s) and a foreseen trigger: `rust-toolchain.toml` states that bumping past 1.88 is expected on a workspace-dep trigger, and at that moment the tree can hold two toolchains' artifacts while still under budget, so the size sweep would not fire and the dead half would be carried indefinitely.",
+        "Four paths executed. Real no-reclaim: silent. Reclaim: verified against a PATH stub reproducing cargo-sweep's observed output shape — prints one line, suppressing the tool's installed-toolchain list. Full function: unchanged budget behaviour (\"target/ is 51 GiB (budget 100 GiB)\"). Missing `cargo-sweep`: silent rc=0.",
+        "The reclaim test caught a defect in the first draft: a real `cargo sweep` prints `Cleaned nothing` rather than staying silent when there is nothing to reclaim, which a DRY RUN never shows (it prints `Would clean: nothing` instead). The filter had been written against dry-run output and would have printed a meaningless line on every push, diluting the size report. Fixed and re-verified.",
+        "Also measured and REJECTED this round: the `--stamp` / `--file` build-aware flow. After a fully warm `cargo clippy --workspace --all-targets --features pinion-runtime/vello` plus `cargo doc --workspace` that rebuilt nothing, `--file` would remove 26.16 GiB of 50 GiB, including all 2539 `target/release` entries (5.0 GiB of demo example binaries the next round rebuilds). Its precision is relative to the build set bracketed by the stamp, and this repo's push gate runs only one of the several configurations a round cycles through — the same fact `ci.yml` already records from R1475 (\"cargo resolves features per invocation ... a superset is not a warm cache\").",
+        "`shellcheck -x` clean on `lib/target-budget.sh` and `pre-push`."
+      ],
+      "publishable_impact_refs": [
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Reclaims nothing until `rust-toolchain.toml`'s pin moves. That is a measured statement about today, not a claim that the step is inert: the pin is documented as movable on a workspace-dep trigger.",
+        "Everything R1486 carried still holds — not a lock against a concurrent build, timestamp-granularity overshoot in the size sweep, push-time enforcement only, and pinion alone being bounded while sibling repos hold 360G+ of very likely the same accretion.",
+        "Not pushed with this commit: another session holds `crates/pinion-rpc` mid-refactor for Round 1487 and the workspace does not currently compile, so the unconditional clippy gate in pre-push would fail on work that is not this round's. Only this round's files were staged."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

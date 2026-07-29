@@ -59,6 +59,46 @@
 # reached. Override per-machine with `PINION_TARGET_BUDGET_GB`.
 TARGET_BUDGET_GB_DEFAULT=100
 
+# Drop artifacts built by a toolchain rustup no longer has.
+#
+# Unconditional, unlike the budget sweep below, because this removal is
+# provably free rather than a trade: a toolchain that is not installed cannot
+# build anything, so nothing here can ever be reused and deleting it costs no
+# rebuild. Budget-gating a free removal would mean carrying dead weight
+# whenever the tree happens to be under budget.
+#
+# Measured 2026-07-29: reclaims NOTHING in this repo, and the reason is worth
+# stating so a later reader does not mistake it for a broken step.
+# `rust-toolchain.toml` pins `channel = "1.88.0"` — an exact version, not
+# `stable` — so every build in the project's history used one rustc, which is
+# still installed. There has been no toolchain rotation, so there is no
+# rotation debris; the 198 GiB this file exists for was entirely SAME-toolchain
+# accretion. It earns its place at the moment that pin moves, which the
+# toolchain file anticipates ("Bumping past 1.88 needs a similar trigger from
+# a workspace dep"): the tree can then hold two toolchains' artifacts without
+# exceeding the budget, so the size sweep would not fire and the dead half
+# would be carried indefinitely. Cost measured at 0.33s.
+sweep_uninstalled_toolchains() {
+    local repo_root="$1"
+    local label="$2"
+
+    command -v cargo-sweep >/dev/null 2>&1 || return 0
+    ( cd "$repo_root" && cargo sweep --installed 2>&1 ) | while read -r line; do
+        # Only a non-empty reclaim is worth a line. The tool also echoes the
+        # full installed-toolchain list, and — the case a dry run does NOT
+        # show — reports `Cleaned nothing` rather than staying silent when
+        # there was nothing to reclaim. That is this step's normal outcome in
+        # this repo, so passing it through would print a meaningless line on
+        # every push and dilute the size report, which is the line that
+        # matters.
+        case "$line" in
+            *"Cleaned nothing"*) ;;
+            *"Cleaned"*) echo "$label: reclaimed dead-toolchain artifacts — $line" >&2 ;;
+        esac
+    done
+    return 0
+}
+
 # Report the workspace build-cache size and, when it exceeds the budget,
 # reclaim oldest artifacts until it fits. Never fails the caller.
 enforce_target_budget() {
@@ -67,6 +107,11 @@ enforce_target_budget() {
     local label="${2:-hook}"
 
     [[ -d "$target" ]] || return 0
+
+    # Before measuring: dead-toolchain artifacts are not part of what the
+    # workspace legitimately needs, so counting them toward the budget would
+    # report a size the project is not actually using.
+    sweep_uninstalled_toolchains "$repo_root" "$label"
 
     local budget_gb="${PINION_TARGET_BUDGET_GB:-$TARGET_BUDGET_GB_DEFAULT}"
     if [[ ! "$budget_gb" =~ ^[1-9][0-9]*$ ]]; then
