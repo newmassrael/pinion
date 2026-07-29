@@ -47,13 +47,48 @@ use crate::widgets::scroll::ScrollState;
 /// that hides its content or vanishes entirely.
 pub const DEFAULT_MIN_COL_WIDTH: u32 = 40;
 
-/// (R785.1) The single clamp the floor invariant flows through — every entry
-/// raised to at least `min`. Shared by construction
-/// ([`ColumnWidths::new`]), floor change ([`ColumnWidths::with_min_width`]),
-/// and whole-vector restore ([`ColumnWidths::set_widths`]) so the
-/// "width ≥ `min_width`" invariant has one enforcement site.
-fn clamp_widths(widths: Vec<u32>, min: u32) -> Vec<u32> {
-    widths.into_iter().map(|w| w.max(min)).collect()
+/// R1492 — default maximum column width: **no ceiling**. Qt spells the same
+/// default `QWIDGETSIZE_MAX`, a sentinel large enough that no real column
+/// reaches it; `u32::MAX` says the same thing without inviting a caller to
+/// treat the sentinel as a real limit.
+///
+/// A ceiling is not decoration. Before this, a `resize_section` of 99999 into a
+/// 700px window applied *verbatim*, and a `ResizeToContents` section took its
+/// content hint however long one pathological cell was — the failure mode a DCC
+/// grid meets the first time a column holds a full path or an encoded blob.
+pub const DEFAULT_MAX_COL_WIDTH: u32 = u32::MAX;
+
+/// (R785.1, R1492) The single clamp both bound invariants flow through — every
+/// entry raised to at least `min` and lowered to at most `max`. Shared by
+/// construction ([`ColumnWidths::new`]), either bound changing
+/// ([`ColumnWidths::set_min_width`] / [`ColumnWidths::set_max_width`]),
+/// whole-vector restore ([`ColumnWidths::set_widths`]), and the derived sizes a
+/// [`ColumnLayout`](crate::widgets::column_layout::ColumnLayout) resolves, so
+/// "`min` ≤ width ≤ `max`" has one enforcement site rather than one per size
+/// path.
+fn clamp_widths(widths: Vec<u32>, min: u32, max: u32) -> Vec<u32> {
+    widths
+        .into_iter()
+        .map(|w| clamp_width(w, min, max))
+        .collect()
+}
+
+/// The scalar half of [`clamp_widths`] — the actual rule, so no caller writes
+/// `.max(min)` and forgets the ceiling (the way every size path did before
+/// R1492).
+///
+/// `max` is floored to `min` first: the two bounds are set independently, and a
+/// caller who lowers the ceiling below the floor must still get a width, not an
+/// empty range. The setters keep the pair ordered so this cannot normally
+/// happen; this makes the rule total anyway.
+const fn clamp_width(width: u32, min: u32, max: u32) -> u32 {
+    if width < min {
+        min
+    } else if width > max {
+        if max < min { min } else { max }
+    } else {
+        width
+    }
 }
 
 /// R785 §5.27 — reactive per-column widths for one data grid.
@@ -70,7 +105,16 @@ pub struct ColumnWidths {
     /// Per-column widths in logical pixels; `widths.len()` is the column count.
     widths: Signal<Vec<u32>>,
     /// Lower clamp applied on every width write.
-    min_width: u32,
+    ///
+    /// R1492 — reactive, and it had to become so when it stopped being a
+    /// construction-time constant: a bound is an INPUT to a derived size (a
+    /// `ResizeToContents` hint and a `Stretch` share both read it), so a view
+    /// that re-runs only on `widths` would keep painting the old floor. The
+    /// R1454 `contents_precision` correction, exactly.
+    min_width: Signal<u32>,
+    /// R1492 — upper clamp applied on every width write. Qt's
+    /// `QHeaderView::maximumSectionSize`; [`DEFAULT_MAX_COL_WIDTH`] means none.
+    max_width: Signal<u32>,
 }
 
 impl ColumnWidths {
@@ -84,11 +128,12 @@ impl ColumnWidths {
     /// column can never be *narrower* than its minimum, however it was sized).
     #[must_use]
     pub fn new(widths: Vec<u32>) -> Self {
-        let widths = clamp_widths(widths, DEFAULT_MIN_COL_WIDTH);
+        let widths = clamp_widths(widths, DEFAULT_MIN_COL_WIDTH, DEFAULT_MAX_COL_WIDTH);
         Self {
             tag: None,
             widths: Signal::new(widths),
-            min_width: DEFAULT_MIN_COL_WIDTH,
+            min_width: Signal::new(DEFAULT_MIN_COL_WIDTH),
+            max_width: Signal::new(DEFAULT_MAX_COL_WIDTH),
         }
     }
 
@@ -107,13 +152,63 @@ impl ColumnWidths {
     /// already-stored width up to the new floor so the "width ≥ `min_width`"
     /// invariant holds after the floor moves too (R785.1 audit-correction).
     #[must_use]
-    pub fn with_min_width(mut self, min_width: u32) -> Self {
-        self.min_width = min_width;
-        // `set_with` reads the current vector by reference (no subscription)
-        // and equality-skips, so a no-op floor change does not churn.
-        self.widths
-            .set_with(|w| w.iter().map(|&x| x.max(min_width)).collect());
+    pub fn with_min_width(self, min_width: u32) -> Self {
+        self.set_min_width(min_width);
         self
+    }
+
+    /// R1492 — the ceiling's builder form, the peer of
+    /// [`with_min_width`](Self::with_min_width).
+    #[must_use]
+    pub fn with_max_width(self, max_width: u32) -> Self {
+        self.set_max_width(max_width);
+        self
+    }
+
+    /// R1492 — move the floor at runtime, re-clamping every stored width — Qt's
+    /// `QHeaderView::setMinimumSectionSize`, which is a setter, not a
+    /// construction argument. A floor above the current ceiling raises the
+    /// ceiling with it, so the two never describe an empty range; the caller
+    /// learns what actually happened by reading either back, which is the whole
+    /// reason both are readable.
+    pub fn set_min_width(&self, min_width: u32) {
+        self.min_width.set(min_width);
+        if self.max_width.get() < min_width {
+            self.max_width.set(min_width);
+        }
+        self.reclamp();
+    }
+
+    /// R1492 — move the ceiling at runtime — Qt's
+    /// `QHeaderView::setMaximumSectionSize`. A ceiling below the current floor
+    /// lowers the floor with it (the mirror of
+    /// [`set_min_width`](Self::set_min_width)).
+    pub fn set_max_width(&self, max_width: u32) {
+        self.max_width.set(max_width);
+        if self.min_width.get() > max_width {
+            self.min_width.set(max_width);
+        }
+        self.reclamp();
+    }
+
+    /// Re-apply both bounds to every stored width. `set_with` reads the current
+    /// vector by reference (no subscription) and equality-skips, so a no-op
+    /// bound change does not churn.
+    fn reclamp(&self) {
+        let (min, max) = (self.min_width.get(), self.max_width.get());
+        self.widths
+            .set_with(|w| w.iter().map(|&x| clamp_width(x, min, max)).collect());
+    }
+
+    /// R1492 — the bounds applied to `width`, for the derived sizes a
+    /// [`ColumnLayout`](crate::widgets::column_layout::ColumnLayout) resolves
+    /// outside this type (a content hint, a stretch share). Exposed so those
+    /// paths call the rule instead of re-deriving half of it, which is exactly
+    /// what they did before this round: each applied the floor and neither knew
+    /// about a ceiling.
+    #[must_use]
+    pub fn clamp(&self, width: u32) -> u32 {
+        clamp_width(width, self.min_width.get(), self.max_width.get())
     }
 
     /// The [`use_column_widths`] cache key, or `None` when constructed directly.
@@ -122,10 +217,19 @@ impl ColumnWidths {
         self.tag
     }
 
-    /// The resize floor (a width write clamps up to this).
+    /// The resize floor (a width write clamps up to this). Subscribes when read
+    /// inside a view-fn, so a view that derives a size from it re-runs when it
+    /// moves.
     #[must_use]
     pub fn min_width(&self) -> u32 {
-        self.min_width
+        self.min_width.get()
+    }
+
+    /// R1492 — the resize ceiling (a width write clamps down to this).
+    /// [`DEFAULT_MAX_COL_WIDTH`] means there is none. Subscribes.
+    #[must_use]
+    pub fn max_width(&self) -> u32 {
+        self.max_width.get()
     }
 
     /// Column count. Subscribes when read inside a view-fn.
@@ -142,7 +246,7 @@ impl ColumnWidths {
             .get()
             .get(col)
             .copied()
-            .unwrap_or(self.min_width)
+            .unwrap_or_else(|| self.min_width())
     }
 
     /// A snapshot of every column width (cheap `Vec` clone). Subscribes when
@@ -159,7 +263,8 @@ impl ColumnWidths {
         self.widths.get().iter().copied().sum()
     }
 
-    /// Set column `col`'s width, clamping up to [`min_width`](Self::min_width).
+    /// Set column `col`'s width, clamped into
+    /// [`min_width`](Self::min_width)`..=`[`max_width`](Self::max_width).
     /// A `Signal` write repaints every view that read a width. An out-of-range
     /// `col` is a silent no-op. Returns the resulting (clamped) width so the
     /// AI-first `set_col_width` path reports the applied value in one
@@ -174,7 +279,7 @@ impl ColumnWidths {
                   Mirrors ScrollState::set_max."
     )]
     pub fn set_width(&self, col: usize, width: u32) -> u32 {
-        let clamped = width.max(self.min_width);
+        let clamped = self.clamp(width);
         let mut applied = 0;
         self.widths.set_with(|w| {
             let mut next = w.clone();
@@ -187,11 +292,15 @@ impl ColumnWidths {
         applied
     }
 
-    /// Replace all column widths at once (admin / restore), clamping each up to
-    /// [`min_width`](Self::min_width). Keeps the column count of the supplied
+    /// Replace all column widths at once (admin / restore), clamping each into
+    /// the bound range. Keeps the column count of the supplied
     /// vector — a caller restoring a malformed width set is its own concern.
     pub fn set_widths(&self, widths: Vec<u32>) {
-        self.widths.set(clamp_widths(widths, self.min_width));
+        self.widths.set(clamp_widths(
+            widths,
+            self.min_width.get(),
+            self.max_width.get(),
+        ));
     }
 }
 
@@ -291,7 +400,8 @@ impl ExternalIntrospect for ColumnWidthExternal {
         // `widths`        — comma-separated per-column widths (query + intervene).
         // `total`         — sum of widths = content width (query only).
         // `cols`          — column count (query only).
-        // `min_width`     — the resize floor (query only).
+        // `min_width`     — the resize floor (query + intervene, R1492).
+        // `max_width`     — the resize ceiling (query + intervene, R1492).
         // `width.<col>`   — one column's width (query only).
         // `set_col_width` — `"<col>=<width>"` invoke; returns the applied width.
         IntrospectSchema::new(
@@ -301,6 +411,7 @@ impl ExternalIntrospect for ColumnWidthExternal {
                     SchemaField::new("total", "int"),
                     SchemaField::new("cols", "int"),
                     SchemaField::new("min_width", "int"),
+                    SchemaField::new("max_width", "int"),
                     // R1353 §2 #2 — `width.<col>` is PARAMETRIC, and now says so:
                     // an agent reads the declared arg instead of guessing that a
                     // path typed `int` like `total` needs `.0` appended, and
@@ -341,6 +452,7 @@ impl ExternalIntrospect for ColumnWidthExternal {
                 i64::try_from(self.state.col_count()).unwrap_or(i64::MAX),
             )),
             "min_width" => Some(IntrospectValue::Int(i64::from(self.state.min_width()))),
+            "max_width" => Some(IntrospectValue::Int(i64::from(self.state.max_width()))),
             _ => None,
         }
     }
@@ -355,7 +467,28 @@ impl ExternalIntrospect for ColumnWidthExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            "total" | "cols" | "min_width" | "width" => Err(InterveneError::ReadOnly),
+            // R1492 — both bounds became runtime settings (Qt's two setters),
+            // so this surface had to stop calling the floor read-only. The
+            // `ColumnLayout` over the SAME model exposes them as writable; a
+            // door that refused what the other door allows would be the R1484
+            // split, over one piece of state rather than one address.
+            "min_width" => match value.as_usize() {
+                Some(px) => {
+                    self.state
+                        .set_min_width(u32::try_from(px).map_err(|_| InterveneError::OutOfRange)?);
+                    Ok(())
+                }
+                None => Err(InterveneError::TypeMismatch),
+            },
+            "max_width" => match value.as_usize() {
+                Some(px) => {
+                    self.state
+                        .set_max_width(u32::try_from(px).map_err(|_| InterveneError::OutOfRange)?);
+                    Ok(())
+                }
+                None => Err(InterveneError::TypeMismatch),
+            },
+            "total" | "cols" | "width" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -367,7 +500,7 @@ impl ExternalIntrospect for ColumnWidthExternal {
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // AI-first column resize: a `"<col>=<width>"` payload sets that
-            // column's width (clamped up to `min_width`) and returns the
+            // column's width (clamped into the bound range) and returns the
             // applied width in one round-trip, so the agent learns the clamped
             // value without a follow-up query.
             "set_col_width" => match args {
@@ -1197,6 +1330,114 @@ mod tests {
         assert_eq!(
             ext.invoke("send", IntrospectValue::Text("bogus".into())),
             Err(InvokeError::UnknownPath)
+        );
+    }
+
+    // ----- R1492: a width has a ceiling as well as a floor -----
+
+    #[test]
+    fn a_width_is_clamped_from_both_ends() {
+        let w = widths().with_max_width(150);
+        assert_eq!(
+            w.set_width(0, 5),
+            DEFAULT_MIN_COL_WIDTH,
+            "raised to the floor"
+        );
+        assert_eq!(w.set_width(0, 99_999), 150, "and lowered to the ceiling");
+        assert_eq!(w.set_width(0, 120), 120, "a width inside the range is kept");
+    }
+
+    #[test]
+    fn a_ceiling_reclamps_the_widths_already_stored() {
+        // Qt's setters are runtime, not construction arguments, so a bound that
+        // only governed FUTURE writes would leave the invariant false for every
+        // width set before it.
+        let w = widths();
+        assert_eq!(w.widths(), vec![130, 90, 200]);
+        w.set_max_width(100);
+        assert_eq!(w.widths(), vec![100, 90, 100], "every stored width obeys");
+        w.set_min_width(95);
+        assert_eq!(w.widths(), vec![100, 95, 100], "and so does the floor");
+    }
+
+    #[test]
+    fn the_two_bounds_cannot_describe_an_empty_range() {
+        // They are set independently, so one can be pushed past the other. The
+        // pair carries the other with it rather than leaving a range no width
+        // could satisfy — and says so on read-back, which is how the caller
+        // learns the rule.
+        let w = widths();
+        w.set_max_width(20);
+        assert_eq!(w.max_width(), 20);
+        assert_eq!(w.min_width(), 20, "the floor came down with the ceiling");
+        assert_eq!(w.set_width(0, 500), 20, "and the clamp still resolves");
+
+        // The mirror: a floor pushed past a REAL ceiling carries it up. It only
+        // moves when it would otherwise invert — raising the floor under the
+        // unbounded default leaves the ceiling unbounded, which is why the
+        // guard is `max < min` rather than an unconditional assignment.
+        let w2 = widths().with_max_width(150);
+        w2.set_min_width(300);
+        assert_eq!(w2.min_width(), 300);
+        assert_eq!(w2.max_width(), 300, "the ceiling came up with the floor");
+
+        let w3 = widths();
+        w3.set_min_width(300);
+        assert_eq!(
+            w3.max_width(),
+            DEFAULT_MAX_COL_WIDTH,
+            "an unbounded ceiling is not dragged down to the new floor"
+        );
+    }
+
+    #[test]
+    fn a_bound_is_reactive_because_a_derived_size_reads_it() {
+        // The R1454 correction, applied before it could bite: a bound is an
+        // INPUT to a derived size, so a view subscribed to it has to wake when
+        // it moves. A plain field would not have.
+        let w = widths();
+        let before = w.widths.revision();
+        w.set_max_width(100);
+        assert!(
+            w.widths.revision() > before,
+            "moving the ceiling rewrote the widths a view is subscribed to"
+        );
+        let settled = w.widths.revision();
+        w.set_max_width(100);
+        assert_eq!(
+            w.widths.revision(),
+            settled,
+            "and a no-op bound change does not churn"
+        );
+    }
+
+    #[test]
+    fn both_bounds_are_readable_and_writable_over_the_wire() {
+        let mut ext = ColumnWidthExternal::new(Rc::new(widths()));
+        assert_eq!(
+            ext.query("min_width"),
+            Some(IntrospectValue::Int(i64::from(DEFAULT_MIN_COL_WIDTH)))
+        );
+        assert_eq!(
+            ext.query("max_width"),
+            Some(IntrospectValue::Int(i64::from(DEFAULT_MAX_COL_WIDTH))),
+            "unbounded by default, and it SAYS so instead of omitting the slot"
+        );
+        ext.intervene("max_width", IntrospectValue::Int(150))
+            .expect("R1492 — the ceiling is a setting, not a constant");
+        assert_eq!(ext.query("max_width"), Some(IntrospectValue::Int(150)));
+        assert_eq!(
+            ext.invoke("set_col_width", IntrospectValue::Text("0=400".into())),
+            Ok(IntrospectValue::Int(150)),
+            "the applied width reports the ceiling that shaped it"
+        );
+        ext.intervene("min_width", IntrospectValue::Int(60))
+            .expect("and the floor stopped being read-only");
+        assert_eq!(ext.query("min_width"), Some(IntrospectValue::Int(60)));
+        assert_eq!(
+            ext.intervene("total", IntrospectValue::Int(1)),
+            Err(InterveneError::ReadOnly),
+            "a derived slot is still read-only"
         );
     }
 

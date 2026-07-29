@@ -97,6 +97,7 @@ use pinion_core::widgets::column_layout::{
     ColumnLayout, ColumnLayoutView, SectionPlacement, SectionResizeMode, read_column_layout,
     use_column_layout,
 };
+use pinion_core::widgets::column_widths::{DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
 use pinion_core::widgets::grid_sort::col_sort_dir;
 use pinion_core::widgets::table::{cell_cmp, grid_order_by};
 use pinion_core::{Frame, Intent, Scene, WidgetCore};
@@ -346,6 +347,8 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     SchemaField::new("visible_total", "int"),
                     SchemaField::new("hidden_count", "int"),
                     SchemaField::new("resize_modes", "json"),
+                    SchemaField::new("min_section_size", "int"),
+                    SchemaField::new("max_section_size", "int"),
                     SchemaField::new("sort_indicator", "string"),
                     SchemaField::new("sort_indicator_section", "int"),
                     SchemaField::new("sort_indicator_order", "string"),
@@ -493,6 +496,10 @@ struct HeaderState {
     sort_indicator: Option<(usize, bool)>,
     /// R1491 — whether the arrow is painted at all (Qt `sortIndicatorShown`).
     sort_indicator_shown: bool,
+    /// R1492 — the bounds every section size is clamped into. Painted in the
+    /// readout because a clamp a reader cannot see the rule for looks like a
+    /// bug: without these, "I dragged and it stopped" has no visible cause.
+    bounds: (u32, u32),
 }
 
 impl Default for HeaderState {
@@ -512,6 +519,7 @@ impl Default for HeaderState {
             // The view enables it, as `QTableView::setSortingEnabled` does —
             // this grid is sortable, so it is on from the first frame.
             sort_indicator_shown: true,
+            bounds: (DEFAULT_MIN_COL_WIDTH, DEFAULT_MAX_COL_WIDTH),
         }
     }
 }
@@ -613,6 +621,17 @@ fn read_header_state(scene: &Scene) -> HeaderState {
     }
     if let Some(IntrospectValue::Bool(g)) = intro.query("grabbed") {
         out.grabbed = g;
+    }
+    // R1492 — read off the wire like everything else the readout shows, so the
+    // painted rule and the rule an agent queries cannot drift apart.
+    if let (Some(IntrospectValue::Int(lo)), Some(IntrospectValue::Int(hi))) = (
+        intro.query("min_section_size"),
+        intro.query("max_section_size"),
+    ) {
+        out.bounds = (
+            u32::try_from(lo).unwrap_or(DEFAULT_MIN_COL_WIDTH),
+            u32::try_from(hi).unwrap_or(DEFAULT_MAX_COL_WIDTH),
+        );
     }
     out
 }
@@ -952,7 +971,7 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
     let layout_row = Scene::Text(
         TextNode::styled(
             format!(
-                "sizes {} | hidden {} | modes {}",
+                "sizes {} | hidden {} | modes {} | bounds {}..{}",
                 state
                     .sizes
                     .iter()
@@ -970,6 +989,14 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
                     .iter()
                     .map(|m| mode_code(*m))
                     .collect::<String>(),
+                state.bounds.0,
+                // R1492 — the unbounded default reads as `-`, because printing
+                // 4294967295 would look like a limit somebody chose.
+                if state.bounds.1 == DEFAULT_MAX_COL_WIDTH {
+                    "-".to_string()
+                } else {
+                    state.bounds.1.to_string()
+                },
             ),
             Rect::default(),
             TextStyle::new()
@@ -1979,6 +2006,86 @@ mod tests {
             "and the rows did not move"
         );
         assert_eq!(hidden.sort_indicator, Some((2, true)));
+    }
+
+    // ----- R1492: the bounds the header applies are the bounds it shows -----
+
+    #[test]
+    fn r1492_the_readout_shows_the_rule_the_clamp_applies() {
+        // A clamp whose rule is invisible reads as a bug. The readout and the
+        // wire are the same two numbers, read from the same place.
+        let mut scene = boot_scene();
+        let boot = read_header_state(&scene);
+        assert_eq!(boot.bounds, (DEFAULT_MIN_COL_WIDTH, DEFAULT_MAX_COL_WIDTH));
+
+        let bounded = after(&mut scene, |i| {
+            i.intervene("max_section_size", IntrospectValue::Int(130))
+                .expect("Qt's setMaximumSectionSize has a wire peer");
+        });
+        assert_eq!(bounded.bounds, (DEFAULT_MIN_COL_WIDTH, 130));
+        assert_eq!(
+            bounded.sizes.to_vec(),
+            vec![130, 90, 100, 130, 100],
+            "the sections over the new ceiling came down to it"
+        );
+        // `view` resolves the theme and the shared layout, so it runs inside an
+        // owner scope exactly as the shell runs it.
+        let painted = Owner::new().run(|| view(&bounded, &Frame::default()));
+        let Scene::Container(root) = painted else {
+            panic!("the view paints a container");
+        };
+        let readout = root
+            .children
+            .iter()
+            .find_map(|c| match c {
+                Scene::Text(t) if t.tag.as_deref() == Some(LAYOUT_TAG) => Some(t.content.clone()),
+                _ => None,
+            })
+            .expect("the layout readout is painted");
+        assert!(
+            readout.ends_with("| bounds 40..130"),
+            "the painted rule names both ends: {readout}"
+        );
+    }
+
+    #[test]
+    fn r1492_the_ceiling_reaches_a_derived_size_too() {
+        // The demo is the forcing consumer for the "every path" claim: its
+        // Stretch row divides a published viewport, which is a size no stored
+        // width ever passed through.
+        let mut scene = boot_scene();
+        // The viewport a share divides is published by the VIEW fn, which does
+        // not run here — so without this the sections fall back to their stored
+        // sizes and the share path is never exercised at all. A counterfactual
+        // that removed the ceiling from the share caught exactly that.
+        let stretched = after(&mut scene, |i| {
+            i.intervene(
+                "available_width",
+                IntrospectValue::Int(i64::from(AVAILABLE_W)),
+            )
+            .expect("the viewport is publishable over the wire");
+            i.invoke(
+                "set_all_resize_modes",
+                IntrospectValue::Text("stretch".into()),
+            )
+            .expect("set_all_resize_modes is a known action");
+        });
+        let share = stretched.placements()[0].size;
+        assert_eq!(
+            u32::try_from(stretched.painted).map(|n| share * n),
+            Ok(AVAILABLE_W),
+            "an unbounded stretch row divides the whole viewport: {share}"
+        );
+
+        let bounded = after(&mut scene, |i| {
+            i.intervene("max_section_size", IntrospectValue::Int(80))
+                .expect("the ceiling is writable");
+        });
+        assert!(
+            bounded.placements().iter().all(|p| p.size == 80),
+            "every stretch share obeys the ceiling: {:?}",
+            bounded.placements()
+        );
     }
 
     #[test]

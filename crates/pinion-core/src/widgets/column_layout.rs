@@ -564,6 +564,40 @@ impl ColumnLayout {
         }
     }
 
+    /// R1492 — the smallest any section may be — Qt's
+    /// `QHeaderView::minimumSectionSize()`.
+    ///
+    /// Header-level in Qt and delegated to the shared width model here, because
+    /// that is where the clamp lives and a bound with two homes is a bound two
+    /// paths can disagree about.
+    #[must_use]
+    pub fn minimum_section_size(&self) -> u32 {
+        self.sizes.min_width()
+    }
+
+    /// R1492 — Qt's `setMinimumSectionSize()`. Every stored width is re-clamped,
+    /// and a floor above the current ceiling carries the ceiling with it.
+    pub fn set_minimum_section_size(&self, size: u32) {
+        self.sizes.set_min_width(size);
+    }
+
+    /// R1492 — the largest any section may be — Qt's
+    /// `QHeaderView::maximumSectionSize()`.
+    /// [`DEFAULT_MAX_COL_WIDTH`](crate::widgets::column_widths::DEFAULT_MAX_COL_WIDTH)
+    /// means unbounded, which is what every pinion header was before this.
+    #[must_use]
+    pub fn maximum_section_size(&self) -> u32 {
+        self.sizes.max_width()
+    }
+
+    /// R1492 — Qt's `setMaximumSectionSize()`. Applies to **every** way a
+    /// section gets a size: a stored width, a content hint, and a stretch
+    /// share. A ceiling that only one of the three honoured would be worse than
+    /// none, because the row would fill differently depending on the mode.
+    pub fn set_maximum_section_size(&self, size: u32) {
+        self.sizes.set_max_width(size);
+    }
+
     /// R1452 — where logical section `logical` takes its size from — Qt's
     /// `sectionResizeMode()`.
     #[must_use]
@@ -683,9 +717,12 @@ impl ColumnLayout {
     /// there is nothing to divide.
     fn base_size(&self, logical: usize, mode: SectionResizeMode) -> u32 {
         match mode {
-            SectionResizeMode::ResizeToContents => {
-                self.content_width(logical).max(self.sizes.min_width())
-            }
+            // R1492 — through the width model's own clamp, both bounds at
+            // once. Before, this said `.max(min_width())`: it knew the floor
+            // and there was no ceiling to know, so a content hint sized the
+            // section however long its longest cell was.
+            SectionResizeMode::ResizeToContents => self.sizes.clamp(self.content_width(logical)),
+            // The stored size is already clamped by the width model on write.
             _ => self.sizes.width(logical),
         }
     }
@@ -802,7 +839,11 @@ impl ColumnLayout {
                 (SectionResizeMode::Stretch, Some((share, extra))) => {
                     let bonus = u32::from(stretch_seen < extra);
                     stretch_seen += 1;
-                    (share + bonus).max(self.sizes.min_width())
+                    // R1492 — the same clamp the other two paths use. A share
+                    // is a derived size like any other, and this site is why
+                    // the rule had to be lifted rather than repeated: it knew
+                    // the floor and would not have learned the ceiling.
+                    self.sizes.clamp(share + bonus)
                 }
                 _ => own,
             };
@@ -927,6 +968,7 @@ impl ColumnLayout {
     /// - `hidden_count`
     /// - `sort_indicator` / `sort_indicator_section` / `sort_indicator_order` /
     ///   `sort_indicator_shown` (R1491)
+    /// - `min_section_size` / `max_section_size` (R1492)
     /// - `visual_index.<logical>` / `logical_index.<visual>`
     /// - `section_size.<logical>` / `section_hidden.<logical>` /
     ///   `section_position.<logical>` / `logical_index_at.<x>`
@@ -995,6 +1037,18 @@ impl ColumnLayout {
                 sort_dir_str(self.sort_indicator().map(|(_, d)| d)).to_string(),
             )),
             "sort_indicator_shown" => Some(IntrospectValue::Bool(self.is_sort_indicator_shown())),
+            // R1492 — the bounds every size path applies. Readable is the
+            // point: before this, a client could watch a resize get clamped and
+            // had no way to learn the rule, so "you asked 5 and got 40" and
+            // "you asked 300 of a stretch section and got 40" were the same
+            // answer. With these two slots and `resize_mode`, the three causes
+            // are distinguishable without a new channel.
+            "min_section_size" => {
+                Some(IntrospectValue::Int(i64::from(self.minimum_section_size())))
+            }
+            "max_section_size" => {
+                Some(IntrospectValue::Int(i64::from(self.maximum_section_size())))
+            }
             "resize_contents_precision" => Some(int(self.resize_contents_precision())),
             "available_width" => Some(
                 self.available_width
@@ -1108,6 +1162,17 @@ impl ColumnLayout {
                     return Err(InterveneError::OutOfRange);
                 }
                 self.content_widths.set(widths);
+                Ok(())
+            }
+            // R1492 — Qt's two setters. Writable for the same reason the modes
+            // are: an agent explores a layout by moving the rule, not only the
+            // numbers the rule applies to.
+            "min_section_size" => {
+                self.set_minimum_section_size(px_bound(value)?);
+                Ok(())
+            }
+            "max_section_size" => {
+                self.set_maximum_section_size(px_bound(value)?);
                 Ok(())
             }
             // R1454 — the row-sampling bound a `ResizeToContents` consumer
@@ -1318,6 +1383,15 @@ pub fn use_column_layout(key: &'static str, sizes: impl FnOnce() -> Vec<u32>) ->
         .cache(key, || ColumnLayout::new(sizes()))
 }
 
+/// R1492 — decode a pixel bound written over the wire. The two size bounds are
+/// the same decode, and separating the *shape* error from the *value* error is
+/// the part worth having once: a client that sent a string learns something
+/// different from one that sent a number no width could be.
+fn px_bound(value: &IntrospectValue) -> Result<u32, InterveneError> {
+    let px = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
+    u32::try_from(px).map_err(|_| InterveneError::OutOfRange)
+}
+
 /// Decode a JSON array of non-negative integers out of an
 /// [`IntrospectValue`]; `None` for any other shape.
 fn json_u64_array(value: &IntrospectValue) -> Option<Vec<u64>> {
@@ -1381,7 +1455,7 @@ mod tests {
     use crate::external::{
         DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
     };
-    use crate::widgets::column_widths::DEFAULT_MIN_COL_WIDTH;
+    use crate::widgets::column_widths::{DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
     use crate::widgets::grid_sort::col_sort_dir;
 
     /// Four sections wide enough to tell apart by width alone.
@@ -2478,6 +2552,117 @@ mod tests {
             Err(InvokeError::Rejected)
         );
         assert_eq!(l.sort_indicator(), None, "no refusal moved the arrow");
+    }
+
+    // ----- R1492: a section says what its size is allowed to be -----
+
+    #[test]
+    fn every_size_path_honours_the_ceiling() {
+        // THE claim, and the reason the clamp had to be lifted rather than
+        // repeated: a section gets its size three different ways, and a ceiling
+        // only one of them honoured would make the row fill differently
+        // depending on a mode the ceiling has nothing to do with.
+        let l = layout();
+        l.set_maximum_section_size(110);
+
+        // (1) the stored size
+        assert_eq!(l.resize_section(0, 400), 110, "stored: clamped down");
+        // (2) the content hint
+        l.set_resize_mode(1, SectionResizeMode::ResizeToContents);
+        l.set_content_widths(vec![100, 900, 100, 100]);
+        assert_eq!(l.section_size(1), 110, "content hint: clamped down");
+        // (3) the stretch share
+        l.set_resize_mode(2, SectionResizeMode::Stretch);
+        l.set_available_width(Some(5_000));
+        assert_eq!(l.section_size(2), 110, "stretch share: clamped down");
+        // The row consequently does NOT fill the width it was given — which is
+        // correct and is Qt's behaviour: a bound the user set outranks a
+        // division, and `visible_total` reports the truth rather than a number
+        // the grid is not painting.
+        assert!(
+            l.visible_total() < 5_000,
+            "a bounded row cannot fill an unbounded viewport: {}",
+            l.visible_total()
+        );
+    }
+
+    #[test]
+    fn the_bounds_are_readable_so_two_identical_sizes_can_be_told_apart() {
+        // Measured on the real wire before this round: `resize_section 0:5`
+        // (interactive, clamped up) and `resize_section 2:300` (stretch, size
+        // derived) BOTH answered 40, and nothing readable distinguished them.
+        // The fix is not a new channel — it is that the rule became legible.
+        let l = layout();
+        l.set_resize_mode(2, SectionResizeMode::Stretch);
+        l.set_available_width(Some(240));
+
+        let clamped = l.resize_section(0, 5);
+        let derived = l.resize_section(2, 300);
+        assert_eq!(clamped, derived, "the two answers are still identical");
+
+        // And now each can be named, from readable state alone.
+        assert_eq!(l.minimum_section_size(), DEFAULT_MIN_COL_WIDTH);
+        assert_eq!(l.resize_mode(0), SectionResizeMode::Interactive);
+        assert_eq!(
+            clamped,
+            l.minimum_section_size(),
+            "asked 5, got the floor: the FLOOR shaped it"
+        );
+        assert_eq!(l.resize_mode(2), SectionResizeMode::Stretch);
+        assert!(
+            300 > l.minimum_section_size() && 300 < l.maximum_section_size(),
+            "300 was inside the bounds, so no bound shaped THIS one"
+        );
+    }
+
+    #[test]
+    fn the_header_reads_and_writes_both_bounds_over_the_wire() {
+        let l = layout();
+        assert_eq!(
+            l.query("min_section_size"),
+            Some(IntrospectValue::Int(i64::from(DEFAULT_MIN_COL_WIDTH)))
+        );
+        assert_eq!(
+            l.query("max_section_size"),
+            Some(IntrospectValue::Int(i64::from(DEFAULT_MAX_COL_WIDTH))),
+            "unbounded, said out loud rather than by omitting the slot"
+        );
+        l.intervene("max_section_size", &IntrospectValue::Int(120))
+            .expect("Qt's setMaximumSectionSize has a wire peer");
+        assert_eq!(l.maximum_section_size(), 120);
+        assert_eq!(
+            l.invoke("resize_section", &text("3:900")),
+            Ok(IntrospectValue::Int(120)),
+            "and the resize reports the size the ceiling left it"
+        );
+        l.intervene("min_section_size", &IntrospectValue::Int(80))
+            .expect("and so does setMinimumSectionSize");
+        assert_eq!(l.minimum_section_size(), 80);
+        assert_eq!(
+            l.intervene("max_section_size", &text("wide")),
+            Err(InterveneError::TypeMismatch),
+            "a bound is a number, and a non-number is told so"
+        );
+    }
+
+    #[test]
+    fn a_bound_moved_after_the_fact_re_sizes_the_sections_it_governs() {
+        // The bounds are settings, not construction arguments, so they have to
+        // reach widths that already exist — including through the layout's own
+        // saved state.
+        let l = layout();
+        assert_eq!(l.visible_widths(), vec![100, 120, 140, 160]);
+        l.set_maximum_section_size(130);
+        assert_eq!(
+            l.visible_widths(),
+            vec![100, 120, 130, 130],
+            "the two sections over the new ceiling came down"
+        );
+        assert_eq!(
+            l.save_state().sizes,
+            vec![100, 120, 130, 130],
+            "and the snapshot records what the header will actually paint"
+        );
     }
 
     #[test]

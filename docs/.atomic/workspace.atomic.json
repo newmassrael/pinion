@@ -74190,6 +74190,68 @@
         "Still open from the Qt QHeaderView surface: defaultSectionSize / minimumSectionSize / maximumSectionSize, cascadingSectionResizes, firstSectionMovable, and an explicit sectionsClickable flag (the click policy is the binding's today)."
       ]
     },
+    "Round 1492": {
+      "decision_summary": "R1492 - a section says what its size is allowed to be: Qt QHeaderView's minimum and maximum section size become runtime, readable bounds applied through one clamp, so a header stops applying a rule it would not disclose",
+      "changes_bullets": [
+        "ColumnWidths gains a maximum: DEFAULT_MAX_COL_WIDTH (unbounded), Qt's QHeaderView::maximumSectionSize. Before this a section could be set to 99999 in a 700px window.",
+        "Both bounds became runtime settings (Qt's two setters) instead of a construction-time builder, so they are Signals: a bound is an INPUT to a derived size, the R1454 correction applied before it could bite.",
+        "clamp_width is the one rule every size path calls. The three paths - stored width, ResizeToContents hint, Stretch share - each wrote their own .max(min) and none could have learned a ceiling.",
+        "Setting one bound past the other carries the other with it, so the pair never describes an empty range, and the read-back is how the caller learns the rule.",
+        "ColumnLayout exposes Qt's header-level names (minimum_section_size / maximum_section_size and their setters) delegating to the shared width model, so the bound has one home.",
+        "Wire: query and intervene min_section_size / max_section_size on ColumnLayout, and max_width added plus min_width un-read-onlyed on ColumnWidthExternal, because both surfaces speak for the same state.",
+        "hello-column-reorder paints the rule: the layout readout ends \"bounds <lo>..<hi>\", with the unbounded default shown as \"-\" rather than 4294967295."
+      ],
+      "verification_bullets": [
+        "pinion-core 2770 tests pass (+9); hello-column-reorder 29 pass (+2).",
+        "tools/demos/r1492_section_size_bounds.py PASS - 34 assertions over the real wire, replaying the pre-round measurement call for call.",
+        "Blast radius: r1450 / r1451 / r1452 / r1453 / r1491 all PASS.",
+        "Counterfactual 1 (the stretch share knows the floor but not the ceiling): 3 witnesses - 1 core unit, 1 demo unit, demo assertion 10.",
+        "Counterfactual 2 (a bound governs only future writes): 6 witnesses - 4 core units, 1 demo unit, demo assertion 5. One of the four is R785.1's own test, so the older suite guards the invariant this round extends.",
+        "Counterfactual 3 (the bounds are applied but not readable): 3 witnesses - 1 core unit, 1 demo unit, the demo's first bound read.",
+        "Counterfactual 4 (no inverted-pair guard): 2 witnesses - 1 core unit, demo assertion 25.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc --workspace --no-deps --document-private-items 0."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "CF-1 exposed a gap in this round's own demo test: it asserted a ceiling reached a stretch share while never producing one, because the viewport a share divides is published by the view fn, which a unit test does not run. Fixed by publishing it over the wire.",
+        "No disclosure channel was added. The three causes of \"you did not get the size you asked for\" - clamped by a bound, derived by a mode, or stored-but-not-shown - are distinguishable from min_section_size, max_section_size and resize_mode, which are all readable. Qt has no such channel either.",
+        "A bounded row cannot fill the viewport a Stretch division was given, and visible_total reports that shortfall rather than a number the grid is not painting. That is the correct precedence (a bound the user set outranks a division) and is asserted, not assumed.",
+        "Still open from the Qt QHeaderView surface: defaultSectionSize, cascadingSectionResizes, firstSectionMovable, and an explicit sectionsClickable flag."
+      ],
+      "publishable_decision_summary": "R1492 - a section says what its size is allowed to be: Qt QHeaderView's minimum and maximum section size become runtime, readable bounds applied through one clamp, so a header stops applying a rule it would not disclose",
+      "publishable_changes_bullets": [
+        "ColumnWidths gains a maximum: DEFAULT_MAX_COL_WIDTH (unbounded), Qt's QHeaderView::maximumSectionSize. Before this a section could be set to 99999 in a 700px window.",
+        "Both bounds became runtime settings (Qt's two setters) instead of a construction-time builder, so they are Signals: a bound is an INPUT to a derived size, the R1454 correction applied before it could bite.",
+        "clamp_width is the one rule every size path calls. The three paths - stored width, ResizeToContents hint, Stretch share - each wrote their own .max(min) and none could have learned a ceiling.",
+        "Setting one bound past the other carries the other with it, so the pair never describes an empty range, and the read-back is how the caller learns the rule.",
+        "ColumnLayout exposes Qt's header-level names (minimum_section_size / maximum_section_size and their setters) delegating to the shared width model, so the bound has one home.",
+        "Wire: query and intervene min_section_size / max_section_size on ColumnLayout, and max_width added plus min_width un-read-onlyed on ColumnWidthExternal, because both surfaces speak for the same state.",
+        "hello-column-reorder paints the rule: the layout readout ends \"bounds <lo>..<hi>\", with the unbounded default shown as \"-\" rather than 4294967295."
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 2770 tests pass (+9); hello-column-reorder 29 pass (+2).",
+        "tools/demos/r1492_section_size_bounds.py PASS - 34 assertions over the real wire, replaying the pre-round measurement call for call.",
+        "Blast radius: r1450 / r1451 / r1452 / r1453 / r1491 all PASS.",
+        "Counterfactual 1 (the stretch share knows the floor but not the ceiling): 3 witnesses - 1 core unit, 1 demo unit, demo assertion 10.",
+        "Counterfactual 2 (a bound governs only future writes): 6 witnesses - 4 core units, 1 demo unit, demo assertion 5. One of the four is R785.1's own test, so the older suite guards the invariant this round extends.",
+        "Counterfactual 3 (the bounds are applied but not readable): 3 witnesses - 1 core unit, 1 demo unit, the demo's first bound read.",
+        "Counterfactual 4 (no inverted-pair guard): 2 witnesses - 1 core unit, demo assertion 25.",
+        "Gates: cargo fmt --all --check clean, clippy -D pedantic 0, cargo doc --workspace --no-deps --document-private-items 0."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CF-1 exposed a gap in this round's own demo test: it asserted a ceiling reached a stretch share while never producing one, because the viewport a share divides is published by the view fn, which a unit test does not run. Fixed by publishing it over the wire.",
+        "No disclosure channel was added. The three causes of \"you did not get the size you asked for\" - clamped by a bound, derived by a mode, or stored-but-not-shown - are distinguishable from min_section_size, max_section_size and resize_mode, which are all readable. Qt has no such channel either.",
+        "A bounded row cannot fill the viewport a Stretch division was given, and visible_total reports that shortfall rather than a number the grid is not painting. That is the correct precedence (a bound the user set outranks a division) and is asserted, not assumed.",
+        "Still open from the Qt QHeaderView surface: defaultSectionSize, cascadingSectionResizes, firstSectionMovable, and an explicit sectionsClickable flag."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
