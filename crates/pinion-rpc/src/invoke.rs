@@ -36,7 +36,9 @@ use pinion_core::Scene;
 use pinion_core::external::{IntrospectValue, InvokeError as TraitInvokeError};
 
 use crate::path::PathError;
-use crate::resolve::{ResolveExternalError, resolve_external_introspect_mut};
+use crate::resolve::{
+    ResolveExternalError, resolve_external_introspect_mut, resolve_external_path,
+};
 
 /// Reasons the typed [`invoke`] dispatcher can fail.
 #[non_exhaustive]
@@ -112,8 +114,72 @@ pub fn invoke(
     // introspect-mut lookup lifted into [`resolve_external_introspect_mut`].
     // `action_path` is owned (String) so the `&mut dyn ExternalIntrospect`
     // borrow on `scene` can outlive `raw_path`'s lifetime.
+    if let Some(result) = invoke_immediate_at(scene, raw_path, &args) {
+        return result;
+    }
     let (intro, action_path) = resolve_external_introspect_mut(scene, raw_path)?;
     intro.invoke(&action_path, args).map_err(Into::into)
+}
+
+/// R1481 §2 #4 §5.12 — the immediate-mode half of [`invoke`], reachable
+/// through a **shared** `&Scene`.
+///
+/// R828 gave `scene/query` an immediate-mode branch and deferred this one
+/// with a stated reason: `invoke` handed back a `&mut dyn ExternalIntrospect`
+/// that had to outlive resolution, which a `RefCell` borrow cannot do. The
+/// deferral was conditioned on "until a consumer needs it" — and the consumer
+/// arrived as a defect: `scene/query ball/external/velocity` answered `-2.5`
+/// while `scene/invoke` on the same path answered `NoExternalAtPath`, a
+/// refusal the read had just disproved.
+///
+/// The seam dissolves the same way it did for the read: do the work *inside*
+/// the borrow and return an owned value, instead of returning the borrow.
+/// `Rc<RefCell<dyn ImmediateMode>>` is interior-mutable, so a shared `&Scene`
+/// is enough — which is what lets the last painted frame, where drivers live,
+/// answer an action at all.
+///
+/// `None` means "no immediate-mode node at this path" — the caller falls
+/// through to the retained-`External` branch rather than treating it as a
+/// failure.
+fn invoke_immediate_at(
+    scene: &Scene,
+    raw_path: &str,
+    args: &IntrospectValue,
+) -> Option<Result<IntrospectValue, InvokeError>> {
+    let Ok((scene_segments, action_path)) = resolve_external_path(raw_path) else {
+        return None;
+    };
+    let Some(Scene::ImmediateModeNode(node)) = scene.lookup_path_ref(&scene_segments) else {
+        return None;
+    };
+    let mut driver = node.handle.borrow_mut();
+    let Some(intro) = driver.introspect_mut() else {
+        return Some(Err(InvokeError::IntrospectionOptedOut));
+    };
+    Some(intro.invoke(&action_path, args.clone()).map_err(Into::into))
+}
+
+/// R1481 §2 #4 §5.12 — invoke against a scene held by shared reference.
+///
+/// The paint-scene entry point: `scene/invoke` reaches for this after the
+/// state scene reports no external, exactly as `scene/query` does. Only
+/// immediate-mode drivers answer here, and that restriction is the honest
+/// one rather than a shortcut — a retained `ExternalNode` in a painted frame
+/// is a `Box` the view fn rebuilds every frame, so a write into it would be
+/// discarded before the next paint. Refusing is the truthful answer for that
+/// shape; a driver's `Rc` is the same one the game loop ticks, so acting on
+/// it is not.
+///
+/// # Errors
+///
+/// [`InvokeError::NoExternalAtPath`] when the path reaches no immediate-mode
+/// driver, plus the usual action-channel failures.
+pub fn invoke_shared(
+    scene: &Scene,
+    raw_path: &str,
+    args: &IntrospectValue,
+) -> Result<IntrospectValue, InvokeError> {
+    invoke_immediate_at(scene, raw_path, args).unwrap_or(Err(InvokeError::NoExternalAtPath))
 }
 
 #[cfg(test)]
@@ -125,6 +191,107 @@ mod tests {
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
+    }
+
+    // R1481 §2 #4 §5.12 — a live immediate-mode driver is writable.
+    #[derive(Debug)]
+    struct SpeedDriver {
+        speed: i64,
+        opted_in: bool,
+    }
+
+    impl pinion_core::scene::ImmediateMode for SpeedDriver {
+        fn introspect(&self) -> Option<&dyn pinion_core::external::ExternalIntrospect> {
+            self.opted_in.then_some(self)
+        }
+        fn introspect_mut(&mut self) -> Option<&mut dyn pinion_core::external::ExternalIntrospect> {
+            self.opted_in.then_some(self)
+        }
+    }
+
+    impl pinion_core::external::ExternalIntrospect for SpeedDriver {
+        fn schema(&self) -> pinion_core::external::IntrospectSchema {
+            pinion_core::external::IntrospectSchema::new(
+                const { &[pinion_core::external::SchemaField::new("speed", "int")] },
+            )
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            (path == "speed").then_some(IntrospectValue::Int(self.speed))
+        }
+        fn intervene(
+            &mut self,
+            path: &str,
+            value: IntrospectValue,
+        ) -> Result<(), pinion_core::external::InterveneError> {
+            match (path, value) {
+                ("speed", IntrospectValue::Int(n)) => {
+                    self.speed = n;
+                    Ok(())
+                }
+                ("speed", _) => Err(pinion_core::external::InterveneError::TypeMismatch),
+                _ => Err(pinion_core::external::InterveneError::UnknownPath),
+            }
+        }
+        fn invoke(
+            &mut self,
+            path: &str,
+            _args: IntrospectValue,
+        ) -> Result<IntrospectValue, pinion_core::external::InvokeError> {
+            match path {
+                "halve" => {
+                    self.speed /= 2;
+                    Ok(IntrospectValue::Int(self.speed))
+                }
+                _ => Err(pinion_core::external::InvokeError::UnknownPath),
+            }
+        }
+    }
+
+    fn driver_scene(speed: i64, opted_in: bool) -> Scene {
+        Scene::Container(pinion_core::scene::ContainerNode::new(vec![
+            Scene::ImmediateModeNode(
+                pinion_core::scene::ImmediateModeNode::from_driver(
+                    SpeedDriver { speed, opted_in },
+                    pinion_core::scene::Rect::default(),
+                )
+                .with_tag("ball".to_owned()),
+            ),
+        ]))
+    }
+
+    #[test]
+    fn r1481_a_live_driver_answers_an_action_through_a_shared_scene() {
+        // The defect this closes: `scene/query ball/external/velocity`
+        // answered a number while `scene/invoke` on the same path answered
+        // `NoExternalAtPath` — a refusal the read had just disproved.
+        let scene = driver_scene(10, true);
+        let out = invoke_shared(&scene, "/ball/external/halve", &IntrospectValue::Null).unwrap();
+        assert_eq!(out, IntrospectValue::Int(5));
+        // The write landed on the SAME driver the tick loop holds, which is
+        // the whole reason a shared `&Scene` is enough here.
+        assert_eq!(
+            crate::query::query(&scene, "/ball/external/speed").unwrap(),
+            IntrospectValue::Int(5),
+        );
+    }
+
+    #[test]
+    fn r1481_a_driver_that_opted_out_says_so_rather_than_denying_it_exists() {
+        let scene = driver_scene(10, false);
+        let err =
+            invoke_shared(&scene, "/ball/external/halve", &IntrospectValue::Null).unwrap_err();
+        assert_eq!(err, InvokeError::IntrospectionOptedOut);
+    }
+
+    #[test]
+    fn r1481_a_path_reaching_no_driver_is_still_refused() {
+        // The shared entry point does NOT fall back to retained externals:
+        // a painted `ExternalNode` is a per-frame `Box`, so a write into it
+        // would be discarded before the next paint.
+        let scene = counted_scene(1);
+        let err =
+            invoke_shared(&scene, "/external/increment", &IntrospectValue::Int(1)).unwrap_err();
+        assert_eq!(err, InvokeError::NoExternalAtPath);
     }
 
     #[test]

@@ -73550,6 +73550,58 @@
         "Only `scene/query` and `scene/invoke` carry raw today. Any other method whose answer is a whole external-supplied payload joins by moving its arm into the outer funnel; none needed it this round."
       ]
     },
+    "Round 1481": {
+      "decision_summary": "A path the read answers, the write may not deny. scene/invoke and scene/intervene gain the paint-scene fallback scene/query has had since R828, so a live immediate-mode driver is actionable rather than read-only by accident — and the borrow seam R828 deferred on dissolves by doing the work inside the borrow instead of returning it.",
+      "changes_bullets": [
+        "pinion-rpc §5.12 — `invoke_shared` / `intervene_shared`: the immediate-mode half of the action and write channels, reachable through a SHARED `&Scene`. R828 gave `scene/query` an immediate-mode branch and deferred these two with a stated reason — they returned a `&mut dyn ExternalIntrospect` that had to outlive resolution, which a `RefCell` borrow cannot do — conditioned on \"until a consumer needs it\". The seam dissolves the same way the read's did: do the work INSIDE the borrow and return an owned value. `Rc<RefCell<dyn ImmediateMode>>` is interior-mutable, so a shared reference suffices, which is what lets the painted frame answer a write at all.",
+        "pinion-rpc §5.7 — `handle_scene_invoke` / `handle_scene_intervene` take `last_paint_scene` and retry on `NoExternalAtPath`, mirroring `handle_scene_query`'s R828 fallback exactly. State-scene authority is preserved the same way: paint is consulted ONLY on that one outcome, so every other verdict returns verbatim.",
+        "The fallback is deliberately NOT a wildcard. A retained `ExternalNode` in a painted frame is a `Box` the view fn rebuilds every frame, so a write into it would vanish before the next paint; `*_shared` refuses it. Refusing is the truthful answer for that shape, and a driver's `Rc` — the same one the tick loop holds — is why acting on the other shape is not.",
+        "examples/hello-immediate-intent — `BouncingBallDriver` gains a writable `velocity` and a `reset` action returning the bounce count it cleared. The driver already declared `introspect_mut`; the channel existed and was simply unreachable over the wire. Read-only slots now answer through `read_only_or_unknown` so \"you cannot write this\" reads differently from \"this does not exist\".",
+        "tools/demos/r1481_driver_write_parity.py — 32 assertions, including a sweep over the driver's OWN declared schema asserting that no readable slot is ever refused as absent, so the property cannot drift as slots are added."
+      ],
+      "verification_bullets": [
+        "MEASURED on an existing binding before any change: `scene/query ball/external/velocity` answered `-2.5` while `scene/intervene` and `scene/invoke` on that same path answered `NoExternalAtPath` — a claim about the scene's shape the read had just disproved. After: intervene sets `velocity` to a chosen value and the read returns it; `invoke reset` returns the bounce count it cleared.",
+        "The FIRST framing was wrong and measurement corrected it. R1480's carry recorded this as a path-SYNTAX asymmetry (`scene/query` resolving `<tag>/external/<field>` where `scene/invoke` did not). A counterfactual that disabled query's paint-scene fallback made the tagged read fail exactly as the write did, proving both paths share one parser and one walker: the real cause is that only the READ consulted the painted frame. The carry note described the symptom with the wrong cause.",
+        "CF (remove the paint fallback from `handle_scene_intervene`): all 956 unit tests PASSED and only the demo failed, with the exact pre-R1481 error. That hole was the finding — `invoke_shared` / `intervene_shared` were unit-tested in isolation while nothing covered whether `dispatch` ever reaches them. Four dispatch-level wire tests added; the re-run CF now kills EXACTLY 2 (both intervene-side, matching the CF's scope) out of 960.",
+        "`r1481_a_write_the_read_can_answer_is_never_refused_as_absent` states the defect as one assertion: read the path, then write it, and assert the failure — a type mismatch is fine — is never `NoExternalAtPath`.",
+        "Gates: cargo fmt --all --check clean; clippy -D pedantic clean on pinion-rpc / hello-immediate-intent; pinion-rpc 960 (+10); demo r1481 PASS (32 assertions) plus the four immediate-mode neighbours r827 / r828 / r829 / r830 and r1480, all PASS."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.7",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "The READ side still has the asymmetry's other half unexamined: `scene/query`'s R828 fallback resolves a retained `ExternalNode` in a painted frame too, and that node is a per-frame `Box`, so the value read is whatever the throwaway holds rather than the state scene's. Sound for a driver (shared `Rc`), questionable for a rebuilt node. R1481 did not touch the read; whether that fallback should narrow to drivers the way the write one does is a separate call.",
+        "`invoke_immediate_at` and `intervene_immediate_at` are two near-identical borrow-discipline bodies, deliberately mirroring `query`'s inline branch rather than being lifted. The borrow rule is what must not be re-derived, so a third consumer is the lift trigger; two mirrored copies that each read like the read path are the more faithful shape today.",
+        "`scene/invoke` on a painted driver is classified `HandlerKind::Mutate` and bumps the scene revision, matching what a state-scene invoke does. Whether a driver mutation SHOULD advance the retained-scene OCC token is a question the immediate-mode axis has not settled; it is bundled with the retained one today."
+      ],
+      "publishable_decision_summary": "A path the read answers, the write may not deny. scene/invoke and scene/intervene gain the paint-scene fallback scene/query has had since R828, so a live immediate-mode driver is actionable rather than read-only by accident — and the borrow seam R828 deferred on dissolves by doing the work inside the borrow instead of returning it.",
+      "publishable_changes_bullets": [
+        "pinion-rpc §5.12 — `invoke_shared` / `intervene_shared`: the immediate-mode half of the action and write channels, reachable through a SHARED `&Scene`. R828 gave `scene/query` an immediate-mode branch and deferred these two with a stated reason — they returned a `&mut dyn ExternalIntrospect` that had to outlive resolution, which a `RefCell` borrow cannot do — conditioned on \"until a consumer needs it\". The seam dissolves the same way the read's did: do the work INSIDE the borrow and return an owned value. `Rc<RefCell<dyn ImmediateMode>>` is interior-mutable, so a shared reference suffices, which is what lets the painted frame answer a write at all.",
+        "pinion-rpc §5.7 — `handle_scene_invoke` / `handle_scene_intervene` take `last_paint_scene` and retry on `NoExternalAtPath`, mirroring `handle_scene_query`'s R828 fallback exactly. State-scene authority is preserved the same way: paint is consulted ONLY on that one outcome, so every other verdict returns verbatim.",
+        "The fallback is deliberately NOT a wildcard. A retained `ExternalNode` in a painted frame is a `Box` the view fn rebuilds every frame, so a write into it would vanish before the next paint; `*_shared` refuses it. Refusing is the truthful answer for that shape, and a driver's `Rc` — the same one the tick loop holds — is why acting on the other shape is not.",
+        "examples/hello-immediate-intent — `BouncingBallDriver` gains a writable `velocity` and a `reset` action returning the bounce count it cleared. The driver already declared `introspect_mut`; the channel existed and was simply unreachable over the wire. Read-only slots now answer through `read_only_or_unknown` so \"you cannot write this\" reads differently from \"this does not exist\".",
+        "tools/demos/r1481_driver_write_parity.py — 32 assertions, including a sweep over the driver's OWN declared schema asserting that no readable slot is ever refused as absent, so the property cannot drift as slots are added."
+      ],
+      "publishable_verification_bullets": [
+        "MEASURED on an existing binding before any change: `scene/query ball/external/velocity` answered `-2.5` while `scene/intervene` and `scene/invoke` on that same path answered `NoExternalAtPath` — a claim about the scene's shape the read had just disproved. After: intervene sets `velocity` to a chosen value and the read returns it; `invoke reset` returns the bounce count it cleared.",
+        "The FIRST framing was wrong and measurement corrected it. R1480's carry recorded this as a path-SYNTAX asymmetry (`scene/query` resolving `<tag>/external/<field>` where `scene/invoke` did not). A counterfactual that disabled query's paint-scene fallback made the tagged read fail exactly as the write did, proving both paths share one parser and one walker: the real cause is that only the READ consulted the painted frame. The carry note described the symptom with the wrong cause.",
+        "CF (remove the paint fallback from `handle_scene_intervene`): all 956 unit tests PASSED and only the demo failed, with the exact pre-R1481 error. That hole was the finding — `invoke_shared` / `intervene_shared` were unit-tested in isolation while nothing covered whether `dispatch` ever reaches them. Four dispatch-level wire tests added; the re-run CF now kills EXACTLY 2 (both intervene-side, matching the CF's scope) out of 960.",
+        "`r1481_a_write_the_read_can_answer_is_never_refused_as_absent` states the defect as one assertion: read the path, then write it, and assert the failure — a type mismatch is fine — is never `NoExternalAtPath`.",
+        "Gates: cargo fmt --all --check clean; clippy -D pedantic clean on pinion-rpc / hello-immediate-intent; pinion-rpc 960 (+10); demo r1481 PASS (32 assertions) plus the four immediate-mode neighbours r827 / r828 / r829 / r830 and r1480, all PASS."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.7",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The READ side still has the asymmetry's other half unexamined: `scene/query`'s R828 fallback resolves a retained `ExternalNode` in a painted frame too, and that node is a per-frame `Box`, so the value read is whatever the throwaway holds rather than the state scene's. Sound for a driver (shared `Rc`), questionable for a rebuilt node. R1481 did not touch the read; whether that fallback should narrow to drivers the way the write one does is a separate call.",
+        "`invoke_immediate_at` and `intervene_immediate_at` are two near-identical borrow-discipline bodies, deliberately mirroring `query`'s inline branch rather than being lifted. The borrow rule is what must not be re-derived, so a third consumer is the lift trigger; two mirrored copies that each read like the read path are the more faithful shape today.",
+        "`scene/invoke` on a painted driver is classified `HandlerKind::Mutate` and bumps the scene revision, matching what a state-scene invoke does. Whether a driver mutation SHOULD advance the retained-scene OCC token is a question the immediate-mode axis has not settled; it is bundled with the retained one today."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

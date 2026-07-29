@@ -40,7 +40,9 @@ use pinion_core::Scene;
 use pinion_core::external::{InterveneError as TraitInterveneError, IntrospectValue};
 
 use crate::path::PathError;
-use crate::resolve::{ResolveExternalError, resolve_external_introspect_mut};
+use crate::resolve::{
+    ResolveExternalError, resolve_external_introspect_mut, resolve_external_path,
+};
 
 /// Reasons the typed [`intervene`] dispatcher can fail.
 #[non_exhaustive]
@@ -130,8 +132,56 @@ pub fn intervene(
     // R667 §5.34 — `/window[id]/<segs>/external/<state>` parse +
     // Container/Scroll walk + multi-widget primary descent + §5.15
     // introspect-mut lookup lifted into [`resolve_external_introspect_mut`].
+    if let Some(result) = intervene_immediate_at(scene, raw_path, &value) {
+        return result;
+    }
     let (intro, state_path) = resolve_external_introspect_mut(scene, raw_path)?;
     intro.intervene(&state_path, value).map_err(Into::into)
+}
+
+/// R1481 §2 #4 §5.12 — the immediate-mode half of [`intervene`], reachable
+/// through a **shared** `&Scene`. The write mirror of `query`'s R828 branch;
+/// see [`crate::invoke::invoke_shared`] for why the borrow seam that deferred
+/// it dissolves once the work happens inside the borrow.
+///
+/// `None` means "no immediate-mode node here" — fall through to the retained
+/// branch rather than failing.
+fn intervene_immediate_at(
+    scene: &Scene,
+    raw_path: &str,
+    value: &IntrospectValue,
+) -> Option<Result<(), InterveneError>> {
+    let Ok((scene_segments, state_path)) = resolve_external_path(raw_path) else {
+        return None;
+    };
+    let Some(Scene::ImmediateModeNode(node)) = scene.lookup_path_ref(&scene_segments) else {
+        return None;
+    };
+    let mut driver = node.handle.borrow_mut();
+    let Some(intro) = driver.introspect_mut() else {
+        return Some(Err(InterveneError::IntrospectionOptedOut));
+    };
+    Some(
+        intro
+            .intervene(&state_path, value.clone())
+            .map_err(Into::into),
+    )
+}
+
+/// R1481 §2 #4 §5.12 — intervene against a scene held by shared reference.
+/// The paint-scene entry point; only immediate-mode drivers answer, for the
+/// reason given on [`crate::invoke::invoke_shared`].
+///
+/// # Errors
+///
+/// [`InterveneError::NoExternalAtPath`] when the path reaches no
+/// immediate-mode driver, plus the usual write-channel failures.
+pub fn intervene_shared(
+    scene: &Scene,
+    raw_path: &str,
+    value: &IntrospectValue,
+) -> Result<(), InterveneError> {
+    intervene_immediate_at(scene, raw_path, value).unwrap_or(Err(InterveneError::NoExternalAtPath))
 }
 
 #[cfg(test)]
@@ -143,6 +193,110 @@ mod tests {
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
+    }
+
+    // R1481 §2 #4 §5.12 — a live immediate-mode driver is writable.
+    #[derive(Debug)]
+    struct SpeedDriver {
+        speed: i64,
+        opted_in: bool,
+    }
+
+    impl pinion_core::scene::ImmediateMode for SpeedDriver {
+        fn introspect(&self) -> Option<&dyn pinion_core::external::ExternalIntrospect> {
+            self.opted_in.then_some(self)
+        }
+        fn introspect_mut(&mut self) -> Option<&mut dyn pinion_core::external::ExternalIntrospect> {
+            self.opted_in.then_some(self)
+        }
+    }
+
+    impl pinion_core::external::ExternalIntrospect for SpeedDriver {
+        fn schema(&self) -> pinion_core::external::IntrospectSchema {
+            pinion_core::external::IntrospectSchema::new(
+                const { &[pinion_core::external::SchemaField::new("speed", "int")] },
+            )
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            (path == "speed").then_some(IntrospectValue::Int(self.speed))
+        }
+        fn intervene(
+            &mut self,
+            path: &str,
+            value: IntrospectValue,
+        ) -> Result<(), pinion_core::external::InterveneError> {
+            match (path, value) {
+                ("speed", IntrospectValue::Int(n)) => {
+                    self.speed = n;
+                    Ok(())
+                }
+                ("speed", _) => Err(pinion_core::external::InterveneError::TypeMismatch),
+                _ => Err(pinion_core::external::InterveneError::UnknownPath),
+            }
+        }
+        fn invoke(
+            &mut self,
+            path: &str,
+            _args: IntrospectValue,
+        ) -> Result<IntrospectValue, pinion_core::external::InvokeError> {
+            match path {
+                "halve" => {
+                    self.speed /= 2;
+                    Ok(IntrospectValue::Int(self.speed))
+                }
+                _ => Err(pinion_core::external::InvokeError::UnknownPath),
+            }
+        }
+    }
+
+    fn driver_scene(speed: i64, opted_in: bool) -> Scene {
+        Scene::Container(pinion_core::scene::ContainerNode::new(vec![
+            Scene::ImmediateModeNode(
+                pinion_core::scene::ImmediateModeNode::from_driver(
+                    SpeedDriver { speed, opted_in },
+                    pinion_core::scene::Rect::default(),
+                )
+                .with_tag("ball".to_owned()),
+            ),
+        ]))
+    }
+
+    #[test]
+    fn r1481_a_live_driver_accepts_a_write_through_a_shared_scene() {
+        let scene = driver_scene(10, true);
+        intervene_shared(&scene, "/ball/external/speed", &IntrospectValue::Int(42)).unwrap();
+        assert_eq!(
+            crate::query::query(&scene, "/ball/external/speed").unwrap(),
+            IntrospectValue::Int(42),
+            "the write must reach the driver the read reports on",
+        );
+    }
+
+    #[test]
+    fn r1481_a_driver_write_keeps_its_typed_refusals() {
+        let scene = driver_scene(10, true);
+        assert_eq!(
+            intervene_shared(
+                &scene,
+                "/ball/external/speed",
+                &IntrospectValue::Text("x".into())
+            )
+            .unwrap_err(),
+            InterveneError::InterveneTypeMismatch,
+        );
+        assert_eq!(
+            intervene_shared(&scene, "/ball/external/ghost", &IntrospectValue::Int(1)).unwrap_err(),
+            InterveneError::UnknownIntervenePath,
+        );
+    }
+
+    #[test]
+    fn r1481_a_path_reaching_no_driver_is_still_refused() {
+        let scene = counted_scene(1);
+        assert_eq!(
+            intervene_shared(&scene, "/external/count", &IntrospectValue::Int(2)).unwrap_err(),
+            InterveneError::NoExternalAtPath,
+        );
     }
 
     #[test]

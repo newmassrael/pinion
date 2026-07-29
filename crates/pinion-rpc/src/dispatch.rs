@@ -44,8 +44,8 @@ use crate::export_pdf::{ExportPdfError, ExportPdfParams, export_pdf};
 use crate::font::{self, FontError, FontRegistry};
 use crate::frame_timings::{FrameTimingsError, FrameTimingsOutcome, frame_timings};
 use crate::intents::{IntentsError, drain_intents};
-use crate::intervene::{InterveneError, intervene};
-use crate::invoke::{InvokeError, invoke};
+use crate::intervene::{InterveneError, intervene, intervene_shared};
+use crate::invoke::{InvokeError, invoke, invoke_shared};
 use crate::layout_query::{LayoutQueryError, LayoutQueryParams, layout_query};
 use crate::locate::{
     BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
@@ -1899,7 +1899,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             HandlerKind::Read,
         ),
         "scene/invoke" => (
-            handle_scene_invoke(scene, request.params.as_ref()),
+            handle_scene_invoke(scene, last_paint_scene, request.params.as_ref()),
             HandlerKind::Mutate,
         ),
         dom_method => {
@@ -2219,7 +2219,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     HandlerKind::Read,
                 ),
                 "scene/intervene" => (
-                    handle_scene_intervene(scene, request.params.as_ref()),
+                    handle_scene_intervene(scene, last_paint_scene, request.params.as_ref()),
                     HandlerKind::Read,
                 ),
                 "scene/intents" => (handle_scene_intents(scene), HandlerKind::Read),
@@ -5473,7 +5473,11 @@ fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
     RpcError::invalid_params(variant)
 }
 
-fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<ResultBody, RpcError> {
+fn handle_scene_invoke(
+    scene: &mut Scene,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<ResultBody, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params(
@@ -5489,8 +5493,29 @@ fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Resu
         ));
     };
 
-    match invoke(scene, path, args) {
+    match invoke(scene, path, args.clone()) {
         Ok(value) => Ok(introspect_value_to_body(value)),
+        // R1481 §2 #4 §5.12 — paint-scene fallback, the write mirror of the
+        // one `handle_scene_query` has had since R828. An immediate-mode
+        // driver lives ONLY in the painted frame, so a state-scene walk
+        // cannot see it — which is why the read got a fallback. Without the
+        // same fallback here, `scene/query ball/external/velocity` answered
+        // a number while `scene/invoke` on that exact path answered
+        // `NoExternalAtPath`: a refusal the read had just disproved.
+        //
+        // State-scene authority is preserved the way the read preserves it:
+        // paint is consulted ONLY on `NoExternalAtPath`, so every other
+        // outcome is returned verbatim. And only a driver answers there —
+        // `invoke_shared` refuses a retained `ExternalNode` in a painted
+        // frame, because that node is a `Box` the view fn rebuilds each
+        // frame and a write into it would vanish before the next paint.
+        Err(InvokeError::NoExternalAtPath) => match last_paint_scene {
+            Some(paint) => match invoke_shared(paint, path, &args) {
+                Ok(value) => Ok(introspect_value_to_body(value)),
+                Err(err) => Err(invoke_error_to_rpc(&err)),
+            },
+            None => Err(invoke_error_to_rpc(&InvokeError::NoExternalAtPath)),
+        },
         Err(err) => Err(invoke_error_to_rpc(&err)),
     }
 }
@@ -7456,7 +7481,11 @@ fn invoke_error_to_rpc(err: &InvokeError) -> RpcError {
 /// [`handle_scene_invoke`] (the read+execute peer); the trait-level
 /// distinction is `intervene = set state slot` vs
 /// `invoke = call action`.
-fn handle_scene_intervene(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+fn handle_scene_intervene(
+    scene: &mut Scene,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params(
@@ -7472,8 +7501,18 @@ fn handle_scene_intervene(scene: &mut Scene, params: Option<&Value>) -> Result<V
         ));
     };
 
-    match intervene(scene, path, value) {
+    match intervene(scene, path, value.clone()) {
         Ok(()) => Ok(Value::Null),
+        // R1481 §2 #4 §5.12 — the write mirror of `handle_scene_query`'s
+        // R828 fallback; see `handle_scene_invoke` for why a driver in the
+        // painted frame may be written and a retained node may not.
+        Err(InterveneError::NoExternalAtPath) => match last_paint_scene {
+            Some(paint) => match intervene_shared(paint, path, &value) {
+                Ok(()) => Ok(Value::Null),
+                Err(err) => Err(intervene_error_to_rpc(&err)),
+            },
+            None => Err(intervene_error_to_rpc(&InterveneError::NoExternalAtPath)),
+        },
         Err(err) => Err(intervene_error_to_rpc(&err)),
     }
 }

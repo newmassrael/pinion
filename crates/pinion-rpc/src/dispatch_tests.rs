@@ -7735,3 +7735,146 @@ fn r1480_a_raw_answer_nested_in_a_snapshot_materializes() {
         "the new variant must not fall through to the wildcard's null: {wire}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// R1481 §2 #4 §5.12 — the paint-scene fallback on the WRITE handlers.
+//
+// `invoke_shared` / `intervene_shared` are unit-tested in their own modules;
+// what those tests cannot see is whether `dispatch` ever reaches them. A
+// counterfactual that removed the fallback from `handle_scene_intervene` left
+// all 956 unit tests passing and broke only the demo — the hole these close.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct SpeedDriver(i64);
+
+impl pinion_core::scene::ImmediateMode for SpeedDriver {
+    fn introspect(&self) -> Option<&dyn pinion_core::external::ExternalIntrospect> {
+        Some(self)
+    }
+    fn introspect_mut(&mut self) -> Option<&mut dyn pinion_core::external::ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl pinion_core::external::ExternalIntrospect for SpeedDriver {
+    fn schema(&self) -> pinion_core::external::IntrospectSchema {
+        pinion_core::external::IntrospectSchema::new(
+            const { &[pinion_core::external::SchemaField::new("speed", "int")] },
+        )
+    }
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        (path == "speed").then_some(IntrospectValue::Int(self.0))
+    }
+    fn intervene(
+        &mut self,
+        path: &str,
+        value: IntrospectValue,
+    ) -> Result<(), pinion_core::external::InterveneError> {
+        match (path, value) {
+            ("speed", IntrospectValue::Int(n)) => {
+                self.0 = n;
+                Ok(())
+            }
+            _ => Err(pinion_core::external::read_only_or_unknown(
+                &self.schema(),
+                path,
+            )),
+        }
+    }
+    fn invoke(
+        &mut self,
+        path: &str,
+        _args: IntrospectValue,
+    ) -> Result<IntrospectValue, pinion_core::external::InvokeError> {
+        match path {
+            "halve" => {
+                self.0 /= 2;
+                Ok(IntrospectValue::Int(self.0))
+            }
+            _ => Err(pinion_core::external::InvokeError::UnknownPath),
+        }
+    }
+}
+
+/// A driver lives only in the painted frame — the shape that made the read
+/// need a fallback in R828 and the write need one in R1481.
+fn paint_scene_with_driver(speed: i64) -> Scene {
+    Scene::Container(pinion_core::scene::ContainerNode::new(vec![
+        Scene::ImmediateModeNode(
+            pinion_core::scene::ImmediateModeNode::from_driver(
+                SpeedDriver(speed),
+                pinion_core::scene::Rect::default(),
+            )
+            .with_tag("ball".to_owned()),
+        ),
+    ]))
+}
+
+fn dispatch_with_paint(state: &mut Scene, paint: &Scene, req: &str) -> Option<String> {
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(state, &previews, &revision).with_last_paint_scene(paint);
+    dispatch(&mut ctx, req)
+}
+
+#[test]
+fn r1481_scene_intervene_reaches_a_driver_in_the_painted_frame() {
+    let mut state = counted_scene(0);
+    let paint = paint_scene_with_driver(10);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/intervene","params":{"path":"/ball/external/speed","value":42},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+
+    // The write reached the live driver, which is the whole claim.
+    let read = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/ball/external/speed"},"id":2}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, read).unwrap());
+    assert_eq!(resp.result, Some(Value::Number(42.into())));
+}
+
+#[test]
+fn r1481_scene_invoke_reaches_a_driver_in_the_painted_frame() {
+    let mut state = counted_scene(0);
+    let paint = paint_scene_with_driver(10);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/ball/external/halve","args":null},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Number(5.into())));
+}
+
+#[test]
+fn r1481_a_write_the_read_can_answer_is_never_refused_as_absent() {
+    // The defect in one assertion: the same path, read then written. The
+    // write may refuse — but never by claiming there is nothing there.
+    let mut state = counted_scene(0);
+    let paint = paint_scene_with_driver(10);
+    let read = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/ball/external/speed"},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, read).unwrap());
+    assert!(resp.result.is_some(), "premise: the read answers this path");
+
+    let write = r#"{"jsonrpc":"2.0","method":"scene/intervene","params":{"path":"/ball/external/speed","value":"not an int"},"id":2}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, write).unwrap());
+    let err = resp.error.expect("a type mismatch is still an error");
+    assert_ne!(
+        err.data,
+        Some(Value::String("NoExternalAtPath".into())),
+        "the read just proved an external is there",
+    );
+}
+
+#[test]
+fn r1481_the_fallback_does_not_make_a_painted_retained_node_writable() {
+    // A retained `ExternalNode` in a painted frame is a `Box` the view fn
+    // rebuilds every frame, so a write into it would vanish. Refusing is the
+    // truthful answer — and it keeps the fallback from becoming a wildcard.
+    let mut state = Scene::Container(pinion_core::scene::ContainerNode::new(vec![]));
+    let paint = Scene::Container(pinion_core::scene::ContainerNode::new(vec![
+        Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(1))).with_tag("counted".to_owned()),
+        ),
+    ]));
+    let req = r#"{"jsonrpc":"2.0","method":"scene/intervene","params":{"path":"/counted/external/count","value":9},"id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    let err = resp.error.expect("a per-frame node is not writable");
+    assert_eq!(err.data, Some(Value::String("NoExternalAtPath".into())));
+}

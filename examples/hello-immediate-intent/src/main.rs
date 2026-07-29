@@ -44,7 +44,8 @@ use std::time::Duration;
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, SchemaField,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    SchemaField, read_only_or_unknown,
 };
 use pinion_core::scene::{
     ContainerNode, ImmediateMode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
@@ -303,6 +304,7 @@ impl ExternalIntrospect for BouncingBallDriver {
                     SchemaField::new("velocity", "float"),
                     SchemaField::new("bounces", "int"),
                     SchemaField::new("clicked", "bool"),
+                    SchemaField::new("reset", "int"),
                     SchemaField::new("last_click_x", "float"),
                     SchemaField::new("last_click_y", "float"),
                 ]
@@ -329,8 +331,41 @@ impl ExternalIntrospect for BouncingBallDriver {
         }
     }
 
-    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        Err(InterveneError::ReadOnly)
+    /// R1481 §2 #4 §5.12 — `velocity` is writable: an agent nudging a live
+    /// game driver is the §2 #2 case the immediate-mode axis exists for, and
+    /// until R1481 the wire could not reach this method at all (the driver
+    /// lives only in the painted frame, which `scene/intervene` never
+    /// consulted). Everything else stays read-only, and says so distinctly
+    /// from "no such path" — an agent told `ReadOnly` for a path that is not
+    /// there learns something false about the surface.
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        match path {
+            "velocity" => {
+                let v = value.as_f32().ok_or(InterveneError::TypeMismatch)?;
+                self.vel = v;
+                Ok(())
+            }
+            _ => Err(read_only_or_unknown(&self.schema(), path)),
+        }
+    }
+
+    /// R1481 §2 #4 §5.15 — the action channel on a live driver. `reset`
+    /// returns the bounce count it cleared, so the caller sees what the
+    /// action did rather than having to poll for it.
+    fn invoke(
+        &mut self,
+        path: &str,
+        _args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "reset" => {
+                let cleared = self.bounces;
+                self.bounces = 0;
+                self.pos = 0.5;
+                Ok(IntrospectValue::Int(i64::from(cleared)))
+            }
+            _ => Err(InvokeError::UnknownPath),
+        }
     }
 }
 
