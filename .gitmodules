@@ -2,3 +2,6 @@
 	path = vendor/sce
 	url = https://github.com/newmassrael/scxml-core-engine.git
 	branch = main
+[submodule "vendor/mnemosyne"]
+	path = vendor/mnemosyne
+	url = https://github.com/newmassrael/mnemosyne.git

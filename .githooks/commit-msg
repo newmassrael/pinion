@@ -13,7 +13,7 @@
 set -euo pipefail
 
 hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/commit-msg-lint.sh
+# shellcheck source=SCRIPTDIR/lib/commit-msg-lint.sh
 source "$hook_dir/lib/commit-msg-lint.sh"
 
 if ! lint_commit_message "$1"; then

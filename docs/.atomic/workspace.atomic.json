@@ -75116,6 +75116,70 @@
         "ColumnHeaderStyle's defaults are hello-column-reorder's measured numbers. A second consumer with a different type scale would want them theme-derived rather than constant, and would be the signal for that."
       ]
     },
+    "Round 1507": {
+      "decision_summary": "The caller resolves the pin, and checks it: the gate tool is vendored at the declared revision and verified by its own --version, so neither a stale PATH binary nor a fresh clone can decide what this workspace's gates measure.",
+      "changes_bullets": [
+        "vendor/mnemosyne is a submodule pinned to the revision mnemosyne.toml [tool].pin names, so the tool that gates every commit and push here can be produced from a checkout of this repository and nothing else.",
+        ".githooks/lib/mnemosyne-tool.sh resolves that pin in the CALLER rather than asking the PATH binary to re-exec the pinned build itself. Order: the installed pin under $MN_ROOT, else the vendored source built with this workspace's own toolchain, else a loud refusal naming both remedies. It never falls back to PATH.",
+        "The resolved build's revision is CHECKED, not read off the directory name: mnemosyne-cli --version reports the revision and the pin must be a prefix of it. A directory called be4c164 is a label someone typed; the binary inside it is the fact.",
+        "Both hooks use the resolver for validate-workspace and validate-code-refs, and log which source answered.",
+        "tools/test_hooks.sh grows 19 assertions over the resolver: the table-scoped pin reader, the revision check, and the refusal-rather-than-PATH behaviour."
+      ],
+      "verification_bullets": [
+        "The stated entry gate, measured before any design was committed to: Mnemosyne builds under pinion's pinned rustc 1.88.0 with --locked in 1m16s, despite its own rust-toolchain.toml naming 1.94.1 — its declared rust-version is 1.88 and that is the honest number. No second toolchain is needed.",
+        "And the mechanism that makes that true was measured rather than assumed: rustup resolves rust-toolchain.toml from the WORKING DIRECTORY, not from --manifest-path. Probed both ways (1.88.0 in the outer root, 1.94.1 inside the submodule directory), then confirmed the vendored build runs under toolchains/1.88.0 when invoked from the root, which is where the hooks run.",
+        "The fresh-clone guarantee verified end to end with MN_ROOT pointed at an empty directory: the resolver built vendor/mnemosyne in 55.87s, reported revision be4c1647 matching the pin, and validate-workspace over this workspace returned rc=0 with T1=0 and zero citations swallowed.",
+        "Four counterfactuals, injected one at a time. Trusting the path instead of checking --version kills 3 assertions; a pin reader that ignores which table it is in kills 2; a silent PATH fall-back kills 3.",
+        "The fourth killed NOTHING at first. Deleting the submodule-revision check left every assertion green, because the fake submodule's build fails anyway — the test was measuring a broken Cargo.toml, not the guard. Reshaped to assert the REASON (the refusal must name the revision mismatch, which it can only do before attempting a build), and re-measured: the counterfactual now kills it.",
+        "R868's VCS-derived foreign-subtree logic absorbed the second submodule with nothing declared: the advisory reports {vendor/sce: 5969, vendor/mnemosyne: 525} and still zero citations swallowed. That is upstream's design choice paying off over the declaration this consumer originally proposed.",
+        "An inline clearance found on the way: R1500 made tools/test_hooks.sh's `shellcheck source=` directives SCRIPTDIR-relative but left the three hooks' own directives CWD-relative, so `shellcheck -x` from the repo root — where every gate here runs — followed none of them. Fixed in all three; shellcheck -x is now clean over the hooks and all four libraries.",
+        "gates: shellcheck -x clean, tools/test_hooks.sh 41 passed, validate-workspace rc=0, validate-code-refs rc=0, submodule clean with its own /target ignored.",
+        "Measured after the first draft of this round was already committed, by reading its own output: the resolver set MNEMOSYNE_PIN_SKIP for every invocation, so the tool printed on every commit that the pin \"is NOT enforced\" and results \"are not attributable to that revision\" — the opposite of what the resolver had just verified. Probed both branches without it: the installed pin and the vendored build each recognise themselves as the pin and do not delegate, the vendored one even with MN_ROOT pointing at an empty directory (rc=0, no warning). The suppression bought nothing, so it now covers the revision PROBE only, where it is load-bearing: a binary allowed to hand off would report its delegate's revision and the check would prove nothing. Mnemosyne's own enforcement stays in place behind this one, so the pin is checked twice.",
+        "Two further counterfactuals for that boundary, using a fake CLI that reports a matching revision only when it was allowed to skip: restoring the suppression in the run path kills the assertion, and removing it from the probe kills the other."
+      ],
+      "impact_refs": [
+        "6.2",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "The installed-pin branch trusts a build whose --version matches the pin to BE that revision's build. Verifying more would mean rebuilding it, which is the cost the branch exists to avoid.",
+        "vendor/mnemosyne/target/ is the submodule's directory and target-budget.sh measures only this workspace's target/, so the vendored build's ~1 GiB is unswept and unreported.",
+        "A fresh clone that skips `git submodule update --init` and has no installed pin cannot commit. That is intended — a gate whose tool has unknown provenance is not a gate — but it is a new way for a first-time clone to be blocked, and the message is the only thing that makes it recoverable.",
+        "Nothing yet checks that the pin and the submodule revision agree at rest; the resolver notices only when it has to build. A drifted pair with an installed pin present would go unmentioned until the day that install disappears.",
+        "The pin is now checked twice — once by this resolver, once by the tool itself. That is deliberate belt-and-braces, but it means a future Mnemosyne that changed its self-recognition could start delegating under the resolver without anything here noticing until it failed."
+      ],
+      "publishable_decision_summary": "The caller resolves the pin, and checks it: the gate tool is vendored at the declared revision and verified by its own --version, so neither a stale PATH binary nor a fresh clone can decide what this workspace's gates measure.",
+      "publishable_changes_bullets": [
+        "vendor/mnemosyne is a submodule pinned to the revision mnemosyne.toml [tool].pin names, so the tool that gates every commit and push here can be produced from a checkout of this repository and nothing else.",
+        ".githooks/lib/mnemosyne-tool.sh resolves that pin in the CALLER rather than asking the PATH binary to re-exec the pinned build itself. Order: the installed pin under $MN_ROOT, else the vendored source built with this workspace's own toolchain, else a loud refusal naming both remedies. It never falls back to PATH.",
+        "The resolved build's revision is CHECKED, not read off the directory name: mnemosyne-cli --version reports the revision and the pin must be a prefix of it. A directory called be4c164 is a label someone typed; the binary inside it is the fact.",
+        "Both hooks use the resolver for validate-workspace and validate-code-refs, and log which source answered.",
+        "tools/test_hooks.sh grows 19 assertions over the resolver: the table-scoped pin reader, the revision check, and the refusal-rather-than-PATH behaviour."
+      ],
+      "publishable_verification_bullets": [
+        "The stated entry gate, measured before any design was committed to: Mnemosyne builds under pinion's pinned rustc 1.88.0 with --locked in 1m16s, despite its own rust-toolchain.toml naming 1.94.1 — its declared rust-version is 1.88 and that is the honest number. No second toolchain is needed.",
+        "And the mechanism that makes that true was measured rather than assumed: rustup resolves rust-toolchain.toml from the WORKING DIRECTORY, not from --manifest-path. Probed both ways (1.88.0 in the outer root, 1.94.1 inside the submodule directory), then confirmed the vendored build runs under toolchains/1.88.0 when invoked from the root, which is where the hooks run.",
+        "The fresh-clone guarantee verified end to end with MN_ROOT pointed at an empty directory: the resolver built vendor/mnemosyne in 55.87s, reported revision be4c1647 matching the pin, and validate-workspace over this workspace returned rc=0 with T1=0 and zero citations swallowed.",
+        "Four counterfactuals, injected one at a time. Trusting the path instead of checking --version kills 3 assertions; a pin reader that ignores which table it is in kills 2; a silent PATH fall-back kills 3.",
+        "The fourth killed NOTHING at first. Deleting the submodule-revision check left every assertion green, because the fake submodule's build fails anyway — the test was measuring a broken Cargo.toml, not the guard. Reshaped to assert the REASON (the refusal must name the revision mismatch, which it can only do before attempting a build), and re-measured: the counterfactual now kills it.",
+        "R868's VCS-derived foreign-subtree logic absorbed the second submodule with nothing declared: the advisory reports {vendor/sce: 5969, vendor/mnemosyne: 525} and still zero citations swallowed. That is upstream's design choice paying off over the declaration this consumer originally proposed.",
+        "An inline clearance found on the way: R1500 made tools/test_hooks.sh's `shellcheck source=` directives SCRIPTDIR-relative but left the three hooks' own directives CWD-relative, so `shellcheck -x` from the repo root — where every gate here runs — followed none of them. Fixed in all three; shellcheck -x is now clean over the hooks and all four libraries.",
+        "gates: shellcheck -x clean, tools/test_hooks.sh 41 passed, validate-workspace rc=0, validate-code-refs rc=0, submodule clean with its own /target ignored.",
+        "Measured after the first draft of this round was already committed, by reading its own output: the resolver set MNEMOSYNE_PIN_SKIP for every invocation, so the tool printed on every commit that the pin \"is NOT enforced\" and results \"are not attributable to that revision\" — the opposite of what the resolver had just verified. Probed both branches without it: the installed pin and the vendored build each recognise themselves as the pin and do not delegate, the vendored one even with MN_ROOT pointing at an empty directory (rc=0, no warning). The suppression bought nothing, so it now covers the revision PROBE only, where it is load-bearing: a binary allowed to hand off would report its delegate's revision and the check would prove nothing. Mnemosyne's own enforcement stays in place behind this one, so the pin is checked twice.",
+        "Two further counterfactuals for that boundary, using a fake CLI that reports a matching revision only when it was allowed to skip: restoring the suppression in the run path kills the assertion, and removing it from the probe kills the other."
+      ],
+      "publishable_impact_refs": [
+        "6.2",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The installed-pin branch trusts a build whose --version matches the pin to BE that revision's build. Verifying more would mean rebuilding it, which is the cost the branch exists to avoid.",
+        "vendor/mnemosyne/target/ is the submodule's directory and target-budget.sh measures only this workspace's target/, so the vendored build's ~1 GiB is unswept and unreported.",
+        "A fresh clone that skips `git submodule update --init` and has no installed pin cannot commit. That is intended — a gate whose tool has unknown provenance is not a gate — but it is a new way for a first-time clone to be blocked, and the message is the only thing that makes it recoverable.",
+        "Nothing yet checks that the pin and the submodule revision agree at rest; the resolver notices only when it has to build. A drifted pair with an installed pin present would go unmentioned until the day that install disappears.",
+        "The pin is now checked twice — once by this resolver, once by the tool itself. That is deliberate belt-and-braces, but it means a future Mnemosyne that changed its self-recognition could start delegating under the resolver without anything here noticing until it failed."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

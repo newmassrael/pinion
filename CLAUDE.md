@@ -105,6 +105,8 @@ docs/
   .atomic/              spec SSOT (do not hand-edit; read via `mnemosyne-cli query`)
 vendor/
   sce/                  scxml-core-engine submodule, branch=main
+  mnemosyne/            Mnemosyne submodule pinned to `[tool].pin` (R1507) —
+                        the gate tool, vendored so a fresh clone can build it
 .githooks/              pre-commit, commit-msg, pre-push (active via core.hooksPath)
 mnemosyne.toml          workspace config (schema, locale, validators, ledgers)
 ```
@@ -145,6 +147,29 @@ from here.
   instead; do not work around this.
 
 ## Pre-commit / pre-push hooks
+
+### The gate tool is resolved, not assumed (R1507)
+
+Both hooks source `.githooks/lib/mnemosyne-tool.sh`, which resolves the
+revision `mnemosyne.toml [tool].pin` names and **verifies it** — the resolved
+build's `--version` revision must have the pin as a prefix. Order: the
+installed pin under `$MN_ROOT/<pin>/bin` (an optimisation), else
+`vendor/mnemosyne` built from source (~1 min, cached), else a loud refusal.
+
+**It never falls back to PATH.** Before R1507 the hooks ran whatever
+`mnemosyne-cli` was on PATH and trusted that binary to re-exec the pinned build
+itself, which asks the untrusted thing to enforce the trust and has a floor: a
+pre-R832 build does not know the `[tool]` key and dies *parsing the config*,
+before any hand-off, with `MNEMOSYNE_PIN_SKIP` powerless because that check
+runs ahead of the parser too. Measured twice in one week (R1502, R1503) — a
+concurrent checkout reinstalled PATH at R807 and every commit and push here was
+blocked. A fresh clone had the mirror-image problem: nothing to delegate *to*.
+Vendoring closes both.
+
+Bumping the pin moves the submodule too (`git -C vendor/mnemosyne checkout
+<pin>` + `git add vendor/mnemosyne`), the same dual discipline `vendor/sce`
+has. The libraries are tested (`tools/test_hooks.sh`, 41 assertions) and
+`pre-push` runs those tests before trusting them.
 
 `.githooks/pre-commit` runs:
 

@@ -26,6 +26,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/.githooks/lib/ci-status.sh"
 # shellcheck source=SCRIPTDIR/../.githooks/lib/commit-msg-lint.sh
 source "$repo_root/.githooks/lib/commit-msg-lint.sh"
+# shellcheck source=SCRIPTDIR/../.githooks/lib/mnemosyne-tool.sh
+source "$repo_root/.githooks/lib/mnemosyne-tool.sh"
 
 pass=0
 fail=0
@@ -280,6 +282,193 @@ ok "an indented continuation line is rejected" \
 - a bullet that wraps
   onto a second line')" \
    "1"
+
+# ---------------------------------------------------------------------------
+# R1507 mnemosyne-tool.sh — resolving the pinned gate tool
+#
+# What is worth testing here is the part that can be WRONG about a fact rather
+# than merely absent: which revision the resolver believes it resolved. A
+# resolver that reads a directory name and reports it as a revision would pass
+# every test that only checks "something was found", which is the shape R1495
+# got wrong with its `gh` stub. So the fake CLIs below LIE about their
+# revision, and the resolver has to notice.
+# ---------------------------------------------------------------------------
+
+mn_tmp="$(mktemp -d)"
+trap 'rm -rf "$mn_tmp"' EXIT
+
+# A stand-in `mnemosyne-cli` that reports `$1` as its build revision, in the
+# real binary's `--version` format. It answers ONLY `--version`, because that is
+# all the resolver may rely on; a stub that answered everything would let a
+# resolver that shelled out for something else pass anyway.
+make_fake_cli() {
+    local path="$1" rev="$2"
+    mkdir -p "$(dirname "$path")"
+    cat >"$path" <<FAKE
+#!/usr/bin/env bash
+[ "\${1:-}" = "--version" ] || { echo "fake cli: unexpected argv: \$*" >&2; exit 64; }
+echo "mnemosyne-cli 0.1.0 ($rev)"
+FAKE
+    chmod +x "$path"
+}
+
+# --- the pin reader ---
+declared_pin() {
+    local toml="$mn_tmp/probe.toml"
+    printf '%s\n' "$1" >"$toml"
+    mnemosyne_declared_pin "$toml" 2>/dev/null || echo "<none>"
+}
+
+ok "the pin is read from the [tool] table" \
+   "$(declared_pin '[tool]
+pin = "be4c164"')" \
+   "be4c164"
+
+ok "a trailing comment is not part of the pin" \
+   "$(declared_pin '[tool]
+pin = "abc1234"  # the revision this workspace attributes gate results to')" \
+   "abc1234"
+
+# The reader must be table-scoped. A `pin` under some other table is a
+# different setting, and treating it as the tool pin would silently gate this
+# workspace with a revision nobody declared for it.
+ok "a pin in another table is not the tool pin" \
+   "$(declared_pin '[schema]
+pin = "deadbee"
+
+[tool]
+pin = "be4c164"')" \
+   "be4c164"
+
+ok "a pin under only another table is no pin at all" \
+   "$(declared_pin '[schema]
+pin = "deadbee"')" \
+   "<none>"
+
+ok "no [tool] table is no pin" \
+   "$(declared_pin '[schema]
+scan_exclusions = ["vendor/"]')" \
+   "<none>"
+
+ok "an unreadable file is no pin" \
+   "$(mnemosyne_declared_pin "$mn_tmp/does-not-exist.toml" 2>/dev/null || echo '<none>')" \
+   "<none>"
+
+# --- the revision check, which is what makes this a guard ---
+make_fake_cli "$mn_tmp/right/bin/mnemosyne-cli" "be4c1647331468b"
+make_fake_cli "$mn_tmp/wrong/bin/mnemosyne-cli" "d02c12fdeadbeef"
+
+matches() {
+    mnemosyne_revision_matches "$1" "$2" && echo yes || echo no
+}
+
+ok "a build whose revision extends the pin matches" \
+   "$(matches "$mn_tmp/right/bin/mnemosyne-cli" be4c164)" "yes"
+
+# The whole point: the DIRECTORY says be4c164, the BINARY says otherwise.
+# A resolver that trusted the path would accept this.
+mkdir -p "$mn_tmp/liar/be4c164/bin"
+cp "$mn_tmp/wrong/bin/mnemosyne-cli" "$mn_tmp/liar/be4c164/bin/mnemosyne-cli"
+ok "a build in a correctly-named directory that reports another revision is rejected" \
+   "$(matches "$mn_tmp/liar/be4c164/bin/mnemosyne-cli" be4c164)" "no"
+
+ok "a pin that is not a prefix is rejected" \
+   "$(matches "$mn_tmp/right/bin/mnemosyne-cli" d02c12f)" "no"
+
+ok "a missing binary is rejected" \
+   "$(matches "$mn_tmp/nope/bin/mnemosyne-cli" be4c164)" "no"
+
+printf '#!/usr/bin/env bash\nexit 3\n' >"$mn_tmp/broken"
+chmod +x "$mn_tmp/broken"
+ok "a binary that cannot report its version is rejected" \
+   "$(matches "$mn_tmp/broken" be4c164)" "no"
+
+printf 'not executable\n' >"$mn_tmp/plain"
+ok "a non-executable path is rejected" \
+   "$(matches "$mn_tmp/plain" be4c164)" "no"
+
+# --- which invocations may suppress the pin ---
+#
+# The probe must, or a binary that hands off reports its delegate's revision
+# and the check above proves nothing. The run path must not, or the tool
+# announces on every commit that the pin is unenforced — which is false, and
+# false in the direction that teaches a reader to ignore the gate's own log.
+# This fake reports a MATCHING revision only when it was allowed to skip, so
+# the probe's precondition is what is being asserted, not merely its result.
+cat >"$mn_tmp/telltale" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+    if [ "${MNEMOSYNE_PIN_SKIP:-}" = "1" ]; then
+        echo "mnemosyne-cli 0.1.0 (be4c1647)"
+    else
+        echo "mnemosyne-cli 0.1.0 (deadbeef)"
+    fi
+    exit 0
+fi
+echo "PIN_SKIP=${MNEMOSYNE_PIN_SKIP:-unset}"
+FAKE
+chmod +x "$mn_tmp/telltale"
+
+ok "the revision probe suppresses delegation" \
+   "$(matches "$mn_tmp/telltale" be4c164)" "yes"
+
+ok "the run path does not suppress the pin" \
+   "$(MN_CLI="$mn_tmp/telltale" mnemosyne_cli validate-workspace)" \
+   "PIN_SKIP=unset"
+
+# --- resolution, in a throwaway repo so no machine state leaks in ---
+mn_repo="$mn_tmp/repo"
+mkdir -p "$mn_repo"
+git -C "$mn_repo" init -q
+printf '[tool]\npin = "be4c164"\n' >"$mn_repo/mnemosyne.toml"
+
+# `mnemosyne_resolve` asks git for the root, so run it from inside the repo.
+resolve_in_repo() {
+    ( cd "$mn_repo" && MN_ROOT="$1" mnemosyne_resolve >/dev/null 2>&1 \
+        && echo "$MN_CLI_SOURCE" || echo "<refused>" )
+}
+
+mkdir -p "$mn_tmp/root-ok/be4c164/bin"
+cp "$mn_tmp/right/bin/mnemosyne-cli" "$mn_tmp/root-ok/be4c164/bin/mnemosyne-cli"
+ok "an installed pin that verifies is used" \
+   "$(resolve_in_repo "$mn_tmp/root-ok")" \
+   "installed pin be4c164"
+
+# No installed pin and no vendor/mnemosyne in this throwaway repo. The
+# resolver must REFUSE rather than reach for PATH — where a real
+# `mnemosyne-cli` may well be sitting on this machine. That fall-back is the
+# defect R1502 / R1503 measured, so its absence is the assertion.
+ok "with no pin and no submodule the resolver refuses rather than using PATH" \
+   "$(resolve_in_repo "$mn_tmp/root-empty")" \
+   "<refused>"
+
+# And it refuses for the right reason, in a message a reader can act on.
+ok "the refusal names both sources" \
+   "$( ( cd "$mn_repo" && MN_ROOT="$mn_tmp/root-empty" mnemosyne_resolve 2>&1 >/dev/null ) \
+        | grep -cE 'cargo install --git|git submodule update --init' )" \
+   "2"
+
+# A submodule checked out somewhere other than the pin must not be built and
+# called the pin: that reintroduces the ambiguity this file removes.
+git -C "$mn_repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "base"
+mkdir -p "$mn_repo/vendor/mnemosyne"
+printf '[package]\nname = "x"\nversion = "0.0.0"\n' >"$mn_repo/vendor/mnemosyne/Cargo.toml"
+git -C "$mn_repo/vendor/mnemosyne" init -q
+git -C "$mn_repo/vendor/mnemosyne" -c user.email=t@t -c user.name=t \
+    commit -q --allow-empty -m "not the pin"
+# Asserted on the REASON, not just the outcome. The first draft checked only
+# that resolution refused, and a counterfactual that deleted the revision check
+# entirely still passed it — the fake submodule's build fails anyway, so the
+# test was measuring a broken Cargo.toml rather than the guard. The refusal has
+# to name the mismatch, which it can only do before attempting a build.
+ok "a submodule at another revision is refused BY REVISION, before any build" \
+   "$( ( cd "$mn_repo" && MN_ROOT="$mn_tmp/root-empty" mnemosyne_resolve 2>&1 >/dev/null ) \
+        | grep -cE 'vendor/mnemosyne is at [0-9a-f]{8}, not the' )" \
+   "1"
+
+ok "and it still refuses" \
+   "$(resolve_in_repo "$mn_tmp/root-empty")" \
+   "<refused>"
 
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

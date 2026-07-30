@@ -42,12 +42,6 @@
 # Install via `git config core.hooksPath .githooks` (one-time per clone).
 set -euo pipefail
 
-if ! command -v mnemosyne-cli >/dev/null 2>&1; then
-    echo "pre-push: mnemosyne-cli not on PATH — install with" >&2
-    echo "  cargo install --path /path/to/mnemosyne/crates/mnemosyne-cli" >&2
-    exit 1
-fi
-
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
@@ -60,10 +54,13 @@ cd "$repo_root"
 # past `--no-verify` cannot be published). Only NEW commits — those ahead of
 # the remote — are checked; already-published history is never re-litigated.
 hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/commit-msg-lint.sh
+# shellcheck source=SCRIPTDIR/lib/commit-msg-lint.sh
 source "$hook_dir/lib/commit-msg-lint.sh"
-# shellcheck source=lib/ci-status.sh
+# shellcheck source=SCRIPTDIR/lib/ci-status.sh
 source "$hook_dir/lib/ci-status.sh"
+# R1507 — the pinned gate tool is resolved by this hook, not by PATH.
+# shellcheck source=SCRIPTDIR/lib/mnemosyne-tool.sh
+source "$hook_dir/lib/mnemosyne-tool.sh"
 
 # --- R1495. The libraries this hook decides with, verified first ---
 #
@@ -123,8 +120,9 @@ if ! check_last_ci_run "$(git rev-parse --abbrev-ref HEAD)" "pre-push"; then
     exit 1
 fi
 
-echo "pre-push: mnemosyne-cli validate-workspace ..." >&2
-if ! mnemosyne-cli validate-workspace; then
+mnemosyne_resolve
+echo "pre-push: mnemosyne-cli validate-workspace ($MN_CLI_SOURCE) ..." >&2
+if ! mnemosyne_cli validate-workspace; then
     echo "pre-push: validate-workspace failed — fix violations before push" >&2
     exit 1
 fi
@@ -159,7 +157,7 @@ fi
 #    push validates the publishable state). Output captured, surfaced only on
 #    failure (the info-level Path B binding axis is verbose).
 echo "pre-push: mnemosyne-cli validate-code-refs ..." >&2
-if ! cr_out="$(mnemosyne-cli validate-code-refs 2>&1)"; then
+if ! cr_out="$(mnemosyne_cli validate-code-refs 2>&1)"; then
     printf '%s\n' "$cr_out" | grep -E '\[(missing|section_missing)\]|violations: total' >&2 || true
     echo "pre-push: validate-code-refs found hallucination-class citations" >&2
     exit 1
@@ -174,7 +172,7 @@ fi
 # on size rather than age, and for what this does NOT guarantee.
 #
 # Never fails the push: the commit being published is not what is unsafe.
-# shellcheck source=lib/target-budget.sh
+# shellcheck source=SCRIPTDIR/lib/target-budget.sh
 source "$hook_dir/lib/target-budget.sh"
 enforce_target_budget "$repo_root" "pre-push"
 

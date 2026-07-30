@@ -39,18 +39,25 @@
 # (one-time per clone; `.githooks/` is tracked, `.git/hooks/` is not)
 set -euo pipefail
 
-if ! command -v mnemosyne-cli >/dev/null 2>&1; then
-    echo "pre-commit: mnemosyne-cli not on PATH — install with" >&2
-    echo "  cargo install --path /path/to/mnemosyne/crates/mnemosyne-cli" >&2
-    exit 1
-fi
-
 # Discover repo root and run from there so `mnemosyne.toml` discovery
 # walks upward correctly regardless of where `git commit` was invoked.
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-mnemosyne-cli validate-workspace
+# R1507 — resolve the PINNED tool rather than trusting PATH to delegate to it.
+# `mnemosyne.toml [tool].pin` names the revision every gate result on this
+# workspace is attributable to, and this hook now resolves that revision
+# itself: the installed pin when its `--version` confirms it, else the
+# `vendor/mnemosyne` submodule built from source. It never falls back to PATH.
+# See lib/mnemosyne-tool.sh for why (a pre-R832 PATH binary dies before it can
+# delegate, and a fresh clone has nothing to delegate to).
+hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=SCRIPTDIR/lib/mnemosyne-tool.sh
+source "$hook_dir/lib/mnemosyne-tool.sh"
+mnemosyne_resolve
+
+echo "pre-commit: mnemosyne-cli validate-workspace ($MN_CLI_SOURCE) ..." >&2
+mnemosyne_cli validate-workspace
 
 if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     # R1026 §6.3 — rustfmt gate (rustfmt.toml, max_width=100). Runs before
@@ -78,7 +85,7 @@ fi
 #    axis is verbose); success is silent.
 if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.(rs|scxml)$'; then
     echo "pre-commit: mnemosyne-cli validate-code-refs ..." >&2
-    if ! cr_out="$(mnemosyne-cli validate-code-refs 2>&1)"; then
+    if ! cr_out="$(mnemosyne_cli validate-code-refs 2>&1)"; then
         printf '%s\n' "$cr_out" | grep -E '\[(missing|section_missing)\]|violations: total' >&2 || true
         echo "pre-commit: validate-code-refs found hallucination-class citations" >&2
         exit 1

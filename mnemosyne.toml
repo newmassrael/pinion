@@ -29,10 +29,14 @@
 # R861/R863 also closed the delegation floor that R1502's own adoption walked
 # into: an unknown key no longer stops the hand-off to the pinned build.
 #
-# The R867 advisory reports 5969 §-tokens under `vendor/sce` that are no
-# longer read as this store's. None of them can be pinion's: `vendor/` holds
-# exactly one entry, `sce`, it is a clean submodule of a separate repository,
-# and this workspace never commits into it (see `scan_exclusions` below).
+# The R867 advisory reports §-tokens under `vendor/` that are no longer read as
+# this store's. None of them can be pinion's: every entry there is a clean
+# submodule of a separate repository (index mode 160000) and this workspace
+# never commits into any of them (see `scan_exclusions` below, which covers
+# `vendor/` as a whole). R1507 added a second such entry, `vendor/mnemosyne`,
+# and the advisory picked it up with nothing declared here — upstream derives
+# foreignness from this tree's own VCS (R868), which is why it rejected the
+# declaration this consumer originally asked for.
 #
 # BUMP DISCIPLINE: a bump asserts BOTH gate commands are green at the new
 # revision — the hooks run both. Measure each against this tree with the
@@ -43,6 +47,13 @@
 # Install a pin with
 #   cargo install --git https://github.com/newmassrael/mnemosyne \
 #       --rev <pin> --locked mnemosyne-cli --root ~/.local/mn/<pin>
+# — an OPTIMISATION since R1507, not a requirement. `.githooks/lib/
+# mnemosyne-tool.sh` resolves this pin itself and verifies the resolved build's
+# `--version` revision against it; with no installed pin it builds
+# `vendor/mnemosyne` (this same revision, vendored) and never falls back to
+# whatever sits on PATH. Bumping the pin therefore means moving the submodule
+# too: `git -C vendor/mnemosyne fetch && git -C vendor/mnemosyne checkout <pin>`
+# then `git add vendor/mnemosyne`, the same dual discipline `vendor/sce` has.
 pin = "be4c164"
 
 [schema]
