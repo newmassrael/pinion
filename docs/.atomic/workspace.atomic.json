@@ -74888,6 +74888,58 @@
         "CI never runs mnemosyne-cli at all (zero references in .github/workflows), so this pin governs local hooks only. Whether CI should run the same pinned gate is a separate question this round does not answer."
       ]
     },
+    "Round 1503": {
+      "decision_summary": "The gate tool moves to a revision that reads this tree's numbering correctly: upstream closed both defects this workspace reported, the same day, so the pin leaves R839 and the paragraph that held it there is gone — and the PATH binary that had gone older than the pin key itself, blocking every commit, is back above the floor.",
+      "changes_bullets": [
+        "mnemosyne.toml pins be4c164 (Mnemosyne R869), replacing d02c12f (R839); the paragraph holding the pin behind R840 is deleted per its own UPGRADE TRIGGER, and a bump discipline replaces it — a bump asserts BOTH gate commands are green, measured with the delegation skipped.",
+        "The PATH binary was reinstalled at the same revision. It had been reinstalled by a concurrent session at R807 (25d30d16), which predates the [tool] key and hard-errors on it, so every commit and push in this repo was blocked regardless of what the pin said.",
+        "claudedocs/mnemosyne-upstream-tool-pin-floor.md gains a closing record; sections 1-12 stay as written at upstream 0c82ad73, so what was true when is readable against what replaced it."
+      ],
+      "verification_bullets": [
+        "Measured, not read from commit messages: be4c1647 identified itself, and both commands the hooks run were measured against pinion HEAD 6bc3c998 — validate-workspace rc=0 with 0 citations swallowed (4 at 0c82ad73), validate-code-refs rc=0. Reproduced through the real hook path with the PATH binary and pin delegation, no MNEMOSYNE_PIN_SKIP.",
+        "The first before/after was INVALID and was redone: 27396a9 silently re-exec'd to the pin and reported the pin's clean result as its own. A revision comparison needs MNEMOSYNE_PIN_SKIP=1, or the old pin answers for the revision under test.",
+        "R858's \"exactly four false positives\" is upstream's own four, not pinion's. pinion's four were still live at 0c82ad73, measured. Trusting that commit message would have bumped the pin onto a red gate on the strength of a coincidence in the number.",
+        "The R867 advisory silences 5969 section-tokens under vendor/sce and upstream states nobody has read inside them. Closed structurally for pinion rather than by sampling: vendor/ holds exactly one entry, sce, at index mode 160000 — a clean submodule of scxml-core-engine — and this workspace never commits into it, so no silenced token can be pinion's own citation.",
+        "R863 verified by A/B in a throwaway workspace carrying a pin plus an unknown key, because the first draft of this round called that unverifiable without editing mnemosyne.toml, which was a false constraint: the pre-R863 build dies on the unknown key with NO hand-off, and be4c164 prints the hand-off and delegates, the delegate then dying on the key. The failure moved from before the hand-off to after it, which is the claim.",
+        "FIVE CLAIMS OF THE REPORT WERE CORRECTED by upstream's reply, which measured this tree read-only: the pin path IS verified (R832's loop guard re-checks after exec, and R861 moved that check before the hand-off), so the report's central argument against the pin mechanism was false; recommendation (C)1 is structurally dead code, since only a build that already knows the key could carry a message about it; (B) was refused because a permanent ignore region turns a loud refusal into silent non-enforcement, not on cost; two of the four swallowed ids are W3C SCXML citations expressible by prefix, so only two ever needed the file's location as their signal; and asking for a severity knob was the wrong ask, because what was imprecise was attribution, not severity.",
+        "The delegation note's doubled \"this build this build\", reported as a minor observation, is also fixed at be4c164."
+      ],
+      "impact_refs": [
+        "6.2"
+      ],
+      "carry_forward_bullets": [
+        "THE SUBMODULE IS STILL OWED, and this round's first draft dropped it on a false reading. R863 fixes only an unknown key stopping the hand-off; it does nothing when the PATH binary predates the key entirely, which is exactly what blocked this repo twice today. Two failure modes stay open under a pinned PATH — a build below R832, and a fresh clone with no pin root — and only vendoring closes both. Upstream reached the same conclusion independently while measuring this tree.",
+        "The reasoning that dropped it was also wrong about cause: an actively developed tool makes the PATH binary churn MORE, including backwards, so upstream's same-day responsiveness raises this risk rather than lowering it.",
+        "Four pin roots now exist under ~/.local/mn (27396a9, d02c12f, 0c82ad7, be4c164) at roughly 42 MB each. Only be4c164 is referenced; the other three are inert and are kept because a future bump can then be measured without a rebuild.",
+        "CI still never runs mnemosyne-cli at all, so this pin governs local hooks only. Whether CI should run the same pinned gate is the question R1502 left open and this round does not answer either.",
+        "Backtick suppression in the citation gate is per LINE, so a code span wrapping across two lines leaves the inner text unprotected — upstream hit this in their own source while quoting this report's examples. Nothing in this tree trips it today (validate-code-refs rc=0), but a section example written into a scanned doc comment will."
+      ],
+      "publishable_decision_summary": "The gate tool moves to a revision that reads this tree's numbering correctly: upstream closed both defects this workspace reported, the same day, so the pin leaves R839 and the paragraph that held it there is gone — and the PATH binary that had gone older than the pin key itself, blocking every commit, is back above the floor.",
+      "publishable_changes_bullets": [
+        "mnemosyne.toml pins be4c164 (Mnemosyne R869), replacing d02c12f (R839); the paragraph holding the pin behind R840 is deleted per its own UPGRADE TRIGGER, and a bump discipline replaces it — a bump asserts BOTH gate commands are green, measured with the delegation skipped.",
+        "The PATH binary was reinstalled at the same revision. It had been reinstalled by a concurrent session at R807 (25d30d16), which predates the [tool] key and hard-errors on it, so every commit and push in this repo was blocked regardless of what the pin said.",
+        "claudedocs/mnemosyne-upstream-tool-pin-floor.md gains a closing record; sections 1-12 stay as written at upstream 0c82ad73, so what was true when is readable against what replaced it."
+      ],
+      "publishable_verification_bullets": [
+        "Measured, not read from commit messages: be4c1647 identified itself, and both commands the hooks run were measured against pinion HEAD 6bc3c998 — validate-workspace rc=0 with 0 citations swallowed (4 at 0c82ad73), validate-code-refs rc=0. Reproduced through the real hook path with the PATH binary and pin delegation, no MNEMOSYNE_PIN_SKIP.",
+        "The first before/after was INVALID and was redone: 27396a9 silently re-exec'd to the pin and reported the pin's clean result as its own. A revision comparison needs MNEMOSYNE_PIN_SKIP=1, or the old pin answers for the revision under test.",
+        "R858's \"exactly four false positives\" is upstream's own four, not pinion's. pinion's four were still live at 0c82ad73, measured. Trusting that commit message would have bumped the pin onto a red gate on the strength of a coincidence in the number.",
+        "The R867 advisory silences 5969 section-tokens under vendor/sce and upstream states nobody has read inside them. Closed structurally for pinion rather than by sampling: vendor/ holds exactly one entry, sce, at index mode 160000 — a clean submodule of scxml-core-engine — and this workspace never commits into it, so no silenced token can be pinion's own citation.",
+        "R863 verified by A/B in a throwaway workspace carrying a pin plus an unknown key, because the first draft of this round called that unverifiable without editing mnemosyne.toml, which was a false constraint: the pre-R863 build dies on the unknown key with NO hand-off, and be4c164 prints the hand-off and delegates, the delegate then dying on the key. The failure moved from before the hand-off to after it, which is the claim.",
+        "FIVE CLAIMS OF THE REPORT WERE CORRECTED by upstream's reply, which measured this tree read-only: the pin path IS verified (R832's loop guard re-checks after exec, and R861 moved that check before the hand-off), so the report's central argument against the pin mechanism was false; recommendation (C)1 is structurally dead code, since only a build that already knows the key could carry a message about it; (B) was refused because a permanent ignore region turns a loud refusal into silent non-enforcement, not on cost; two of the four swallowed ids are W3C SCXML citations expressible by prefix, so only two ever needed the file's location as their signal; and asking for a severity knob was the wrong ask, because what was imprecise was attribution, not severity.",
+        "The delegation note's doubled \"this build this build\", reported as a minor observation, is also fixed at be4c164."
+      ],
+      "publishable_impact_refs": [
+        "6.2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "THE SUBMODULE IS STILL OWED, and this round's first draft dropped it on a false reading. R863 fixes only an unknown key stopping the hand-off; it does nothing when the PATH binary predates the key entirely, which is exactly what blocked this repo twice today. Two failure modes stay open under a pinned PATH — a build below R832, and a fresh clone with no pin root — and only vendoring closes both. Upstream reached the same conclusion independently while measuring this tree.",
+        "The reasoning that dropped it was also wrong about cause: an actively developed tool makes the PATH binary churn MORE, including backwards, so upstream's same-day responsiveness raises this risk rather than lowering it.",
+        "Four pin roots now exist under ~/.local/mn (27396a9, d02c12f, 0c82ad7, be4c164) at roughly 42 MB each. Only be4c164 is referenced; the other three are inert and are kept because a future bump can then be measured without a rebuild.",
+        "CI still never runs mnemosyne-cli at all, so this pin governs local hooks only. Whether CI should run the same pinned gate is the question R1502 left open and this round does not answer either.",
+        "Backtick suppression in the citation gate is per LINE, so a code span wrapping across two lines leaves the inner text unprotected — upstream hit this in their own source while quoting this report's examples. Nothing in this tree trips it today (validate-code-refs rc=0), but a section example written into a scanned doc comment will."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
