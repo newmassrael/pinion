@@ -75180,6 +75180,62 @@
         "The pin is now checked twice — once by this resolver, once by the tool itself. That is deliberate belt-and-braces, but it means a future Mnemosyne that changed its self-recognition could start delegating under the resolver without anything here noticing until it failed."
       ]
     },
+    "Round 1508": {
+      "decision_summary": "The pin is checked where it can actually be wrong: a dirty build is not the revision it names, a build that would delegate elsewhere is not the one checked, and the two pins are one decision verified at rest rather than only when a build is needed.",
+      "changes_bullets": [
+        "The revision must be a revision: pure hex with the pin as a prefix. R1507 matched it as a bare prefix, so `be4c1647-dirty` — Mnemosyne's stamp for a build made from modified sources — passed as the pin. Measured before the fix: `be4c1647`, `be4c1647-dirty` and `be4c164-dirty` were all accepted.",
+        "The build must report the same revision whether or not it is allowed to delegate. The probe has to suppress delegation to describe the binary rather than a delegate, which makes it blind to a build that hands off elsewhere when left alone — the assumption R1507 leaned on with nothing checking it. Asking twice costs one exec.",
+        "The declared pin and the recorded gitlink are checked on EVERY run, before a source is chosen. R1507 checked the submodule only inside the vendored branch, so a workspace whose installed pin resolved never looked at it and the two could drift apart indefinitely.",
+        "A vendored build requires a clean submodule worktree. Upstream's stamp derives `-dirty` from git metadata and its own docs say an unstaged edit moves neither HEAD nor the index, adding that if a locally built binary ever has to be trusted AS a pin then something must watch the worktree instead. R1507 made a locally built binary exactly that; this is that input, and the consumer is the one who can supply it.",
+        "A never-checked-out submodule is initialised automatically, turning a fresh clone's hard block into a wait. Never one that already exists: `submodule update` force-checks-out the gitlink and would discard local work there.",
+        "`target-budget.sh` reports `vendor/mnemosyne/target/` on every push (measured 326 MiB), reported rather than swept because another repository's tree is not this budget's to reclaim."
+      ],
+      "verification_bullets": [
+        "The entry audit found ⓐ was not the deliberate trade-off R1507 recorded but a hole, and upstream had already written down the case: \"if a locally built binary ever has to be trusted AS a pin, this needs an input that watches the worktree rather than git's metadata\". R1507 had done precisely that.",
+        "Five counterfactuals, injected one at a time. A bare prefix match kills 2 assertions; asking only the suppressed probe kills 2; tolerating a dirty vendored worktree kills 2; auto-initialising an existing checkout kills 2.",
+        "Two of the five killed NOTHING at first, both for the same reason, and both were fixed rather than accepted. Removing the at-rest dual-pin check left every assertion green because they all called the function directly and nothing asserted that the resolver CALLS it — so a test was added that drifts the gitlink while a VALID installed pin is present, which is exactly the situation R1507 left unchecked. And the dirty-worktree outcome assertion passed either way because the fixture's build fails regardless; it now asserts the reason.",
+        "That is the third appearance of one shape — an outcome asserted in a fixture that would fail anyway — after R1507's own CF-4. It is now named in the test file rather than left to be rediscovered.",
+        "Verified against the live tree, not only fakes: appending a line inside vendor/mnemosyne makes the vendored branch refuse and name the reason; setting the pin to a revision this machine HAS installed still refuses, because the gitlink check runs first.",
+        "gates: shellcheck -x clean over both hooks and all four libraries, tools/test_hooks.sh 58 passed, validate-workspace and validate-code-refs rc=0."
+      ],
+      "impact_refs": [
+        "6.2",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "An installed MN_ROOT build made from an unstaged edit of the pinned revision still passes: the stamp cannot see it and the source it was built from is no longer there to inspect. Closed for the vendored build, where the worktree is present; not closable for an installed one without rebuilding it, which is the cost that branch exists to avoid.",
+        "The auto-init is announced but not bounded: a first clone pays an unannounced network fetch of the submodule's history before the ~1 minute build it does announce.",
+        "`vendor/mnemosyne/target/` is reported and never reclaimed. One release binary is not the accretion the budget exists for, but nothing will ever shrink it either.",
+        "The delegation cross-check compares two `--version` answers. A build that delegated to a DIFFERENT build of the same revision would agree on both and pass, which is the correct outcome by revision but not by provenance."
+      ],
+      "publishable_decision_summary": "The pin is checked where it can actually be wrong: a dirty build is not the revision it names, a build that would delegate elsewhere is not the one checked, and the two pins are one decision verified at rest rather than only when a build is needed.",
+      "publishable_changes_bullets": [
+        "The revision must be a revision: pure hex with the pin as a prefix. R1507 matched it as a bare prefix, so `be4c1647-dirty` — Mnemosyne's stamp for a build made from modified sources — passed as the pin. Measured before the fix: `be4c1647`, `be4c1647-dirty` and `be4c164-dirty` were all accepted.",
+        "The build must report the same revision whether or not it is allowed to delegate. The probe has to suppress delegation to describe the binary rather than a delegate, which makes it blind to a build that hands off elsewhere when left alone — the assumption R1507 leaned on with nothing checking it. Asking twice costs one exec.",
+        "The declared pin and the recorded gitlink are checked on EVERY run, before a source is chosen. R1507 checked the submodule only inside the vendored branch, so a workspace whose installed pin resolved never looked at it and the two could drift apart indefinitely.",
+        "A vendored build requires a clean submodule worktree. Upstream's stamp derives `-dirty` from git metadata and its own docs say an unstaged edit moves neither HEAD nor the index, adding that if a locally built binary ever has to be trusted AS a pin then something must watch the worktree instead. R1507 made a locally built binary exactly that; this is that input, and the consumer is the one who can supply it.",
+        "A never-checked-out submodule is initialised automatically, turning a fresh clone's hard block into a wait. Never one that already exists: `submodule update` force-checks-out the gitlink and would discard local work there.",
+        "`target-budget.sh` reports `vendor/mnemosyne/target/` on every push (measured 326 MiB), reported rather than swept because another repository's tree is not this budget's to reclaim."
+      ],
+      "publishable_verification_bullets": [
+        "The entry audit found ⓐ was not the deliberate trade-off R1507 recorded but a hole, and upstream had already written down the case: \"if a locally built binary ever has to be trusted AS a pin, this needs an input that watches the worktree rather than git's metadata\". R1507 had done precisely that.",
+        "Five counterfactuals, injected one at a time. A bare prefix match kills 2 assertions; asking only the suppressed probe kills 2; tolerating a dirty vendored worktree kills 2; auto-initialising an existing checkout kills 2.",
+        "Two of the five killed NOTHING at first, both for the same reason, and both were fixed rather than accepted. Removing the at-rest dual-pin check left every assertion green because they all called the function directly and nothing asserted that the resolver CALLS it — so a test was added that drifts the gitlink while a VALID installed pin is present, which is exactly the situation R1507 left unchecked. And the dirty-worktree outcome assertion passed either way because the fixture's build fails regardless; it now asserts the reason.",
+        "That is the third appearance of one shape — an outcome asserted in a fixture that would fail anyway — after R1507's own CF-4. It is now named in the test file rather than left to be rediscovered.",
+        "Verified against the live tree, not only fakes: appending a line inside vendor/mnemosyne makes the vendored branch refuse and name the reason; setting the pin to a revision this machine HAS installed still refuses, because the gitlink check runs first.",
+        "gates: shellcheck -x clean over both hooks and all four libraries, tools/test_hooks.sh 58 passed, validate-workspace and validate-code-refs rc=0."
+      ],
+      "publishable_impact_refs": [
+        "6.2",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "An installed MN_ROOT build made from an unstaged edit of the pinned revision still passes: the stamp cannot see it and the source it was built from is no longer there to inspect. Closed for the vendored build, where the worktree is present; not closable for an installed one without rebuilding it, which is the cost that branch exists to avoid.",
+        "The auto-init is announced but not bounded: a first clone pays an unannounced network fetch of the submodule's history before the ~1 minute build it does announce.",
+        "`vendor/mnemosyne/target/` is reported and never reclaimed. One release binary is not the accretion the budget exists for, but nothing will ever shrink it either.",
+        "The delegation cross-check compares two `--version` answers. A build that delegated to a DIFFERENT build of the same revision would agree on both and pass, which is the correct outcome by revision but not by provenance."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

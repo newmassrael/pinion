@@ -168,8 +168,22 @@ Vendoring closes both.
 
 Bumping the pin moves the submodule too (`git -C vendor/mnemosyne checkout
 <pin>` + `git add vendor/mnemosyne`), the same dual discipline `vendor/sce`
-has. The libraries are tested (`tools/test_hooks.sh`, 41 assertions) and
-`pre-push` runs those tests before trusting them.
+has — and since R1508 that pair is **checked on every hook run**, not only when
+a build is needed, so `mnemosyne.toml` and the gitlink cannot drift apart
+behind a working installed pin.
+
+R1508 also closed a hole in R1507's own check: the revision was matched as a
+bare prefix, so `be4c1647-dirty` — Mnemosyne's stamp for "built from modified
+sources" — passed as the pin. The revision must now be pure hex, the build must
+report the same revision whether or not it is allowed to delegate, and a
+vendored build additionally requires a clean submodule worktree (upstream's
+stamp derives `-dirty` from git metadata and its own docs say an unstaged edit
+can escape it; we are the ones who can watch the worktree). A never-checked-out
+submodule is initialised automatically — but never one that already exists,
+because `submodule update` would discard local work there.
+
+The libraries are tested (`tools/test_hooks.sh`, 58 assertions) and `pre-push`
+runs those tests before trusting them.
 
 `.githooks/pre-commit` runs:
 

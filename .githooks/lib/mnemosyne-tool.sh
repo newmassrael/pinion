@@ -65,10 +65,20 @@
 # Limits, stated rather than discovered:
 #   * the first vendored build takes ~1-2 minutes (286 dependencies, measured
 #     1m16s release). It is announced before it starts, and cached after.
-#   * `vendor/mnemosyne/target/` is the submodule's own directory, and is not
-#     swept by `target-budget.sh` (which measures this workspace's `target/`).
-#   * a `MN_ROOT` pin that matches the revision is trusted to BE that
-#     revision's build. Verifying more would mean rebuilding it.
+#   * `vendor/mnemosyne/target/` is the submodule's own directory, so
+#     `target-budget.sh` does not SWEEP it — another repository's tree is not
+#     this budget's to reclaim. Since R1508 it is reported on every push
+#     (measured 326 MiB), because an unreported cache is one nobody notices
+#     growing, which is the whole reason that file prints a number.
+#   * an installed `MN_ROOT` build is trusted to be what its revision says.
+#     R1508 narrowed that considerably — a `-dirty` or `unknown` stamp is
+#     rejected, and the build must report the same revision whether or not it is
+#     allowed to delegate — but the stamp still comes from git metadata, so an
+#     `MN_ROOT` build made from an unstaged edit of the pinned revision would
+#     pass. For the VENDORED build we close that ourselves by requiring a clean
+#     worktree; for an installed one we cannot, because the source it was built
+#     from is no longer there to inspect. Verifying more would mean rebuilding
+#     it, which is the cost that branch exists to avoid.
 
 # Resolve the pinned CLI. Sets `MN_CLI` (path) and `MN_CLI_SOURCE` (a short
 # human label for the log line). Returns non-zero, with a message on stderr,
@@ -88,6 +98,14 @@ mnemosyne_resolve() {
         echo "  revision. Add one (see the [tool] comment in mnemosyne.toml)." >&2
         return 1
     }
+
+    # R1508 — the dual pin, checked AT REST rather than only when a build is
+    # needed. R1507 verified the submodule's revision inside the vendored
+    # branch, so a workspace whose installed pin resolved never looked at it:
+    # `mnemosyne.toml` and the gitlink could disagree indefinitely and the
+    # discrepancy would surface only on the day that install disappeared. This
+    # is the same dual discipline `vendor/sce` has, made mechanical.
+    mnemosyne_check_vendored_pin "$repo_root" "$pin" || return 1
 
     mn_root="${MN_ROOT:-$HOME/.local/mn}"
     candidate="$mn_root/$pin/bin/mnemosyne-cli"
@@ -138,44 +156,158 @@ mnemosyne_declared_pin() {
     ' "$toml"
 }
 
-# Does `$1` exist, run, and report a revision the pin `$2` is a prefix of?
+# Does `$1` exist, run, and report exactly the pinned revision `$2`?
 #
 # The check is what makes this a guard. `~/.local/mn/<rev>/bin` is a path
 # someone typed; the binary inside it is the fact. R1478's lesson — a check
 # that cannot fail is not a check — applied to the tool that runs the checks.
+#
+# R1508 — the revision must be HEX and nothing else after the pin. R1507 wrote
+# this as a bare prefix match, which accepted `be4c1647-dirty`: Mnemosyne's
+# build stamp appends that suffix when the tracked tree differs from HEAD, so a
+# build made from MODIFIED sources passed as the pin. Measured: `be4c1647`,
+# `be4c1647-dirty` and `be4c164-dirty` were all accepted. A dirty build is not
+# the revision it names, and `unknown` (git could not say) is not a revision at
+# all.
+#
+# Also verified WITHOUT the suppression, and the two answers must agree.
+# `MNEMOSYNE_PIN_SKIP` is needed for the probe to describe the binary rather
+# than a delegate — but that means the probe alone cannot notice a build that
+# hands off to a DIFFERENT one when left to itself, which is the assumption
+# R1507 leaned on with nothing checking it. Asking twice costs one exec and
+# turns that assumption into a measurement.
 mnemosyne_revision_matches() {
-    local bin="$1" pin="$2" out rev
+    local bin="$1" pin="$2" bare delegated
     [ -x "$bin" ] || return 1
-    out="$(MNEMOSYNE_PIN_SKIP=1 "$bin" --version 2>/dev/null)" || return 1
+
+    bare="$(mnemosyne_reported_revision "$bin" 1)" || return 1
+    mnemosyne_is_pinned_revision "$bare" "$pin" || return 1
+
+    # Unsuppressed: whatever this binary does when nobody stops it must still
+    # be the pinned revision.
+    delegated="$(mnemosyne_reported_revision "$bin" 0)" || return 1
+    [ "$delegated" = "$bare" ] || {
+        echo "mnemosyne-tool: $bin reports \`$bare\` for itself but" >&2
+        echo "  \`$delegated\` when allowed to delegate — the build that would" >&2
+        echo "  actually answer this workspace's gates is not the one checked." >&2
+        return 1
+    }
+    return 0
+}
+
+# The revision `$1` reports via `--version`. `$2` = 1 suppresses delegation.
+mnemosyne_reported_revision() {
+    local bin="$1" suppress="$2" out rev
+    if [ "$suppress" = "1" ]; then
+        out="$(MNEMOSYNE_PIN_SKIP=1 "$bin" --version 2>/dev/null)" || return 1
+    else
+        out="$("$bin" --version 2>/dev/null)" || return 1
+    fi
     # `mnemosyne-cli 0.1.0 (be4c1647)` -> `be4c1647`
     rev="${out##*\(}"
     rev="${rev%%\)*}"
     [ -n "$rev" ] || return 1
+    printf '%s' "$rev"
+}
+
+# Is `$1` a pure-hex revision that starts with the pin `$2`?
+mnemosyne_is_pinned_revision() {
+    local rev="$1" pin="$2"
+    case "$rev" in
+        *[!0-9a-f]*) return 1 ;;  # `-dirty`, `unknown`, anything non-hex
+    esac
     case "$rev" in
         "$pin"*) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-# Build (or reuse) the vendored CLI at the pinned revision.
+# R1508 — is `vendor/mnemosyne` present and AT the declared pin?
 #
-# Refuses when the submodule is absent or checked out somewhere other than the
-# pin: building a different revision and calling it the pin would reintroduce
-# exactly the ambiguity this file exists to remove.
-mnemosyne_build_vendored() {
-    local repo_root="$1" pin="$2" sub="$1/vendor/mnemosyne" head bin
-    [ -f "$sub/Cargo.toml" ] || return 1
+# Three separate facts, and each can be wrong on its own:
+#
+#   * the GITLINK this repo records must be the pin. A bump that moves
+#     `mnemosyne.toml` without moving the submodule leaves the two disagreeing,
+#     which is the drift R1507 left unchecked.
+#   * the submodule must be CHECKED OUT. When it has never been (no
+#     `Cargo.toml`), this initialises it — there is nothing to lose, and it
+#     turns a first clone's hard block into a wait. It does NOT run when the
+#     directory exists, because `submodule update` force-checks-out the gitlink
+#     and would discard a developer's local work there.
+#   * HEAD must be the pin. Refused rather than corrected, for the same reason.
+#
+# Returns 0 when this repo declares no such submodule, so the resolver still
+# works in a tree that has not adopted one.
+mnemosyne_check_vendored_pin() {
+    local repo_root="$1" pin="$2" sub="$1/vendor/mnemosyne" gitlink head
+    gitlink="$(git -C "$repo_root" ls-files -s -- vendor/mnemosyne 2>/dev/null \
+        | awk '$1 == "160000" { print $2 }')"
+    [ -n "$gitlink" ] || return 0
 
-    head="$(git -C "$sub" rev-parse HEAD 2>/dev/null)" || return 1
-    case "$head" in
+    case "$gitlink" in
         "$pin"*) ;;
         *)
-            echo "mnemosyne-tool: vendor/mnemosyne is at ${head:0:8}, not the" >&2
-            echo "  declared pin $pin. Run:" >&2
-            echo "    git submodule update --init vendor/mnemosyne" >&2
+            echo "mnemosyne-tool: mnemosyne.toml pins \`$pin\` but this repo" >&2
+            echo "  records vendor/mnemosyne at ${gitlink:0:8}. The two pins are" >&2
+            echo "  one decision and must move together:" >&2
+            echo "    git -C vendor/mnemosyne fetch --all" >&2
+            echo "    git -C vendor/mnemosyne checkout $pin" >&2
+            echo "    git add vendor/mnemosyne" >&2
             return 1
             ;;
     esac
+
+    if [ ! -f "$sub/Cargo.toml" ]; then
+        echo "mnemosyne-tool: vendor/mnemosyne is not checked out; initialising" >&2
+        echo "  it at $pin (once per clone)" >&2
+        ( cd "$repo_root" && git submodule update --init vendor/mnemosyne >&2 ) || {
+            echo "mnemosyne-tool: could not initialise vendor/mnemosyne. Run" >&2
+            echo "    git submodule update --init vendor/mnemosyne" >&2
+            return 1
+        }
+    fi
+
+    head="$(git -C "$sub" rev-parse HEAD 2>/dev/null)" || {
+        echo "mnemosyne-tool: vendor/mnemosyne is not a git checkout" >&2
+        return 1
+    }
+    case "$head" in
+        "$pin"*) return 0 ;;
+        *)
+            echo "mnemosyne-tool: vendor/mnemosyne is checked out at" >&2
+            echo "  ${head:0:8}, not the declared pin $pin. Refusing to build a" >&2
+            echo "  different revision and call it the pin. To restore it:" >&2
+            echo "    git submodule update --checkout vendor/mnemosyne" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Build (or reuse) the vendored CLI at the pinned revision.
+#
+# `mnemosyne_check_vendored_pin` has already established that the submodule is
+# present and at the pin, so this is only about producing a binary from it.
+#
+# R1508 — and about the WORKTREE. Mnemosyne's build stamp derives `-dirty` from
+# git metadata, and its own docs say an edit that is never staged moves neither
+# HEAD nor the index, so a binary built after one can fail to say `-dirty`:
+# "if a locally built binary ever has to be trusted AS a pin, this needs an
+# input that watches the worktree rather than git's metadata". R1507 made a
+# locally built binary exactly that, walking into the case upstream had left out
+# of scope. This is that input, and we are the ones who can supply it.
+mnemosyne_build_vendored() {
+    local repo_root="$1" pin="$2" sub="$1/vendor/mnemosyne" bin dirt
+    [ -f "$sub/Cargo.toml" ] || return 1
+
+    dirt="$(git -C "$sub" status --porcelain --untracked-files=no 2>/dev/null)" || return 1
+    if [ -n "$dirt" ]; then
+        echo "mnemosyne-tool: vendor/mnemosyne has uncommitted changes, so a" >&2
+        echo "  build from it would not be revision \`$pin\` — and the build" >&2
+        echo "  stamp cannot always tell (an unstaged edit moves neither HEAD" >&2
+        echo "  nor the index). Restore it with:" >&2
+        echo "    git -C vendor/mnemosyne checkout -- ." >&2
+        return 1
+    fi
 
     bin="$sub/target/release/mnemosyne-cli"
     if mnemosyne_revision_matches "$bin" "$pin"; then

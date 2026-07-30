@@ -387,40 +387,198 @@ printf 'not executable\n' >"$mn_tmp/plain"
 ok "a non-executable path is rejected" \
    "$(matches "$mn_tmp/plain" be4c164)" "no"
 
-# --- which invocations may suppress the pin ---
+# --- the revision must be a revision, not a description of one (R1508) ---
 #
-# The probe must, or a binary that hands off reports its delegate's revision
-# and the check above proves nothing. The run path must not, or the tool
-# announces on every commit that the pin is unenforced — which is false, and
-# false in the direction that teaches a reader to ignore the gate's own log.
-# This fake reports a MATCHING revision only when it was allowed to skip, so
-# the probe's precondition is what is being asserted, not merely its result.
-cat >"$mn_tmp/telltale" <<'FAKE'
-#!/usr/bin/env bash
-if [ "${1:-}" = "--version" ]; then
-    if [ "${MNEMOSYNE_PIN_SKIP:-}" = "1" ]; then
-        echo "mnemosyne-cli 0.1.0 (be4c1647)"
-    else
-        echo "mnemosyne-cli 0.1.0 (deadbeef)"
-    fi
-    exit 0
-fi
-echo "PIN_SKIP=${MNEMOSYNE_PIN_SKIP:-unset}"
-FAKE
-chmod +x "$mn_tmp/telltale"
+# Mnemosyne's build stamp appends `-dirty` when the tracked tree differs from
+# HEAD and reports `unknown` when git cannot say. R1507 matched the pin as a
+# bare prefix, so `be4c1647-dirty` — a build made from MODIFIED sources —
+# passed as the pin. Measured before the fix: accepted.
+hexpin() {
+    mnemosyne_is_pinned_revision "$1" "$2" && echo yes || echo no
+}
 
-ok "the revision probe suppresses delegation" \
-   "$(matches "$mn_tmp/telltale" be4c164)" "yes"
+ok "an exact hex revision extending the pin is the pin" \
+   "$(hexpin be4c1647331468b be4c164)" "yes"
+ok "a -dirty build is not the revision it names" \
+   "$(hexpin be4c1647-dirty be4c164)" "no"
+ok "a -dirty build is rejected even at the pin's exact length" \
+   "$(hexpin be4c164-dirty be4c164)" "no"
+ok "unknown is not a revision" \
+   "$(hexpin unknown be4c164)" "no"
+ok "hex comparison is case-sensitive, as git's is" \
+   "$(hexpin BE4C1647 be4c164)" "no"
+ok "a different revision is not the pin" \
+   "$(hexpin d02c12fabc be4c164)" "no"
+
+# --- both probes must agree (R1508) ---
+#
+# The probe suppresses delegation so `--version` describes the binary rather
+# than a delegate. That is necessary, and it is also blind by construction to a
+# build that hands off to a DIFFERENT one when left alone — the assumption
+# R1507 leaned on with nothing checking it. So the resolver asks twice.
+
+# Reports the pin either way: an honest build that does not delegate.
+cat >"$mn_tmp/honest" <<'FAKE'
+#!/usr/bin/env bash
+[ "${1:-}" = "--version" ] || { echo "unexpected argv: $*" >&2; exit 64; }
+echo "mnemosyne-cli 0.1.0 (be4c1647)"
+FAKE
+chmod +x "$mn_tmp/honest"
+
+# Reports the pin when stopped, something else when not: a build that would
+# delegate elsewhere, so the checked binary is not the one that would answer.
+cat >"$mn_tmp/delegating" <<'FAKE'
+#!/usr/bin/env bash
+[ "${1:-}" = "--version" ] || { echo "unexpected argv: $*" >&2; exit 64; }
+if [ "${MNEMOSYNE_PIN_SKIP:-}" = "1" ]; then
+    echo "mnemosyne-cli 0.1.0 (be4c1647)"
+else
+    echo "mnemosyne-cli 0.1.0 (d02c12fa)"
+fi
+FAKE
+chmod +x "$mn_tmp/delegating"
+
+ok "a build that reports the pin either way is accepted" \
+   "$(matches "$mn_tmp/honest" be4c164)" "yes"
+
+ok "a build that would delegate elsewhere is rejected" \
+   "$(matches "$mn_tmp/delegating" be4c164 2>/dev/null)" "no"
+
+# The probe's precondition, observed directly rather than inferred: the fake
+# records what it was given, so the assertion is about the call and not about a
+# revision string that could agree by luck.
+cat >"$mn_tmp/recorder" <<FAKE
+#!/usr/bin/env bash
+echo "\${MNEMOSYNE_PIN_SKIP:-unset}" >>"$mn_tmp/skips"
+echo "mnemosyne-cli 0.1.0 (be4c1647)"
+FAKE
+chmod +x "$mn_tmp/recorder"
+: >"$mn_tmp/skips"
+mnemosyne_revision_matches "$mn_tmp/recorder" be4c164 >/dev/null 2>&1
+ok "the probe asks once suppressed and once not" \
+   "$(tr '\n' ' ' <"$mn_tmp/skips")" \
+   "1 unset "
 
 ok "the run path does not suppress the pin" \
-   "$(MN_CLI="$mn_tmp/telltale" mnemosyne_cli validate-workspace)" \
+   "$(MN_CLI="$mn_tmp/telltale_run" bash -c '
+        printf "#!/usr/bin/env bash\necho PIN_SKIP=\${MNEMOSYNE_PIN_SKIP:-unset}\n" >"'"$mn_tmp"'/telltale_run"
+        chmod +x "'"$mn_tmp"'/telltale_run"
+        MNEMOSYNE_PIN_SKIP="" true' ; MN_CLI="$mn_tmp/telltale_run" mnemosyne_cli validate-workspace)" \
    "PIN_SKIP=unset"
 
-# --- resolution, in a throwaway repo so no machine state leaks in ---
+# --- the dual pin, checked at rest (R1508) ---
+#
+# R1507 checked the submodule's revision only inside the vendored branch, so a
+# workspace whose installed pin resolved never looked at it: mnemosyne.toml and
+# the gitlink could disagree indefinitely. The gitlink is written directly here
+# (`update-index --cacheinfo`), which is all a submodule is from the index's
+# point of view, so the check can be exercised without a real one.
 mn_repo="$mn_tmp/repo"
 mkdir -p "$mn_repo"
 git -C "$mn_repo" init -q
 printf '[tool]\npin = "be4c164"\n' >"$mn_repo/mnemosyne.toml"
+
+link_gitlink() {
+    git -C "$mn_repo" update-index --add --cacheinfo "160000,$1,vendor/mnemosyne"
+}
+
+check_pin() {
+    ( cd "$mn_repo" && mnemosyne_check_vendored_pin "$mn_repo" "$1" >/dev/null 2>&1 \
+        && echo ok || echo refused )
+}
+
+check_pin_msg() {
+    ( cd "$mn_repo" && { mnemosyne_check_vendored_pin "$mn_repo" "$1" >/dev/null; } 2>&1 )
+}
+
+# A tree that declares no such submodule is not broken — the resolver still
+# works there, so this must not refuse.
+ok "no gitlink is not a drifted gitlink" \
+   "$(check_pin be4c164)" "ok"
+
+link_gitlink "d02c12fa11111111111111111111111111111111"
+ok "a gitlink that is not the pin is refused" \
+   "$(check_pin be4c164)" "refused"
+
+ok "and the refusal says both revisions and how to move them together" \
+   "$(check_pin_msg be4c164 | grep -cE 'pins .be4c164.|records vendor/mnemosyne at d02c12fa|git add vendor/mnemosyne')" \
+   "3"
+
+# The auto-init is NON-DESTRUCTIVE, and that is the assertion.
+#
+# `git submodule update` force-checks-out the gitlink, so running it on an
+# existing directory would discard a developer's local work there. It therefore
+# runs only when the submodule has never been checked out. Asserted on the
+# announcement rather than on the outcome: a `submodule update` in this fake
+# repo would fail anyway, so an outcome-only test would pass whether or not the
+# guard existed — the shape R1507's CF-4 was caught by.
+mn_live="$mn_tmp/live"
+mkdir -p "$mn_live/vendor/mnemosyne"
+git -C "$mn_live" init -q
+printf '[package]\nname = "x"\nversion = "0.0.0"\n' >"$mn_live/vendor/mnemosyne/Cargo.toml"
+git -C "$mn_live/vendor/mnemosyne" init -q
+git -C "$mn_live/vendor/mnemosyne" add -A
+git -C "$mn_live/vendor/mnemosyne" -c user.email=t@t -c user.name=t commit -q -m "at the pin"
+live_sha="$(git -C "$mn_live/vendor/mnemosyne" rev-parse HEAD)"
+git -C "$mn_live" update-index --add --cacheinfo "160000,$live_sha,vendor/mnemosyne"
+
+ok "a checked-out submodule at the pin is accepted without touching it" \
+   "$( { mnemosyne_check_vendored_pin "$mn_live" "${live_sha:0:7}" >/dev/null; } 2>&1 \
+        | grep -c 'initialising' )" \
+   "0"
+
+ok "and it is accepted" \
+   "$(mnemosyne_check_vendored_pin "$mn_live" "${live_sha:0:7}" >/dev/null 2>&1 \
+        && echo ok || echo refused)" \
+   "ok"
+
+# --- a build from a dirty worktree is not the pinned revision (R1508) ---
+#
+# Upstream's build stamp derives `-dirty` from git metadata and its own docs say
+# an unstaged edit moves neither HEAD nor the index, so it cannot always tell.
+# R1507 made a locally built binary trusted AS a pin, which is the case those
+# docs leave out of scope. The worktree check is the input they say is needed.
+mn_sub="$mn_tmp/sub"
+mkdir -p "$mn_sub/vendor/mnemosyne"
+printf '[package]\nname = "x"\nversion = "0.0.0"\n' >"$mn_sub/vendor/mnemosyne/Cargo.toml"
+git -C "$mn_sub/vendor/mnemosyne" init -q
+git -C "$mn_sub/vendor/mnemosyne" add -A
+git -C "$mn_sub/vendor/mnemosyne" -c user.email=t@t -c user.name=t commit -q -m "clean"
+
+build_vendored_verdict() {
+    mnemosyne_build_vendored "$mn_sub" "$1" >/dev/null 2>&1 && echo built || echo refused
+}
+
+printf 'local edit\n' >>"$mn_sub/vendor/mnemosyne/Cargo.toml"
+# Asserted on the REASON. An outcome-only check passes whether or not the guard
+# exists, because this fixture's build fails regardless — the third time that
+# shape has surfaced (R1507 CF-4, R1508 CF-3 and CF-4), so it is called out
+# here rather than rediscovered.
+ok "a dirty vendored worktree is refused for BEING dirty, before any build" \
+   "$( { mnemosyne_build_vendored "$mn_sub" deadbee >/dev/null; } 2>&1 \
+        | grep -c 'uncommitted changes' )" \
+   "1"
+
+ok "and the refusal explains that the stamp cannot always tell" \
+   "$({ mnemosyne_build_vendored "$mn_sub" deadbee >/dev/null; } 2>&1 \
+        | grep -cE 'uncommitted changes|stamp cannot always tell')" \
+   "2"
+
+git -C "$mn_sub/vendor/mnemosyne" checkout -- .
+# Clean now, so it gets past the worktree gate and fails on the build instead —
+# which is a different refusal, and the point is that it reached it.
+ok "a clean worktree gets past the worktree gate" \
+   "$({ mnemosyne_build_vendored "$mn_sub" deadbee >/dev/null; } 2>&1 \
+        | grep -cE 'uncommitted changes')" \
+   "0"
+
+# --- resolution, in a throwaway repo so no machine state leaks in ---
+#
+# The dual-pin tests above left a drifted gitlink in this repo, and the
+# resolver now refuses on that BEFORE choosing a source — which is the point of
+# them. Removed here so what follows exercises source selection rather than
+# re-testing the drift refusal.
+git -C "$mn_repo" update-index --force-remove vendor/mnemosyne
 
 # `mnemosyne_resolve` asks git for the root, so run it from inside the repo.
 resolve_in_repo() {
@@ -444,31 +602,21 @@ ok "with no pin and no submodule the resolver refuses rather than using PATH" \
 
 # And it refuses for the right reason, in a message a reader can act on.
 ok "the refusal names both sources" \
-   "$( ( cd "$mn_repo" && MN_ROOT="$mn_tmp/root-empty" mnemosyne_resolve 2>&1 >/dev/null ) \
+   "$( ( cd "$mn_repo" && { MN_ROOT="$mn_tmp/root-empty" mnemosyne_resolve >/dev/null; } 2>&1 ) \
         | grep -cE 'cargo install --git|git submodule update --init' )" \
    "2"
 
-# A submodule checked out somewhere other than the pin must not be built and
-# called the pin: that reintroduces the ambiguity this file removes.
-git -C "$mn_repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "base"
-mkdir -p "$mn_repo/vendor/mnemosyne"
-printf '[package]\nname = "x"\nversion = "0.0.0"\n' >"$mn_repo/vendor/mnemosyne/Cargo.toml"
-git -C "$mn_repo/vendor/mnemosyne" init -q
-git -C "$mn_repo/vendor/mnemosyne" -c user.email=t@t -c user.name=t \
-    commit -q --allow-empty -m "not the pin"
-# Asserted on the REASON, not just the outcome. The first draft checked only
-# that resolution refused, and a counterfactual that deleted the revision check
-# entirely still passed it — the fake submodule's build fails anyway, so the
-# test was measuring a broken Cargo.toml rather than the guard. The refusal has
-# to name the mismatch, which it can only do before attempting a build.
-ok "a submodule at another revision is refused BY REVISION, before any build" \
-   "$( ( cd "$mn_repo" && MN_ROOT="$mn_tmp/root-empty" mnemosyne_resolve 2>&1 >/dev/null ) \
-        | grep -cE 'vendor/mnemosyne is at [0-9a-f]{8}, not the' )" \
-   "1"
-
-ok "and it still refuses" \
-   "$(resolve_in_repo "$mn_tmp/root-empty")" \
+# The WIRING, not just the check. The dual-pin assertions above call
+# `mnemosyne_check_vendored_pin` directly, so removing its call from
+# `mnemosyne_resolve` left every one of them green — the resolver could stop
+# looking at the gitlink entirely and nothing would say so. This asserts the
+# call, with a VALID installed pin present so the drift is the only reason to
+# refuse: exactly the situation R1507 left unchecked.
+git -C "$mn_repo" update-index --add \
+    --cacheinfo "160000,d02c12fa11111111111111111111111111111111,vendor/mnemosyne"
+ok "a drifted gitlink refuses even when the installed pin is good" \
+   "$(resolve_in_repo "$mn_tmp/root-ok")" \
    "<refused>"
-
+git -C "$mn_repo" update-index --force-remove vendor/mnemosyne
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

@@ -144,6 +144,15 @@ enforce_target_budget() {
 
     local gib=$(( bytes / 1073741824 ))
     echo "$label: target/ is ${gib} GiB (budget ${budget_gb} GiB)" >&2
+
+    # R1508 — the vendored gate tool builds into its OWN target/, inside a
+    # submodule, which this budget does not measure and `cargo sweep` over this
+    # workspace does not reach. R1507 created it and recorded the gap; this
+    # reports it, because the whole reason this file prints a number on every
+    # push is that an unreported cache is one nobody notices growing. Reported
+    # rather than swept: it is another repository's tree, and one release build
+    # of one binary is not the accretion this budget exists for.
+    report_vendored_cache "$repo_root" "$label"
     (( gib <= budget_gb )) && return 0
 
     if ! command -v cargo-sweep >/dev/null 2>&1; then
@@ -166,4 +175,30 @@ enforce_target_budget() {
         echo "$label: target/ now $(( bytes / 1073741824 )) GiB" >&2
     fi
     return 0
+}
+
+# R1508 — report the vendored gate tool's build cache, if it has one.
+#
+# Deliberately separate from the budget: `enforce_target_budget` bounds what
+# THIS workspace accretes across hundreds of rounds, and `vendor/mnemosyne`
+# holds one binary rebuilt only when the pin moves. Printing it keeps the
+# trend visible without pretending the two are one pool.
+report_vendored_cache() {
+    local repo_root="${1:?report_vendored_cache needs the repo root}"
+    local label="${2:-hook}"
+    local vendored="$repo_root/vendor/mnemosyne/target"
+
+    [[ -d "$vendored" ]] || return 0
+
+    local bytes
+    bytes="$(du -sbL "$vendored" 2>/dev/null | cut -f1)" || return 0
+    [[ -n "$bytes" ]] || return 0
+
+    local gib=$(( bytes / 1073741824 ))
+    local mib=$(( bytes / 1048576 ))
+    if (( gib > 0 )); then
+        echo "$label: vendor/mnemosyne/target/ is ${gib} GiB (unswept: another repo's tree)" >&2
+    else
+        echo "$label: vendor/mnemosyne/target/ is ${mib} MiB (unswept: another repo's tree)" >&2
+    fi
 }
