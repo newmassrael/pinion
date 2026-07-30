@@ -177,12 +177,22 @@ enforce_target_budget() {
     return 0
 }
 
-# R1508 — report the vendored gate tool's build cache, if it has one.
+# R1508 — report the vendored gate tool's build cache, and (R1509) bound it.
 #
-# Deliberately separate from the budget: `enforce_target_budget` bounds what
-# THIS workspace accretes across hundreds of rounds, and `vendor/mnemosyne`
-# holds one binary rebuilt only when the pin moves. Printing it keeps the
-# trend visible without pretending the two are one pool.
+# Deliberately separate from `enforce_target_budget`: that one bounds what THIS
+# workspace accretes across hundreds of rounds and reclaims OLDEST artifacts,
+# because most of the tree is still wanted. This one holds a single binary of a
+# single pinned revision, so there is nothing to keep selectively — when it is
+# over budget the whole cache goes, and the resolver rebuilds it in about a
+# minute. R1508 only reported it, and recorded as a limit that nothing would
+# ever shrink it; a cache that is measured and never reclaimed is a number
+# watched going one way.
+#
+# The budget is generous (2 GiB against a measured 326 MiB) because the cost of
+# firing is a minute of somebody's next commit. It exists for accretion across
+# pin bumps, not for the steady state.
+VENDORED_CACHE_BUDGET_GB_DEFAULT=2
+
 report_vendored_cache() {
     local repo_root="${1:?report_vendored_cache needs the repo root}"
     local label="${2:-hook}"
@@ -194,11 +204,27 @@ report_vendored_cache() {
     bytes="$(du -sbL "$vendored" 2>/dev/null | cut -f1)" || return 0
     [[ -n "$bytes" ]] || return 0
 
+    local budget_gb="${PINION_VENDORED_CACHE_BUDGET_GB:-$VENDORED_CACHE_BUDGET_GB_DEFAULT}"
+    if [[ ! "$budget_gb" =~ ^[1-9][0-9]*$ ]]; then
+        # Rejected rather than silently defaulted, for the reason the sibling
+        # budget states: a typo'd bound that quietly reverts is how a bound
+        # stops being a bound.
+        echo "$label: PINION_VENDORED_CACHE_BUDGET_GB must be a positive integer of GiB (got '$budget_gb')" >&2
+        return 0
+    fi
+
     local gib=$(( bytes / 1073741824 ))
     local mib=$(( bytes / 1048576 ))
     if (( gib > 0 )); then
-        echo "$label: vendor/mnemosyne/target/ is ${gib} GiB (unswept: another repo's tree)" >&2
+        echo "$label: vendor/mnemosyne/target/ is ${gib} GiB (budget ${budget_gb} GiB)" >&2
     else
-        echo "$label: vendor/mnemosyne/target/ is ${mib} MiB (unswept: another repo's tree)" >&2
+        echo "$label: vendor/mnemosyne/target/ is ${mib} MiB (budget ${budget_gb} GiB)" >&2
+    fi
+    (( gib <= budget_gb )) && return 0
+
+    echo "$label: reclaiming it — one pinned revision has nothing worth keeping" >&2
+    echo "$label: the next hook run rebuilds the gate tool (~1 min)" >&2
+    if ! ( cd "$repo_root" && cargo clean --manifest-path vendor/mnemosyne/Cargo.toml >&2 ); then
+        echo "$label: cargo clean failed; vendored cache left at ${gib} GiB" >&2
     fi
 }

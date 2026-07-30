@@ -28,6 +28,8 @@ source "$repo_root/.githooks/lib/ci-status.sh"
 source "$repo_root/.githooks/lib/commit-msg-lint.sh"
 # shellcheck source=SCRIPTDIR/../.githooks/lib/mnemosyne-tool.sh
 source "$repo_root/.githooks/lib/mnemosyne-tool.sh"
+# shellcheck source=SCRIPTDIR/../.githooks/lib/target-budget.sh
+source "$repo_root/.githooks/lib/target-budget.sh"
 
 pass=0
 fail=0
@@ -306,8 +308,11 @@ make_fake_cli() {
     mkdir -p "$(dirname "$path")"
     cat >"$path" <<FAKE
 #!/usr/bin/env bash
-[ "\${1:-}" = "--version" ] || { echo "fake cli: unexpected argv: \$*" >&2; exit 64; }
-echo "mnemosyne-cli 0.1.0 ($rev)"
+case "\${1:-}" in
+    --version) echo "mnemosyne-cli 0.1.0 ($rev)" ;;
+    query) ;;   # the R1509 delegation probe; silent = did not hand off
+    *) echo "fake cli: unexpected argv: \$*" >&2; exit 64 ;;
+esac
 FAKE
     chmod +x "$path"
 }
@@ -420,44 +425,56 @@ ok "a different revision is not the pin" \
 # Reports the pin either way: an honest build that does not delegate.
 cat >"$mn_tmp/honest" <<'FAKE'
 #!/usr/bin/env bash
-[ "${1:-}" = "--version" ] || { echo "unexpected argv: $*" >&2; exit 64; }
-echo "mnemosyne-cli 0.1.0 (be4c1647)"
+case "${1:-}" in
+    --version) echo "mnemosyne-cli 0.1.0 (be4c1647)" ;;
+    query) ;;   # silent: answers for itself
+    *) echo "unexpected argv: $*" >&2; exit 64 ;;
+esac
 FAKE
 chmod +x "$mn_tmp/honest"
 
-# Reports the pin when stopped, something else when not: a build that would
-# delegate elsewhere, so the checked binary is not the one that would answer.
+# Reports the pin, then hands the actual work to another build — and says so,
+# which is what the real tool does. R1508's version of this fake made
+# `--version` change with suppression instead; R1509 measured that the tool
+# answers `--version` before the pin logic and never does that, so the fake was
+# modelling a behaviour that does not exist and the check over it could not fail.
 cat >"$mn_tmp/delegating" <<'FAKE'
 #!/usr/bin/env bash
-[ "${1:-}" = "--version" ] || { echo "unexpected argv: $*" >&2; exit 64; }
-if [ "${MNEMOSYNE_PIN_SKIP:-}" = "1" ]; then
-    echo "mnemosyne-cli 0.1.0 (be4c1647)"
-else
-    echo "mnemosyne-cli 0.1.0 (d02c12fa)"
-fi
+case "${1:-}" in
+    --version) echo "mnemosyne-cli 0.1.0 (be4c1647)" ;;
+    query) echo "note: switching to the pinned build at /elsewhere/bin/mnemosyne-cli" >&2 ;;
+    *) echo "unexpected argv: $*" >&2; exit 64 ;;
+esac
 FAKE
 chmod +x "$mn_tmp/delegating"
 
-ok "a build that reports the pin either way is accepted" \
+ok "a build that answers for itself is accepted" \
    "$(matches "$mn_tmp/honest" be4c164)" "yes"
 
-ok "a build that would delegate elsewhere is rejected" \
+ok "a build that announces handing the work off is rejected" \
    "$(matches "$mn_tmp/delegating" be4c164 2>/dev/null)" "no"
+
+ok "and the refusal quotes what the tool said" \
+   "$( { mnemosyne_revision_matches "$mn_tmp/delegating" be4c164 >/dev/null; } 2>&1 \
+        | grep -c 'switching to the pinned build' )" \
+   "1"
 
 # The probe's precondition, observed directly rather than inferred: the fake
 # records what it was given, so the assertion is about the call and not about a
 # revision string that could agree by luck.
 cat >"$mn_tmp/recorder" <<FAKE
 #!/usr/bin/env bash
-echo "\${MNEMOSYNE_PIN_SKIP:-unset}" >>"$mn_tmp/skips"
-echo "mnemosyne-cli 0.1.0 (be4c1647)"
+if [ "\${1:-}" = "--version" ]; then
+    echo "\${MNEMOSYNE_PIN_SKIP:-unset}" >>"$mn_tmp/skips"
+    echo "mnemosyne-cli 0.1.0 (be4c1647)"
+fi
 FAKE
 chmod +x "$mn_tmp/recorder"
 : >"$mn_tmp/skips"
 mnemosyne_revision_matches "$mn_tmp/recorder" be4c164 >/dev/null 2>&1
-ok "the probe asks once suppressed and once not" \
+ok "the version probe suppresses delegation, and asks exactly once" \
    "$(tr '\n' ' ' <"$mn_tmp/skips")" \
-   "1 unset "
+   "1 "
 
 ok "the run path does not suppress the pin" \
    "$(MN_CLI="$mn_tmp/telltale_run" bash -c '
@@ -618,5 +635,82 @@ ok "a drifted gitlink refuses even when the installed pin is good" \
    "$(resolve_in_repo "$mn_tmp/root-ok")" \
    "<refused>"
 git -C "$mn_repo" update-index --force-remove vendor/mnemosyne
+# ---------------------------------------------------------------------------
+# R1509 — which source wins, and the vendored cache bound
+# ---------------------------------------------------------------------------
+
+# A repo that has BOTH an already-built vendored binary and a good installed
+# pin. The vendored one must win: its provenance is checkable (the worktree is
+# right there) while an installed build made from an unstaged edit of the pinned
+# revision cannot be told apart from a clean one. Nothing asserted this
+# ordering when it was introduced, so a revert to installed-first would have
+# been silent.
+mn_both="$mn_tmp/both"
+mkdir -p "$mn_both/vendor/mnemosyne/target/release"
+git -C "$mn_both" init -q
+printf '[package]\nname = "x"\nversion = "0.0.0"\n' >"$mn_both/vendor/mnemosyne/Cargo.toml"
+git -C "$mn_both/vendor/mnemosyne" init -q
+git -C "$mn_both/vendor/mnemosyne" add -A
+git -C "$mn_both/vendor/mnemosyne" -c user.email=t@t -c user.name=t commit -q -m "clean"
+both_sha="$(git -C "$mn_both/vendor/mnemosyne" rev-parse HEAD)"
+both_pin="${both_sha:0:7}"
+printf '[tool]\npin = "%s"\n' "$both_pin" >"$mn_both/mnemosyne.toml"
+git -C "$mn_both" update-index --add --cacheinfo "160000,$both_sha,vendor/mnemosyne"
+make_fake_cli "$mn_both/vendor/mnemosyne/target/release/mnemosyne-cli" "$both_sha"
+mkdir -p "$mn_tmp/root-both/$both_pin/bin"
+make_fake_cli "$mn_tmp/root-both/$both_pin/bin/mnemosyne-cli" "$both_sha"
+
+resolve_both() {
+    ( cd "$mn_both" && MN_ROOT="$mn_tmp/root-both" mnemosyne_resolve >/dev/null 2>&1 \
+        && echo "$MN_CLI_SOURCE" || echo "<refused>" )
+}
+
+ok "an already-built vendored binary beats an installed pin" \
+   "$(resolve_both)" \
+   "vendor/mnemosyne @ $both_pin"
+
+# …and it is not used when its worktree is dirty, even though the binary is
+# right there. The same condition that gates the BUILD has to gate the reuse,
+# or the second caller quietly trusts what the first refused to make.
+printf 'local edit\n' >>"$mn_both/vendor/mnemosyne/Cargo.toml"
+ok "a dirty worktree disqualifies the vendored binary, falling back to the pin" \
+   "$(resolve_both)" \
+   "installed pin $both_pin"
+git -C "$mn_both/vendor/mnemosyne" checkout -- .
+
+ok "and with the worktree restored the vendored binary is preferred again" \
+   "$(resolve_both)" \
+   "vendor/mnemosyne @ $both_pin"
+
+# --- the vendored cache bound (R1509) ---
+#
+# R1508 reported this cache and recorded that nothing would ever shrink it. The
+# apparent size is what `du -sbL` measures, so a sparse file exercises the
+# over-budget path without costing disk.
+mn_cache="$mn_tmp/cache"
+mkdir -p "$mn_cache/vendor/mnemosyne/target"
+
+ok "a cache under budget is reported and kept" \
+   "$( { report_vendored_cache "$mn_cache" test >/dev/null; } 2>&1 \
+        | grep -c 'vendor/mnemosyne/target/ is 0 MiB (budget 2 GiB)' )" \
+   "1"
+
+truncate -s 3G "$mn_cache/vendor/mnemosyne/target/sparse" 2>/dev/null || true
+if [[ -f "$mn_cache/vendor/mnemosyne/target/sparse" ]]; then
+    ok "a cache over budget is reclaimed, and says the next run rebuilds" \
+       "$( { report_vendored_cache "$mn_cache" test >/dev/null; } 2>&1 \
+            | grep -cE 'is 3 GiB \(budget 2 GiB\)|reclaiming it|rebuilds the gate tool' )" \
+       "3"
+fi
+
+ok "a non-numeric vendored budget is rejected, not silently defaulted" \
+   "$( { PINION_VENDORED_CACHE_BUDGET_GB=2G report_vendored_cache "$mn_cache" test >/dev/null; } 2>&1 \
+        | grep -c 'must be a positive integer of GiB' )" \
+   "1"
+
+ok "no vendored cache at all is silent" \
+   "$( { report_vendored_cache "$mn_tmp/no-such-repo" test >/dev/null; } 2>&1 | wc -c )" \
+   "0"
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

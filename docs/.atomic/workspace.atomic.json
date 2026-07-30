@@ -75236,6 +75236,64 @@
         "The delegation cross-check compares two `--version` answers. A build that delegated to a DIFFERENT build of the same revision would agree on both and pass, which is the correct outcome by revision but not by provenance."
       ]
     },
+    "Round 1509": {
+      "decision_summary": "A check that cannot fail is not a check: R1508 asked about delegation on the one command that never delegates, so the question is now put to a command that does — and the build whose provenance this repo can actually verify is the one it uses.",
+      "changes_bullets": [
+        "Delegation is probed on a command that actually delegates. R1508 asked by comparing `--version` with and without MNEMOSYNE_PIN_SKIP; the probe is now `query --list-sections` and the assertion is that the tool's own `switching to the pinned build` announcement is absent.",
+        "The already-built vendored binary is preferred over the installed pin. Its provenance is the one this repo can check — the source is present and its worktree verified — and once the build exists preferring it costs nothing. The installed pin's role narrows to avoiding the FIRST build.",
+        "The worktree-clean condition is lifted to `mnemosyne_vendored_worktree_clean` and gates the reuse as well as the build, so the second caller cannot trust what the first refused to make.",
+        "The vendored build cache is bounded, not merely reported: over 2 GiB it is reclaimed whole, because one pinned revision has nothing worth keeping selectively and the resolver rebuilds it in about a minute.",
+        "The auto-init announcement says it clones history over the network (~200 MiB), which R1508 did while announcing only the checkout."
+      ],
+      "verification_bullets": [
+        "The entry audit found that R1508's own delegation check CANNOT FAIL. Measured: `--version` is answered before the pin logic, so this machine's PATH build — revision a886cd0f, nothing like the pin — reports a886cd0f both suppressed and unsuppressed and prints no hand-off note for `--version` at all. `query` and `validate-workspace` do print it. So the check only ever discriminated against a synthetic fake modelling behaviour the tool does not have, which is the \"a check that cannot fail is not a check\" class (R1478) — introduced one round after citing that very lesson.",
+        "The probe's cost was measured before choosing it: 39 ms, against gates that already take minutes.",
+        "Four counterfactuals, injected one at a time: never probing delegation kills 2 assertions; removing the vendored-first preference kills 2; letting the reuse skip the worktree check kills 1; reporting the cache without reclaiming it kills 1.",
+        "The third counterfactual's first injection broke the file's syntax and produced 19 failures, which measures nothing about discrimination. Re-injected cleanly, it kills exactly the one assertion it should.",
+        "Four R1508 tests broke on this round's changes, all for one reason worth keeping: the fakes answered only `--version`, so they were no longer models of a thing that now runs a real command. They were taught the command surface rather than the check being loosened — and the `delegating` fake was rewritten to announce a hand-off, which is what the tool does, instead of changing its `--version` under suppression, which it does not.",
+        "Two behaviours had no assertion at all when introduced and now do: which source wins when both are available, and that a dirty worktree disqualifies the vendored binary it would otherwise reuse.",
+        "The over-budget cache path is exercised with a sparse file, because `du -sbL` measures apparent bytes — so a 3 GiB assertion costs no disk.",
+        "gates: shellcheck -x clean over both hooks and all four libraries, tools/test_hooks.sh 66 passed, validate-workspace and validate-code-refs rc=0."
+      ],
+      "impact_refs": [
+        "6.2",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "The delegation probe matches upstream's wording. If that message changes it fails OPEN — it stops detecting hand-offs rather than refusing everything. Only the matcher's own behaviour is testable here; that the real tool still prints that string is not.",
+        "An installed build made from an unstaged edit of the pinned revision still passes, and cannot be told apart without rebuilding it. The exposure is now one clone's first commit rather than every run, since the vendored binary takes over afterwards.",
+        "The probe adds one 39 ms command to every hook run, and it reads the store — so it is doing real work whose only purpose is to observe whether a hand-off happened.",
+        "Nothing verifies that the reclaimed vendored cache is actually rebuilt on the next run; the two halves are tested separately."
+      ],
+      "publishable_decision_summary": "A check that cannot fail is not a check: R1508 asked about delegation on the one command that never delegates, so the question is now put to a command that does — and the build whose provenance this repo can actually verify is the one it uses.",
+      "publishable_changes_bullets": [
+        "Delegation is probed on a command that actually delegates. R1508 asked by comparing `--version` with and without MNEMOSYNE_PIN_SKIP; the probe is now `query --list-sections` and the assertion is that the tool's own `switching to the pinned build` announcement is absent.",
+        "The already-built vendored binary is preferred over the installed pin. Its provenance is the one this repo can check — the source is present and its worktree verified — and once the build exists preferring it costs nothing. The installed pin's role narrows to avoiding the FIRST build.",
+        "The worktree-clean condition is lifted to `mnemosyne_vendored_worktree_clean` and gates the reuse as well as the build, so the second caller cannot trust what the first refused to make.",
+        "The vendored build cache is bounded, not merely reported: over 2 GiB it is reclaimed whole, because one pinned revision has nothing worth keeping selectively and the resolver rebuilds it in about a minute.",
+        "The auto-init announcement says it clones history over the network (~200 MiB), which R1508 did while announcing only the checkout."
+      ],
+      "publishable_verification_bullets": [
+        "The entry audit found that R1508's own delegation check CANNOT FAIL. Measured: `--version` is answered before the pin logic, so this machine's PATH build — revision a886cd0f, nothing like the pin — reports a886cd0f both suppressed and unsuppressed and prints no hand-off note for `--version` at all. `query` and `validate-workspace` do print it. So the check only ever discriminated against a synthetic fake modelling behaviour the tool does not have, which is the \"a check that cannot fail is not a check\" class (R1478) — introduced one round after citing that very lesson.",
+        "The probe's cost was measured before choosing it: 39 ms, against gates that already take minutes.",
+        "Four counterfactuals, injected one at a time: never probing delegation kills 2 assertions; removing the vendored-first preference kills 2; letting the reuse skip the worktree check kills 1; reporting the cache without reclaiming it kills 1.",
+        "The third counterfactual's first injection broke the file's syntax and produced 19 failures, which measures nothing about discrimination. Re-injected cleanly, it kills exactly the one assertion it should.",
+        "Four R1508 tests broke on this round's changes, all for one reason worth keeping: the fakes answered only `--version`, so they were no longer models of a thing that now runs a real command. They were taught the command surface rather than the check being loosened — and the `delegating` fake was rewritten to announce a hand-off, which is what the tool does, instead of changing its `--version` under suppression, which it does not.",
+        "Two behaviours had no assertion at all when introduced and now do: which source wins when both are available, and that a dirty worktree disqualifies the vendored binary it would otherwise reuse.",
+        "The over-budget cache path is exercised with a sparse file, because `du -sbL` measures apparent bytes — so a 3 GiB assertion costs no disk.",
+        "gates: shellcheck -x clean over both hooks and all four libraries, tools/test_hooks.sh 66 passed, validate-workspace and validate-code-refs rc=0."
+      ],
+      "publishable_impact_refs": [
+        "6.2",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The delegation probe matches upstream's wording. If that message changes it fails OPEN — it stops detecting hand-offs rather than refusing everything. Only the matcher's own behaviour is testable here; that the real tool still prints that string is not.",
+        "An installed build made from an unstaged edit of the pinned revision still passes, and cannot be told apart without rebuilding it. The exposure is now one clone's first commit rather than every run, since the vendored binary takes over afterwards.",
+        "The probe adds one 39 ms command to every hook run, and it reads the store — so it is doing real work whose only purpose is to observe whether a hand-off happened.",
+        "Nothing verifies that the reclaimed vendored cache is actually rebuilt on the next run; the two halves are tested separately."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

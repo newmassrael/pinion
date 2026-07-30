@@ -153,7 +153,9 @@ from here.
 Both hooks source `.githooks/lib/mnemosyne-tool.sh`, which resolves the
 revision `mnemosyne.toml [tool].pin` names and **verifies it** — the resolved
 build's `--version` revision must have the pin as a prefix. Order: the
-installed pin under `$MN_ROOT/<pin>/bin` (an optimisation), else
+already-built `vendor/mnemosyne` binary (best provenance — its source is
+present and its worktree checked), else the installed pin under
+`$MN_ROOT/<pin>/bin` (which exists to avoid the *first* build), else
 `vendor/mnemosyne` built from source (~1 min, cached), else a loud refusal.
 
 **It never falls back to PATH.** Before R1507 the hooks ran whatever
@@ -182,7 +184,17 @@ can escape it; we are the ones who can watch the worktree). A never-checked-out
 submodule is initialised automatically — but never one that already exists,
 because `submodule update` would discard local work there.
 
-The libraries are tested (`tools/test_hooks.sh`, 58 assertions) and `pre-push`
+R1509 then found that R1508's own delegation check could not fail. It compared
+`--version` with and without `MNEMOSYNE_PIN_SKIP`, but `--version` is answered
+*before* the pin logic — the PATH build here reports its own revision either way
+and prints no hand-off note at all — so the check only discriminated against a
+synthetic fake modelling behaviour the tool does not have. Delegation is
+announced on real commands, so the probe is now a real command (`query
+--list-sections`, 39 ms) and the assertion is that the announcement is absent.
+The vendored cache is also bounded now (2 GiB; one pinned revision has nothing
+worth keeping selectively, so it goes whole and rebuilds).
+
+The libraries are tested (`tools/test_hooks.sh`, 66 assertions) and `pre-push`
 runs those tests before trusting them.
 
 `.githooks/pre-commit` runs:

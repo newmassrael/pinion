@@ -21,14 +21,17 @@
 #
 # Vendoring closes both, which is what `vendor/mnemosyne` is for, and is the
 # conclusion R1503 reached and Mnemosyne upstream reached independently.
-# Resolution order:
+# Resolution order (R1509 put the vendored build first):
 #
-#   1. `$MN_ROOT/<pin>/bin/mnemosyne-cli` — the installed pin. An
-#      optimisation only: it saves the vendored build. Skipped if its
-#      `--version` revision does not match the pin.
-#   2. `vendor/mnemosyne` at the pinned revision, built once into its own
-#      `target/`. This is the guarantee: it needs no machine state.
-#   3. Nothing. A LOUD, actionable failure — never a silent fall back to an
+#   1. `vendor/mnemosyne/target/release/mnemosyne-cli`, IF already built and its
+#      submodule worktree is clean. Best provenance of the three: the source it
+#      came from is present and checked. Once the build exists this costs
+#      nothing, so there is no reason to prefer anything else.
+#   2. `$MN_ROOT/<pin>/bin/mnemosyne-cli` — the installed pin. Its role is to
+#      avoid the FIRST vendored build; after that (1) has it.
+#   3. `vendor/mnemosyne` built from source. The guarantee: it needs no machine
+#      state at all.
+#   4. Nothing. A LOUD, actionable failure — never a silent fall back to an
 #      unknown-vintage PATH binary, because a gate whose tool has unknown
 #      provenance is not a gate. That is the whole defect this closes.
 #
@@ -70,15 +73,17 @@
 #     this budget's to reclaim. Since R1508 it is reported on every push
 #     (measured 326 MiB), because an unreported cache is one nobody notices
 #     growing, which is the whole reason that file prints a number.
-#   * an installed `MN_ROOT` build is trusted to be what its revision says.
-#     R1508 narrowed that considerably — a `-dirty` or `unknown` stamp is
-#     rejected, and the build must report the same revision whether or not it is
-#     allowed to delegate — but the stamp still comes from git metadata, so an
-#     `MN_ROOT` build made from an unstaged edit of the pinned revision would
-#     pass. For the VENDORED build we close that ourselves by requiring a clean
-#     worktree; for an installed one we cannot, because the source it was built
-#     from is no longer there to inspect. Verifying more would mean rebuilding
-#     it, which is the cost that branch exists to avoid.
+#   * an installed `MN_ROOT` build is trusted to be what its revision says. A
+#     `-dirty` or `unknown` stamp is rejected (R1508) and the build must answer
+#     gates itself rather than hand them off (R1509), but the stamp comes from
+#     git metadata, so an installed build made from an UNSTAGED edit of the
+#     pinned revision would pass — the source it came from is no longer there to
+#     inspect. Since R1509 that branch is only reached before the vendored build
+#     exists, so the exposure is one clone's first commit rather than every run.
+#   * the delegation probe reads upstream's own wording. If that message changes
+#     this fails open: it stops detecting hand-offs rather than refusing
+#     everything. The matcher is tested against a fake that emits the note,
+#     which is the half this repo controls.
 
 # Resolve the pinned CLI. Sets `MN_CLI` (path) and `MN_CLI_SOURCE` (a short
 # human label for the log line). Returns non-zero, with a message on stderr,
@@ -89,7 +94,7 @@
 # below is preferred to a blanket file-level disable.
 # shellcheck disable=SC2034
 mnemosyne_resolve() {
-    local repo_root pin mn_root candidate
+    local repo_root pin mn_root candidate vendored
     repo_root="$(git rev-parse --show-toplevel)"
 
     pin="$(mnemosyne_declared_pin "$repo_root/mnemosyne.toml")" || {
@@ -106,6 +111,25 @@ mnemosyne_resolve() {
     # discrepancy would surface only on the day that install disappeared. This
     # is the same dual discipline `vendor/sce` has, made mechanical.
     mnemosyne_check_vendored_pin "$repo_root" "$pin" || return 1
+
+    # R1509 — the VENDORED binary first, when one already exists.
+    #
+    # R1507 ordered the installed pin first because it saves the build, and
+    # R1508 then recorded as a limit that an installed build made from an
+    # unstaged edit of the pinned revision still passes: the stamp cannot see
+    # such an edit and the source is no longer there to inspect. The vendored
+    # binary has no such gap — its worktree is present and checked. Once it
+    # exists the build is already paid for, so preferring it costs nothing and
+    # closes that limit for every run after the first. The installed pin remains
+    # the way to avoid the first build.
+    vendored="$repo_root/vendor/mnemosyne/target/release/mnemosyne-cli"
+    if [ -x "$vendored" ] \
+        && mnemosyne_vendored_worktree_clean "$repo_root" >/dev/null 2>&1 \
+        && mnemosyne_revision_matches "$vendored" "$pin"; then
+        MN_CLI="$vendored"
+        MN_CLI_SOURCE="vendor/mnemosyne @ $pin"
+        return 0
+    fi
 
     mn_root="${MN_ROOT:-$HOME/.local/mn}"
     candidate="$mn_root/$pin/bin/mnemosyne-cli"
@@ -177,22 +201,50 @@ mnemosyne_declared_pin() {
 # R1507 leaned on with nothing checking it. Asking twice costs one exec and
 # turns that assumption into a measurement.
 mnemosyne_revision_matches() {
-    local bin="$1" pin="$2" bare delegated
+    local bin="$1" pin="$2" bare
     [ -x "$bin" ] || return 1
 
     bare="$(mnemosyne_reported_revision "$bin" 1)" || return 1
     mnemosyne_is_pinned_revision "$bare" "$pin" || return 1
-
-    # Unsuppressed: whatever this binary does when nobody stops it must still
-    # be the pinned revision.
-    delegated="$(mnemosyne_reported_revision "$bin" 0)" || return 1
-    [ "$delegated" = "$bare" ] || {
-        echo "mnemosyne-tool: $bin reports \`$bare\` for itself but" >&2
-        echo "  \`$delegated\` when allowed to delegate — the build that would" >&2
-        echo "  actually answer this workspace's gates is not the one checked." >&2
-        return 1
-    }
+    mnemosyne_answers_for_itself "$bin" || return 1
     return 0
+}
+
+# R1509 — does this binary ANSWER a gate itself, or hand the work to another
+# build?
+#
+# R1508 asked this by comparing `--version` with and without
+# `MNEMOSYNE_PIN_SKIP` and requiring the two to agree. Measured 2026-07-31, that
+# check cannot fail: `--version` is answered BEFORE the pin logic, so it reports
+# the binary's own revision either way. The PATH build here — revision
+# `a886cd0f`, nothing like the pin — reports `a886cd0f` suppressed and
+# unsuppressed, and prints no delegation note for `--version` at all. The check
+# only ever discriminated against a synthetic fake modelling behaviour the tool
+# does not have, which is the "a check that cannot fail is not a check" class
+# (R1478) introduced one round after writing that lesson down.
+#
+# Delegation happens on real commands, and the tool ANNOUNCES it: `query` and
+# `validate-workspace` print `switching to the pinned build at <path>` when they
+# hand off. So the probe is a real command (`query --list-sections`, measured
+# 39ms) and the assertion is that the announcement is absent.
+#
+# Known limit: this reads upstream's wording. If that message changes, this
+# fails OPEN — it would stop detecting delegation rather than start refusing
+# everything. The matcher is tested against a fake that emits the note, which is
+# the half this repo controls.
+mnemosyne_answers_for_itself() {
+    local bin="$1" noise
+    noise="$( { "$bin" query --list-sections >/dev/null; } 2>&1 )" || return 1
+    case "$noise" in
+        *"switching to the pinned build"*)
+            echo "mnemosyne-tool: $bin hands its work to another build:" >&2
+            printf '  %s\n' "$noise" >&2
+            echo "  The build that would answer this workspace's gates is not" >&2
+            echo "  the one just checked." >&2
+            return 1
+            ;;
+        *) return 0 ;;
+    esac
 }
 
 # The revision `$1` reports via `--version`. `$2` = 1 suppresses delegation.
@@ -258,8 +310,10 @@ mnemosyne_check_vendored_pin() {
     esac
 
     if [ ! -f "$sub/Cargo.toml" ]; then
-        echo "mnemosyne-tool: vendor/mnemosyne is not checked out; initialising" >&2
-        echo "  it at $pin (once per clone)" >&2
+        echo "mnemosyne-tool: vendor/mnemosyne is not checked out; fetching" >&2
+        echo "  and initialising it at $pin — this CLONES the tool's history" >&2
+        echo "  over the network (~200 MiB), once per clone, and the build that" >&2
+        echo "  follows takes about a minute" >&2
         ( cd "$repo_root" && git submodule update --init vendor/mnemosyne >&2 ) || {
             echo "mnemosyne-tool: could not initialise vendor/mnemosyne. Run" >&2
             echo "    git submodule update --init vendor/mnemosyne" >&2
@@ -296,18 +350,10 @@ mnemosyne_check_vendored_pin() {
 # locally built binary exactly that, walking into the case upstream had left out
 # of scope. This is that input, and we are the ones who can supply it.
 mnemosyne_build_vendored() {
-    local repo_root="$1" pin="$2" sub="$1/vendor/mnemosyne" bin dirt
+    local repo_root="$1" pin="$2" sub="$1/vendor/mnemosyne" bin
     [ -f "$sub/Cargo.toml" ] || return 1
 
-    dirt="$(git -C "$sub" status --porcelain --untracked-files=no 2>/dev/null)" || return 1
-    if [ -n "$dirt" ]; then
-        echo "mnemosyne-tool: vendor/mnemosyne has uncommitted changes, so a" >&2
-        echo "  build from it would not be revision \`$pin\` — and the build" >&2
-        echo "  stamp cannot always tell (an unstaged edit moves neither HEAD" >&2
-        echo "  nor the index). Restore it with:" >&2
-        echo "    git -C vendor/mnemosyne checkout -- ." >&2
-        return 1
-    fi
+    mnemosyne_vendored_worktree_clean "$repo_root" || return 1
 
     bin="$sub/target/release/mnemosyne-cli"
     if mnemosyne_revision_matches "$bin" "$pin"; then
@@ -321,6 +367,24 @@ mnemosyne_build_vendored() {
         --manifest-path vendor/mnemosyne/Cargo.toml -p mnemosyne-cli >&2 ) || return 1
 
     mnemosyne_revision_matches "$bin" "$pin"
+}
+
+# R1509 — is the vendored submodule's worktree clean?
+#
+# Lifted out of `mnemosyne_build_vendored` because R1509 gave it a second
+# caller: the resolver now prefers an already-built vendored binary, and that
+# binary is only trustworthy under the same condition the build was.
+mnemosyne_vendored_worktree_clean() {
+    local repo_root="$1" sub="$1/vendor/mnemosyne" dirt
+    dirt="$(git -C "$sub" status --porcelain --untracked-files=no 2>/dev/null)" || return 1
+    [ -z "$dirt" ] && return 0
+    echo "mnemosyne-tool: vendor/mnemosyne has uncommitted changes, so a build" >&2
+    echo "  from it is not the pinned revision, and the build" >&2
+    echo "  stamp cannot always tell: an unstaged edit moves neither HEAD nor" >&2
+    echo "  the index." >&2
+    echo "  Restore it with:" >&2
+    echo "    git -C vendor/mnemosyne checkout -- ." >&2
+    return 1
 }
 
 # Run the resolved CLI. `mnemosyne_resolve` must have succeeded first.
