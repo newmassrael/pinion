@@ -74790,6 +74790,62 @@
         "R1498 and R1499 were still unpushed when this round opened, because this defect is what refused them."
       ]
     },
+    "Round 1501": {
+      "decision_summary": "A surface declares what it answers: the header's schema moved to the module that answers it and is composed by its consumer, because three rounds in a row added a path upstream and left the hand-copied list downstream behind, leaving five surfaces the wire answered and $schema denied.",
+      "changes_bullets": [
+        "ColumnLayout::SCHEMA_FIELDS declares every path the layout answers, composed with ReorderModel::SCHEMA_FIELDS rather than restating it; hello-column-reorder composes that in turn and no longer hand-copies ~40 names.",
+        "ColumnLayout::query is gated on the declaration, so an arm no field addresses is unreachable and the round that adds one fails its own tests instead of shipping a path $schema denies.",
+        "SchemaField::concat lifts the const-fn composition hello-audio-device had written by hand; that binding now calls it, which is what a third caller of a mechanical wiring pattern earns.",
+        "Every section-keyed parametric family answers through one range check against the declared IndexOf(count) domain; five of the nine used to answer a plausible value for a column that does not exist.",
+        "logical_index_at.<x> is declared parametric with a typed argument bounded by visible_total, where it was a scalar whose path spelled a placeholder.",
+        "ColumnLayout answers count, so the domain its families declare is one this surface publishes; intervene's fall-through routes through read_only_or_unknown, so an unwritable read is ReadOnly rather than nonexistent."
+      ],
+      "verification_bullets": [
+        "Measured over the real wire before the round, against hello-column-reorder: $schema declared 50 fields while stretch_last_section, effective_resize_modes, effective_resize_mode.<logical> (R1498), resize_contents_precision (R1496) and reset_default_section_size (R1493) all answered and none was declared. After: 55 fields, all five present, and a walk of the whole declaration reads every non-action path over the wire.",
+        "Measured on a 3-section header before the round: section_size.3 = 0, section_hidden.3 = false, resize_mode.3 and effective_resize_mode.3 = \"interactive\", content_width.3 = 0. The other four families already answered null, so the module knew the rule and five accessors' unwrap_or_default broke it on the way out. After: all nine answer null outside the domain, in-range reads unchanged.",
+        "Extending the R1353.1 dynamic audit to the layout found the resize_mode case on its first run; the layout was unreachable from that audit while its declaration lived in an example.",
+        "7 counterfactuals, one at a time, after proving the runner reports failure: a declared field deleted = 3 dead (2 are R1498's own tests, so the declaration is load-bearing across rounds); the query gate removed = 0 dead, honestly recorded, because the gate is preventive and CF-1 is what shows it is wired; the domain guard dropped = 2 including the R1353.1 audit; the family re-declared a scalar = 4 including two older suites; the refusal-origin fall-through dropped = 1 plus the demo; concat dropping its second operand = 17, of which 14 are older suites from R1450 through R1498; the count slot removed = 3 including the audit.",
+        "cargo fmt, workspace clippy with -D pedantic, and cargo doc are clean. pinion-core 2817 tests (+6), hello-column-reorder 39, hello-audio-device 8. Demo r1501_declared_surface is new at 51 assertions.",
+        "13 affected demos re-run and passing: r1450, r1451, r1452, r1491, r1492, r1493, r1494, r1496, r1497, r1498, r1501, r1347, r990. hello_audio_device cannot boot on this host because snd-dummy is not loaded; verified environmental by reverting this round's change to that binding and reproducing the identical refusal."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.12",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "The gate is per-widget. ColumnLayout cannot grow an undeclared path; every other External in the tree still can, and IntrospectSchema.fields is still a hand-written literal at ~104 sites. What would generalise this is the per-crate audit R1353.1's own doc asks for, which now has one worked example instead of none.",
+        "SchemaField still does not separate a readable value from an invoke channel, so the declaration lists both and the tests name the 15 actions to skip them. That list is the one place in this round a path can be added without the declaration noticing.",
+        "The label in hello-column-reorder's section_cell is inset 12px, not centred; R1499's comment said centred and the paint says otherwise. Corrected in place. The real discriminator for the R1497 defect is label width against section width, which is why it could not be inferred from the tree."
+      ],
+      "publishable_decision_summary": "A surface declares what it answers: the header's schema moved to the module that answers it and is composed by its consumer, because three rounds in a row added a path upstream and left the hand-copied list downstream behind, leaving five surfaces the wire answered and $schema denied.",
+      "publishable_changes_bullets": [
+        "ColumnLayout::SCHEMA_FIELDS declares every path the layout answers, composed with ReorderModel::SCHEMA_FIELDS rather than restating it; hello-column-reorder composes that in turn and no longer hand-copies ~40 names.",
+        "ColumnLayout::query is gated on the declaration, so an arm no field addresses is unreachable and the round that adds one fails its own tests instead of shipping a path $schema denies.",
+        "SchemaField::concat lifts the const-fn composition hello-audio-device had written by hand; that binding now calls it, which is what a third caller of a mechanical wiring pattern earns.",
+        "Every section-keyed parametric family answers through one range check against the declared IndexOf(count) domain; five of the nine used to answer a plausible value for a column that does not exist.",
+        "logical_index_at.<x> is declared parametric with a typed argument bounded by visible_total, where it was a scalar whose path spelled a placeholder.",
+        "ColumnLayout answers count, so the domain its families declare is one this surface publishes; intervene's fall-through routes through read_only_or_unknown, so an unwritable read is ReadOnly rather than nonexistent."
+      ],
+      "publishable_verification_bullets": [
+        "Measured over the real wire before the round, against hello-column-reorder: $schema declared 50 fields while stretch_last_section, effective_resize_modes, effective_resize_mode.<logical> (R1498), resize_contents_precision (R1496) and reset_default_section_size (R1493) all answered and none was declared. After: 55 fields, all five present, and a walk of the whole declaration reads every non-action path over the wire.",
+        "Measured on a 3-section header before the round: section_size.3 = 0, section_hidden.3 = false, resize_mode.3 and effective_resize_mode.3 = \"interactive\", content_width.3 = 0. The other four families already answered null, so the module knew the rule and five accessors' unwrap_or_default broke it on the way out. After: all nine answer null outside the domain, in-range reads unchanged.",
+        "Extending the R1353.1 dynamic audit to the layout found the resize_mode case on its first run; the layout was unreachable from that audit while its declaration lived in an example.",
+        "7 counterfactuals, one at a time, after proving the runner reports failure: a declared field deleted = 3 dead (2 are R1498's own tests, so the declaration is load-bearing across rounds); the query gate removed = 0 dead, honestly recorded, because the gate is preventive and CF-1 is what shows it is wired; the domain guard dropped = 2 including the R1353.1 audit; the family re-declared a scalar = 4 including two older suites; the refusal-origin fall-through dropped = 1 plus the demo; concat dropping its second operand = 17, of which 14 are older suites from R1450 through R1498; the count slot removed = 3 including the audit.",
+        "cargo fmt, workspace clippy with -D pedantic, and cargo doc are clean. pinion-core 2817 tests (+6), hello-column-reorder 39, hello-audio-device 8. Demo r1501_declared_surface is new at 51 assertions.",
+        "13 affected demos re-run and passing: r1450, r1451, r1452, r1491, r1492, r1493, r1494, r1496, r1497, r1498, r1501, r1347, r990. hello_audio_device cannot boot on this host because snd-dummy is not loaded; verified environmental by reverting this round's change to that binding and reproducing the identical refusal."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.12",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The gate is per-widget. ColumnLayout cannot grow an undeclared path; every other External in the tree still can, and IntrospectSchema.fields is still a hand-written literal at ~104 sites. What would generalise this is the per-crate audit R1353.1's own doc asks for, which now has one worked example instead of none.",
+        "SchemaField still does not separate a readable value from an invoke channel, so the declaration lists both and the tests name the 15 actions to skip them. That list is the one place in this round a path can be added without the declaration noticing.",
+        "The label in hello-column-reorder's section_cell is inset 12px, not centred; R1499's comment said centred and the paint says otherwise. Corrected in place. The real discriminator for the R1497 defect is label width against section width, which is why it could not be inferred from the tree."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

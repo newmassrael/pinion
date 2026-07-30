@@ -50,6 +50,7 @@ use std::cell::{Cell, RefCell};
 use crate::composite_tag::{parse_pair, parse_send_payload, split_subindex};
 use crate::external::{
     DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+    SchemaField,
 };
 use crate::input::PointerWireEvent;
 
@@ -232,6 +233,32 @@ impl ReorderModel {
         *self.preview.borrow_mut() = None;
         self.pressed.set(None);
     }
+
+    /// R1501 — every path this model answers, declared where it is answered.
+    ///
+    /// A consumer that layers its own slots over these composes with
+    /// [`SchemaField::concat`] instead of restating them, so a slot added here
+    /// reaches every embedding surface without any of them being edited. Before
+    /// R1501 the nearest thing to this list was a sentence in
+    /// [`query`](Self::query)'s doc, and each embedder hand-copied the names
+    /// out of it.
+    ///
+    /// Reads and actions sit in one list because [`SchemaField`] does not
+    /// distinguish them yet (its own doc says so): `send` / `move` / `grab` /
+    /// `grab_cancel` / `move_section` are `invoke` channels that read as
+    /// nothing, and `order` / `focused_index` additionally take an
+    /// `intervene`.
+    pub const SCHEMA_FIELDS: &'static [SchemaField] = &[
+        SchemaField::new("order", "json"),
+        SchemaField::new("preview", "json"),
+        SchemaField::new("focused_index", "int"),
+        SchemaField::new("grabbed", "boolean"),
+        SchemaField::new("send", "string"),
+        SchemaField::new("move", "int"),
+        SchemaField::new("move_section", "string"),
+        SchemaField::new("grab", "boolean"),
+        SchemaField::new("grab_cancel", "string"),
+    ];
 
     /// Reorder slots for [`ExternalIntrospect::query`]:
     /// `order` / `preview` / `focused_index` / `grabbed`. Returns `None`

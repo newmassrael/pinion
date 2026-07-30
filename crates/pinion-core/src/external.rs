@@ -345,6 +345,54 @@ impl SchemaField {
         Self { path, ty, args }
     }
 
+    /// R1501 — `a` followed by `b`, composed at **compile time**, so a consumer
+    /// that layers its own paths over another surface's declares its own and
+    /// borrows the rest instead of hand-copying them.
+    ///
+    /// The hand-copy is what fails. `hello-column-reorder` restated ~40 of
+    /// [`ColumnLayout`](crate::widgets::column_layout::ColumnLayout)'s paths in
+    /// its own literal, and three consecutive rounds that added a path upstream
+    /// left the copy behind — measured, five of them, all answering and none
+    /// discoverable. This is the shape [`EMPTY`](Self::EMPTY) was introduced
+    /// for; `hello-audio-device` had already written the loop by hand, and
+    /// R1501 is its third caller, which is what lifts it here.
+    ///
+    /// `N` comes from the call site's own type, which is where the two lengths
+    /// are known:
+    ///
+    /// ```
+    /// # use pinion_core::external::SchemaField;
+    /// const OWN: [SchemaField; 1] = [SchemaField::new("labels", "json")];
+    /// const BASE: &[SchemaField] = &[SchemaField::new("order", "json")];
+    /// static ALL: [SchemaField; OWN.len() + BASE.len()] =
+    ///     SchemaField::concat(&OWN, BASE);
+    /// assert_eq!(ALL[1].path, "order");
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// When `N` is smaller than `a.len() + b.len()`. In the `const` context
+    /// this exists for that is a compile error, not a runtime one — which is
+    /// the point: a length that stops matching its inputs cannot ship.
+    #[must_use]
+    pub const fn concat<const N: usize>(a: &[Self], b: &[Self]) -> [Self; N] {
+        // `EMPTY` is the fill, and every slot is overwritten below; an
+        // un-overwritten one would render as a blank row rather than as
+        // something plausible (see `EMPTY`).
+        let mut out = [Self::EMPTY; N];
+        let mut i = 0;
+        while i < a.len() {
+            out[i] = a[i];
+            i += 1;
+        }
+        let mut j = 0;
+        while j < b.len() {
+            out[i + j] = b[j];
+            j += 1;
+        }
+        out
+    }
+
     /// The literal prefix before this field's first argument — exactly the
     /// string a `query` impl's `strip_prefix` matches (`"width.<col>"` →
     /// `"width."`, `"state:<id>"` → `"state:"`). Equal to [`path`](Self::path)
@@ -434,9 +482,27 @@ impl SchemaField {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntrospectSchema {
-    /// Declared fields. Authors are responsible for keeping this in sync with
-    /// `query` / `intervene`; mismatches surface as test failures, not silent
-    /// corruption.
+    /// Declared fields.
+    ///
+    /// R1501 — the sentence that stood here said authors are responsible for
+    /// keeping this in sync with `query` / `intervene`, and that mismatches
+    /// surface as test failures. Measured over the real wire against
+    /// `hello-column-reorder`, they do not: five surfaces answered that
+    /// `$schema` never mentioned (`stretch_last_section`,
+    /// `effective_resize_modes`, `effective_resize_mode.<logical>`,
+    /// `resize_contents_precision`, `reset_default_section_size`), each one
+    /// added by a round that edited the answering module and not the
+    /// hand-copied list downstream of it. Nothing failed, because nothing was
+    /// checking this direction — [`SchemaField::addresses`] audits the
+    /// declarations that exist, and an omission declares nothing to audit.
+    ///
+    /// So the responsibility is not the author's to remember: a surface
+    /// declares the paths it answers, and a consumer *composes* that
+    /// declaration with [`SchemaField::concat`] rather than restating it. A
+    /// widget that gates its own dispatch on its own list
+    /// (`ColumnLayout::query`) cannot grow an undeclared path at all — the arm
+    /// is unreachable until it is declared, so the round that adds it finds out
+    /// in its own tests instead of shipping a surface no client can discover.
     pub fields: &'static [SchemaField],
 }
 
@@ -2400,6 +2466,24 @@ mod tests {
         assert!(ext.query("total").is_some(), "a scalar answers bare");
     }
 
+    /// R1501 — a binding's `External` wrapper, reduced to what the audit needs:
+    /// it declares a surface's schema and forwards the reads. Every real
+    /// consumer of [`ColumnLayout`](crate::widgets::column_layout::ColumnLayout)
+    /// is this plus a paint.
+    struct LayoutProbe(crate::widgets::column_layout::ColumnLayout);
+
+    impl ExternalIntrospect for LayoutProbe {
+        fn schema(&self) -> IntrospectSchema {
+            crate::widgets::column_layout::ColumnLayout::SCHEMA
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            self.0.query(path)
+        }
+        fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+            self.0.intervene(path, &value)
+        }
+    }
+
     /// R1353.1 §2 #2 — run a parametric widget's DECLARED arity against its real
     /// `query` impl.
     ///
@@ -2521,6 +2605,19 @@ mod tests {
             &ToolbarExternal::new(vec![ToolItem::Command, ToolItem::Toggle]),
         );
         audit("pagination", &PaginationExternal::new(4, 0));
+        // R1501 — reachable from here for the first time because the header's
+        // declaration moved OUT of `hello-column-reorder` and into the module
+        // that answers it. While it lived in an example, neither half of this
+        // audit could see it: this one links only what `pinion-core` links, and
+        // the static scan reads `parametric(` call sites, which is precisely
+        // what `logical_index_at.<x>` was not — it was declared a scalar while
+        // spelling a placeholder, alongside five paths never declared at all.
+        audit(
+            "column_layout",
+            &LayoutProbe(crate::widgets::column_layout::ColumnLayout::new(vec![
+                150, 90, 100,
+            ])),
+        );
         // `with_source` is what makes `match.<row>` / `tint.<row>` answerable at
         // all, so the audit must use it — a bare `RowStyleExternal` has
         // `row_count = 0` and the domain check would skip.

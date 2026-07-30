@@ -103,8 +103,8 @@ use pinion_a11y::{AccessNode, AccessState, AriaRole, SortDirection, WidgetA11y};
 use pinion_core::command::Command;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::reactive::measured_text_extent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -366,106 +366,28 @@ impl External for ColumnHeaderExternal {
     }
 }
 
+/// R1501 — the one path this binding answers itself. Everything else is the
+/// layout model's, and is composed in below rather than restated.
+const OWN_SCHEMA_FIELDS: [SchemaField; 1] = [SchemaField::new("labels", "json")];
+
+/// R1501 — this binding's declaration: its own field, then
+/// [`ColumnLayout::SCHEMA_FIELDS`] verbatim.
+///
+/// It used to be a hand-written literal that spelled ~40 of the layout's paths
+/// again, and it had drifted: measured over the real wire before this round,
+/// `stretch_last_section`, `effective_resize_modes`,
+/// `effective_resize_mode.<logical>` (R1498), `resize_contents_precision`
+/// (R1496) and `reset_default_section_size` (R1493) all answered while
+/// `$schema` denied them, and `logical_index_at.<x>` was declared a scalar
+/// although it takes an argument. Each was added by a round that edited
+/// `column_layout.rs` and had no reason to look here — which is exactly the
+/// failure `SchemaField::concat` removes: there is no longer a copy to forget.
+static SCHEMA_FIELDS: [SchemaField; OWN_SCHEMA_FIELDS.len() + ColumnLayout::SCHEMA_FIELDS.len()] =
+    SchemaField::concat(&OWN_SCHEMA_FIELDS, ColumnLayout::SCHEMA_FIELDS);
+
 impl ExternalIntrospect for ColumnHeaderExternal {
     fn schema(&self) -> IntrospectSchema {
-        // Everything below the `labels` / `count` pair is the layout model's —
-        // the permutation, the sizes, the hidden flags, the derived geometry,
-        // and the whole-state round-trip. This binding contributes the column
-        // names and nothing else, which is what the lift bought.
-        IntrospectSchema::new(
-            const {
-                &[
-                    SchemaField::new("labels", "json"),
-                    SchemaField::new("count", "int"),
-                    SchemaField::new("state", "json"),
-                    SchemaField::new("order", "json"),
-                    SchemaField::new("sizes", "json"),
-                    // R1493 — the effective peer of `sizes`. Declared next to
-                    // it because the pair is the point: `sizes` is what a
-                    // restore replays, this is what the strip paints, and under
-                    // `Stretch` / `ResizeToContents` they differ.
-                    SchemaField::new("section_sizes", "json"),
-                    SchemaField::new("default_section_size", "int"),
-                    // R1494 — Qt's `cascadingSectionResizes`, and the resize it
-                    // governs. `resize_section` is declared by the layout model
-                    // beside it; the two are separate methods on purpose.
-                    SchemaField::new("cascading_section_resizes", "boolean"),
-                    SchemaField::new("interactive_resize_section", "string"),
-                    // R1496 — Qt's two interaction permissions. Declared beside
-                    // the resize rule above because they are the same kind of
-                    // thing: what the header lets a gesture do.
-                    SchemaField::new("sections_movable", "boolean"),
-                    SchemaField::new("sections_clickable", "boolean"),
-                    SchemaField::new("hidden", "json"),
-                    SchemaField::new("placements", "json"),
-                    SchemaField::new("visible_sections", "json"),
-                    SchemaField::new("visible_widths", "json"),
-                    SchemaField::new("visible_total", "int"),
-                    SchemaField::new("hidden_count", "int"),
-                    SchemaField::new("resize_modes", "json"),
-                    SchemaField::new("min_section_size", "int"),
-                    SchemaField::new("max_section_size", "int"),
-                    SchemaField::new("sort_indicator", "string"),
-                    SchemaField::new("sort_indicator_section", "int"),
-                    SchemaField::new("sort_indicator_order", "string"),
-                    SchemaField::new("sort_indicator_shown", "boolean"),
-                    SchemaField::new("content_widths", "json"),
-                    SchemaField::new("available_width", "int"),
-                    SchemaField::parametric(
-                        "resize_mode.<logical>",
-                        "string",
-                        const { &[SchemaArg::index("logical", "count")] },
-                    ),
-                    SchemaField::parametric(
-                        "content_width.<logical>",
-                        "int",
-                        const { &[SchemaArg::index("logical", "count")] },
-                    ),
-                    SchemaField::new("preview", "json"),
-                    SchemaField::new("focused_index", "int"),
-                    SchemaField::new("grabbed", "boolean"),
-                    SchemaField::parametric(
-                        "visual_index.<logical>",
-                        "int",
-                        const { &[SchemaArg::index("logical", "count")] },
-                    ),
-                    SchemaField::parametric(
-                        "logical_index.<visual>",
-                        "int",
-                        const { &[SchemaArg::index("visual", "count")] },
-                    ),
-                    SchemaField::parametric(
-                        "section_size.<logical>",
-                        "int",
-                        const { &[SchemaArg::index("logical", "count")] },
-                    ),
-                    SchemaField::parametric(
-                        "section_hidden.<logical>",
-                        "boolean",
-                        const { &[SchemaArg::index("logical", "count")] },
-                    ),
-                    SchemaField::parametric(
-                        "section_position.<logical>",
-                        "int",
-                        const { &[SchemaArg::index("logical", "count")] },
-                    ),
-                    SchemaField::new("logical_index_at.<x>", "int"),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("move", "int"),
-                    SchemaField::new("move_section", "string"),
-                    SchemaField::new("swap_sections", "string"),
-                    SchemaField::new("resize_section", "string"),
-                    SchemaField::new("set_section_hidden", "string"),
-                    SchemaField::new("set_resize_mode", "string"),
-                    SchemaField::new("set_all_resize_modes", "string"),
-                    SchemaField::new("set_sort_indicator", "string"),
-                    SchemaField::new("cycle_sort_indicator", "int"),
-                    SchemaField::new("clear_sort_indicator", "string"),
-                    SchemaField::new("grab", "boolean"),
-                    SchemaField::new("grab_cancel", "string"),
-                ]
-            },
-        )
+        IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -483,19 +405,26 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     .collect();
                 Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
-            "count" => Some(IntrospectValue::Int(
-                i64::try_from(NCOLS).unwrap_or(i64::MAX),
-            )),
+            // R1501 — `count` was answered here too, with `NCOLS`, beside the
+            // layout's own count of the same sections. It is the layout's now:
+            // the parametric families declare `IndexOf("count")`, and a domain
+            // whose bound the declaring surface does not publish is one a
+            // consumer has to remember to supply.
+            //
             // Every other slot is the layout's (which itself falls through to
             // the reorder model); it returns None for anything unknown, so the
-            // two above win.
+            // one above wins.
             other => self.layout.query(other),
         }
     }
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            "labels" | "count" => Err(InterveneError::ReadOnly),
+            // `count` is not here: the layout declares it, so the layout's own
+            // fall-through reports it `ReadOnly` (R1501). `labels` is this
+            // binding's, so this binding still has to refuse it — a read-only
+            // path reported as unknown is the §2 #7 lie in the other direction.
+            "labels" => Err(InterveneError::ReadOnly),
             // `state` (Qt restoreState), `sizes`, `hidden`, `order`, and
             // `focused_index` — all typed data rather than an opaque blob.
             other => self.layout.intervene(other, &value),
@@ -1026,11 +955,17 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
         // R1499 — decoration, and it says so: Qt's `WA_TransparentForMouseEvents`
         // / CSS's `pointer-events: none`. The label is tagged for the snapshot
         // assertions and the a11y walk, and nothing dispatches to it, so a press
-        // whose coordinate lands on it must reach the section underneath. Without
-        // this the section's own centred label makes the most obvious click point
-        // the one that cannot work — `scene/click` on `colhdr#3` / `#4` was lost
-        // 100% of the time (R1497 measured it; R1499 moved the cure here, where
-        // the fact that this is decoration is actually known).
+        // whose coordinate lands on it must reach the section underneath.
+        //
+        // R1501 corrects the reason written here: the label is not "centred" —
+        // it is inset 12px from the section's left edge, measured on the real
+        // paint (left gap 12 in all five sections, right gap 45..100). What made
+        // `scene/click` on `colhdr#3` / `#4` fail 100% of the time is that
+        // `scene/click` presses a rect's CENTRE and those two labels are wide
+        // enough to cover their section's centre while the narrower three are
+        // not. So the hazard is a function of label width against section
+        // width, which is exactly why it cannot be inferred from the tree and
+        // has to be declared here.
         .with_layout(
             LayoutStyle::new()
                 .with_absolute_position(12, 12)

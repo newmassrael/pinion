@@ -73,7 +73,8 @@ use std::rc::Rc;
 
 use crate::composite_tag::{parse_pair, split_send_payload};
 use crate::external::{
-    DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+    DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
+    InvokeError, SchemaArg, SchemaField, read_only_or_unknown,
 };
 use crate::input::PointerWireEvent;
 use crate::reactive::{Owner, Signal};
@@ -642,6 +643,121 @@ pub struct ColumnLayout {
     /// fn reads.
     pressed_section: Cell<Option<usize>>,
 }
+
+/// R1501 — the paths [`ColumnLayout`] answers itself, ahead of the ones it
+/// inherits from the embedded [`ReorderModel`]. Composed into
+/// [`ColumnLayout::SCHEMA_FIELDS`], which is the list callers should read; this
+/// half exists only because the composition needs two operands.
+///
+/// Ordered the way [`ColumnLayout::query`]'s doc reads: the whole-state
+/// round-trip, the stored/effective pairs, the header-wide rules, the
+/// projections, then the parametric families and the actions.
+const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
+    SchemaField::new("state", "json"),
+    SchemaField::new("count", "int"),
+    // The stored/effective pairs (R1493, R1498). Declared adjacently because
+    // the pair is the contract: the first is what a restore replays, the second
+    // is what the header paints, and under `Stretch` / `ResizeToContents` /
+    // `stretchLastSection` they differ.
+    SchemaField::new("sizes", "json"),
+    SchemaField::new("section_sizes", "json"),
+    SchemaField::new("resize_modes", "json"),
+    SchemaField::new("effective_resize_modes", "json"),
+    // The header-wide rules Qt's `saveState()` carries.
+    SchemaField::new("default_section_size", "int"),
+    SchemaField::new("min_section_size", "int"),
+    SchemaField::new("max_section_size", "int"),
+    SchemaField::new("cascading_section_resizes", "boolean"),
+    SchemaField::new("stretch_last_section", "boolean"),
+    SchemaField::new("sections_movable", "boolean"),
+    SchemaField::new("sections_clickable", "boolean"),
+    SchemaField::new("resize_contents_precision", "int"),
+    SchemaField::new("sort_indicator", "string"),
+    SchemaField::new("sort_indicator_section", "int"),
+    SchemaField::new("sort_indicator_order", "string"),
+    SchemaField::new("sort_indicator_shown", "boolean"),
+    // The projections, and the two inputs a consumer publishes.
+    SchemaField::new("hidden", "json"),
+    SchemaField::new("hidden_count", "int"),
+    SchemaField::new("visible_sections", "json"),
+    SchemaField::new("visible_widths", "json"),
+    SchemaField::new("visible_total", "int"),
+    SchemaField::new("placements", "json"),
+    SchemaField::new("content_widths", "json"),
+    SchemaField::new("available_width", "int"),
+    // The parametric families. Every one is an index into `count`, except the
+    // last: `logical_index_at` takes a **pixel** offset along the painted row,
+    // whose bound the surface publishes as `visible_total`. R1501 — it was
+    // declared as a plain scalar spelling `<x>` in its path, which is neither
+    // half of a declaration: `$schema` rendered it exactly like `visible_total`
+    // and a client had nothing to enumerate the argument from. It escaped both
+    // halves of the R1353.1 audit — the static scan reads `parametric(` call
+    // sites, and the dynamic one only reaches widgets `pinion-core` links.
+    SchemaField::parametric(
+        "resize_mode.<logical>",
+        "string",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "effective_resize_mode.<logical>",
+        "string",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "content_width.<logical>",
+        "int",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "section_size.<logical>",
+        "int",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "section_hidden.<logical>",
+        "boolean",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "section_position.<logical>",
+        "int",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "visual_index.<logical>",
+        "int",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "logical_index.<visual>",
+        "int",
+        const { &[SchemaArg::index("visual", "count")] },
+    ),
+    SchemaField::parametric(
+        "logical_index_at.<x>",
+        "int",
+        const { &[SchemaArg::index("x", "visible_total")] },
+    ),
+    // Qt's section vocabulary, as `invoke` channels.
+    SchemaField::new("swap_sections", "string"),
+    SchemaField::new("resize_section", "string"),
+    SchemaField::new("interactive_resize_section", "string"),
+    SchemaField::new("set_section_hidden", "string"),
+    SchemaField::new("set_resize_mode", "string"),
+    SchemaField::new("set_all_resize_modes", "string"),
+    SchemaField::new("set_sort_indicator", "string"),
+    SchemaField::new("cycle_sort_indicator", "int"),
+    SchemaField::new("clear_sort_indicator", "string"),
+    SchemaField::new("reset_default_section_size", "string"),
+];
+
+/// R1501 — the composed declaration, in a `static` so it outlives the
+/// `&'static` slice [`ColumnLayout::SCHEMA_FIELDS`] hands out. The length is an
+/// expression over its own operands, so adding a path at either end cannot
+/// leave a blank row behind.
+static SCHEMA_FIELD_STORAGE: [SchemaField;
+    OWN_SCHEMA_FIELDS.len() + ReorderModel::SCHEMA_FIELDS.len()] =
+    SchemaField::concat(OWN_SCHEMA_FIELDS, ReorderModel::SCHEMA_FIELDS);
 
 impl ColumnLayout {
     /// Build a layout for the given per-logical-section `sizes`, in identity
@@ -1705,6 +1821,39 @@ impl ColumnLayout {
         true
     }
 
+    /// R1501 — every path this layout answers, declared beside the dispatch
+    /// that answers it, and composed with the embedded [`ReorderModel`]'s own
+    /// declaration rather than restating it.
+    ///
+    /// **Why it is here and not in the consumer.** It was in the consumer:
+    /// `hello-column-reorder` spelled ~40 of these names into its own
+    /// `IntrospectSchema`, and three consecutive rounds that added a path to
+    /// *this* module left that copy behind. Measured over the real wire before
+    /// R1501, five surfaces answered that `$schema` did not mention —
+    /// `stretch_last_section`, `effective_resize_modes`,
+    /// `effective_resize_mode.<logical>` (R1498), `resize_contents_precision`
+    /// (R1496) and `reset_default_section_size` (R1493). §2 #2 makes RPC the
+    /// AI's primary path and `$schema` its discovery primitive, so a feature
+    /// the surface will not admit to is a feature no client can find.
+    ///
+    /// The list is load-bearing, not documentary: [`query`](Self::query) is
+    /// gated on it, so an arm added without a field here answers nothing and
+    /// the round that adds it fails its own test instead of shipping an
+    /// undiscoverable path.
+    ///
+    /// Reads and actions share the list because [`SchemaField`] does not yet
+    /// distinguish them — its own doc says so, and inventing the distinction
+    /// here would put a second vocabulary beside the one every other widget
+    /// declares in.
+    pub const SCHEMA_FIELDS: &'static [SchemaField] =
+        &SCHEMA_FIELD_STORAGE as &'static [SchemaField];
+
+    /// The declaration as the type the introspection surface consumes.
+    /// [`query`](Self::query) reads it to decide whether a path is one of ours,
+    /// and [`intervene`](Self::intervene) reads it to tell a path that is not
+    /// writable from a path that does not exist.
+    pub const SCHEMA: IntrospectSchema = IntrospectSchema::new(Self::SCHEMA_FIELDS);
+
     /// Header-layout slots for [`ExternalIntrospect::query`], layered over the
     /// reorder slots (`order` / `preview` / `focused_index` / `grabbed`),
     /// which fall through to the embedded [`ReorderModel`]:
@@ -1752,8 +1901,21 @@ impl ColumnLayout {
             v.map_or(IntrospectValue::Null, int)
         }
 
+        // R1501 — the declaration decides what this surface answers. An arm
+        // below that no [`SCHEMA_FIELDS`](Self::SCHEMA_FIELDS) entry addresses
+        // is unreachable, so a path added without being declared fails in the
+        // round that adds it rather than shipping as a surface `$schema` denies
+        // exists. Costs one linear pass over ~50 `&'static str` per read, which
+        // is a wire-rate path, not a frame-rate one.
+        Self::SCHEMA.field_for(path)?;
+
         match path {
             "state" => Some(IntrospectValue::Json(self.save_state().to_json())),
+            // R1501 — the section count, answered here rather than left to the
+            // consumer so the parametric families above can name a domain this
+            // surface publishes. A consumer that also answers it wins, and
+            // agrees by construction: both report the same sections.
+            "count" => Some(int(self.count)),
             // The STORED sizes — what a restore replays. Its effective peer is
             // `section_sizes`, and a client that wants the painted row wants
             // that one (R1493).
@@ -1865,35 +2027,56 @@ impl ColumnLayout {
                 IntrospectValue::Int(i64::try_from(n).unwrap_or(0))
             })
         }
+        // R1501 — every section-keyed family answers through this, so the
+        // declared domain (`IndexOf("count")`) is enforced once instead of nine
+        // times. Measured on a 3-section header before the round, five of the
+        // nine answered a plausible value for section 3: `section_size` → `0`
+        // (a width below this header's own floor), `section_hidden` → `false`
+        // (a column that does not exist, reported visible), `resize_mode` and
+        // `effective_resize_mode` → `"interactive"`, `content_width` → `0`.
+        // The other four already answered `Null`, so the module knew the rule
+        // and the accessors' `unwrap_or_default` quietly broke it on the way
+        // out — the same read-forgot-what-the-write-kept shape R1487 and R1493
+        // found in this file, now caught by the R1353.1 audit, which could only
+        // reach the layout once the declaration lived here (R1501).
+        let per_section = |arg: &str, f: &dyn Fn(usize) -> IntrospectValue| {
+            arg.parse::<usize>().ok().map(|l| {
+                if l < self.count {
+                    f(l)
+                } else {
+                    IntrospectValue::Null
+                }
+            })
+        };
         let (head, arg) = path.split_once('.')?;
         match head {
-            "visual_index" => arg.parse().ok().map(|l| opt_int(self.visual_index(l))),
-            "logical_index" => arg.parse().ok().map(|v| opt_int(self.logical_index(v))),
-            "section_size" => arg
-                .parse()
-                .ok()
-                .map(|l| IntrospectValue::Int(i64::from(self.section_size(l)))),
-            "section_hidden" => arg
-                .parse()
-                .ok()
-                .map(|l| IntrospectValue::Bool(self.is_section_hidden(l))),
-            "section_position" => arg.parse().ok().map(|l| {
+            "visual_index" => per_section(arg, &|l| opt_int(self.visual_index(l))),
+            "logical_index" => per_section(arg, &|v| opt_int(self.logical_index(v))),
+            "section_size" => per_section(arg, &|l| {
+                IntrospectValue::Int(i64::from(self.section_size(l)))
+            }),
+            "section_hidden" => {
+                per_section(arg, &|l| IntrospectValue::Bool(self.is_section_hidden(l)))
+            }
+            "section_position" => per_section(arg, &|l| {
                 self.section_position(l).map_or(IntrospectValue::Null, |x| {
                     IntrospectValue::Int(i64::from(x))
                 })
             }),
+            // Keyed by a PIXEL offset along the painted row, not by a section,
+            // so `count` is not its bound — the declaration names
+            // `visible_total`, and the accessor already answers `Null` for a
+            // coordinate no section covers.
             "logical_index_at" => arg.parse().ok().map(|x| opt_int(self.logical_index_at(x))),
-            "resize_mode" => arg
-                .parse()
-                .ok()
-                .map(|l: usize| IntrospectValue::Text(self.resize_mode(l).as_wire().to_string())),
-            "effective_resize_mode" => arg.parse().ok().map(|l: usize| {
+            "resize_mode" => per_section(arg, &|l| {
+                IntrospectValue::Text(self.resize_mode(l).as_wire().to_string())
+            }),
+            "effective_resize_mode" => per_section(arg, &|l| {
                 IntrospectValue::Text(self.effective_resize_mode(l).as_wire().to_string())
             }),
-            "content_width" => arg
-                .parse()
-                .ok()
-                .map(|l| IntrospectValue::Int(i64::from(self.content_width(l)))),
+            "content_width" => per_section(arg, &|l| {
+                IntrospectValue::Int(i64::from(self.content_width(l)))
+            }),
             _ => None,
         }
     }
@@ -2030,9 +2213,22 @@ impl ColumnLayout {
             }
             // NB: the scalar rules first, then the reorder model — a rule name
             // this header does not know is still the embedded model's to claim.
-            _ => self
-                .intervene_rule(path, value)
-                .unwrap_or_else(|| self.sections.intervene(path, value)),
+            //
+            // R1501 — and what neither claims is now answered from the
+            // declaration instead of as a flat "unknown". A path this surface
+            // reads but does not write (`placements`, `visible_total`, `count`)
+            // is `ReadOnly`; only a path nothing declares is `UnknownPath`. The
+            // distinction was unavailable before there was a declaration to
+            // consult, which is why every unwritable read reported itself as
+            // nonexistent — the §2 #7 lie [`read_only_or_unknown`] exists for.
+            _ => self.intervene_rule(path, value).unwrap_or_else(|| {
+                match self.sections.intervene(path, value) {
+                    Err(InterveneError::UnknownPath) => {
+                        Err(read_only_or_unknown(&Self::SCHEMA, path))
+                    }
+                    other => other,
+                }
+            }),
         }
     }
 
@@ -2386,10 +2582,12 @@ mod tests {
         SectionPlacement, SectionResizeMode, read_column_layout,
     };
     use crate::external::{
-        DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+        ArgDomain, DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue,
+        InvokeError,
     };
     use crate::widgets::column_widths::{DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
     use crate::widgets::grid_sort::col_sort_dir;
+    use crate::widgets::reorder::ReorderModel;
 
     /// Four sections wide enough to tell apart by width alone.
     fn layout() -> ColumnLayout {
@@ -2398,6 +2596,161 @@ mod tests {
 
     fn text(s: &str) -> IntrospectValue {
         IntrospectValue::Text(s.to_string())
+    }
+
+    /// R1501 — the five paths that answered while `$schema` denied them. Each
+    /// was added by a round that edited this module (R1493 / R1496 / R1498) and
+    /// left the consumer's hand-written copy of the list behind.
+    const FORMERLY_UNDECLARED: [&str; 5] = [
+        "stretch_last_section",
+        "effective_resize_modes",
+        "effective_resize_mode.<logical>",
+        "resize_contents_precision",
+        "reset_default_section_size",
+    ];
+
+    #[test]
+    fn r1501_the_declaration_names_every_path_the_layout_answers() {
+        for p in FORMERLY_UNDECLARED {
+            assert!(
+                ColumnLayout::SCHEMA.field_for(p).is_some()
+                    || ColumnLayout::SCHEMA_FIELDS.iter().any(|f| f.path == p),
+                "{p:?} answers but is not declared — the R1501 defect",
+            );
+        }
+    }
+
+    /// R1501 — the declared paths that are `invoke` channels. They read as
+    /// nothing by design, because [`SchemaField`] does not separate a readable
+    /// value from an action yet (its own doc says so), so the walk below names
+    /// them rather than probing them.
+    const ACTIONS: [&str; 15] = [
+        "swap_sections",
+        "resize_section",
+        "interactive_resize_section",
+        "set_section_hidden",
+        "set_resize_mode",
+        "set_all_resize_modes",
+        "set_sort_indicator",
+        "cycle_sort_indicator",
+        "clear_sort_indicator",
+        "reset_default_section_size",
+        "send",
+        "move",
+        "move_section",
+        "grab",
+        "grab_cancel",
+    ];
+
+    #[test]
+    fn r1501_every_declared_read_path_answers() {
+        let l = layout();
+        let mut probed = 0;
+        for f in ColumnLayout::SCHEMA_FIELDS {
+            if ACTIONS.contains(&f.path) {
+                continue;
+            }
+            // A family is addressed by its members, never by its template.
+            let probe = if f.args.is_empty() {
+                f.path.to_string()
+            } else {
+                format!("{}0", f.literal_prefix())
+            };
+            assert!(
+                l.query(&probe).is_some(),
+                "{:?} is declared but {probe:?} does not answer",
+                f.path,
+            );
+            probed += 1;
+        }
+        assert_eq!(
+            probed,
+            ColumnLayout::SCHEMA_FIELDS.len() - ACTIONS.len(),
+            "every declared field is either probed or a named action",
+        );
+    }
+
+    #[test]
+    fn r1501_a_section_keyed_read_outside_the_header_answers_null() {
+        // Measured before the round on a 3-section header: five of these nine
+        // answered a plausible value for section 3 — `0` widths, a `false`
+        // hidden flag, and `"interactive"` modes for a column that is not
+        // there. A client that trusts the declared domain cannot tell those
+        // from real answers.
+        let l = ColumnLayout::new(vec![150, 90, 100]);
+        for p in [
+            "visual_index.3",
+            "logical_index.3",
+            "section_size.3",
+            "section_hidden.3",
+            "section_position.3",
+            "resize_mode.3",
+            "effective_resize_mode.3",
+            "content_width.3",
+        ] {
+            assert_eq!(
+                l.query(p),
+                Some(IntrospectValue::Null),
+                "{p:?} is outside the declared domain and must not read as a value",
+            );
+        }
+        // In range, all nine still answer for real.
+        assert_eq!(l.query("section_size.2"), Some(IntrospectValue::Int(100)));
+        assert_eq!(l.query("resize_mode.2"), Some(text("interactive")));
+    }
+
+    #[test]
+    fn r1501_the_layout_publishes_the_bound_its_families_declare() {
+        // `IndexOf("count")` is a dead end unless this surface answers `count`.
+        let l = layout();
+        assert_eq!(l.query("count"), Some(IntrospectValue::Int(4)));
+        // And `logical_index_at` is bounded by pixels, not sections, which is
+        // the domain it declares.
+        let f = ColumnLayout::SCHEMA
+            .field_for("logical_index_at.0")
+            .expect("declared");
+        assert_eq!(f.args.len(), 1, "it takes an argument — it was a scalar");
+        assert!(matches!(
+            f.args[0].domain,
+            ArgDomain::IndexOf("visible_total")
+        ));
+        assert_eq!(l.query("visible_total"), Some(IntrospectValue::Int(520)));
+    }
+
+    #[test]
+    fn r1501_an_unwritable_read_is_read_only_not_unknown() {
+        let l = layout();
+        assert_eq!(
+            l.intervene("placements", &IntrospectValue::Null),
+            Err(InterveneError::ReadOnly),
+            "declared and readable, so refusing it as unknown is the §2 #7 lie",
+        );
+        assert_eq!(
+            l.intervene("count", &IntrospectValue::Int(9)),
+            Err(InterveneError::ReadOnly),
+        );
+        assert_eq!(
+            l.intervene("no_such_path", &IntrospectValue::Null),
+            Err(InterveneError::UnknownPath),
+            "and a path nothing declares is still unknown",
+        );
+    }
+
+    #[test]
+    fn r1501_the_declaration_composes_the_reorder_models_verbatim() {
+        let tail = &ColumnLayout::SCHEMA_FIELDS
+            [ColumnLayout::SCHEMA_FIELDS.len() - ReorderModel::SCHEMA_FIELDS.len()..];
+        assert_eq!(
+            tail,
+            ReorderModel::SCHEMA_FIELDS,
+            "the embedded model's paths are borrowed, not restated",
+        );
+        assert!(
+            ColumnLayout::SCHEMA_FIELDS
+                .iter()
+                .all(|f| !f.path.is_empty()),
+            "a blank row means a length that stopped matching its operands",
+        );
     }
 
     fn ints(v: &IntrospectValue) -> Vec<u64> {
@@ -2877,8 +3230,12 @@ mod tests {
     struct Probe(ColumnLayout);
 
     impl ExternalIntrospect for Probe {
+        /// R1501 — the layout's own declaration, not an empty one. A standin
+        /// for a binding's wrapper has to declare what it forwards, or it
+        /// stands in for the defect this round removed rather than for the
+        /// consumer.
         fn schema(&self) -> crate::external::IntrospectSchema {
-            crate::external::IntrospectSchema::new(const { &[] })
+            ColumnLayout::SCHEMA
         }
         fn query(&self, path: &str) -> Option<IntrospectValue> {
             self.0.query(path)

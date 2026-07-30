@@ -208,24 +208,14 @@ const SCHEMA_LEN: usize = RT_EXTERNAL_FIELDS.len() + DEVICE_FIELDS.len();
 /// **compile time** from [`RT_EXTERNAL_FIELDS`] rather than hand-copied — so the
 /// RT External stays the single source of truth for its own schema and a field
 /// added there cannot silently go missing here.
-const fn compose_schema() -> [SchemaField; SCHEMA_LEN] {
-    let mut fields = [SchemaField::EMPTY; SCHEMA_LEN];
-    let mut i = 0;
-    while i < RT_EXTERNAL_FIELDS.len() {
-        fields[i] = RT_EXTERNAL_FIELDS[i];
-        i += 1;
-    }
-    let mut j = 0;
-    while j < DEVICE_FIELDS.len() {
-        fields[i + j] = DEVICE_FIELDS[j];
-        j += 1;
-    }
-    fields
-}
-
-/// The composed field list, in a `static` so it outlives the `IntrospectSchema`
-/// borrow.
-static SCHEMA_FIELDS: [SchemaField; SCHEMA_LEN] = compose_schema();
+///
+/// R1501 — the loop that stood here moved to [`SchemaField::concat`]. This was
+/// the only binding that composed instead of copying, and the round that found
+/// out why it matters (`hello-column-reorder` had lost five paths to a
+/// hand-written copy) added two more callers, which is what lifts a mechanical
+/// wiring pattern out of its first site.
+static SCHEMA_FIELDS: [SchemaField; SCHEMA_LEN] =
+    SchemaField::concat(RT_EXTERNAL_FIELDS, DEVICE_FIELDS);
 
 /// What matching `requested` against the host's device list produced.
 #[derive(Debug, PartialEq, Eq)]
@@ -425,7 +415,7 @@ fn audio_rig() -> Rc<AudioRig> {
 /// What this wrapper adds is the *device* half of the surface, which the
 /// device-agnostic controller cannot know: the read-only [`DEVICE_FIELDS`]. So
 /// the wire contract's home is the inner External **plus** those fields — see
-/// [`compose_schema`].
+/// [`SCHEMA_FIELDS`].
 ///
 /// It also declares [`pinion_core::external::ThreadOwnership::OwnThread`], because
 /// that is the truth: a cpal callback thread is running underneath, and the
