@@ -52,19 +52,18 @@ VIEWPORT = (700, 420)
 
 HDR = "colhdr"
 LABEL = "colhdr_label"
+SORT = "colhdr_sort"
 
 HEADERS = ["Name", "Type", "Size", "Modified", "Owner"]
 NCOLS = len(HEADERS)
 BOOT_W = [150, 90, 100, 130, 100]
 IDENTITY = list(range(NCOLS))
 
-# The binding's label geometry (examples/hello-column-reorder): a section's
-# label box is the cell inset on both sides, less the sort glyph when one is
-# shown. Mirrored here so the slack premise is checked against the widget's
-# own arithmetic rather than a number this file invented.
-CELL_BORDER = 2
-LABEL_INSET = 12
-GLYPH_W = 24
+# R1506 — no label geometry is mirrored here. An earlier draft copied the
+# binding's cell-border / inset / glyph-width constants and asserted an
+# arithmetic identity against them, which gave that geometry a second home and
+# made this file fail on an intentional retune. Everything below measures the
+# painted tree and asserts the invariants instead.
 
 
 def _paint(tf):
@@ -79,6 +78,23 @@ def _label_node(tf, visual: int) -> dict:
     node = find_by_tag(_paint(tf), f"{LABEL}#{visual}")
     assert node is not None, f"{LABEL}#{visual} is painted"
     return node
+
+
+def _cell_and_label(tf, visual: int) -> tuple[dict, dict]:
+    """One section's cell and its label, from a single snapshot."""
+    snap = _paint(tf)
+    cell = find_by_tag(snap, f"{HDR}#{visual}")
+    label = find_by_tag(snap, f"{LABEL}#{visual}")
+    assert cell is not None and label is not None, f"section #{visual} paints"
+    return cell, label
+
+
+def _insets(cell: dict, label: dict) -> tuple[int, int]:
+    """The label box's measured gap to its section's leading / trailing edge."""
+    left = label["rect"]["x"] - cell["rect"]["x"]
+    right = (cell["rect"]["x"] + cell["rect"]["w"]) - (
+        label["rect"]["x"] + label["rect"]["w"])
+    return left, right
 
 
 def _node_aligns(tf) -> list[str]:
@@ -109,22 +125,61 @@ def body() -> None:
                   "surface and scene agree, in one shared spelling "
                   "(TextAlign::as_wire is the single table since R1504)")         # 3
 
-        # ── (B) the box has slack, which is what makes alignment mean
-        # anything. `paint_text` hands the node's own rect.w to the shaper as
-        # the width to align within, so a label pinned to its glyphs would
-        # render identically under all three rules.
-        sizes = _h(tf, "sizes")
+        # ── (B) the box is the SECTION's, not the string's ───────────
+        # This is what makes alignment mean anything: `paint_text` hands the
+        # node's own rect.w to the shaper as the width to align within, so a
+        # label pinned to its glyphs renders identically under all three rules.
+        #
+        # Every number below is MEASURED from the painted tree. An earlier
+        # draft mirrored the binding's inset / border / glyph-width constants
+        # and asserted an arithmetic identity, which made the demo a second
+        # copy of geometry that already had one home. Reading the insets off
+        # the tree and asserting the INVARIANTS instead means the binding can
+        # retune its spacing without this file knowing, while a box that stops
+        # spanning its section still fails.
         for visual in range(NCOLS):
-            node = _label_node(tf, visual)
             logical = _h(tf, "order")[visual]
-            sect_w = sizes[logical] - CELL_BORDER
-            # No column is sorted at boot, so no section shows the glyph.
-            expected = max(sect_w - LABEL_INSET * 2, 1)
-            assert_eq(node["rect"]["w"], expected,
-                      f"label #{visual} spans its section less the insets, "
-                      f"so there is room to align inside it")                     # 4-8
-            assert_eq(node["content"], HEADERS[logical],
-                      f"and it is column {logical}'s label")                      # 9-13
+            cell, label = _cell_and_label(tf, visual)
+            left, right = _insets(cell, label)
+            assert_eq(left, right,
+                      f"section #{visual}'s label box is inset symmetrically, "
+                      f"or 'centred' would not be centred")                       # 4-8
+            assert label["rect"]["w"] > 0 and left > 0, \
+                f"section #{visual} has a real box, inset from its section"       # 9-13
+            assert_eq(label["content"], HEADERS[logical],
+                      f"and it is column {logical}'s label")                      # 14-18
+
+        # Two sections of EQUAL width carrying labels of different length must
+        # get equal boxes. If the box were pinned to the glyphs this is the
+        # assertion that fails, and it needs no constant to say so.
+        sizes = _h(tf, "sizes")
+        pairs = [(a, b) for a in range(NCOLS) for b in range(NCOLS)
+                 if a < b and sizes[a] == sizes[b]
+                 and len(HEADERS[a]) != len(HEADERS[b])]
+        assert pairs, f"the boot widths must contain such a pair: {sizes}"        # 19
+        for logical_a, logical_b in pairs[:1]:
+            va = _h(tf, "order").index(logical_a)
+            vb = _h(tf, "order").index(logical_b)
+            assert_eq(_label_node(tf, va)["rect"]["w"],
+                      _label_node(tf, vb)["rect"]["w"],
+                      f"{HEADERS[logical_a]!r} and {HEADERS[logical_b]!r} sit "
+                      f"in equal boxes because their SECTIONS are equal")         # 20
+
+        # …and the box follows its section when the section moves. The delta is
+        # the discriminator: a box that tracked the string would not move at all.
+        target = _h(tf, "order")[0]
+        before = _label_node(tf, 0)["rect"]["w"]
+        grown = sizes[target] + 40
+        tf.invoke("/external/resize_section", f"{target}:{grown}")
+        wait_until(lambda: _h(tf, "sizes")[target] == grown,
+                   desc="the front section grows by 40")
+        assert_eq(_label_node(tf, 0)["rect"]["w"], before + 40,
+                  "the label box grew by exactly what its section grew by")       # 21
+        tf.invoke("/external/resize_section", f"{target}:{sizes[target]}")
+        wait_until(lambda: _h(tf, "sizes")[target] == sizes[target],
+                   desc="and shrinks back")
+        assert_eq(_label_node(tf, 0)["rect"]["w"], before,
+                  "and came back to exactly where it was")                        # 22
 
         # ── (C) changing the rule rebuilds every node ────────────────
         tf.intervene("/external/default_alignment", "Start")
@@ -191,20 +246,28 @@ def body() -> None:
         # wide enough to align within, or the rule would silently stop meaning
         # anything on exactly the column the user is looking at.
         sorted_logical = _h(tf, "order")[0]
-        unsorted_w = _label_node(tf, 0)["rect"]["w"]
+        cell_before, label_before = _cell_and_label(tf, 0)
         tf.invoke("/external/cycle_sort_indicator", sorted_logical)
         wait_until(lambda: _h(tf, "sort_indicator") != "none",
                    desc="the front column sorts")
-        node = _label_node(tf, 0)
-        sect_w = _h(tf, "sizes")[sorted_logical] - CELL_BORDER
-        assert_eq(node["rect"]["w"],
-                  max(sect_w - (LABEL_INSET * 2 + GLYPH_W), 1),
-                  "the sorted section's label yields the glyph's width")          # 25
-        assert 0 < node["rect"]["w"] < unsorted_w, \
-            f"and still has a box to align within, a narrower one: " \
-            f"{node['rect']['w']} of {unsorted_w}"                                # 26
+        cell, label = _cell_and_label(tf, 0)
+        left, right = _insets(cell, label)
+        assert_eq(cell["rect"]["w"], cell_before["rect"]["w"],
+                  "the section itself did not resize")                            # 31
+        assert 0 < label["rect"]["w"] < label_before["rect"]["w"], \
+            f"the label yielded room and still has a box to align within: " \
+            f"{label['rect']['w']} of {label_before['rect']['w']}"                # 32
+        assert right > left, \
+            f"and it yielded at the TRAILING end, where the arrow goes: " \
+            f"left={left} right={right}"                                          # 33
+        glyph = find_by_tag(_paint(tf), f"{SORT}#0")
+        assert glyph is not None, "the sort arrow paints"                         # 34
+        assert glyph["rect"]["x"] >= label["rect"]["x"] + label["rect"]["w"], \
+            f"and it starts after the label box ends, so the centred label " \
+            f"cannot collide with it: arrow x={glyph['rect']['x']} vs box " \
+            f"end={label['rect']['x'] + label['rect']['w']}"                      # 35
         assert_eq(_node_aligns(tf)[0], "Center",
-                  "the rule is unchanged by sorting")                             # 27
+                  "the rule is unchanged by sorting")                             # 36
 
         # ── (H) hidden sections paint no label at all ────────────────
         # The nodes are the only place this is observable: `alignments` answers

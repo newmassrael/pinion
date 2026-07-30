@@ -10,10 +10,10 @@
 # Run it locally only on explicit request. Windows render UNMAPPED by
 # default — `rpc_verify.RpcSubprocess` exports `PINION_HIDDEN_WINDOW=1`, so
 # the full real render pipeline runs without flashing windows on the
-# developer's display. The 5 live-pixel / x11grab demos (r706/r707/r786/
-# r794/r806) opt back to a visible window (`visible_window=True`) because
-# they screen-capture the mapped window; locally they flicker, so they are
-# the reason the full sweep is CI-primary. Day-to-day, a round verifies
+# developer's display. The 6 live-pixel / x11grab demos (r706/r707/r786/
+# r794/r806/r1506) opt back to a visible window (`visible_window=True`)
+# because they screen-capture the mapped window; locally they flicker, so
+# they are the reason the full sweep is CI-primary. Day-to-day, a round verifies
 # `cargo test` + `clippy` + its own affected demo(s) (hidden), not this.
 #
 # Two render modes (PINION_SWEEP_MODE):

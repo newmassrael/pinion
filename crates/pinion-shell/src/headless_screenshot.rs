@@ -2952,6 +2952,133 @@ mod tests {
         );
     }
 
+    /// The label box's `(x, width)` on the render target, and the
+    /// `[Start, Center, End]` ink spans measured inside it — each span being
+    /// `(min_x, max_x, width)`.
+    type HeaderInkSpans = (u32, u32, [(u32, u32, u32); 3]);
+
+    /// R1506 — the render half of
+    /// [`r1505_declared_alignment_slides_the_ink_within_the_box`], split out so
+    /// the test body reads as the rule it asserts rather than as setup (the
+    /// R1494 split, not a `clippy::too_many_lines` allow).
+    ///
+    /// Returns the header style it rendered against and a closure over the
+    /// three ink spans, or `None` when this host has no wgpu adapter.
+    fn header_label_ink_spans() -> Option<HeaderInkSpans> {
+        use pinion_core::scene::{BoxNode, ContainerNode, Scene};
+        use pinion_core::style::{Color, FontFamily, LayoutStyle, Size, TextAlign};
+        use pinion_core::theme::Theme;
+        use pinion_core::widgets::column_layout::SectionPlacement;
+        use pinion_runtime::compute_layout;
+        use pinion_runtime::paint_adapter::to_vello;
+        use pinion_text::LayoutCache;
+        use pinion_widget_paint::column_header::{
+            ColumnHeaderStyle, HeaderSection, header_label_node,
+        };
+
+        /// The §5.37 parser fixture, installed as the process default family so
+        /// the glyph advances are the same on every host (see the doc above).
+        const NOTO: &[u8] =
+            include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+        /// One of `hello-column-reorder`'s own headers.
+        const LABEL: &str = "Modified";
+        /// Wide enough that the word leaves slack in its box to align within.
+        const SECTION_SIZE: u32 = 260;
+
+        let mut shot = match HeadlessScreenshot::new() {
+            Ok(s) => s,
+            // No GPU / software adapter on this host — skip rather than fail,
+            // the stance the sibling headless tests take on a bare dev box.
+            Err(e) => {
+                eprintln!("skipping: no wgpu adapter ({e})");
+                return None;
+            }
+        };
+
+        let hdr = ColumnHeaderStyle::new();
+        // The dark palette makes `OnSurface` light, so the PRODUCTION label —
+        // whose colour this test does not get to choose — inks bright over the
+        // black target and `glyph_gutters` can read it.
+        let theme = Theme::dark();
+        let surface_w = hdr.section_width(SECTION_SIZE);
+        let box_x = hdr.label_inset;
+        let box_w = hdr.label_box_width(SECTION_SIZE, false);
+
+        let mut text_cache = LayoutCache::new();
+        let family = text_cache
+            .register_font_data(NOTO.to_vec())
+            .into_iter()
+            .next()
+            .expect("NotoSans fixture registers at least one family");
+        // A production header label names no family, so the fixture is
+        // installed the way an application installs its own (R1472
+        // `ShellConfig::with_default_font_family`) rather than by editing the
+        // node — which would make this a test of a node production never paints.
+        text_cache.set_default_font_family(Some(FontFamily::Named(family.into())));
+
+        let placement = SectionPlacement {
+            visual: 0,
+            logical: 0,
+            x: 0,
+            size: SECTION_SIZE,
+        };
+
+        // Ink extent `(min_x, max_x, width)` for one alignment, measured with
+        // this module's existing [`glyph_gutters`] — a first/last-inked-column
+        // scan, which is exactly this question asked of a wider box. The first
+        // draft of this test hand-rolled the same scan; the R727 / R732
+        // 3rd-consumer self-grep is what caught it.
+        let mut ink_span = |align: TextAlign| -> (u32, u32, u32) {
+            let section = HeaderSection {
+                label: LABEL,
+                align,
+                sort_glyph: None,
+                dragged: false,
+                focused: false,
+            };
+            // The PRODUCTION leaf, inside a bare container the size of the
+            // section it would sit in — `view_header_cell`'s own wrapper less
+            // its fill, so the label's ink is the only thing on the target.
+            let mut scene = Scene::Container(
+                ContainerNode::new(vec![header_label_node(
+                    "colhdr",
+                    placement.visual,
+                    &section,
+                    placement.size,
+                    &hdr,
+                    &theme,
+                )])
+                .with_layout(LayoutStyle::new().with_size(Size::px(surface_w, hdr.height))),
+            );
+            compute_layout(&mut scene, &mut text_cache, surface_w, hdr.height);
+            let mut vello_scene = VelloScene::new();
+            to_vello(
+                &scene,
+                &|_: &BoxNode| -> Option<Color> { None },
+                &mut text_cache,
+                &mut vello_scene,
+            );
+            let rgba = shot
+                .render_to_rgba8(&vello_scene, surface_w, hdr.height, PenikoColor::BLACK)
+                .expect("headless render");
+            // `glyph_gutters` panics when nothing inked, which is the premise
+            // guard this needs: without ink every bound below would compare
+            // sentinels and the test would pass vacuously.
+            let (left, right, width) = glyph_gutters(&rgba, surface_w, hdr.height);
+            (left, surface_w - 1 - right, width)
+        };
+
+        Some((
+            box_x,
+            box_w,
+            [
+                ink_span(TextAlign::Start),
+                ink_span(TextAlign::Center),
+                ink_span(TextAlign::End),
+            ],
+        ))
+    }
+
     /// R1505 §5.36 §5.49 — the pixel half of "a header says where its labels
     /// sit": does a leaf's DECLARED alignment actually move its glyphs?
     ///
@@ -2971,98 +3098,46 @@ mod tests {
     /// dropped the `layout.align(…)` call, or stopped passing the box width,
     /// leaves all three renders identical, and both are caught here.
     ///
-    /// Renders the same node shape the header label is built from (a sized box
-    /// carrying `with_align` and `TextOverflow::Clip`) through the production
-    /// [`to_vello`](pinion_runtime::paint_adapter::to_vello) walk, and asserts
-    /// the ink SLIDES: `Start` left of `Center` left of `End`, while the ink
-    /// WIDTH holds (the same glyphs moved, not re-shaped or re-wrapped).
+    /// R1506 — it renders the PRODUCTION leaf, not a copy of one.
+    /// [`header_label_node`](pinion_widget_paint::column_header::header_label_node)
+    /// is the same function `hello-column-reorder` calls, so the box, the
+    /// insets, the overflow and the declaration are the binding's own. R1505
+    /// reconstructed that node here, and a guard that renders a copy of the
+    /// thing under test is testing the copy: a binding that stopped declaring
+    /// the alignment, or collapsed the box, left this test green. Measured —
+    /// with `label_style` no longer passing `section.align` through, this test
+    /// now fails; before the lift it could not have.
     ///
-    /// The font is REGISTERED, not discovered. A guard that leaned on whatever
-    /// the host happens to have installed would measure the host, and its
-    /// answer would drift between this box and CI — the R1473 / R1500 lesson,
-    /// applied at the seam that first tempted it.
+    /// Asserted against the LABEL BOX, which is inset from the section, rather
+    /// than against the render target: `Start` begins at the inset, not at
+    /// zero. That is production geometry the reconstruction did not have.
+    ///
+    /// The font is REGISTERED, not discovered, and installed as the cache's
+    /// default family because a production label names none. A guard that
+    /// leaned on whatever the host happens to have installed would measure the
+    /// host, and its answer would drift between this box and CI — the R1473 /
+    /// R1500 lesson, applied at the seam that first tempted it.
     ///
     /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
     /// tests; run with `--ignored`.
     #[test]
     #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
     fn r1505_declared_alignment_slides_the_ink_within_the_box() {
-        use pinion_core::scene::{BoxNode, Rect, Scene, TextNode};
-        use pinion_core::style::{Color, TextAlign, TextOverflow, TextStyle};
-        use pinion_runtime::paint_adapter::to_vello;
-        use pinion_text::LayoutCache;
-
-        /// The §5.37 parser fixture, reused as a REGISTERED family so the
-        /// glyph advances are the same on every host (see the doc above).
-        const NOTO: &[u8] =
-            include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
-        /// Far wider than the word, so all three alignments have room to
-        /// differ — a header section's `label_w`, in miniature.
-        const BOX_W: u32 = 240;
-        const BOX_H: u32 = 40;
-        /// The widest of `hello-column-reorder`'s headers.
-        const LABEL: &str = "Modified";
-
-        let mut shot = match HeadlessScreenshot::new() {
-            Ok(s) => s,
-            // No GPU / software adapter on this host — skip rather than fail,
-            // the stance the sibling headless tests take on a bare dev box.
-            Err(e) => {
-                eprintln!("skipping: no wgpu adapter ({e})");
-                return;
-            }
+        let Some((box_x, box_w, spans)) = header_label_ink_spans() else {
+            return;
         };
-
-        let mut text_cache = LayoutCache::new();
-        let family = text_cache
-            .register_font_data(NOTO.to_vec())
-            .into_iter()
-            .next()
-            .expect("NotoSans fixture registers at least one family");
-
-        // Ink extent `(min_x, max_x, width)` for one alignment, measured with
-        // this module's existing [`glyph_gutters`] — a first/last-inked-column
-        // scan, which is exactly this question asked of a wider box. The first
-        // draft of this test hand-rolled the same scan; the R727 / R732
-        // 3rd-consumer self-grep is what caught it.
-        let mut ink_span = |align: TextAlign| -> (u32, u32, u32) {
-            let scene = Scene::Text(TextNode::styled(
-                LABEL,
-                Rect::new(0, 0, BOX_W, BOX_H),
-                TextStyle::new()
-                    .with_font_family(family.clone())
-                    .with_size_px(20)
-                    .with_fg(Color::rgb(255, 255, 255))
-                    .with_align(align)
-                    .with_overflow(TextOverflow::Clip),
-            ));
-            let mut vello_scene = VelloScene::new();
-            to_vello(
-                &scene,
-                &|_: &BoxNode| -> Option<Color> { None },
-                &mut text_cache,
-                &mut vello_scene,
-            );
-            let rgba = shot
-                .render_to_rgba8(&vello_scene, BOX_W, BOX_H, PenikoColor::BLACK)
-                .expect("headless render");
-            // `glyph_gutters` panics when nothing inked, which is the premise
-            // guard this needs: without ink every bound below would compare
-            // sentinels and the test would pass vacuously.
-            let (left, right, width) = glyph_gutters(&rgba, BOX_W, BOX_H);
-            (left, BOX_W - 1 - right, width)
-        };
-
-        let (start_min, start_max, ink_w) = ink_span(TextAlign::Start);
-        let (mid_min, mid_max, mid_w) = ink_span(TextAlign::Center);
-        let (end_min, end_max, end_w) = ink_span(TextAlign::End);
+        let [
+            (start_min, start_max, ink_w),
+            (mid_min, mid_max, mid_w),
+            (end_min, end_max, end_w),
+        ] = spans;
 
         // The word must not fill the box, or there is nothing to slide within
         // and the assertions below would be unfalsifiable.
         assert!(
-            ink_w < BOX_W - 20,
-            "the fixture word must leave slack in the box to align within: \
-             ink {ink_w}px of {BOX_W}px",
+            ink_w + 20 < box_w,
+            "the fixture word must leave slack in its box to align within: \
+             ink {ink_w}px of {box_w}px",
         );
 
         // The rule: the ink SLIDES rightward across the three alignments.
@@ -3088,20 +3163,31 @@ mod tests {
             );
         }
 
-        // Anchored, not merely ordered: `End`'s right edge sits near the box's
-        // right edge, and `Center` is centred. Ordering alone would survive a
-        // shaper that nudged the text by a constant.
+        // The BOX, not the surface, is what the three align within — and the
+        // box is inset from the section. `Start` therefore begins at the inset,
+        // not at zero, which is the production geometry this guard exists to
+        // render rather than approximate.
         assert!(
-            BOX_W - end_max <= 4,
-            "End must anchor to the box's right edge: max_x={end_max} of \
-             {BOX_W}",
+            start_min.abs_diff(box_x) <= 4,
+            "Start must begin at the label box's left edge: min_x={start_min} \
+             vs box_x={box_x}",
         );
-        let mid_slack_l = mid_min;
-        let mid_slack_r = BOX_W - mid_max;
+
+        // Anchored, not merely ordered: `End`'s right edge sits at the box's
+        // right edge, and `Center` is centred in it. Ordering alone would
+        // survive a shaper that nudged the text by a constant.
+        let box_right = box_x + box_w;
+        assert!(
+            box_right - end_max <= 4,
+            "End must anchor to the label box's right edge: max_x={end_max} \
+             of box_right={box_right}",
+        );
+        let mid_slack_l = mid_min - box_x;
+        let mid_slack_r = box_right - mid_max;
         assert!(
             mid_slack_l.abs_diff(mid_slack_r) <= 4,
-            "Center must leave equal slack: {mid_slack_l}px left vs \
-             {mid_slack_r}px right",
+            "Center must leave equal slack inside its box: {mid_slack_l}px \
+             left vs {mid_slack_r}px right",
         );
     }
 

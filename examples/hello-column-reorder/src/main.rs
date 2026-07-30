@@ -109,8 +109,7 @@ use pinion_core::external::{
 use pinion_core::reactive::measured_text_extent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextAlign,
-    TextOverflow, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextAlign, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::column_layout::{
@@ -122,6 +121,7 @@ use pinion_core::widgets::grid_sort::col_sort_dir;
 use pinion_core::widgets::table::{cell_cmp, grid_order_by};
 use pinion_core::{Frame, Intent, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
+use pinion_widget_paint::column_header::{ColumnHeaderStyle, HeaderSection, view_header_cell};
 use pinion_widget_paint::glyph::sort_glyph;
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -189,15 +189,14 @@ fn cell_text(row: usize, logical: usize) -> &'static str {
 const SECTION_W: [u32; NCOLS] = [150, 90, 100, 130, 100];
 const GRID_X: u32 = 30;
 const GRID_Y: u32 = 90;
-const HDR_H: u32 = 40;
-/// R1504 — the horizontal breathing room a header label keeps at each end, and
-/// the room reserved for the sort arrow. The label's box is the section minus
-/// these, so `Start` paints exactly where it painted before this round.
-const LABEL_INSET: u32 = 12;
-const GLYPH_W: u32 = 24;
-/// Top inset of both the label and the arrow; the label's box is the header
-/// height minus twice this, so the two share a baseline.
-const LABEL_Y: u32 = 12;
+/// R1506 — the header section geometry, which is `QHeaderView` knowledge and
+/// therefore [`pinion_widget_paint::column_header`]'s rather than this
+/// binding's. The insets, the arrow's reserved end and the label-box arithmetic
+/// moved there with [`view_header_cell`]: R1505's pixel guard was rendering its
+/// own copy of the label node, and a guard that renders a copy of the thing
+/// under test is testing the copy. Now the guard calls what this binding calls.
+const HDR_STYLE: ColumnHeaderStyle = ColumnHeaderStyle::new();
+const HDR_H: u32 = HDR_STYLE.height;
 const ROW_H: u32 = 34;
 /// Resize step for the `[` / `]` keyboard gesture.
 const RESIZE_STEP: u32 = 20;
@@ -206,7 +205,7 @@ const RESIZE_STEP: u32 = 20;
 const LAYOUT_KEY: &str = "colreorder.layout";
 /// R1452 — one text size for both the header and the body, so a single
 /// measured monospace cell answers for every cell in the grid.
-const TEXT_PX: u32 = 13;
+const TEXT_PX: u32 = HDR_STYLE.text_px;
 /// Horizontal padding inside a section, both sides — what a content-fitted
 /// column needs on top of its text.
 const CELL_PAD: u32 = 12;
@@ -1018,95 +1017,28 @@ fn set_cursor(intro: &mut dyn ExternalIntrospect, target: usize) -> bool {
 /// One header section cell, tagged `colhdr#<visual>` so the router's `'#'`
 /// split reaches the composite external and the model's drop classification
 /// sees a real subindex.
+/// R1506 — the geometry is [`view_header_cell`]'s; this fn is the projection
+/// from THIS binding's state onto the [`HeaderSection`] that function reads.
+/// The sort arrow is resolved here because only the binding knows which column
+/// carries the indicator and whether indicators are shown at all.
 fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Scene {
-    let is_dragged = state.dragging == Some(p.visual);
-    let fill = if is_dragged {
-        theme.resolve(ColorRole::SurfaceContainerLow)
-    } else if state.focused == Some(p.visual) {
-        theme.resolve(ColorRole::SurfaceContainerHighest)
-    } else {
-        theme.resolve(ColorRole::SurfaceContainerHigh)
-    };
-    let visual = p.visual;
-    // R1504 — the sort arrow is decided FIRST, because the label's box has to
-    // know whether the arrow is taking the section's right end. Qt reserves the
-    // same room; a centred label over an unreserved arrow reads as a collision
-    // the moment a column is sorted.
-    let glyph = sort_glyph(
-        state
-            .sort_indicator_shown
-            .then(|| col_sort_dir(state.sort_indicator, p.logical))
-            .flatten(),
-    );
-    let sect_w = p.size.saturating_sub(2);
-    let label_w = sect_w
-        .saturating_sub(LABEL_INSET * 2 + if glyph.is_some() { GLYPH_W } else { 0 })
-        .max(1);
-    let align = state
-        .alignments
-        .get(p.logical)
-        .copied()
-        .unwrap_or(DEFAULT_HEADER_ALIGNMENT);
-    let label = Scene::Text(
-        TextNode::styled(
-            HEADERS[p.logical],
-            Rect::default(),
-            grid_text(
-                if is_dragged {
-                    ColorRole::OnSurfaceMuted
-                } else {
-                    ColorRole::OnSurface
-                },
-                theme,
-            )
-            .with_align(align)
-            // The box is the containment: without this a label wider than its
-            // section paints over the neighbour, and under `Center` it would do
-            // so at BOTH ends. The chart's `label_node` reaches for the same
-            // pair for the same reason.
-            .with_overflow(TextOverflow::Clip),
-        )
-        .with_tag(format!("colhdr_label#{visual}"))
-        // R1499 — decoration, and it says so: Qt's `WA_TransparentForMouseEvents`
-        // / CSS's `pointer-events: none`. The label is tagged for the snapshot
-        // assertions and the a11y walk, and nothing dispatches to it, so a press
-        // whose coordinate lands on it must reach the section underneath.
-        //
-        // R1504 — and now it is load-bearing in every section rather than two.
-        // The label used to be a bare `Rect::default()` pinned 12px from the
-        // left edge, so whether it covered the section's centre — the point
-        // `scene/click` presses — was a function of the string's width. With a
-        // box that spans the section, a centred label covers that point in ALL
-        // of them, which is what R1497 measured the hazard of and R1499 declared
-        // the fix for.
-        .with_layout(
-            LayoutStyle::new()
-                .with_absolute_position(LABEL_INSET, LABEL_Y)
-                .with_size(Size::px(label_w, HDR_H - LABEL_Y * 2))
-                .with_pointer_transparent(true),
+    let section = HeaderSection {
+        label: HEADERS[p.logical],
+        align: state
+            .alignments
+            .get(p.logical)
+            .copied()
+            .unwrap_or(DEFAULT_HEADER_ALIGNMENT),
+        sort_glyph: sort_glyph(
+            state
+                .sort_indicator_shown
+                .then(|| col_sort_dir(state.sort_indicator, p.logical))
+                .flatten(),
         ),
-    );
-    let mut children = vec![label];
-    if let Some(glyph) = glyph {
-        children.push(Scene::Text(
-            TextNode::styled(glyph, Rect::default(), grid_text(ColorRole::Accent, theme))
-                .with_tag(format!("colhdr_sort#{visual}"))
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_absolute_position(sect_w.saturating_sub(GLYPH_W), LABEL_Y),
-                ),
-        ));
-    }
-    Scene::Container(
-        ContainerNode::new(children)
-            .with_tag(section_tag(visual))
-            .with_style(BoxStyle::filled(fill))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(p.x, 0)
-                    .with_size(Size::px(p.size.saturating_sub(2), HDR_H)),
-            ),
-    )
+        dragged: state.dragging == Some(p.visual),
+        focused: state.focused == Some(p.visual),
+    };
+    view_header_cell(HDR_TAG, p, &section, &HDR_STYLE, theme)
 }
 
 /// The strip that owns the sections. It carries the external's own tag and is

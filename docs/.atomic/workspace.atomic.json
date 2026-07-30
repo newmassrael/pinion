@@ -75054,6 +75054,68 @@
         "The S5.37 arm now declines every header label. That is correct, since parley is the reference, but the arm's coverage of production text shrank and nothing tracks what fraction of painted leaves it still serves."
       ]
     },
+    "Round 1506": {
+      "decision_summary": "A guard that renders a copy of the thing under test is testing the copy: the header section paint is lifted so the pixel guard calls what the binding calls, the live window becomes a witness, and the demo stops mirroring geometry that already has a home.",
+      "changes_bullets": [
+        "pinion-widget-paint::column_header lifts the QHeaderView section paint out of hello-column-reorder: ColumnHeaderStyle owns the geometry (section gap, symmetric label inset, the arrow's reserved end, the label-box arithmetic), HeaderSection is what the caller's model supplies, and header_label_node / view_header_cell are what both the binding and the tests now call. The binding keeps only the projection from its own state onto HeaderSection.",
+        "R1505's pixel guard renders that production leaf instead of a reconstruction, asserts against the LABEL BOX rather than the render target (so Start begins at the inset, not at zero), and installs its fixture font as the cache's default family because a production label names none.",
+        "tools/demos/r1506_alignment_live_pixels.py is the live-window witness R1505 lacked: three x11grab frames, one per alignment, whose difference localizes the label band without hunting the window, and the ink centroid inside it must slide rightward. It asks the X server for the screen size rather than hardcoding 1920x1080 as the sibling x11grab demos do.",
+        "crates/pinion-shell/tests/self_hosted_arm_coverage.rs measures what R1504 silently changed: with the header rule at Center the S5.37 arm paints none of the five labels, at Start it paints all five, and a sorted strip is MIXED because the arrow declares no alignment.",
+        "r1505_alignment_reaches_glyphs.py no longer mirrors any of the binding's label geometry. It measures the insets off the painted tree and asserts the invariants instead: symmetric insets, a box that tracks its SECTION rather than its string (equal-width sections with different labels get equal boxes; a resized section moves its box by the same delta), and an arrow that starts after the label box ends."
+      ],
+      "verification_bullets": [
+        "CF-6 / CF-7, one at a time: with label_style no longer passing section.align through, the pixel guard FAILS and the live demo FAILS. Before the lift neither could have — the guard set the alignment on its own reconstructed node, so a binding that stopped declaring it left the guard green. That is the class the lift closes, measured rather than argued.",
+        "The live demo's first draft reported that same counterfactual as a SKIP with exit 0. It waited for a frame to differ from the previous alignment's, which conflates \"the repaint has not landed\" with \"the repaint landed and moved nothing\". Rewritten to settle on frame STABILITY, with a separate liveness premise (hiding a column must move screen pixels) that decides SKIP-vs-FAIL before any alignment is measured. Re-measured: the counterfactual now exits 1 with the right diagnosis.",
+        "That first reading of the exit code was itself wrong — `| tail` masked it and reported exit 0 for a failing run, the pipe-masks-exit-code trap this workspace already had a lesson for.",
+        "CF re-run after the clippy line-budget split, because a refactor can silently weaken a guard.",
+        "Verified on a live window: ink centroid slides 278.4 -> 299.7 -> 325.1 over a 46.7px sweep, liveness probe 9540 px. NOT on the host's own display, where the window presents black to x11grab and the demo SKIPs — the pre-existing r706 demo SKIPs there for the same reason, so this is the host, not the demo. Run on a private Xvfb display with lavapipe, which is CI's recipe.",
+        "The lift is behaviour-preserving by measurement: all 41 hello-column-reorder unit tests and all 14 of its demos pass unchanged.",
+        "The clippy line budget was met by extracting the render half into a helper plus a type alias, not by an allow.",
+        "gates: fmt / clippy -D pedantic / cargo doc clean, pinion-widget-paint 724 (+4), pinion-shell all targets green plus 3 new census tests, hello-column-reorder 41."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.27",
+        "5.36",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "The live demo asserts an AGGREGATE centroid over the whole strip, not per section. A change that slid four labels right and one left could average out. Per-section geometry is asserted deterministically in the sibling demo and the headless guard; splitting the live assertion per section needs the screen-space section bounds, which means mapping window coordinates onto the capture.",
+        "The live demo is the sixth x11grab demo and therefore CI-row: it cannot run in a normal local sweep without a mapped window, and on a host whose windows present black it SKIPs. The SKIP path is exercised; the PASS path is verified only under Xvfb + lavapipe.",
+        "The arm-coverage census covers one widget. Nothing yet reports the arm's share across the workspace's painted text, which is the question the module docs actually pose.",
+        "ColumnHeaderStyle's defaults are hello-column-reorder's measured numbers. A second consumer with a different type scale would want them theme-derived rather than constant, and would be the signal for that."
+      ],
+      "publishable_decision_summary": "A guard that renders a copy of the thing under test is testing the copy: the header section paint is lifted so the pixel guard calls what the binding calls, the live window becomes a witness, and the demo stops mirroring geometry that already has a home.",
+      "publishable_changes_bullets": [
+        "pinion-widget-paint::column_header lifts the QHeaderView section paint out of hello-column-reorder: ColumnHeaderStyle owns the geometry (section gap, symmetric label inset, the arrow's reserved end, the label-box arithmetic), HeaderSection is what the caller's model supplies, and header_label_node / view_header_cell are what both the binding and the tests now call. The binding keeps only the projection from its own state onto HeaderSection.",
+        "R1505's pixel guard renders that production leaf instead of a reconstruction, asserts against the LABEL BOX rather than the render target (so Start begins at the inset, not at zero), and installs its fixture font as the cache's default family because a production label names none.",
+        "tools/demos/r1506_alignment_live_pixels.py is the live-window witness R1505 lacked: three x11grab frames, one per alignment, whose difference localizes the label band without hunting the window, and the ink centroid inside it must slide rightward. It asks the X server for the screen size rather than hardcoding 1920x1080 as the sibling x11grab demos do.",
+        "crates/pinion-shell/tests/self_hosted_arm_coverage.rs measures what R1504 silently changed: with the header rule at Center the S5.37 arm paints none of the five labels, at Start it paints all five, and a sorted strip is MIXED because the arrow declares no alignment.",
+        "r1505_alignment_reaches_glyphs.py no longer mirrors any of the binding's label geometry. It measures the insets off the painted tree and asserts the invariants instead: symmetric insets, a box that tracks its SECTION rather than its string (equal-width sections with different labels get equal boxes; a resized section moves its box by the same delta), and an arrow that starts after the label box ends."
+      ],
+      "publishable_verification_bullets": [
+        "CF-6 / CF-7, one at a time: with label_style no longer passing section.align through, the pixel guard FAILS and the live demo FAILS. Before the lift neither could have — the guard set the alignment on its own reconstructed node, so a binding that stopped declaring it left the guard green. That is the class the lift closes, measured rather than argued.",
+        "The live demo's first draft reported that same counterfactual as a SKIP with exit 0. It waited for a frame to differ from the previous alignment's, which conflates \"the repaint has not landed\" with \"the repaint landed and moved nothing\". Rewritten to settle on frame STABILITY, with a separate liveness premise (hiding a column must move screen pixels) that decides SKIP-vs-FAIL before any alignment is measured. Re-measured: the counterfactual now exits 1 with the right diagnosis.",
+        "That first reading of the exit code was itself wrong — `| tail` masked it and reported exit 0 for a failing run, the pipe-masks-exit-code trap this workspace already had a lesson for.",
+        "CF re-run after the clippy line-budget split, because a refactor can silently weaken a guard.",
+        "Verified on a live window: ink centroid slides 278.4 -> 299.7 -> 325.1 over a 46.7px sweep, liveness probe 9540 px. NOT on the host's own display, where the window presents black to x11grab and the demo SKIPs — the pre-existing r706 demo SKIPs there for the same reason, so this is the host, not the demo. Run on a private Xvfb display with lavapipe, which is CI's recipe.",
+        "The lift is behaviour-preserving by measurement: all 41 hello-column-reorder unit tests and all 14 of its demos pass unchanged.",
+        "The clippy line budget was met by extracting the render half into a helper plus a type alias, not by an allow.",
+        "gates: fmt / clippy -D pedantic / cargo doc clean, pinion-widget-paint 724 (+4), pinion-shell all targets green plus 3 new census tests, hello-column-reorder 41."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.27",
+        "5.36",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The live demo asserts an AGGREGATE centroid over the whole strip, not per section. A change that slid four labels right and one left could average out. Per-section geometry is asserted deterministically in the sibling demo and the headless guard; splitting the live assertion per section needs the screen-space section bounds, which means mapping window coordinates onto the capture.",
+        "The live demo is the sixth x11grab demo and therefore CI-row: it cannot run in a normal local sweep without a mapped window, and on a host whose windows present black it SKIPs. The SKIP path is exercised; the PASS path is verified only under Xvfb + lavapipe.",
+        "The arm-coverage census covers one widget. Nothing yet reports the arm's share across the workspace's painted text, which is the question the module docs actually pose.",
+        "ColumnHeaderStyle's defaults are hello-column-reorder's measured numbers. A second consumer with a different type scale would want them theme-derived rather than constant, and would be the signal for that."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
