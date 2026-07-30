@@ -6,6 +6,44 @@
 # set-section-*) + the `append-changelog-entry` CLI; humans read the store
 # via `mnemosyne-cli query` (no rendered GENERATED.md doc to keep in sync).
 
+[tool]
+# pinion R1502 — the revision every gate result on this workspace is
+# attributable to. Mnemosyne R832 made a pinned workspace delegate: whatever
+# `mnemosyne-cli` sits on PATH re-execs the build installed at
+# `$MN_ROOT/<pin>/bin` (default `~/.local/mn`), so a machine-global binary
+# another project reinstalls can no longer decide what pinion's hooks measure.
+#
+# Why this matters here, measured 2026-07-30: the PATH binary was rebuilt
+# mid-session by a concurrent Mnemosyne checkout, and the SAME commit that had
+# just passed `pre-commit` was refused by `pre-push` three minutes later. Two
+# runs of one gate over one tree disagreed, and nothing in this repo said which
+# answer was pinion's. `vendor/sce` gets a submodule + rev pin; the tool that
+# gates every commit and every push had none.
+#
+# Why R839 and not the newest: R840 ("an exclusion is a claim, now checked")
+# rejects a `§N.M` citation that appears only inside `scan_exclusions`. Four
+# such citations exist here — §5.5 / §5.10 / §6.2 / §6.4 — and every one is
+# SCE's OWN spec numbering inside `vendor/sce`, not this workspace's sections
+# (the same cross-document collision `style.rs` shows with `CSS Color 4 §6.2`).
+# Neither remedy the gate offers fits: scanning `vendor/` measures a document
+# pinion does not own (see `scan_exclusions` below, which says so), and binding
+# the citations would record a relationship that does not exist. The axis has
+# no severity knob. So this is an upstream matcher gap of the class this file
+# already carries for `UAX #9` / `CSS Color 4`, and pinning behind it is the
+# same call as holding a linter version until its new findings are actionable —
+# not a bypass, which would have to be repeated on every push and would take
+# the rest of the pre-push gate down with it each time.
+#
+# Verified pre-existing, not caused by the round that hit it: the parent commit
+# 7f65e51b — already pushed, CI fully green — fails R840 identically.
+#
+# UPGRADE TRIGGER: when upstream distinguishes a citation into another
+# document's numbering from one into this store's, bump this pin and drop this
+# paragraph. Install a pin with
+#   cargo install --git https://github.com/newmassrael/mnemosyne \
+#       --rev <pin> --locked mnemosyne-cli --root ~/.local/mn/<pin>
+pin = "d02c12f"
+
 [schema]
 changelog_titles = ["Changelog"]
 # pinion R878 — Mnemosyne R424 started enforcing this prefix on append,

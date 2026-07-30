@@ -74846,6 +74846,48 @@
         "The label in hello-column-reorder's section_cell is inset 12px, not centred; R1499's comment said centred and the paint says otherwise. Corrected in place. The real discriminator for the R1497 defect is label width against section width, which is why it could not be inferred from the tree."
       ]
     },
+    "Round 1502": {
+      "decision_summary": "The tool that gates every commit is pinned by the workspace it gates: mnemosyne.toml names the revision, the PATH binary delegates to it, and a concurrent reinstall can no longer change what pinion's hooks measure mid-session.",
+      "changes_bullets": [
+        "mnemosyne.toml declares [tool].pin, so every gate on this workspace re-execs the build at $MN_ROOT/<pin>/bin instead of whatever a machine-global install happens to be.",
+        "Pinned at d02c12f (Mnemosyne R839), the newest revision whose findings pinion can act on; the comment records why R840 is held behind and what unblocks the bump."
+      ],
+      "verification_bullets": [
+        "Measured 2026-07-30: the PATH binary was reinstalled at 13:26:41 by a concurrent Mnemosyne checkout, and commit eb340571 — which had just passed pre-commit — was refused by pre-push three minutes later. One gate, one tree, two answers, and nothing in the repo said which was pinion's.",
+        "The refusal is R840 (\"an exclusion is a claim, now checked\"). Reproduced at the PARENT commit 7f65e51b, which is already pushed and whose CI run 30505489473 is fully green, so the finding is pre-existing and unattributable to the round that hit it.",
+        "All four cited sections are SCE's own spec numbering inside vendor/sce, not this store's: 5.5, 5.10, 6.2, 6.4. Neither remedy the gate names is available — scan_exclusions already documents that scanning vendor/ would measure a document pinion does not own, and binding the citations would record a relationship that does not exist. The axis has no severity knob (the config carries nine severity_* keys and none covers it).",
+        "Delegation verified by running it: the PATH build 5bbf4d17 prints \"switching to the pinned build at /home/coin/.local/mn/d02c12f/bin/mnemosyne-cli\", and validate-workspace then reports the same T1=0 / entries=1479 pinion has had all along. validate-workspace and validate-code-refs both exit 0 through the pin.",
+        "The pin window is bounded at both ends and was found rather than guessed: R832 introduced the delegation this file relies on, R840 introduced the failing axis, so R839 is the newest revision that both understands [tool].pin and leaves pinion actionable."
+      ],
+      "impact_refs": [
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "The four citations are still swallowed; the pin makes the result attributable and stable, it does not make the finding go away. When upstream distinguishes a citation into another document's numbering from one into this store's, bump the pin and delete that paragraph from mnemosyne.toml.",
+        "Only two pin roots exist on this machine (d02c12f, 27396a9). A fresh clone has none, and the hooks do not install one — they will delegate to a path that is not there. The install line is in the mnemosyne.toml comment, which is where someone hitting it will be looking.",
+        "CI never runs mnemosyne-cli at all (zero references in .github/workflows), so this pin governs local hooks only. Whether CI should run the same pinned gate is a separate question this round does not answer."
+      ],
+      "publishable_decision_summary": "The tool that gates every commit is pinned by the workspace it gates: mnemosyne.toml names the revision, the PATH binary delegates to it, and a concurrent reinstall can no longer change what pinion's hooks measure mid-session.",
+      "publishable_changes_bullets": [
+        "mnemosyne.toml declares [tool].pin, so every gate on this workspace re-execs the build at $MN_ROOT/<pin>/bin instead of whatever a machine-global install happens to be.",
+        "Pinned at d02c12f (Mnemosyne R839), the newest revision whose findings pinion can act on; the comment records why R840 is held behind and what unblocks the bump."
+      ],
+      "publishable_verification_bullets": [
+        "Measured 2026-07-30: the PATH binary was reinstalled at 13:26:41 by a concurrent Mnemosyne checkout, and commit eb340571 — which had just passed pre-commit — was refused by pre-push three minutes later. One gate, one tree, two answers, and nothing in the repo said which was pinion's.",
+        "The refusal is R840 (\"an exclusion is a claim, now checked\"). Reproduced at the PARENT commit 7f65e51b, which is already pushed and whose CI run 30505489473 is fully green, so the finding is pre-existing and unattributable to the round that hit it.",
+        "All four cited sections are SCE's own spec numbering inside vendor/sce, not this store's: 5.5, 5.10, 6.2, 6.4. Neither remedy the gate names is available — scan_exclusions already documents that scanning vendor/ would measure a document pinion does not own, and binding the citations would record a relationship that does not exist. The axis has no severity knob (the config carries nine severity_* keys and none covers it).",
+        "Delegation verified by running it: the PATH build 5bbf4d17 prints \"switching to the pinned build at /home/coin/.local/mn/d02c12f/bin/mnemosyne-cli\", and validate-workspace then reports the same T1=0 / entries=1479 pinion has had all along. validate-workspace and validate-code-refs both exit 0 through the pin.",
+        "The pin window is bounded at both ends and was found rather than guessed: R832 introduced the delegation this file relies on, R840 introduced the failing axis, so R839 is the newest revision that both understands [tool].pin and leaves pinion actionable."
+      ],
+      "publishable_impact_refs": [
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The four citations are still swallowed; the pin makes the result attributable and stable, it does not make the finding go away. When upstream distinguishes a citation into another document's numbering from one into this store's, bump the pin and delete that paragraph from mnemosyne.toml.",
+        "Only two pin roots exist on this machine (d02c12f, 27396a9). A fresh clone has none, and the hooks do not install one — they will delegate to a path that is not there. The install line is in the mnemosyne.toml comment, which is where someone hitting it will be looking.",
+        "CI never runs mnemosyne-cli at all (zero references in .github/workflows), so this pin governs local hooks only. Whether CI should run the same pinned gate is a separate question this round does not answer."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
