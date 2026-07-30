@@ -2575,12 +2575,11 @@ pub fn json_to_text_style(obj: &serde_json::Map<String, serde_json::Value>) -> T
         }
     }
     if let Some(ta) = obj.get("text_align").and_then(serde_json::Value::as_str) {
-        s.text_align = match ta {
-            "Center" => TextAlign::Center,
-            "End" => TextAlign::End,
-            "Justify" => TextAlign::Justify,
-            _ => TextAlign::Start,
-        };
+        // R1504 — the spelling table moved to `TextAlign::from_wire`; what stays
+        // here is this decoder's own leniency, now written as the one thing it
+        // is: an unknown spelling means `Start`. Before the lift that policy was
+        // indistinguishable from the table it was fused to.
+        s.text_align = TextAlign::from_wire(ta).unwrap_or_default();
     }
     if let Some(d) = obj.get("decoration").and_then(serde_json::Value::as_object) {
         s.decoration = TextDecoration {

@@ -23,7 +23,7 @@
 //! module exposes the typed dispatcher only.
 
 use pinion_core::Scene;
-use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+use pinion_core::external::{ExternalIntrospect, IntrospectValue, SchemaChannel};
 use serde_json::{Value, json};
 
 use crate::origin::{AnswerOrigin, QueryRefusal, SceneSource};
@@ -97,8 +97,19 @@ fn schema_value(intro: &dyn ExternalIntrospect) -> IntrospectValue {
         .fields
         .iter()
         .map(|f| {
+            // R1504 — the channel, present only where it is not the default.
+            // A reader that does not know the key sees the shape it always saw;
+            // one that does can tell `set_section_alignment` from a path it can
+            // read, which before this was a guess from the name's prefix.
+            let channel = match f.channel {
+                SchemaChannel::Invoke => Some("invoke"),
+                _ => None,
+            };
             if f.args.is_empty() {
-                return json!({ "path": f.path, "type": f.ty });
+                return match channel {
+                    Some(c) => json!({ "path": f.path, "type": f.ty, "channel": c }),
+                    None => json!({ "path": f.path, "type": f.ty }),
+                };
             }
             let args: Vec<Value> = f
                 .args

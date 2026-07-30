@@ -240,6 +240,25 @@ impl SchemaArg {
     }
 }
 
+/// R1504 — which channel a declared path belongs to: something a client
+/// **reads** (`scene/query`), or something it **calls** (`scene/invoke`).
+///
+/// R1501 declared both kinds in one list and had no way to say which was
+/// which, so the only thing that could tell them apart was a hand-written list
+/// of names in a test — fifteen of them, and this round was about to add a
+/// sixteenth. A declaration that cannot state the difference makes every
+/// consumer of it restate the difference.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SchemaChannel {
+    /// Answered by `query` at the declared path.
+    #[default]
+    Read,
+    /// Called by `invoke` under the declared name. Not readable: probing it
+    /// with `query` is expected to answer nothing.
+    Invoke,
+}
+
 /// One declared member of an [`ExternalIntrospect`] surface: a path, the type of
 /// the value it reads, and — R1353 — whether it takes an **argument**.
 ///
@@ -295,6 +314,10 @@ pub struct SchemaField {
     /// Modelling one argument would have forced that field back to a hand-spelled
     /// template string — the exact under-declaration this type exists to end.
     pub args: &'static [SchemaArg],
+    /// R1504 — read path or invoke channel. [`new`](Self::new) and
+    /// [`parametric`](Self::parametric) declare reads; [`action`](Self::action)
+    /// declares a call.
+    pub channel: SchemaChannel,
 }
 
 impl SchemaField {
@@ -318,6 +341,21 @@ impl SchemaField {
             path,
             ty,
             args: &[],
+            channel: SchemaChannel::Read,
+        }
+    }
+
+    /// R1504 — an `invoke` channel rather than a readable path. Declared in the
+    /// same list because it is part of the same surface, but marked, so a
+    /// caller auditing "does every declared path answer?" can skip these
+    /// without being handed a list of names to maintain.
+    #[must_use]
+    pub const fn action(path: &'static str, ty: &'static str) -> Self {
+        Self {
+            path,
+            ty,
+            args: &[],
+            channel: SchemaChannel::Invoke,
         }
     }
 
@@ -342,7 +380,12 @@ impl SchemaField {
         ty: &'static str,
         args: &'static [SchemaArg],
     ) -> Self {
-        Self { path, ty, args }
+        Self {
+            path,
+            ty,
+            args,
+            channel: SchemaChannel::Read,
+        }
     }
 
     /// R1501 — `a` followed by `b`, composed at **compile time**, so a consumer

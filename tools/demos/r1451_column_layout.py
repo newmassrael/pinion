@@ -124,6 +124,17 @@ IDENTITY = {
     # unpainted. Five rounds running now, this equality has been the thing that
     # makes a field's arrival visible.
     "stretch_last_section": False,
+    # R1504 — a SIXTH time, for Qt's `defaultAlignment`. `"Center"` is Qt's
+    # horizontal-header default and what `ColumnLayout` constructs with; note it
+    # is NOT what an absent field decodes to (`"Start"`, what the pre-R1504
+    # header actually painted), so this fixture and the older-snapshot decode
+    # deliberately disagree — the R1496 split, one round later.
+    #
+    # What is NOT here is the per-section exception. Qt keeps it in the model
+    # (`headerData(TextAlignmentRole)`) and its `saveState()` does not carry it,
+    # so this equality asserts an absence as much as a presence: a round that
+    # started saving the exceptions would fail here, which is the point.
+    "default_alignment": "Center",
 }
 
 

@@ -5207,18 +5207,16 @@ fn line_height_to_json(lh: pinion_core::style::LineHeight) -> Value {
     }
 }
 
-/// R55.G.10 §5.49 — wire serialization for `TextAlign`. Bare string
-/// for each variant; wildcard catches future additions.
+/// R55.G.10 §5.49 — wire serialization for `TextAlign`.
+///
+/// R1504 — the table this used to hold by hand now lives at
+/// [`TextAlign::as_wire`](pinion_core::style::TextAlign::as_wire), because a
+/// third consumer needed it. The wildcard that stood here answered `"Unknown"`
+/// for a variant nobody had added yet; the lifted match is exhaustive inside
+/// `pinion-core`, so that case is a compile error there rather than a string
+/// here.
 fn text_align_to_json(a: pinion_core::style::TextAlign) -> Value {
-    use pinion_core::style::TextAlign;
-    let name = match a {
-        TextAlign::Start => "Start",
-        TextAlign::Center => "Center",
-        TextAlign::End => "End",
-        TextAlign::Justify => "Justify",
-        _ => "Unknown",
-    };
-    Value::String(name.to_string())
+    Value::String(a.as_wire().to_string())
 }
 
 /// R55.G.10 §5.49 — wire serialization for `TextDecoration`. Both

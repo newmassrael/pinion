@@ -88,8 +88,11 @@ FORMERLY_UNDECLARED = [
     "reset_default_section_size",
 ]
 
-# `SchemaField` does not separate a readable value from an `invoke` channel yet
-# (its own doc says so), so the write channels are named rather than probed.
+# R1504 — `SchemaField` now separates the two, so this set is no longer what
+# tells them apart: the walk below reads `channel` off the declaration. It stays
+# as the EXPECTED set, which is a different assertion — that the surface's
+# invoke channels are the ones this script was written against, so one appearing
+# or vanishing upstream is visible here rather than silently absorbed.
 ACTIONS = {
     "swap_sections",
     "resize_section",
@@ -101,6 +104,7 @@ ACTIONS = {
     "cycle_sort_indicator",
     "clear_sort_indicator",
     "reset_default_section_size",
+    "set_section_alignment",
     "send",
     "move",
     "move_section",
@@ -167,8 +171,13 @@ def body() -> None:
         # make this walk fail on two honest paths and, worse, would pass on a
         # surface that answered null to everything.
         probed = 0
+        declared_actions = set()
         for f in fields:
-            if f["path"] in ACTIONS:
+            # R1504 — the declaration says which channel this is. Before it did,
+            # the only thing that could tell an action from a readable path was
+            # the set above, and a round adding either had to edit it in step.
+            if f.get("channel") == "invoke":
+                declared_actions.add(f["path"])
                 continue
             probe = f["path"]
             if f.get("args"):
@@ -180,8 +189,12 @@ def body() -> None:
                     f"{f['path']!r} is declared but {probe!r} refused: {exc}"
                 ) from exc
             probed += 1
+        assert_eq(declared_actions, ACTIONS,
+                  "the surface declares exactly the invoke channels this "
+                  "script was written against")                             # 11a
         assert_eq(probed, len(fields) - len(ACTIONS),
-                  "every declared field is probed or a named action")        # 11
+                  "every declared field is probed or declares itself an "
+                  "action")                                                  # 11
         assert probed >= 34, f"the walk is not vacuous: {probed} paths"      # 12
 
         # ── (B) a family declares its argument ────────────────────────
@@ -206,7 +219,10 @@ def body() -> None:
         by_count = [f["path"] for f in fields
                     if any(a["domain"].get("count_path") == "count"
                            for a in (f.get("args") or []))]
-        assert_eq(len(by_count), 8, f"the section-keyed families: {by_count}")  # 22
+        # R1504 added two (`section_alignment` and its override), so the count
+        # moves with the surface. Kept as a NUMBER rather than a `>=` because a
+        # family that stops declaring its domain has to be visible here.
+        assert_eq(len(by_count), 10, f"the section-keyed families: {by_count}")  # 22
 
         # ── (C) the declared domain holds ─────────────────────────────
         for path, inside in (("section_size", 100), ("section_hidden", False),

@@ -112,15 +112,38 @@ def body() -> None:
         tf.invoke("/external/set_all_resize_modes", "resize_to_contents")
         wait_until(lambda: _h(tf, "visible_widths") == hints,
                    desc="every column fits its content")                            # 3
+        # R1504 CHANGED WHAT THIS CAN READ, and the change is a real cost of
+        # that round rather than a detail. This block used to take the header
+        # label's node rect as its glyph EXTENT — true while the label was a
+        # bare `Rect::default()` pinned 12px in. R1504 gave it a BOX spanning
+        # its section, because Qt's `defaultAlignment` needs somewhere to align
+        # within, and a box reports the box.
+        #
+        # So the header's own string width is no longer readable from the tree.
+        # What stays exact is the BODY, which still paints unsized labels, and
+        # the hint is still bounded below by the header — asserted, so a hint
+        # that stopped measuring the header at all would still fail here.
         for logical in range(NCOLS):
             cells = _painted_cells(tf, logical)
             widest_px = max(w for _, w in cells)
-            header = _rect(tf, f"colhdr_label#{_visual_of(tf, logical)}")["w"]
-            assert_eq(
-                max(widest_px, header) + 2 * CELL_PAD,
-                hints[logical],
-                f"column {logical}'s hint is exactly its widest painted string",
+            assert hints[logical] >= widest_px + 2 * CELL_PAD, (
+                f"column {logical}'s hint covers its widest painted CELL: "
+                f"{hints[logical]} vs {widest_px + 2 * CELL_PAD}"
             )                                                                        # 4-8
+            header_box = _rect(tf, f"colhdr_label#{_visual_of(tf, logical)}")
+            section = _rect(tf, f"{HDR}#{_visual_of(tf, logical)}")
+            assert (
+                header_box["x"] >= section["x"]
+                and header_box["x"] + header_box["w"] <= section["x"] + section["w"]
+            ), f"column {logical}'s header box is inside its section"                # 4b-8b
+        # Exactness survives where the body drives the hint: at least one column
+        # is measured to the pixel, so this is not a suite of bounds.
+        exact = [
+            logical
+            for logical in range(NCOLS)
+            if hints[logical] == max(w for _, w in _painted_cells(tf, logical)) + 2 * CELL_PAD
+        ]
+        assert exact, f"some column's hint is EXACTLY its widest cell: {hints}"      # 8c
         # The hints are not one number: each column measured its own content.
         assert len(set(hints)) > 1, f"the columns measured differently: {hints}"    # 9
 
@@ -160,21 +183,32 @@ def body() -> None:
         # ── (D) R1454 — the measurement is bounded, and says so ───────
         assert_eq(_h(tf, "resize_contents_precision"), 1000,
                   "Qt's default row-sampling bound")                                # 44
-        # Capture what each column's HEADER and FIRST ROW paint at, before
-        # changing anything: those are the only two strings a precision of 1
-        # measures, so they are the expectation — derived from this run, not
-        # from a font-specific constant.
-        expected = []
+        # R1504 — the header's glyph extent is no longer readable (see the note
+        # in section A), so the expectation is stated as the floor a precision
+        # of 1 cannot go below: the FIRST ROW, which still paints unsized. The
+        # header's contribution is asserted separately by the narrowing below —
+        # a hint that stopped measuring the header would not narrow at all.
+        row0_floor = []
         for logical in range(NCOLS):
             v = _visual_of(tf, logical)
-            head = _rect(tf, f"colhdr_label#{v}")["w"]
-            row0 = _rect(tf, f"colbody#0_{v}")["w"]
-            expected.append(max(head, row0) + 2 * CELL_PAD)
+            row0_floor.append(_rect(tf, f"colbody#0_{v}")["w"] + 2 * CELL_PAD)
 
         tf.intervene("/external/resize_contents_precision", 1)
-        wait_until(lambda: _h(tf, "content_widths") == expected,
-                   desc="one sampled row leaves only the header and row 0")         # 45
-        assert any(e < b for e, b in zip(expected, before)), (
+        wait_until(
+            lambda: _h(tf, "resize_contents_precision") == 1
+            and _h(tf, "content_widths") != before,
+            desc="one sampled row changes what the columns measure",
+        )                                                                            # 45
+        sampled = _h(tf, "content_widths")
+        for logical in range(NCOLS):
+            assert sampled[logical] >= row0_floor[logical], (
+                f"column {logical} still covers the one row it sampled: "
+                f"{sampled[logical]} vs {row0_floor[logical]}"
+            )                                                                        # 45b
+            assert sampled[logical] <= before[logical], (
+                f"column {logical} measured no MORE from fewer rows"
+            )                                                                        # 45c
+        assert any(sm < b for sm, b in zip(sampled, before)), (
             "and at least one column really did narrow — otherwise the bound "
             "would be unobservable in this dataset"
         )                                                                            # 46

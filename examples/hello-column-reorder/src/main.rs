@@ -109,12 +109,13 @@ use pinion_core::external::{
 use pinion_core::reactive::measured_text_extent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextAlign,
+    TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::column_layout::{
-    ColumnLayout, ColumnLayoutView, DEFAULT_SECTION_SIZE, SectionPlacement, SectionResizeMode,
-    read_column_layout, use_column_layout_with,
+    ColumnLayout, ColumnLayoutView, DEFAULT_HEADER_ALIGNMENT, DEFAULT_SECTION_SIZE,
+    SectionPlacement, SectionResizeMode, read_column_layout, use_column_layout_with,
 };
 use pinion_core::widgets::column_widths::{DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
 use pinion_core::widgets::grid_sort::col_sort_dir;
@@ -189,6 +190,14 @@ const SECTION_W: [u32; NCOLS] = [150, 90, 100, 130, 100];
 const GRID_X: u32 = 30;
 const GRID_Y: u32 = 90;
 const HDR_H: u32 = 40;
+/// R1504 — the horizontal breathing room a header label keeps at each end, and
+/// the room reserved for the sort arrow. The label's box is the section minus
+/// these, so `Start` paints exactly where it painted before this round.
+const LABEL_INSET: u32 = 12;
+const GLYPH_W: u32 = 24;
+/// Top inset of both the label and the arrow; the label's box is the header
+/// height minus twice this, so the two share a baseline.
+const LABEL_Y: u32 = 12;
 const ROW_H: u32 = 34;
 /// Resize step for the `[` / `]` keyboard gesture.
 const RESIZE_STEP: u32 = 20;
@@ -558,6 +567,15 @@ struct HeaderState {
     /// Painted for the R1492 reason the bounds are: a gesture that does nothing
     /// looks like a broken widget unless the rule that refused it is on screen.
     permissions: (bool, bool),
+    /// R1504 — the **effective** alignment of each logical section's label:
+    /// its own exception where the model gave one, the header's rule where it
+    /// did not. Read as a row rather than derived here, for the reason
+    /// [`section_sizes`](Self::section_sizes) is: a view that recomputed it
+    /// could disagree with the surface an agent queries.
+    alignments: [TextAlign; NCOLS],
+    /// R1504 — Qt's `defaultAlignment`, painted in the readout because a label
+    /// that moved needs a visible cause, the R1492 rule.
+    default_alignment: TextAlign,
 }
 
 impl Default for HeaderState {
@@ -585,6 +603,11 @@ impl Default for HeaderState {
             // This app declares both (`boot_layout`), so the boot posture the
             // first frame paints is the one the header will report.
             permissions: (true, true),
+            // Qt's horizontal-header default, which is what `ColumnLayout`
+            // constructs with, so the first frame paints what the header
+            // reports.
+            alignments: [DEFAULT_HEADER_ALIGNMENT; NCOLS],
+            default_alignment: DEFAULT_HEADER_ALIGNMENT,
         }
     }
 }
@@ -739,6 +762,22 @@ fn read_header_state(scene: &Scene) -> HeaderState {
     ) {
         out.permissions = (m, k);
     }
+    // R1504 — the rule and the row it resolves to, both off the wire. The row
+    // is what the strip paints with, so deriving it here from the rule would
+    // drop every per-section exception the model set and paint a label the
+    // surface does not claim.
+    if let Some(IntrospectValue::Text(a)) = intro.query("default_alignment") {
+        out.default_alignment = TextAlign::from_wire(&a).unwrap_or(DEFAULT_HEADER_ALIGNMENT);
+    }
+    out.alignments = [out.default_alignment; NCOLS];
+    if let Some(IntrospectValue::Json(serde_json::Value::Array(items))) = intro.query("alignments")
+    {
+        for (slot, a) in out.alignments.iter_mut().zip(&items) {
+            if let Some(parsed) = a.as_str().and_then(TextAlign::from_wire) {
+                *slot = parsed;
+            }
+        }
+    }
     out
 }
 
@@ -869,6 +908,57 @@ fn toggle_stretch_last(intro: &mut dyn ExternalIntrospect) -> bool {
         .is_ok()
 }
 
+/// R1504 — Qt `setDefaultAlignment`, cycled in place. A header rule, so like
+/// `f` it needs no cursor.
+fn cycle_default_alignment(intro: &mut dyn ExternalIntrospect) -> bool {
+    let now = match intro.query("default_alignment") {
+        Some(IntrospectValue::Text(a)) => TextAlign::from_wire(&a),
+        _ => None,
+    };
+    // Justify is skipped: it is a multi-line rule and a header label is one
+    // line, so offering it here would be a knob with no visible effect.
+    let next = match now {
+        Some(TextAlign::Start) => TextAlign::Center,
+        Some(TextAlign::Center) => TextAlign::End,
+        _ => TextAlign::Start,
+    };
+    intro
+        .intervene(
+            "default_alignment",
+            IntrospectValue::Text(next.as_wire().to_string()),
+        )
+        .is_ok()
+}
+
+/// R1504 — the per-section exception, Qt's `headerData(TextAlignmentRole)`.
+/// Cycles the section under the cursor through the three and then back to
+/// `default`, which is the spelling that hands it to the header's rule.
+fn cycle_alignment_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
+    let Some(visual) = cursor else { return false };
+    let Some(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
+        return false;
+    };
+    let Ok(logical) = usize::try_from(l) else {
+        return false;
+    };
+    let now = match intro.query(&format!("section_alignment_override.{logical}")) {
+        Some(IntrospectValue::Text(a)) => TextAlign::from_wire(&a),
+        _ => None,
+    };
+    let next = match now {
+        None => "Start",
+        Some(TextAlign::Start) => "Center",
+        Some(TextAlign::Center) => "End",
+        _ => "default",
+    };
+    intro
+        .invoke(
+            "set_section_alignment",
+            IntrospectValue::Text(format!("{logical}:{next}")),
+        )
+        .is_ok()
+}
+
 /// Qt `resizeSection` — the size is keyed by the logical section, so a column
 /// widened here stays wide wherever it is dragged next.
 ///
@@ -938,6 +1028,25 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
         theme.resolve(ColorRole::SurfaceContainerHigh)
     };
     let visual = p.visual;
+    // R1504 — the sort arrow is decided FIRST, because the label's box has to
+    // know whether the arrow is taking the section's right end. Qt reserves the
+    // same room; a centred label over an unreserved arrow reads as a collision
+    // the moment a column is sorted.
+    let glyph = sort_glyph(
+        state
+            .sort_indicator_shown
+            .then(|| col_sort_dir(state.sort_indicator, p.logical))
+            .flatten(),
+    );
+    let sect_w = p.size.saturating_sub(2);
+    let label_w = sect_w
+        .saturating_sub(LABEL_INSET * 2 + if glyph.is_some() { GLYPH_W } else { 0 })
+        .max(1);
+    let align = state
+        .alignments
+        .get(p.logical)
+        .copied()
+        .unwrap_or(DEFAULT_HEADER_ALIGNMENT);
     let label = Scene::Text(
         TextNode::styled(
             HEADERS[p.logical],
@@ -949,7 +1058,13 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
                     ColorRole::OnSurface
                 },
                 theme,
-            ),
+            )
+            .with_align(align)
+            // The box is the containment: without this a label wider than its
+            // section paints over the neighbour, and under `Center` it would do
+            // so at BOTH ends. The chart's `label_node` reaches for the same
+            // pair for the same reason.
+            .with_overflow(TextOverflow::Clip),
         )
         .with_tag(format!("colhdr_label#{visual}"))
         // R1499 — decoration, and it says so: Qt's `WA_TransparentForMouseEvents`
@@ -957,37 +1072,28 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
         // assertions and the a11y walk, and nothing dispatches to it, so a press
         // whose coordinate lands on it must reach the section underneath.
         //
-        // R1501 corrects the reason written here: the label is not "centred" —
-        // it is inset 12px from the section's left edge, measured on the real
-        // paint (left gap 12 in all five sections, right gap 45..100). What made
-        // `scene/click` on `colhdr#3` / `#4` fail 100% of the time is that
-        // `scene/click` presses a rect's CENTRE and those two labels are wide
-        // enough to cover their section's centre while the narrower three are
-        // not. So the hazard is a function of label width against section
-        // width, which is exactly why it cannot be inferred from the tree and
-        // has to be declared here.
+        // R1504 — and now it is load-bearing in every section rather than two.
+        // The label used to be a bare `Rect::default()` pinned 12px from the
+        // left edge, so whether it covered the section's centre — the point
+        // `scene/click` presses — was a function of the string's width. With a
+        // box that spans the section, a centred label covers that point in ALL
+        // of them, which is what R1497 measured the hazard of and R1499 declared
+        // the fix for.
         .with_layout(
             LayoutStyle::new()
-                .with_absolute_position(12, 12)
+                .with_absolute_position(LABEL_INSET, LABEL_Y)
+                .with_size(Size::px(label_w, HDR_H - LABEL_Y * 2))
                 .with_pointer_transparent(true),
         ),
     );
-    // R1491 — the sort arrow, asked for by LOGICAL column through the same
-    // `col_sort_dir` / `sort_glyph` pair every other pinion grid header uses.
-    // It rides in this cell, so it moves when the section moves and needs no
-    // second geometry walk to find its x.
     let mut children = vec![label];
-    if let Some(glyph) = sort_glyph(
-        state
-            .sort_indicator_shown
-            .then(|| col_sort_dir(state.sort_indicator, p.logical))
-            .flatten(),
-    ) {
+    if let Some(glyph) = glyph {
         children.push(Scene::Text(
             TextNode::styled(glyph, Rect::default(), grid_text(ColorRole::Accent, theme))
                 .with_tag(format!("colhdr_sort#{visual}"))
                 .with_layout(
-                    LayoutStyle::new().with_absolute_position(p.size.saturating_sub(24), 12),
+                    LayoutStyle::new()
+                        .with_absolute_position(sect_w.saturating_sub(GLYPH_W), LABEL_Y),
                 ),
         ));
     }
@@ -1128,9 +1234,35 @@ fn layout_readout_text(state: &HeaderState) -> String {
         (false, true) => "click",
         (false, false) => "-",
     };
+    // R1504 — the header's rule, and the sections that do not follow it. The
+    // exceptions print only when there are some, the shape `stored` and
+    // `stored_modes` above already use: a row that always named every section
+    // would bury the rule it exists to show.
+    let align_code = |a: TextAlign| match a {
+        TextAlign::Start => "S",
+        TextAlign::Center => "C",
+        TextAlign::End => "E",
+        _ => "?",
+    };
+    let exceptions: Vec<String> = state
+        .alignments
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| **a != state.default_alignment)
+        .map(|(l, a)| format!("{}={}", HEADERS[l], align_code(*a)))
+        .collect();
+    let align = if exceptions.is_empty() {
+        align_code(state.default_alignment).to_string()
+    } else {
+        format!(
+            "{} except {}",
+            align_code(state.default_alignment),
+            exceptions.join(" ")
+        )
+    };
     format!(
         "sizes {}{stored} | hidden {} | modes {}{stored_modes} | default {} | \
-         cascade {} | stretch-last {} | bounds {}..{} | allows {allows}",
+         cascade {} | stretch-last {} | bounds {}..{} | allows {allows} | align {align}",
         keyed(&state.section_sizes),
         if hidden.is_empty() {
             "-".to_string()
@@ -1338,6 +1470,10 @@ impl WidgetCore for ColumnReorderView {
             // R1498 — Qt `setStretchLastSection`. A header rule rather than a
             // per-section one, so unlike `m` and `h` it needs no cursor.
             "f" => toggle_stretch_last(intro),
+            // R1504 — Qt `setDefaultAlignment` (header rule, no cursor) and the
+            // model's per-section exception (cursor, like `h` and `m`).
+            "a" => cycle_default_alignment(intro),
+            "A" => cycle_alignment_at(intro, cursor),
             // Qt `resizeSection`, gated by the mode (R1452).
             "]" | "[" => nudge_size_at(intro, cursor, key == "]"),
             _ => false,
@@ -2184,13 +2320,17 @@ mod tests {
         });
         assert_eq!(pinned.permissions, (false, true));
         assert!(
-            layout_readout_text(&pinned).ends_with("| allows click"),
+            // R1504 — `contains`, not `ends_with`: the assertion is that the row
+            // NAMES the permission, and being last was an accident of nothing
+            // having been appended yet. R1504 appended `align`.
+            layout_readout_text(&pinned).contains("| allows click"),
             "the painted rule: {}",
             layout_readout_text(&pinned)
         );
         assert!(
-            layout_readout_text(&boot).ends_with("| allows move+click"),
-            "and the boot posture names both"
+            layout_readout_text(&boot).contains("| allows move+click"),
+            "and the boot posture names both: {}",
+            layout_readout_text(&boot)
         );
     }
 
@@ -2674,6 +2814,91 @@ mod tests {
             IntrospectValue::Int(i64::from(AVAILABLE_W)),
         )
         .expect("publish the viewport");
+    }
+
+    /// R1504 — the `a` gesture is Qt's `setDefaultAlignment`, and the readout
+    /// names the rule for the R1492 reason: a label that moved with no visible
+    /// cause reads as a bug.
+    #[test]
+    fn r1504_the_a_key_cycles_the_rule_and_the_readout_names_it() {
+        let mut scene = boot_scene();
+        let boot = after(&mut scene, publish_viewport);
+        assert_eq!(
+            boot.default_alignment,
+            TextAlign::Center,
+            "Qt centres a horizontal header"
+        );
+        assert!(
+            layout_readout(&boot).contains("| align C"),
+            "the readout names it: {}",
+            layout_readout(&boot)
+        );
+
+        let next = after(&mut scene, |i| {
+            assert!(cycle_default_alignment(i), "the a gesture ran");
+        });
+        assert_eq!(next.default_alignment, TextAlign::End);
+        assert!(
+            next.alignments.iter().all(|a| *a == TextAlign::End),
+            "with no exceptions set, every section follows the rule",
+        );
+        assert!(layout_readout(&next).contains("| align E"));
+
+        // Round the cycle: End -> Start -> Center.
+        let wrapped = after(&mut scene, |i| {
+            assert!(cycle_default_alignment(i));
+            assert!(cycle_default_alignment(i));
+        });
+        assert_eq!(wrapped.default_alignment, TextAlign::Center);
+    }
+
+    /// R1504 — the `A` gesture is the MODEL's per-section exception, and the
+    /// readout prints it beside the rule only while one exists. Qt keeps these
+    /// two in different objects, and so does this.
+    #[test]
+    fn r1504_the_shift_a_key_excepts_one_section_from_the_rule() {
+        let mut scene = boot_scene();
+        let boot = after(&mut scene, publish_viewport);
+        assert!(
+            !layout_readout(&boot).contains("except"),
+            "no exceptions at boot: {}",
+            layout_readout(&boot)
+        );
+
+        // Put the cursor on the second painted section, then except it.
+        let excepted = after(&mut scene, |i| {
+            assert!(i.invoke("move", IntrospectValue::Int(1)).is_ok(), "cursor");
+            assert!(cycle_alignment_at(i, Some(1)), "the A gesture ran");
+        });
+        let logical = excepted.order[1];
+        assert_eq!(excepted.alignments[logical], TextAlign::Start);
+        assert!(
+            excepted
+                .alignments
+                .iter()
+                .enumerate()
+                .filter(|(l, _)| *l != logical)
+                .all(|(_, a)| *a == excepted.default_alignment),
+            "one exception moves one section",
+        );
+        assert!(
+            layout_readout(&excepted).contains(&format!("except {}=S", HEADERS[logical])),
+            "the readout names the exception: {}",
+            layout_readout(&excepted)
+        );
+
+        // Cycling past End hands it back to the rule.
+        let returned = after(&mut scene, |i| {
+            assert!(cycle_alignment_at(i, Some(1)));
+            assert!(cycle_alignment_at(i, Some(1)));
+            assert!(cycle_alignment_at(i, Some(1)));
+        });
+        assert_eq!(returned.alignments[logical], returned.default_alignment);
+        assert!(
+            !layout_readout(&returned).contains("except"),
+            "and the readout stops naming one: {}",
+            layout_readout(&returned)
+        );
     }
 
     #[test]

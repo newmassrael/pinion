@@ -78,6 +78,7 @@ use crate::external::{
 };
 use crate::input::PointerWireEvent;
 use crate::reactive::{Owner, Signal};
+use crate::style::TextAlign;
 use crate::widgets::column_widths::{ColumnWidths, DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
 use crate::widgets::grid_sort::{grid_sort_parse, grid_sort_str};
 use crate::widgets::reorder::{ReorderAxis, ReorderModel};
@@ -169,6 +170,20 @@ pub struct ColumnLayoutState {
     /// content-fitted width while dropping the sampling bound that produced
     /// them — the same omission R1493 found for the size bounds.
     pub resize_contents_precision: usize,
+    /// R1504 — where a section's label sits along the row: Qt's
+    /// `QHeaderView::defaultAlignment`, which `QHeaderViewPrivate::write()`
+    /// serialises. Scalar, not per section, because it is the header's rule —
+    /// Qt keeps the per-section exception in the **model**
+    /// (`headerData(TextAlignmentRole)`) and its `saveState()` does not carry
+    /// it, so neither does this. A snapshot is a header's state, and a model's
+    /// answers are not the header's to replay.
+    ///
+    /// Only the horizontal axis. Qt bundles both into one `Qt::Alignment`
+    /// flag word; pinion's [`TextAlign`] is the CSS split, where the cross-axis
+    /// placement is a layout property rather than a text one. The consequence
+    /// is stated rather than hidden: a Qt `AlignVCenter` has no counterpart
+    /// here and none is invented.
+    pub default_alignment: TextAlign,
 }
 
 impl ColumnLayoutState {
@@ -206,6 +221,12 @@ impl ColumnLayoutState {
             "sections_movable": self.sections_movable,
             "sections_clickable": self.sections_clickable,
             "resize_contents_precision": self.resize_contents_precision,
+            // R1504 — the label rule. Spelled the way `TextAlign` is spelled
+            // everywhere else on the wire (`"Start"`, not `"start"`), which
+            // differs from the lower-case vocabulary `modes` above uses: the
+            // type owns its spelling, and this one had two live consumers
+            // before this header wanted it.
+            "default_alignment": self.default_alignment.as_wire(),
         })
     }
 
@@ -323,8 +344,46 @@ impl ColumnLayoutState {
                 None => DEFAULT_CONTENTS_PRECISION,
                 Some(v) => usize::try_from(v.as_u64()?).ok()?,
             },
+            // R1504 — the second field whose absent-value is deliberately NOT
+            // the construction default, for the same reason `sections_movable`
+            // above is: `Start` is what a pre-R1504 header PAINTED (its labels
+            // sat at a fixed 12px inset from the section's left edge, measured
+            // on the real paint), while a fresh header starts at Qt's `Center`.
+            // Decoding absent as `Center` would move every label in every
+            // layout saved before this round.
+            //
+            // An unknown spelling is a shape error like any other here, not a
+            // silent `Start`: `from_wire` is the strict reader, and this
+            // decoder's contract is that a well-formed field decodes or the
+            // whole state is refused.
+            default_alignment: match value.get("default_alignment") {
+                None => TextAlign::Start,
+                Some(v) => TextAlign::from_wire(v.as_str()?)?,
+            },
         })
     }
+}
+
+/// R1504 — the `"<logical>:<align>"` payload `set_section_alignment` takes,
+/// where the value half is a [`TextAlign`] spelling or the literal `default`.
+///
+/// The arm answers the EFFECTIVE row rather than the section it changed:
+/// setting one exception does not move the others, but a client that just
+/// learned it can clear one wants to see what is painted now.
+///
+/// `default` is the spelling that hands a section BACK to the header's rule,
+/// and it is the reason this cannot be `parse_pair::<usize, TextAlign>`: the
+/// sentinel is not a member of the enum, and making it one would put a
+/// "no opinion" variant into a type whose whole job is to name one.
+fn section_and_alignment(text: &str) -> Result<(usize, Option<TextAlign>), InvokeError> {
+    let (logical, spelling) =
+        parse_pair::<usize, String>(text, ':').ok_or(InvokeError::Rejected)?;
+    let align = if spelling == "default" {
+        None
+    } else {
+        Some(TextAlign::from_wire(&spelling).ok_or(InvokeError::Rejected)?)
+    };
+    Ok((logical, align))
 }
 
 impl Default for ColumnLayoutState {
@@ -352,6 +411,11 @@ impl Default for ColumnLayoutState {
             sections_movable: false,
             sections_clickable: false,
             resize_contents_precision: DEFAULT_CONTENTS_PRECISION,
+            // R1504 — Qt's horizontal-header default
+            // (`QHeaderViewPrivate::setDefaultValues` centres it), and the same
+            // new-vs-old split `sections_movable` above carries: `from_json`
+            // decodes ABSENT as `Start`.
+            default_alignment: DEFAULT_HEADER_ALIGNMENT,
         }
     }
 }
@@ -395,6 +459,17 @@ pub const DEFAULT_SECTION_SIZE: u32 = 100;
 /// R1454 §5.36 — how many rows a `ResizeToContents` consumer measures by
 /// default, matching Qt's `QHeaderView::resizeContentsPrecision` default.
 pub const DEFAULT_CONTENTS_PRECISION: usize = 1000;
+
+/// R1504 §5.27 — where a fresh header's labels sit: Qt centres a horizontal
+/// header (`QHeaderViewPrivate::setDefaultValues` sets
+/// `Qt::AlignCenter | Qt::AlignVCenter`), and this is the horizontal half of
+/// that.
+///
+/// Deliberately **not** what [`ColumnLayoutState::from_json`] gives an absent
+/// field. A snapshot taken before this round describes a header whose labels
+/// were painted flush left, so that decodes as [`TextAlign::Start`] — the same
+/// new-header-vs-old-snapshot split R1496 drew for `sections_movable`.
+pub const DEFAULT_HEADER_ALIGNMENT: TextAlign = TextAlign::Center;
 
 /// R1452 §5.27 — where a section's size **comes from**: Qt's
 /// `QHeaderView::setSectionResizeMode`.
@@ -592,6 +667,21 @@ pub struct ColumnLayout {
     /// A mode belongs to a column and travels with it; this rule belongs to the
     /// header and stays where it is.
     stretch_last: Signal<bool>,
+    /// R1504 — Qt's `defaultAlignment`: where a section's label sits when the
+    /// model has no opinion. Reactive, because it is painted — the mistake
+    /// [`contents_precision`](Self::contents_precision) documents above.
+    default_alignment: Signal<TextAlign>,
+    /// R1504 — the per-section exceptions, `None` meaning "take the header's
+    /// rule". Qt keeps these in the **model**
+    /// (`headerData(section, orientation, Qt::TextAlignmentRole)`) rather than
+    /// the header, and its `saveState()` does not carry them; this vector is
+    /// the same separation, which is why it is a field here and not a member of
+    /// [`ColumnLayoutState`].
+    ///
+    /// Keyed by **logical** section, like `sizes` and `hidden`: an exception
+    /// belongs to a column and has to travel with it when the column is
+    /// dragged.
+    section_alignments: Signal<Vec<Option<TextAlign>>>,
     /// R1494 — the cascade currently in flight, if any.
     ///
     /// A cascade has to be *undoable* or it is not a drag: pulling a section
@@ -672,6 +762,10 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("sections_movable", "boolean"),
     SchemaField::new("sections_clickable", "boolean"),
     SchemaField::new("resize_contents_precision", "int"),
+    // R1504 — the label rule. Qt's `defaultAlignment` is a header scalar its
+    // `saveState()` carries; the per-section exception below is the model's and
+    // is not saved, which is why only this one sits among the saved rules.
+    SchemaField::new("default_alignment", "string"),
     SchemaField::new("sort_indicator", "string"),
     SchemaField::new("sort_indicator_section", "int"),
     SchemaField::new("sort_indicator_order", "string"),
@@ -685,6 +779,10 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("placements", "json"),
     SchemaField::new("content_widths", "json"),
     SchemaField::new("available_width", "int"),
+    // R1504 — the EFFECTIVE alignment per logical section: each
+    // section's own exception where it has one, the header's rule where
+    // it does not. The peer of `section_sizes` against `sizes`.
+    SchemaField::new("alignments", "json"),
     // The parametric families. Every one is an index into `count`, except the
     // last: `logical_index_at` takes a **pixel** offset along the painted row,
     // whose bound the surface publishes as `visible_total`. R1501 — it was
@@ -723,6 +821,20 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
         "int",
         const { &[SchemaArg::index("logical", "count")] },
     ),
+    // R1504 — the pair, declared adjacently like every other stored/effective
+    // pair in this list: the first is what the label is painted with, the
+    // second is the model's exception alone and answers `Null` where the
+    // section defers to the header.
+    SchemaField::parametric(
+        "section_alignment.<logical>",
+        "string",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "section_alignment_override.<logical>",
+        "string",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
     SchemaField::parametric(
         "visual_index.<logical>",
         "int",
@@ -739,16 +851,17 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
         const { &[SchemaArg::index("x", "visible_total")] },
     ),
     // Qt's section vocabulary, as `invoke` channels.
-    SchemaField::new("swap_sections", "string"),
-    SchemaField::new("resize_section", "string"),
-    SchemaField::new("interactive_resize_section", "string"),
-    SchemaField::new("set_section_hidden", "string"),
-    SchemaField::new("set_resize_mode", "string"),
-    SchemaField::new("set_all_resize_modes", "string"),
-    SchemaField::new("set_sort_indicator", "string"),
-    SchemaField::new("cycle_sort_indicator", "int"),
-    SchemaField::new("clear_sort_indicator", "string"),
-    SchemaField::new("reset_default_section_size", "string"),
+    SchemaField::action("swap_sections", "string"),
+    SchemaField::action("resize_section", "string"),
+    SchemaField::action("interactive_resize_section", "string"),
+    SchemaField::action("set_section_hidden", "string"),
+    SchemaField::action("set_section_alignment", "string"),
+    SchemaField::action("set_resize_mode", "string"),
+    SchemaField::action("set_all_resize_modes", "string"),
+    SchemaField::action("set_sort_indicator", "string"),
+    SchemaField::action("cycle_sort_indicator", "int"),
+    SchemaField::action("clear_sort_indicator", "string"),
+    SchemaField::action("reset_default_section_size", "string"),
 ];
 
 /// R1501 — the composed declaration, in a `static` so it outlives the
@@ -791,6 +904,10 @@ impl ColumnLayout {
             default_size: Signal::new(DEFAULT_SECTION_SIZE),
             cascading: Signal::new(false),
             stretch_last: Signal::new(false),
+            // R1504 — Qt's horizontal default, and no exceptions: a fresh
+            // header has a rule and the model has said nothing.
+            default_alignment: Signal::new(DEFAULT_HEADER_ALIGNMENT),
+            section_alignments: Signal::new(vec![None; count]),
             cascade: Signal::new(None),
             movable: Signal::new(false),
             clickable: Signal::new(false),
@@ -1343,6 +1460,83 @@ impl ColumnLayout {
         self.set_default_section_size(DEFAULT_SECTION_SIZE)
     }
 
+    /// R1504 — where a section's label sits when the model has no opinion:
+    /// Qt's `QHeaderView::defaultAlignment`. [`DEFAULT_HEADER_ALIGNMENT`] on a
+    /// fresh header.
+    #[must_use]
+    pub fn default_alignment(&self) -> TextAlign {
+        self.default_alignment.get()
+    }
+
+    /// R1504 — set the header's rule — Qt's `setDefaultAlignment`. Sections
+    /// carrying an exception keep it; this is the fallback, not an override.
+    pub fn set_default_alignment(&self, align: TextAlign) {
+        self.default_alignment.set(align);
+    }
+
+    /// R1504 — the exception this **logical** section carries, if any: the
+    /// answer Qt's model gives to `headerData(section, …, TextAlignmentRole)`.
+    /// `None` means the section defers to
+    /// [`default_alignment`](Self::default_alignment).
+    ///
+    /// Out of range answers `None` rather than a guess — a section that does
+    /// not exist carries no exception, and inventing one would be a value from
+    /// outside the domain, which this surface refuses to do (R1501).
+    #[must_use]
+    pub fn section_alignment_override(&self, logical: usize) -> Option<TextAlign> {
+        self.section_alignments
+            .get()
+            .get(logical)
+            .copied()
+            .flatten()
+    }
+
+    /// R1504 — what the section's label is actually painted with: its own
+    /// exception if the model gave one, otherwise the header's rule.
+    ///
+    /// The stored/effective pair this file already speaks in `sizes` /
+    /// `section_sizes` and `resize_modes` / `effective_resize_modes`. `None`
+    /// for a section outside `0..count`, for the reason above.
+    #[must_use]
+    pub fn section_alignment(&self, logical: usize) -> Option<TextAlign> {
+        (logical < self.count).then(|| {
+            self.section_alignment_override(logical)
+                .unwrap_or_else(|| self.default_alignment())
+        })
+    }
+
+    /// R1504 — give a **logical** section its own alignment, or `None` to hand
+    /// it back to the header's rule. `false` when the index is out of range,
+    /// which is how every other per-section writer here reports it.
+    pub fn set_section_alignment(&self, logical: usize, align: Option<TextAlign>) -> bool {
+        if logical >= self.count {
+            return false;
+        }
+        let mut v = self.section_alignments.get();
+        if v.len() < self.count {
+            v.resize(self.count, None);
+        }
+        v[logical] = align;
+        self.section_alignments.set(v);
+        true
+    }
+
+    /// R1504 — the `set_section_alignment` channel's body, lifted out of
+    /// [`invoke`](Self::invoke) so that match stays inside the line budget the
+    /// workspace lints for. Same split R1494 made for `section_and_size`.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::Rejected`] when the payload does not parse or names a
+    /// section that does not exist.
+    fn invoke_set_section_alignment(&self, text: &str) -> Result<IntrospectValue, InvokeError> {
+        let (logical, align) = section_and_alignment(text)?;
+        if !self.set_section_alignment(logical, align) {
+            return Err(InvokeError::Rejected);
+        }
+        Ok(self.query("alignments").unwrap_or(IntrospectValue::Null))
+    }
+
     /// R1494 — whether an interactive resize takes its space from the
     /// following sections instead of from the row's width — Qt's
     /// `cascadingSectionResizes`. `false` by default, as in Qt.
@@ -1748,6 +1942,12 @@ impl ColumnLayout {
             sections_movable: self.movable.get(),
             sections_clickable: self.clickable.get(),
             resize_contents_precision: self.contents_precision.get(),
+            // R1504 — the header's rule travels; the per-section exceptions do
+            // NOT, because they are the model's and Qt's `saveState()` does not
+            // carry them either. A restore therefore hands back a header whose
+            // sections all defer to the rule, which is exactly what restoring a
+            // header without its model should mean.
+            default_alignment: self.default_alignment.get(),
         }
     }
 
@@ -1804,6 +2004,14 @@ impl ColumnLayout {
         // bounds above have to keep: it changes what is painted, never what is
         // stored.
         self.stretch_last.set(state.stretch_last_section);
+        // R1504 — the rule comes back, and the exceptions are DROPPED rather
+        // than kept: the snapshot does not carry them (Qt's does not either),
+        // so leaving the outgoing header's exceptions in place would let a
+        // restore paint a column with an alignment the restored state never
+        // mentioned. Restoring a header without its model means every section
+        // defers to the rule.
+        self.default_alignment.set(state.default_alignment);
+        self.section_alignments.set(vec![None; self.count]);
         self.sizes.set_widths(state.sizes.clone());
         self.hidden.set(state.hidden.clone());
         self.modes.set(state.modes.clone());
@@ -1923,6 +2131,16 @@ impl ColumnLayout {
             "section_sizes" => Some(json_of(self.section_sizes())),
             "default_section_size" => {
                 Some(IntrospectValue::Int(i64::from(self.default_section_size())))
+            }
+            "default_alignment" => Some(IntrospectValue::Text(
+                self.default_alignment().as_wire().to_string(),
+            )),
+            // The effective alignment of every section, in logical order — the
+            // peer of `section_sizes` against `sizes`.
+            "alignments" => {
+                Some(json_of((0..self.count).filter_map(|l| {
+                    self.section_alignment(l).map(TextAlign::as_wire)
+                })))
             }
             "cascading_section_resizes" => {
                 Some(IntrospectValue::Bool(self.cascading_section_resizes()))
@@ -2063,6 +2281,23 @@ impl ColumnLayout {
                     IntrospectValue::Int(i64::from(x))
                 })
             }),
+            // R1504 — the effective alignment, and the model's exception on its
+            // own. `section_alignment` cannot answer `Null` for an in-range
+            // section (every section is painted with something); the override
+            // answers `Null` exactly when the section defers to the header,
+            // which is the one bit a client cannot derive from the other.
+            "section_alignment" => per_section(arg, &|l| {
+                self.section_alignment(l)
+                    .map_or(IntrospectValue::Null, |a| {
+                        IntrospectValue::Text(a.as_wire().to_string())
+                    })
+            }),
+            "section_alignment_override" => per_section(arg, &|l| {
+                self.section_alignment_override(l)
+                    .map_or(IntrospectValue::Null, |a| {
+                        IntrospectValue::Text(a.as_wire().to_string())
+                    })
+            }),
             // Keyed by a PIXEL offset along the painted row, not by a section,
             // so `count` is not its bound — the declaration names
             // `visible_total`, and the accessor already answers `Null` for a
@@ -2177,6 +2412,19 @@ impl ColumnLayout {
             // string, unlike the older `GridSortExternal::intervene("sort")`,
             // which reads one as "unsorted": the two doors of THIS header must
             // agree, and its other door (`state`) reports the error.
+            // R1504 — Qt's `setDefaultAlignment`. A spelling this build does not
+            // know is a TYPE error rather than a silent `Start`: the strict
+            // reader is `TextAlign::from_wire`, and the lenient behaviour that
+            // exists elsewhere is one decoder's documented choice, not this
+            // channel's.
+            "default_alignment" => {
+                let IntrospectValue::Text(s) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                let align = TextAlign::from_wire(s).ok_or(InterveneError::TypeMismatch)?;
+                self.set_default_alignment(align);
+                Ok(())
+            }
             "sort_indicator" => {
                 let IntrospectValue::Text(s) = value else {
                     return Err(InterveneError::TypeMismatch);
@@ -2375,6 +2623,11 @@ impl ColumnLayout {
                     .query("visible_sections")
                     .unwrap_or(IntrospectValue::Null))
             }
+            // R1504 — Qt's per-section `TextAlignmentRole`, as a channel. The
+            // value half is a `TextAlign` spelling or the literal `default`,
+            // which is how a client hands a section BACK to the header's rule;
+            // without it an exception could be set and never cleared.
+            "set_section_alignment" => self.invoke_set_section_alignment(&pair_text(args)?),
             // R1452 — Qt's setSectionResizeMode, both overloads. Each returns
             // the resulting painted widths, because changing one section's
             // policy re-sizes every `Stretch` section sharing the row with it —
@@ -2578,12 +2831,12 @@ mod tests {
     use std::borrow::Cow;
 
     use super::{
-        ColumnLayout, ColumnLayoutState, DEFAULT_CONTENTS_PRECISION, DEFAULT_SECTION_SIZE,
-        SectionPlacement, SectionResizeMode, read_column_layout,
+        ColumnLayout, ColumnLayoutState, DEFAULT_CONTENTS_PRECISION, DEFAULT_HEADER_ALIGNMENT,
+        DEFAULT_SECTION_SIZE, SectionPlacement, SectionResizeMode, TextAlign, read_column_layout,
     };
     use crate::external::{
         ArgDomain, DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue,
-        InvokeError,
+        InvokeError, SchemaChannel,
     };
     use crate::widgets::column_widths::{DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
     use crate::widgets::grid_sort::col_sort_dir;
@@ -2624,30 +2877,159 @@ mod tests {
     /// nothing by design, because [`SchemaField`] does not separate a readable
     /// value from an action yet (its own doc says so), so the walk below names
     /// them rather than probing them.
-    const ACTIONS: [&str; 15] = [
-        "swap_sections",
-        "resize_section",
-        "interactive_resize_section",
-        "set_section_hidden",
-        "set_resize_mode",
-        "set_all_resize_modes",
-        "set_sort_indicator",
-        "cycle_sort_indicator",
-        "clear_sort_indicator",
-        "reset_default_section_size",
-        "send",
-        "move",
-        "move_section",
-        "grab",
-        "grab_cancel",
-    ];
+    /// R1504 — Qt centres a horizontal header; a snapshot taken before this
+    /// round describes one painted flush left. The two are different questions
+    /// and the module answers them differently, which is the R1496 split.
+    #[test]
+    fn r1504_a_new_header_centres_and_an_old_snapshot_does_not() {
+        assert_eq!(DEFAULT_HEADER_ALIGNMENT, TextAlign::Center);
+        assert_eq!(layout().default_alignment(), TextAlign::Center);
+
+        // An older snapshot: every other field present, this one absent.
+        let mut older = layout().save_state().to_json();
+        older
+            .as_object_mut()
+            .expect("state is an object")
+            .remove("default_alignment");
+        let decoded = ColumnLayoutState::from_json(&older).expect("older shape decodes");
+        assert_eq!(
+            decoded.default_alignment,
+            TextAlign::Start,
+            "absent describes the header that painted its labels flush left",
+        );
+    }
+
+    /// R1504 — the stored/effective pair. A section paints with its own
+    /// exception where the model gave one and with the header's rule where it
+    /// did not, and only the override can answer "nothing".
+    #[test]
+    fn r1504_a_section_paints_its_exception_or_the_headers_rule() {
+        let l = layout();
+        l.set_default_alignment(TextAlign::End);
+
+        assert_eq!(l.section_alignment(0), Some(TextAlign::End));
+        assert_eq!(l.section_alignment_override(0), None);
+
+        assert!(l.set_section_alignment(1, Some(TextAlign::Start)));
+        assert_eq!(l.section_alignment(1), Some(TextAlign::Start));
+        assert_eq!(l.section_alignment_override(1), Some(TextAlign::Start));
+        assert_eq!(
+            l.section_alignment(0),
+            Some(TextAlign::End),
+            "one section's exception is not the header's rule",
+        );
+
+        // Handing it back.
+        assert!(l.set_section_alignment(1, None));
+        assert_eq!(l.section_alignment(1), Some(TextAlign::End));
+        assert_eq!(l.section_alignment_override(1), None);
+    }
+
+    /// R1504 — a section outside `0..count` carries no alignment and is not
+    /// given a plausible one, the rule R1501 found five accessors breaking.
+    #[test]
+    fn r1504_an_absent_section_has_no_alignment() {
+        let l = layout();
+        let out = l.count();
+        assert_eq!(l.section_alignment(out), None);
+        assert_eq!(l.section_alignment_override(out), None);
+        assert!(!l.set_section_alignment(out, Some(TextAlign::Center)));
+        assert_eq!(
+            l.query(&format!("section_alignment.{out}")),
+            Some(IntrospectValue::Null),
+        );
+        assert_eq!(
+            l.query(&format!("section_alignment_override.{out}")),
+            Some(IntrospectValue::Null),
+        );
+    }
+
+    /// R1504 — both channels over the wire, including the spelling that hands a
+    /// section back to the rule and the one this build does not know.
+    #[test]
+    fn r1504_the_header_reads_and_writes_its_alignment_over_the_wire() {
+        let l = layout();
+        assert_eq!(l.query("default_alignment"), Some(text("Center")));
+
+        l.intervene("default_alignment", &text("End"))
+            .expect("a known spelling is accepted");
+        assert_eq!(l.query("default_alignment"), Some(text("End")));
+        assert!(
+            l.intervene("default_alignment", &text("middle")).is_err(),
+            "an unknown spelling is refused, not silently defaulted",
+        );
+        assert_eq!(l.query("default_alignment"), Some(text("End")));
+
+        l.invoke("set_section_alignment", &text("2:Start"))
+            .expect("a section takes an exception");
+        assert_eq!(l.query("section_alignment.2"), Some(text("Start")));
+        assert_eq!(l.query("section_alignment_override.2"), Some(text("Start")));
+
+        // The projection reports what every section paints with.
+        let IntrospectValue::Json(all) = l.query("alignments").expect("alignments answers") else {
+            panic!("alignments is json");
+        };
+        assert_eq!(
+            all,
+            serde_json::json!(["End", "End", "Start", "End"]),
+            "the effective row, exception included",
+        );
+
+        l.invoke("set_section_alignment", &text("2:default"))
+            .expect("`default` hands the section back");
+        assert_eq!(
+            l.query("section_alignment_override.2"),
+            Some(IntrospectValue::Null)
+        );
+        assert!(
+            l.invoke("set_section_alignment", &text("2:middle"))
+                .is_err(),
+            "an unknown spelling is refused here too",
+        );
+    }
+
+    /// R1504 — the header's rule is saved and the model's exceptions are not,
+    /// which is what Qt's `saveState()` carries. A restore therefore hands back
+    /// a header whose sections all defer.
+    #[test]
+    fn r1504_the_rule_survives_a_restore_and_the_exceptions_do_not() {
+        let l = layout();
+        l.set_default_alignment(TextAlign::End);
+        assert!(l.set_section_alignment(1, Some(TextAlign::Start)));
+        let saved = l.save_state();
+        assert_eq!(saved.default_alignment, TextAlign::End);
+
+        let other = layout();
+        assert!(other.set_section_alignment(0, Some(TextAlign::Center)));
+        other.restore_state(&saved);
+        assert_eq!(other.default_alignment(), TextAlign::End);
+        assert_eq!(
+            other.section_alignment_override(0),
+            None,
+            "the outgoing header's exception does not survive a state that never mentioned it",
+        );
+        assert_eq!(other.section_alignment(1), Some(TextAlign::End));
+    }
 
     #[test]
     fn r1501_every_declared_read_path_answers() {
         let l = layout();
         let mut probed = 0;
+        let mut actions = 0;
         for f in ColumnLayout::SCHEMA_FIELDS {
-            if ACTIONS.contains(&f.path) {
+            // R1504 — the declaration says which channel it is. This used to be
+            // a hand-written list of fifteen names here, and R1504 was about to
+            // make it sixteen: an action added upstream would have been probed
+            // as a read and failed, and one added here would have needed the
+            // list edited in step. Neither is a thing a test should be asked to
+            // remember.
+            if f.channel == SchemaChannel::Invoke {
+                assert!(
+                    l.query(f.path).is_none(),
+                    "{:?} is declared as an invoke channel but answers a read",
+                    f.path,
+                );
+                actions += 1;
                 continue;
             }
             // A family is addressed by its members, never by its template.
@@ -2664,10 +3046,11 @@ mod tests {
             probed += 1;
         }
         assert_eq!(
-            probed,
-            ColumnLayout::SCHEMA_FIELDS.len() - ACTIONS.len(),
-            "every declared field is either probed or a named action",
+            probed + actions,
+            ColumnLayout::SCHEMA_FIELDS.len(),
+            "every declared field is either probed or declared an action",
         );
+        assert!(actions > 0, "the surface declares invoke channels");
     }
 
     #[test]

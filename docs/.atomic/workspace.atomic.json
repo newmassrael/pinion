@@ -74940,6 +74940,60 @@
         "Backtick suppression in the citation gate is per LINE, so a code span wrapping across two lines leaves the inner text unprotected — upstream hit this in their own source while quoting this report's examples. Nothing in this tree trips it today (validate-code-refs rc=0), but a section example written into a scanned doc comment will."
       ]
     },
+    "Round 1504": {
+      "decision_summary": "The header says where its labels sit: Qt's defaultAlignment becomes header state and the per-section exception stays the model's, as Qt splits them — and the declaration learns to say which of its paths are read and which are called, so the sixteenth hand-listed action name was never written.",
+      "changes_bullets": [
+        "ColumnLayout answers Qt's QHeaderView::defaultAlignment, plus the per-section exception Qt keeps in the model: default_alignment (header scalar, in saveState), alignments, section_alignment.<logical> and its override, and set_section_alignment whose value half is a spelling or the literal `default` that hands a section back to the rule.",
+        "TextAlign::as_wire / from_wire lifted to pinion-core, this round being the third consumer; the RPC writer and the TextField decoder are redefined on top, and the lifted match is exhaustive so a new variant is a compile error rather than the \"Unknown\" string one copy emitted and the silent Start the other chose.",
+        "SchemaField declares its channel (SchemaChannel::Read / Invoke) and $schema carries it, which clears R1501's carry (b): the fifteen action names a test held by hand were about to become sixteen, and both the unit gate and r1501_declared_surface now read the split off the declaration.",
+        "The header label is painted into a box that spans its section instead of a bare extent pinned 12px in, which is what an alignment has to align within."
+      ],
+      "verification_bullets": [
+        "Six counterfactuals, injected one at a time, all fatal: effective alignment collapsing to the header rule (3 core + 2 demo-unit + script), absent decoding as the construction default (2 + script), a lenient write channel (2 + script), a restore keeping stale exceptions (2 + script), the label box collapsed (script), and the action declared as a readable path (2 + script).",
+        "CF-5 first died on an unused-variable lint rather than on behaviour, which proves nothing about the rule; it was re-injected so the box collapsed while the value stayed consumed, and then it killed the geometry assertions on their own merit.",
+        "Measured before writing the assertions rather than assumed: a label node's rect is its BOX, so the three alignments produce byte-identical trees. The rule is therefore asserted on the surface that owns it, and the tree is asserted for the box. Stated in the script instead of worked around.",
+        "gates: fmt / clippy -D pedantic / cargo doc all clean, pinion-core 2822 (+5), pinion-rpc 1014, hello-column-reorder 41 (+2), r1504 demo 43 assertions.",
+        "Thirteen demo scripts over the real wire, all green. Three needed updating and each names why: r1501 now reads the channel it used to hand-list, r1496 asserted the readout by position, and r1497's witness INVERTED — its measured asymmetry (labels 3 and 4 cover their cell centres, 0-2 do not) is now uniform, so R1499's pointer_transparent is load-bearing in all five sections rather than two.",
+        "A REGRESSION THIS ROUND CAUSED, found by running the peers and attributed by stashing: r1453 read the header label's rect as its glyph EXTENT to derive an exact content hint, a premise the box breaks. It now asserts exactness where the body drives the hint and bounds where the header does, and says which is which.",
+        "The clippy line budget was met by lifting the arm body to a method, not by an allow, the split R1494 made for section_and_size."
+      ],
+      "impact_refs": [
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "The header's glyph extent is no longer readable from the paint tree, which cost r1453 two exact assertions. Nothing in this round needed it, but a consumer that wants \"how wide is this label really\" has no path today; the answer would be a measurement surface, not a wider rect.",
+        "No live-pixel guard was added, so nothing proves the three alignments PAINT differently — the scene tree cannot show it by construction, and only a pixel readback can. This is the round's weakest link and the visual-widget precedent (R706/R707.3) says a guard belongs here.",
+        "SchemaField::action exists and is used by this widget and the embedded ReorderModel only. R1501's carry (a) is untouched: roughly 104 hand-written schema literals across the workspace still declare invoke channels as readable paths, and the per-crate audit its doc asks for has one more worked example now, not a sweep.",
+        "TextAlign's wire spelling is capitalised while this module's SectionResizeMode spelling is lower case. The type owns its spelling and TextAlign's had two live consumers before this round, so the inconsistency is declared rather than resolved.",
+        "Justify is reachable over the wire and skipped by the demo's cycle, because a header label is one line and the variant is a multi-line rule."
+      ],
+      "publishable_decision_summary": "The header says where its labels sit: Qt's defaultAlignment becomes header state and the per-section exception stays the model's, as Qt splits them — and the declaration learns to say which of its paths are read and which are called, so the sixteenth hand-listed action name was never written.",
+      "publishable_changes_bullets": [
+        "ColumnLayout answers Qt's QHeaderView::defaultAlignment, plus the per-section exception Qt keeps in the model: default_alignment (header scalar, in saveState), alignments, section_alignment.<logical> and its override, and set_section_alignment whose value half is a spelling or the literal `default` that hands a section back to the rule.",
+        "TextAlign::as_wire / from_wire lifted to pinion-core, this round being the third consumer; the RPC writer and the TextField decoder are redefined on top, and the lifted match is exhaustive so a new variant is a compile error rather than the \"Unknown\" string one copy emitted and the silent Start the other chose.",
+        "SchemaField declares its channel (SchemaChannel::Read / Invoke) and $schema carries it, which clears R1501's carry (b): the fifteen action names a test held by hand were about to become sixteen, and both the unit gate and r1501_declared_surface now read the split off the declaration.",
+        "The header label is painted into a box that spans its section instead of a bare extent pinned 12px in, which is what an alignment has to align within."
+      ],
+      "publishable_verification_bullets": [
+        "Six counterfactuals, injected one at a time, all fatal: effective alignment collapsing to the header rule (3 core + 2 demo-unit + script), absent decoding as the construction default (2 + script), a lenient write channel (2 + script), a restore keeping stale exceptions (2 + script), the label box collapsed (script), and the action declared as a readable path (2 + script).",
+        "CF-5 first died on an unused-variable lint rather than on behaviour, which proves nothing about the rule; it was re-injected so the box collapsed while the value stayed consumed, and then it killed the geometry assertions on their own merit.",
+        "Measured before writing the assertions rather than assumed: a label node's rect is its BOX, so the three alignments produce byte-identical trees. The rule is therefore asserted on the surface that owns it, and the tree is asserted for the box. Stated in the script instead of worked around.",
+        "gates: fmt / clippy -D pedantic / cargo doc all clean, pinion-core 2822 (+5), pinion-rpc 1014, hello-column-reorder 41 (+2), r1504 demo 43 assertions.",
+        "Thirteen demo scripts over the real wire, all green. Three needed updating and each names why: r1501 now reads the channel it used to hand-list, r1496 asserted the readout by position, and r1497's witness INVERTED — its measured asymmetry (labels 3 and 4 cover their cell centres, 0-2 do not) is now uniform, so R1499's pointer_transparent is load-bearing in all five sections rather than two.",
+        "A REGRESSION THIS ROUND CAUSED, found by running the peers and attributed by stashing: r1453 read the header label's rect as its glyph EXTENT to derive an exact content hint, a premise the box breaks. It now asserts exactness where the body drives the hint and bounds where the header does, and says which is which.",
+        "The clippy line budget was met by lifting the arm body to a method, not by an allow, the split R1494 made for section_and_size."
+      ],
+      "publishable_impact_refs": [
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The header's glyph extent is no longer readable from the paint tree, which cost r1453 two exact assertions. Nothing in this round needed it, but a consumer that wants \"how wide is this label really\" has no path today; the answer would be a measurement surface, not a wider rect.",
+        "No live-pixel guard was added, so nothing proves the three alignments PAINT differently — the scene tree cannot show it by construction, and only a pixel readback can. This is the round's weakest link and the visual-widget precedent (R706/R707.3) says a guard belongs here.",
+        "SchemaField::action exists and is used by this widget and the embedded ReorderModel only. R1501's carry (a) is untouched: roughly 104 hand-written schema literals across the workspace still declare invoke channels as readable paths, and the per-crate audit its doc asks for has one more worked example now, not a sweep.",
+        "TextAlign's wire spelling is capitalised while this module's SectionResizeMode spelling is lower case. The type owns its spelling and TextAlign's had two live consumers before this round, so the inconsistency is declared rather than resolved.",
+        "Justify is reachable over the wire and skipped by the demo's cycle, because a header label is one line and the variant is a multi-line rule."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

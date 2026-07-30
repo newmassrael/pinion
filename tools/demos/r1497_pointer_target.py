@@ -169,10 +169,25 @@ def body() -> None:
                 f"section {i}'s label is painted inside its own cell",
             )                                                              # 1-5
             covered.append(lo <= centre < hi)
+        # R1504 UPDATED THIS WITNESS, and strengthened what it witnesses. When
+        # R1497 measured it, a label was a bare glyph EXTENT pinned 12px from
+        # its cell's left edge, so whether it covered the cell's centre — the
+        # point `scene/click` presses — was a function of the string's width:
+        # true for the two wide ones, false for the three narrow ones, which is
+        # exactly why the hazard could not be inferred from the tree.
+        #
+        # R1504 gave the label a BOX that spans its section (Qt's
+        # `defaultAlignment` needs somewhere to align within), so every label
+        # now covers its cell's centre. The asymmetry is gone and the round's
+        # claim is stronger for it: `pointer_transparent` is load-bearing in
+        # ALL FIVE sections rather than in two, and a regression that dropped
+        # the declaration would now break every section instead of two.
         assert_eq(
             covered,
-            [False, False, False, True, True],
-            "the labels of sections 3 and 4 cover their cell centres; 0-2 do not",
+            [True] * NCOLS,
+            "every label covers its cell's centre, so decoration is "
+            "load-bearing in all five (R1504 widened the box; before that "
+            "only sections 3 and 4 did)",
         )                                                                  # 6
         # Whichever way that lands, the round is about the covered ones — if a
         # future layout covers none, this demo must say so instead of passing

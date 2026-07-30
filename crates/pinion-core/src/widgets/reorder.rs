@@ -253,11 +253,11 @@ impl ReorderModel {
         SchemaField::new("preview", "json"),
         SchemaField::new("focused_index", "int"),
         SchemaField::new("grabbed", "boolean"),
-        SchemaField::new("send", "string"),
-        SchemaField::new("move", "int"),
-        SchemaField::new("move_section", "string"),
-        SchemaField::new("grab", "boolean"),
-        SchemaField::new("grab_cancel", "string"),
+        SchemaField::action("send", "string"),
+        SchemaField::action("move", "int"),
+        SchemaField::action("move_section", "string"),
+        SchemaField::action("grab", "boolean"),
+        SchemaField::action("grab_cancel", "string"),
     ];
 
     /// Reorder slots for [`ExternalIntrospect::query`]:

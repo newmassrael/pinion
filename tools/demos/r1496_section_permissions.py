@@ -209,7 +209,7 @@ def body() -> None:
                   "the app declared its header movable")                   # 1
         assert_eq(_h(tf, "sections_clickable"), True,
                   "and clickable, as setSortingEnabled does in Qt")        # 2
-        assert _readout(tf).endswith("| allows move+click"), \
+        assert "| allows move+click" in _readout(tf), \
             f"the strip paints what it allows: {_readout(tf)}"             # 3
         state = _h(tf, "state")
         assert_eq(state["sections_movable"], True,
@@ -275,7 +275,7 @@ def body() -> None:
 
         # ── (E) a pinned header still sorts ───────────────────────────
         _reset(tf, sections_movable=False)
-        assert _readout(tf).endswith("| allows click"), \
+        assert "| allows click" in _readout(tf), \
             f"the readout drops the half it revoked: {_readout(tf)}"      # 17
         tf.drag(from_path=f"{HDR}#0", to_path=f"{HDR}#2", steps=6)
         wait_until(lambda: _h(tf, "preview") is None, desc="the gesture ended") # 18
@@ -295,7 +295,7 @@ def body() -> None:
 
         # ── (F) an inert header ───────────────────────────────────────
         _reset(tf, sections_movable=False, sections_clickable=False)
-        assert _readout(tf).endswith("| allows -"), \
+        assert "| allows -" in _readout(tf), \
             f"the readout says it allows nothing: {_readout(tf)}"         # 24
         tf.drag(from_path=f"{HDR}#0", to_path=f"{HDR}#2", steps=6)
         wait_until(lambda: _h(tf, "preview") is None, desc="the gesture ended") # 25

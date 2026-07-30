@@ -1754,6 +1754,48 @@ pub enum TextAlign {
     Justify,
 }
 
+impl TextAlign {
+    /// R1504 — the wire spelling, and the only one. Two sites wrote this
+    /// mapping by hand before a third needed it: the RPC writer
+    /// (`text_align_to_json`) and the `TextField` style decoder, which is
+    /// exactly the shape `grid_sort_parse` was lifted for in R1491.
+    ///
+    /// The match is **exhaustive** rather than wildcarded. Both hand-written
+    /// copies ended in a catch-all — one emitting `"Unknown"`, the other
+    /// silently choosing `Start` — so a variant added here would have reached
+    /// the wire as a lie from one and a default from the other. `TextAlign` is
+    /// `#[non_exhaustive]`, but that only binds *other* crates; inside this one
+    /// the compiler can still demand every arm, and now does.
+    #[must_use]
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::Start => "Start",
+            Self::Center => "Center",
+            Self::End => "End",
+            Self::Justify => "Justify",
+        }
+    }
+
+    /// R1504 — the strict inverse of [`as_wire`](Self::as_wire): `None` for a
+    /// spelling this build does not know, so a caller decides what an unknown
+    /// value means instead of inheriting someone else's default.
+    ///
+    /// A lenient reader is a documented weakening *on top of this*, never a
+    /// second table — `TextField`'s decoder keeps its "unknown means `Start`"
+    /// behaviour by spelling it `from_wire(s).unwrap_or_default()` at the one
+    /// place that wants it.
+    #[must_use]
+    pub fn from_wire(s: &str) -> Option<Self> {
+        Some(match s {
+            "Start" => Self::Start,
+            "Center" => Self::Center,
+            "End" => Self::End,
+            "Justify" => Self::Justify,
+            _ => return None,
+        })
+    }
+}
+
 /// Inline text decoration (§5.36 R47.5 Figma-fidelity).
 ///
 /// Both `underline` and `strikethrough` may be `true` simultaneously
