@@ -848,6 +848,71 @@ mod tests {
         );
     }
 
+    /// R1505 §5.36 §5.37 — a leaf that asked to be aligned is NOT this arm's
+    /// to paint, and that exclusion is now load-bearing in production.
+    ///
+    /// [`self_hosted_text_eligible`] has always required `Start`: the arm pens
+    /// from the box left, so it would render `Center` / `End` flush left while
+    /// parley slides them — the same text in two places depending on which arm
+    /// happened to take it. The condition was documented from R1068 but never
+    /// asserted, and the sibling `measure_text_defers_for_ineligible_leaves`
+    /// covers hard breaks / styled runs / decoration and stops short of it.
+    ///
+    /// R1504 is what made that gap matter: it moved `ColumnLayout`'s default
+    /// alignment to `Center` (Qt's `QHeaderView` default), so EVERY header
+    /// label is now an aligned leaf and every one of them leaves this arm for
+    /// parley. That is the correct outcome — parley is the reference, and
+    /// R1505's pixel guard is what proves the alignment it applies is real —
+    /// but it is a behavioural consequence of R1504 that nothing recorded, and
+    /// a future relaxation of this predicate would silently paint header labels
+    /// flush left again.
+    ///
+    /// Asserted on both arms, because eligibility is their shared SSOT: a split
+    /// here is a leaf measured against one layout and painted from another.
+    #[test]
+    fn r1505_an_aligned_leaf_is_not_this_arms_to_paint() {
+        use crate::layout::TextMeasure;
+        let engine = noto_engine();
+        let base = TextStyle::new().with_size_px(20);
+
+        // The baseline: Start IS served, so the assertions below single out
+        // alignment rather than some unrelated ineligibility.
+        assert!(
+            self_hosted_text_eligible("Modified", &base, &[], false),
+            "a plain Start leaf must be eligible, or this test proves nothing",
+        );
+        assert!(engine.serves("Modified", &base, &[], false));
+        assert!(
+            engine
+                .measure_text("Modified", &base, &[], None, false)
+                .is_some(),
+            "the measure arm takes the Start leaf",
+        );
+
+        // Every non-Start alignment defers — including `Justify`, which reads
+        // like `Start` on the single line this arm renders and would be the
+        // easy one to wave through.
+        for align in [TextAlign::Center, TextAlign::End, TextAlign::Justify] {
+            let styled = base.clone().with_align(align);
+            assert!(
+                !self_hosted_text_eligible("Modified", &styled, &[], false),
+                "{align:?} must not be eligible: the arm pens from the box \
+                 left and would paint it flush left",
+            );
+            assert!(
+                !engine.serves("Modified", &styled, &[], false),
+                "{align:?} must not be served by the paint arm",
+            );
+            assert!(
+                engine
+                    .measure_text("Modified", &styled, &[], None, false)
+                    .is_none(),
+                "{align:?} must defer on the measure arm too — paint and \
+                 measure share one eligibility SSOT",
+            );
+        }
+    }
+
     #[test]
     fn caret_bearing_text_defers_to_parley_for_both_arms() {
         // R1072 — the R1070.1 caret contract: an editable TextField's text is

@@ -2952,6 +2952,159 @@ mod tests {
         );
     }
 
+    /// R1505 §5.36 §5.49 — the pixel half of "a header says where its labels
+    /// sit": does a leaf's DECLARED alignment actually move its glyphs?
+    ///
+    /// R1504 gave `ColumnLayout` a `default_alignment` and painted each header
+    /// label through `TextStyle::with_align`, then closed honestly — a label
+    /// node's rect is its BOX, so all three alignments produce a byte-identical
+    /// scene tree, and nothing anywhere proved the glyphs land in different
+    /// pixels. The rule is asserted at the surface that owns it and at the node
+    /// that carries it (`tools/demos/r1505_alignment_reaches_glyphs.py`); this
+    /// is the last seam, declaration → pixels, and it had no witness at all.
+    ///
+    /// The alignment is applied by parley inside `LayoutCache::shape`, which
+    /// aligns within the width `break_all_lines` was handed, and `paint_text`
+    /// derives that width from the node's own `rect.w`. So a leaf aligns only
+    /// when its box is WIDER than its glyphs — exactly a header label's shape
+    /// (`label_w` spans the section; the word does not). A regression that
+    /// dropped the `layout.align(…)` call, or stopped passing the box width,
+    /// leaves all three renders identical, and both are caught here.
+    ///
+    /// Renders the same node shape the header label is built from (a sized box
+    /// carrying `with_align` and `TextOverflow::Clip`) through the production
+    /// [`to_vello`](pinion_runtime::paint_adapter::to_vello) walk, and asserts
+    /// the ink SLIDES: `Start` left of `Center` left of `End`, while the ink
+    /// WIDTH holds (the same glyphs moved, not re-shaped or re-wrapped).
+    ///
+    /// The font is REGISTERED, not discovered. A guard that leaned on whatever
+    /// the host happens to have installed would measure the host, and its
+    /// answer would drift between this box and CI — the R1473 / R1500 lesson,
+    /// applied at the seam that first tempted it.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1505_declared_alignment_slides_the_ink_within_the_box() {
+        use pinion_core::scene::{BoxNode, Rect, Scene, TextNode};
+        use pinion_core::style::{Color, TextAlign, TextOverflow, TextStyle};
+        use pinion_runtime::paint_adapter::to_vello;
+        use pinion_text::LayoutCache;
+
+        /// The §5.37 parser fixture, reused as a REGISTERED family so the
+        /// glyph advances are the same on every host (see the doc above).
+        const NOTO: &[u8] =
+            include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+        /// Far wider than the word, so all three alignments have room to
+        /// differ — a header section's `label_w`, in miniature.
+        const BOX_W: u32 = 240;
+        const BOX_H: u32 = 40;
+        /// The widest of `hello-column-reorder`'s headers.
+        const LABEL: &str = "Modified";
+
+        let mut shot = match HeadlessScreenshot::new() {
+            Ok(s) => s,
+            // No GPU / software adapter on this host — skip rather than fail,
+            // the stance the sibling headless tests take on a bare dev box.
+            Err(e) => {
+                eprintln!("skipping: no wgpu adapter ({e})");
+                return;
+            }
+        };
+
+        let mut text_cache = LayoutCache::new();
+        let family = text_cache
+            .register_font_data(NOTO.to_vec())
+            .into_iter()
+            .next()
+            .expect("NotoSans fixture registers at least one family");
+
+        // Ink extent `(min_x, max_x, width)` for one alignment, measured with
+        // this module's existing [`glyph_gutters`] — a first/last-inked-column
+        // scan, which is exactly this question asked of a wider box. The first
+        // draft of this test hand-rolled the same scan; the R727 / R732
+        // 3rd-consumer self-grep is what caught it.
+        let mut ink_span = |align: TextAlign| -> (u32, u32, u32) {
+            let scene = Scene::Text(TextNode::styled(
+                LABEL,
+                Rect::new(0, 0, BOX_W, BOX_H),
+                TextStyle::new()
+                    .with_font_family(family.clone())
+                    .with_size_px(20)
+                    .with_fg(Color::rgb(255, 255, 255))
+                    .with_align(align)
+                    .with_overflow(TextOverflow::Clip),
+            ));
+            let mut vello_scene = VelloScene::new();
+            to_vello(
+                &scene,
+                &|_: &BoxNode| -> Option<Color> { None },
+                &mut text_cache,
+                &mut vello_scene,
+            );
+            let rgba = shot
+                .render_to_rgba8(&vello_scene, BOX_W, BOX_H, PenikoColor::BLACK)
+                .expect("headless render");
+            // `glyph_gutters` panics when nothing inked, which is the premise
+            // guard this needs: without ink every bound below would compare
+            // sentinels and the test would pass vacuously.
+            let (left, right, width) = glyph_gutters(&rgba, BOX_W, BOX_H);
+            (left, BOX_W - 1 - right, width)
+        };
+
+        let (start_min, start_max, ink_w) = ink_span(TextAlign::Start);
+        let (mid_min, mid_max, mid_w) = ink_span(TextAlign::Center);
+        let (end_min, end_max, end_w) = ink_span(TextAlign::End);
+
+        // The word must not fill the box, or there is nothing to slide within
+        // and the assertions below would be unfalsifiable.
+        assert!(
+            ink_w < BOX_W - 20,
+            "the fixture word must leave slack in the box to align within: \
+             ink {ink_w}px of {BOX_W}px",
+        );
+
+        // The rule: the ink SLIDES rightward across the three alignments.
+        assert!(
+            start_min < mid_min && mid_min < end_min,
+            "declared alignment must move the ink: Start(min_x={start_min}) \
+             < Center(min_x={mid_min}) < End(min_x={end_min}) — equal values \
+             mean the declaration never reached the shaper",
+        );
+        assert!(
+            start_max < mid_max && mid_max < end_max,
+            "the ink's right edge slides with its left: Start={start_max} \
+             Center={mid_max} End={end_max}",
+        );
+
+        // …and it is the SAME ink, moved: identical glyphs, so the extent
+        // holds within AA noise. A soft wrap or a re-shape would change it.
+        for (name, w) in [("Center", mid_w), ("End", end_w)] {
+            assert!(
+                w.abs_diff(ink_w) <= 2,
+                "{name} must be the same glyphs moved, not re-shaped: ink \
+                 width {w}px vs Start's {ink_w}px",
+            );
+        }
+
+        // Anchored, not merely ordered: `End`'s right edge sits near the box's
+        // right edge, and `Center` is centred. Ordering alone would survive a
+        // shaper that nudged the text by a constant.
+        assert!(
+            BOX_W - end_max <= 4,
+            "End must anchor to the box's right edge: max_x={end_max} of \
+             {BOX_W}",
+        );
+        let mid_slack_l = mid_min;
+        let mid_slack_r = BOX_W - mid_max;
+        assert!(
+            mid_slack_l.abs_diff(mid_slack_r) <= 4,
+            "Center must leave equal slack: {mid_slack_l}px left vs \
+             {mid_slack_r}px right",
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

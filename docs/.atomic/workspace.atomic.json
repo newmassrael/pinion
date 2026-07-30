@@ -74994,6 +74994,66 @@
         "Justify is reachable over the wire and skipped by the demo's cycle, because a header label is one line and the variant is a multi-line rule."
       ]
     },
+    "Round 1505": {
+      "decision_summary": "The declared alignment reaches the glyphs: the rule R1504 proved at the surface that owns it is now proved at the node it built and at the pixels it moves — measured by breaking the paint side and watching R1504's own demo pass.",
+      "changes_bullets": [
+        "A demo asserts the middle link of surface -> label node -> glyphs: every colhdr_label node's style.text_align is read from the paint scene and matched against what the header reports, through the rule changing, a per-section exception, a column move, a restore that drops the exception, a sorted section, and a hidden one. The scene has carried text_align on every Text node since R55.G.10 and no assertion anywhere had ever read it.",
+        "A headless pixel guard asserts the last link: the same node shape a header label is built from is rendered through the production to_vello walk under Start / Center / End, and the ink must SLIDE — ordered, anchored to the box edges, and the same width each time, so a re-shape or a soft wrap is not mistaken for an alignment.",
+        "The guard registers its own font instead of discovering one, because a guard that leans on whatever the host has installed measures the host.",
+        "A test pins the consequence R1504 did not record: self_hosted_text_eligible has always required Start, so moving ColumnLayout's default to Center took every header label off the S5.37 arm and onto parley. The condition was documented from R1068 and never asserted; the sibling test covers hard breaks, styled runs and decoration and stops short of it."
+      ],
+      "verification_bullets": [
+        "The decisive measurement: with the label's with_align dropped so every header paints flush left, R1504's own demo PASSES. Its whole paint side can be removed and the round that added it reports green. The gap was real and larger than the honest weakness it recorded, which named only the missing pixel guard.",
+        "CF-5 (the label node never receives the alignment) kills the new demo at its second assertion, naming the link it exists to prove.",
+        "CF-1 (layout.align never called) and CF-2 (the box width never handed to the shaper) each kill the pixel guard on the ordering assertion; CF-3 (aligning within half the box) survives ordering and dies on the anchoring assertion, which is why both are there.",
+        "CF-1 first died on an unused-import lint, which discriminates nothing; it was re-injected consuming both values so only the behaviour changed, the trap R1501 recorded.",
+        "CF-4 (the eligibility predicate relaxed to admit alignments) kills the arm test.",
+        "CF-1 was re-run after the guard moved onto glyph_gutters, because a refactor can silently weaken a guard.",
+        "The 3rd-consumer self-grep caught this round hand-rolling a scan glyph_gutters already performs in the same module; the guard was moved onto it and the duplicated lit-pixel count dropped rather than kept as a second measurement.",
+        "gates: fmt / clippy -D pedantic / cargo doc clean, pinion-runtime 577, pinion-shell all targets green, r1505 demo 35 assertions over the real wire, r1504 demo still green."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.36",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "The pixel guard renders a faithful reconstruction of the label node, not the widget's own, because pinion-shell cannot depend on an example. The composition is sound only because the demo asserts the real node's fields; a binding that changed its label's box or overflow would leave the guard measuring a shape production no longer paints.",
+        "The guard is headless, so nothing yet proves alignment survives the live window path. The x11grab demos are the precedent for that and this round did not add one.",
+        "The demo mirrors the binding's label arithmetic (cell border, inset, sort-glyph width) as constants. Those numbers live in the example and a change there would make the slack premise assert against a stale formula rather than fail loudly.",
+        "R1504's carry that a label's glyph extent is not readable from the paint tree is untouched and is why the slack premise is asserted from layout arithmetic rather than measured ink.",
+        "The S5.37 arm now declines every header label. That is correct, since parley is the reference, but the arm's coverage of production text shrank and nothing tracks what fraction of painted leaves it still serves."
+      ],
+      "publishable_decision_summary": "The declared alignment reaches the glyphs: the rule R1504 proved at the surface that owns it is now proved at the node it built and at the pixels it moves — measured by breaking the paint side and watching R1504's own demo pass.",
+      "publishable_changes_bullets": [
+        "A demo asserts the middle link of surface -> label node -> glyphs: every colhdr_label node's style.text_align is read from the paint scene and matched against what the header reports, through the rule changing, a per-section exception, a column move, a restore that drops the exception, a sorted section, and a hidden one. The scene has carried text_align on every Text node since R55.G.10 and no assertion anywhere had ever read it.",
+        "A headless pixel guard asserts the last link: the same node shape a header label is built from is rendered through the production to_vello walk under Start / Center / End, and the ink must SLIDE — ordered, anchored to the box edges, and the same width each time, so a re-shape or a soft wrap is not mistaken for an alignment.",
+        "The guard registers its own font instead of discovering one, because a guard that leans on whatever the host has installed measures the host.",
+        "A test pins the consequence R1504 did not record: self_hosted_text_eligible has always required Start, so moving ColumnLayout's default to Center took every header label off the S5.37 arm and onto parley. The condition was documented from R1068 and never asserted; the sibling test covers hard breaks, styled runs and decoration and stops short of it."
+      ],
+      "publishable_verification_bullets": [
+        "The decisive measurement: with the label's with_align dropped so every header paints flush left, R1504's own demo PASSES. Its whole paint side can be removed and the round that added it reports green. The gap was real and larger than the honest weakness it recorded, which named only the missing pixel guard.",
+        "CF-5 (the label node never receives the alignment) kills the new demo at its second assertion, naming the link it exists to prove.",
+        "CF-1 (layout.align never called) and CF-2 (the box width never handed to the shaper) each kill the pixel guard on the ordering assertion; CF-3 (aligning within half the box) survives ordering and dies on the anchoring assertion, which is why both are there.",
+        "CF-1 first died on an unused-import lint, which discriminates nothing; it was re-injected consuming both values so only the behaviour changed, the trap R1501 recorded.",
+        "CF-4 (the eligibility predicate relaxed to admit alignments) kills the arm test.",
+        "CF-1 was re-run after the guard moved onto glyph_gutters, because a refactor can silently weaken a guard.",
+        "The 3rd-consumer self-grep caught this round hand-rolling a scan glyph_gutters already performs in the same module; the guard was moved onto it and the duplicated lit-pixel count dropped rather than kept as a second measurement.",
+        "gates: fmt / clippy -D pedantic / cargo doc clean, pinion-runtime 577, pinion-shell all targets green, r1505 demo 35 assertions over the real wire, r1504 demo still green."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.36",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The pixel guard renders a faithful reconstruction of the label node, not the widget's own, because pinion-shell cannot depend on an example. The composition is sound only because the demo asserts the real node's fields; a binding that changed its label's box or overflow would leave the guard measuring a shape production no longer paints.",
+        "The guard is headless, so nothing yet proves alignment survives the live window path. The x11grab demos are the precedent for that and this round did not add one.",
+        "The demo mirrors the binding's label arithmetic (cell border, inset, sort-glyph width) as constants. Those numbers live in the example and a change there would make the slack premise assert against a stale formula rather than fail loudly.",
+        "R1504's carry that a label's glyph extent is not readable from the paint tree is untouched and is why the slack premise is asserted from layout arithmetic rather than measured ink.",
+        "The S5.37 arm now declines every header label. That is correct, since parley is the reference, but the arm's coverage of production text shrank and nothing tracks what fraction of painted leaves it still serves."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
