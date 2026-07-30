@@ -17,9 +17,14 @@
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=../.githooks/lib/ci-status.sh
+# (R1500) SCRIPTDIR, not a CWD-relative path: the `source=../...` R1495 wrote
+# resolved against the working directory, so `shellcheck -x` from the repo root
+# — where every other gate in this project runs — could not find either library
+# and reported SC1091 for both. The libraries went unchecked and the round that
+# added them recorded the run as clean.
+# shellcheck source=SCRIPTDIR/../.githooks/lib/ci-status.sh
 source "$repo_root/.githooks/lib/ci-status.sh"
-# shellcheck source=../.githooks/lib/commit-msg-lint.sh
+# shellcheck source=SCRIPTDIR/../.githooks/lib/commit-msg-lint.sh
 source "$repo_root/.githooks/lib/commit-msg-lint.sh"
 
 pass=0
@@ -146,36 +151,89 @@ STUB_HEAD
     PATH="$_stub_dir:$PATH"
 }
 
+# (R1500) `$1` is the `PINION_PUSH_ON_RED` posture, and it is MANDATORY: `-`
+# unsets the override, anything else is its literal value. Every case therefore
+# states the environment it is asserting about, and none can inherit one.
+#
+# R1495 wrote these tests taking the variable from whatever the caller had, and
+# set it only on the two cases that wanted it armed. That was invisible until
+# the override was used for the purpose it was built for — `PINION_PUSH_ON_RED=1
+# git push`, publishing the fix for a red base. `pre-push` runs this file before
+# trusting its own libraries, inherits the exported value, and "a red base
+# refuses" gets 0 instead of 1: the escape hatch disarmed the test that guards
+# the rule it escapes, and the push was refused for the wrong reason. A gate
+# whose documented escape hatch cannot be used has no escape hatch.
+#
+# A test that reads ambient state is testing the environment, not the code —
+# the R1476 "state the premise by construction" rule, applied to a shell fixture.
 with_stub() {
-    local listing="$1"
-    shift
-    ( stub_gh "$listing"; "$@" >/dev/null 2>&1; echo $? )
+    local override="$1" listing="$2"
+    shift 2
+    # SC2030/SC2031 are the POINT: the export is scoped to this subshell, which
+    # is how one case's posture is kept out of the next one's.
+    # shellcheck disable=SC2030
+    (
+        if [[ "$override" == "-" ]]; then
+            unset PINION_PUSH_ON_RED
+        else
+            export PINION_PUSH_ON_RED="$override"
+        fi
+        stub_gh "$listing"
+        "$@" >/dev/null 2>&1
+        echo $?
+    )
 }
 
 ok "a green base publishes" \
-   "$(with_stub "$(row completed success 111)" check_last_ci_run main test)" \
+   "$(with_stub - "$(row completed success 111)" check_last_ci_run main test)" \
    "0"
 
 ok "a red base refuses" \
-   "$(with_stub "$(row completed failure 222)" check_last_ci_run main test)" \
+   "$(with_stub - "$(row completed failure 222)" check_last_ci_run main test)" \
    "1"
 
 ok "an unknown base publishes (nothing to inherit)" \
-   "$(with_stub "" check_last_ci_run main test)" \
+   "$(with_stub - "" check_last_ci_run main test)" \
    "0"
 
 # The override exists so the FIX for a red base can be published. Without it a
 # stop-the-line rule stops the line permanently.
 ok "the override publishes onto a red base" \
-   "$(PINION_PUSH_ON_RED=1 with_stub "$(row completed failure 222)" \
-        check_last_ci_run main test)" \
+   "$(with_stub 1 "$(row completed failure 222)" check_last_ci_run main test)" \
    "0"
 
 # ...and only for the exact value, so a stray `PINION_PUSH_ON_RED=0` in a
 # shell profile cannot quietly disarm the gate.
 ok "the override is not armed by any other value" \
-   "$(PINION_PUSH_ON_RED=0 with_stub "$(row completed failure 222)" \
-        check_last_ci_run main test)" \
+   "$(with_stub 0 "$(row completed failure 222)" check_last_ci_run main test)" \
+   "1"
+
+# (R1500) The override changes the DECISION, not the verdict: a red base under
+# an armed override still says so, loudly, naming the run. Asserted on the
+# message because the exit code cannot tell "published because green" from
+# "published because overridden" — and that indistinguishability is what let
+# R1495's leak turn a red base into a silent green one.
+with_stub_stderr() {
+    local override="$1" listing="$2"
+    shift 2
+    # shellcheck disable=SC2031
+    (
+        export PINION_PUSH_ON_RED="$override"
+        stub_gh "$listing"
+        # Stderr only: the verdict is what is being read, and the listing the
+        # stub prints on stdout is not.
+        { "$@" >/dev/null; } 2>&1
+    )
+}
+
+ok "an armed override still reports the base as red" \
+   "$(with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
+        | grep -c 'FAILED (run 222)')" \
+   "1"
+
+ok "and says which rule let it through" \
+   "$(with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
+        | grep -c 'PINION_PUSH_ON_RED=1')" \
    "1"
 
 # Fail-open on infrastructure absence: no `gh`, no verdict, but publishing is
@@ -184,7 +242,8 @@ ok "the override is not armed by any other value" \
 # this machine" is reproduced, and it is scoped to the subshell.
 # shellcheck disable=SC2123
 ok "no gh on PATH publishes" \
-   "$( (PATH=/nonexistent; check_last_ci_run main test >/dev/null 2>&1; echo $?) )" \
+   "$( (unset PINION_PUSH_ON_RED; PATH=/nonexistent; \
+        check_last_ci_run main test >/dev/null 2>&1; echo $?) )" \
    "0"
 
 # ---------------------------------------------------------------------------

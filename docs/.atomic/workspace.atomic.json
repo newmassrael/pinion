@@ -74748,6 +74748,48 @@
         "R1498 (971d50e2) was committed while the line was red and is still unpushed; it and this round should go together."
       ]
     },
+    "Round 1500": {
+      "decision_summary": "A test that reads ambient state is testing the environment, not the code: the hook suite takes its PINION_PUSH_ON_RED posture as a mandatory argument, because inheriting it let the documented stop-the-line escape hatch fail the very test that guards the rule it escapes.",
+      "changes_bullets": [
+        "with_stub takes the PINION_PUSH_ON_RED posture as a MANDATORY first argument (\"-\" unsets it), so every case states the environment it asserts about and none can inherit one.",
+        "Two assertions on the override's stderr: a red base under an armed override still names the failing run, and still names the rule that let the push through — the exit code alone cannot tell \"published because green\" from \"published because overridden\".",
+        "The shellcheck source= directives use SCRIPTDIR, so `shellcheck -x` resolves both hook libraries from any working directory."
+      ],
+      "verification_bullets": [
+        "The defect was found by using the escape hatch for its documented purpose: `PINION_PUSH_ON_RED=1 git push`, publishing R1499's fix for the red base R1497 left. pre-push runs the hook tests before trusting its own libraries, the exported value reached them, and \"a red base refuses\" got 0 instead of 1 — so the push was refused, for the wrong reason, by the test guarding the rule the override exists to escape.",
+        "Verified across four caller environments (unset, =1, =0, =yes): 24 assertions pass in all of them, where before the suite passed only when PINION_PUSH_ON_RED was absent.",
+        "4 counterfactuals one at a time: harness inherits the environment again = 1 failure under =1 and none when clean (the exact R1495 shape, invisible to a clean run); posture argument ignored = 1; the override's message goes silent = 2; CWD-relative source= restored = shellcheck exits 1.",
+        "shellcheck -x clean from the repo root, from tools/, and from /tmp — R1495 recorded the file as clean while SC1091 hid both libraries from the linter, so neither was ever checked through it.",
+        "No Rust changed; pinion's build and test gates are untouched by this round."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "A gate whose documented escape hatch cannot be used has no escape hatch, and the way this one broke is that the hatch disarmed the test guarding the rule it escapes. Any future hook test that reads process state has the same exposure; the mandatory-posture argument is the shape that prevents it here.",
+        "R1498 and R1499 were still unpushed when this round opened, because this defect is what refused them."
+      ],
+      "publishable_decision_summary": "A test that reads ambient state is testing the environment, not the code: the hook suite takes its PINION_PUSH_ON_RED posture as a mandatory argument, because inheriting it let the documented stop-the-line escape hatch fail the very test that guards the rule it escapes.",
+      "publishable_changes_bullets": [
+        "with_stub takes the PINION_PUSH_ON_RED posture as a MANDATORY first argument (\"-\" unsets it), so every case states the environment it asserts about and none can inherit one.",
+        "Two assertions on the override's stderr: a red base under an armed override still names the failing run, and still names the rule that let the push through — the exit code alone cannot tell \"published because green\" from \"published because overridden\".",
+        "The shellcheck source= directives use SCRIPTDIR, so `shellcheck -x` resolves both hook libraries from any working directory."
+      ],
+      "publishable_verification_bullets": [
+        "The defect was found by using the escape hatch for its documented purpose: `PINION_PUSH_ON_RED=1 git push`, publishing R1499's fix for the red base R1497 left. pre-push runs the hook tests before trusting its own libraries, the exported value reached them, and \"a red base refuses\" got 0 instead of 1 — so the push was refused, for the wrong reason, by the test guarding the rule the override exists to escape.",
+        "Verified across four caller environments (unset, =1, =0, =yes): 24 assertions pass in all of them, where before the suite passed only when PINION_PUSH_ON_RED was absent.",
+        "4 counterfactuals one at a time: harness inherits the environment again = 1 failure under =1 and none when clean (the exact R1495 shape, invisible to a clean run); posture argument ignored = 1; the override's message goes silent = 2; CWD-relative source= restored = shellcheck exits 1.",
+        "shellcheck -x clean from the repo root, from tools/, and from /tmp — R1495 recorded the file as clean while SC1091 hid both libraries from the linter, so neither was ever checked through it.",
+        "No Rust changed; pinion's build and test gates are untouched by this round."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "A gate whose documented escape hatch cannot be used has no escape hatch, and the way this one broke is that the hatch disarmed the test guarding the rule it escapes. Any future hook test that reads process state has the same exposure; the mandatory-posture argument is the shape that prevents it here.",
+        "R1498 and R1499 were still unpushed when this round opened, because this defect is what refused them."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
