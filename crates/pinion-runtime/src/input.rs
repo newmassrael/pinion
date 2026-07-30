@@ -1671,7 +1671,7 @@ impl InputRouter {
             return;
         }
         if let Some(cap_tag) = self.captured_targets.get(&id).cloned() {
-            let release_over = self.cursor_over_tag(id, &cap_tag, state_scene);
+            let release_over = self.cursor_over_tag(id, &cap_tag);
             let event = if !release_over && widget_cancels_on_release_off(state_scene, &cap_tag) {
                 PointerWireEvent::Leave
             } else {
@@ -1704,10 +1704,10 @@ impl InputRouter {
     /// capture widget whose own label sat under the release cursor read as
     /// off-target and cancelled instead of activating — a press released exactly
     /// where it started, refused because the widget paints its own name there.
-    fn cursor_over_tag(&self, id: PointerId, tag: &str, state_scene: &Scene) -> bool {
+    fn cursor_over_tag(&self, id: PointerId, tag: &str) -> bool {
         match (self.cursors.get(&id), self.last_paint_scene.as_ref()) {
             (Some(&(x, y)), Some(scene)) => {
-                resolve_pointer_tag(scene, state_scene, x, y).as_deref() == Some(tag)
+                resolve_pointer_tag(scene, x, y).as_deref() == Some(tag)
             }
             _ => false,
         }
@@ -2634,7 +2634,7 @@ impl InputRouter {
     /// (`LayoutStyle::drop_target`) leg already skipped decoration — it demands a
     /// marker the label does not carry — which is why drops kept working while
     /// presses on the same pixel did not.
-    fn resolve_drop_point(&self, x: f64, y: f64, state_scene: &Scene) -> Option<DropPoint> {
+    fn resolve_drop_point(&self, x: f64, y: f64) -> Option<DropPoint> {
         let paint = self.last_paint_scene.as_ref()?;
         // R1152 §5.51 — a cursor OUTSIDE this window (negative window-local coord)
         // has NO own-window drop target. Guard before the hit-test, whose
@@ -2658,8 +2658,8 @@ impl InputRouter {
         // tagged hit when no node in the path opted in (the reorder-row
         // case, where the drop target is itself the deepest tag), so every
         // pre-R1080 R742 consumer is bit-identical.
-        let tag = resolve_drop_target_tag(paint, x, y)
-            .or_else(|| resolve_pointer_tag(paint, state_scene, x, y))?;
+        let tag =
+            resolve_drop_target_tag(paint, x, y).or_else(|| resolve_pointer_tag(paint, x, y))?;
         let rect = rect_for_tag(paint, &tag)?;
         let (x_rel, y_rel) = normalize_cursor(rect, x, y);
         Some(DropPoint { tag, x_rel, y_rel })
@@ -2812,7 +2812,7 @@ impl InputRouter {
                 // Vetoed → fall through: the perimeter is just interior here.
             }
         }
-        self.resolve_drop_point(x, y, state_scene)
+        self.resolve_drop_point(x, y)
     }
 
     /// (R1124 §5.51 PR-33) Whether the own-window drop `own` is a SELF-DROP for a
@@ -2853,7 +2853,7 @@ impl InputRouter {
             // event, so `pointer_down` cannot arm a tag `dispatch_send_mods` will
             // then drop, and `hover_wants_capture` is read off the widget that
             // owns the region rather than off decoration painted over it.
-            (Some(&(x, y)), Some(scene)) => resolve_pointer_tag(scene, state_scene, x, y),
+            (Some(&(x, y)), Some(scene)) => resolve_pointer_tag(scene, x, y),
             _ => None,
         };
         let prev = self.hover_targets.get(&id).cloned();
@@ -2882,79 +2882,66 @@ impl InputRouter {
     }
 }
 
-/// R1497 §5.35 §5.51 §2 #2 — hit-test `paint_scene` at `(x, y)` and return the
-/// tag of the deepest node under the pointer **that can receive a pointer
-/// event**: the deepest tagged ancestor whose primary half resolves to an
-/// [`ExternalNode`] in `state_scene`, exactly as [`dispatch_send_mods`] resolves
-/// its target. `None` when no node in the hit path carries a tag (the cursor is
-/// over a fully untagged region — usually the background).
+/// R1499 §5.35 §5.51 §2 #2 — hit-test `paint_scene` at `(x, y)` and return the
+/// tag of the deepest node under the pointer. `None` when no node in the hit
+/// path carries a tag (the cursor is over a fully untagged region — usually the
+/// background).
 ///
 /// The walk is deepest-first, sharing [`Scene::hit_test`]'s single descent the
 /// way [`Scene::cursor_hint_at`] does: one hit-test, then
 /// [`Scene::lookup_path_ref`] over the returned path.
 ///
-/// ## Why the deepest TAG is the wrong answer
+/// ## Decoration declares itself, it is not inferred
 ///
-/// A tag is an introspection name, not an event target — the target is the
-/// `External` behind it. Pre-R1497 this returned the deepest tag outright, so a
-/// tagged decorative child (a header section's own label, an icon inside a row)
-/// became the hover target, `pointer_down` dispatched to it, and
-/// `dispatch_send_mods` found no `External` for its primary half and **dropped
-/// the event silently**. Measured on `hello-column-reorder`: `scene/click` on
-/// `colhdr#3` / `colhdr#4` was lost 100% of the time while `#0` / `#1` / `#2`
-/// worked, and the discriminator was exactly whether the cell's rect CENTRE — the
-/// point `scene/click {path}` presses — fell inside that section's
-/// `colhdr_label#<n>` text rect. A centred label makes the most obvious click
-/// point the one that cannot work.
+/// A tagged decorative child — a header section's own label, an icon inside a
+/// row — must not become the pointer target: `pointer_down` would dispatch to
+/// it, [`dispatch_send_mods`] would find no `External` for its primary half, and
+/// the event would be **dropped silently**. Measured on `hello-column-reorder`
+/// (R1497): `scene/click` on `colhdr#3` / `colhdr#4` was lost 100% of the time
+/// while `#0` / `#1` / `#2` worked, and the discriminator was exactly whether the
+/// cell's rect CENTRE — the point `scene/click {path}` presses — fell inside that
+/// section's `colhdr_label#<n>` text rect. A centred label makes the most obvious
+/// click point the one that cannot work.
 ///
-/// Qt spells the same rule `Qt::WA_TransparentForMouseEvents` and CSS spells it
-/// `pointer-events: none`; decoration does not intercept the pointer. pinion
-/// needs no such declaration, because "is there an `External` behind this tag"
-/// already answers it — and a rule that cannot be forgotten at a paint site is
-/// worth more than one that can.
+/// The cure is the declaration the decoration itself carries:
+/// [`LayoutStyle::pointer_transparent`](pinion_core::style::LayoutStyle::pointer_transparent)
+/// (R705), Qt's `WA_TransparentForMouseEvents` and CSS's `pointer-events: none`.
+/// [`Scene::hit_test`] already skips such a node, so it never reaches this walk
+/// and the widget beneath it — sibling or ancestor — is hit exactly as CSS says.
 ///
-/// ## The fallback
+/// **R1499 — this must not be inferred instead.** R1497 tried to derive it here,
+/// answering the deepest tag whose primary resolves to an `External` and falling
+/// back to the deepest tag when none did, on the reasoning that "is there an
+/// `External` behind this tag" already answers the question. It does not, and the
+/// justification was factually wrong: window chrome was said to be safe because
+/// the controls and the eight resize regions "are injected as top-level SIBLINGS
+/// of the content, so no `External` is ever an ancestor of one". But
+/// `pinion_overlay`'s `wrap_into_container` returns an existing `Scene::Container`
+/// unchanged, so when the app's root view IS that container and carries the
+/// widget's tag — the chromeless / content-header floater shape — the regions
+/// become CHILDREN of a tagged, `External`-backed node, as does a dock header's
+/// own close control. Three `pinion-shell` window-chrome tests went red.
 ///
-/// When NO tag on the path resolves to an `External`, the deepest tag is
-/// returned unchanged. Window-chrome controls and the eight resize regions are
-/// tagged [`Scene`] nodes with no `External` behind them — the shell intercepts
-/// them by tag (`pinion_overlay::window_control_for_tag`) before widget routing
-/// — so they must stay hoverable. They are injected as top-level SIBLINGS of the
-/// content, so no `External` is ever an ancestor of one, and this fallback hands
-/// them back verbatim. That makes R1497 a pure widening: it only changes the
-/// answer where the event was previously discarded.
-fn resolve_pointer_tag(paint_scene: &Scene, state_scene: &Scene, x: f64, y: f64) -> Option<String> {
+/// The two cases are structurally identical — `colhdr_label#3` inside `colhdr`
+/// (the ancestor should win) and `window-resize#north` inside `r1121-content`
+/// (the descendant should win) — so no rule reading the tree can tell them apart.
+/// Which one is decoration is a fact only the paint site knows, which is why Qt
+/// and CSS both make it a declaration and why this walk asks for none.
+fn resolve_pointer_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
     let xu = floor_clamp_u32(x);
     let yu = floor_clamp_u32(y);
     let hit = paint_scene.hit_test(xu, yu)?;
     // Walk segments deepest-first: the longer the prefix, the deeper
     // the ancestor. The root (empty prefix) is the last fallback.
-    let mut deepest: Option<&str> = None;
     for k in (0..=hit.segments.len()).rev() {
         let Some(scene) = paint_scene.lookup_path_ref(&hit.segments[..k]) else {
             continue;
         };
         if let Some(tag) = scene.tag() {
-            if tag_has_dispatch_target(state_scene, tag) {
-                return Some(tag.to_string());
-            }
-            // Remember the deepest tag for the no-External-anywhere fallback.
-            if deepest.is_none() {
-                deepest = Some(tag);
-            }
+            return Some(tag.to_string());
         }
     }
-    deepest.map(str::to_string)
-}
-
-/// R1497 §5.35 — whether a pointer event addressed to `tag` would reach a
-/// widget: the existence half of [`dispatch_send_mods`]'s target resolution.
-/// Splits the composite tag exactly as the dispatch does and then asks the SAME
-/// lookup, so the two cannot disagree about which tags are addressable — the
-/// agreement is structural, not merely tested.
-fn tag_has_dispatch_target(state_scene: &Scene, tag: &str) -> bool {
-    let (primary, _) = split_subindex(tag);
-    state_scene.find_external_with_tag(primary).is_some()
+    None
 }
 
 /// R1080 §5.51 — hit-test `paint_scene` at `(x, y)` and return the nearest
@@ -8698,7 +8685,7 @@ mod tests {
         );
         let (mut state_scene, _) = state_with_button();
         assert_eq!(
-            resolve_pointer_tag(&scene, &state_scene, 200.0, 200.0).as_deref(),
+            resolve_pointer_tag(&scene, 200.0, 200.0).as_deref(),
             Some("panel#content"),
             "hover stays on the deepest tag (unchanged)",
         );
@@ -8709,7 +8696,7 @@ mod tests {
         let mut router = InputRouter::new();
         router.update_paint_scene(scene, &mut state_scene);
         let dp = router
-            .resolve_drop_point(200.0, 200.0, &state_scene)
+            .resolve_drop_point(200.0, 200.0)
             .expect("over a drop target");
         assert_eq!(dp.tag, "panel");
         assert!(
@@ -8739,7 +8726,7 @@ mod tests {
         let (mut state_scene, _) = state_with_button();
         router.update_paint_scene(scene, &mut state_scene);
         let dp = router
-            .resolve_drop_point(200.0, 200.0, &state_scene)
+            .resolve_drop_point(200.0, 200.0)
             .expect("over a tagged region");
         // Deepest tag = the content; normalised over the CONTENT rect
         // (300 wide at offset 50): (200 - 50) / 300 = 0.5.
@@ -8772,22 +8759,14 @@ mod tests {
         let (mut state_scene, _) = state_with_button();
         router.update_paint_scene(scene, &mut state_scene);
         // In-bounds over the panel resolves it.
-        assert!(
-            router
-                .resolve_drop_point(200.0, 200.0, &state_scene)
-                .is_some()
-        );
+        assert!(router.resolve_drop_point(200.0, 200.0).is_some());
         // A negative (out-of-window) cursor resolves NOTHING.
         assert!(
-            router
-                .resolve_drop_point(-50.0, 200.0, &state_scene)
-                .is_none(),
+            router.resolve_drop_point(-50.0, 200.0).is_none(),
             "a cursor left of the window has no own-window drop target",
         );
         assert!(
-            router
-                .resolve_drop_point(200.0, -50.0, &state_scene)
-                .is_none(),
+            router.resolve_drop_point(200.0, -50.0).is_none(),
             "a cursor above the window has no own-window drop target",
         );
     }
@@ -9495,9 +9474,16 @@ mod tests {
     /// would answer `main_btn` and lose the sub-region the widget acts on.
     fn paint_with_labelled_cells(primary: &str) -> Scene {
         let cell = |i: u32, x: u32| {
+            // R1499 — the label declares itself decoration, as Qt's
+            // `WA_TransparentForMouseEvents` and CSS's `pointer-events: none`
+            // do and as the real consumer's paint site now does. Drop the
+            // declaration and the press lands on a tag no `External` backs.
             let label = Scene::Box(
                 BoxNode::filled(Rect::new(x + 30, 10, 40, 20), Color::default())
-                    .with_tag(format!("{primary}_label#{i}")),
+                    .with_tag(format!("{primary}_label#{i}"))
+                    .with_layout(
+                        pinion_core::style::LayoutStyle::new().with_pointer_transparent(true),
+                    ),
             );
             let mut c = ContainerNode::new(vec![label]).with_tag(format!("{primary}#{i}"));
             c.rect = Rect::new(x, 0, 100, 40);
@@ -9573,64 +9559,61 @@ mod tests {
         assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_btn#1"));
     }
 
-    /// R1497 — the fallback. Window-chrome controls and the eight resize regions
-    /// are tagged nodes with NO `External` behind them; the shell intercepts them
-    /// by tag before widget routing (`pinion_overlay::window_control_for_tag`), so
-    /// they must stay hoverable. They are injected as top-level siblings of the
-    /// content, so no `External` is ever their ancestor and the deepest tag is
-    /// returned verbatim — which is what makes R1497 a pure widening rather than
-    /// a trade.
+    /// R1499 §5.35 §5.16 — THE regression R1497 shipped, as a router test.
     ///
-    /// Non-tautological: with the fallback removed this resolves `None` and the
-    /// shell's chrome interception stops seeing the control.
+    /// A window-chrome control with no `External` behind it, nested inside a
+    /// tagged container that DOES have one. R1497 answered the deepest tag whose
+    /// primary resolves to an `External`, falling back to the deepest tag only
+    /// when none on the path did — so this resolved the container and the
+    /// shell's chrome interception stopped seeing the control. R1497 believed
+    /// the shape impossible ("injected as top-level SIBLINGS of the content"),
+    /// but `pinion_overlay::wrap_into_container` returns an existing
+    /// `Scene::Container` unchanged, so a chromeless window whose root view IS
+    /// that container hosts the regions as its CHILDREN. Three `pinion-shell`
+    /// window-chrome tests went red on it.
+    ///
+    /// The control declares nothing, so the deepest tag is the answer. The
+    /// discriminator against the R1497 rule is that `main_btn` — the container —
+    /// is genuinely `External`-backed here, which is what made it win.
     #[test]
-    fn r1497_the_deepest_tag_survives_when_nothing_on_the_path_can_receive() {
-        let mut inner = ContainerNode::new(vec![]).with_tag("ai-overlay/window-controls#close");
-        inner.rect = Rect::new(160, 0, 40, 30);
-        let mut strip = ContainerNode::new(vec![Scene::Container(inner)]).with_tag("ai-overlay/x");
-        strip.rect = Rect::new(0, 0, 200, 30);
-        let mut root = ContainerNode::new(vec![Scene::Container(strip)]);
-        root.rect = Rect::new(0, 0, 200, 100);
-        let paint = Scene::Container(root);
-        // The state scene's only External is `main_btn` — nothing on this path.
+    fn r1499_a_chrome_tag_inside_an_external_backed_container_still_wins() {
+        let mut close =
+            ContainerNode::new(vec![]).with_tag("ai-overlay/window-controls#close".to_string());
+        close.rect = Rect::new(160, 0, 40, 30);
+        // Tagged `main_btn`, which the state scene DOES back with an External —
+        // the content-hosted shape, not a top-level sibling.
+        let mut content =
+            ContainerNode::new(vec![Scene::Container(close)]).with_tag("main_btn".to_string());
+        content.rect = Rect::new(0, 0, 200, 100);
+        let paint = Scene::Container(content);
         let (state, _) = state_with_button();
-        assert_eq!(
-            resolve_pointer_tag(&paint, &state, 170.0, 10.0).as_deref(),
-            Some("ai-overlay/window-controls#close"),
-            "a tag no External backs is still the answer when none is available",
+        assert!(
+            state.find_external_with_tag("main_btn").is_some(),
+            "the fixture's premise: the ANCESTOR is the External-backed one",
         );
-    }
+        assert_eq!(
+            resolve_pointer_tag(&paint, 170.0, 10.0).as_deref(),
+            Some("ai-overlay/window-controls#close"),
+            "a tag the shell intercepts is not shadowed by the widget it sits in",
+        );
+        // And the widget still owns everywhere the control is not.
+        assert_eq!(
+            resolve_pointer_tag(&paint, 20.0, 50.0).as_deref(),
+            Some("main_btn"),
+        );
 
-    /// R1497 — the predicate that decides "can this tag receive an event" and the
-    /// lookup the dispatch performs share one walk
-    /// ([`Scene::find_external_with_tag`]), so what remains to hold them to is
-    /// the COMPOSITE SPLIT: each must reduce a `widget#sub` tag to its primary
-    /// half before looking, or hover would arm tags the dispatch then discards.
-    /// A predicate that stopped splitting passes every other test in this file.
-    #[test]
-    fn r1497_dispatch_target_predicate_agrees_with_the_dispatch_lookup() {
-        let (mut state, _) = state_with_button();
-        for tag in [
-            "main_btn",
-            "main_btn#0",
-            "main_btn#h3",
-            "main_btn_label",
-            "main_btn_label#0",
-            "nobody",
-            "",
-        ] {
-            let (primary, _) = split_subindex(tag);
-            let predicate = tag_has_dispatch_target(&state, tag);
-            let dispatch = state.find_external_with_tag_mut(primary).is_some();
-            assert_eq!(
-                predicate, dispatch,
-                "predicate and dispatch lookup disagree about {tag:?}",
-            );
-        }
-        // The split is the content: a composite tag is addressable exactly when
-        // its primary half is, whatever the sub-index says.
-        assert!(tag_has_dispatch_target(&state, "main_btn#7"));
-        assert!(!tag_has_dispatch_target(&state, "main_btn_label#7"));
+        // The shape R1497 assumed was the only one — the control as a top-level
+        // sibling, with no External anywhere on the path. It has to keep working
+        // too; the rule is the same one, which is the point.
+        let mut sibling =
+            ContainerNode::new(vec![]).with_tag("ai-overlay/window-controls#close".to_string());
+        sibling.rect = Rect::new(160, 0, 40, 30);
+        let mut root = ContainerNode::new(vec![Scene::Container(sibling)]);
+        root.rect = Rect::new(0, 0, 200, 100);
+        assert_eq!(
+            resolve_pointer_tag(&Scene::Container(root), 170.0, 10.0).as_deref(),
+            Some("ai-overlay/window-controls#close"),
+        );
     }
 
     /// R1497 — the second, smaller widening the SSOT switch brings. The router's
@@ -9641,8 +9624,7 @@ mod tests {
     /// (the branch set `contains_tag` and `hit_test` already walked), so both the
     /// predicate and the dispatch now reach it.
     ///
-    /// Non-tautological: under the retired walk `tag_has_dispatch_target` is
-    /// `false` here and the press logs nothing.
+    /// Non-tautological: under the retired walk the press logs nothing.
     #[test]
     fn r1497_an_external_inside_a_scroll_is_addressable() {
         use pinion_core::scene::ScrollNode;
@@ -9651,7 +9633,7 @@ mod tests {
         let inner = Scene::External(ExternalNode::new(Box::new(capture)).with_tag("main_btn"));
         let mut state = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 100), inner));
         assert!(
-            tag_has_dispatch_target(&state, "main_btn#0"),
+            state.find_external_with_tag("main_btn").is_some(),
             "a scroll region does not hide the widget it holds",
         );
         let mut router = InputRouter::new();
@@ -9720,7 +9702,7 @@ mod tests {
             None
         );
         let dp = router
-            .resolve_drop_point(150.0, 20.0, &state)
+            .resolve_drop_point(150.0, 20.0)
             .expect("over a tagged region");
         assert_eq!(
             dp.tag, "dnd#1",

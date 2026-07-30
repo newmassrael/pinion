@@ -74694,6 +74694,60 @@
         "R1495's leftovers untouched: target-budget.sh still has no filesystem-fixture test; the push gate reads the last COMPLETED run; CI's demo-sweep is still needs:-gated behind lint-and-test."
       ]
     },
+    "Round 1499": {
+      "decision_summary": "Decoration declares itself rather than being inferred: R1497's router rule is reverted and the fix moves to LayoutStyle::pointer_transparent (R705, Qt WA_TransparentForMouseEvents), because no rule reading the tree can tell a widget's own label from a shell-intercepted chrome region nested in the same place.",
+      "changes_bullets": [
+        "Reverted R1497's inferred pointer resolution: resolve_pointer_tag answers the deepest tag again, and no longer consults the state scene for an External behind it.",
+        "The cure R1497 was reaching for is a declaration that already existed — LayoutStyle::pointer_transparent (R705, Qt WA_TransparentForMouseEvents / CSS pointer-events:none), which Scene::hit_test already honours by skipping the node entirely.",
+        "hello-column-reorder's header label declares it, which is what keeps R1497's defect fixed; the label is tagged for snapshots and the a11y walk and dispatches nowhere, so a press on it must reach the section beneath.",
+        "Dropped tag_has_dispatch_target and the state_scene parameters it forced onto cursor_over_tag and resolve_drop_point.",
+        "Kept R1497's genuinely separate win: the router's private External walks stay retired in favour of Scene::find_external_with_tag, so an External inside a Scroll is still addressable by every dispatch site."
+      ],
+      "verification_bullets": [
+        "The three pinion-shell window-chrome tests R1497 turned red pass again: content_header_floater_top_edge_resizes_close_reachable_below, rpc_click_drives_content_hosted_header_controls_too, r1343_view_drawn_focus_indicator_survives_every_producer.",
+        "Root cause established from the code, three symptoms agreeing: pinion_overlay's wrap_into_container returns an existing Scene::Container unchanged, so a chromeless window whose root view IS that tagged container hosts the eight resize regions as its CHILDREN — R1497's stated reason (\"top-level SIBLINGS, so no External is ever their ancestor\") was false.",
+        "No rule reading the tree can separate the two cases: colhdr_label#3 inside colhdr (ancestor should win) and window-resize#north inside r1121-content (descendant should win) are structurally identical, which is why Qt and CSS both make it a declaration.",
+        "3 counterfactuals: consumer declaration removed = the R1497 demo dies with the original symptom (scene/click on section 3 sorts nothing); fixture declaration removed = 5 router tests die; R1497's rule restored with the declaration in place = the same 3 shell tests die again, so both halves are load-bearing and neither substitutes for the other.",
+        "pinion-runtime 576 (net -1: the predicate test lost its subject), pinion-shell 213, pinion-core / pinion-rpc / pinion-overlay / pinion-widget-paint all clean.",
+        "16 demos PASS including r1497_pointer_target itself and the router-heavy set R1497 exercised (r707_table, r719_pointer_leave, r729_tooltip_rich, r1096/r1097 dock, r1159 drop resolution).",
+        "fmt clean, clippy -D pedantic clean on pinion-runtime / pinion-shell / hello-column-reorder, cargo doc --workspace --document-private-items clean, cargo check --workspace clean."
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "The local gate has to cover the crates whose BEHAVIOUR a round changes, not only the crate it edited: R1497 ran pinion-runtime and the breakage was in pinion-shell, which consumes the router. 20 crates and examples depend on pinion-runtime.",
+        "The repo's other tagged decorations were checked: table.rs's _cellsel already declares pointer_transparent (R954, the same reasoning), and datepicker's _wh{col} weekday header is genuinely inert in Qt too, so its silence is the right outcome rather than a latent defect.",
+        "R1497's carry note \"the eager table's R730 tag inversion is now unnecessary\" is withdrawn: with the inference gone the discipline is load-bearing again, and the table already follows it.",
+        "R1498 (971d50e2) was committed while the line was red and is still unpushed; it and this round should go together."
+      ],
+      "publishable_decision_summary": "Decoration declares itself rather than being inferred: R1497's router rule is reverted and the fix moves to LayoutStyle::pointer_transparent (R705, Qt WA_TransparentForMouseEvents), because no rule reading the tree can tell a widget's own label from a shell-intercepted chrome region nested in the same place.",
+      "publishable_changes_bullets": [
+        "Reverted R1497's inferred pointer resolution: resolve_pointer_tag answers the deepest tag again, and no longer consults the state scene for an External behind it.",
+        "The cure R1497 was reaching for is a declaration that already existed — LayoutStyle::pointer_transparent (R705, Qt WA_TransparentForMouseEvents / CSS pointer-events:none), which Scene::hit_test already honours by skipping the node entirely.",
+        "hello-column-reorder's header label declares it, which is what keeps R1497's defect fixed; the label is tagged for snapshots and the a11y walk and dispatches nowhere, so a press on it must reach the section beneath.",
+        "Dropped tag_has_dispatch_target and the state_scene parameters it forced onto cursor_over_tag and resolve_drop_point.",
+        "Kept R1497's genuinely separate win: the router's private External walks stay retired in favour of Scene::find_external_with_tag, so an External inside a Scroll is still addressable by every dispatch site."
+      ],
+      "publishable_verification_bullets": [
+        "The three pinion-shell window-chrome tests R1497 turned red pass again: content_header_floater_top_edge_resizes_close_reachable_below, rpc_click_drives_content_hosted_header_controls_too, r1343_view_drawn_focus_indicator_survives_every_producer.",
+        "Root cause established from the code, three symptoms agreeing: pinion_overlay's wrap_into_container returns an existing Scene::Container unchanged, so a chromeless window whose root view IS that tagged container hosts the eight resize regions as its CHILDREN — R1497's stated reason (\"top-level SIBLINGS, so no External is ever their ancestor\") was false.",
+        "No rule reading the tree can separate the two cases: colhdr_label#3 inside colhdr (ancestor should win) and window-resize#north inside r1121-content (descendant should win) are structurally identical, which is why Qt and CSS both make it a declaration.",
+        "3 counterfactuals: consumer declaration removed = the R1497 demo dies with the original symptom (scene/click on section 3 sorts nothing); fixture declaration removed = 5 router tests die; R1497's rule restored with the declaration in place = the same 3 shell tests die again, so both halves are load-bearing and neither substitutes for the other.",
+        "pinion-runtime 576 (net -1: the predicate test lost its subject), pinion-shell 213, pinion-core / pinion-rpc / pinion-overlay / pinion-widget-paint all clean.",
+        "16 demos PASS including r1497_pointer_target itself and the router-heavy set R1497 exercised (r707_table, r719_pointer_leave, r729_tooltip_rich, r1096/r1097 dock, r1159 drop resolution).",
+        "fmt clean, clippy -D pedantic clean on pinion-runtime / pinion-shell / hello-column-reorder, cargo doc --workspace --document-private-items clean, cargo check --workspace clean."
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The local gate has to cover the crates whose BEHAVIOUR a round changes, not only the crate it edited: R1497 ran pinion-runtime and the breakage was in pinion-shell, which consumes the router. 20 crates and examples depend on pinion-runtime.",
+        "The repo's other tagged decorations were checked: table.rs's _cellsel already declares pointer_transparent (R954, the same reasoning), and datepicker's _wh{col} weekday header is genuinely inert in Qt too, so its silence is the right outcome rather than a latent defect.",
+        "R1497's carry note \"the eager table's R730 tag inversion is now unnecessary\" is withdrawn: with the inference gone the discipline is load-bearing again, and the table already follows it.",
+        "R1498 (971d50e2) was committed while the line was red and is still unpushed; it and this round should go together."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

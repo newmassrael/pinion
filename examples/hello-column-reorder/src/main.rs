@@ -1023,7 +1023,19 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
             ),
         )
         .with_tag(format!("colhdr_label#{visual}"))
-        .with_layout(LayoutStyle::new().with_absolute_position(12, 12)),
+        // R1499 — decoration, and it says so: Qt's `WA_TransparentForMouseEvents`
+        // / CSS's `pointer-events: none`. The label is tagged for the snapshot
+        // assertions and the a11y walk, and nothing dispatches to it, so a press
+        // whose coordinate lands on it must reach the section underneath. Without
+        // this the section's own centred label makes the most obvious click point
+        // the one that cannot work — `scene/click` on `colhdr#3` / `#4` was lost
+        // 100% of the time (R1497 measured it; R1499 moved the cure here, where
+        // the fact that this is decoration is actually known).
+        .with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(12, 12)
+                .with_pointer_transparent(true),
+        ),
     );
     // R1491 — the sort arrow, asked for by LOGICAL column through the same
     // `col_sort_dir` / `sort_glyph` pair every other pinion grid header uses.
