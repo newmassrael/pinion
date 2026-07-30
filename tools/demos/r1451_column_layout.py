@@ -118,6 +118,12 @@ IDENTITY = {
     "sections_movable": True,
     "sections_clickable": True,
     "resize_contents_precision": 1000,
+    # R1498 — a fifth time, for Qt's `stretchLastSection`. `False` is both Qt's
+    # default and this app's posture: the strip is 640 wide and the sections sum
+    # to 570, and until a consumer asks for the rule those 70 pixels stay
+    # unpainted. Five rounds running now, this equality has been the thing that
+    # makes a field's arrival visible.
+    "stretch_last_section": False,
 }
 
 

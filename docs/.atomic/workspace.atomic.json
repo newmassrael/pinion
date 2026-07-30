@@ -74630,6 +74630,70 @@
         "R1495 leftovers untouched: target-budget.sh still has no filesystem-fixture test; the push gate reads the last COMPLETED run so two pushes can land before a verdict; CI's demo-sweep is still needs:-gated behind lint-and-test."
       ]
     },
+    "Round 1498": {
+      "decision_summary": "A row fills the viewport it was given: the last PAINTED section absorbs the leftover width (Qt QHeaderView::stretchLastSection), which is a header rule keyed by position and therefore not the Stretch mode that is keyed to a column.",
+      "changes_bullets": [
+        "The last painted section absorbs the leftover viewport width — Qt's QHeaderView::stretchLastSection, off by default as in Qt, readable, writable, and carried by saveState().",
+        "Implemented as Qt's documented override rather than a second sizing pass: the last visible section's effective resize mode becomes Stretch, so the division that already exists gives it what the others leave over.",
+        "The rule is keyed by POSITION, not by column, which is why Stretch on the last column is not a spelling of it: hiding that column dropped the fill entirely and moving it painted the fill wherever the column went.",
+        "effective_resize_mode / effective_resize_modes join resize_mode / resize_modes on the wire — the same stored-versus-applied pair sizes and section_sizes already form, because a rule that overrides a mode makes the two differ.",
+        "R1494's cascade now asks the effective mode: a filled section derives its width, so squeezing its stored size would move no pixels while the cascade counted the debt as paid.",
+        "The binding's [ / ] gesture is gated on the effective mode too, and its readout names the applied modes with the set ones beside them, the shape it already used for sizes.",
+        "Nothing is written to any section, so withdrawing the rule restores the previous width by construction; Qt needs a lastSectionSize memory only because Qt writes the stretched width into the section.",
+        "Split the scalar-rule writes out of ColumnLayout::intervene (clippy 100-line, extracted rather than allowed) on the axis query_parametric uses: only that half grows when Qt's next header property arrives."
+      ],
+      "verification_bullets": [
+        "Measured over the real wire before any change: stretch_last_section absent (UnknownIntrospectPath), visible_total 570 against an available_width of 640 — 70 pixels no rule claimed.",
+        "The Stretch-mode contrast measured in the same session: 4:stretch filled to 170, hiding it dropped visible_total to 470, and moving it to the front painted the 170-wide fill at x=0.",
+        "9 counterfactuals one at a time: rule inert=12 (8 core + 4 example), last-logical-not-last-visible=2, cascade on the stored mode=1, absent-decodes-true=1, gesture on the stored mode=1, readout names the stored mode=1, hidden-blind last section=2, restore drops the rule=1, effective plural collapses=3.",
+        "CF-4 and CF-5 first passed the demo: nothing was driving the absent-field decode or the keystroke gate over the wire. Both paths added, and both counterfactuals then killed it.",
+        "pinion-core 2811 tests (+12), hello-column-reorder 39 (+4), tools/demos/r1498_stretch_last_section.py 49 assertions PASS and FAIL before the fix (exit 1, measured under CF-1).",
+        "r1451's whole-object saveState equality failed again, a fifth round running, which is what that assertion is for; updated.",
+        "My own ad-hoc sweep loop reported 12 PASS while r1451 was failing — rc captured tail's exit, not python's. Re-run with the exit code taken from the command itself: 12 demos PASS.",
+        "fmt clean, clippy -D pedantic clean on both touched crates, cargo doc --workspace --document-private-items clean, cargo check --workspace clean, validate-workspace T1=0."
+      ],
+      "impact_refs": [
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "HeaderState's two rule booleans became a LayoutRules struct (clippy struct_excessive_bools, fixed rather than allowed); Qt's remaining header rules land there.",
+        "Remaining QHeaderView saveState fields untouched: highlightSelected, defaultAlignment, sortIndicatorClearable. firstSectionMovable needs the drop side gated too, not only the arm.",
+        "The fill clamps to the floor when the leading sections already exceed the viewport, the same honest answer bounded Stretch gives; there is no horizontal scroll interaction to report because visible_total reports the row actually painted.",
+        "R1497's leftovers untouched: resolution cost per cursor move is still unmeasured, and the eager table's R730 tag inversion is now unnecessary but is a paint change.",
+        "R1495's leftovers untouched: target-budget.sh still has no filesystem-fixture test; the push gate reads the last COMPLETED run; CI's demo-sweep is still needs:-gated behind lint-and-test."
+      ],
+      "publishable_decision_summary": "A row fills the viewport it was given: the last PAINTED section absorbs the leftover width (Qt QHeaderView::stretchLastSection), which is a header rule keyed by position and therefore not the Stretch mode that is keyed to a column.",
+      "publishable_changes_bullets": [
+        "The last painted section absorbs the leftover viewport width — Qt's QHeaderView::stretchLastSection, off by default as in Qt, readable, writable, and carried by saveState().",
+        "Implemented as Qt's documented override rather than a second sizing pass: the last visible section's effective resize mode becomes Stretch, so the division that already exists gives it what the others leave over.",
+        "The rule is keyed by POSITION, not by column, which is why Stretch on the last column is not a spelling of it: hiding that column dropped the fill entirely and moving it painted the fill wherever the column went.",
+        "effective_resize_mode / effective_resize_modes join resize_mode / resize_modes on the wire — the same stored-versus-applied pair sizes and section_sizes already form, because a rule that overrides a mode makes the two differ.",
+        "R1494's cascade now asks the effective mode: a filled section derives its width, so squeezing its stored size would move no pixels while the cascade counted the debt as paid.",
+        "The binding's [ / ] gesture is gated on the effective mode too, and its readout names the applied modes with the set ones beside them, the shape it already used for sizes.",
+        "Nothing is written to any section, so withdrawing the rule restores the previous width by construction; Qt needs a lastSectionSize memory only because Qt writes the stretched width into the section.",
+        "Split the scalar-rule writes out of ColumnLayout::intervene (clippy 100-line, extracted rather than allowed) on the axis query_parametric uses: only that half grows when Qt's next header property arrives."
+      ],
+      "publishable_verification_bullets": [
+        "Measured over the real wire before any change: stretch_last_section absent (UnknownIntrospectPath), visible_total 570 against an available_width of 640 — 70 pixels no rule claimed.",
+        "The Stretch-mode contrast measured in the same session: 4:stretch filled to 170, hiding it dropped visible_total to 470, and moving it to the front painted the 170-wide fill at x=0.",
+        "9 counterfactuals one at a time: rule inert=12 (8 core + 4 example), last-logical-not-last-visible=2, cascade on the stored mode=1, absent-decodes-true=1, gesture on the stored mode=1, readout names the stored mode=1, hidden-blind last section=2, restore drops the rule=1, effective plural collapses=3.",
+        "CF-4 and CF-5 first passed the demo: nothing was driving the absent-field decode or the keystroke gate over the wire. Both paths added, and both counterfactuals then killed it.",
+        "pinion-core 2811 tests (+12), hello-column-reorder 39 (+4), tools/demos/r1498_stretch_last_section.py 49 assertions PASS and FAIL before the fix (exit 1, measured under CF-1).",
+        "r1451's whole-object saveState equality failed again, a fifth round running, which is what that assertion is for; updated.",
+        "My own ad-hoc sweep loop reported 12 PASS while r1451 was failing — rc captured tail's exit, not python's. Re-run with the exit code taken from the command itself: 12 demos PASS.",
+        "fmt clean, clippy -D pedantic clean on both touched crates, cargo doc --workspace --document-private-items clean, cargo check --workspace clean, validate-workspace T1=0."
+      ],
+      "publishable_impact_refs": [
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "HeaderState's two rule booleans became a LayoutRules struct (clippy struct_excessive_bools, fixed rather than allowed); Qt's remaining header rules land there.",
+        "Remaining QHeaderView saveState fields untouched: highlightSelected, defaultAlignment, sortIndicatorClearable. firstSectionMovable needs the drop side gated too, not only the arm.",
+        "The fill clamps to the floor when the leading sections already exceed the viewport, the same honest answer bounded Stretch gives; there is no horizontal scroll interaction to report because visible_total reports the row actually painted.",
+        "R1497's leftovers untouched: resolution cost per cursor move is still unmeasured, and the eager table's R730 tag inversion is now unnecessary but is a paint change.",
+        "R1495's leftovers untouched: target-budget.sh still has no filesystem-fixture test; the push gate reads the last COMPLETED run; CI's demo-sweep is still needs:-gated behind lint-and-test."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -534,6 +534,27 @@ impl ExternalIntrospect for ColumnHeaderExternal {
     }
 }
 
+/// R1498 — the header-wide sizing rules Qt's `saveState()` carries, grouped
+/// because they are one kind of thing: a policy that belongs to the header
+/// rather than to a column, that the readout names, and that a keystroke moves.
+///
+/// Grouped rather than left flat for the reason the R1496 permissions are a
+/// pair: the state this view paints from is `Copy` and flat by construction,
+/// and a run of loose policy booleans in it stops saying which ones are read
+/// together. Qt has more of these (`highlightSelected`, `firstSectionMovable`),
+/// so this is where they land.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LayoutRules {
+    /// R1494 — Qt's `cascadingSectionResizes`: whether the `[` / `]` gesture
+    /// takes its space from the following sections or from the row's width.
+    /// Painted, because the same keystroke does two visibly different things
+    /// depending on it.
+    cascading: bool,
+    /// R1498 — Qt's `stretchLastSection`: whether the section painted last
+    /// absorbs the leftover viewport width. Painted for the same reason.
+    stretch_last: bool,
+}
+
 /// The `Copy` posture the view paints from — the whole header layout plus the
 /// live drag preview, all read off the primary external.
 ///
@@ -592,11 +613,16 @@ struct HeaderState {
     /// else determined it, and the size `reset_default_section_size` returns
     /// every shown section to.
     default_size: u32,
-    /// R1494 — Qt's `cascadingSectionResizes`: whether the `[` / `]` gesture
-    /// takes its space from the following sections or from the row's width.
-    /// Painted, because the same keystroke does two visibly different things
-    /// depending on it.
-    cascading: bool,
+    /// R1498 — the header-wide sizing rules, grouped. See [`LayoutRules`].
+    rules: LayoutRules,
+    /// R1498 — the mode the layout **applies** to each section, as distinct
+    /// from [`modes`](Self::modes), which is what was set on it. The two differ
+    /// only under [`LayoutRules::stretch_last`].
+    ///
+    /// Carried for the reason [`section_sizes`](Self::section_sizes) is: the
+    /// readout names the modes, and naming the stored one over a section the
+    /// header is stretching is the R1493 defect in the vocabulary next door.
+    effective_modes: [SectionResizeMode; NCOLS],
     /// R1496 — Qt's `sectionsMovable` / `sectionsClickable`: whether a drag on
     /// the strip moves anything, and whether a press-release sorts.
     ///
@@ -625,7 +651,8 @@ impl Default for HeaderState {
             bounds: (DEFAULT_MIN_COL_WIDTH, DEFAULT_MAX_COL_WIDTH),
             section_sizes: SECTION_W,
             default_size: DEFAULT_SECTION_SIZE,
-            cascading: false,
+            rules: LayoutRules::default(),
+            effective_modes: [SectionResizeMode::Interactive; NCOLS],
             // This app declares both (`boot_layout`), so the boot posture the
             // first frame paints is the one the header will report.
             permissions: (true, true),
@@ -758,7 +785,22 @@ fn read_header_state(scene: &Scene) -> HeaderState {
         out.default_size = u32::try_from(d).unwrap_or(DEFAULT_SECTION_SIZE);
     }
     if let Some(IntrospectValue::Bool(c)) = intro.query("cascading_section_resizes") {
-        out.cascading = c;
+        out.rules.cascading = c;
+    }
+    // R1498 — the rule, and the modes it overrides. Both off the wire, so the
+    // readout cannot claim a mode the header is not applying.
+    if let Some(IntrospectValue::Bool(s)) = intro.query("stretch_last_section") {
+        out.rules.stretch_last = s;
+    }
+    out.effective_modes = out.modes;
+    if let Some(IntrospectValue::Json(serde_json::Value::Array(items))) =
+        intro.query("effective_resize_modes")
+    {
+        for (slot, m) in out.effective_modes.iter_mut().zip(&items) {
+            if let Some(parsed) = m.as_str().and_then(|s| s.parse().ok()) {
+                *slot = parsed;
+            }
+        }
     }
     // R1496 — the two permissions, off the wire for the same reason: the strip
     // paints them, so what it paints has to be what an agent is told.
@@ -797,6 +839,17 @@ fn read_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMod
     match intro.query(&format!("resize_mode.{logical}")) {
         Some(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
         _ => SectionResizeMode::default(),
+    }
+}
+
+/// R1498 — the mode the header is **applying**, which is what a gesture has to
+/// be judged against. The `m` cycle still reads [`read_mode`]: cycling advances
+/// the mode that was set, and reading the override there would let one keypress
+/// turn a filled `Interactive` section into a `ResizeToContents` one.
+fn read_effective_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMode {
+    match intro.query(&format!("effective_resize_mode.{logical}")) {
+        Some(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
+        _ => read_mode(intro, logical),
     }
 }
 
@@ -874,6 +927,19 @@ fn cycle_mode_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> b
         .is_ok()
 }
 
+/// R1498 — Qt `setStretchLastSection`, toggled. A header-wide rule, so it takes
+/// no cursor: there is no section to aim it at, which is exactly what makes it
+/// different from the `Stretch` mode `m` can put on one.
+fn toggle_stretch_last(intro: &mut dyn ExternalIntrospect) -> bool {
+    let on = matches!(
+        intro.query("stretch_last_section"),
+        Some(IntrospectValue::Bool(true))
+    );
+    intro
+        .intervene("stretch_last_section", IntrospectValue::Bool(!on))
+        .is_ok()
+}
+
 /// Qt `resizeSection` — the size is keyed by the logical section, so a column
 /// widened here stays wide wherever it is dragged next.
 ///
@@ -890,11 +956,17 @@ fn cycle_mode_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> b
 /// This binding has no pointer grabber (`column_resize_externals` lives in
 /// `hello-grid-hscroll`, over a `ColumnWidths` with no layout), so the keyboard
 /// is its interactive resize.
+///
+/// R1498 — gated on the **effective** mode. Under `stretchLastSection` the last
+/// painted section's set mode is still `Interactive` while its width comes from
+/// the leftover, so gating on the set mode would accept the keystroke and paint
+/// nothing — the same "gated like one resize, writing like another" split R1494
+/// found here.
 fn nudge_size_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>, grow: bool) -> bool {
     let Some(logical) = logical_at(&*intro, cursor) else {
         return false;
     };
-    if !read_mode(&*intro, logical).user_resizable() {
+    if !read_effective_mode(&*intro, logical).user_resizable() {
         return false;
     }
     let size = match intro.query(&format!("section_size.{logical}")) {
@@ -1090,6 +1162,17 @@ fn layout_readout_text(state: &HeaderState) -> String {
     } else {
         format!(" | stored {}", keyed(&state.sizes))
     };
+    let codes = |modes: &[SectionResizeMode; NCOLS]| -> String {
+        modes.iter().map(|m| mode_code(*m)).collect()
+    };
+    // R1498 — the same shape the sizes use above, for the same reason: the row
+    // names what the header APPLIES, and shows what was set beside it only when
+    // a rule has overridden it.
+    let stored_modes = if state.effective_modes == state.modes {
+        String::new()
+    } else {
+        format!(" | stored modes {}", codes(&state.modes))
+    };
     // R1496 — one word for the pair, because they are read together: what this
     // header lets a hand do to it.
     let allows = match state.permissions {
@@ -1099,21 +1182,22 @@ fn layout_readout_text(state: &HeaderState) -> String {
         (false, false) => "-",
     };
     format!(
-        "sizes {}{stored} | hidden {} | modes {} | default {} | cascade {} | \
-         bounds {}..{} | allows {allows}",
+        "sizes {}{stored} | hidden {} | modes {}{stored_modes} | default {} | \
+         cascade {} | stretch-last {} | bounds {}..{} | allows {allows}",
         keyed(&state.section_sizes),
         if hidden.is_empty() {
             "-".to_string()
         } else {
             hidden.join(" ")
         },
-        state
-            .modes
-            .iter()
-            .map(|m| mode_code(*m))
-            .collect::<String>(),
+        codes(&state.effective_modes),
         state.default_size,
-        if state.cascading { "on" } else { "off" },
+        if state.rules.cascading { "on" } else { "off" },
+        if state.rules.stretch_last {
+            "on"
+        } else {
+            "off"
+        },
         state.bounds.0,
         // R1492 — the unbounded default reads as `-`, because printing
         // 4294967295 would look like a limit somebody chose.
@@ -1145,7 +1229,7 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
 
     let caption = Scene::Text(
         TextNode::styled(
-            "Drag a header to move it; [ ] resize, h hides, m cycles sizing",
+            "Drag a header to move it; [ ] resize, h hides, m cycles sizing, f fills",
             Rect::default(),
             TextStyle::new()
                 .with_size_px(14)
@@ -1304,6 +1388,9 @@ impl WidgetCore for ColumnReorderView {
             "h" => toggle_hidden_at(intro, cursor),
             // R1452 — Qt `setSectionResizeMode`, cycled in place.
             "m" => cycle_mode_at(intro, cursor),
+            // R1498 — Qt `setStretchLastSection`. A header rule rather than a
+            // per-section one, so unlike `m` and `h` it needs no cursor.
+            "f" => toggle_stretch_last(intro),
             // Qt `resizeSection`, gated by the mode (R1452).
             "]" | "[" => nudge_size_at(intro, cursor, key == "]"),
             _ => false,
@@ -2527,7 +2614,7 @@ mod tests {
         // things depending on a rule the user can see.
         let mut scene = boot_scene();
         let boot = read_header_state(&scene);
-        assert!(!boot.cascading, "off by default, as in Qt");
+        assert!(!boot.rules.cascading, "off by default, as in Qt");
         assert!(
             layout_readout(&boot).contains("| cascade off |"),
             "and the readout says so: {}",
@@ -2562,7 +2649,7 @@ mod tests {
             i.intervene("cascading_section_resizes", IntrospectValue::Bool(true))
                 .expect("Qt's property has a wire peer");
         });
-        assert!(on.cascading);
+        assert!(on.rules.cascading);
         assert!(
             layout_readout(&on).contains("| cascade on |"),
             "the readout names the rule that is now in force: {}",
@@ -2628,5 +2715,165 @@ mod tests {
             ]))),
             "along with the order it was saved with"
         );
+    }
+
+    /// Publish the viewport the view fn publishes every frame, so a test that
+    /// asks about a filled row is asking about a row that has something to
+    /// fill. (R1452's own stretch test says this inline; three tests below
+    /// need it too.)
+    fn publish_viewport(i: &mut dyn ExternalIntrospect) {
+        i.intervene(
+            "available_width",
+            IntrospectValue::Int(i64::from(AVAILABLE_W)),
+        )
+        .expect("publish the viewport");
+    }
+
+    #[test]
+    fn r1498_the_f_key_fills_the_row_and_the_readout_names_the_rule() {
+        let mut scene = boot_scene();
+        let boot = after(&mut scene, publish_viewport);
+        assert!(!boot.rules.stretch_last, "off by default, as in Qt");
+        assert!(
+            layout_readout(&boot).contains("| stretch-last off |"),
+            "and the readout says so: {}",
+            layout_readout(&boot)
+        );
+        assert_eq!(
+            boot.total_w(),
+            SECTION_W.iter().sum::<u32>(),
+            "the row is as wide as its sections, not as wide as the strip"
+        );
+        assert!(
+            boot.total_w() < AVAILABLE_W,
+            "leaving {} px of the strip unpainted",
+            AVAILABLE_W - boot.total_w()
+        );
+
+        let on = after(&mut scene, |i| {
+            assert!(toggle_stretch_last(i), "the f gesture ran");
+        });
+        assert!(on.rules.stretch_last);
+        assert!(
+            layout_readout(&on).contains("| stretch-last on |"),
+            "the readout names the rule now in force: {}",
+            layout_readout(&on)
+        );
+        assert_eq!(on.total_w(), AVAILABLE_W, "and the row fills the strip");
+        assert_eq!(
+            on.section_sizes[4],
+            SECTION_W[4] + (AVAILABLE_W - SECTION_W.iter().sum::<u32>()),
+            "the last section took exactly what was left over"
+        );
+        assert_eq!(
+            on.sizes, SECTION_W,
+            "and no stored width moved, so f is its own undo"
+        );
+
+        let off = after(&mut scene, |i| {
+            assert!(toggle_stretch_last(i), "and toggles back");
+        });
+        assert!(!off.rules.stretch_last);
+        assert_eq!(off.section_sizes, SECTION_W);
+    }
+
+    #[test]
+    fn r1498_the_readout_names_the_mode_the_header_applies() {
+        // The R1493 rule in the vocabulary next door: the row above says the
+        // last section is 170 wide, so the row below must not call it
+        // `interactive` and leave the reader to guess where 170 came from.
+        let mut scene = boot_scene();
+        let plain = after(&mut scene, publish_viewport);
+        assert!(
+            layout_readout(&plain).contains("| modes iiiii |"),
+            "{}",
+            layout_readout(&plain)
+        );
+        assert!(
+            !layout_readout(&plain).contains("stored modes"),
+            "with nothing overridden there is no second row to show"
+        );
+
+        let on = after(&mut scene, |i| {
+            assert!(toggle_stretch_last(i));
+        });
+        assert_eq!(
+            on.effective_modes[4],
+            SectionResizeMode::Stretch,
+            "the header is stretching the last section"
+        );
+        assert_eq!(
+            on.modes[4],
+            SectionResizeMode::Interactive,
+            "while the mode set on it is untouched"
+        );
+        let readout = layout_readout(&on);
+        assert!(
+            readout.contains("| modes iiiis | stored modes iiiii |"),
+            "so the readout names both, applied first: {readout}"
+        );
+    }
+
+    #[test]
+    fn r1498_the_resize_key_refuses_the_section_the_rule_is_filling() {
+        // The R1494 split, in a new place: the gesture is gated on the mode the
+        // header APPLIES, or it would accept the keystroke and paint nothing.
+        let mut scene = boot_scene();
+        let on = after(&mut scene, |i| {
+            publish_viewport(i);
+            assert!(toggle_stretch_last(i));
+            i.intervene("focused_index", IntrospectValue::Int(4))
+                .expect("cursor onto the last section");
+        });
+        assert_eq!(on.focused, Some(4));
+        assert!(!press(&mut scene, "]"), "the key is refused");
+        assert_eq!(
+            read_header_state(&scene).sizes,
+            SECTION_W,
+            "and nothing moved behind the refusal"
+        );
+
+        // The section BEFORE it is still resizable, and the fill absorbs it.
+        let grown = after(&mut scene, |i| {
+            assert!(nudge_size_at(i, Some(3), true), "its neighbour still is");
+        });
+        assert_eq!(grown.sizes[3], SECTION_W[3] + RESIZE_STEP);
+        assert_eq!(
+            grown.total_w(),
+            AVAILABLE_W,
+            "the row still fills, because the last section gave the space up"
+        );
+        assert_eq!(
+            grown.section_sizes[4],
+            on.section_sizes[4] - RESIZE_STEP,
+            "which is where it came from"
+        );
+    }
+
+    #[test]
+    fn r1498_the_mode_cycle_still_reads_the_mode_that_was_set() {
+        // `m` advances the SET mode. Reading the override there would let one
+        // keypress turn a filled `Interactive` section into `ResizeToContents`,
+        // skipping `Fixed` and `Stretch` — the cycle would depend on where the
+        // section happens to be sitting.
+        let mut scene = boot_scene();
+        after(&mut scene, |i| {
+            publish_viewport(i);
+            assert!(toggle_stretch_last(i));
+        });
+        let cycled = after(&mut scene, |i| {
+            assert!(cycle_mode_at(i, Some(4)), "the m gesture ran");
+        });
+        assert_eq!(
+            cycled.modes[4],
+            SectionResizeMode::Fixed,
+            "one step from Interactive, not one step from Stretch"
+        );
+        assert_eq!(
+            cycled.effective_modes[4],
+            SectionResizeMode::Stretch,
+            "and the rule still overrides whatever it was set to"
+        );
+        assert_eq!(cycled.total_w(), AVAILABLE_W, "so the row still fills");
     }
 }

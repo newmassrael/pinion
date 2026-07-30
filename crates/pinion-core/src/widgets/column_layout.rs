@@ -143,6 +143,13 @@ pub struct ColumnLayoutState {
     /// carries too. The cascade *in flight* is not here and should not be —
     /// that is gesture state, not layout state, and Qt does not save it either.
     pub cascading_section_resizes: bool,
+    /// R1498 — whether the section painted last absorbs the leftover viewport:
+    /// Qt's `stretchLastSection`, which `QHeaderViewPrivate::write()`
+    /// serialises. It belongs here rather than in [`modes`](Self::modes)
+    /// because it is keyed by position and the modes are keyed by column: a
+    /// restore that replayed the modes alone would put the fill back on
+    /// whichever column happened to be last when the snapshot was taken.
+    pub stretch_last_section: bool,
     /// R1496 — whether the user may drag a section to a new position: Qt's
     /// `sectionsMovable`, which `QHeaderViewPrivate::write()` serialises as
     /// `movableSections`. A saved layout that restored the permutation but not
@@ -187,6 +194,10 @@ impl ColumnLayoutState {
             "min_section_size": self.min_section_size,
             "max_section_size": self.max_section_size,
             "cascading_section_resizes": self.cascading_section_resizes,
+            // R1498 — the other layout rule Qt's `saveState()` carries. Without
+            // it a restore replays sizes that were never painted: under this
+            // rule the last section's stored width is not its width.
+            "stretch_last_section": self.stretch_last_section,
             // R1496 — the two permissions and the sampling bound Qt's
             // `saveState()` carries and this snapshot did not. Without them a
             // restore hands back a permutation the restored header may forbid,
@@ -279,6 +290,15 @@ impl ColumnLayoutState {
                 None => false,
                 Some(v) => v.as_bool()?,
             },
+            // R1498 — absent decodes to `false`, and here Qt's default and the
+            // older header AGREE, unlike the two permissions below. Measured
+            // before the round: the pre-R1498 header left 70px of its 640-wide
+            // viewport unpainted, so "did not fill" is what an older snapshot
+            // describes as well as what Qt starts at.
+            stretch_last_section: match value.get("stretch_last_section") {
+                None => false,
+                Some(v) => v.as_bool()?,
+            },
             // R1496 — absent decodes to **`true`**, which is deliberately NOT
             // the construction default. The other absent-field fallbacks above
             // all name a Qt default because that is also what the older header
@@ -323,6 +343,7 @@ impl Default for ColumnLayoutState {
             min_section_size: DEFAULT_MIN_COL_WIDTH,
             max_section_size: DEFAULT_MAX_COL_WIDTH,
             cascading_section_resizes: false,
+            stretch_last_section: false,
             // R1496 — Qt's defaults, and the ones a fresh `ColumnLayout` has.
             // `from_json` decodes an ABSENT field as `true` instead; the two
             // answer different questions — this is the state of a new header,
@@ -454,6 +475,33 @@ impl std::fmt::Display for SectionResizeMode {
     }
 }
 
+/// R1498 §5.27 — Qt's `stretchLastSection` override, stated once.
+///
+/// "If this value is set to true, this property will override the resize mode
+/// set on the last section in the header" — so the last painted section becomes
+/// a [`SectionResizeMode::Stretch`] section, and the division that already
+/// exists gives it what the others leave over. There is no second sizing
+/// algorithm: a header with three stretching sections and this rule on has four
+/// of them, sharing exactly as they always did.
+///
+/// A free function because its two callers know the two facts by different
+/// means. [`ColumnLayout::visible_placements`] hoists them once for the whole
+/// walk; [`ColumnLayout::effective_resize_mode`] reads them for one section.
+/// Asking the getter from inside the walk would re-read both signals per
+/// section — and stating the rule twice would leave one of the copies to learn
+/// the next correction alone.
+fn stretch_last_override(
+    stored: SectionResizeMode,
+    is_last_visible: bool,
+    stretch_last: bool,
+) -> SectionResizeMode {
+    if stretch_last && is_last_visible {
+        SectionResizeMode::Stretch
+    } else {
+        stored
+    }
+}
+
 /// R1494 §5.27 — one interactive resize gesture's debt to the sections that
 /// paid for it.
 ///
@@ -530,6 +578,19 @@ pub struct ColumnLayout {
     contents_precision: Signal<usize>,
     /// R1494 — Qt's `cascadingSectionResizes`. Default `false`, as in Qt.
     cascading: Signal<bool>,
+    /// R1498 — Qt's `stretchLastSection`: whether the section painted **last**
+    /// takes whatever the viewport has left over. Default `false`, as in Qt,
+    /// where the view opts in (`QTreeView`'s header does; `QTableView`'s does
+    /// not).
+    ///
+    /// Keyed by *position*, which is the whole reason it is not
+    /// [`SectionResizeMode::Stretch`] on the last column. Measured on this very
+    /// header before the round: with the last column set to `Stretch`, hiding
+    /// it dropped the fill entirely (the row went back to 470 of a 640-wide
+    /// viewport) and moving it to the front painted the fill at the front.
+    /// A mode belongs to a column and travels with it; this rule belongs to the
+    /// header and stays where it is.
+    stretch_last: Signal<bool>,
     /// R1494 — the cascade currently in flight, if any.
     ///
     /// A cascade has to be *undoable* or it is not a drag: pulling a section
@@ -613,6 +674,7 @@ impl ColumnLayout {
             contents_precision: Signal::new(DEFAULT_CONTENTS_PRECISION),
             default_size: Signal::new(DEFAULT_SECTION_SIZE),
             cascading: Signal::new(false),
+            stretch_last: Signal::new(false),
             cascade: Signal::new(None),
             movable: Signal::new(false),
             clickable: Signal::new(false),
@@ -1185,11 +1247,73 @@ impl ColumnLayout {
         }
     }
 
+    /// R1498 — whether the section painted last absorbs the leftover viewport
+    /// width — Qt's `stretchLastSection`. `false` by default, as in Qt.
+    #[must_use]
+    pub fn stretch_last_section(&self) -> bool {
+        self.stretch_last.get()
+    }
+
+    /// R1498 — turn the rule on or off.
+    ///
+    /// Nothing is written to any section: the fill is resolved in
+    /// [`visible_placements`](Self::visible_placements) from the stored widths,
+    /// so turning the rule off restores what the last section had by
+    /// construction. Qt has to remember a `lastSectionSize` because Qt writes
+    /// the stretched width into the section; this module keeps the stored size
+    /// and the painted size apart already (R1493), and that split is what makes
+    /// the memory unnecessary here.
+    pub fn set_stretch_last_section(&self, on: bool) {
+        self.stretch_last.set(on);
+    }
+
+    /// The logical section painted **last** — the one
+    /// [`stretch_last_section`](Self::stretch_last_section) gives the leftover
+    /// to. `None` when every section is hidden.
+    ///
+    /// Walks the permutation from the end rather than reading
+    /// [`visible_placements`](Self::visible_placements), which is the walk that
+    /// asks this question: going through the placements would be infinite
+    /// recursion. It needs no sizes to answer, only the order and the hidden
+    /// flags, which is why it can be answered first.
+    fn last_visible_section(&self) -> Option<usize> {
+        let hidden = self.hidden.get();
+        self.sections
+            .order()
+            .into_iter()
+            .rev()
+            .find(|&l| !hidden.get(l).copied().unwrap_or(false))
+    }
+
+    /// R1498 — the mode the layout actually applies to a section, as distinct
+    /// from the one that was **set** on it ([`resize_mode`](Self::resize_mode)).
+    ///
+    /// The two differ only under `stretchLastSection`, whose documented Qt
+    /// behaviour is exactly this: "this property will override the resize mode
+    /// set on the last section in the header". Readable for the R1492 reason
+    /// the bounds are — a client that watches an interactive resize come back
+    /// unchanged can otherwise not tell a `Fixed` section from a filled one —
+    /// and it is the same stored/effective pair `sizes` and `section_sizes`
+    /// already form.
+    #[must_use]
+    pub fn effective_resize_mode(&self, logical: usize) -> SectionResizeMode {
+        stretch_last_override(
+            self.resize_mode(logical),
+            self.last_visible_section() == Some(logical),
+            self.stretch_last.get(),
+        )
+    }
+
     /// Whether logical section `logical` can be squeezed to pay for a
     /// neighbour's growth: Qt takes only from `Interactive` sections, and a
     /// hidden section is painted nowhere so it has no width to give.
+    ///
+    /// R1498 — against the **effective** mode. A section the last-section rule
+    /// is filling derives its width like any other `Stretch` section, so
+    /// squeezing its stored size would move no pixels while the cascade counted
+    /// the debt as paid.
     fn is_cascadable(&self, logical: usize) -> bool {
-        self.resize_mode(logical) == SectionResizeMode::Interactive
+        self.effective_resize_mode(logical) == SectionResizeMode::Interactive
             && !self.is_section_hidden(logical)
     }
 
@@ -1360,6 +1484,10 @@ impl ColumnLayout {
     pub fn visible_placements(&self) -> Vec<SectionPlacement> {
         let hidden = self.hidden.get();
         let modes = self.modes.get();
+        // R1498 — both facts the last-section rule needs, read once for the
+        // whole walk rather than per section.
+        let stretch_last = self.stretch_last.get();
+        let last_visible = self.last_visible_section();
         // Pass 1 — who is painted, in what mode, at what size of their own.
         let mut painted: Vec<(usize, usize, SectionResizeMode, u32)> =
             Vec::with_capacity(self.count);
@@ -1367,7 +1495,11 @@ impl ColumnLayout {
             if hidden.get(logical).copied().unwrap_or(false) {
                 continue;
             }
-            let mode = modes.get(logical).copied().unwrap_or_default();
+            let mode = stretch_last_override(
+                modes.get(logical).copied().unwrap_or_default(),
+                last_visible == Some(logical),
+                stretch_last,
+            );
             painted.push((visual, logical, mode, self.base_size(logical, mode)));
         }
 
@@ -1493,6 +1625,7 @@ impl ColumnLayout {
             min_section_size: self.sizes.min_width(),
             max_section_size: self.sizes.max_width(),
             cascading_section_resizes: self.cascading.get(),
+            stretch_last_section: self.stretch_last.get(),
             // R1496 — the permissions travel with the layout they permit. The
             // press in flight does not: that is gesture state, like the
             // cascade above, and Qt saves neither.
@@ -1551,6 +1684,10 @@ impl ColumnLayout {
         // either way.
         self.set_cascading_section_resizes(state.cascading_section_resizes);
         self.cascade.set(None);
+        // R1498 — read-time only, so it needs no place in the ordering the
+        // bounds above have to keep: it changes what is painted, never what is
+        // stored.
+        self.stretch_last.set(state.stretch_last_section);
         self.sizes.set_widths(state.sizes.clone());
         self.hidden.set(state.hidden.clone());
         self.modes.set(state.modes.clone());
@@ -1587,6 +1724,12 @@ impl ColumnLayout {
     /// - `min_section_size` / `max_section_size` (R1492)
     /// - `sections_movable` / `sections_clickable` (R1496) — Qt's two
     ///   interaction permissions, both of which `saveState()` carries
+    /// - `stretch_last_section` (R1498) — Qt's rule that the last painted
+    ///   section absorbs the leftover viewport
+    /// - `resize_modes` / `resize_mode.<logical>` — the mode that was **set**;
+    ///   `effective_resize_modes` / `effective_resize_mode.<logical>` (R1498)
+    ///   is the one the layout applies, and the two differ under
+    ///   `stretch_last_section`
     /// - `visual_index.<logical>` / `logical_index.<visual>`
     /// - `section_size.<logical>` / `section_hidden.<logical>` /
     ///   `section_position.<logical>` / `logical_index_at.<x>`
@@ -1622,6 +1765,9 @@ impl ColumnLayout {
             "cascading_section_resizes" => {
                 Some(IntrospectValue::Bool(self.cascading_section_resizes()))
             }
+            // R1498 — the layout rule that is keyed by position rather than by
+            // column, which is why no per-section slot can report it.
+            "stretch_last_section" => Some(IntrospectValue::Bool(self.stretch_last_section())),
             // R1496 — the two permissions, readable so a client can tell a
             // header that refused a drag from one that has no drag to give.
             "sections_movable" => Some(IntrospectValue::Bool(self.sections_movable())),
@@ -1656,6 +1802,15 @@ impl ColumnLayout {
                     .get()
                     .iter()
                     .map(|m| serde_json::Value::from(m.as_wire()))
+                    .collect(),
+            ))),
+            // R1498 — the effective plural, beside the stored one for the same
+            // reason `section_sizes` sits beside `sizes`: a client reading only
+            // the plural was the R1493 defect, and a rule that overrides a mode
+            // would have re-created it in the vocabulary next door.
+            "effective_resize_modes" => Some(IntrospectValue::Json(serde_json::Value::Array(
+                (0..self.count)
+                    .map(|l| serde_json::Value::from(self.effective_resize_mode(l).as_wire()))
                     .collect(),
             ))),
             "content_widths" => Some(json_of(self.content_widths.get())),
@@ -1732,6 +1887,9 @@ impl ColumnLayout {
                 .parse()
                 .ok()
                 .map(|l: usize| IntrospectValue::Text(self.resize_mode(l).as_wire().to_string())),
+            "effective_resize_mode" => arg.parse().ok().map(|l: usize| {
+                IntrospectValue::Text(self.effective_resize_mode(l).as_wire().to_string())
+            }),
             "content_width" => arg
                 .parse()
                 .ok()
@@ -1831,49 +1989,6 @@ impl ColumnLayout {
                 self.content_widths.set(self.width_vector(value)?);
                 Ok(())
             }
-            // R1492 — Qt's two setters. Writable for the same reason the modes
-            // are: an agent explores a layout by moving the rule, not only the
-            // numbers the rule applies to.
-            "min_section_size" => {
-                self.set_minimum_section_size(px_bound(value)?);
-                Ok(())
-            }
-            "max_section_size" => {
-                self.set_maximum_section_size(px_bound(value)?);
-                Ok(())
-            }
-            // R1493 — Qt's `setDefaultSectionSize`, through the same door its
-            // two bound siblings use, because it is the same kind of thing: a
-            // scalar rule that shapes every section's size.
-            "default_section_size" => {
-                self.set_default_section_size(px_bound(value)?);
-                Ok(())
-            }
-            // R1494 — Qt's `cascadingSectionResizes`, writable like the modes
-            // and the bounds: an agent explores a layout by moving the rule.
-            "cascading_section_resizes" => {
-                self.set_cascading_section_resizes(bool_rule(value)?);
-                Ok(())
-            }
-            // R1496 — Qt's `setSectionsMovable` / `setSectionsClickable`. Both
-            // writable for the reason the rules above are: a permission an
-            // agent can read but not move is one it cannot explore.
-            "sections_movable" => {
-                self.set_sections_movable(bool_rule(value)?);
-                Ok(())
-            }
-            "sections_clickable" => {
-                self.set_sections_clickable(bool_rule(value)?);
-                Ok(())
-            }
-            // R1454 — the row-sampling bound a `ResizeToContents` consumer
-            // honours; writable so an agent can shrink it and watch the hints
-            // change without rebuilding the grid.
-            "resize_contents_precision" => {
-                let rows = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
-                self.set_resize_contents_precision(rows);
-                Ok(())
-            }
             // R1491 — the restore half for the header's own sort, both as the
             // compound string and as the shown flag. Strict on a malformed
             // string, unlike the older `GridSortExternal::intervene("sort")`,
@@ -1913,7 +2028,77 @@ impl ColumnLayout {
                 }
                 Ok(())
             }
-            _ => self.sections.intervene(path, value),
+            // NB: the scalar rules first, then the reorder model — a rule name
+            // this header does not know is still the embedded model's to claim.
+            _ => self
+                .intervene_rule(path, value)
+                .unwrap_or_else(|| self.sections.intervene(path, value)),
+        }
+    }
+
+    /// The scalar-rule half of [`intervene`](Self::intervene) — every write
+    /// that sets one header-wide policy, each a decoder and a setter.
+    /// `None` for anything else, so the caller's reorder fall-through runs.
+    ///
+    /// (R1498) Split out on the axis [`query_parametric`](Self::query_parametric)
+    /// was: the two halves take different shapes of value, and only this one
+    /// grows when Qt's next header property is added. Every round from R1492 on
+    /// has added exactly one arm here.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the decoders' [`InterveneError::TypeMismatch`] /
+    /// [`InterveneError::OutOfRange`].
+    fn intervene_rule(
+        &self,
+        path: &str,
+        value: &IntrospectValue,
+    ) -> Option<Result<(), InterveneError>> {
+        // Each arm is `decode?` then a setter, so the `?` needs a fallible
+        // body of its own; the closure is that body, run once.
+        let apply = || -> Result<(), InterveneError> {
+            match path {
+                // R1492 — Qt's two setters. Writable for the same reason the
+                // modes are: an agent explores a layout by moving the rule, not
+                // only the numbers the rule applies to.
+                "min_section_size" => self.set_minimum_section_size(px_bound(value)?),
+                "max_section_size" => self.set_maximum_section_size(px_bound(value)?),
+                // R1493 — Qt's `setDefaultSectionSize`, through the same door
+                // its two bound siblings use, because it is the same kind of
+                // thing: a scalar rule that shapes every section's size.
+                "default_section_size" => {
+                    self.set_default_section_size(px_bound(value)?);
+                }
+                // R1494 — Qt's `cascadingSectionResizes`, writable like the
+                // modes and the bounds.
+                "cascading_section_resizes" => {
+                    self.set_cascading_section_resizes(bool_rule(value)?);
+                }
+                // R1498 — Qt's `setStretchLastSection`. The effective modes and
+                // every painted width follow from it, so an agent moves the
+                // rule and reads the consequence in one round trip.
+                "stretch_last_section" => self.set_stretch_last_section(bool_rule(value)?),
+                // R1496 — Qt's `setSectionsMovable` / `setSectionsClickable`. A
+                // permission an agent can read but not move is one it cannot
+                // explore.
+                "sections_movable" => self.set_sections_movable(bool_rule(value)?),
+                "sections_clickable" => self.set_sections_clickable(bool_rule(value)?),
+                // R1454 — the row-sampling bound a `ResizeToContents` consumer
+                // honours; writable so an agent can shrink it and watch the
+                // hints change without rebuilding the grid.
+                "resize_contents_precision" => {
+                    let rows = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
+                    self.set_resize_contents_precision(rows);
+                }
+                _ => return Err(InterveneError::UnknownPath),
+            }
+            Ok(())
+        };
+        match apply() {
+            // The one error this half invents rather than decodes means "not
+            // mine", and is the caller's cue to keep looking.
+            Err(InterveneError::UnknownPath) => None,
+            other => Some(other),
         }
     }
 
@@ -4193,6 +4378,308 @@ mod tests {
             c.invoke("interactive_resize_section", &text("9:200")),
             Err(InvokeError::Rejected),
             "an out-of-range section is refused by both, through one parser"
+        );
+    }
+
+    /// The viewport the R1498 tests publish. `BOOT` sums to 520, so the three
+    /// leading sections take 360 and there are 240 left for whoever is last.
+    const VIEWPORT_W: u32 = 600;
+
+    fn filled() -> ColumnLayout {
+        let l = layout();
+        l.set_available_width(Some(VIEWPORT_W));
+        l
+    }
+
+    fn effective_modes(l: &ColumnLayout) -> Vec<String> {
+        match l.query("effective_resize_modes") {
+            Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a
+                .iter()
+                .map(|m| m.as_str().unwrap_or_default().to_string())
+                .collect(),
+            other => panic!("effective_resize_modes: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r1498_off_by_default_and_the_row_falls_short_of_its_viewport() {
+        let l = filled();
+        assert!(!l.stretch_last_section(), "Qt's default");
+        assert_eq!(
+            l.visible_total(),
+            520,
+            "the entry measurement: the row does not fill the width it was given"
+        );
+        assert_eq!(l.available_width(), Some(VIEWPORT_W));
+        assert_eq!(l.visible_widths(), vec![100, 120, 140, 160]);
+    }
+
+    #[test]
+    fn r1498_the_last_painted_section_absorbs_the_leftover() {
+        let l = filled();
+        l.set_stretch_last_section(true);
+        assert_eq!(
+            l.visible_widths(),
+            vec![100, 120, 140, 240],
+            "the last section takes what the other three left over"
+        );
+        assert_eq!(
+            l.visible_total(),
+            VIEWPORT_W,
+            "so the row fills its viewport"
+        );
+        assert_eq!(
+            l.section_position(3),
+            Some(360),
+            "and the geometry every hit test reads agrees"
+        );
+    }
+
+    #[test]
+    fn r1498_the_rule_is_keyed_by_position_not_by_column() {
+        // The discriminator against `Stretch` on the last column, measured on
+        // the real binding before the round: with a mode, hiding that column
+        // dropped the fill entirely and moving it painted the fill wherever the
+        // column went. The rule belongs to the header, so it stays put.
+        let l = filled();
+        l.set_stretch_last_section(true);
+
+        l.set_section_hidden(3, true);
+        assert_eq!(
+            l.visible_widths(),
+            vec![100, 120, 380],
+            "hiding the filled section promotes the one now painted last"
+        );
+        assert_eq!(l.visible_total(), VIEWPORT_W, "the row still fills");
+
+        l.set_section_hidden(3, false);
+        l.move_section(3, 0);
+        assert_eq!(l.order(), vec![3, 0, 1, 2]);
+        assert_eq!(
+            l.visible_widths(),
+            vec![160, 100, 120, 220],
+            "dragged to the front it is an ordinary section again, and the \
+             fill stayed at the end of the row"
+        );
+        assert_eq!(l.visible_total(), VIEWPORT_W);
+    }
+
+    #[test]
+    fn r1498_it_overrides_the_mode_set_on_the_last_section() {
+        // Qt states this on the property itself: "this property will override
+        // the resize mode set on the last section in the header".
+        let l = filled();
+        l.set_resize_mode(3, SectionResizeMode::Fixed);
+        l.set_stretch_last_section(true);
+        assert_eq!(
+            l.visible_widths(),
+            vec![100, 120, 140, 240],
+            "a Fixed last section is filled anyway"
+        );
+        assert_eq!(
+            l.resize_mode(3),
+            SectionResizeMode::Fixed,
+            "the mode that was SET is still the one reported"
+        );
+        assert_eq!(
+            l.effective_resize_mode(3),
+            SectionResizeMode::Stretch,
+            "and the one the layout applies is a separate read"
+        );
+        assert_eq!(
+            effective_modes(&l),
+            vec!["interactive", "interactive", "interactive", "stretch"],
+            "the plural says the same as the singular — the R1493 rule"
+        );
+        assert_eq!(
+            l.query("effective_resize_mode.3"),
+            Some(text("stretch")),
+            "and both faces are on the wire"
+        );
+        assert_eq!(
+            l.query("resize_mode.3"),
+            Some(text("fixed")),
+            "beside the stored one, which a mode cycle still reads"
+        );
+    }
+
+    #[test]
+    fn r1498_the_last_section_shares_with_the_other_stretch_sections() {
+        // Overriding the last section's mode to `Stretch` means the division
+        // that already exists does the work: four sections, two of them
+        // stretching, and no second sizing algorithm.
+        let l = filled();
+        l.set_resize_mode(1, SectionResizeMode::Stretch);
+        l.set_stretch_last_section(true);
+        assert_eq!(
+            l.visible_widths(),
+            vec![100, 180, 140, 180],
+            "600 less the 240 the fixed pair take, split two ways"
+        );
+        assert_eq!(l.visible_total(), VIEWPORT_W);
+    }
+
+    #[test]
+    fn r1498_the_stored_width_is_untouched_so_withdrawing_the_rule_restores_it() {
+        // Qt has to remember a `lastSectionSize` because Qt writes the
+        // stretched width into the section. Nothing here writes, so there is
+        // nothing to remember.
+        let l = filled();
+        l.set_stretch_last_section(true);
+        assert_eq!(l.section_size(3), 240, "painted");
+        assert_eq!(
+            l.save_state().sizes,
+            vec![100, 120, 140, 160],
+            "stored — the snapshot records what the user set, not the fill"
+        );
+        l.set_stretch_last_section(false);
+        assert_eq!(
+            l.visible_widths(),
+            vec![100, 120, 140, 160],
+            "withdrawing the rule hands the section back its own width"
+        );
+    }
+
+    #[test]
+    fn r1498_a_filled_section_does_not_pay_for_a_neighbours_resize() {
+        // R1494's cascade takes from `Interactive` sections. A filled section
+        // derives its width, so squeezing its stored size would move no pixels
+        // while the cascade counted the debt as paid.
+        let l = filled();
+        l.set_stretch_last_section(true);
+        l.set_cascading_section_resizes(true);
+        l.interactive_resize_section(0, 400);
+        assert_eq!(
+            l.save_state().sizes,
+            vec![400, 40, 40, 160],
+            "the two interactive followers paid to the floor; the filled one \
+             was skipped and kept the width it will come back at"
+        );
+        assert_eq!(
+            l.visible_widths(),
+            vec![400, 40, 40, 120],
+            "and the fill absorbed what the followers could not cover"
+        );
+        assert_eq!(l.visible_total(), VIEWPORT_W);
+    }
+
+    #[test]
+    fn r1498_with_no_published_viewport_the_last_section_keeps_its_size() {
+        // The same answer `Stretch` already gives when there is nothing to
+        // divide: a section with no leftover to take keeps its stored size
+        // rather than collapsing.
+        let l = layout();
+        l.set_stretch_last_section(true);
+        assert_eq!(l.available_width(), None);
+        assert_eq!(l.visible_widths(), vec![100, 120, 140, 160]);
+        assert_eq!(l.visible_total(), 520);
+    }
+
+    #[test]
+    fn r1498_when_the_others_overflow_the_last_section_falls_to_the_floor() {
+        // Honest rather than refusing: the leading sections already exceed the
+        // viewport, so there is no leftover and the fill clamps to the floor
+        // every other derived width clamps to (R1492).
+        let l = layout();
+        l.set_available_width(Some(300));
+        l.set_stretch_last_section(true);
+        assert_eq!(l.visible_widths(), vec![100, 120, 140, 40]);
+        assert_eq!(
+            l.visible_total(),
+            400,
+            "and visible_total reports the row that is actually painted"
+        );
+    }
+
+    #[test]
+    fn r1498_every_section_hidden_leaves_nothing_to_fill() {
+        let l = filled();
+        l.set_stretch_last_section(true);
+        for c in 0..4 {
+            l.set_section_hidden(c, true);
+        }
+        assert!(l.visible_placements().is_empty());
+        assert_eq!(l.visible_total(), 0);
+        assert_eq!(
+            l.effective_resize_mode(3),
+            SectionResizeMode::Interactive,
+            "a hidden section is painted nowhere, so it is not the last one"
+        );
+    }
+
+    #[test]
+    fn r1498_the_rule_is_readable_writable_and_saved() {
+        let l = filled();
+        assert_eq!(
+            l.query("stretch_last_section"),
+            Some(IntrospectValue::Bool(false))
+        );
+        l.intervene("stretch_last_section", &IntrospectValue::Bool(true))
+            .expect("Qt's property has a wire peer");
+        assert!(l.stretch_last_section());
+        assert!(
+            l.save_state().stretch_last_section,
+            "and saveState carries it"
+        );
+        assert_eq!(
+            l.intervene("stretch_last_section", &IntrospectValue::Int(1)),
+            Err(InterveneError::TypeMismatch)
+        );
+
+        let saved = l.save_state();
+        let other = filled();
+        assert!(!other.stretch_last_section());
+        assert!(other.restore_state(&saved));
+        assert!(
+            other.stretch_last_section(),
+            "a restore replays the rule, not only the widths it produced"
+        );
+        assert_eq!(
+            other.visible_widths(),
+            vec![100, 120, 140, 240],
+            "and the restored header fills, from the stored widths it was given"
+        );
+
+        // An older snapshot has no such field. Here Qt's default and the
+        // pre-R1498 header agree — that header did not fill either — so unlike
+        // the R1496 permissions there is no divergence to encode.
+        let older = serde_json::json!({
+            "order": [0, 1, 2, 3],
+            "sizes": BOOT,
+            "hidden": [false, false, false, false],
+        });
+        let decoded = ColumnLayoutState::from_json(&older).expect("older shape decodes");
+        assert!(!decoded.stretch_last_section);
+    }
+
+    #[test]
+    fn r1498_splitting_the_rule_writes_out_kept_both_halves_of_the_fall_through() {
+        // `intervene_rule` signals "not mine" with `UnknownPath`, which is safe
+        // only because no decoder it calls can produce that error. This asserts
+        // the three outcomes stayed apart across the split: a rule applies, a
+        // non-rule path still reaches the embedded reorder model, and an
+        // unknown one is still unknown.
+        let l = layout();
+        assert_eq!(
+            l.intervene("max_section_size", &IntrospectValue::Int(500)),
+            Ok(())
+        );
+        assert_eq!(l.maximum_section_size(), 500);
+        assert_eq!(
+            l.intervene("focused_index", &IntrospectValue::Int(2)),
+            Ok(()),
+            "a reorder slot still falls through"
+        );
+        assert_eq!(l.query("focused_index"), Some(IntrospectValue::Int(2)));
+        assert_eq!(
+            l.intervene("no_such_rule", &IntrospectValue::Bool(true)),
+            Err(InterveneError::UnknownPath)
+        );
+        assert_eq!(
+            l.intervene("stretch_last_section", &IntrospectValue::Text("on".into())),
+            Err(InterveneError::TypeMismatch),
+            "a rule that IS this header's reports the decode error, not \
+             'unknown' — the two must not collapse into one answer"
         );
     }
 }
