@@ -16,6 +16,11 @@
 //! R1447 §5.36 — the `FontContext` is built on the first *shape*, not on
 //! construction. See [`LayoutCache`] for why that distinction is load-
 //! bearing rather than a micro-optimisation.
+//!
+//! R1521 §5.36 — the capacity **adapts to the working set** rather than
+//! standing at a fixed number. See [`LayoutCache`]'s "the capacity is
+//! earned" section: a fixed LRU bound smaller than a cyclic working set
+//! has a 0% hit rate, which is the one failure mode this cache can have.
 
 use crate::layout::Layout;
 use lru::LruCache;
@@ -30,6 +35,7 @@ use pinion_core::style::{
     Color, FontFamily as PinFontFamily, FontStyle, GenericFontFamily, LineHeight, TextAlign,
     TextStyle,
 };
+use pinion_core::text_cache_stats::TextCacheStats;
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
@@ -146,8 +152,98 @@ struct LayoutKey {
 /// the identical cost at the identical count, one construction later.
 /// [`Self::font_scans`] reports how many times it has been built, which is
 /// what pins the TUI guarantee as an assertion rather than a claim.
+///
+/// # R1521 §5.36 — the capacity is earned, not guessed
+///
+/// A fixed-capacity LRU has exactly one failure mode, and a UI frame walks
+/// straight into it. Painting is a **cyclic** access pattern: every frame
+/// visits the same labels in the same order. LRU is pathological on a cycle
+/// longer than its capacity — each entry is evicted by the one requested
+/// just before it comes round again — so the hit rate is not *degraded* but
+/// **0%**, and it is 0% on every subsequent frame, forever.
+///
+/// Measured on this box (release, `Scene::Text` leaves through the paint
+/// walk, one shell-sized cache), the old fixed 256 produced a cliff:
+///
+/// | text leaves | steady-state paint | shapes per frame | after R1521 | settles at |
+/// |------------:|-------------------:|-----------------:|------------:|-----------:|
+/// | 256         | 0.53 ms            | 0                | 0.40 ms     | 256        |
+/// | 300         | 5.35 ms            | 300              | **0.43 ms** | 512        |
+/// | 512         | 11.9 ms            | 512              | **0.76 ms** | 512        |
+/// | 1200        | 27.4 ms            | 1200             | **1.59 ms** | 2048       |
+///
+/// A **17% increase in content multiplied the per-frame cost by ten**, and
+/// 1200 leaves — a 30-column data grid with 40 visible rows, an ordinary
+/// pro-tool scene — cost 1.6x the entire 60fps budget on shaping alone.
+/// That is the shape of a cliff, not of a cost curve, which is what makes
+/// it worth removing rather than tuning.
+///
+/// Raising the constant moves the cliff instead of removing it: whatever
+/// number is chosen, the scene one leaf larger falls off it just as hard.
+/// So the capacity **grows on proof that it was too small**. The proof is a
+/// miss on a key this cache itself evicted — the ghost list of 2Q / ARC
+/// (Megiddo & Modha, 2003). A key that comes back after being evicted is a
+/// witness that the working set did not fit; a key that never comes back is
+/// a scan, and a scan must not grow anything.
+///
+/// That distinction is the whole design, and it is what
+/// [`Self::growths`] makes checkable:
+///
+/// - **cyclic** (row labels revisited every frame) — evicted keys return,
+///   so the cache doubles until the set fits, then stops.
+/// - **scan** (a streaming log whose lines are never revisited) — evicted
+///   keys never return, so the capacity stays where it started no matter
+///   how many million lines pass through.
+///
+/// Growth is bounded by [`Self::MAX_CAPACITY`]. Entries are ~3.1 KB
+/// measured (a 24-character label, RSS delta over 20,000 entries), so the
+/// bound is a memory statement: ~26 MB if a scene ever proves it needs the
+/// whole thing, against ~0.8 MB for the 256 that used to be the ceiling.
+/// A caller that needs a hard bound states one with
+/// [`Self::with_max_capacity`]; that is the only way to get the old
+/// fixed-ceiling behaviour back, and it is now a decision rather than a
+/// default.
 pub struct LayoutCache {
     inner: LruCache<LayoutKey, Layout>,
+    /// R1521 — hashes of keys this cache evicted. A miss whose key hashes
+    /// into here is the witness that [`Self::inner`] is too small for the
+    /// caller's working set; see the type doc.
+    ///
+    /// **Sized to [`Self::max_capacity`], not to `inner`.** A ghost list as
+    /// long as the cache detects only working sets up to twice the capacity:
+    /// beyond that, a cycle's own evictions push the earlier evidence out
+    /// before the cycle comes round to supply it. Measured against the case
+    /// that motivated R1521 — capacity 256, working set 1,200 — a
+    /// capacity-sized ghost list never fires at all. The list has to span the
+    /// largest working set the cache is *allowed* to serve, which is the
+    /// ceiling.
+    ///
+    /// That sizing carries a property worth naming: a working set larger than
+    /// [`Self::max_capacity`] produces no ghost hits either, so the cache does
+    /// not grow for it. That is correct rather than a gap — such a set cannot
+    /// be held at any permitted capacity, so growing toward the ceiling would
+    /// buy nothing and cost the memory.
+    ///
+    /// Hashes rather than keys: the question asked of this list is only
+    /// "recently evicted?", and a `u64` entry costs no heap while a
+    /// [`LayoutKey`] carries an owned `String` and a `Vec`. A collision would
+    /// authorise one growth that no eviction earned — bounded, self-limiting,
+    /// and at 8,192 live entries about 2e-12 likely.
+    ///
+    /// The map is allocated at full size on construction, which is what a
+    /// ceiling-sized list costs whether or not the cache ever grows: **33 kB
+    /// per `LayoutCache`**, measured as the RSS delta over 100 fresh caches.
+    /// Every caller that builds one per call rather than per shell is a
+    /// documented one-shot (`pinion_tui::render_one_frame`, the drag-chip
+    /// repaint), so this lands on no hot path; a future per-frame constructor
+    /// would want [`LayoutCache::with_max_capacity`] with a small ceiling
+    /// rather than the default.
+    ghosts: LruCache<u64, ()>,
+    /// R1521 — the ceiling [`Self::grow`] will not pass.
+    max_capacity: NonZeroUsize,
+    /// R1521 — how many times the capacity doubled. Reported by
+    /// [`Self::growths`].
+    growths: u32,
     /// `None` until the first shape. See the type doc — this is the
     /// system-font scan, deferred.
     font_cx: Option<FontContext>,
@@ -201,17 +297,55 @@ fn ensure_font_context<'a>(
 }
 
 impl LayoutCache {
-    /// Default cache capacity (cached layouts). A `NonZeroUsize`
+    /// Starting cache capacity (cached layouts). A `NonZeroUsize`
     /// compile-time constant so [`LayoutCache::new`] needs no runtime
     /// unwrap.
+    ///
+    /// R1521 §5.36 — a *starting* capacity since the ceiling became
+    /// [`Self::MAX_CAPACITY`]: a cache that proves this is too small for its
+    /// caller grows past it. See the type doc.
     pub const DEFAULT_CAPACITY: NonZeroUsize = NonZeroUsize::new(256).expect("256 is non-zero");
 
-    /// Construct a cache with `capacity` slots. Use [`LayoutCache::new`]
-    /// for the default.
+    /// R1521 §5.36 — the ceiling an adaptively-grown cache will not pass.
+    ///
+    /// 8,192 entries at the measured ~3.1 KB each is ~26 MB, and it takes a
+    /// scene of 8,192 simultaneously-painted text leaves to reach it — a
+    /// dense 4K pro-tool layout (180 rows x 30 columns) is about 5,400. The
+    /// bound exists so the growth rule cannot be turned into an unbounded
+    /// allocation by an adversarial access pattern, not because any measured
+    /// scene approaches it.
+    pub const MAX_CAPACITY: NonZeroUsize = NonZeroUsize::new(8192).expect("8192 is non-zero");
+
+    /// Construct a cache that starts at `capacity` slots and may grow to
+    /// [`Self::MAX_CAPACITY`]. Use [`LayoutCache::new`] for the default
+    /// start, or [`LayoutCache::with_max_capacity`] to state a hard bound.
     #[must_use]
     pub fn with_capacity(capacity: NonZeroUsize) -> Self {
+        Self::with_max_capacity(capacity, Self::MAX_CAPACITY.max(capacity))
+    }
+
+    /// R1521 §5.36 — construct a cache that starts at `capacity` and grows no
+    /// further than `max_capacity`.
+    ///
+    /// Passing `max_capacity == capacity` pins the capacity: the cache never
+    /// grows, and a working set larger than it re-shapes every pass exactly as
+    /// a fixed-capacity LRU always did. That behaviour is still reachable
+    /// because a caller may genuinely need a hard memory bound more than it
+    /// needs hits — a preview thumbnail pass, a one-shot PDF render. It is no
+    /// longer the *default*, which is the whole of R1521: the cliff is now
+    /// something a caller opts into with a number it chose, not something
+    /// every caller inherits from a constant.
+    ///
+    /// `max_capacity` is clamped up to `capacity` — a ceiling below the floor
+    /// would describe no cache at all.
+    #[must_use]
+    pub fn with_max_capacity(capacity: NonZeroUsize, max_capacity: NonZeroUsize) -> Self {
+        let max_capacity = max_capacity.max(capacity);
         Self {
             inner: LruCache::new(capacity),
+            ghosts: LruCache::new(max_capacity),
+            max_capacity,
+            growths: 0,
             font_cx: None,
             font_scans: 0,
             shapes: 0,
@@ -222,7 +356,7 @@ impl LayoutCache {
         }
     }
 
-    /// Construct a cache with [`Self::DEFAULT_CAPACITY`] slots.
+    /// Construct a cache starting at [`Self::DEFAULT_CAPACITY`] slots.
     #[must_use]
     pub fn new() -> Self {
         Self::with_capacity(Self::DEFAULT_CAPACITY)
@@ -271,12 +405,71 @@ impl LayoutCache {
             max_width,
         };
         if !self.inner.contains(&key) {
+            // R1521 §5.36 — the witness. This key missing is ordinary; this
+            // key missing *after this cache evicted it* means the working set
+            // did not fit, because the caller came back for something the
+            // capacity forced out. Popping it also retires the evidence, so
+            // one eviction can only justify one growth.
+            if self.ghosts.pop(&ghost_hash(&key)).is_some() {
+                self.grow();
+            }
             let layout = self.shape(text, style, runs, max_width);
-            self.inner.put(key.clone(), layout);
+            // `push` reports what left. Reached only on a miss, so a returned
+            // pair is always an eviction rather than a same-key replacement.
+            if let Some((evicted, _)) = self.inner.push(key.clone(), layout) {
+                self.ghosts.put(ghost_hash(&evicted), ());
+            }
         }
         self.inner
             .get(&key)
             .expect("entry just inserted on cache miss")
+    }
+
+    /// R1521 §5.36 — double the capacity, bounded by [`Self::max_capacity`].
+    ///
+    /// Doubling rather than growing by the measured shortfall, and the
+    /// distinction is worth stating because the shortfall *is* measurable: at
+    /// the moment a witness fires, `ghosts.len()` is the number of distinct
+    /// keys evicted since the last growth, so `capacity + ghosts.len()` sizes
+    /// a purely cyclic working set in one step (measured: 256 + 44 = exactly
+    /// the 300-leaf scene). It is rejected because that estimate is only sound
+    /// when the ghost population is entirely cyclic. Mix a scan into the frame
+    /// — a streaming log beside a stable label set — and the ghosts are mostly
+    /// keys nobody will ask for again, so the "shortfall" is inflated by
+    /// content that was never cacheable, in one jump, with no second
+    /// observation to correct it.
+    ///
+    /// Doubling is robust to what the ghost population happens to contain: it
+    /// never over-shoots by more than 2x, it re-measures after each step, and
+    /// its convergence is bounded at `log2(MAX_CAPACITY / start)` = five
+    /// frames from the default. Measured, a 1,200-leaf scene settles at 2,048
+    /// on the fourth frame and a 3,000-leaf scene at 4,096 on the fifth.
+    ///
+    /// The ghost list is not resized here — it is already sized to
+    /// [`Self::max_capacity`], for the reason its field doc gives. It is
+    /// **cleared**, and that is what keeps growth proportionate.
+    ///
+    /// Every ghost in the list was evicted under the capacity that just
+    /// doubled, so the list holds one round of evidence for a question that
+    /// has now been answered. Spending it entry by entry makes the cache
+    /// react once per *evicted key* instead of once per *undersizing*: a
+    /// 300-leaf scene against 256 slots arrives at pass two with 44 ghosts and
+    /// grows five times on them, landing at 8,192 for a working set that fits
+    /// in 512 (measured — this is what the round's first implementation did).
+    /// Clearing retires the whole round, so the next growth needs a key
+    /// evicted under the *new* capacity to justify it. Convergence takes a few
+    /// frames rather than one, and lands on the capacity the scene actually
+    /// needs.
+    fn grow(&mut self) {
+        let current = self.inner.cap();
+        if current >= self.max_capacity {
+            return;
+        }
+        let doubled = current.saturating_mul(NonZeroUsize::new(2).expect("2 is non-zero"));
+        let next = doubled.min(self.max_capacity);
+        self.inner.resize(next);
+        self.ghosts.clear();
+        self.growths += 1;
     }
 
     /// Number of currently cached entries (test + diagnostic surface).
@@ -319,22 +512,90 @@ impl LayoutCache {
     /// The diagnostic for the one failure mode an LRU-bounded measurement
     /// cache has. A caller measuring a **bounded** working set sees this stop
     /// climbing once the set is warm; a caller whose per-pass working set
-    /// exceeds [`Self::DEFAULT_CAPACITY`] sees it climb by the full set size
-    /// on every pass, because each entry evicts the one the next pass wants.
+    /// exceeds the capacity sees it climb by the full set size on every pass,
+    /// because each entry evicts the one the next pass wants.
     ///
     /// Why that matters, measured (release, this machine, short labels):
     /// a shape **miss costs 18.5 us** and a **hit 118 ns** — 157x. So a pass
     /// over 300 strings that thrashes costs **5.6 ms**, a third of a 60fps
     /// frame, *every frame*; at 1000 strings it is over budget on its own.
-    /// A cache is therefore not by itself a strategy — a per-pass working set
-    /// has to be BOUNDED, which is what Qt's
-    /// `QHeaderView::resizeContentsPrecision` bounds.
+    ///
+    /// R1521 §5.36 — that is why the capacity is no longer fixed. A cache
+    /// that grows on proof of undersizing (see the type doc) drives this
+    /// counter back to "stops climbing once warm" for a cyclic working set of
+    /// any size up to [`Self::MAX_CAPACITY`], so a thrashing `shapes()` now
+    /// means one of two specific things: a working set past that ceiling, or
+    /// a caller that pinned its own bound via
+    /// [`Self::with_max_capacity`]. Reading it with [`Self::growths`] says
+    /// which. A cache is still not by itself a strategy for a *measurement*
+    /// pass — a pass that measures rows nobody will look at should measure
+    /// fewer, which is what Qt's `QHeaderView::resizeContentsPrecision`
+    /// bounds — but a *paint* pass has no such freedom: it must visit every
+    /// leaf it paints, so the cache is the only place the cost can go.
     ///
     /// Cheap to read (a field), so a consumer can gate a debug assertion on
     /// it or a profiler can sample it per frame.
     #[must_use]
     pub fn shapes(&self) -> u64 {
         self.shapes
+    }
+
+    /// R1521 §5.36 — the cache's current capacity in entries.
+    ///
+    /// Starts at what the constructor was given and rises toward
+    /// [`Self::max_capacity`] as the working set proves it has to. Reading it
+    /// alongside [`Self::len`] is how a profiler tells "warm and roomy" from
+    /// "full and about to evict".
+    #[must_use]
+    pub fn capacity(&self) -> NonZeroUsize {
+        self.inner.cap()
+    }
+
+    /// R1521 §5.36 — the ceiling [`Self::capacity`] will not pass.
+    #[must_use]
+    pub fn max_capacity(&self) -> NonZeroUsize {
+        self.max_capacity
+    }
+
+    /// R1521 §5.36 §5.7 — every counter this cache keeps, as one `Copy`
+    /// snapshot for the §2 #2 wire (`scene/text_cache_stats`).
+    ///
+    /// The individual accessors stay because in-process callers ask one
+    /// question at a time; this exists because an agent asking "is the shaper
+    /// thrashing" needs several of them **from the same instant**. Reading
+    /// them one call at a time across a frame boundary can report a `shapes`
+    /// from before a growth beside a `capacity` from after it, which describes
+    /// a cache that never existed.
+    ///
+    /// `usize` counters widen to `u64` here so the wire shape does not vary
+    /// with the host's pointer width.
+    #[must_use]
+    pub fn stats(&self) -> TextCacheStats {
+        TextCacheStats {
+            shapes: self.shapes,
+            entries: self.inner.len() as u64,
+            capacity: self.inner.cap().get() as u64,
+            max_capacity: self.max_capacity.get() as u64,
+            growths: self.growths,
+            font_scans: self.font_scans,
+        }
+    }
+
+    /// R1521 §5.36 — how many times the capacity has doubled.
+    ///
+    /// The instrument that separates the two access patterns a text cache
+    /// sees, which no other counter distinguishes. A **cyclic** working set
+    /// larger than the capacity drives this up a few times and then stops
+    /// (the set now fits); a **scan** of never-revisited strings leaves it at
+    /// zero however long it runs, because a scan produces no ghost hits.
+    ///
+    /// `shapes()` alone cannot tell those apart — both climb by the pass size
+    /// every pass — which is exactly why a cache that grew on *misses* rather
+    /// than on evicted-key returns would inflate itself to the ceiling on the
+    /// first streaming log it ever rendered.
+    #[must_use]
+    pub fn growths(&self) -> u32 {
+        self.growths
     }
 
     /// R1448 §5.36 — whether this cache reached the platform font database.
@@ -480,6 +741,12 @@ impl LayoutCache {
         }
         self.default_family = family;
         self.inner.clear();
+        // R1521 — the ghosts go with them. A key evicted under the previous
+        // default is no longer evidence that the capacity is too small: the
+        // caller asking for it again is asking for a *different* layout, and
+        // counting it as a witness would grow the cache for a reason that has
+        // nothing to do with the working set.
+        self.ghosts.clear();
     }
 
     /// R1472 §5.36 — the family an unset [`TextStyle::font_family`] resolves
@@ -627,6 +894,23 @@ impl LayoutCache {
         );
         layout
     }
+}
+
+/// R1521 §5.36 — the ghost-list identity of a [`LayoutKey`].
+///
+/// The ghost list answers one question — "did this cache evict this key
+/// recently?" — so it stores identities rather than keys. See
+/// [`LayoutCache::ghosts`] for why that is the right trade and what a
+/// collision costs.
+///
+/// `DefaultHasher` because the value never leaves the process and never
+/// crosses a run: it identifies an entry against other entries in the same
+/// cache, and nothing is persisted or compared across executions.
+fn ghost_hash(key: &LayoutKey) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut h);
+    h.finish()
 }
 
 /// R713 §5.36 — lower a [`TextStyle`] to the parley [`StyleProperty`]
@@ -999,14 +1283,17 @@ mod tests {
     }
 
     #[test]
-    fn r1454_a_working_set_past_capacity_reshapes_every_pass() {
+    fn r1454_a_pinned_capacity_past_its_working_set_reshapes_every_pass() {
         // THE CLIFF, measured rather than asserted in prose: with a working
         // set one larger than the cache, each entry evicts the one the next
         // pass wants, so a steady-state frame pays the FULL set every time.
-        // This is why a content-measuring consumer needs a bound on how much
-        // it measures per pass, not merely a cache.
+        //
+        // R1521 — this is now what a caller gets when it PINS the bound
+        // (`max == initial`), not what every caller inherits. The test keeps
+        // measuring it because the behaviour is still reachable and a caller
+        // choosing it should know exactly what it costs.
         let cap = NonZeroUsize::new(8).expect("8 is non-zero");
-        let mut cache = LayoutCache::with_capacity(cap);
+        let mut cache = LayoutCache::with_max_capacity(cap, cap);
         let style = TextStyle::new().with_size_px(13);
         let set: Vec<String> = (0..9).map(|i| format!("row-{i}")).collect();
         for pass in 1..=3 {
@@ -1019,8 +1306,15 @@ mod tests {
                 "pass {pass} re-shaped the whole set: nine strings, eight slots"
             );
         }
+        assert_eq!(
+            cache.growths(),
+            0,
+            "a pinned bound does not grow — that is what pinning means",
+        );
+        assert_eq!(cache.capacity(), cap, "and the capacity never moved");
+
         // One string fewer fits, and the very next pass is free.
-        let mut fits = LayoutCache::with_capacity(cap);
+        let mut fits = LayoutCache::with_max_capacity(cap, cap);
         for s in &set[..8] {
             let _ = fits.layout(s, &style, None);
         }
@@ -1028,6 +1322,272 @@ mod tests {
             let _ = fits.layout(s, &style, None);
         }
         assert_eq!(fits.shapes(), 8, "eight strings in eight slots stay warm");
+    }
+
+    /// R1521 §5.36 — **the defect**, and the reason the capacity adapts: an
+    /// unpinned cache whose cyclic working set is larger than its capacity
+    /// grows until the set fits, and then stops shaping entirely.
+    ///
+    /// The discriminating assertion is the last one. Before R1521 this same
+    /// set re-shaped all nine strings on every pass forever — a 0% hit rate,
+    /// not a degraded one — because LRU evicts precisely the entry a cycle is
+    /// about to ask for next.
+    #[test]
+    fn r1521_a_cyclic_working_set_grows_the_cache_until_it_fits() {
+        let cap = NonZeroUsize::new(8).expect("8 is non-zero");
+        let mut cache = LayoutCache::with_capacity(cap);
+        let style = TextStyle::new().with_size_px(13);
+        let set: Vec<String> = (0..9).map(|i| format!("row-{i}")).collect();
+
+        for _ in 0..6 {
+            for s in &set {
+                let _ = cache.layout(s, &style, None);
+            }
+        }
+        assert!(
+            cache.growths() > 0,
+            "the cycle came back for keys the cache had evicted — that is the \
+             witness the capacity was too small",
+        );
+        assert!(
+            cache.capacity().get() >= set.len(),
+            "it grew until the working set fits: capacity={} set={}",
+            cache.capacity(),
+            set.len(),
+        );
+
+        // Now warm: further passes cost nothing at all.
+        let settled = cache.shapes();
+        for _ in 0..3 {
+            for s in &set {
+                let _ = cache.layout(s, &style, None);
+            }
+        }
+        assert_eq!(
+            cache.shapes(),
+            settled,
+            "three more passes over a set that now fits add ZERO shapes; \
+             pre-R1521 they added 27",
+        );
+    }
+
+    /// R1521 §5.36 — growth is **proportionate**: a working set slightly past
+    /// the capacity settles one doubling up, not at the ceiling.
+    ///
+    /// The counterfactual is a defect this round shipped and then fixed. A
+    /// `grow` that does not retire the ghost list spends its evidence one
+    /// evicted key at a time: pass two of a 300-leaf scene begins with 44
+    /// ghosts and grows on each of them, so the cache lands at 8,192 — 27x the
+    /// working set — while every other assertion here still passes, because
+    /// every other assertion is satisfied by a cache that is merely *large
+    /// enough*. Only the settled capacity distinguishes "grew until it fit"
+    /// from "grew until it ran out of room to grow".
+    #[test]
+    fn r1521_growth_settles_at_the_working_set_not_at_the_ceiling() {
+        let mut cache = LayoutCache::new();
+        let style = TextStyle::new().with_size_px(13);
+        let set: Vec<String> = (0..300).map(|i| format!("row-{i}")).collect();
+        for _ in 0..6 {
+            for s in &set {
+                let _ = cache.layout(s, &style, None);
+            }
+        }
+        assert_eq!(
+            cache.capacity().get(),
+            512,
+            "300 leaves need one doubling from 256 — not five to the ceiling",
+        );
+        assert_eq!(cache.growths(), 1, "and exactly one growth was justified");
+        assert!(
+            cache.capacity() < LayoutCache::MAX_CAPACITY,
+            "a scene this size must not reach the ceiling",
+        );
+    }
+
+    /// R1521 §5.36 — a **scan** does not grow the cache, however long it runs.
+    ///
+    /// This is the half that makes the growth rule a rule rather than a leak.
+    /// A streaming log renders lines that are never revisited: every access is
+    /// a miss, so a cache that grew on *misses* would inflate straight to its
+    /// ceiling on content that could never have been cached usefully. Growing
+    /// on evicted-key RETURNS instead distinguishes the two, because a scan
+    /// produces none.
+    ///
+    /// The counterfactual is the paired test above: same capacity, same number
+    /// of shapes, opposite verdict. Only the revisiting tells them apart.
+    #[test]
+    fn r1521_a_scan_never_grows_the_cache() {
+        let cap = NonZeroUsize::new(8).expect("8 is non-zero");
+        let mut cache = LayoutCache::with_capacity(cap);
+        let style = TextStyle::new().with_size_px(13);
+        for i in 0..500 {
+            let _ = cache.layout(&format!("log line {i}"), &style, None);
+        }
+        assert_eq!(
+            cache.shapes(),
+            500,
+            "premise: every line missed — a scan is all misses by definition",
+        );
+        assert_eq!(
+            cache.growths(),
+            0,
+            "and none of those 500 misses is evidence of undersizing: no line \
+             was ever asked for twice",
+        );
+        assert_eq!(cache.capacity(), cap, "so the capacity did not move");
+    }
+
+    /// R1521 §5.36 — growth stops at the stated ceiling.
+    ///
+    /// Without a bound the growth rule is an unbounded allocation driven by
+    /// the access pattern, which is a worse failure than the one it fixes.
+    #[test]
+    fn r1521_growth_stops_at_max_capacity() {
+        let start = NonZeroUsize::new(2).expect("2 is non-zero");
+        let max = NonZeroUsize::new(8).expect("8 is non-zero");
+        let mut cache = LayoutCache::with_max_capacity(start, max);
+        let style = TextStyle::new().with_size_px(13);
+        let set: Vec<String> = (0..8).map(|i| format!("row-{i}")).collect();
+        for _ in 0..8 {
+            for s in &set {
+                let _ = cache.layout(s, &style, None);
+            }
+        }
+        assert_eq!(
+            cache.capacity(),
+            max,
+            "a working set that needs the whole ceiling reaches it exactly",
+        );
+        assert_eq!(cache.max_capacity(), max);
+        let settled = cache.shapes();
+        for s in &set {
+            let _ = cache.layout(s, &style, None);
+        }
+        assert_eq!(settled, cache.shapes(), "and it is warm there");
+    }
+
+    /// R1521 §5.36 — a working set larger than the ceiling does not grow the
+    /// cache at all.
+    ///
+    /// Not a gap in the growth rule but a consequence of sizing the ghost list
+    /// to the ceiling: evidence is retained for exactly the working sets that
+    /// could be served. A set of 64 against a ceiling of 8 thrashes at any
+    /// permitted capacity, so climbing to the ceiling would spend memory to
+    /// change nothing — the cache stays at the size its caller asked for.
+    ///
+    /// Worth pinning because the tempting implementation (grow on any miss, or
+    /// keep ghosts only as long as the cache) gets this case wrong in opposite
+    /// directions: the first inflates to the ceiling on hopeless content, the
+    /// second fails to grow for the 1,200-leaf scene that motivated the round.
+    #[test]
+    fn r1521_a_working_set_past_the_ceiling_does_not_grow_the_cache() {
+        let start = NonZeroUsize::new(2).expect("2 is non-zero");
+        let max = NonZeroUsize::new(8).expect("8 is non-zero");
+        let mut cache = LayoutCache::with_max_capacity(start, max);
+        let style = TextStyle::new().with_size_px(13);
+        let set: Vec<String> = (0..64).map(|i| format!("row-{i}")).collect();
+        for _ in 0..4 {
+            for s in &set {
+                let _ = cache.layout(s, &style, None);
+            }
+        }
+        assert_eq!(
+            cache.capacity(),
+            start,
+            "64 entries fit in no permitted capacity, so growing toward the \
+             ceiling would buy nothing",
+        );
+        assert_eq!(cache.growths(), 0);
+    }
+
+    /// R1521 §5.36 — **the production case**, at production scale: a 1,200-leaf
+    /// working set against the default 256 warms completely.
+    ///
+    /// The discriminating number is the ratio. A ghost list sized to the
+    /// *capacity* rather than to the ceiling — the 2Q/ARC convention, and the
+    /// first thing this round implemented — detects a working set up to about
+    /// twice the capacity and silently fails beyond it, because the cycle's own
+    /// evictions push the earlier evidence out before the cycle returns to
+    /// supply it. 1,200 against 256 is 4.7x, so under that sizing this test
+    /// never grows once and the whole round is inert.
+    #[test]
+    fn r1521_a_pro_tool_working_set_warms_at_the_default_capacity() {
+        let mut cache = LayoutCache::new();
+        let style = TextStyle::new().with_size_px(13);
+        let set: Vec<String> = (0..1200)
+            .map(|i| format!("row {i} some cell content"))
+            .collect();
+        for _ in 0..6 {
+            for s in &set {
+                let _ = cache.layout(s, &style, None);
+            }
+        }
+        assert!(
+            cache.capacity().get() >= set.len(),
+            "the 30-column / 40-row data grid fits: capacity={} set={}",
+            cache.capacity(),
+            set.len(),
+        );
+        let settled = cache.shapes();
+        for s in &set {
+            let _ = cache.layout(s, &style, None);
+        }
+        assert_eq!(
+            settled,
+            cache.shapes(),
+            "a full pass over 1,200 leaves now shapes NOTHING; before R1521 it \
+             shaped all 1,200, every frame, at 27.4 ms",
+        );
+    }
+
+    /// R1521 §5.36 — the default cache starts at
+    /// [`LayoutCache::DEFAULT_CAPACITY`] and may reach
+    /// [`LayoutCache::MAX_CAPACITY`].
+    ///
+    /// Pins the pair as a deliberate choice: the start is what a small app
+    /// pays, the ceiling is what a pro-tool scene is allowed to prove it
+    /// needs. A regression that made them equal would restore the cliff for
+    /// every consumer while every other test here still passed.
+    #[test]
+    fn r1521_default_cache_starts_small_and_may_grow() {
+        let cache = LayoutCache::new();
+        assert_eq!(cache.capacity(), LayoutCache::DEFAULT_CAPACITY);
+        assert_eq!(cache.max_capacity(), LayoutCache::MAX_CAPACITY);
+        assert!(
+            LayoutCache::MAX_CAPACITY > LayoutCache::DEFAULT_CAPACITY,
+            "the default cache can grow at all — equal constants would pin \
+             every consumer to the pre-R1521 cliff",
+        );
+        assert_eq!(cache.growths(), 0, "and it has not grown yet");
+    }
+
+    /// R1521 §5.36 — changing the application default font clears the ghost
+    /// list along with the entries it invalidates.
+    ///
+    /// A ghost is evidence about *capacity*. After a default change, the
+    /// caller asking again for a cleared key is asking for a different layout,
+    /// so treating that as a capacity witness would grow the cache for a
+    /// reason unrelated to the working set — on a boot sequence that sets the
+    /// font once, at that.
+    #[test]
+    fn r1521_changing_the_default_font_retires_the_ghosts() {
+        let cap = NonZeroUsize::new(2).expect("2 is non-zero");
+        let mut cache = LayoutCache::with_capacity(cap);
+        let s = style(16);
+        // Fill and overflow so "a" is evicted into the ghost list.
+        for t in ["a", "b", "c"] {
+            let _ = cache.layout(t, &s, None);
+        }
+        assert_eq!(cache.growths(), 0, "premise: nothing has grown yet");
+
+        cache.set_default_font_family(Some(PinFontFamily::Named("Some Face".into())));
+        let _ = cache.layout("a", &s, None);
+        assert_eq!(
+            cache.growths(),
+            0,
+            "re-shaping under a NEW default is not evidence the capacity was \
+             too small",
+        );
     }
 
     #[test]

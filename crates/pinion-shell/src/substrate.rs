@@ -5427,6 +5427,11 @@ impl<V: WidgetView> ShellCore<V> {
         // input state, pacing, unknown-window verdict) before the
         // split-borrow block; see [`Self::window_scoped_rpc_reads`].
         let window_reads = self.window_scoped_rpc_reads(&request, window_id);
+        // R1521 §5.36 §5.7 — the shape cache's snapshot. A GLOBAL read, not a
+        // window-scoped one: this shell owns one `LayoutCache` and every
+        // window shapes through it. Taken here, before the disjoint-field
+        // borrow split below, and `Copy` so it costs a struct move.
+        let text_cache_stats = self.text_cache.stats();
         // R1087 §5.16 §5.41 §2 #7 PR-31 — resolve the binding's declared
         // window set for `scene/windows` only (a GLOBAL read, not
         // window-scoped, so it lives here rather than in
@@ -5763,6 +5768,12 @@ impl<V: WidgetView> ShellCore<V> {
             if let Some(stats) = window_reads.cache_stats {
                 ctx = ctx.with_fragment_cache_stats(stats);
             }
+            // R1521 §5.36 — unconditional: a shell always has a shape cache,
+            // so `scene/text_cache_stats` always has an answer here. The
+            // `Unavailable` token is for an embedder that holds no cache at
+            // all (a `pinion-tui` host, which never shapes), not for a shell
+            // that has not shaped yet — that one honestly reports zeros.
+            ctx = ctx.with_text_cache_stats(text_cache_stats);
             if let Some(timings) = window_reads.frame_timings {
                 ctx = ctx.with_frame_timings(timings);
             }

@@ -42,6 +42,7 @@ pub mod simulate;
 pub mod snapshot;
 pub mod substrate_introspect;
 pub mod text;
+pub mod text_cache_stats;
 pub mod text_state;
 pub mod theme;
 pub mod transport;
@@ -130,6 +131,7 @@ pub use substrate_introspect::{
     SubstrateIntrospectError, introspect_error_to_data, lookup as substrate_lookup,
 };
 pub use text::{NormalizeForm, NormalizeOutcome, text_normalize};
+pub use text_cache_stats::{TextCacheStatsError, TextCacheStatsOutcome, text_cache_stats};
 pub use text_state::{TextSelectionView, TextStateError, TextStateOutcome, text_state};
 pub use theme::{
     DEFAULT_THEME_TAG, PaletteCatalogue, PaletteTokens, SetThemeModeError, SetThemeModeOutcome,

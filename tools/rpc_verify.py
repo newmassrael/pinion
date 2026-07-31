@@ -740,6 +740,24 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None and isinstance(resp.result, dict)
         return resp.result
 
+    def text_cache_stats(self) -> dict[str, Any]:
+        """`scene/text_cache_stats` typed wrapper (R1521 §5.36 §5.7).
+
+        Returns the §5.36 shape cache's `{shapes, entries, capacity,
+        max_capacity, growths, font_scans, at_ceiling}`. Per-SHELL, not
+        per-window — one `LayoutCache` serves every window — so unlike
+        [`cache_stats`] this takes no `window` param.
+
+        Distinct from [`cache_stats`], which reports the §5.16 paint
+        FRAGMENT cache. The two disagree in the direction that matters: a
+        working set past the shape cache's capacity re-runs the shaper on
+        every string every frame while the fragment cache reports a
+        perfectly healthy hit rate.
+        """
+        resp = self.request("scene/text_cache_stats", {})
+        assert resp is not None and isinstance(resp.result, dict)
+        return resp.result
+
     def frame_timings(self, *, window: Optional[str] = None) -> dict[str, Any]:
         """`scene/frame_timings` typed wrapper (R907 §5.16 §5.7).
 

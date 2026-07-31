@@ -50,10 +50,21 @@
 //! (window pages + overscan, plus any prefetch margin). The LRU order keeps
 //! the visible window resident *because* it is touched every frame; were the
 //! capacity smaller than the window, a single frame's ensures could evict a
-//! page that frame still needs — the classic cache-thrash. Size it like
-//! [`LayoutCache`](../../../pinion_text/cache/struct.LayoutCache.html) does
-//! (256 layouts ≫ on-screen runs): a handful of pages of headroom over the
-//! tallest viewport.
+//! page that frame still needs — the classic cache-thrash. Give it a handful
+//! of pages of headroom over the tallest viewport.
+//!
+//! R1521 — this invariant used to say "size it like `LayoutCache` does (256
+//! layouts)", and that cross-reference is retired because the §5.36 shape
+//! cache no longer sizes itself that way: it grows when it catches proof that
+//! its capacity was too small, precisely because a fixed guess at the working
+//! set is the failure this paragraph describes. The obligation stays on the
+//! caller **here**, deliberately. A shaped layout is ~3 KB and a fetched slice
+//! is whatever the source returns, so a cache that grew itself to fit the
+//! access pattern would trade the memory bound this type exists to provide;
+//! and [`new`](ResourceCache::new) is unbounded, so the bound is already an
+//! opt-in a caller chose for a stated reason. What changed is that the
+//! sizing rule is no longer borrowed from a cache that has stopped following
+//! it.
 //!
 //! ## Eviction is fetch-safe
 //!

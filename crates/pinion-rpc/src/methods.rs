@@ -157,6 +157,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/simulate", MethodOcc::Read),
     ("scene/smart_zoom_gesture", MethodOcc::Read),
     ("scene/snapshot", MethodOcc::Read),
+    ("scene/text_cache_stats", MethodOcc::Read),
     ("scene/text_state", MethodOcc::Read),
     ("scene/theme_tokens", MethodOcc::Read),
     ("scene/tick", MethodOcc::Mutate),

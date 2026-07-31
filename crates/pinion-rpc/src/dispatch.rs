@@ -73,6 +73,7 @@ use crate::snapshot::{
 };
 use crate::substrate_introspect::{SubstrateIntrospectError, introspect_error_to_data};
 use crate::text::{NormalizeForm, NormalizeOutcome, text_normalize};
+use crate::text_cache_stats::{TextCacheStatsError, text_cache_stats};
 use crate::text_state::{
     SetCaretParams, SetSelectionParams, SetTextParams, TextStateOutcome, set_caret, set_selection,
     set_text, text_state,
@@ -484,6 +485,21 @@ pub struct DispatchContext<'a> {
     /// cases so the AI client can distinguish "no data yet" from
     /// "all zeros".
     pub fragment_cache_stats: Option<pinion_runtime::FragmentCacheStats>,
+
+    /// R1521 §5.36 §5.7 — the §5.36 shape cache's cost and capacity, resolved
+    /// by the embedder before dispatch. Consumed by
+    /// `scene/text_cache_stats`.
+    ///
+    /// **Not window-scoped**, unlike [`Self::fragment_cache_stats`]: a shell
+    /// owns one `LayoutCache` and every window shapes through it, so there is
+    /// one answer per process and a per-window projection of it would be a
+    /// fiction.
+    ///
+    /// `None` means the embedder holds no shape cache — a `pinion-tui` host
+    /// never shapes by construction — and surfaces
+    /// `TextCacheStatsUnavailable` rather than a zeroed snapshot, so a client
+    /// can tell "nothing shapes here" from "nothing has shaped yet".
+    pub text_cache_stats: Option<pinion_core::text_cache_stats::TextCacheStats>,
 
     /// R907 §5.16 §5.7 — per-window frame-timing profiler snapshot.
     /// Resolved by the embedder before dispatch (the
@@ -1364,6 +1380,7 @@ impl<'a> DispatchContext<'a> {
             deferred_inputs: None,
             window_id: None,
             fragment_cache_stats: None,
+            text_cache_stats: None,
             frame_timings: None,
             render_fidelity: None,
             screenshot: None,
@@ -1550,6 +1567,19 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_fragment_cache_stats(mut self, stats: pinion_runtime::FragmentCacheStats) -> Self {
         self.fragment_cache_stats = Some(stats);
+        self
+    }
+
+    /// R1521 §5.36 §5.7 — builder: attach the §5.36 shape-cache snapshot the
+    /// embedder read from `pinion_text::LayoutCache::stats`.
+    /// `scene/text_cache_stats` reads the slot; every other arm ignores it.
+    /// `None` (the default) surfaces `TextCacheStatsUnavailable`.
+    #[must_use]
+    pub fn with_text_cache_stats(
+        mut self,
+        stats: pinion_core::text_cache_stats::TextCacheStats,
+    ) -> Self {
+        self.text_cache_stats = Some(stats);
         self
     }
 
@@ -1789,6 +1819,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // context for the dispatch lifetime; `scene/cache_stats` reads
     // the value, every other arm ignores it.
     let fragment_cache_stats = ctx.fragment_cache_stats;
+    // R1521 §5.36 — the shape cache's snapshot, read by
+    // `scene/text_cache_stats`. Per-shell rather than per-window; `Copy`, so
+    // consulting it borrows nothing.
+    let text_cache_stats = ctx.text_cache_stats;
     // R907 §5.16 — per-window frame-timing profiler snapshot the
     // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
     // Copy out for the dispatch lifetime; `scene/frame_timings` reads
@@ -2248,6 +2282,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 ),
                 "scene/cache_stats" => (
                     handle_scene_cache_stats(fragment_cache_stats),
+                    HandlerKind::Read,
+                ),
+                "scene/text_cache_stats" => (
+                    handle_scene_text_cache_stats(text_cache_stats),
                     HandlerKind::Read,
                 ),
                 "scene/frame_timings" => {
@@ -5970,6 +6008,30 @@ fn cache_stats_error_to_rpc(err: &CacheStatsError) -> RpcError {
             RpcError::invalid_params("fragment cache stats unavailable for this window")
                 .with_data_string("CacheStatsUnavailable")
         }
+    }
+}
+
+/// R1521 §5.36 §5.7 — `scene/text_cache_stats` typed handler. Reads the
+/// per-shell [`TextCacheStats`](pinion_core::text_cache_stats::TextCacheStats)
+/// snapshot the embedder resolved on
+/// [`DispatchContext::text_cache_stats`] and emits the wire
+/// [`TextCacheStatsOutcome`](crate::text_cache_stats::TextCacheStatsOutcome)
+/// shape.
+///
+/// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`] bump.
+fn handle_scene_text_cache_stats(
+    stats: Option<pinion_core::text_cache_stats::TextCacheStats>,
+) -> Result<Value, RpcError> {
+    match text_cache_stats(stats) {
+        Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
+            RpcError::internal_error(format!(
+                "scene/text_cache_stats: failed to serialize outcome: {e}",
+            ))
+        }),
+        Err(TextCacheStatsError::TextCacheStatsUnavailable) => Err(RpcError::invalid_params(
+            "text shape cache stats unavailable for this embedder",
+        )
+        .with_data_string("TextCacheStatsUnavailable")),
     }
 }
 
