@@ -176,4 +176,20 @@ fi
 source "$hook_dir/lib/target-budget.sh"
 enforce_target_budget "$repo_root" "pre-push"
 
+# 5. R1519 — report whether the Phase B progress judgment still describes the
+# tree. `CLAUDE.md` carried "~56%" from a tally made at R931 and held it for 587
+# rounds while examples grew +71% and demos +108%; nothing ever said the number
+# had stopped being a measurement. This prints the axis judgments and shouts
+# when the evidence one rests on has drifted past the tool's threshold.
+#
+# Reports, never fails — same reasoning as the cache budget above: a stale
+# self-estimate is not a reason to refuse a push. The value is that the number
+# is spoken every time, so its going stale is visible the round it happens
+# rather than 587 rounds later.
+if [ -f "$repo_root/tools/phase_b_tally.py" ] && command -v python3 >/dev/null 2>&1; then
+    python3 "$repo_root/tools/phase_b_tally.py" 2>/dev/null \
+        | grep -E "^(weighted|STALE|UNCLASSIFIED)" \
+        | sed 's/^/pre-push: /' || true
+fi
+
 exit 0
