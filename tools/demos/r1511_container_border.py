@@ -20,17 +20,31 @@ Falsifiability, in both directions:
 
   * Stop stroking a container's border and the box vanishes: the locator
     finds no rectangle, and every band assertion fails.
-  * Fill the rect instead of stroking it and the HOLLOW assertions fail —
-    the interior probes read ink where the page colour belongs.
+  * Fill the rect instead of stroking it and the HOLLOW assertion fails —
+    the interior reads ink where the page colour belongs.
 
 Neither collapses into the other, so the demo pins the shape of what is
 painted rather than merely that something is.
 
 The checked state is asserted through the same lens from the same process
-(`scene/screenshot` captures the live surface, so state can be driven between
-captures): checking the box fills the SAME rect the outline occupied. That is
-the second direction — the outline is not a static decoration, it is the
-declaration the widget swaps out.
+(`scene/screenshot` re-renders the live surface, so state can be driven
+between captures): checking the box fills the SAME rect the outline occupied.
+That is the second direction — the outline is not a static decoration, it is
+the declaration the widget swaps out.
+
+R1515 — the interior claims are AREA measures, not point probes. This demo
+shipped in R1511 asserting `is_ink(centre)` for the filled state and failed
+its first CI run, having passed locally every time. The cause is a property
+of the widget, not of the runner: the M3 checkmark is drawn in `on-primary`,
+which is near-white, so it is on the PAGE side of the `INK` threshold and
+carves a page-coloured trail through the fill. Measured on a real capture,
+that trail runs within one pixel of the centre column, and shifting the probe
+by two pixels flips the old assertion while the interior fraction does not
+move at all (0.9568 either way). Which pixel moved in CI — a font-driven
+layout shift, a different rasterisation phase — is not established and does
+not need to be: a probe must be located relative to the feature it asserts
+about, and `centre` was located from the box while making a claim about the
+fill, which contains a feature the locator knows nothing about.
 
 Run:
     cargo build -p hello-checkbox --release
@@ -106,6 +120,45 @@ def find_box(img: Png, page: tuple[int, int, int, int]) -> tuple[int, int, int, 
     return x0, rows[0], x1, rows[-1]
 
 
+def interior_ink(img: Png, page, x0: int, y0: int, x1: int, y1: int) -> float:
+    """Fraction of the box's interior — inside the border band — carrying ink.
+
+    R1515 replaces R1511's single-pixel interior probes with this, because the
+    point was the wrong shape for this widget. The M3 checkmark is drawn in
+    `on-primary`, which is near-white: the SAME side of the `INK` threshold as
+    the page. So a checked box is not a solid block of ink — the glyph carves
+    a page-coloured trail straight through it, and measured on this window
+    that trail passes within ONE pixel of the centre column.
+
+    A point probe there is a coin flip on where the glyph rasterises, and the
+    coin came up tails in CI (run 30598731572) while landing heads on every
+    local adapter, under Xvfb, and under full CPU load — 20 local runs, zero
+    failures. The states themselves are not close at all: the interior is
+    0.00 inked when hollow and 0.96 when filled. R1511 reached for the one
+    measurement with no margin when the one with total margin was available.
+    """
+    ix0, iy0 = x0 + BORDER_W + 1, y0 + BORDER_W + 1
+    ix1, iy1 = x1 - BORDER_W - 1, y1 - BORDER_W - 1
+    total = (ix1 - ix0 + 1) * (iy1 - iy0 + 1)
+    assert total > 0, "the interior has area to sample"
+    inked = sum(
+        1
+        for y in range(iy0, iy1 + 1)
+        for x in range(ix0, ix1 + 1)
+        if is_ink(img, x, y, page)
+    )
+    return inked / total
+
+
+# Measured on this window: hollow = 0.0000, filled = 0.9568. Both thresholds
+# sit far from both readings, and no single image can satisfy the two — so a
+# reported fraction also SAYS which failure happened: ~0.0 means the box is
+# hollow (the click never landed, or the fill was dropped), ~0.96 means it is
+# filled and something else is wrong.
+HOLLOW_MAX = 0.05
+FILLED_MIN = 0.80
+
+
 def band_thickness(img: Png, page, x: int, y: int, dx: int, dy: int) -> int:
     """Count consecutive ink pixels walking inward from (x, y)."""
     n = 0
@@ -165,15 +218,11 @@ def body() -> None:
             got = band_thickness(unchecked, page, x, y, dx, dy)
             assert_eq(got, BORDER_W, f"{label} band is the declared border width")
 
-        for label, x, y in (
-            ("centre", mx, my),
-            ("upper-left inner", x0 + BORDER_W + 2, y0 + BORDER_W + 2),
-            ("lower-right inner", x1 - BORDER_W - 2, y1 - BORDER_W - 2),
-        ):
-            assert not is_ink(unchecked, x, y, page), (
-                f"an unchecked box is HOLLOW — {label} must read the page, got "
-                f"{png_pixel(unchecked, x, y)}"
-            )
+        hollow = interior_ink(unchecked, page, x0, y0, x1, y1)
+        assert hollow <= HOLLOW_MAX, (
+            f"an unchecked box is HOLLOW — its whole interior must read the "
+            f"page, got {hollow:.4f} inked (threshold {HOLLOW_MAX})"
+        )
 
         # ── (E) the corner radius is real ──────────────────────────────
         # `box_radius = 4`, so the exact corner pixel lies outside the rounded
@@ -193,21 +242,30 @@ def body() -> None:
         checked = capture(tf, "checked")
         cx0, cy0, cx1, cy1 = find_box(checked, page)
         assert_eq((cx0, cy0, cx1, cy1), (x0, y0, x1, y1), "checked box occupies the same rect")
-        assert is_ink(checked, mx, my, page), (
-            "a checked box is FILLED — the centre carries ink"
+        filled = interior_ink(checked, page, x0, y0, x1, y1)
+        assert filled >= FILLED_MIN, (
+            f"a checked box is FILLED — its interior must carry ink, got "
+            f"{filled:.4f} (threshold {FILLED_MIN}). A reading near "
+            f"{HOLLOW_MAX} means the box is still HOLLOW: the click did not "
+            f"land, or the fill was dropped"
         )
-        centre = png_pixel(checked, mx, my)
-        assert centre != page, "checked centre differs from the page"
-        for frac in (0.35, 0.5, 0.65):
-            sx = x0 + int((x1 - x0) * frac)
-            assert is_ink(checked, sx, my, page), f"checked interior inked at x-frac {frac}"
+        # …and filled is not the same as opaque-everywhere: the checkmark is
+        # drawn in `on-primary`, so some of the interior is legitimately
+        # page-coloured. Asserting a strict 1.0 would forbid the glyph.
+        assert filled < 1.0, (
+            f"the checkmark glyph is present — a perfectly solid interior "
+            f"({filled:.4f}) would mean the check was never drawn"
+        )
 
         # ── (G) unchecking restores the hollow outline ─────────────────
         tf.click(path=TAG)
         again = capture(tf, "unchecked-again")
         ax0, ay0, ax1, ay1 = find_box(again, page)
         assert_eq((ax0, ay0, ax1, ay1), (x0, y0, x1, y1), "box rect survives the round trip")
-        assert not is_ink(again, mx, my, page), "unchecking returns the hollow interior"
+        back = interior_ink(again, page, x0, y0, x1, y1)
+        assert back <= HOLLOW_MAX, (
+            f"unchecking returns the hollow interior, got {back:.4f} inked"
+        )
         for label, x, y in (("top", mx, y0), ("left", x0, my), ("right", x1, my)):
             assert is_ink(again, x, y, page), f"{label} edge still inked after the round trip"
         assert_eq(

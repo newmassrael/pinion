@@ -75910,6 +75910,56 @@
         "R1511's pixel sweep is still CI's to confirm. This round changes no pixels, but the standing debt is unchanged until that run is green."
       ]
     },
+    "Round 1515": {
+      "decision_summary": "A probe must be located relative to the feature it asserts about, or it measures the rasteriser",
+      "changes_bullets": [
+        "`r1511_container_border.py` was the ONE failure in the R1513 sweep (469 of 470 passed, so R1511's ~30-file pixel change is otherwise clear). It failed its FIRST CI run at \"a checked box is FILLED — the centre carries ink\", having passed locally in the round that wrote it.",
+        "Root cause is a property of the widget, not the runner: the M3 checkmark is drawn in `on-primary`, which is near-white — the SAME side of the demo's `INK` threshold as the page — so a checked box is not a solid block of ink. The glyph carves a page-coloured trail through the fill, and measured on a real capture that trail runs within ONE pixel of the centre column.",
+        "The two states were never close: the interior is 0.0000 inked when hollow and 0.9568 when filled. R1511 reached for the one measurement with a one-pixel margin when the one with total margin was available.",
+        "The interior claims are now AREA measures (`interior_ink`), applied in all three places that had point probes — hollow, filled, and hollow-again after the round trip. The hollow side gets stronger too: three sampled points become all 324 interior pixels.",
+        "The failure message reports the measured fraction and says what each end means, so a future failure discriminates by itself: ~0.00 is a hollow box (the click never landed, or the fill was dropped) and ~0.96 is a filled one.",
+        "A second assertion pins that `filled < 1.0` — the glyph must be there. Demanding a perfectly solid interior would forbid the checkmark, and the two bounds together say \"filled AND checked\" rather than merely \"not page\"."
+      ],
+      "verification_bullets": [
+        "The CI failure was reproduced WITHOUT CI, on a real capture: shifting the probe by two pixels flips the old single-pixel assertion from PASS to FAIL while the interior fraction is unchanged at 0.9568 for every offset from -3 to +3. That is the whole defect, measured.",
+        "What was ruled out first, by measurement rather than by argument: the adapter (forced lavapipe locally — PASS), the display (Xvfb :98 + hidden window, 6 runs — PASS), a timing race (20 runs including 8 under full 32-core load — PASS), and a stale frame (`capture_window_screenshot` calls `render_window` synchronously, so the screenshot re-renders rather than reading a presented frame).",
+        "CF-1, the click withheld: FAILS with `got 0.0000 (threshold 0.8)` and the message names the right cause — \"the box is still HOLLOW: the click did not land, or the fill was dropped\". So the area measure still catches the failure a point probe was there to catch.",
+        "Class audit, as [[zero-flake-policy]] requires: every other demo using `png_pixel` / `is_ink` either scans a REGION in a loop or compares against a known colour with a tolerance over a flat fill. `r1511` was the only one asserting a lone interior point in a filled area that another near-page feature crosses.",
+        "Which pixel moved in CI is NOT established and is recorded as such — a font-driven layout shift and a different rasterisation phase are both consistent with the evidence. The fix is invariant to all of them, which is why it did not need to be settled."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The CI-vs-local divergence itself is unexplained at the mechanism level. Everything reproducible locally was reproduced and none of it failed; only the assertion's fragility is proven. If the demo fails again the reported fraction will say which side it is on, which is the check this round could add and the diagnosis it could not.",
+        "The 6 live-pixel demos CI skips for want of Pillow (`r706`, `r707`, `r786`, `r787`, `r794`, `r1506`) are still vacuous there, unchanged by this round."
+      ],
+      "publishable_decision_summary": "A probe must be located relative to the feature it asserts about, or it measures the rasteriser",
+      "publishable_changes_bullets": [
+        "`r1511_container_border.py` was the ONE failure in the R1513 sweep (469 of 470 passed, so R1511's ~30-file pixel change is otherwise clear). It failed its FIRST CI run at \"a checked box is FILLED — the centre carries ink\", having passed locally in the round that wrote it.",
+        "Root cause is a property of the widget, not the runner: the M3 checkmark is drawn in `on-primary`, which is near-white — the SAME side of the demo's `INK` threshold as the page — so a checked box is not a solid block of ink. The glyph carves a page-coloured trail through the fill, and measured on a real capture that trail runs within ONE pixel of the centre column.",
+        "The two states were never close: the interior is 0.0000 inked when hollow and 0.9568 when filled. R1511 reached for the one measurement with a one-pixel margin when the one with total margin was available.",
+        "The interior claims are now AREA measures (`interior_ink`), applied in all three places that had point probes — hollow, filled, and hollow-again after the round trip. The hollow side gets stronger too: three sampled points become all 324 interior pixels.",
+        "The failure message reports the measured fraction and says what each end means, so a future failure discriminates by itself: ~0.00 is a hollow box (the click never landed, or the fill was dropped) and ~0.96 is a filled one.",
+        "A second assertion pins that `filled < 1.0` — the glyph must be there. Demanding a perfectly solid interior would forbid the checkmark, and the two bounds together say \"filled AND checked\" rather than merely \"not page\"."
+      ],
+      "publishable_verification_bullets": [
+        "The CI failure was reproduced WITHOUT CI, on a real capture: shifting the probe by two pixels flips the old single-pixel assertion from PASS to FAIL while the interior fraction is unchanged at 0.9568 for every offset from -3 to +3. That is the whole defect, measured.",
+        "What was ruled out first, by measurement rather than by argument: the adapter (forced lavapipe locally — PASS), the display (Xvfb :98 + hidden window, 6 runs — PASS), a timing race (20 runs including 8 under full 32-core load — PASS), and a stale frame (`capture_window_screenshot` calls `render_window` synchronously, so the screenshot re-renders rather than reading a presented frame).",
+        "CF-1, the click withheld: FAILS with `got 0.0000 (threshold 0.8)` and the message names the right cause — \"the box is still HOLLOW: the click did not land, or the fill was dropped\". So the area measure still catches the failure a point probe was there to catch.",
+        "Class audit, as [[zero-flake-policy]] requires: every other demo using `png_pixel` / `is_ink` either scans a REGION in a loop or compares against a known colour with a tolerance over a flat fill. `r1511` was the only one asserting a lone interior point in a filled area that another near-page feature crosses.",
+        "Which pixel moved in CI is NOT established and is recorded as such — a font-driven layout shift and a different rasterisation phase are both consistent with the evidence. The fix is invariant to all of them, which is why it did not need to be settled."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The CI-vs-local divergence itself is unexplained at the mechanism level. Everything reproducible locally was reproduced and none of it failed; only the assertion's fragility is proven. If the demo fails again the reported fraction will say which side it is on, which is the check this round could add and the diagnosis it could not.",
+        "The 6 live-pixel demos CI skips for want of Pillow (`r706`, `r707`, `r786`, `r787`, `r794`, `r1506`) are still vacuous there, unchanged by this round."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
