@@ -128,8 +128,14 @@ def body() -> None:
         assert vp_w > 0, f"horizontal viewport measured > 0, got {vp_w}"
         assert vp_w < TOTAL_W, f"viewport ({vp_w}) narrower than columns ({TOTAL_W})"
         assert x_visible(rects["ghs_ch0"], vp_x, vp_w), "leftmost column on-screen at boot"
-        assert not x_visible(rects["ghs_ch7"], vp_x, vp_w), \
-            "right-edge column laid out beyond the viewport at boot (overflow)"
+        # R1523 — the column axis is WINDOWED, so the right-edge column is not
+        # in the tree at all at boot. Before R1523 it was built and merely
+        # positioned beyond the viewport, and this demo asserted exactly that
+        # (`not x_visible(ghs_ch7)`) — the assertion was the record of the
+        # un-windowed axis. The overflow premise it was there to witness is
+        # carried by `vp_w < TOTAL_W` above plus the `max_x` clamp below.
+        assert "ghs_ch7" not in rects, \
+            "right-edge column windowed OUT at boot (R1523) — not merely off-screen"
         # Row 0 rendered, header above it (frozen vertically).
         assert "ghs_row0" in rects, "first data row rendered at boot"
         assert rects[HEADER_TAG][1] < rects["ghs_row0"][1], "header band above the first row"
@@ -180,8 +186,11 @@ def body() -> None:
         rects3 = abs_rects_of(snap)
         assert x_visible(rects3["ghs_ch7"], vp_x, vp_w), \
             "right-edge column on-screen at max horizontal scroll"
-        assert not x_visible(rects3["ghs_ch0"], vp_x, vp_w), \
-            "left-edge column scrolled off-screen at max horizontal scroll"
+        # R1523 — and the left-edge column has left the tree, not just the
+        # viewport: scrolling the column window is what makes the far column
+        # above appear at all.
+        assert "ghs_ch0" not in rects3, \
+            "left-edge column windowed OUT at max horizontal scroll"
         # The right-edge body cell is also revealed and column-aligned.
         assert_eq(rects3["ghs_ch7"][0], rects3["ghs#0_7"][0],
                   "header col 7 x-aligned with body cell (0,7) at max scroll")

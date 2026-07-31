@@ -4003,6 +4003,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-virtual-columns"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-virtual-list"
 version = "0.0.1"
 dependencies = [

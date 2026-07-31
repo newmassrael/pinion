@@ -459,13 +459,12 @@ fn tree_cell_content(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> 
     let indent_px = row.depth * style.indent_step;
     let mut row_children: Vec<Scene> = Vec::new();
     if indent_px > 0 {
-        // Empty container as a depth indent spacer. Width = depth ×
-        // indent_step; height = row_height. The container carries no
-        // tag (presentational) so the AT layer doesn't expose it.
-        row_children.push(Scene::Container(
-            ContainerNode::new(Vec::new())
-                .with_layout(LayoutStyle::new().with_size(Size::px(indent_px, style.row_height))),
-        ));
+        // Depth indent: width = depth × indent_step, height = row_height.
+        // (R1523: the shared [`spacer`](crate::spacer::spacer) — untagged, so
+        // the AT layer does not expose it. This was one of the three copies
+        // that lifted it, and the one whose comment recorded the untagged
+        // decision the shared home now owns.)
+        row_children.push(crate::spacer::spacer(indent_px, style.row_height));
     }
     // R673 §5.50 — wrap the expand glyph in a fixed-width container
     // so leaf rows (NO-BREAK SPACE placeholder, narrow) and branch

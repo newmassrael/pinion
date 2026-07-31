@@ -132,10 +132,26 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5, visible_window=True) as tf:
         # ── (A) boot: grabbers + width model + rendered cells ───────
         snap = tf.snapshot(source="paint", viewport=WIN)
-        # A grabber is painted at every column's trailing edge.
-        for c in range(NCOLS):
-            assert find_by_tag(snap, grabber_tag(c)) is not None, \
-                f"col {c} resize grabber present at boot"
+        # A grabber is painted at every RENDERED column's trailing edge.
+        # R1523 windows the column axis, so at 130px per column only the part
+        # of the 8 that fits the 520px window is in the tree — and a grabber
+        # you cannot see is a grabber you cannot grab, so the handles follow
+        # the window. The resize EXTERNALS are registered per column
+        # regardless (asserted in (F) below for col 7, which is off-window at
+        # boot), so an AI agent can still resize a column it cannot see.
+        grabbed = [c for c in range(NCOLS) if find_by_tag(snap, grabber_tag(c)) is not None]
+        assert grabbed == list(range(grabbed[0], grabbed[-1] + 1)) and grabbed[0] == 0, \
+            f"the grabbers are the leading column window at boot, got {grabbed}"
+        assert 0 < len(grabbed) < NCOLS, \
+            f"some but not all columns are on screen at boot, got {grabbed}"
+        # Scrolling right reveals the far column's grabber — the handles track
+        # the window rather than being fixed at boot.
+        tf.scroll(H_SCROLL_TAG, to=(10 ** 9, 0))
+        far = tf.snapshot(source="paint", viewport=WIN)
+        assert find_by_tag(far, grabber_tag(NCOLS - 1)) is not None, \
+            "the last column's grabber appears once its column is scrolled into view"
+        tf.scroll(H_SCROLL_TAG, to=(0, 0))
+        snap = tf.snapshot(source="paint", viewport=WIN)
         # The per-column resize externals introspect their identity + state.
         assert_eq(tf.query(resize_path(2, "col")), 2, "resize external knows its column")
         assert_eq(tf.query(resize_path(2, "dragging")), False, "no drag in flight at boot")

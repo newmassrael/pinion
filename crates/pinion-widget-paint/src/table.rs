@@ -28,6 +28,7 @@
 //!   `InputRouter` `'#'`-split routes a
 //!   click on cell `(r, c)` to the table's `"<r>_<c>:<EventName>"` send).
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use pinion_core::Scene;
@@ -38,6 +39,7 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::widgets::column_widths::{columns_width_before, visible_columns};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, content_height};
@@ -453,6 +455,81 @@ fn header_cell(
     )
 }
 
+/// R1523 §5.27 §5.45 — the width of the columns **outside** a windowed pane,
+/// held as a leading + trailing pair.
+///
+/// When the column axis is windowed, a row builds only the cells the horizontal
+/// viewport exposes — but it must still *occupy* the full content width, or the
+/// layout pass would measure the shrunken row and publish a horizontal `max_x`
+/// that cannot reach the un-built columns (the scroll would bound itself to the
+/// window it came from). The pad is that missing extent, rendered as one empty
+/// container on each side: the windowed cells then land at exactly the x they
+/// would have had with every column built, and the row's natural width is
+/// unchanged.
+///
+/// This is the canonical column-virtualization recipe — `TanStack` Table spells
+/// the same pair `virtualPaddingLeft` / `virtualPaddingRight` — chosen over
+/// absolutely-positioning each cell (the technique the *row* axis uses) for two
+/// reasons: the row strip keeps its flex-row shape, so the eager [`view_table`]
+/// and the windowed grid keep **one** row builder; and the natural width stays
+/// correct without a second width sizer to keep in step with the pad.
+///
+/// [`NONE`](Self::NONE) is the un-windowed pane (both zero), which emits no
+/// spacer nodes at all — so a grid narrower than its viewport paints a
+/// byte-identical scene to the pre-R1523 one.
+#[derive(Clone, Copy)]
+struct ColumnPad {
+    /// Total width of the columns before the window.
+    lead: u32,
+    /// Total width of the columns after the window.
+    trail: u32,
+}
+
+impl ColumnPad {
+    /// No columns outside the pane — every column is built.
+    const NONE: Self = Self { lead: 0, trail: 0 };
+
+    /// The pad around `window` for a grid whose columns are `widths`.
+    fn around(widths: &[u32], window: &VisibleWindow) -> Self {
+        let end = (window.first + window.count).min(widths.len());
+        Self {
+            lead: columns_width_before(widths, window.first),
+            trail: widths[end..].iter().copied().sum(),
+        }
+    }
+
+    /// The `[lead?, cells…, trail?]` child list for a windowed row of
+    /// `cell_height`-tall cells. A zero-width side contributes no node.
+    fn wrap(self, cells: Vec<Scene>, cell_height: u32) -> Vec<Scene> {
+        let mut out = Vec::with_capacity(cells.len() + 2);
+        out.extend(pad_node(self.lead, cell_height));
+        out.extend(cells);
+        out.extend(pad_node(self.trail, cell_height));
+        out
+    }
+}
+
+/// R1523 — `cells[span]`, tolerating a row builder that returned fewer cells
+/// than the grid has columns.
+///
+/// That tolerance is [`view_virtual_table`]'s documented contract ("a cell
+/// beyond the returned length renders blank"), and windowing is where it starts
+/// to matter: an un-windowed row indexed short vecs harmlessly through
+/// `get(j)`, but a *slice* of one panics. Clamping in one place keeps the blank
+/// -cell rule from being re-decided per call site.
+fn clamped<'a, 'b>(cells: &'a [&'b str], span: &Range<usize>) -> &'a [&'b str] {
+    let start = span.start.min(cells.len());
+    let end = span.end.clamp(start, cells.len());
+    &cells[start..end]
+}
+
+/// The shared [`spacer`](crate::spacer::spacer), or **nothing** when `width` is
+/// 0 — so a grid whose columns fit its viewport emits no pad node at all and
+/// paints a byte-identical scene to the pre-R1523 one.
+fn pad_node(width: u32, height: u32) -> Option<Scene> {
+    (width > 0).then(|| crate::spacer::spacer(width, height))
+}
+
 /// R786 §5.27 — the header's per-column layout: the resolved widths plus
 /// whether each column carries a resize grabber. Bundled so [`header_row`] stays
 /// under the argument budget (the [`ColCell`] / [`VirtualTableData`] precedent).
@@ -460,6 +537,8 @@ fn header_cell(
 struct ColumnLayout<'a> {
     widths: &'a [u32],
     resizable: bool,
+    /// R1523 — the extent of the columns this pane windowed out.
+    pad: ColumnPad,
     /// R859 — absolute table-column index of `widths[0]`. `0` for an
     /// unsplit grid (and the frozen pane); `frozen_cols` for the scrolled
     /// pane, so its header cells keep their original `"{tag}_ch{col}"`
@@ -488,6 +567,8 @@ struct RowPane<'a> {
     col_base: usize,
     /// This pane's per-column widths (the frozen or scrolled slice).
     widths: &'a [u32],
+    /// R1523 — the extent of the columns this pane windowed out.
+    pad: ColumnPad,
 }
 
 /// The header band: one clickable `columnheader` cell per column ([
@@ -528,7 +609,7 @@ fn header_row(
         })
         .collect();
     Scene::Container(
-        ContainerNode::new(cells)
+        ContainerNode::new(layout.pad.wrap(cells, style.header_height))
             // Tagged `"<tag>_hrow"` (or `"<tag>_fhrow"` for the R859
             // frozen pane) so the binding's `access_node` walker can
             // attach the header `row` node (and resolve its bounds); not a
@@ -581,7 +662,7 @@ fn data_row(
         })
         .collect();
     Scene::Container(
-        ContainerNode::new(cells)
+        ContainerNode::new(pane.pad.wrap(cells, style.row_height))
             .with_tag(pane.container_tag.to_string())
             .with_style(BoxStyle::filled(fill))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
@@ -666,6 +747,9 @@ pub fn view_table(
         ColumnLayout {
             widths: &widths,
             resizable: false,
+            // The eager table has no viewport to window against — it builds
+            // every row, so it builds every column.
+            pad: ColumnPad::NONE,
             col_base: 0,
             container_tag: &hrow_tag,
         },
@@ -694,6 +778,7 @@ pub fn view_table(
                 container_tag: &row_tag,
                 col_base: 0,
                 widths: &widths,
+                pad: ColumnPad::NONE,
             },
             style,
         ));
@@ -1161,9 +1246,34 @@ impl GridRender<'_> {
         (source, fill, fg)
     }
 
+    /// R1523 §5.27 §5.45 — the columns the horizontal viewport exposes within
+    /// `widths`, on the [`visible_columns`] SSOT.
+    ///
+    /// The column-axis peer of the `window` this render already carries for the
+    /// row axis, and derived the same way: from a **measured** viewport, so a
+    /// resize re-windows without the caller restating anything. `offset` is the
+    /// horizontal scroll offset already relative to this pane's content, which
+    /// is why the frozen pane (pinned, never scrolled) does not call this at
+    /// all.
+    fn column_window(&self, horizontal: &Rc<ScrollState>, widths: &[u32]) -> VisibleWindow {
+        let (viewport_w, _) = horizontal.measured_viewport();
+        visible_columns(
+            widths,
+            horizontal.offset_x(),
+            viewport_w,
+            self.data.overscan,
+        )
+    }
+
     /// R784 single-scroll grid (the only mode before R859): one
     /// `total_w`-wide `[header, body]` column inside an outer horizontal
-    /// scroll. Byte-identical to the pre-R859 assembly.
+    /// scroll.
+    ///
+    /// R1523 — both axes are now windowed: the header band and every row build
+    /// only the columns `column_window` selected, padded to the full `total_w`
+    /// so the horizontal scroll still bounds against all of them. A grid whose
+    /// columns fit its viewport windows all of them and pads by zero, painting
+    /// the pre-R1523 scene exactly.
     fn render_unsplit(
         &self,
         scroll: GridScroll<'_>,
@@ -1171,6 +1281,9 @@ impl GridRender<'_> {
         mut build_cells: impl FnMut(usize) -> Vec<String>,
     ) -> Scene {
         let total_w: u32 = self.widths.iter().copied().sum();
+        let cols = self.column_window(scroll.horizontal, self.widths);
+        let span = cols.first..cols.first + cols.count;
+        let pad = ColumnPad::around(self.widths, &cols);
         let hrow_tag = GridTag::header_row(self.tag);
         // R784 — the frozen header above the inner vertical body scroll, the
         // whole `total_w`-wide column slid by the outer horizontal scroll. No
@@ -1179,12 +1292,13 @@ impl GridRender<'_> {
         let header = header_row(
             self.tag,
             self.click_tag,
-            self.data.headers,
+            &self.data.headers[span.clone()],
             self.data.sort,
             ColumnLayout {
-                widths: self.widths,
+                widths: &self.widths[span.clone()],
                 resizable: self.data.resizable,
-                col_base: 0,
+                pad,
+                col_base: cols.first,
                 container_tag: &hrow_tag,
             },
             self.theme,
@@ -1210,13 +1324,14 @@ impl GridRender<'_> {
                 data_row(
                     self.tag,
                     source,
-                    &cell_refs,
+                    clamped(&cell_refs, &span),
                     fill,
                     fg,
                     RowPane {
                         container_tag: &row_tag,
-                        col_base: 0,
-                        widths: self.widths,
+                        col_base: cols.first,
+                        widths: &self.widths[span.clone()],
+                        pad,
                     },
                     self.style,
                 )
@@ -1234,6 +1349,13 @@ impl GridRender<'_> {
     /// `build_cells` is invoked once per visible row **per pane** (the
     /// small overscanned window only): two `uniform_slots` passes keep the
     /// slot-top geometry on its R775.1 SSOT instead of hand-rolling a loop.
+    ///
+    /// R1523 — only the **scrolling** pane windows its columns. A frozen column
+    /// is pinned against the horizontal scroll, so it is on screen at every
+    /// offset by definition and windowing it could only ever remove something
+    /// visible. The window is therefore computed inside the scrolling pane's own
+    /// column space (`frozen_cols..`), which is also the space its horizontal
+    /// offset is measured in.
     fn render_frozen(
         &self,
         scroll: GridScroll<'_>,
@@ -1242,8 +1364,15 @@ impl GridRender<'_> {
         mut build_cells: impl FnMut(usize) -> Vec<String>,
     ) -> Scene {
         let frozen_w: u32 = self.widths[..frozen_cols].iter().copied().sum();
-        let scroll_w: u32 = self.widths[frozen_cols..].iter().copied().sum();
+        let scrolled = &self.widths[frozen_cols..];
+        let scroll_w: u32 = scrolled.iter().copied().sum();
         let row_pitch = self.style.row_height;
+        // The scrolling pane's window, in its own column space, then lifted to
+        // absolute table columns for the header labels / cell texts.
+        let cols = self.column_window(scroll.horizontal, scrolled);
+        let rel = cols.first..cols.first + cols.count;
+        let abs = frozen_cols + rel.start..frozen_cols + rel.end;
+        let scroll_pad = ColumnPad::around(scrolled, &cols);
 
         let frozen_slots = uniform_slots(self.window, frozen_w, row_pitch, |view_pos| {
             let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
@@ -1264,6 +1393,8 @@ impl GridRender<'_> {
                     container_tag: &frow_tag,
                     col_base: 0,
                     widths: &self.widths[..frozen_cols],
+                    // Pinned columns are never windowed out.
+                    pad: ColumnPad::NONE,
                 },
                 self.style,
             )
@@ -1272,18 +1403,18 @@ impl GridRender<'_> {
             let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
             let cells_text = build_cells(source);
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
-            let split = frozen_cols.min(cell_refs.len());
             let row_tag = GridTag::data_row(self.tag, source);
             data_row(
                 self.tag,
                 source,
-                &cell_refs[split..],
+                clamped(&cell_refs, &abs),
                 fill,
                 fg,
                 RowPane {
                     container_tag: &row_tag,
-                    col_base: frozen_cols,
-                    widths: &self.widths[frozen_cols..],
+                    col_base: abs.start,
+                    widths: &scrolled[rel.clone()],
+                    pad: scroll_pad,
                 },
                 self.style,
             )
@@ -1301,23 +1432,25 @@ impl GridRender<'_> {
             ColumnLayout {
                 widths: &self.widths[..frozen_cols],
                 resizable: false,
+                pad: ColumnPad::NONE,
                 col_base: 0,
                 container_tag: &fhrow_tag,
             },
             self.theme,
             self.style,
         );
-        // Scrolling pane header (right, columns `frozen_cols..`).
+        // Scrolling pane header (right, the windowed slice of `frozen_cols..`).
         let hrow_tag = GridTag::header_row(self.tag);
         let scroll_header = header_row(
             self.tag,
             self.click_tag,
-            &self.data.headers[frozen_cols..],
+            &self.data.headers[abs.clone()],
             self.data.sort,
             ColumnLayout {
-                widths: &self.widths[frozen_cols..],
+                widths: &scrolled[rel.clone()],
                 resizable: self.data.resizable,
-                col_base: frozen_cols,
+                pad: scroll_pad,
+                col_base: abs.start,
                 container_tag: &hrow_tag,
             },
             self.theme,
@@ -1583,6 +1716,30 @@ mod tests {
     const VT_HEADERS: [&str; 3] = ["Index", "Name", "Value"];
     const VT_N: usize = 10_000;
 
+    /// R1523 — a **laid-out** horizontal scroll for the virtual-table fixtures.
+    ///
+    /// The layout pass publishes a measured viewport for every `Scene::Scroll`,
+    /// so a fixture that renders a grid without one models a state the runtime
+    /// never paints. That was invisible until R1523 windowed the column axis
+    /// against exactly that width — an unmeasured (0) width windows *nothing*,
+    /// which is the correct pre-measurement boot state and useless as a fixture.
+    ///
+    /// The width is wide enough to expose every column, because these fixtures
+    /// are about per-column sizing, sort glyphs and the frozen split — the
+    /// windowing behaviour gets its own fixtures with a deliberately narrow one
+    /// (`run_vtable_narrow`), so a change in windowing cannot quietly rewrite
+    /// what the unrelated tests are measuring.
+    fn vt_hscroll(offset_x: i32) -> Rc<ScrollState> {
+        /// Wider than any fixture's column total (the widest is 550).
+        const EXPOSES_EVERY_COLUMN: u32 = 4_000;
+        let h = Rc::new(ScrollState::with_tag("vtbl_h"));
+        h.set_measured_viewport(EXPOSES_EVERY_COLUMN, 0);
+        // Room to move so a non-zero `offset_x` actually applies.
+        h.set_max(1000, 0);
+        h.scroll_to(offset_x, 0);
+        h
+    }
+
     fn run_vtable(measured_h: u32, offset_y: i32) -> Scene {
         run_vtable_h(measured_h, offset_y, 0)
     }
@@ -1596,11 +1753,7 @@ mod tests {
         let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
         state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
         state.scroll_to(0, offset_y);
-        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
-        // Three 120-wide columns = 360 content; let the outer scroll have
-        // room to move so a non-zero offset_x actually applies.
-        h_state.set_max(1000, 0);
-        h_state.scroll_to(offset_x, 0);
+        let h_state = vt_hscroll(offset_x);
         let theme = light();
         let style = TableStyle::m3();
         Owner::new().run(|| {
@@ -1630,25 +1783,32 @@ mod tests {
         })
     }
 
-    /// Count `vtbl_row<id>` data-row strips anywhere in the scene.
-    fn count_vt_rows(scene: &Scene) -> usize {
-        fn walk(scene: &Scene, n: &mut usize) {
+    /// Every container tag in the scene that starts with `prefix`, in document
+    /// order. (R1523 generalised this from the `count_vt_rows`-only walk: the
+    /// column axis needs the tags themselves, not just how many there are.)
+    fn tags_with_prefix(scene: &Scene, prefix: &str) -> Vec<String> {
+        fn walk(scene: &Scene, prefix: &str, out: &mut Vec<String>) {
             match scene {
                 Scene::Container(c) => {
-                    if c.tag.as_deref().is_some_and(|t| t.starts_with("vtbl_row")) {
-                        *n += 1;
+                    if let Some(tag) = c.tag.as_deref().filter(|t| t.starts_with(prefix)) {
+                        out.push(tag.to_string());
                     }
                     for child in &c.children {
-                        walk(child, n);
+                        walk(child, prefix, out);
                     }
                 }
-                Scene::Scroll(s) => walk(s.content.as_ref(), n),
+                Scene::Scroll(s) => walk(s.content.as_ref(), prefix, out),
                 _ => {}
             }
         }
-        let mut n = 0;
-        walk(scene, &mut n);
-        n
+        let mut out = Vec::new();
+        walk(scene, prefix, &mut out);
+        out
+    }
+
+    /// Count `vtbl_row<id>` data-row strips anywhere in the scene.
+    fn count_vt_rows(scene: &Scene) -> usize {
+        tags_with_prefix(scene, "vtbl_row").len()
     }
 
     /// Find the **body** (vertical) [`ScrollNode`]. R784 wraps the grid in
@@ -1680,9 +1840,7 @@ mod tests {
         state.set_measured_viewport(360, measured_h);
         let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
         state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
-        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
-        h_state.set_max(1000, 0);
-        h_state.scroll_to(offset_x, 0);
+        let h_state = vt_hscroll(offset_x);
         let theme = light();
         let style = TableStyle::m3();
         Owner::new().run(|| {
@@ -1936,7 +2094,7 @@ mod tests {
         // threaded into each data cell's layout sidecar.
         let state = Rc::new(ScrollState::new());
         state.set_measured_viewport(360, 360);
-        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
+        let h_state = vt_hscroll(0);
         let widths = [200u32, 50, 300];
         let scene = Owner::new().run(|| {
             view_virtual_table(
@@ -2001,7 +2159,7 @@ mod tests {
     fn run_vtable_resizable(widths: &[u32], resizable: bool) -> Scene {
         let state = Rc::new(ScrollState::new());
         state.set_measured_viewport(360, 360);
-        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
+        let h_state = vt_hscroll(0);
         Owner::new().run(|| {
             view_virtual_table(
                 "vtbl",
@@ -2151,7 +2309,7 @@ mod tests {
             0,
             i32::try_from(order.len()).unwrap() * i32::try_from(pitch).unwrap(),
         );
-        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
+        let h_state = vt_hscroll(0);
         let theme = light();
         let style = TableStyle::m3();
         Owner::new().run(|| {
@@ -2241,5 +2399,216 @@ mod tests {
             scene.contains_tag("vtbl#h0"),
             "display grid header stays on the grid anchor"
         );
+    }
+
+    // ── R1523 column-axis windowing ─────────────────────────────────
+
+    /// 200 columns on a five-width cycle — 600px per five columns, 24,000px of
+    /// content. Deliberately unequal: a window derived from a uniform pitch
+    /// lands on the wrong column, so these fixtures discriminate against a
+    /// re-derivation that divided by an average width.
+    const WIDE_NCOLS: usize = 200;
+
+    fn wide_widths() -> Vec<u32> {
+        (0..WIDE_NCOLS)
+            .map(|c| [150u32, 90, 120, 105, 135][c % 5])
+            .collect()
+    }
+
+    fn wide_headers() -> Vec<String> {
+        (0..WIDE_NCOLS).map(|c| format!("C{c:03}")).collect()
+    }
+
+    /// Render the wide grid with a **narrow** horizontal viewport, so the
+    /// column axis genuinely windows. `frozen_cols` exercises the split path.
+    fn run_vtable_wide(viewport_w: u32, offset_x: i32, frozen_cols: usize) -> Scene {
+        let widths = wide_widths();
+        let labels = wide_headers();
+        let header_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let body = Rc::new(ScrollState::new());
+        body.set_measured_viewport(viewport_w, 360);
+        let h = Rc::new(ScrollState::with_tag("vtbl_h"));
+        h.set_measured_viewport(viewport_w, 0);
+        let total: u32 = widths.iter().copied().sum();
+        h.set_max(i32::try_from(total.saturating_sub(viewport_w)).unwrap(), 0);
+        h.scroll_to(offset_x, 0);
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll {
+                    body: &body,
+                    horizontal: &h,
+                },
+                VirtualTableData {
+                    headers: &header_refs,
+                    item_count: VT_N,
+                    overscan: 0,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                    col_widths: Some(&widths),
+                    resizable: false,
+                    frozen_cols,
+                    row_style: None,
+                },
+                &light(),
+                &TableStyle::m3(),
+                |_| false,
+                |id| (0..WIDE_NCOLS).map(|c| format!("r{id}c{c}")).collect(),
+            )
+        })
+    }
+
+    /// The columns present in the header band, as absolute indices.
+    fn header_cols(scene: &Scene) -> Vec<usize> {
+        let mut cols: Vec<usize> = tags_with_prefix(scene, "vtbl_ch")
+            .iter()
+            .filter_map(|t| t.strip_prefix("vtbl_ch")?.parse().ok())
+            .collect();
+        cols.sort_unstable();
+        cols
+    }
+
+    /// The columns present in data row `row`, as absolute indices.
+    fn row_cols(scene: &Scene, row: usize) -> Vec<usize> {
+        let prefix = format!("vtbl#{row}_");
+        let mut cols: Vec<usize> = tags_with_prefix(scene, &prefix)
+            .iter()
+            .filter_map(|t| t.strip_prefix(&prefix)?.parse().ok())
+            .collect();
+        cols.sort_unstable();
+        cols
+    }
+
+    /// The defect R1523 closes: at 200 columns and a 560px viewport the grid
+    /// built **every** column for every windowed row, and merely positioned the
+    /// off-screen ones outside the R784 viewport.
+    #[test]
+    fn r1523_column_axis_windows_against_the_measured_viewport() {
+        let scene = run_vtable_wide(560, 0, 0);
+        let cols = row_cols(&scene, 0);
+        assert!(!cols.is_empty(), "the visible columns are built");
+        assert!(
+            cols.len() < WIDE_NCOLS / 10,
+            "a 560px viewport over 24,000px of columns must window: got {} of {WIDE_NCOLS} \
+             cells in row 0",
+            cols.len(),
+        );
+        // Exactly the columns intersecting [0, 560): 0..=4 spans [0, 600).
+        assert_eq!(cols, vec![0, 1, 2, 3, 4]);
+    }
+
+    /// The before/after of this round, measured rather than asserted from
+    /// memory: the **same** grid rendered with a viewport wide enough to expose
+    /// every column (which is what the pre-R1523 assembly produced at any
+    /// viewport) and with the real 560px one.
+    #[test]
+    fn r1523_windowing_is_a_40x_reduction_in_cells() {
+        let before = row_cols(&run_vtable_wide(24_000, 0, 0), 0);
+        let after = row_cols(&run_vtable_wide(560, 0, 0), 0);
+        assert_eq!(
+            before.len(),
+            WIDE_NCOLS,
+            "un-windowed, one cell per column — the pre-R1523 cost",
+        );
+        assert_eq!(after.len(), 5, "windowed, one cell per visible column");
+        assert!(
+            before.len() / after.len() >= 40,
+            "{}x fewer cells per row",
+            before.len() / after.len(),
+        );
+    }
+
+    /// Header and body window in lockstep. They share one horizontal scroll, so
+    /// a disagreement would paint labels over the wrong columns — the failure
+    /// R784's frozen-header sync exists to prevent, now on the windowed axis.
+    #[test]
+    fn r1523_header_windows_in_lockstep_with_the_body() {
+        for offset in [0i32, 700, 6_000, 23_000] {
+            let scene = run_vtable_wide(560, offset, 0);
+            assert_eq!(
+                header_cols(&scene),
+                row_cols(&scene, 0),
+                "header and body must window identically at offset {offset}",
+            );
+        }
+    }
+
+    /// Scrolling moves the window: far columns enter the tree and near ones
+    /// leave it entirely — not merely off-screen.
+    #[test]
+    fn r1523_scrolling_moves_the_column_window() {
+        let near = row_cols(&run_vtable_wide(560, 0, 0), 0);
+        let far = row_cols(&run_vtable_wide(560, 6_000, 0), 0);
+        assert!(
+            far.iter().min() > near.iter().max(),
+            "a 6000px scroll replaces the whole column set: {near:?} -> {far:?}",
+        );
+        // Column 50 starts at exactly 6000 (ten 600px cycles).
+        assert_eq!(far.first(), Some(&50));
+    }
+
+    /// The pad accounts for exactly the columns the window left out, so the row
+    /// still occupies the full content width and the horizontal scroll keeps
+    /// bounding against all 200 columns.
+    #[test]
+    fn r1523_pad_accounts_for_every_windowed_out_column() {
+        let widths = wide_widths();
+        let total: u32 = widths.iter().copied().sum();
+        for offset in [0i32, 700, 6_000, 23_000] {
+            let window = visible_columns(&widths, offset, 560, 0);
+            let pad = ColumnPad::around(&widths, &window);
+            let inside: u32 = window.indices().map(|c| widths[c]).sum();
+            assert_eq!(
+                pad.lead + inside + pad.trail,
+                total,
+                "lead + windowed + trail must be the whole content width at offset {offset}",
+            );
+        }
+    }
+
+    /// A grid whose columns fit its viewport windows all of them and pads by
+    /// zero — so it emits no spacer node at all and paints the pre-R1523 scene.
+    /// The regression guarantee for the 3-column grids in the tree.
+    #[test]
+    fn r1523_grid_that_fits_emits_no_pad() {
+        let narrow = ColumnPad::around(
+            &[100, 100, 100],
+            &visible_columns(&[100, 100, 100], 0, 500, 0),
+        );
+        assert_eq!(narrow.lead, 0);
+        assert_eq!(narrow.trail, 0);
+        assert!(
+            pad_node(0, 40).is_none(),
+            "a zero-width pad contributes no node, so the tree is unchanged",
+        );
+    }
+
+    /// A frozen column is pinned against the horizontal scroll, so it is on
+    /// screen at every offset — windowing it could only remove something
+    /// visible. The frozen pane stays whole while the scrolling pane windows.
+    #[test]
+    fn r1523_frozen_pane_is_never_windowed() {
+        for offset in [0i32, 6_000, 23_000] {
+            let scene = run_vtable_wide(560, offset, 2);
+            assert!(
+                scene.contains_tag("vtbl_fhrow"),
+                "frozen header pane present at offset {offset}",
+            );
+            for col in 0..2usize {
+                assert!(
+                    scene.contains_tag(&format!("vtbl_ch{col}")),
+                    "pinned column {col} present at offset {offset}",
+                );
+            }
+            // And the scrolling pane still windowed — the two panes did not
+            // collapse into one un-windowed row.
+            let cols = row_cols(&scene, 0);
+            assert!(
+                cols.len() < WIDE_NCOLS / 10,
+                "scrolling pane still windows at offset {offset}: {} cells",
+                cols.len(),
+            );
+        }
     }
 }

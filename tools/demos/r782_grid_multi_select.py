@@ -50,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     find_by_tag,
+    indexed_tags,
     read_png_rgba8,
     run_demo,
     sample_png_points,
@@ -84,13 +85,7 @@ def scroll_offset(snap) -> int:
 
 def present_rows(snap) -> set[int]:
     """Rendered data-row ids (from the `vtbl_row<id>` strips)."""
-    out: set[int] = set()
-    for tag in abs_rects_of(snap):
-        if tag.startswith("vtbl_row"):
-            suffix = tag[len("vtbl_row"):]
-            if suffix.isdigit():
-                out.add(int(suffix))
-    return out
+    return set(indexed_tags(abs_rects_of(snap), "vtbl_row"))
 
 
 def click_cell(tf, row: int, col: int, *, shift: bool = False, ctrl: bool = False) -> None:

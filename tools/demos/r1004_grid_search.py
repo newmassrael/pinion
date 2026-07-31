@@ -53,6 +53,7 @@ from rpc_verify import (  # noqa: E402
     WORKSPACE_ROOT,
     abs_rects_of,
     assert_eq,
+    indexed_tags,
     read_png_rgba8,
     run_demo,
     sample_png_points,
@@ -96,13 +97,7 @@ def set_query(d, wire):
 
 def present_rows(snap) -> list[int]:
     """Source ids of the data-row strips currently in the painted window."""
-    out: list[int] = []
-    for tag in abs_rects_of(snap):
-        if tag.startswith("vtbl_row"):
-            suffix = tag[len("vtbl_row"):]
-            if suffix.isdigit():
-                out.append(int(suffix))
-    return out
+    return indexed_tags(abs_rects_of(snap), "vtbl_row")
 
 
 def first_with(pred) -> int:

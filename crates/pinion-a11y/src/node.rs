@@ -160,6 +160,29 @@ pub struct AccessNode {
     /// provides the visible-or-known total here. `None` omits the
     /// attribute.
     pub size_of_set: Option<u32>,
+    /// R1523 §5.40 §5.27 — WAI-ARIA `aria-colcount` per WAI-ARIA 1.2 §6.6.4.
+    /// The **total** number of columns in a `grid` / `table`, which is not the
+    /// number of `columnheader` / `gridcell` children when the column axis is
+    /// windowed.
+    ///
+    /// The column-axis peer of [`Self::size_of_set`]: that says how many rows
+    /// the windowed row set is drawn from, this says how many columns the
+    /// windowed column set is drawn from. A grid that windows an axis without
+    /// declaring that axis' extent is *less* readable than before it scaled —
+    /// the AT would report a 200-column table as five columns wide.
+    ///
+    /// Set on the `grid` container; `None` omits the attribute (a grid whose
+    /// every column is present needs no separate extent, though the shared
+    /// builders declare it anyway so the two cases read identically).
+    pub column_count: Option<u32>,
+    /// R1523 §5.40 §5.27 — WAI-ARIA `aria-colindex` per WAI-ARIA 1.2 §6.6.5.
+    /// **One-based** absolute column position of this cell / column header
+    /// within [`Self::column_count`] columns, so a windowed cell is locatable
+    /// even though the columns before it are not in the tree.
+    ///
+    /// One-based to match the ARIA vocabulary this whole struct is named
+    /// after ([`Self::position_in_set`] is one-based for the same reason).
+    pub column_index: Option<u32>,
     /// R693 §5.40 — WAI-ARIA `aria-modal` per WAI-ARIA 1.2 §6.6.1.
     /// `true` lowers to `accesskit::Node::set_modal` so AT announces the
     /// node as a modal boundary and confines its virtual cursor to the
@@ -317,6 +340,8 @@ impl AccessNode {
             level: None,
             position_in_set: None,
             size_of_set: None,
+            column_count: None,
+            column_index: None,
             modal: false,
             described_by: None,
             expanded: None,
@@ -463,6 +488,24 @@ impl AccessNode {
     #[must_use]
     pub fn with_size_of_set(mut self, size: u32) -> Self {
         self.size_of_set = Some(size);
+        self
+    }
+
+    /// R1523 §5.40 — set the WAI-ARIA `aria-colcount` attribute. See
+    /// [`Self::column_count`] for the semantic axis.
+    #[must_use]
+    pub fn with_column_count(mut self, columns: u32) -> Self {
+        self.column_count = Some(columns);
+        self
+    }
+
+    /// R1523 §5.40 — set the WAI-ARIA `aria-colindex` attribute from a
+    /// **zero-based** column index: the stored value is the one-based
+    /// `col + 1`, mirroring [`Self::with_set_position`]'s handling of
+    /// `aria-posinset` so no caller has to remember which axis is off by one.
+    #[must_use]
+    pub fn with_column(mut self, col: usize) -> Self {
+        self.column_index = Some(u32::try_from(col + 1).unwrap_or(u32::MAX));
         self
     }
 

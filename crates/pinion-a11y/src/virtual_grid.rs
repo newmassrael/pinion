@@ -59,7 +59,7 @@ pub fn windowed_grid_nodes(
     grid_nodes(
         grid_tag,
         grid_name,
-        headers,
+        GridColumns::all(headers),
         set_size,
         window,
         GridSelection::Display,
@@ -96,7 +96,7 @@ pub fn windowed_grid_nodes_frozen(
     grid_nodes(
         grid_tag,
         grid_name,
-        headers,
+        GridColumns::all(headers),
         set_size,
         window,
         GridSelection::Display,
@@ -125,6 +125,72 @@ fn cell_tag(grid_tag: &str, id: usize, col: usize) -> String {
     format!("{grid_tag}#{}", GridSendKey::Cell { row: id, col }.encode())
 }
 
+/// R1523 §5.40 §5.27 — the **column axis** of a grid whose columns may be
+/// windowed: the labels actually in the tree, where they start, and how many
+/// columns the grid has in total.
+///
+/// The column-axis counterpart of the `(window, set_size)` pair the row axis
+/// already threads through these builders, and it exists for the same reason:
+/// once an axis holds a slice, the slice has to say what it is a slice of, or
+/// the AT reads a 200-column table as five columns wide.
+///
+/// Private — every public builder either takes the whole header slice
+/// ([`Self::all`], the pre-R1523 shape) or a header slice plus a column
+/// [`VisibleWindow`] it resolves here, so no caller assembles this by hand.
+#[derive(Clone, Copy)]
+struct GridColumns<'a> {
+    /// Labels of the columns present in the tree.
+    labels: &'a [&'a str],
+    /// Absolute table-column index of `labels[0]`.
+    first: usize,
+    /// Total number of columns the grid is drawn from (`aria-colcount`).
+    total: usize,
+}
+
+impl<'a> GridColumns<'a> {
+    /// Every column is in the tree — the un-windowed column axis.
+    fn all(labels: &'a [&'a str]) -> Self {
+        Self {
+            labels,
+            first: 0,
+            total: labels.len(),
+        }
+    }
+
+    /// The `window` slice of `labels`, keeping `labels.len()` as the extent.
+    /// A window past the end clamps, so a stale window cannot panic the a11y
+    /// walker (it would report fewer columns, which the `aria-colcount` still
+    /// contextualises).
+    fn windowed(labels: &'a [&'a str], window: &VisibleWindow) -> Self {
+        let first = window.first.min(labels.len());
+        let end = (window.first + window.count).min(labels.len());
+        Self {
+            labels: &labels[first..end],
+            first,
+            total: labels.len(),
+        }
+    }
+
+    /// `(absolute column index, label)` for each column in the tree.
+    fn enumerate(&self) -> impl Iterator<Item = (usize, &'a str)> + '_ {
+        self.labels
+            .iter()
+            .enumerate()
+            .map(move |(i, label)| (self.first + i, *label))
+    }
+
+    /// Absolute indices of the columns in the tree.
+    fn indices(&self) -> impl Iterator<Item = usize> + '_ {
+        let first = self.first;
+        (0..self.labels.len()).map(move |i| first + i)
+    }
+
+    /// `aria-colcount` as the saturating `u32` the node carries.
+    fn colcount(&self) -> u32 {
+        u32::try_from(self.total).unwrap_or(u32::MAX)
+    }
+}
+
 /// Shared builder for both grid topologies. `selection` distinguishes the
 /// two: `None` → display-only (no `aria-selected` axis); `Some(sel)` →
 /// single-select (each *data* row gets `aria-selected = (id == sel)`,
@@ -132,20 +198,23 @@ fn cell_tag(grid_tag: &str, id: usize, col: usize) -> String {
 fn grid_nodes(
     grid_tag: &str,
     grid_name: &str,
-    headers: &[&str],
+    cols: GridColumns<'_>,
     set_size: u32,
     window: &VisibleWindow,
     selection: GridSelection,
     frozen: bool,
 ) -> Vec<AccessNode> {
-    let ncols = headers.len();
+    let ncols = cols.labels.len();
     // grid + header row + ncols columnheaders + per windowed row (1 row +
     // ncols cells).
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (ncols + 1) + ncols + 2);
 
     let mut grid = AccessNode::new(grid_tag, AriaRole::Grid)
         .with_name(grid_name)
-        .with_size_of_set(set_size);
+        .with_size_of_set(set_size)
+        // R1523 — the column extent, which `ncols` above is NOT when the
+        // column axis is windowed.
+        .with_column_count(cols.colcount());
     // Multi-select: selection is an arbitrary row **set**, so the grid
     // container is `aria-multiselectable` (Display / Single are not).
     if matches!(selection, GridSelection::Multi(_)) {
@@ -166,14 +235,15 @@ fn grid_nodes(
     if frozen {
         hrow = hrow.with_bounds_union_tag(GridTag::frozen_header_row(grid_tag));
     }
-    for col in 0..ncols {
+    for col in cols.indices() {
         hrow = hrow.with_child(GridTag::col_header(grid_tag, col));
     }
     nodes.push(hrow);
-    for (col, label) in headers.iter().enumerate() {
+    for (col, label) in cols.enumerate() {
         nodes.push(
             AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
-                .with_name(*label),
+                .with_name(label)
+                .with_column(col),
         );
     }
 
@@ -189,7 +259,7 @@ fn grid_nodes(
         if frozen {
             row = row.with_bounds_union_tag(GridTag::frozen_data_row(grid_tag, id));
         }
-        for col in 0..ncols {
+        for col in cols.indices() {
             row = row.with_child(cell_tag(grid_tag, id, col));
         }
         // aria-selected on the ROW (WAI-ARIA `SelectRows`): single-select
@@ -201,14 +271,61 @@ fn grid_nodes(
             GridSelection::Multi(set) => row = row.with_selected(set.contains(&id)),
         }
         nodes.push(row);
-        for col in 0..ncols {
-            nodes.push(AccessNode::new(
-                cell_tag(grid_tag, id, col),
-                AriaRole::GridCell,
-            ));
+        for col in cols.indices() {
+            nodes.push(
+                AccessNode::new(cell_tag(grid_tag, id, col), AriaRole::GridCell)
+                    // R1523 — a windowed cell states its absolute column, so it
+                    // stays locatable with its predecessors absent from the tree.
+                    .with_column(col),
+            );
         }
     }
     nodes
+}
+
+/// R1523 §5.40 §5.27 §5.45 — build a `grid` windowed on **both** axes: the
+/// [`windowed_grid_nodes`] topology, plus only the columns `cols` selects.
+///
+/// The row axis has conveyed "which of how many" since R775 through
+/// `aria-setsize` / `aria-posinset`. This is the same contract on the column
+/// axis: the grid carries `aria-colcount` = `headers.len()` (the **full**
+/// extent) and every `columnheader` / `gridcell` carries its absolute
+/// `aria-colindex`, so an AT can place a cell whose 136 predecessors are not in
+/// the tree. Windowing an axis without its extent pair would leave the grid
+/// *less* readable than before it scaled — a 200-column table announced as five
+/// columns wide.
+///
+/// - `headers` — labels for **every** column (not the windowed slice); the
+///   builder slices them, so the caller keeps one header list and cannot get the
+///   `aria-colcount` and the slice out of step.
+/// - `rows` — the row window (the same `compute_visible_range` the view painted
+///   against).
+/// - `cols` — the column window, from
+///   [`visible_columns`](pinion_core::widgets::column_widths::visible_columns)
+///   over the same widths and the same measured horizontal viewport the view
+///   painted against.
+///
+/// Display-only, like [`windowed_grid_nodes`]: a two-axis windowed grid with a
+/// selection axis is additive at its second consumer
+/// (`[[abstraction-needs-second-consumer]]`).
+#[must_use]
+pub fn windowed_grid_nodes_wide(
+    grid_tag: &str,
+    grid_name: &str,
+    headers: &[&str],
+    set_size: u32,
+    rows: &VisibleWindow,
+    cols: &VisibleWindow,
+) -> Vec<AccessNode> {
+    grid_nodes(
+        grid_tag,
+        grid_name,
+        GridColumns::windowed(headers, cols),
+        set_size,
+        rows,
+        GridSelection::Display,
+        false,
+    )
 }
 
 /// Build a **single-select** virtualized `grid`: the same container +
@@ -241,7 +358,7 @@ pub fn windowed_grid_nodes_selected(
     grid_nodes(
         grid_tag,
         grid_name,
-        headers,
+        GridColumns::all(headers),
         set_size,
         window,
         GridSelection::Single(selected),
@@ -284,7 +401,7 @@ pub fn windowed_grid_nodes_multiselected(
     grid_nodes(
         grid_tag,
         grid_name,
-        headers,
+        GridColumns::all(headers),
         set_size,
         window,
         GridSelection::Multi(selection),
@@ -335,7 +452,10 @@ pub fn windowed_grid_nodes_sorted(
     // setsize is the *view* length (the filtered/sorted row count).
     let mut grid = AccessNode::new(grid_tag, AriaRole::Grid)
         .with_name(grid_name)
-        .with_size_of_set(total);
+        .with_size_of_set(total)
+        // R1523 — the column extent, declared on every grid so a windowed and
+        // an un-windowed column axis read identically to an AT.
+        .with_column_count(u32::try_from(ncols).unwrap_or(u32::MAX));
     grid = grid.with_child(GridTag::header_row(grid_tag));
     for view_pos in window.indices() {
         if let Some(&source) = order.get(view_pos) {
@@ -353,7 +473,8 @@ pub fn windowed_grid_nodes_sorted(
     nodes.push(hrow);
     for (col, label) in headers.iter().enumerate() {
         let mut ch = AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
-            .with_name(*label);
+            .with_name(*label)
+            .with_column(col);
         // R886.1 — active-column decision + bool→direction through the
         // two SSOTs (`col_sort_dir` / `SortDirection::from_ascending`);
         // this builder was a surviving hand-rolled copy the R886 lift's
@@ -380,10 +501,10 @@ pub fn windowed_grid_nodes_sorted(
         }
         nodes.push(row);
         for col in 0..ncols {
-            nodes.push(AccessNode::new(
-                cell_tag(grid_tag, source, col),
-                AriaRole::GridCell,
-            ));
+            nodes.push(
+                AccessNode::new(cell_tag(grid_tag, source, col), AriaRole::GridCell)
+                    .with_column(col),
+            );
         }
     }
     nodes
@@ -397,6 +518,152 @@ mod tests {
 
     fn window(first: usize, count: usize) -> VisibleWindow {
         VisibleWindow { first, count }
+    }
+
+    // ── R1523 column-axis windowing ─────────────────────────────────
+
+    /// 200 column labels, of which a windowed grid holds a handful.
+    fn wide_labels() -> Vec<String> {
+        (0..200).map(|c| format!("C{c:03}")).collect()
+    }
+
+    /// The two-axis contract: the tree holds the windowed columns, and says how
+    /// many columns they were drawn from.
+    #[test]
+    fn r1523_wide_grid_windows_columns_and_declares_the_full_extent() {
+        let labels = wide_labels();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let nodes = windowed_grid_nodes_wide(
+            "vcol",
+            "Wide grid",
+            &refs,
+            10_000,
+            &window(0, 2),
+            &window(50, 5),
+        );
+        assert_eq!(nodes[0].role, AriaRole::Grid);
+        assert_eq!(
+            nodes[0].column_count,
+            Some(200),
+            "aria-colcount is the FULL column extent, not the windowed count",
+        );
+        let columnheaders: Vec<&AccessNode> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .collect();
+        assert_eq!(columnheaders.len(), 5, "only the windowed columns exist");
+        assert_eq!(
+            columnheaders[0].name.as_deref(),
+            Some("C050"),
+            "the window starts at the label of column 50, not column 0",
+        );
+        // 2 windowed rows x 5 windowed columns.
+        let cells: Vec<&AccessNode> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::GridCell)
+            .collect();
+        assert_eq!(cells.len(), 2 * 5);
+    }
+
+    /// `aria-colindex` is one-based and **absolute**, so a windowed cell is
+    /// locatable although the 50 columns before it are not in the tree.
+    #[test]
+    fn r1523_colindex_is_one_based_and_absolute() {
+        let labels = wide_labels();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let nodes =
+            windowed_grid_nodes_wide("vcol", "G", &refs, 10_000, &window(0, 1), &window(50, 3));
+        let cols: Vec<u32> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .filter_map(|n| n.column_index)
+            .collect();
+        assert_eq!(cols, vec![51, 52, 53], "one-based absolute column indices");
+        let cell_cols: Vec<u32> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::GridCell)
+            .filter_map(|n| n.column_index)
+            .collect();
+        assert_eq!(cell_cols, vec![51, 52, 53], "cells carry the same axis");
+        // The cell TAGS keep the zero-based absolute column, unchanged — the
+        // wire vocabulary and the ARIA vocabulary are different axes and this
+        // is the one place both are visible.
+        assert!(
+            nodes.iter().any(|n| n.tag == cell_tag("vcol", 0, 50)),
+            "cell tags stay zero-based absolute (the paint / send-wire form)",
+        );
+    }
+
+    /// The row axis is untouched: its extent still reaches the AT the way it
+    /// has since R775.
+    #[test]
+    fn r1523_row_axis_extent_is_unchanged_by_column_windowing() {
+        let labels = wide_labels();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let nodes =
+            windowed_grid_nodes_wide("vcol", "G", &refs, 10_000, &window(100, 2), &window(50, 3));
+        assert_eq!(nodes[0].size_of_set, Some(10_000));
+        let first_data = nodes
+            .iter()
+            .find(|n| n.role == AriaRole::Row && n.tag != "vcol_hrow")
+            .expect("a windowed data row");
+        assert_eq!(first_data.position_in_set, Some(101));
+        assert_eq!(first_data.size_of_set, Some(10_000));
+    }
+
+    /// A column window past the end clamps instead of panicking the a11y
+    /// walker: it reports fewer columns, which the `aria-colcount` still
+    /// contextualises. (The window and the header list come from two reads of
+    /// the same reactive state, so a frame that saw them disagree is
+    /// reachable.)
+    #[test]
+    fn r1523_column_window_past_the_end_clamps() {
+        let nodes =
+            windowed_grid_nodes_wide("vcol", "G", &HEADERS, 10, &window(0, 1), &window(2, 50));
+        let columnheaders = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .count();
+        assert_eq!(columnheaders, 1, "clamped to the one real column left");
+        assert_eq!(
+            nodes[0].column_count,
+            Some(3),
+            "the extent is still the truth"
+        );
+        // Entirely out of range: no columns, still no panic.
+        let empty =
+            windowed_grid_nodes_wide("vcol", "G", &HEADERS, 10, &window(0, 1), &window(99, 5));
+        assert_eq!(
+            empty
+                .iter()
+                .filter(|n| n.role == AriaRole::ColumnHeader)
+                .count(),
+            0,
+        );
+    }
+
+    /// Every grid declares its column count, windowed or not, so the two cases
+    /// read identically to an AT (and a consumer cannot tell them apart by the
+    /// absence of an attribute).
+    #[test]
+    fn r1523_every_grid_declares_its_column_count() {
+        let display = windowed_grid_nodes("vtbl", "G", &HEADERS, 10, &window(0, 1));
+        assert_eq!(display[0].column_count, Some(3));
+        let selected =
+            windowed_grid_nodes_selected("vtbl", "G", &HEADERS, 10, &window(0, 1), Some(0));
+        assert_eq!(selected[0].column_count, Some(3));
+        let sorted = windowed_grid_nodes_sorted(
+            "vtbl",
+            "G",
+            &HEADERS,
+            &[0, 1, 2],
+            None,
+            None,
+            &window(0, 1),
+        );
+        assert_eq!(sorted[0].column_count, Some(3));
+        let frozen = windowed_grid_nodes_frozen("vtbl", "G", &HEADERS, 10, &window(0, 1));
+        assert_eq!(frozen[0].column_count, Some(3));
     }
 
     #[test]

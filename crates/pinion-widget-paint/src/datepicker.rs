@@ -179,11 +179,10 @@ pub fn day_cell_fill(theme: &Theme, state: RadioState, selected: bool) -> Color 
 }
 
 /// One blank (non-interactive) grid cell — a fixed-size transparent box.
+/// (R1523: the shared [`spacer`](crate::spacer::spacer); this was one of the
+/// three copies that lifted it.)
 fn blank_cell(style: &DatePickerStyle) -> Scene {
-    Scene::Container(
-        ContainerNode::new(Vec::new())
-            .with_layout(LayoutStyle::new().with_size(Size::px(style.cell_size, style.cell_size))),
-    )
+    crate::spacer::spacer(style.cell_size, style.cell_size)
 }
 
 /// One real day cell: a centred day-number label inside a tagged box.

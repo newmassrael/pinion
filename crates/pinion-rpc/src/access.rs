@@ -99,6 +99,18 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if let Some(size) = node.size_of_set {
         obj.insert("size_of_set".to_string(), Value::from(size));
     }
+    // R1523 §5.40 §5.27 — the column axis' extent pair. It reaches the wire for
+    // the same reason `size_of_set` does, and more urgently: the RPC access
+    // surface is the primary path an AI agent reads the tree through
+    // (invariant #2), so a windowed column axis whose extent stopped at the
+    // AccessKit lowering would be unobservable from the side pinion is built to
+    // be observed from.
+    if let Some(columns) = node.column_count {
+        obj.insert("column_count".to_string(), Value::from(columns));
+    }
+    if let Some(col) = node.column_index {
+        obj.insert("column_index".to_string(), Value::from(col));
+    }
     if node.modal {
         obj.insert("modal".to_string(), Value::Bool(true));
     }
@@ -266,6 +278,8 @@ mod tests {
             .with_expanded(true)
             .with_set_position(0, 3)
             .with_level(2)
+            .with_column_count(200)
+            .with_column(136)
             .with_sort(SortDirection::Ascending)
             .with_child("row#reset");
         let focus = AccessFocus {
@@ -285,6 +299,16 @@ mod tests {
         assert_eq!(n["level"], 2);
         assert_eq!(n["position_in_set"], 1);
         assert_eq!(n["size_of_set"], 3);
+        // R1523 — the column axis' extent pair reaches the wire. Asserted here
+        // rather than only in a grid demo because this serializer hand-writes
+        // every field: a new `AccessNode` field is absent from the RPC surface
+        // until someone adds a line, and this test is the only place that
+        // notices.
+        assert_eq!(n["column_count"], 200);
+        assert_eq!(
+            n["column_index"], 137,
+            "one-based aria-colindex on the wire"
+        );
         assert_eq!(n["sort"], "ascending");
         assert_eq!(n["children"][0], "row#reset");
         assert_eq!(json["focus"]["tag"], "grid");

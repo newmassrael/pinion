@@ -41,6 +41,7 @@ use crate::intent::Intent;
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
 use crate::widgets::scroll::ScrollState;
+use crate::widgets::virtual_list::{RowOffsets, VisibleWindow, compute_visible_range_variable};
 
 /// Default minimum column width (logical pixels). A [`set_width`](ColumnWidths::set_width)
 /// below this clamps up, so a column can never be dragged / set to a sliver
@@ -263,6 +264,22 @@ impl ColumnWidths {
         self.widths.get().iter().copied().sum()
     }
 
+    /// R1523 §5.27 §5.45 — the columns a horizontal viewport exposes, as a
+    /// [`VisibleWindow`] over this model's widths. Subscribes (a width change
+    /// re-windows).
+    ///
+    /// The reactive binding of [`visible_columns()`]; see that function for the
+    /// arithmetic and its boundaries.
+    #[must_use]
+    pub fn visible_columns(
+        &self,
+        offset_x: i32,
+        viewport_w: u32,
+        overscan: usize,
+    ) -> VisibleWindow {
+        visible_columns(&self.widths.get(), offset_x, viewport_w, overscan)
+    }
+
     /// Set column `col`'s width, clamped into
     /// [`min_width`](Self::min_width)`..=`[`max_width`](Self::max_width).
     /// A `Signal` write repaints every view that read a width. An out-of-range
@@ -302,6 +319,76 @@ impl ColumnWidths {
             self.max_width.get(),
         ));
     }
+}
+
+/// R1523 §5.27 §5.45 — the **columns a horizontal viewport exposes**, as a
+/// [`VisibleWindow`] over `widths`.
+///
+/// The column-axis peer of the row axis' variable-pitch windowing, and
+/// deliberately not a second implementation of it: the arithmetic *is*
+/// [`compute_visible_range_variable`] over a [`RowOffsets`] prefix sum of the
+/// column widths. A grid's two axes are the same one-dimensional problem —
+/// cumulative extents, binary-search the viewport edges, pad by `overscan` —
+/// which is why Qt serves both orientations from one `QHeaderView`
+/// implementation parameterised by `Qt::Orientation`. Re-deriving it here would
+/// be the divergence-is-a-bug class (an off-by-one on one axis only).
+///
+/// Before R1523 the grid windowed rows and materialised **every** column,
+/// merely positioning the off-screen ones outside the R784 horizontal viewport.
+/// That is invisible at 8 columns and costs 40× the cells at 200 — in the
+/// layout walk, the paint encode, the a11y tree and the `scene/snapshot`, the
+/// exact list R744 gives as its reason to window the row axis at all.
+///
+/// # Parameters
+///
+/// - `widths` — per-column widths in logical pixels; `widths.len()` is the
+///   column count.
+/// - `offset_x` — current horizontal scroll offset; negatives treated as `0`.
+/// - `viewport_w` — the measured clip-window width.
+/// - `overscan` — extra columns built on each side of the strict window, so a
+///   fast horizontal flick never exposes an un-built column.
+///
+/// # Boundaries (honest)
+///
+/// - **The prefix sum is built per call**, where the row axis caches its
+///   `RowOffsets` across frames. The asymmetry is deliberate and follows the
+///   magnitudes: a row count is the *dataset* size (10k–1M, so an O(n) rebuild
+///   per frame is the cost the caching exists to avoid), while a column count
+///   is the *schema* width — hundreds at the outside. 200 saturating adds per
+///   frame is below measurement, and a memo would add an invalidation key that
+///   can go stale for no measured gain.
+/// - **A zero `viewport_w` yields [`VisibleWindow::EMPTY`]**, exactly as the
+///   row axis does for a zero height. This is the pre-measurement boot state,
+///   not an error: the layout pass publishes the measured viewport and re-runs
+///   the view in the same frame (R774 `AutoSizer` feedback), so the empty
+///   window is never painted. It does mean a caller must keep declaring the
+///   **full** content extent (the width sizer) independently of the window, or
+///   the axis would never measure itself out of the empty state.
+#[must_use]
+pub fn visible_columns(
+    widths: &[u32],
+    offset_x: i32,
+    viewport_w: u32,
+    overscan: usize,
+) -> VisibleWindow {
+    compute_visible_range_variable(
+        offset_x,
+        viewport_w,
+        &RowOffsets::from_heights(widths),
+        overscan,
+    )
+}
+
+/// R1523 §5.27 — the width of the columns **before** `col`, i.e. the x offset
+/// of column `col` inside the grid's full-width content row.
+///
+/// The leading pad a windowed row needs so its windowed cells land at the same
+/// x they would have had if every column were built (the `TanStack`
+/// `virtualPaddingLeft` role). `col` beyond `widths.len()` reports the total.
+#[must_use]
+pub fn columns_width_before(widths: &[u32], col: usize) -> u32 {
+    let end = col.min(widths.len());
+    widths[..end].iter().copied().sum()
 }
 
 /// R785 §5.27 — resolve the shared [`ColumnWidths`] for `key`, building it once
@@ -1438,6 +1525,146 @@ mod tests {
             ext.intervene("total", IntrospectValue::Int(1)),
             Err(InterveneError::ReadOnly),
             "a derived slot is still read-only"
+        );
+    }
+
+    // ── R1523 column-axis windowing ─────────────────────────────────
+
+    /// Five distinct widths on a cycle: the point of the fixture is that no
+    /// uniform pitch describes it, so a window computed as `offset / pitch`
+    /// lands on the wrong column past the first cycle.
+    fn wide_widths() -> Vec<u32> {
+        (0..200).map(|c| [150, 90, 120, 105, 135][c % 5]).collect()
+    }
+
+    #[test]
+    fn r1523_window_is_the_columns_the_viewport_covers() {
+        let w = wide_widths();
+        // Columns 0..4 span [0,150,240,360,465) and end at 600. A 560-wide
+        // viewport at offset 0 covers columns 0..=4 (col 4 starts at 465 and
+        // ends at 600, straddling the right edge).
+        let win = visible_columns(&w, 0, 560, 0);
+        assert_eq!(win.first, 0);
+        assert_eq!(
+            win.indices().collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4],
+            "the strict window is exactly the columns intersecting [0, 560)",
+        );
+    }
+
+    /// The discriminating case: at this offset a uniform-pitch window and the
+    /// prefix-sum window disagree, so a re-derivation that divided by an
+    /// average width would fail here.
+    #[test]
+    fn r1523_window_follows_unequal_widths_not_a_uniform_pitch() {
+        let w = wide_widths();
+        // The cycle sums to 600 per 5 columns, so column 50 starts at exactly
+        // 6000 (10 whole cycles).
+        assert_eq!(columns_width_before(&w, 50), 6_000);
+        let win = visible_columns(&w, 6_000, 400, 0);
+        assert_eq!(
+            win.first, 50,
+            "the window starts at the column containing 6000"
+        );
+        // The property, asserted across a spread of offsets rather than at one
+        // hand-picked index: the offset must fall inside the span of the FIRST
+        // windowed column. Any pitch-based derivation violates this as soon as
+        // the offset lands in a column narrower or wider than that pitch — the
+        // 90px and 150px columns of this cycle are on both sides of every
+        // candidate average, so no single divisor satisfies the whole list.
+        for offset in [1u32, 149, 150, 151, 599, 600, 6_001, 6_359, 24_000 - 1] {
+            let win = visible_columns(&w, i32::try_from(offset).unwrap(), 200, 0);
+            let first = win.first;
+            let left = columns_width_before(&w, first);
+            let right = left + w[first];
+            assert!(
+                left <= offset && offset < right,
+                "offset {offset} must fall inside the first windowed column {first} \
+                 [{left}, {right})",
+            );
+        }
+    }
+
+    #[test]
+    fn r1523_overscan_pads_and_clamps_at_both_edges() {
+        let w = wide_widths();
+        let strict = visible_columns(&w, 6_000, 400, 0);
+        let padded = visible_columns(&w, 6_000, 400, 2);
+        assert_eq!(padded.first, strict.first - 2, "overscan extends leftward");
+        assert_eq!(padded.count, strict.count + 4, "and rightward");
+        // Left edge: cannot pad below column 0.
+        let at_left = visible_columns(&w, 0, 400, 3);
+        assert_eq!(at_left.first, 0, "overscan clamps at the first column");
+        // Right edge: cannot pad past the last column.
+        let total: u32 = w.iter().copied().sum();
+        let at_right = visible_columns(&w, i32::try_from(total).unwrap(), 400, 3);
+        assert_eq!(
+            at_right.first + at_right.count,
+            w.len(),
+            "overscan clamps at the last column",
+        );
+    }
+
+    #[test]
+    fn r1523_unmeasured_viewport_windows_nothing() {
+        let w = wide_widths();
+        assert_eq!(
+            visible_columns(&w, 0, 0, 2).count,
+            0,
+            "a zero viewport is the pre-measurement boot state, not every column",
+        );
+        assert_eq!(
+            visible_columns(&[], 0, 500, 2).count,
+            0,
+            "a zero-column grid windows nothing",
+        );
+    }
+
+    #[test]
+    fn r1523_narrow_grid_windows_every_column() {
+        // The pre-R1523 behaviour must survive for a grid that fits: every
+        // column is inside the viewport, so every column is in the window.
+        let w = vec![100, 100, 100];
+        let win = visible_columns(&w, 0, 500, 0);
+        assert_eq!(win.first, 0);
+        assert_eq!(
+            win.count, 3,
+            "a grid narrower than its viewport windows all of it"
+        );
+    }
+
+    #[test]
+    fn r1523_width_before_is_the_prefix_sum() {
+        let w = wide_widths();
+        assert_eq!(columns_width_before(&w, 0), 0);
+        assert_eq!(columns_width_before(&w, 1), 150);
+        assert_eq!(columns_width_before(&w, 5), 600);
+        assert_eq!(
+            columns_width_before(&w, w.len()),
+            w.iter().copied().sum::<u32>(),
+            "the pad before the end is the whole content width",
+        );
+        assert_eq!(
+            columns_width_before(&w, w.len() + 10),
+            w.iter().copied().sum::<u32>(),
+            "an out-of-range column clamps to the total",
+        );
+    }
+
+    #[test]
+    fn r1523_model_windows_against_its_own_widths() {
+        let state = ColumnWidths::new(wide_widths());
+        let win = state.visible_columns(6_000, 400, 0);
+        assert_eq!(win.first, 50);
+        // A width change re-windows: widening column 0 by 600 pushes the
+        // column at x=6000 one cycle earlier.
+        state.set_width(0, 750);
+        let after = state.visible_columns(6_000, 400, 0);
+        assert!(
+            after.first < win.first,
+            "widening a leading column moves the window left: {} -> {}",
+            win.first,
+            after.first,
         );
     }
 

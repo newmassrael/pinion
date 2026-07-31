@@ -490,6 +490,25 @@ fn lower_access_node(access: &AccessNode) -> Node {
     if let Some(size) = access.size_of_set {
         node.set_size_of_set(usize::try_from(size).unwrap_or(usize::MAX));
     }
+    // R1523 §5.40 §5.27 — the column axis' extent pair (`aria-colcount` /
+    // `aria-colindex`), which a column-windowed grid needs for the same reason
+    // the row axis needs setsize/posinset: the tree holds a slice, so the slice
+    // has to say what it is a slice of.
+    //
+    // Carried through as the one-based ARIA value pinion stores. AccessKit
+    // documents no base for `ColumnIndex`, and **no platform adapter in the
+    // pinned generation reads it** — accesskit 0.24 / accesskit_winit 0.33 map
+    // only `ColumnIndexText` (Windows), so there is nothing to calibrate the
+    // base against yet. If a future adapter bump surfaces `ColumnIndex` and
+    // announces it off by one, this is the single line that changes; pinion's
+    // own tree (and the RPC introspection over it — invariant #2's primary
+    // path) is where the value is verified today.
+    if let Some(columns) = access.column_count {
+        node.set_column_count(usize::try_from(columns).unwrap_or(usize::MAX));
+    }
+    if let Some(col) = access.column_index {
+        node.set_column_index(usize::try_from(col).unwrap_or(usize::MAX));
+    }
 
     for child_tag in &access.children {
         node.push_child(tag_to_node_id(child_tag));

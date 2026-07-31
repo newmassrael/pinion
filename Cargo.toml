@@ -65,6 +65,7 @@ members = [
     "examples/hello-tree-reparent",
     "examples/hello-flex-virtual-list",
     "examples/hello-virtual-table",
+    "examples/hello-virtual-columns",
     "examples/hello-grid-nav",
     "examples/hello-grid-sort",
     "examples/hello-grid-multi-select",

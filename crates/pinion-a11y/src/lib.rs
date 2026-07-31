@@ -99,7 +99,7 @@ pub use tree_view::{
 };
 pub use virtual_grid::{
     windowed_grid_nodes, windowed_grid_nodes_frozen, windowed_grid_nodes_multiselected,
-    windowed_grid_nodes_selected, windowed_grid_nodes_sorted,
+    windowed_grid_nodes_selected, windowed_grid_nodes_sorted, windowed_grid_nodes_wide,
 };
 pub use virtual_list::{
     windowed_list_nodes, windowed_list_nodes_multiselected, windowed_list_nodes_selected,

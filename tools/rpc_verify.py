@@ -1908,6 +1908,37 @@ def count_indexed_tags(snap: Any, prefix: str, suffix: str = "") -> int:
     return k
 
 
+def indexed_tags(rects: dict, prefix: str) -> list[int]:
+    """Sorted indices `k` of the `{prefix}{k}` tags present in a `abs_rects_of`
+    mapping.
+
+    The **windowed-axis** reader: which members of an indexed family actually
+    reached the paint tree, when the answer is a *window* rather than a prefix
+    starting at 0. Contrast `count_indexed_tags`, which counts consecutively from
+    0 and stops at the first gap — right for a chart's legend rows, wrong for a
+    virtualized grid, whose rendered rows (and, since R1523, columns) start
+    wherever the scroll offset put them.
+
+    Takes the rects mapping rather than the snapshot, unlike the rest of this
+    family: a windowed-axis assertion usually already holds the rects (it is
+    checking geometry too), and several call sites only ever have the mapping —
+    `wait_until` predicates return one, not the snapshot it came from.
+
+    R1523 obligation-3b lift: five demos carried a byte-identical private copy
+    (measured — r777, r778, r782, r998, r1004) and this round's column-window
+    assertions would have been the sixth and seventh. Mechanical, no per-demo
+    opinion, so it is shared — following `access_node_by_tag` (R1517) and
+    `walk_nodes` (R1516).
+    """
+    out: list[int] = []
+    for tag in rects:
+        if tag.startswith(prefix):
+            suffix = tag[len(prefix):]
+            if suffix.isdigit():
+                out.append(int(suffix))
+    return sorted(out)
+
+
 def cursor_to_source(tf, group_tag: str, source: int) -> None:
     """Move a `GroupOrderExternal`'s roving visual-row cursor onto the data row
     with stable `source` index (R873).

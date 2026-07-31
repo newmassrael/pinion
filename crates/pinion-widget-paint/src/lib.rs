@@ -99,6 +99,7 @@ pub mod radio_composite;
 pub mod scrim;
 pub mod scrollbar;
 pub mod slider;
+pub mod spacer;
 pub mod splitter;
 pub mod state_layer;
 pub mod table;

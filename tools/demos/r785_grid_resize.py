@@ -32,6 +32,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     find_by_tag,
+    indexed_tags,
     run_demo,
     wait_until,
 )
@@ -58,6 +59,20 @@ def cell_w(rects, tag: str) -> int:
 def cell_x(rects, tag: str) -> int:
     assert tag in rects, f"{tag} present"
     return rects[tag][0]
+
+
+def rendered_cols(rects) -> list[int]:
+    """Absolute indices of the data-row-0 cells actually in the paint tree.
+
+    R1523 windows the column axis, so this is the viewport's column window, not
+    `range(NCOLS)`. The width MODEL still holds all NCOLS widths (asserted
+    through `width.<c>` queries above) — this is what the grid renders.
+    """
+    cols = indexed_tags(rects, "ghs#0_")
+    assert cols, "some columns render"
+    assert cols == list(range(cols[0], cols[-1] + 1)), \
+        f"the rendered columns are one contiguous window, got {cols}"
+    return cols
 
 
 def _hscroll_offset_x(tf) -> int:
@@ -100,8 +115,11 @@ def body() -> None:
         assert isinstance(min_w, int) and min_w > 0, f"min_width is a positive int, got {min_w}"
 
         rects = abs_rects_of(snap_now())
-        # Every column renders at the seeded uniform width at boot.
-        for c in range(NCOLS):
+        # Every RENDERED column renders at the seeded uniform width at boot.
+        # (R1523: at 130px per column only part of the 8 fit the 520px window,
+        # so the rest are windowed out of the tree — their widths are asserted
+        # through the model's `width.<c>` queries above.)
+        for c in rendered_cols(rects):
             assert_eq(cell_w(rects, f"ghs#0_{c}"), COL_W, f"col {c} cell at the seeded width")
         x1_boot = cell_x(rects, "ghs#0_1")
         x0_boot = cell_x(rects, "ghs#0_0")
@@ -157,9 +175,15 @@ def body() -> None:
 
         rects3 = wait_until(col0_restored, desc="grid repaints after widths restore")
         assert_eq(cell_w(rects3, "ghs#0_0"), 100, "rendered col-0 width follows the restore")
-        # All eight columns now render at the uniform restored width.
-        for c in range(NCOLS):
+        # Every rendered column now carries the uniform restored width — and
+        # because 100px columns fit more of the window than 130px ones did, the
+        # window itself grew: the rendered set is the observable consequence of
+        # the restore, not a constant.
+        restored = rendered_cols(rects3)
+        for c in restored:
             assert_eq(cell_w(rects3, f"ghs#0_{c}"), 100, f"col {c} at restored width")
+        assert len(restored) > len(rendered_cols(rects)), \
+            f"narrower columns widen the column window: {rendered_cols(rects)} -> {restored}"
 
 
 if __name__ == "__main__":

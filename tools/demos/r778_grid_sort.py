@@ -50,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     WORKSPACE_ROOT,
     abs_rects_of,
     assert_eq,
+    indexed_tags,
     read_png_rgba8,
     run_demo,
     sample_png_points,
@@ -99,13 +100,7 @@ def lex_order(col: int) -> list[int]:
 
 def present_sources(snap) -> list[int]:
     """Source ids of the rendered `vtbl_row<source>` strips (sorted set)."""
-    out: list[int] = []
-    for tag in abs_rects_of(snap):
-        if tag.startswith("vtbl_row"):
-            suffix = tag[len("vtbl_row"):]
-            if suffix.isdigit():
-                out.append(int(suffix))
-    return sorted(out)
+    return indexed_tags(abs_rects_of(snap), "vtbl_row")
 
 
 def grid_sort(d):
