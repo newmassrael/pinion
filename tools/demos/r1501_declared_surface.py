@@ -105,6 +105,11 @@ ACTIONS = {
     "clear_sort_indicator",
     "reset_default_section_size",
     "set_section_alignment",
+    # R1510 added this channel and updated `r1451`'s whole-object saveState
+    # equivalence but not this list, so CI's sweep is where it surfaced — which
+    # is the assertion working: a channel appearing upstream is visible here
+    # rather than silently absorbed.
+    "set_section_selection",
     "send",
     "move",
     "move_section",
@@ -219,10 +224,12 @@ def body() -> None:
         by_count = [f["path"] for f in fields
                     if any(a["domain"].get("count_path") == "count"
                            for a in (f.get("args") or []))]
-        # R1504 added two (`section_alignment` and its override), so the count
-        # moves with the surface. Kept as a NUMBER rather than a `>=` because a
-        # family that stops declaring its domain has to be visible here.
-        assert_eq(len(by_count), 10, f"the section-keyed families: {by_count}")  # 22
+        # R1504 added two (`section_alignment` and its override) and R1510 two
+        # more (`section_selection` and `section_highlight`), so the count moves
+        # with the surface. Kept as a NUMBER rather than a `>=` because a family
+        # that stops declaring its domain has to be visible here — and because
+        # the number is what caught R1510's additions, in CI's sweep.
+        assert_eq(len(by_count), 12, f"the section-keyed families: {by_count}")  # 22
 
         # ── (C) the declared domain holds ─────────────────────────────
         for path, inside in (("section_size", 100), ("section_hidden", False),
