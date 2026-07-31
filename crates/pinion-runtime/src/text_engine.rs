@@ -19,7 +19,7 @@
 
 use crate::layout::{TextBox, TextMeasure};
 use pinion_core::scene::StyleRun;
-use pinion_core::style::{FontFamily, LineHeight, TextAlign, TextStyle};
+use pinion_core::style::{FontFamily, FontStyle, FontWeight, LineHeight, TextAlign, TextStyle};
 use pinion_text::{CaretRect, TextLayout, VisualLineMetric};
 use pinion_text_font::{Font, shape_paragraph_with_fallback};
 use std::path::PathBuf;
@@ -185,7 +185,16 @@ impl SelfHostedTextEngine {
 /// - **`Normal` line height** — the arm's baseline matches parley's natural line
 ///   box only in `Normal` mode; a fixed / multiplied height moves parley's
 ///   baseline by leading the arm does not model;
-/// - **undecorated** — underline / strikethrough are not drawn by the arm;
+/// - **`Normal` weight and `Normal` style** (R1510) — the arm holds ONE parsed
+///   face, so it can only ever pen that face's outlines. A leaf asking for bold
+///   or italic would be served in Regular and its declaration silently lost,
+///   which is the R1505 defect (a declaration that does not reach the glyphs) in
+///   a second channel; parley selects a real face for the same request. Measured
+///   when R1510 gave a header label `FontWeight::BOLD`: the predicate read
+///   alignment, line height, decoration and runs, never the weight, so a
+///   `Start`-aligned bold label was the arm's and painted Regular. This is the
+///   same shape as the alignment condition above — the arm declines what it
+///   cannot reproduce rather than approximating it;
 /// - **not caret-bearing** (`caret_bearing` false) — a [`TextField`] derives its
 ///   caret / selection / hit-test geometry from a separate parley shaping of this
 ///   same string ([`pinion_core::scene::TextNode::caret_bearing`]), so re-shaping
@@ -211,6 +220,8 @@ pub fn self_hosted_text_eligible(
         && !content.contains('\n')
         && matches!(style.text_align, TextAlign::Start)
         && matches!(style.line_height, LineHeight::Normal)
+        && style.font_weight == FontWeight::NORMAL
+        && matches!(style.font_style, FontStyle::Normal)
         && !style.decoration.underline
         && !style.decoration.strikethrough
 }
@@ -909,6 +920,52 @@ mod tests {
                     .is_none(),
                 "{align:?} must defer on the measure arm too — paint and \
                  measure share one eligibility SSOT",
+            );
+        }
+    }
+
+    /// R1510 §5.36 §5.37 — a leaf that asked for a face this arm does not hold
+    /// is not this arm's either, and for the same reason an aligned leaf is not:
+    /// it would be rendered as something else and the request lost.
+    ///
+    /// The arm holds ONE parsed face and pens its outlines whatever the style
+    /// says, so `bold` and `italic` are requests it cannot honour — and until
+    /// R1510 the predicate did not read them. That was harmless only while no
+    /// production leaf declared either without also declaring something else
+    /// that deferred (styled runs carry weight and already defer on
+    /// `runs.is_empty()`). R1510's header highlight is the first: a
+    /// `Start`-aligned label bolded because the selection reached its column,
+    /// which measured as served and would have painted Regular.
+    ///
+    /// Asserted on both arms, because eligibility is their shared SSOT.
+    #[test]
+    fn r1510_a_face_this_arm_does_not_hold_is_not_this_arms_to_paint() {
+        use crate::layout::TextMeasure;
+        let engine = noto_engine();
+        let base = TextStyle::new().with_size_px(20);
+        assert!(
+            self_hosted_text_eligible("Modified", &base, &[], false),
+            "the plain leaf must be eligible, or this test proves nothing",
+        );
+
+        for (label, styled) in [
+            ("bold", base.clone().with_weight(FontWeight::BOLD)),
+            ("light", base.clone().with_weight(FontWeight::LIGHT)),
+            ("italic", base.clone().with_style(FontStyle::Italic)),
+        ] {
+            assert!(
+                !self_hosted_text_eligible("Modified", &styled, &[], false),
+                "{label} must not be eligible: one face cannot pen it",
+            );
+            assert!(
+                !engine.serves("Modified", &styled, &[], false),
+                "{label} must not be served by the paint arm",
+            );
+            assert!(
+                engine
+                    .measure_text("Modified", &styled, &[], None, false)
+                    .is_none(),
+                "{label} must defer on the measure arm too — one SSOT",
             );
         }
     }

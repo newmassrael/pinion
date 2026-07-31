@@ -23,7 +23,7 @@
 use pinion_core::scene::Scene;
 use pinion_core::style::TextAlign;
 use pinion_core::theme::Theme;
-use pinion_core::widgets::column_layout::SectionPlacement;
+use pinion_core::widgets::column_layout::{SectionPlacement, SectionSelection};
 use pinion_runtime::text_engine::SelfHostedTextEngine;
 use pinion_text_font::Font;
 use pinion_widget_paint::column_header::{ColumnHeaderStyle, HeaderSection, view_header_cell};
@@ -43,6 +43,16 @@ const WIDTHS: [u32; 5] = [150, 90, 100, 130, 100];
 /// from the labels beside it. A census over labels alone would have missed
 /// that the strip is mixed.
 fn header_strip(align: TextAlign, sorted: Option<usize>) -> Vec<Scene> {
+    header_strip_selected(align, sorted, SectionSelection::Unselected)
+}
+
+/// R1510 — the same strip with a selection published, so the census can ask what
+/// the arm does with the WEIGHT the highlight declares.
+fn header_strip_selected(
+    align: TextAlign,
+    sorted: Option<usize>,
+    selection: SectionSelection,
+) -> Vec<Scene> {
     let theme = Theme::light();
     let style = ColumnHeaderStyle::new();
     let mut x = 0;
@@ -60,6 +70,7 @@ fn header_strip(align: TextAlign, sorted: Option<usize>) -> Vec<Scene> {
             sort_glyph: (sorted == Some(visual)).then_some("\u{25b2}"),
             dragged: false,
             focused: false,
+            selection,
         };
         cells.push(view_header_cell(
             "colhdr", &placement, &section, &style, &theme,
@@ -124,6 +135,44 @@ fn the_arms_share_of_a_header_strip_is_a_function_of_the_declaration() {
         "and under Start it paints all five — so the shift R1504 caused is \
          the declaration's doing, not an unrelated ineligibility",
     );
+}
+
+/// R1510 — the arm holds ONE face, so a leaf that declares a weight the face
+/// does not have must not be served: it would be painted Regular and the
+/// declaration would be silently lost. Measured before the predicate was
+/// taught this: `self_hosted_text_eligible` read alignment, line height,
+/// decoration and runs, and never `font_weight`, so a `Start`-aligned bold
+/// header label WAS the arm's — the R1505 defect (a declaration that does not
+/// reach the glyphs) in a second channel.
+///
+/// `Start` is the load-bearing half of the fixture: under Qt's `Center` default
+/// these labels leave the arm over the alignment anyway, so the alignment has to
+/// be the one the arm accepts for the weight to be what decides.
+#[test]
+fn a_weight_the_single_face_cannot_serve_leaves_the_arm() {
+    let engine = engine();
+    let (plain, _) = census(
+        &header_strip_selected(TextAlign::Start, None, SectionSelection::Unselected),
+        &engine,
+    );
+    assert_eq!(
+        plain,
+        HEADERS.len(),
+        "an unhighlighted Start strip is entirely the arm's — the baseline the \
+         next assertion moves away from",
+    );
+    for selection in [SectionSelection::Partial, SectionSelection::Full] {
+        let (served, declined) = census(
+            &header_strip_selected(TextAlign::Start, None, selection),
+            &engine,
+        );
+        assert_eq!(
+            (served, declined),
+            (0, HEADERS.len()),
+            "{selection} bolds every label, and a bold leaf must defer to parley, \
+             which selects a real bold face",
+        );
+    }
 }
 
 /// The strip is MIXED once a column sorts: the arrow declares no alignment, so

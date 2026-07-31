@@ -1,4 +1,5 @@
-//! R1506 §5.16 §5.27 §5.36 — `QHeaderView`-style column-header section paint.
+//! R1506 R1510 §5.16 §5.27 §5.36 — `QHeaderView`-style column-header section
+//! paint.
 //!
 //! # Why this is a crate and not a binding's private fn
 //!
@@ -26,9 +27,11 @@
 //! This module holds no state and reads no external.
 
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextAlign, TextOverflow, TextStyle};
+use pinion_core::style::{
+    BoxStyle, FontWeight, LayoutStyle, Size, TextAlign, TextOverflow, TextStyle,
+};
 use pinion_core::theme::{ColorRole, Theme};
-use pinion_core::widgets::column_layout::SectionPlacement;
+use pinion_core::widgets::column_layout::{SectionPlacement, SectionSelection};
 
 /// Geometry + type scale for a header strip, in logical pixels.
 ///
@@ -129,18 +132,57 @@ pub struct HeaderSection<'a> {
     pub dragged: bool,
     /// This section is the keyboard-focused one.
     pub focused: bool,
+    /// R1510 — how much of the section the selection covers, **already gated**
+    /// on the header's `highlightSections` rule
+    /// ([`ColumnLayout::section_highlight`](pinion_core::widgets::column_layout::ColumnLayout::section_highlight)).
+    ///
+    /// The effective value, not the published one, for the same reason
+    /// [`align`](Self::align) is resolved by the caller: two of the three
+    /// inputs live somewhere this module cannot see, and a paint function that
+    /// took the raw selection would have to be told the rule as well and could
+    /// then be told a contradictory pair.
+    pub selection: SectionSelection,
 }
 
 /// The label's own text style.
 fn label_style(section: &HeaderSection, style: &ColumnHeaderStyle, theme: &Theme) -> TextStyle {
+    // R1510 — the two Qt flags reach two properties of the LABEL, and neither
+    // touches the box's fill.
+    //
+    // Weight is `State_On` (the selection intersects the section) and colour is
+    // `State_Sunken` (it covers the whole of it). Qt's own mapping for the
+    // second is a sunken bevel, which this theme does not have; the accent is
+    // this theme's resolution, stated here rather than implied.
+    //
+    // WHY NOT THE FILL, and why not a border. The fill is already spoken for by
+    // the drag and the keyboard cursor ([`view_header_cell`]), and a selected
+    // section that swallowed the focus colour would hide the cursor exactly
+    // where a user is working. A border on the section box was the first
+    // choice and was measured to not paint at all: the runtime's
+    // `Scene::Container` arm fills and shadows but never strokes
+    // `BoxStyle::border` (only `Scene::Box` does), so 45 container-attached
+    // border declarations across this workspace are silently dropped today.
+    // That is a real defect and a round of its own — fixing it turns on borders
+    // in ~30 files at once — and declaring one here meanwhile would have
+    // shipped a rule that reaches no pixels.
     let role = if section.dragged {
+        // The drag wins: it is the transient gesture, and its muted label is
+        // what tells a user which section is in flight.
         ColorRole::OnSurfaceMuted
+    } else if section.selection.covers() {
+        ColorRole::Accent
     } else {
         ColorRole::OnSurface
+    };
+    let weight = if section.selection.intersects() {
+        FontWeight::BOLD
+    } else {
+        FontWeight::NORMAL
     };
     TextStyle::new()
         .with_size_px(style.text_px)
         .with_fg(theme.resolve(role))
+        .with_weight(weight)
         .with_align(section.align)
         // The box is the containment: without this a label wider than its
         // section paints over the neighbour, and under `Center` it would do so
@@ -269,6 +311,7 @@ mod tests {
             sort_glyph: glyph,
             dragged: false,
             focused: false,
+            selection: SectionSelection::Unselected,
         }
     }
 
@@ -323,6 +366,111 @@ mod tests {
             );
             assert_eq!(t.layout.size, Size::px(124, 16));
         }
+    }
+
+    /// R1510 — the two levels reach two different channels, and each reaches
+    /// only its own: weight tracks Qt's `State_On` (the selection intersects),
+    /// the border tracks `State_Sunken` (it covers).
+    #[test]
+    fn the_two_highlight_levels_use_two_channels() {
+        let theme = Theme::light();
+        let style = ColumnHeaderStyle::new();
+        let expected = [
+            (
+                SectionSelection::Unselected,
+                FontWeight::NORMAL,
+                ColorRole::OnSurface,
+            ),
+            (
+                SectionSelection::Partial,
+                FontWeight::BOLD,
+                ColorRole::OnSurface,
+            ),
+            (SectionSelection::Full, FontWeight::BOLD, ColorRole::Accent),
+        ];
+        for (selection, weight, role) in expected {
+            let mut s = section(TextAlign::Center, None);
+            s.selection = selection;
+            let Scene::Container(cell) =
+                view_header_cell("colhdr", &placement(150), &s, &style, &theme)
+            else {
+                panic!("the cell is a Container");
+            };
+            let Scene::Text(label) = &cell.children[0] else {
+                panic!("the label comes first");
+            };
+            assert_eq!(
+                label.style.font_weight, weight,
+                "{selection} bolds the label iff the selection intersects",
+            );
+            assert_eq!(
+                label.style.fg_color,
+                theme.resolve(role),
+                "{selection} accents the label iff the selection covers it",
+            );
+        }
+    }
+
+    /// R1510 — the drag outranks the highlight for the label's colour, because a
+    /// drag is the gesture in flight and its muted label is what names the
+    /// section being moved. The weight still reports the selection.
+    #[test]
+    fn a_dragged_section_keeps_its_muted_label_while_highlighted() {
+        let theme = Theme::light();
+        let style = ColumnHeaderStyle::new();
+        let mut s = section(TextAlign::Center, None);
+        s.dragged = true;
+        s.selection = SectionSelection::Full;
+        let Scene::Text(label) = header_label_node("colhdr", 0, &s, 150, &style, &theme) else {
+            panic!("the label is a Text leaf");
+        };
+        assert_eq!(
+            label.style.fg_color,
+            theme.resolve(ColorRole::OnSurfaceMuted)
+        );
+        assert_eq!(
+            label.style.font_weight,
+            FontWeight::BOLD,
+            "the weight is the other channel and still answers the selection",
+        );
+    }
+
+    /// R1510 — the highlight leaves the fill alone, so a fully-selected section
+    /// still shows the keyboard cursor. The reason the levels were mapped to
+    /// weight and border rather than to the fill both of these already own.
+    #[test]
+    fn highlighting_does_not_take_the_fill_from_focus_or_drag() {
+        let theme = Theme::light();
+        let style = ColumnHeaderStyle::new();
+        let fill_of = |dragged: bool, focused: bool, selection: SectionSelection| {
+            let mut s = section(TextAlign::Center, None);
+            s.dragged = dragged;
+            s.focused = focused;
+            s.selection = selection;
+            let Scene::Container(cell) =
+                view_header_cell("colhdr", &placement(150), &s, &style, &theme)
+            else {
+                panic!("the cell is a Container");
+            };
+            cell.style.fill
+        };
+        for state in [(false, false), (false, true), (true, false), (true, true)] {
+            let (dragged, focused) = state;
+            let plain = fill_of(dragged, focused, SectionSelection::Unselected);
+            for selection in [SectionSelection::Partial, SectionSelection::Full] {
+                assert_eq!(
+                    fill_of(dragged, focused, selection),
+                    plain,
+                    "dragged={dragged} focused={focused}: {selection} must not \
+                     move the fill those two decide",
+                );
+            }
+        }
+        assert_ne!(
+            fill_of(false, true, SectionSelection::Full),
+            fill_of(false, false, SectionSelection::Full),
+            "and the cursor is still visible on a fully-selected section",
+        );
     }
 
     /// The sort glyph takes the section's trailing end, and the label yields

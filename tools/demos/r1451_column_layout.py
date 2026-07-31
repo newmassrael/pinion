@@ -135,6 +135,18 @@ IDENTITY = {
     # so this equality asserts an absence as much as a presence: a round that
     # started saving the exceptions would fail here, which is the point.
     "default_alignment": "Center",
+    # R1510 — a SEVENTH time, for Qt's `highlightSections` (serialised as
+    # `highlightSelected`). `False` is Qt's default AND what an absent field
+    # decodes to, so unlike `default_alignment` above this fixture and the
+    # older-snapshot decode agree — the pre-R1510 header had no selection input
+    # at all, so "did not highlight" describes both.
+    #
+    # What is NOT here is the SELECTION. Qt's header reads the view's selection
+    # model and `saveState()` cannot reach it, so this equality asserts that
+    # absence too: a round that started saving the published coverage would fail
+    # here. Seven rounds running, this whole-object form has been the thing that
+    # makes a field's arrival visible instead of letting it in unremarked.
+    "highlight_sections": False,
 }
 
 

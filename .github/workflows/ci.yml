@@ -288,19 +288,26 @@ jobs:
         # other #[ignore]d tests (the pinion-platform-tray SNI D-Bus tests and
         # the pinion-text-unicode bidi UCD sweeps, which need different setup).
         #
-        # `--skip r806` drops the two R806 canaries
-        # (r806_focus_ring_top_edge_rasterizes_two_px_not_thick,
-        # r806_1_top_tile_flood_is_in_vello_not_the_adapter). They assert that an
-        # upstream vello bug — a 2px stroke flush on the framebuffer y=0 row
-        # floods ~16px — STILL reproduces (`flood > 4`). That flood is itself
-        # adapter-dependent: it appears on hardware/Intel adapters but NOT on
-        # lavapipe, so the canaries are vacuous-or-false under software Vulkan
-        # and can only run on a flooding adapter. They stay #[ignore]d for local
-        # hardware runs; the positive guard (r807_highlight_top_edge_flood_safe,
-        # which asserts flood-SAFE) DOES run here.
+        # R1510 — the two R806 canaries used to be dropped here by name
+        # (`--skip r806`). They assert that an upstream vello bug — a 2px stroke
+        # flush on the framebuffer y=0 row floods ~16px — STILL reproduces, and
+        # that flood is adapter-dependent: it appears on hardware adapters and
+        # NOT on lavapipe, so under software Vulkan the canaries had nothing to
+        # say. Excluding them by name put that premise in this file, where the
+        # tests cannot see it: run on the wrong adapter they reported that
+        # UPSTREAM WAS FIXED, which is a message blaming the wrong thing.
+        #
+        # The premise is now a check inside them
+        # (`HeadlessScreenshot::adapter_floods_top_tile`), so they RUN here and
+        # skip their adapter-dependent half loudly, naming the adapter as the
+        # reason. That is strictly more than the skip gave: the positive half of
+        # `r806_focus_ring_top_edge_rasterizes_two_px_not_thick` — pinion's own
+        # claim that the top inset keeps the ring's stroke off the flood row —
+        # now gets CI coverage it never had, and the log says which half was
+        # skipped instead of the run silently not containing them.
         run: |
           vulkaninfo --summary 2>/dev/null | head -30 || true
-          cargo test -p pinion-shell --lib -- --ignored --skip r806
+          cargo test -p pinion-shell --lib -- --ignored
           # R1066.1 — the §5.37 paint-seam pixel proofs (text_engine_paint_seam:
           # R1063 coverage blit / R1065 atlas quads / R1066 per-glyph colour) are
           # an integration test under tests/, which `--lib` above does NOT run, so

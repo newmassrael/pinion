@@ -184,6 +184,18 @@ pub struct ColumnLayoutState {
     /// is stated rather than hidden: a Qt `AlignVCenter` has no counterpart
     /// here and none is invented.
     pub default_alignment: TextAlign,
+    /// R1510 — whether a section the selection reaches is highlighted: Qt's
+    /// `QHeaderView::highlightSections`, which `QHeaderViewPrivate::write()`
+    /// serialises as `highlightSelected`.
+    ///
+    /// The RULE is here; the selection is not. Qt's header holds a pointer to
+    /// the view's selection model and only ever reads it, so a header snapshot
+    /// carries the permission to highlight and never the thing highlighted —
+    /// the same division R1504 drew between this header's
+    /// [`default_alignment`](Self::default_alignment) and the model's
+    /// per-section exceptions. Restoring a layout into a view whose selection
+    /// has moved on must not put the old selection back.
+    pub highlight_sections: bool,
 }
 
 impl ColumnLayoutState {
@@ -227,6 +239,9 @@ impl ColumnLayoutState {
             // type owns its spelling, and this one had two live consumers
             // before this header wanted it.
             "default_alignment": self.default_alignment.as_wire(),
+            // R1510 — the highlight rule. Qt serialises this one and not the
+            // selection that satisfies it, because the selection is the view's.
+            "highlight_sections": self.highlight_sections,
         })
     }
 
@@ -360,6 +375,17 @@ impl ColumnLayoutState {
                 None => TextAlign::Start,
                 Some(v) => TextAlign::from_wire(v.as_str()?)?,
             },
+            // R1510 — absent decodes to `false`, and here Qt's default and the
+            // older header AGREE, as they did for `stretch_last_section` and
+            // unlike the two permissions and the alignment above. Measured over
+            // the wire before the round: a pre-R1510 header painted all five
+            // labels at weight 400 whatever was selected — it had no selection
+            // input at all — so "did not highlight" is both what an older
+            // snapshot describes and where Qt starts.
+            highlight_sections: match value.get("highlight_sections") {
+                None => false,
+                Some(v) => v.as_bool()?,
+            },
         })
     }
 }
@@ -416,6 +442,10 @@ impl Default for ColumnLayoutState {
             // new-vs-old split `sections_movable` above carries: `from_json`
             // decodes ABSENT as `Start`.
             default_alignment: DEFAULT_HEADER_ALIGNMENT,
+            // R1510 — Qt's default, and the same value `from_json` decodes an
+            // absent field as: a header that has never been told to highlight
+            // and an older header that could not are the same header.
+            highlight_sections: false,
         }
     }
 }
@@ -546,6 +576,91 @@ impl std::str::FromStr for SectionResizeMode {
 }
 
 impl std::fmt::Display for SectionResizeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_wire())
+    }
+}
+
+/// R1510 §5.27 — how much of a section the selection covers: the two
+/// predicates `QHeaderView::paintSection` asks, as one value.
+///
+/// Qt resolves a selection into two independent style flags — `State_On` when
+/// `sectionIntersectsSelection(logical)` and `State_Sunken` when
+/// `isSectionSelected(logical)`, the second being the whole section — and both
+/// are gated on `highlightSections`. Two predicates over the same selection
+/// cannot disagree in only one direction (a covered section always intersects),
+/// so they are three states rather than two booleans: the pair `(false, true)`
+/// does not exist, and a type that can express it invites a caller to build it.
+///
+/// **Who computes this is the point.** Qt's header does, because it has the
+/// selection model *and* the row count. [`ColumnLayout`] has neither — it is a
+/// header, not a view — so the consumer that owns the rows publishes the answer
+/// through [`set_section_selection`](ColumnLayout::set_section_selection),
+/// exactly as it already publishes the content widths Qt's header gets from
+/// `sectionSizeFromContents()`. Deriving it here would mean growing a selection
+/// model inside a column header.
+// `Signal` snapshots its value, so this must round-trip serde for the same
+// reason `SectionResizeMode` above must.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SectionSelection {
+    /// The selection does not reach this section: neither Qt predicate holds.
+    #[default]
+    Unselected,
+    /// Some of the section's cells are selected — Qt's
+    /// `sectionIntersectsSelection` alone.
+    Partial,
+    /// Every one of the section's cells is selected — Qt's
+    /// `isSectionSelected`, which implies the intersection as well.
+    Full,
+}
+
+impl SectionSelection {
+    /// Whether the selection reaches the section at all — Qt's
+    /// `sectionIntersectsSelection`, the predicate behind `State_On`.
+    #[must_use]
+    pub fn intersects(self) -> bool {
+        matches!(self, Self::Partial | Self::Full)
+    }
+
+    /// Whether the selection covers the section entirely — Qt's
+    /// `isSectionSelected`, the predicate behind `State_Sunken`.
+    #[must_use]
+    pub fn covers(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    /// The wire spelling, and the inverse of [`FromStr`](std::str::FromStr).
+    ///
+    /// Lower-case, like the [`SectionResizeMode`] vocabulary next door rather
+    /// than the capitalised [`TextAlign`] one, and `"none"` for
+    /// [`Unselected`](Self::Unselected) because this module already spells an
+    /// absent thing that way (`sort_indicator` answers `"none"`). A client
+    /// reading this header does not learn a third spelling convention.
+    #[must_use]
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Unselected => "none",
+            Self::Partial => "partial",
+            Self::Full => "full",
+        }
+    }
+}
+
+impl std::str::FromStr for SectionSelection {
+    type Err = ();
+
+    /// One spelling per state, no aliases — the [`SectionResizeMode`] rule.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "none" => Ok(Self::Unselected),
+            "partial" => Ok(Self::Partial),
+            "full" => Ok(Self::Full),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for SectionSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_wire())
     }
@@ -682,6 +797,27 @@ pub struct ColumnLayout {
     /// belongs to a column and has to travel with it when the column is
     /// dragged.
     section_alignments: Signal<Vec<Option<TextAlign>>>,
+    /// R1510 — Qt's `highlightSections`. Default `false`, as in Qt. Reactive
+    /// because it is painted: turning it off has to un-bold every label that
+    /// was bold, which is only possible if the write reaches the view.
+    highlight: Signal<bool>,
+    /// R1510 — `selection[logical]`: how much of each section the selection
+    /// covers, as published by the consumer.
+    ///
+    /// Supplied rather than derived, for the reason [`SectionSelection`]
+    /// documents: Qt's header reads a selection model this widget does not have,
+    /// and a header that grew one would be a view. The peer of
+    /// [`content_widths`](Self::content_widths) — both are answers only the
+    /// consumer can give, and both are inputs to what gets painted.
+    ///
+    /// Keyed by **logical** section, like `sizes` and the alignment exceptions:
+    /// a selection is a fact about a *column*, so dragging that column to a new
+    /// position has to carry its highlight along.
+    ///
+    /// Not part of [`ColumnLayoutState`], for the same reason the alignment
+    /// exceptions are not: Qt's `saveState()` carries the rule and never the
+    /// selection.
+    selection: Signal<Vec<SectionSelection>>,
     /// R1494 — the cascade currently in flight, if any.
     ///
     /// A cascade has to be *undoable* or it is not a drag: pulling a section
@@ -766,6 +902,9 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     // `saveState()` carries; the per-section exception below is the model's and
     // is not saved, which is why only this one sits among the saved rules.
     SchemaField::new("default_alignment", "string"),
+    // R1510 — the highlight rule, the last field Qt's `saveState()` carries
+    // that this header did not have.
+    SchemaField::new("highlight_sections", "boolean"),
     SchemaField::new("sort_indicator", "string"),
     SchemaField::new("sort_indicator_section", "int"),
     SchemaField::new("sort_indicator_order", "string"),
@@ -783,6 +922,14 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     // section's own exception where it has one, the header's rule where
     // it does not. The peer of `section_sizes` against `sizes`.
     SchemaField::new("alignments", "json"),
+    // R1510 — the third input a consumer publishes, and what the header makes
+    // of it. Two words on purpose: the SELECTION is the view's answer (which
+    // cells are picked, collapsed per column), the HIGHLIGHT is this header's
+    // (the selection, gated on `highlight_sections`). A client that reads only
+    // `highlights` can tell what is painted; one that reads both can tell
+    // whether an unhighlighted section is unselected or merely un-permitted.
+    SchemaField::new("selections", "json"),
+    SchemaField::new("highlights", "json"),
     // The parametric families. Every one is an index into `count`, except the
     // last: `logical_index_at` takes a **pixel** offset along the painted row,
     // whose bound the surface publishes as `visible_total`. R1501 — it was
@@ -835,6 +982,20 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
         "string",
         const { &[SchemaArg::index("logical", "count")] },
     ),
+    // R1510 — the same pair per section: what the consumer published, and what
+    // the header paints from it. Unlike the alignment pair above, neither half
+    // answers `Null` — a section the selection never reached is `"none"`, which
+    // is a state and not an absence.
+    SchemaField::parametric(
+        "section_selection.<logical>",
+        "string",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
+    SchemaField::parametric(
+        "section_highlight.<logical>",
+        "string",
+        const { &[SchemaArg::index("logical", "count")] },
+    ),
     SchemaField::parametric(
         "visual_index.<logical>",
         "int",
@@ -856,6 +1017,8 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::action("interactive_resize_section", "string"),
     SchemaField::action("set_section_hidden", "string"),
     SchemaField::action("set_section_alignment", "string"),
+    // R1510 — the per-section peer of the whole-row `selections` write.
+    SchemaField::action("set_section_selection", "string"),
     SchemaField::action("set_resize_mode", "string"),
     SchemaField::action("set_all_resize_modes", "string"),
     SchemaField::action("set_sort_indicator", "string"),
@@ -908,6 +1071,10 @@ impl ColumnLayout {
             // header has a rule and the model has said nothing.
             default_alignment: Signal::new(DEFAULT_HEADER_ALIGNMENT),
             section_alignments: Signal::new(vec![None; count]),
+            // R1510 — Qt's default, and an empty selection: a fresh header may
+            // not highlight, and nothing has been selected to highlight.
+            highlight: Signal::new(false),
+            selection: Signal::new(vec![SectionSelection::Unselected; count]),
             cascade: Signal::new(None),
             movable: Signal::new(false),
             clickable: Signal::new(false),
@@ -1537,6 +1704,121 @@ impl ColumnLayout {
         Ok(self.query("alignments").unwrap_or(IntrospectValue::Null))
     }
 
+    /// R1510 — whether a section the selection reaches is highlighted: Qt's
+    /// `QHeaderView::highlightSections`. `false` on a fresh header, as in Qt.
+    #[must_use]
+    pub fn highlight_sections(&self) -> bool {
+        self.highlight.get()
+    }
+
+    /// R1510 — set the rule — Qt's `setHighlightSections`. The published
+    /// selection is untouched: turning the rule off stops the header painting a
+    /// selection it still knows about, which is exactly what makes
+    /// [`section_selection`](Self::section_selection) and
+    /// [`section_highlight`](Self::section_highlight) two different questions.
+    pub fn set_highlight_sections(&self, highlight: bool) {
+        self.highlight.set(highlight);
+    }
+
+    /// R1510 — how much of this **logical** section the consumer says the
+    /// selection covers, whether or not the header may paint it.
+    ///
+    /// Out of range answers `None`, not
+    /// [`Unselected`](SectionSelection::Unselected): a section that does not
+    /// exist has no coverage, and answering with a member of the domain would
+    /// be the R1501 defect — a plausible value from outside it.
+    #[must_use]
+    pub fn section_selection(&self, logical: usize) -> Option<SectionSelection> {
+        self.selection.get().get(logical).copied()
+    }
+
+    /// R1510 — what the header paints for this **logical** section: the
+    /// published selection when the rule permits it, and
+    /// [`Unselected`](SectionSelection::Unselected) when it does not.
+    ///
+    /// The effective half of the pair, like
+    /// [`section_alignment`](Self::section_alignment) against its override and
+    /// `section_size` against `sizes`. Qt gates both of its flags on
+    /// `highlightSections` in `paintSection` for the same reason: the selection
+    /// is still there, the header is simply not dressing it.
+    #[must_use]
+    pub fn section_highlight(&self, logical: usize) -> Option<SectionSelection> {
+        let published = self.section_selection(logical)?;
+        Some(if self.highlight_sections() {
+            published
+        } else {
+            SectionSelection::Unselected
+        })
+    }
+
+    /// R1510 — publish one **logical** section's coverage. `false` when the
+    /// index is out of range, like every other per-section writer here.
+    pub fn set_section_selection(&self, logical: usize, selection: SectionSelection) -> bool {
+        if logical >= self.count {
+            return false;
+        }
+        let mut v = self.selection.get();
+        if v.len() < self.count {
+            v.resize(self.count, SectionSelection::Unselected);
+        }
+        v[logical] = selection;
+        self.selection.set(v);
+        true
+    }
+
+    /// R1510 — publish the whole row at once, the way a consumer that just
+    /// recomputed its selection has it. A vector of the wrong length is
+    /// ignored, for the reason
+    /// [`set_content_widths`](Self::set_content_widths) ignores one: half an
+    /// answer from another grid's selection is worse than none.
+    pub fn set_selections(&self, selections: Vec<SectionSelection>) {
+        if selections.len() == self.count {
+            self.selection.set(selections);
+        }
+    }
+
+    /// R1510 — one of the two selection rows as wire words, in logical order.
+    ///
+    /// Both rows are the same walk over the same domain and differ only in which
+    /// accessor answers, so they are one function: a second copy is where the
+    /// published row and the painted row would learn to disagree about their
+    /// length or their ordering.
+    fn selection_row(
+        &self,
+        of: impl Fn(&Self, usize) -> Option<SectionSelection>,
+    ) -> IntrospectValue {
+        IntrospectValue::Json(serde_json::Value::Array(
+            (0..self.count)
+                .filter_map(|l| of(self, l))
+                .map(|s| serde_json::Value::String(s.as_wire().to_string()))
+                .collect(),
+        ))
+    }
+
+    /// R1510 — the `set_section_selection` channel's body, lifted out of
+    /// [`invoke`](Self::invoke) so that match stays inside the line budget the
+    /// workspace lints for. Same split R1504 made for `set_section_alignment`
+    /// and R1494 for `section_and_size`.
+    ///
+    /// Answers the EFFECTIVE row, not the published one: a client that just
+    /// selected a column wants to know whether the header is painting it, and
+    /// under a `false` rule the two rows differ.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::Rejected`] when the payload does not parse, names a
+    /// spelling this build does not know, or names a section that does not
+    /// exist.
+    fn invoke_set_section_selection(&self, text: &str) -> Result<IntrospectValue, InvokeError> {
+        let (logical, spelling) =
+            parse_pair::<usize, String>(text, ':').ok_or(InvokeError::Rejected)?;
+        let selection: SectionSelection = spelling.parse().map_err(|()| InvokeError::Rejected)?;
+        if !self.set_section_selection(logical, selection) {
+            return Err(InvokeError::Rejected);
+        }
+        Ok(self.query("highlights").unwrap_or(IntrospectValue::Null))
+    }
+
     /// R1494 — whether an interactive resize takes its space from the
     /// following sections instead of from the row's width — Qt's
     /// `cascadingSectionResizes`. `false` by default, as in Qt.
@@ -1948,6 +2230,10 @@ impl ColumnLayout {
             // sections all defer to the rule, which is exactly what restoring a
             // header without its model should mean.
             default_alignment: self.default_alignment.get(),
+            // R1510 — the permission to highlight, and never the selection it
+            // would highlight. Qt's `write()` carries `highlightSelected` and
+            // has no access to the view's selection model at all.
+            highlight_sections: self.highlight.get(),
         }
     }
 
@@ -2012,6 +2298,19 @@ impl ColumnLayout {
         // defers to the rule.
         self.default_alignment.set(state.default_alignment);
         self.section_alignments.set(vec![None; self.count]);
+        // R1510 — the rule comes back, and the published selection is KEPT,
+        // which is the opposite of what happens to the alignment exceptions one
+        // line up. The two look alike — neither is in the snapshot — and are
+        // owned by different objects. An alignment exception is *header* data
+        // (Qt's model answers `headerData(TextAlignmentRole)`), so a header
+        // restored without its model has none. A selection is not the header's
+        // at all: it belongs to the view's selection model, which Qt's
+        // `restoreState()` cannot reach and does not disturb. Clearing the
+        // user's selection because they reloaded a column layout would be a
+        // surprise Qt does not produce — and it would be inert as well as
+        // wrong, because the consumer that owns the rows republishes the
+        // coverage on the next frame.
+        self.highlight.set(state.highlight_sections);
         self.sizes.set_widths(state.sizes.clone());
         self.hidden.set(state.hidden.clone());
         self.modes.set(state.modes.clone());
@@ -2083,6 +2382,11 @@ impl ColumnLayout {
     ///   interaction permissions, both of which `saveState()` carries
     /// - `stretch_last_section` (R1498) — Qt's rule that the last painted
     ///   section absorbs the leftover viewport
+    /// - `highlight_sections` (R1510) — Qt's rule that a section the selection
+    ///   reaches is highlighted, plus `selections` /
+    ///   `section_selection.<logical>` (what the consumer published) and
+    ///   `highlights` / `section_highlight.<logical>` (what the rule makes of
+    ///   it, so an unhighlighted section can be told from an unselected one)
     /// - `resize_modes` / `resize_mode.<logical>` — the mode that was **set**;
     ///   `effective_resize_modes` / `effective_resize_mode.<logical>` (R1498)
     ///   is the one the layout applies, and the two differ under
@@ -2142,6 +2446,11 @@ impl ColumnLayout {
                     self.section_alignment(l).map(TextAlign::as_wire)
                 })))
             }
+            // R1510 — the rule, and the two rows it stands between: what the
+            // consumer published, and what this header makes of it.
+            "highlight_sections" => Some(IntrospectValue::Bool(self.highlight_sections())),
+            "selections" => Some(self.selection_row(ColumnLayout::section_selection)),
+            "highlights" => Some(self.selection_row(ColumnLayout::section_highlight)),
             "cascading_section_resizes" => {
                 Some(IntrospectValue::Bool(self.cascading_section_resizes()))
             }
@@ -2298,6 +2607,23 @@ impl ColumnLayout {
                         IntrospectValue::Text(a.as_wire().to_string())
                     })
             }),
+            // R1510 — the published coverage, and the highlight the rule makes
+            // of it. Neither answers `Null` in range: a section the selection
+            // never reached is `"none"`, a state rather than an absence, which
+            // is why this pair needs no sentinel the way the alignment override
+            // above does.
+            "section_selection" => per_section(arg, &|l| {
+                self.section_selection(l)
+                    .map_or(IntrospectValue::Null, |s| {
+                        IntrospectValue::Text(s.as_wire().to_string())
+                    })
+            }),
+            "section_highlight" => per_section(arg, &|l| {
+                self.section_highlight(l)
+                    .map_or(IntrospectValue::Null, |s| {
+                        IntrospectValue::Text(s.as_wire().to_string())
+                    })
+            }),
             // Keyed by a PIXEL offset along the painted row, not by a section,
             // so `count` is not its bound — the declaration names
             // `visible_total`, and the accessor already answers `Null` for a
@@ -2405,6 +2731,28 @@ impl ColumnLayout {
             // agent can do the same to explore a layout without a real grid.
             "content_widths" => {
                 self.content_widths.set(self.width_vector(value)?);
+                Ok(())
+            }
+            // R1510 — the third such input, writable for exactly that reason.
+            // `QHeaderView` has no selection setter — a Qt client drives the
+            // view's selection model — but the class boundary Qt draws is not
+            // this surface's contract: §2 #2 makes the wire an agent's primary
+            // path, and the two inputs above are already writable here so an
+            // agent can explore a layout without a real grid. An input it could
+            // read and never move would make the whole rule unexplorable.
+            "selections" => {
+                let IntrospectValue::Json(serde_json::Value::Array(items)) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                let row: Vec<SectionSelection> = items
+                    .iter()
+                    .map(|v| v.as_str()?.parse().ok())
+                    .collect::<Option<_>>()
+                    .ok_or(InterveneError::TypeMismatch)?;
+                if row.len() != self.count {
+                    return Err(InterveneError::OutOfRange);
+                }
+                self.selection.set(row);
                 Ok(())
             }
             // R1491 — the restore half for the header's own sort, both as the
@@ -2527,6 +2875,13 @@ impl ColumnLayout {
                 // explore.
                 "sections_movable" => self.set_sections_movable(bool_rule(value)?),
                 "sections_clickable" => self.set_sections_clickable(bool_rule(value)?),
+                // R1510 — Qt's `setHighlightSections`. The rule and the
+                // selection it gates are written through different doors on
+                // purpose: this one, and the `selections` vector beside
+                // `content_widths`, because they are different kinds of thing —
+                // a permission the header owns, and an input a consumer feeds
+                // it.
+                "highlight_sections" => self.set_highlight_sections(bool_rule(value)?),
                 // R1454 — the row-sampling bound a `ResizeToContents` consumer
                 // honours; writable so an agent can shrink it and watch the
                 // hints change without rebuilding the grid.
@@ -2628,6 +2983,9 @@ impl ColumnLayout {
             // which is how a client hands a section BACK to the header's rule;
             // without it an exception could be set and never cleared.
             "set_section_alignment" => self.invoke_set_section_alignment(&pair_text(args)?),
+            // R1510 — one section's coverage, the per-section door beside the
+            // whole-row `selections`.
+            "set_section_selection" => self.invoke_set_section_selection(&pair_text(args)?),
             // R1452 — Qt's setSectionResizeMode, both overloads. Each returns
             // the resulting painted widths, because changing one section's
             // policy re-sizes every `Stretch` section sharing the row with it —
@@ -2832,7 +3190,8 @@ mod tests {
 
     use super::{
         ColumnLayout, ColumnLayoutState, DEFAULT_CONTENTS_PRECISION, DEFAULT_HEADER_ALIGNMENT,
-        DEFAULT_SECTION_SIZE, SectionPlacement, SectionResizeMode, TextAlign, read_column_layout,
+        DEFAULT_SECTION_SIZE, SectionPlacement, SectionResizeMode, SectionSelection, TextAlign,
+        read_column_layout,
     };
     use crate::external::{
         ArgDomain, DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue,
@@ -3009,6 +3368,257 @@ mod tests {
             "the outgoing header's exception does not survive a state that never mentioned it",
         );
         assert_eq!(other.section_alignment(1), Some(TextAlign::End));
+    }
+
+    /// R1510 — the rule gates what the header paints and never what the
+    /// consumer published, which is the whole reason both are readable.
+    #[test]
+    fn r1510_the_rule_gates_the_highlight_not_the_selection() {
+        let l = layout();
+        assert!(!l.highlight_sections(), "off by default, as in Qt");
+        assert!(l.set_section_selection(1, SectionSelection::Partial));
+        assert!(l.set_section_selection(2, SectionSelection::Full));
+
+        // The published selection is the same in both postures.
+        for on in [false, true] {
+            l.set_highlight_sections(on);
+            assert_eq!(l.section_selection(1), Some(SectionSelection::Partial));
+            assert_eq!(l.section_selection(2), Some(SectionSelection::Full));
+        }
+
+        l.set_highlight_sections(false);
+        assert_eq!(
+            (0..l.count())
+                .filter_map(|s| l.section_highlight(s))
+                .collect::<Vec<_>>(),
+            vec![SectionSelection::Unselected; l.count()],
+            "no rule, no highlight — the selection is still there and unpainted",
+        );
+        l.set_highlight_sections(true);
+        assert_eq!(l.section_highlight(1), Some(SectionSelection::Partial));
+        assert_eq!(l.section_highlight(2), Some(SectionSelection::Full));
+    }
+
+    /// R1510 — the two Qt predicates, and the pair that cannot exist.
+    #[test]
+    fn r1510_coverage_implies_intersection() {
+        assert!(!SectionSelection::Unselected.intersects());
+        assert!(!SectionSelection::Unselected.covers());
+        assert!(SectionSelection::Partial.intersects());
+        assert!(!SectionSelection::Partial.covers());
+        assert!(SectionSelection::Full.intersects());
+        assert!(SectionSelection::Full.covers());
+        for s in [
+            SectionSelection::Unselected,
+            SectionSelection::Partial,
+            SectionSelection::Full,
+        ] {
+            assert!(
+                !s.covers() || s.intersects(),
+                "{s} covers without intersecting, which is not a state a \
+                 selection can be in",
+            );
+            assert_eq!(
+                s.as_wire().parse::<SectionSelection>(),
+                Ok(s),
+                "the wire spelling round-trips",
+            );
+        }
+        assert!("Full".parse::<SectionSelection>().is_err(), "no aliases");
+        assert!(
+            "unselected".parse::<SectionSelection>().is_err(),
+            "the wire word for `Unselected` is `none`, and only that",
+        );
+    }
+
+    /// R1510 — a section outside the header has no coverage, rather than a
+    /// plausible `"none"` from inside the domain (the R1501 defect).
+    #[test]
+    fn r1510_out_of_range_has_no_coverage() {
+        let l = layout();
+        let past = l.count();
+        assert_eq!(l.section_selection(past), None);
+        assert_eq!(l.section_highlight(past), None);
+        assert!(!l.set_section_selection(past, SectionSelection::Full));
+        assert_eq!(
+            l.query(&format!("section_selection.{past}")),
+            Some(IntrospectValue::Null),
+        );
+        assert_eq!(
+            l.query(&format!("section_highlight.{past}")),
+            Some(IntrospectValue::Null),
+        );
+    }
+
+    /// R1510 — a bulk publish takes the whole row or none of it, like
+    /// `set_content_widths`.
+    #[test]
+    fn r1510_a_wrong_length_publish_is_ignored() {
+        let l = layout();
+        l.set_selections(vec![SectionSelection::Full; l.count()]);
+        assert_eq!(l.section_selection(0), Some(SectionSelection::Full));
+        l.set_selections(vec![SectionSelection::Unselected; l.count() - 1]);
+        assert_eq!(
+            l.section_selection(0),
+            Some(SectionSelection::Full),
+            "a short vector is another grid's selection, not half of this one's",
+        );
+    }
+
+    /// R1510 — the rule travels with the layout and the selection does not,
+    /// which is the opposite of what happens to the alignment exceptions.
+    #[test]
+    fn r1510_a_restore_replays_the_rule_and_keeps_the_selection() {
+        let l = layout();
+        l.set_highlight_sections(true);
+        let saved = l.save_state();
+        assert!(saved.highlight_sections);
+        assert_eq!(
+            saved.to_json().get("highlight_sections"),
+            Some(&serde_json::Value::Bool(true)),
+            "Qt serialises this one as `highlightSelected`",
+        );
+
+        let other = layout();
+        assert!(other.set_section_selection(0, SectionSelection::Full));
+        assert!(other.restore_state(&saved));
+        assert!(other.highlight_sections(), "the rule came back");
+        assert_eq!(
+            other.section_selection(0),
+            Some(SectionSelection::Full),
+            "and the selection survived: it belongs to the view's selection \
+             model, which a header restore cannot reach",
+        );
+    }
+
+    /// R1510 — an older snapshot decodes as `false`, which is both Qt's default
+    /// and what a pre-R1510 header did.
+    #[test]
+    fn r1510_an_older_snapshot_does_not_highlight() {
+        let l = layout();
+        l.set_highlight_sections(true);
+        let mut older = l.save_state().to_json();
+        older
+            .as_object_mut()
+            .expect("state is an object")
+            .remove("highlight_sections");
+        let decoded = ColumnLayoutState::from_json(&older).expect("the rest still decodes");
+        assert!(
+            !decoded.highlight_sections,
+            "absent decodes to `false` — the old header had no selection input \
+             at all, and Qt starts here too",
+        );
+        assert_eq!(
+            ColumnLayoutState::default().highlight_sections,
+            decoded.highlight_sections,
+            "so for this field the new-header and old-snapshot answers agree, \
+             unlike `sections_movable` and `default_alignment`",
+        );
+    }
+
+    /// R1510 — the wire doors: the rule, the whole row, and one section.
+    #[test]
+    fn r1510_the_rule_is_readable_and_writable_over_the_wire() {
+        let l = layout();
+        assert_eq!(
+            l.query("highlight_sections"),
+            Some(IntrospectValue::Bool(false)),
+        );
+        l.intervene("highlight_sections", &IntrospectValue::Bool(true))
+            .expect("the rule is writable");
+        assert!(l.highlight_sections());
+        assert!(
+            l.intervene("highlight_sections", &IntrospectValue::Text("yes".into()))
+                .is_err(),
+            "a non-bool is a type error, not a silent `true`",
+        );
+
+        assert!(l.set_section_selection(0, SectionSelection::Partial));
+        assert!(l.set_section_selection(1, SectionSelection::Full));
+        let wire = |path: &str| match l.query(path) {
+            Some(IntrospectValue::Json(v)) => v.to_string(),
+            other => panic!("{path} answers json, got {other:?}"),
+        };
+        // Built from the fixture's own count: a hardcoded length measures the
+        // fixture rather than the rule.
+        let published = || {
+            let mut row = vec!["none"; l.count()];
+            row[0] = "partial";
+            row[1] = "full";
+            serde_json::json!(row).to_string()
+        };
+        let suppressed = serde_json::json!(vec!["none"; l.count()]).to_string();
+        assert_eq!(wire("selections"), published());
+        assert_eq!(wire("highlights"), published());
+        l.set_highlight_sections(false);
+        assert_eq!(
+            wire("selections"),
+            published(),
+            "the published row is unchanged by the rule",
+        );
+        assert_eq!(
+            wire("highlights"),
+            suppressed,
+            "and the painted row is entirely the rule's to suppress",
+        );
+
+        // The input is writable too, like the two consumer-published inputs
+        // beside it — §2 #2, not Qt's class boundary. A wrong length is the
+        // same `OutOfRange` `content_widths` reports, and an unknown spelling
+        // the same `TypeMismatch`.
+        assert_eq!(
+            l.intervene(
+                "selections",
+                &IntrospectValue::Json(serde_json::json!(["full"])),
+            ),
+            Err(InterveneError::OutOfRange),
+            "a short row is another grid's selection",
+        );
+        assert_eq!(
+            l.intervene(
+                "selections",
+                &IntrospectValue::Json(serde_json::json!(vec!["everything"; l.count()])),
+            ),
+            Err(InterveneError::TypeMismatch),
+            "and a spelling this build does not know is refused, not defaulted",
+        );
+        l.set_highlight_sections(true);
+        l.intervene(
+            "selections",
+            &IntrospectValue::Json(serde_json::json!(vec!["full"; l.count()])),
+        )
+        .expect("the whole row is writable");
+        assert_eq!(l.section_highlight(0), Some(SectionSelection::Full));
+
+        // And the per-section door answers the EFFECTIVE row, so a client
+        // learns in one round-trip whether the rule let its write show.
+        let painted = l
+            .invoke(
+                "set_section_selection",
+                &IntrospectValue::Text("1:partial".into()),
+            )
+            .expect("one section is settable");
+        assert_eq!(l.section_selection(1), Some(SectionSelection::Partial));
+        let IntrospectValue::Json(row) = painted else {
+            panic!("the action answers the painted row");
+        };
+        assert_eq!(row[1], serde_json::Value::String("partial".into()));
+        assert!(
+            l.invoke(
+                "set_section_selection",
+                &IntrospectValue::Text("1:everything".into()),
+            )
+            .is_err(),
+            "an unknown spelling is rejected here too",
+        );
+        assert!(
+            l.invoke(
+                "set_section_selection",
+                &IntrospectValue::Text(format!("{}:full", l.count())),
+            )
+            .is_err(),
+            "and so is a section this header does not have",
+        );
     }
 
     #[test]

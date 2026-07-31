@@ -154,6 +154,18 @@ pub struct HeadlessScreenshot {
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: Renderer,
+    /// R1510 — the class of adapter this rendered on, and its name.
+    ///
+    /// Kept because one guarded behaviour is not pinion's at all: the VELLO-001
+    /// y=0 top-tile flood reproduces on hardware adapters and NOT on lavapipe,
+    /// so a test whose subject IS that flood has a premise about the adapter
+    /// and no way to state it. Before this the premise lived in a CI `--skip`
+    /// argument and a prose comment, and running the canaries on the wrong
+    /// adapter made them report that UPSTREAM WAS FIXED.
+    device_type: wgpu::DeviceType,
+    /// The adapter's reported name, so a premise check can say which adapter it
+    /// saw rather than leaving a reader to guess from the environment.
+    adapter_name: String,
 }
 
 impl HeadlessScreenshot {
@@ -202,6 +214,9 @@ impl HeadlessScreenshot {
             })
             .await
             .map_err(|_| HeadlessScreenshotError::AdapterNotFound)?;
+        let adapter_info = adapter.get_info();
+        let device_type = adapter_info.device_type;
+        let adapter_name = adapter_info.name.clone();
         let (device, queue) = adapter
             .request_device(&DeviceDescriptor {
                 label: Some("pinion-shell::HeadlessScreenshot"),
@@ -232,7 +247,37 @@ impl HeadlessScreenshot {
             device,
             queue,
             renderer,
+            device_type,
+            adapter_name,
         })
+    }
+
+    /// R1510 — does this adapter reproduce the VELLO-001 y=0 top-tile flood?
+    ///
+    /// `false` for a CPU adapter (lavapipe / llvmpipe), `true` otherwise.
+    /// MEASURED on this machine, both adapters, same `Cargo.lock` (vello 0.9.0 +
+    /// wgpu 29.0.3): NVIDIA RTX 4070 (`DiscreteGpu`) floods and both R806
+    /// canaries pass; llvmpipe (`Cpu`, Mesa 23.2.1) does not flood and both
+    /// fail. CI's own workflow comment says the same thing and passes
+    /// `--skip r806` because of it.
+    ///
+    /// This exists so the canaries can state that premise as a CHECK. Without
+    /// it their failure message blames upstream ("the upstream vello bug is
+    /// fixed; the workaround can be retired") for what is really "you ran me on
+    /// an adapter I cannot speak about" — a message that misattributes its own
+    /// failure, which teaches a reader to distrust the next one.
+    #[must_use]
+    pub fn adapter_floods_top_tile(&self) -> bool {
+        self.device_type != wgpu::DeviceType::Cpu
+    }
+
+    /// R1510 — the adapter this instance actually got, for a premise check's
+    /// diagnostic. `request_adapter` picks from whatever the loader offers, so
+    /// which one arrives is not something a caller can read off its own
+    /// environment.
+    #[must_use]
+    pub fn adapter_label(&self) -> String {
+        format!("{} ({:?})", self.adapter_name, self.device_type)
     }
 
     /// Render `vello_scene` at `width x height` with `base_color` as
@@ -2381,6 +2426,23 @@ mod tests {
         // Inside border drawn flush on the y=0 row (no inset) DOES flood
         // ~16px. If this ever stops flooding, the upstream vello bug is fixed
         // and build_focus_ring_box::TOP_EDGE_INSET can be retired.
+        //
+        // R1510 — the control's premise, as a check, and gating ONLY the
+        // control: assertion (1) above is pinion's own claim (the inset keeps
+        // the stroke off the flood row) and holds on every adapter, so it keeps
+        // running here. The flood itself is upstream's and appears only on
+        // hardware-class adapters, which is why this half returns early instead
+        // of reporting that upstream was fixed.
+        if !shot.adapter_floods_top_tile() {
+            eprintln!(
+                "r806 on {}: the positive guard ran; skipping the negative \
+                 control — a CPU-class adapter does not reproduce the VELLO-001 \
+                 flood, so the control cannot distinguish `upstream fixed` from \
+                 `wrong adapter`.",
+                shot.adapter_label(),
+            );
+            return;
+        }
         let mut flush = BoxNode::new(
             Rect::new(94, 0, 100, 42),
             BoxStyle::filled(Color::TRANSPARENT),
@@ -2390,8 +2452,10 @@ mod tests {
         assert!(
             flood > 4,
             "a 2px Inside border flush on the framebuffer y=0 row no longer \
-             floods (got {flood}px) — the upstream vello top-tile bug may be \
-             fixed; revisit build_focus_ring_box::TOP_EDGE_INSET.",
+             floods (got {flood}px) on {} — this adapter is hardware-class, \
+             where the flood is expected, so the upstream vello top-tile bug may \
+             be fixed; revisit build_focus_ring_box::TOP_EDGE_INSET.",
+            shot.adapter_label(),
         );
     }
 
@@ -2412,6 +2476,19 @@ mod tests {
         const W: u32 = 520;
         const H: u32 = 320;
         let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        // R1510 — the premise, as a check. This canary's whole subject is an
+        // upstream flood that only some adapters reproduce, so on the others it
+        // has nothing to say and must say THAT rather than blame upstream.
+        if !shot.adapter_floods_top_tile() {
+            eprintln!(
+                "skipping r806_1 on {}: a CPU-class adapter does not reproduce \
+                 the VELLO-001 y=0 flood at all, so the canary cannot \
+                 distinguish `upstream fixed` from `wrong adapter`. Run it on a \
+                 hardware adapter.",
+                shot.adapter_label(),
+            );
+            return;
+        }
         let white = PenikoColor::from_rgba8(255, 255, 255, 255);
         let mut raw = VelloScene::new();
         raw.fill(
@@ -2650,15 +2727,43 @@ mod tests {
         (rgba8, cw, ch)
     }
 
+    /// The brightness threshold every pixel reader in this module shares.
+    ///
+    /// A `const` rather than a literal in each scan because the readers ask
+    /// DIFFERENT questions of the same renders — [`glyph_gutters`] asks how far
+    /// the ink reaches, [`ink_pixel_count`] asks how much of it there is — and
+    /// two thresholds would make those answers incomparable while both looked
+    /// right.
+    const INK_LEVEL: u8 = 120;
+
+    /// Is the pixel at `(x, y)` inked, over a black render target?
+    fn inked(rgba8: &[u8], cw: u32, x: u32, y: u32) -> bool {
+        let i = ((y * cw + x) * 4) as usize;
+        rgba8[i] > INK_LEVEL || rgba8[i + 1] > INK_LEVEL || rgba8[i + 2] > INK_LEVEL
+    }
+
+    /// How many pixels the render inked — ink MASS, as distinct from the extent
+    /// [`glyph_gutters`] measures. The measurement a weight claim needs: a
+    /// heavier face lays down more ink for the same string at the same size,
+    /// while its extent may barely move.
+    fn ink_pixel_count(rgba8: &[u8], cw: u32, ch: u32) -> u32 {
+        let mut n = 0;
+        for y in 0..ch {
+            for x in 0..cw {
+                if inked(rgba8, cw, x, y) {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
     /// Measure a single rendered glyph's horizontal ink within its cell:
     /// `(left_gutter, right_gutter, ink_span)` in px. A blank cell panics
     /// (the glyph must ink). Shared by the snugness guard and the looseness
     /// characterization below — one measurement, two interpretations.
     fn glyph_gutters(rgba8: &[u8], cw: u32, ch: u32) -> (u32, u32, u32) {
-        let bright = |x: u32, y: u32| -> bool {
-            let i = ((y * cw + x) * 4) as usize;
-            rgba8[i] > 120 || rgba8[i + 1] > 120 || rgba8[i + 2] > 120
-        };
+        let bright = |x: u32, y: u32| -> bool { inked(rgba8, cw, x, y) };
         let col_inked = |x: u32| -> bool { (0..ch).any(|y| bright(x, y)) };
         let first = (0..cw).find(|&x| col_inked(x));
         let last = (0..cw).rev().find(|&x| col_inked(x));
@@ -2968,7 +3073,7 @@ mod tests {
         use pinion_core::scene::{BoxNode, ContainerNode, Scene};
         use pinion_core::style::{Color, FontFamily, LayoutStyle, Size, TextAlign};
         use pinion_core::theme::Theme;
-        use pinion_core::widgets::column_layout::SectionPlacement;
+        use pinion_core::widgets::column_layout::{SectionPlacement, SectionSelection};
         use pinion_runtime::compute_layout;
         use pinion_runtime::paint_adapter::to_vello;
         use pinion_text::LayoutCache;
@@ -3028,13 +3133,14 @@ mod tests {
         // scan, which is exactly this question asked of a wider box. The first
         // draft of this test hand-rolled the same scan; the R727 / R732
         // 3rd-consumer self-grep is what caught it.
-        let mut ink_span = |align: TextAlign| -> (u32, u32, u32) {
+        let mut render = |align: TextAlign, selection: SectionSelection| -> (u32, u32, u32, u32) {
             let section = HeaderSection {
                 label: LABEL,
                 align,
                 sort_glyph: None,
                 dragged: false,
                 focused: false,
+                selection,
             };
             // The PRODUCTION leaf, inside a bare container the size of the
             // section it would sit in — `view_header_cell`'s own wrapper less
@@ -3065,7 +3171,16 @@ mod tests {
             // guard this needs: without ink every bound below would compare
             // sentinels and the test would pass vacuously.
             let (left, right, width) = glyph_gutters(&rgba, surface_w, hdr.height);
-            (left, surface_w - 1 - right, width)
+            (
+                left,
+                surface_w - 1 - right,
+                width,
+                ink_pixel_count(&rgba, surface_w, hdr.height),
+            )
+        };
+        let mut ink_span = |align: TextAlign| -> (u32, u32, u32) {
+            let (lo, hi, w, _) = render(align, SectionSelection::Unselected);
+            (lo, hi, w)
         };
 
         Some((
@@ -3077,6 +3192,126 @@ mod tests {
                 ink_span(TextAlign::End),
             ],
         ))
+    }
+
+    /// R1510 — the render half of
+    /// [`r1510_full_coverage_accents_the_label_the_other_levels_do_not`]: the
+    /// production header CELL under each selection level, as the count of pixels
+    /// painted in the accent colour.
+    ///
+    /// WHY THE BORDER AND NOT THE WEIGHT. Both levels are declared in the same
+    /// place and only one of them can be witnessed in pixels from this repo's
+    /// fixtures. Weight is a property of the FACE: the shaper honours
+    /// `FontWeight::BOLD` by selecting a bold face, and the two bundled fixtures
+    /// (`NotoSans-Regular`, `NanumGothic-Regular`) are Regular-only while
+    /// committing a production font is disallowed. Measured, with this very rig:
+    /// with the Regular fixture pinned as the process family the bold label inks
+    /// **174px against the unhighlighted 174px** — identical, because there is no
+    /// bold face to select — while on this host's real font stack, with no family
+    /// pinned, the same label inks **251px against 161px**. So the weight DOES
+    /// reach the glyphs in production and CANNOT be shown to from a bundled
+    /// fixture; resolving the face through the host instead is the
+    /// host-dependence R1473 and R1500 rule out, and would make the guard's
+    /// subject the machine rather than the declaration.
+    ///
+    /// Colour has no such dependence — any face inks in the colour it is told —
+    /// so the `Full` level is the one that gets the pixel witness, and the weight
+    /// is asserted where it is decidable: on the node
+    /// (`pinion_widget_paint::column_header`) and at the §5.37 arm, which R1510
+    /// taught to DECLINE a weight its single face cannot pen
+    /// (`tests/self_hosted_arm_coverage.rs`).
+    fn header_cell_accent_pixels() -> Option<[u32; 3]> {
+        use pinion_core::scene::BoxNode;
+        use pinion_core::style::{Color, FontFamily, TextAlign};
+        use pinion_core::theme::{ColorRole, Theme};
+        use pinion_core::widgets::column_layout::{SectionPlacement, SectionSelection};
+        use pinion_runtime::compute_layout;
+        use pinion_runtime::paint_adapter::to_vello;
+        use pinion_text::LayoutCache;
+        use pinion_widget_paint::column_header::{
+            ColumnHeaderStyle, HeaderSection, view_header_cell,
+        };
+
+        const NOTO: &[u8] =
+            include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+        const LABEL: &str = "Modified";
+        const SECTION_SIZE: u32 = 260;
+
+        let mut shot = match HeadlessScreenshot::new() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("skipping: no wgpu adapter ({e})");
+                return None;
+            }
+        };
+
+        let hdr = ColumnHeaderStyle::new();
+        let theme = Theme::light();
+        let accent = theme.resolve(ColorRole::Accent);
+        let surface_w = hdr.section_width(SECTION_SIZE);
+
+        let mut text_cache = LayoutCache::new();
+        let family = text_cache
+            .register_font_data(NOTO.to_vec())
+            .into_iter()
+            .next()
+            .expect("NotoSans fixture registers at least one family");
+        text_cache.set_default_font_family(Some(FontFamily::Named(family.into())));
+
+        let placement = SectionPlacement {
+            visual: 0,
+            logical: 0,
+            x: 0,
+            size: SECTION_SIZE,
+        };
+
+        let mut accent_pixels = |selection: SectionSelection| -> u32 {
+            let section = HeaderSection {
+                label: LABEL,
+                align: TextAlign::Center,
+                sort_glyph: None,
+                dragged: false,
+                focused: false,
+                selection,
+            };
+            // The whole PRODUCTION cell, fill and all, so the count also proves
+            // the accent is the LABEL's and not something the box did.
+            let mut scene = view_header_cell("colhdr", &placement, &section, &hdr, &theme);
+            compute_layout(&mut scene, &mut text_cache, surface_w, hdr.height);
+            let mut vello_scene = VelloScene::new();
+            to_vello(
+                &scene,
+                &|_: &BoxNode| -> Option<Color> { None },
+                &mut text_cache,
+                &mut vello_scene,
+            );
+            let rgba = shot
+                .render_to_rgba8(&vello_scene, surface_w, hdr.height, PenikoColor::WHITE)
+                .expect("headless render");
+            // Count pixels close to the theme's accent, so the measurement names
+            // the colour the production code asked for rather than "not the
+            // fill". The tolerance absorbs AA along the border's inner edge.
+            let mut n = 0;
+            for y in 0..hdr.height {
+                for x in 0..surface_w {
+                    let i = ((y * surface_w + x) * 4) as usize;
+                    let near = |got: u8, want: u8| got.abs_diff(want) <= 24;
+                    if near(rgba[i], accent.r)
+                        && near(rgba[i + 1], accent.g)
+                        && near(rgba[i + 2], accent.b)
+                    {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        };
+
+        Some([
+            accent_pixels(SectionSelection::Unselected),
+            accent_pixels(SectionSelection::Partial),
+            accent_pixels(SectionSelection::Full),
+        ])
     }
 
     /// R1505 §5.36 §5.49 — the pixel half of "a header says where its labels
@@ -3188,6 +3423,45 @@ mod tests {
             mid_slack_l.abs_diff(mid_slack_r) <= 4,
             "Center must leave equal slack inside its box: {mid_slack_l}px \
              left vs {mid_slack_r}px right",
+        );
+    }
+
+    /// R1510 §5.36 §5.49 — the pixel half of "a header dresses the sections the
+    /// selection reaches", for the level that can have one.
+    ///
+    /// `Full` is Qt's `State_Sunken` — the selection covers the whole section —
+    /// and this theme paints it by accenting the label. Only that level: an
+    /// unhighlighted section and a partially-selected one both ink their label in
+    /// `OnSurface`, which is what makes the accent a witness for the LEVEL rather
+    /// than for the highlight in general.
+    ///
+    /// Renders the PRODUCTION cell (`view_header_cell`, the function
+    /// `hello-column-reorder` calls), so a binding that stopped passing the
+    /// selection through fails here. See [`header_cell_accent_pixels`] for why
+    /// the WEIGHT half of this round is asserted elsewhere and cannot be
+    /// asserted here.
+    ///
+    /// `#[ignore]`d for the wgpu cold-boot cost, like every pixel guard in this
+    /// module; CI runs it with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1510_full_coverage_accents_the_label_the_other_levels_do_not() {
+        let Some([plain, partial, full]) = header_cell_accent_pixels() else {
+            return;
+        };
+        // "Modified" at 13px inks on the order of a couple of hundred pixels;
+        // a floor of 40 is far above AA speckle and far below the glyphs, so
+        // this asserts the label inked IN THE ACCENT rather than its exact mass.
+        assert!(
+            full >= 40,
+            "a fully-covered section must ink its label in the accent: {full} \
+             accent pixels",
+        );
+        assert_eq!(
+            (plain, partial),
+            (0, 0),
+            "and neither an unhighlighted nor a partially-selected section may \
+             — the accent is the FULL level's, not the highlight's",
         );
     }
 

@@ -114,7 +114,8 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::column_layout::{
     ColumnLayout, ColumnLayoutView, DEFAULT_HEADER_ALIGNMENT, DEFAULT_SECTION_SIZE,
-    SectionPlacement, SectionResizeMode, read_column_layout, use_column_layout_with,
+    SectionPlacement, SectionResizeMode, SectionSelection, read_column_layout,
+    use_column_layout_with,
 };
 use pinion_core::widgets::column_widths::{DEFAULT_MAX_COL_WIDTH, DEFAULT_MIN_COL_WIDTH};
 use pinion_core::widgets::grid_sort::col_sort_dir;
@@ -575,6 +576,19 @@ struct HeaderState {
     /// R1504 — Qt's `defaultAlignment`, painted in the readout because a label
     /// that moved needs a visible cause, the R1492 rule.
     default_alignment: TextAlign,
+    /// R1510 — the **effective** highlight of each logical section: what the
+    /// strip paints, which is the published selection gated on the header's
+    /// rule.
+    ///
+    /// Read as a row rather than derived from the selection and the rule for the
+    /// reason [`alignments`](Self::alignments) is read: a view that resolved the
+    /// gate itself could disagree with the surface an agent queries.
+    highlights: [SectionSelection; NCOLS],
+    /// R1510 — Qt's `highlightSections`, painted in the readout so that a
+    /// selection which stops being dressed has a visible cause (the R1492 rule
+    /// again). The row above cannot supply it: an all-`none` row is what both a
+    /// revoked rule and an empty selection look like.
+    highlight_rule: bool,
 }
 
 impl Default for HeaderState {
@@ -607,6 +621,10 @@ impl Default for HeaderState {
             // reports.
             alignments: [DEFAULT_HEADER_ALIGNMENT; NCOLS],
             default_alignment: DEFAULT_HEADER_ALIGNMENT,
+            // R1510 — Qt's default, which `ColumnLayout` also constructs with:
+            // nothing selected and no permission to dress it if it were.
+            highlights: [SectionSelection::Unselected; NCOLS],
+            highlight_rule: false,
         }
     }
 }
@@ -777,6 +795,21 @@ fn read_header_state(scene: &Scene) -> HeaderState {
             }
         }
     }
+    // R1510 — the rule and the row it gates, both off the wire. `highlights` is
+    // the EFFECTIVE row, so this binding never resolves the gate a second time:
+    // the strip paints what an agent is told, which is the R1504 rule applied to
+    // the field next door.
+    if let Some(IntrospectValue::Bool(h)) = intro.query("highlight_sections") {
+        out.highlight_rule = h;
+    }
+    if let Some(IntrospectValue::Json(serde_json::Value::Array(items))) = intro.query("highlights")
+    {
+        for (slot, s) in out.highlights.iter_mut().zip(&items) {
+            if let Some(parsed) = s.as_str().and_then(|w| w.parse().ok()) {
+                *slot = parsed;
+            }
+        }
+    }
     out
 }
 
@@ -898,12 +931,63 @@ fn cycle_mode_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> b
 /// no cursor: there is no section to aim it at, which is exactly what makes it
 /// different from the `Stretch` mode `m` can put on one.
 fn toggle_stretch_last(intro: &mut dyn ExternalIntrospect) -> bool {
-    let on = matches!(
-        intro.query("stretch_last_section"),
-        Some(IntrospectValue::Bool(true))
-    );
+    toggle_bool_rule(intro, "stretch_last_section")
+}
+
+/// R1510 — Qt `setHighlightSections`, toggled in place. A header rule, so like
+/// `f` it needs no cursor.
+fn toggle_highlight_sections(intro: &mut dyn ExternalIntrospect) -> bool {
+    toggle_bool_rule(intro, "highlight_sections")
+}
+
+/// Read a boolean header rule and write back its negation.
+///
+/// R1510 — collapsed when this round added the second one. The R727 / R732
+/// self-grep found the two bodies byte-identical but for the path string:
+/// mechanical wiring with no opinion in it, in one file, where the mandate's
+/// three-site threshold exists to stop things that are merely SIMILAR from being
+/// abstracted. These are the same function, and the next rule toggle is now
+/// free rather than a third copy.
+fn toggle_bool_rule(intro: &mut dyn ExternalIntrospect, path: &str) -> bool {
+    let on = matches!(intro.query(path), Some(IntrospectValue::Bool(true)));
+    intro.intervene(path, IntrospectValue::Bool(!on)).is_ok()
+}
+
+/// R1510 — the selection this app publishes for the cursor's column, cycled
+/// none -> partial -> full -> none.
+///
+/// This stands in for the cell picking a real grid would do: in Qt the selection
+/// comes from the view's selection model, and the coverage the header reads is
+/// derived from it (`sectionIntersectsSelection` / `isSectionSelected`). This
+/// binding has rows but no cell cursor, so the gesture names the coverage
+/// directly — the same three answers a derivation would produce, reached by the
+/// only affordance this example has.
+///
+/// Reads the PUBLISHED row rather than the effective one: cycling has to advance
+/// even while the rule is off, and the effective row reports `none` for every
+/// section then, which would pin the cycle at its first step.
+fn cycle_selection_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
+    let Some(visual) = cursor else { return false };
+    let Some(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
+        return false;
+    };
+    let Ok(logical) = usize::try_from(l) else {
+        return false;
+    };
+    let now: Option<SectionSelection> = match intro.query(&format!("section_selection.{logical}")) {
+        Some(IntrospectValue::Text(s)) => s.parse().ok(),
+        _ => None,
+    };
+    let next = match now {
+        Some(SectionSelection::Unselected) | None => "partial",
+        Some(SectionSelection::Partial) => "full",
+        Some(SectionSelection::Full) => "none",
+    };
     intro
-        .intervene("stretch_last_section", IntrospectValue::Bool(!on))
+        .invoke(
+            "set_section_selection",
+            IntrospectValue::Text(format!("{logical}:{next}")),
+        )
         .is_ok()
 }
 
@@ -1037,6 +1121,14 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
         ),
         dragged: state.dragging == Some(p.visual),
         focused: state.focused == Some(p.visual),
+        // R1510 — keyed LOGICALLY, like the alignment above it: a selection is a
+        // fact about the column, so it rides along when the column is dragged
+        // to a new visual position.
+        selection: state
+            .highlights
+            .get(p.logical)
+            .copied()
+            .unwrap_or(SectionSelection::Unselected),
     };
     view_header_cell(HDR_TAG, p, &section, &HDR_STYLE, theme)
 }
@@ -1192,9 +1284,30 @@ fn layout_readout_text(state: &HeaderState) -> String {
             exceptions.join(" ")
         )
     };
+    // R1510 — the rule, and the sections it is dressing. The row names only the
+    // highlighted ones, the shape `exceptions` above uses: with the rule off
+    // there are none to name, which is what distinguishes it on screen from a
+    // rule that is on over an empty selection.
+    let highlit: Vec<String> = state
+        .highlights
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.intersects())
+        .map(|(l, s)| format!("{}={}", HEADERS[l], s.as_wire()))
+        .collect();
+    let highlight = format!(
+        "{}{}",
+        if state.highlight_rule { "on" } else { "off" },
+        if highlit.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", highlit.join(" "))
+        }
+    );
     format!(
         "sizes {}{stored} | hidden {} | modes {}{stored_modes} | default {} | \
-         cascade {} | stretch-last {} | bounds {}..{} | allows {allows} | align {align}",
+         cascade {} | stretch-last {} | bounds {}..{} | allows {allows} | \
+         align {align} | highlight {highlight}",
         keyed(&state.section_sizes),
         if hidden.is_empty() {
             "-".to_string()
@@ -1240,7 +1353,7 @@ fn view(state: &HeaderState, _frame: &Frame) -> Scene {
 
     let caption = Scene::Text(
         TextNode::styled(
-            "Drag a header to move it; [ ] resize, h hides, m cycles sizing, f fills",
+            "Drag a header to move it; [ ] resize, h hides, m sizing, f fills, H+s highlight",
             Rect::default(),
             TextStyle::new()
                 .with_size_px(14)
@@ -1406,6 +1519,10 @@ impl WidgetCore for ColumnReorderView {
             // model's per-section exception (cursor, like `h` and `m`).
             "a" => cycle_default_alignment(intro),
             "A" => cycle_alignment_at(intro, cursor),
+            // R1510 — Qt `setHighlightSections` (header rule, no cursor) and the
+            // selection this app publishes for one column (cursor, like `A`).
+            "H" => toggle_highlight_sections(intro),
+            "s" => cycle_selection_at(intro, cursor),
             // Qt `resizeSection`, gated by the mode (R1452).
             "]" | "[" => nudge_size_at(intro, cursor, key == "]"),
             _ => false,
