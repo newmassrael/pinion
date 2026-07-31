@@ -314,7 +314,7 @@ fn button(label: &str, tag: &'static str, state: ButtonState, colors: &ButtonCol
         .with_corner_radius(8)
         .with_padding(Rect::new(14, 8, 14, 8))
         .with_label_font_size_px(BODY_FONT_PX);
-    view_button(label, state, 0.0, false, colors, &style)
+    view_button(label, state, 0.0, colors, &style)
 }
 
 // R1026 — rustfmt's reflow pushed this example view over the workspace

@@ -375,14 +375,12 @@ fn nav_button(
     tag: &'static str,
     label: &str,
     state: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     theme: &Theme,
 ) -> Scene {
     pinion_widget_paint::button::button_scene(
         label,
         state,
-        focused,
         hover_key,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
@@ -411,7 +409,7 @@ type AsyncDataViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 /// side-effects (the refetch Effect is installed in `create_extra_externals`).
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: AsyncDataViewState, _frame: &Frame) -> Scene {
-    let (prev_posture, next_posture, reload_posture, [prev_f, next_f, reload_f]) = state;
+    let (prev_posture, next_posture, reload_posture, _focus) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let page = page_signal().get();
     let res = result().state();
@@ -446,13 +444,12 @@ fn view(state: AsyncDataViewState, _frame: &Frame) -> Scene {
     let next_state = clamped(next_posture, page + 1 >= TOTAL_PAGES);
     let buttons = Scene::Container(
         ContainerNode::new(vec![
-            nav_button(PREV_TAG, "Prev", prev_state, prev_f, PREV_HOVER_KEY, &theme),
-            nav_button(NEXT_TAG, "Next", next_state, next_f, NEXT_HOVER_KEY, &theme),
+            nav_button(PREV_TAG, "Prev", prev_state, PREV_HOVER_KEY, &theme),
+            nav_button(NEXT_TAG, "Next", next_state, NEXT_HOVER_KEY, &theme),
             nav_button(
                 RELOAD_TAG,
                 "Reload",
                 reload_posture,
-                reload_f,
                 RELOAD_HOVER_KEY,
                 &theme,
             ),

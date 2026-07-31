@@ -262,17 +262,10 @@ fn build_entry(index: usize, kind: Kind, text: &str, theme: &Theme) -> Scene {
     )
 }
 
-fn control(
-    tag: &'static str,
-    label: &str,
-    state: ButtonState,
-    focused: bool,
-    theme: &Theme,
-) -> Scene {
+fn control(tag: &'static str, label: &str, state: ButtonState, theme: &Theme) -> Scene {
     button_scene(
         label,
         state,
-        focused,
         tag, // hover-spring key: the tag is already unique per control
         &ButtonColors::accent(theme),
         &ButtonStyle::m3_default(tag)
@@ -316,14 +309,8 @@ fn view(state: Controls, _frame: &Frame) -> Scene {
 
     let controls = Scene::Container(
         ContainerNode::new(vec![
-            control(REPLY_TAG, "Reply", state.reply, state.reply_focused, &theme),
-            control(
-                NOTICE_TAG,
-                "Notice",
-                state.notice,
-                state.notice_focused,
-                &theme,
-            ),
+            control(REPLY_TAG, "Reply", state.reply, &theme),
+            control(NOTICE_TAG, "Notice", state.notice, &theme),
         ])
         .with_layout(
             LayoutStyle::new()

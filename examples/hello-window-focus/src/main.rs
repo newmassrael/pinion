@@ -100,7 +100,6 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         "focusable button",
         state,
         hover_progress,
-        focused,
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default("main_btn")
             .with_size(Size::px(BTN_W, BTN_H))

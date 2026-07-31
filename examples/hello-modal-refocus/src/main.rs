@@ -236,7 +236,7 @@ const TAGS: [&str; 6] = [
 /// the two views is painted, and the palette overlays whichever is up.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: RefocusState, _frame: &Frame) -> Scene {
-    let (postures, focus) = state;
+    let (postures, _focus) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let palette_open = palette().is_open();
     let results = results_open().get();
@@ -250,7 +250,6 @@ fn view(state: RefocusState, _frame: &Frame) -> Scene {
                 tag: TAGS[i],
                 label,
                 state: postures[i],
-                focused: focus[i],
                 hover_key: HOVER_KEYS[i],
                 size,
                 focusable,

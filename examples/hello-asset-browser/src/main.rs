@@ -555,14 +555,12 @@ fn toolbar_button(
     tag: &'static str,
     label: &str,
     state: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     theme: &Theme,
 ) -> Scene {
     button_scene(
         label,
         state,
-        focused,
         hover_key,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
@@ -583,7 +581,7 @@ type AssetBrowserState = (ButtonState, ButtonState, [bool; 2]);
 /// page's state; the data is virtual, out-of-memory, and source-side ordered.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: AssetBrowserState, _frame: &Frame) -> Scene {
-    let (sort_posture, filter_posture, [sort_f, filter_f]) = state;
+    let (sort_posture, filter_posture, _focus) = state;
     let scroll = use_scroll_state(SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
     let cache = page_cache();
@@ -616,7 +614,6 @@ fn view(state: AssetBrowserState, _frame: &Frame) -> Scene {
                 SORT_TAG,
                 sort_label(sort),
                 sort_posture,
-                sort_f,
                 SORT_HOVER_KEY,
                 &theme,
             ),
@@ -624,7 +621,6 @@ fn view(state: AssetBrowserState, _frame: &Frame) -> Scene {
                 FILTER_TAG,
                 &filter_label(filter),
                 filter_posture,
-                filter_f,
                 FILTER_HOVER_KEY,
                 &theme,
             ),

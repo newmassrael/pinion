@@ -145,7 +145,6 @@ fn view_window(window_id: &str, state: ButtonState) -> Scene {
             "focusable button",
             state,
             hover,
-            focused,
             &ButtonColors::filled_tonal(&theme),
             &ButtonStyle::m3_default(MAIN_BTN_TAG)
                 .with_size(Size::px(180, 52))

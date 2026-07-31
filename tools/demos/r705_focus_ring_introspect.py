@@ -127,10 +127,22 @@ def body() -> None:
         # (E) exactly one ring — a single focus paints a single overlay.
         assert_eq(_count_rings(snap), 1, "exactly one focus ring in the scene")
 
-        # The widget keeps its own R694 posture border — the overlay is
-        # additive and faithful, not a replacement of widget chrome.
+        # R1511 — this assertion was INVERTED, and the reason is the round's
+        # subject. R705 wrote "the overlay is additive and faithful, not a
+        # replacement of widget chrome" while a container's border could not
+        # reach pixels at all (the vello adapter stroked one in the
+        # `Scene::Box` arm alone), so "additive" cost nothing and was never
+        # seen. With the adapter honouring the declaration, additive means a
+        # focused button paints its own 3px accent band INSIDE its edge under
+        # this 2px ring OUTSIDE it — two indicators, two colours, one state.
+        # The widget-local ring was R694's stand-in for the offset primitive
+        # its own doc said pinion lacked; this overlay IS that primitive, so
+        # the stand-in retired and the overlay is now the SOLE indicator.
         cancel = find_by_tag(snap, CANCEL)
-        assert cancel["style"].get("border") is not None, "Cancel keeps its own R694 border"
+        assert cancel["style"].get("border") is None, (
+            "the focused button declares no border of its own — the overlay "
+            "owns the focus indicator"
+        )
 
         # ── (E) focus/next moves the ring Cancel -> Delete, no stale ring
         assert_eq(tf.request("focus/next").result.get("focused"), OK, "Tab -> Delete")

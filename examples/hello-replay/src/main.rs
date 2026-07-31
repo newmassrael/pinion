@@ -168,14 +168,12 @@ fn transport_button(
     tag: &'static str,
     label: &str,
     posture: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     theme: &Theme,
 ) -> Scene {
     button_scene(
         label,
         posture,
-        focused,
         hover_key,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
@@ -195,7 +193,7 @@ type ReplayState = ([ButtonState; 3], [bool; 3]);
     reason = "the WidgetCore::view trait hands the frame by reference"
 )]
 fn view(state: ReplayState, _frame: &Frame) -> Scene {
-    let (postures, focused) = state;
+    let (postures, _focused) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -230,9 +228,7 @@ fn view(state: ReplayState, _frame: &Frame) -> Scene {
         .iter()
         .zip(labels)
         .enumerate()
-        .map(|(i, (tag, (label, hover)))| {
-            transport_button(tag, label, postures[i], focused[i], hover, &theme)
-        })
+        .map(|(i, (tag, (label, hover)))| transport_button(tag, label, postures[i], hover, &theme))
         .collect();
     let button_row = Scene::Container(
         ContainerNode::new(buttons).with_layout(

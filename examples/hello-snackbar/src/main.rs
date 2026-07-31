@@ -110,7 +110,6 @@ fn button_scene(
     tag: &'static str,
     label: &str,
     state: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     colors: &ButtonColors,
     size: Size,
@@ -121,7 +120,6 @@ fn button_scene(
     pinion_widget_paint::button::button_scene(
         label,
         state,
-        focused,
         hover_key,
         colors,
         &ButtonStyle::m3_default(tag)
@@ -144,18 +142,13 @@ fn snackbar_action_colors(theme: &pinion_core::theme::Theme) -> ButtonColors {
         inverse_surface,                            // disabled fill (unused here)
         inverse_primary,                            // label
         theme.resolve(ColorRole::InverseOnSurface), // disabled label
-        inverse_primary,                            // focus ring
     )
 }
 
 /// Build the bottom-anchored snackbar overlay (only called while
 /// visible): an `inverseSurface` bar holding the message
 /// (`inverseOnSurface`) and the `inversePrimary` UNDO action.
-fn snackbar_overlay(
-    undo_state: ButtonState,
-    undo_focused: bool,
-    theme: &pinion_core::theme::Theme,
-) -> Scene {
+fn snackbar_overlay(undo_state: ButtonState, theme: &pinion_core::theme::Theme) -> Scene {
     let message = Scene::Text(TextNode::styled(
         SNACK_MESSAGE,
         Rect::default(),
@@ -167,7 +160,6 @@ fn snackbar_overlay(
         UNDO_TAG,
         "UNDO",
         undo_state,
-        undo_focused,
         UNDO_HOVER_KEY,
         &snackbar_action_colors(theme),
         Size::px(72, 32),
@@ -202,7 +194,7 @@ type SnackbarViewState = (ButtonState, ButtonState, [bool; 2]);
 /// reading the reactive `SnackbarTimer` + undo-count signal.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: SnackbarViewState, _frame: &Frame) -> Scene {
-    let (show_state, undo_state, [show_focused, undo_focused]) = state;
+    let (show_state, undo_state, _focus) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let visible = snackbar().visible();
     let undos = undo_count().get();
@@ -211,7 +203,6 @@ fn view(state: SnackbarViewState, _frame: &Frame) -> Scene {
         SHOW_TAG,
         "Send message",
         show_state,
-        show_focused,
         SHOW_HOVER_KEY,
         &ButtonColors::filled_tonal(&theme),
         Size::px(160, 40),
@@ -237,7 +228,7 @@ fn view(state: SnackbarViewState, _frame: &Frame) -> Scene {
 
     let mut children = vec![content];
     if visible {
-        children.push(snackbar_overlay(undo_state, undo_focused, &theme));
+        children.push(snackbar_overlay(undo_state, &theme));
     }
 
     Scene::Container(

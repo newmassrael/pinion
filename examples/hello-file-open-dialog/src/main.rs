@@ -290,14 +290,12 @@ fn action_button(
     tag: &'static str,
     label: &str,
     state: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     colors: &ButtonColors,
 ) -> Scene {
     button_scene(
         label,
         state,
-        focused,
         hover_key,
         colors,
         &ButtonStyle::m3_default(tag)
@@ -318,14 +316,12 @@ type FileOpenViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 /// **last** so it paints over (and hit-tests above) the trigger content.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: FileOpenViewState, _frame: &Frame) -> Scene {
-    let (trigger_state, ok_state, cancel_state, focus) = state;
-    let [trigger_focused, ok_focused, cancel_focused] = focus;
+    let (trigger_state, ok_state, cancel_state, _focus) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
 
     let trigger = button_scene(
         "Open file\u{2026}",
         trigger_state,
-        trigger_focused,
         TRIGGER_HOVER_KEY,
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default(TRIGGER_TAG)
@@ -366,7 +362,6 @@ fn view(state: FileOpenViewState, _frame: &Frame) -> Scene {
             CANCEL_TAG,
             "Cancel",
             cancel_state,
-            cancel_focused,
             CANCEL_HOVER_KEY,
             &ButtonColors::filled_tonal(&theme),
         );
@@ -380,7 +375,6 @@ fn view(state: FileOpenViewState, _frame: &Frame) -> Scene {
             OK_TAG,
             "Open",
             ok_posture,
-            ok_focused,
             OK_HOVER_KEY,
             &ButtonColors::accent(&theme),
         );

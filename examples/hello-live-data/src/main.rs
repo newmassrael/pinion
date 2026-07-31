@@ -263,7 +263,7 @@ type LiveDataViewState = (ButtonState, bool);
 /// (the producer thread is spawned in `create_extra_externals`).
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: LiveDataViewState, _frame: &Frame) -> Scene {
-    let (posture, focused) = state;
+    let (posture, _focused) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let lines = log_lines(&use_live_log());
 
@@ -296,7 +296,6 @@ fn view(state: LiveDataViewState, _frame: &Frame) -> Scene {
     let button = pinion_widget_paint::button::button_scene(
         "Tick",
         posture,
-        focused,
         TICK_HOVER_KEY,
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default(TICK_TAG)

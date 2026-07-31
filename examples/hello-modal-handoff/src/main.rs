@@ -206,7 +206,7 @@ const TAGS: [&str; 5] = [
 /// other, so the menu and the confirm are never both painted.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: HandoffState, _frame: &Frame) -> Scene {
-    let (postures, focus) = state;
+    let (postures, _focus) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let menu_open = menu().is_open();
     let confirm_open = confirm().is_open();
@@ -220,7 +220,6 @@ fn view(state: HandoffState, _frame: &Frame) -> Scene {
                 tag: TAGS[i],
                 label,
                 state: postures[i],
-                focused: focus[i],
                 hover_key: HOVER_KEYS[i],
                 size,
                 focusable: i == 0,

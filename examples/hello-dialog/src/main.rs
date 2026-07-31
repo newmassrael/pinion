@@ -187,8 +187,7 @@ type DialogViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 /// hit-tests above) the trigger content.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: DialogViewState, _frame: &Frame) -> Scene {
-    let (trigger_state, ok_state, cancel_state, focus) = state;
-    let [trigger_focused, ok_focused, cancel_focused] = focus;
+    let (trigger_state, ok_state, cancel_state, _focus) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let open = modal().is_open();
     let result = use_dialog_result().get();
@@ -198,7 +197,6 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
             tag: TRIGGER_TAG,
             label: "Delete file\u{2026}",
             state: trigger_state,
-            focused: trigger_focused,
             hover_key: TRIGGER_HOVER_KEY,
             size: Size::px(TRIGGER_W, TRIGGER_H),
             focusable: true,
@@ -237,7 +235,6 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
                 tag: CANCEL_TAG,
                 label: "Cancel",
                 state: cancel_state,
-                focused: cancel_focused,
                 hover_key: CANCEL_HOVER_KEY,
                 size: Size::px(ACTION_W, ACTION_H),
                 // Action tags are modal members: focusable only while
@@ -251,7 +248,6 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
                 tag: OK_TAG,
                 label: "Delete",
                 state: ok_state,
-                focused: ok_focused,
                 hover_key: OK_HOVER_KEY,
                 size: Size::px(ACTION_W, ACTION_H),
                 focusable: false,

@@ -137,7 +137,6 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         label,
         state,
         hover_progress,
-        false,
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default("main_btn")
             .with_size(Size::px(BTN_W, BTN_H))

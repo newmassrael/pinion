@@ -245,11 +245,10 @@ fn build_entry(text: &str, theme: &Theme) -> Scene {
     )
 }
 
-fn control(label: &str, state: ButtonState, focused: bool, theme: &Theme) -> Scene {
+fn control(label: &str, state: ButtonState, theme: &Theme) -> Scene {
     button_scene(
         label,
         state,
-        focused,
         REPLY_TAG, // hover-spring key: the tag is already unique
         &ButtonColors::accent(theme),
         &ButtonStyle::m3_default(REPLY_TAG)
@@ -287,13 +286,7 @@ fn view(state: Controls, _frame: &Frame) -> Scene {
     ));
 
     let controls = Scene::Container(
-        ContainerNode::new(vec![control(
-            "Reply",
-            state.reply,
-            state.reply_focused,
-            &theme,
-        )])
-        .with_layout(
+        ContainerNode::new(vec![control("Reply", state.reply, &theme)]).with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
                 .with_justify(JustifyContent::Center),

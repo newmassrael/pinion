@@ -122,7 +122,7 @@ fn fab_size(i: usize) -> Size {
 /// Paint one FAB by reusing [`view_button`] with the accent colour scheme
 /// and the new elevation axis. The icon variants pass the `"+"` glyph as
 /// the (centred) label; the extended variant passes its icon + label.
-fn view_fab(i: usize, state: ButtonState, focused: bool, theme: &Theme) -> Scene {
+fn view_fab(i: usize, state: ButtonState, theme: &Theme) -> Scene {
     let colors = ButtonColors::accent(theme);
     // Discrete hover (no spring): 1.0 on Hover, 0.0 otherwise — m3_button_fill
     // lands on the same endpoints a spring would settle to.
@@ -137,7 +137,7 @@ fn view_fab(i: usize, state: ButtonState, focused: bool, theme: &Theme) -> Scene
         .with_label_font_size_px(FONTS[i])
         .with_elevation(fab_level(state));
     let label = if i == EXTENDED { EXTENDED_LABEL } else { ICON };
-    view_button(label, state, hover_progress, focused, &colors, &style)
+    view_button(label, state, hover_progress, &colors, &style)
 }
 
 /// view-fn (§6.3): pure sync mapping [`FabStates`] → [`Scene`]. A centred
@@ -153,7 +153,7 @@ fn view(state: &FabStates, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let columns: Vec<Scene> = (0..N)
         .map(|i| {
-            let fab = view_fab(i, state[i], false, &theme);
+            let fab = view_fab(i, state[i], &theme);
             let caption = Scene::Text(TextNode::styled(
                 CAPTIONS[i],
                 Rect::default(),
@@ -336,7 +336,7 @@ mod tests {
         let theme = Theme::light();
         let accent = theme.resolve(ColorRole::Accent);
         for i in 0..N {
-            let scene = view_fab(i, ButtonState::Idle, false, &theme);
+            let scene = view_fab(i, ButtonState::Idle, &theme);
             let Scene::Container(c) = &scene else {
                 panic!("Container")
             };
@@ -351,8 +351,8 @@ mod tests {
     fn every_fab_casts_a_resting_shadow_and_hover_lifts_it() {
         let theme = Theme::light();
         for i in 0..N {
-            let idle = view_fab(i, ButtonState::Idle, false, &theme);
-            let hover = view_fab(i, ButtonState::Hover, false, &theme);
+            let idle = view_fab(i, ButtonState::Idle, &theme);
+            let hover = view_fab(i, ButtonState::Hover, &theme);
             let (Scene::Container(ci), Scene::Container(ch)) = (&idle, &hover) else {
                 panic!("Container");
             };
@@ -380,7 +380,7 @@ mod tests {
         // small 12 < standard 16 = extended 16 < large 28.
         assert_eq!(RADII, [12, 16, 28, 16]);
         let theme = Theme::light();
-        let small = view_fab(0, ButtonState::Idle, false, &theme);
+        let small = view_fab(0, ButtonState::Idle, &theme);
         let Scene::Container(c) = &small else {
             panic!("Container")
         };

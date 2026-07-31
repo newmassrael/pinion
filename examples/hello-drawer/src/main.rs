@@ -214,7 +214,6 @@ fn view(state: &DrawerViewState, _frame: &Frame) -> Scene {
             tag: TRIGGER_TAG,
             label: "\u{2630} Open navigation",
             state: state.trigger,
-            focused: state.trigger_focused,
             hover_key: TRIGGER_HOVER_KEY,
             size: Size::px(TRIGGER_W, TRIGGER_H),
             focusable: true,
@@ -254,7 +253,6 @@ fn view(state: &DrawerViewState, _frame: &Frame) -> Scene {
                         tag: NAV_TAGS[i],
                         label: DESTINATIONS[i],
                         state: state.items[i],
-                        focused: state.items_focused[i],
                         hover_key: ITEM_HOVER_KEYS[i],
                         size: Size::px(DrawerStyle::m3_default().panel_width - 24, ITEM_H),
                         // Nav items are modal members: focusable only

@@ -132,11 +132,10 @@ fn status_line(clock: &TransportClock) -> String {
 
 /// The play/pause toggle button. Its label flips with the clock state (Play
 /// when idle/paused, Pause when playing) — the video-preview toggle idiom.
-fn toggle_button(label: &str, posture: ButtonState, focused: bool, theme: &Theme) -> Scene {
+fn toggle_button(label: &str, posture: ButtonState, theme: &Theme) -> Scene {
     button_scene(
         label,
         posture,
-        focused,
         TOGGLE_HOVER_KEY,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(TOGGLE_TAG)
@@ -159,7 +158,7 @@ type ScrubState = (SliderState, ButtonState, bool);
     reason = "the WidgetCore::view trait hands the frame by reference"
 )]
 fn view(state: ScrubState, _frame: &Frame) -> Scene {
-    let (scrub_state, toggle_posture, toggle_focused) = state;
+    let (scrub_state, toggle_posture, _toggle_focused) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -227,13 +226,8 @@ fn view(state: ScrubState, _frame: &Frame) -> Scene {
 
     let toggle_label = if clock.is_playing() { "Pause" } else { "Play" };
     let toggle = Scene::Container(
-        ContainerNode::new(vec![toggle_button(
-            toggle_label,
-            toggle_posture,
-            toggle_focused,
-            &theme,
-        )])
-        .with_layout(LayoutStyle::new().with_absolute_position(24, 168)),
+        ContainerNode::new(vec![toggle_button(toggle_label, toggle_posture, &theme)])
+            .with_layout(LayoutStyle::new().with_absolute_position(24, 168)),
     );
 
     let status = Scene::Text(

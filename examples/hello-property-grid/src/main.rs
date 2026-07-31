@@ -3805,13 +3805,11 @@ fn asset_action_button(
     tag: &'static str,
     label: &str,
     state: ButtonState,
-    focused: bool,
     colors: &ButtonColors,
 ) -> Scene {
     button_scene(
         label,
         state,
-        focused,
         tag,
         colors,
         &ButtonStyle::m3_default(tag)
@@ -3834,7 +3832,7 @@ fn view_asset_dialog(theme: &Theme, buttons: AssetButtons) -> Vec<Scene> {
     let dir = asset_directory();
     let scroll = use_scroll_state(ASSET_SCROLL_KEY);
     let has_selection = dir.selected().is_some();
-    let (ok_state, cancel_state, ok_focused, cancel_focused) = buttons;
+    let (ok_state, cancel_state, _ok_focused, _cancel_focused) = buttons;
     let pane = file_browser_pane(
         ASSET_DIR_TAG,
         &dir,
@@ -3854,7 +3852,6 @@ fn view_asset_dialog(theme: &Theme, buttons: AssetButtons) -> Vec<Scene> {
         ASSET_CANCEL_TAG,
         "Cancel",
         cancel_state,
-        cancel_focused,
         &ButtonColors::filled_tonal(theme),
     );
     // OK gated disabled until a file is selected (the gate overrides the read
@@ -3868,7 +3865,6 @@ fn view_asset_dialog(theme: &Theme, buttons: AssetButtons) -> Vec<Scene> {
         ASSET_OK_TAG,
         "Open",
         ok_posture,
-        ok_focused,
         &ButtonColors::accent(theme),
     );
     vec![view_dialog(

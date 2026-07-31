@@ -61,8 +61,7 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
-    TextStyle,
+    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::button::ButtonState;
@@ -77,15 +76,23 @@ pub use crate::state_layer::{
     DISABLED as DISABLED_STATE_LAYER, HOVER as HOVER_STATE_LAYER, PRESSED as PRESSED_STATE_LAYER,
 };
 
-/// (R694 §5.16 §5.39) Keyboard-focus indicator ring width in logical
-/// pixels. Material 3's focus indicator is a 3-dp outline; pinion paints
-/// it as a [`Border`] on the button's outer container (drawn only while
-/// the widget holds the shell `FocusManager`
-/// focus). M3's 2-dp *offset gap* between the component edge and the ring
-/// needs a border-offset primitive pinion does not have yet, so the ring
-/// sits on the edge — a visible keyboard-focus affordance, with the
-/// offset gap deferred as an additive axis.
-pub const FOCUS_RING_WIDTH: u32 = 3;
+// R1511 §5.16 §5.39 — `FOCUS_RING_WIDTH` and the widget-local focus ring it
+// sized were RETIRED here. R694 painted the ring as a `Border` on the
+// button's own container and its doc named the reason it could not match M3:
+// "M3's 2-dp offset gap between the component edge and the ring needs a
+// border-offset primitive pinion does not have yet, so the ring sits on the
+// edge". R705 §5.39 built exactly that primitive — `FocusRingStyle::offset`,
+// the shell's overlay ring, injected around whatever tag holds focus
+// (including a roving active-descendant) for EVERY widget rather than the two
+// that hand-rolled one. The consumers had already moved: `hello-fab` passes
+// `focused = false` and records that it "defers the *painted* ring ... and
+// reports focus through the a11y tree instead".
+//
+// The vestige survived only because it never reached pixels: until R1511 the
+// vello adapter stroked a border in the `Scene::Box` arm alone, so a border
+// declared on a Container was silently dropped. Once the adapter honoured the
+// declaration, a focused button would have painted its 3px inside band UNDER
+// the shell's 2px offset ring — two indicators for one state.
 
 /// (R686.B §5.16) Per-state colour value-object for a filled button.
 ///
@@ -120,13 +127,9 @@ pub struct ButtonColors {
     pub label: Color,
     /// Label text colour when `Disabled`.
     pub label_disabled: Color,
-    /// (R694 §5.16 §5.39) Keyboard-focus ring colour — the [`Border`]
-    /// [`view_button`] paints while the button holds shell focus. M3
-    /// uses `primary` ([`ColorRole::Accent`], documented as the
-    /// focus-ring role) for neutral / tonal buttons; an accent-filled
-    /// button rings in [`ColorRole::OnAccent`] so the indicator
-    /// contrasts against its own fill.
-    pub focus_ring: Color,
+    // R1511 — `focus_ring` was REMOVED with the widget-local ring it
+    // coloured; the shell's §5.39 overlay owns the focus indicator and
+    // carries its own `FocusRingStyle::stroke`.
 }
 
 impl ButtonColors {
@@ -140,7 +143,6 @@ impl ButtonColors {
         fill_disabled: Color,
         label: Color,
         label_disabled: Color,
-        focus_ring: Color,
     ) -> Self {
         Self {
             base,
@@ -148,7 +150,6 @@ impl ButtonColors {
             fill_disabled,
             label,
             label_disabled,
-            focus_ring,
         }
     }
 
@@ -166,7 +167,6 @@ impl ButtonColors {
             fill_disabled: base.lerp(theme.resolve(ColorRole::Surface), DISABLED_STATE_LAYER),
             label: theme.resolve(ColorRole::OnSurface),
             label_disabled: theme.resolve(ColorRole::OnSurfaceMuted),
-            focus_ring: theme.resolve(ColorRole::Accent),
         }
     }
 
@@ -183,7 +183,6 @@ impl ButtonColors {
             fill_disabled: theme.resolve(ColorRole::SurfaceContainerHigh),
             label: theme.resolve(ColorRole::OnAccent),
             label_disabled: theme.resolve(ColorRole::OnSurfaceMuted),
-            focus_ring: theme.resolve(ColorRole::OnAccent),
         }
     }
 }
@@ -341,19 +340,16 @@ impl ButtonStyle {
 /// [`ButtonExternal`](pinion_core::widgets::button::ButtonExternal)
 /// against `style.tag` for the click wire.
 ///
-/// (R694 §5.16 §5.39) `focused` paints the keyboard-focus indicator: a
-/// [`FOCUS_RING_WIDTH`]-pixel [`Border`] in [`ButtonColors::focus_ring`]
-/// while the button holds the shell
-/// `FocusManager` focus (sourced by the
-/// binding from the external's focus posture, the same channel hover
-/// flows through). `false` leaves the container border-free — the
-/// pre-R694 fill-only appearance.
+/// (R1511 §5.16 §5.39) The button paints no focus indicator of its own. The
+/// shell's overlay ring owns that affordance for every widget — see the
+/// module-level note where R694's `FOCUS_RING_WIDTH` was retired. Focus still
+/// reaches the a11y tree through [`button_a11y_state`], which is where a
+/// binding reports it.
 #[must_use]
 pub fn view_button(
     label: &str,
     state: ButtonState,
     hover_progress: f32,
-    focused: bool,
     colors: &ButtonColors,
     style: &ButtonStyle,
 ) -> Scene {
@@ -374,9 +370,6 @@ pub fn view_button(
     // Container so the scene-derived enumeration collects this button's tag.
     layout = layout.with_focusable(style.focusable);
     let mut box_style = BoxStyle::filled(fill).with_corner_radius(style.corner_radius);
-    if focused {
-        box_style = box_style.with_border(Border::new(colors.focus_ring, FOCUS_RING_WIDTH));
-    }
     // (R760 §5.16) An elevated button (the M3 FAB) casts the shared
     // elevation shadow ramp; a flat button (level 0) leaves the surface
     // shadowless, byte-identical to the pre-R760 output.
@@ -453,13 +446,12 @@ pub fn use_hover_progress(is_hover: bool, anim_key: &'static str) -> f32 {
 pub fn button_scene(
     label: &str,
     state: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     colors: &ButtonColors,
     style: &ButtonStyle,
 ) -> Scene {
     let hover = use_hover_progress(matches!(state, ButtonState::Hover), hover_key);
-    view_button(label, state, hover, focused, colors, style)
+    view_button(label, state, hover, colors, style)
 }
 
 /// R1456 §5.16 §5.40 — label size of a [`surface_action_scene`] button.
@@ -485,8 +477,6 @@ pub struct SurfaceAction<'a> {
     pub label: &'a str,
     /// Posture read back from the state scene ([`read_button_state`]).
     pub state: ButtonState,
-    /// Keyboard-focus posture ([`read_button_focused`]) — drives the ring.
-    pub focused: bool,
     /// `Owner::cache` key for this button's hover-progress animation.
     pub hover_key: &'static str,
     /// Fixed box size. Modal actions are laid out in a fixed row, not
@@ -519,7 +509,6 @@ pub fn surface_action_scene(action: &SurfaceAction<'_>, theme: &Theme) -> Scene 
     button_scene(
         action.label,
         action.state,
-        action.focused,
         action.hover_key,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(action.tag)
@@ -613,7 +602,6 @@ mod tests {
             Color::rgb(40, 40, 40),
             Color::rgb(255, 255, 255),
             Color::rgb(180, 180, 180),
-            Color::rgb(103, 80, 164),
         )
     }
 
@@ -734,7 +722,7 @@ mod tests {
             .with_size(Size::px(120, 40))
             .with_corner_radius(20)
             .with_label_font_size_px(16);
-        let scene = view_button("Go", ButtonState::Idle, 0.0, false, &c, &style);
+        let scene = view_button("Go", ButtonState::Idle, 0.0, &c, &style);
         let Scene::Container(outer) = &scene else {
             panic!("button must be a Container");
         };
@@ -749,7 +737,7 @@ mod tests {
     fn r686_b_view_button_disabled_uses_disabled_label_colour() {
         let c = explicit_colors();
         let style = ButtonStyle::m3_default("test_btn");
-        let scene = view_button("Off", ButtonState::Disabled, 0.0, false, &c, &style);
+        let scene = view_button("Off", ButtonState::Disabled, 0.0, &c, &style);
         let Scene::Container(outer) = &scene else {
             panic!("button must be a Container");
         };
@@ -767,7 +755,7 @@ mod tests {
         let c = explicit_colors();
         let style = ButtonStyle::m3_default("b");
         assert_eq!(style.elevation_level, 0, "the default level is flat");
-        let scene = view_button("x", ButtonState::Idle, 0.0, false, &c, &style);
+        let scene = view_button("x", ButtonState::Idle, 0.0, &c, &style);
         let Scene::Container(outer) = &scene else {
             panic!("Container")
         };
@@ -781,7 +769,7 @@ mod tests {
     fn r760_elevated_button_casts_the_shared_ramp() {
         let c = explicit_colors();
         let style = ButtonStyle::m3_default("fab").with_elevation(3);
-        let scene = view_button("+", ButtonState::Idle, 0.0, false, &c, &style);
+        let scene = view_button("+", ButtonState::Idle, 0.0, &c, &style);
         let Scene::Container(outer) = &scene else {
             panic!("Container")
         };
@@ -796,55 +784,43 @@ mod tests {
         );
     }
 
-    // R694 §5.16 §5.39 — keyboard-focus ring.
+    // R1511 §5.16 §5.39 — the button declares NO focus decoration.
 
+    /// The three R694 ring tests (`filled_tonal_focus_ring_is_accent`,
+    /// `accent_button_focus_ring_contrasts_via_on_accent`,
+    /// `focused_button_paints_focus_ring_border`) were REPLACED by this one
+    /// when the widget-local ring was retired — see the module-level note.
+    /// Their subject no longer exists, and this asserts the property that
+    /// replaced it: whatever the button's posture, it leaves the focus
+    /// indicator to the shell's §5.39 overlay and declares no border of its
+    /// own. That matters more now than a bare deletion would: since R1511 the
+    /// vello adapter STROKES a container's border, so a re-introduced ring
+    /// would paint under the overlay's rather than vanish.
     #[test]
-    fn r694_filled_tonal_focus_ring_is_accent() {
-        // M3 documents Accent (`primary`) as the focus-ring role.
-        let theme = Theme::light();
-        let c = ButtonColors::filled_tonal(&theme);
-        assert_eq!(c.focus_ring, theme.resolve(ColorRole::Accent));
-    }
-
-    #[test]
-    fn r694_accent_button_focus_ring_contrasts_via_on_accent() {
-        let theme = Theme::light();
-        let c = ButtonColors::accent(&theme);
-        assert_eq!(c.focus_ring, theme.resolve(ColorRole::OnAccent));
-    }
-
-    #[test]
-    fn r694_focused_button_paints_focus_ring_border() {
+    fn r1511_button_declares_no_border_in_any_posture() {
         let c = explicit_colors();
-        let style = ButtonStyle::m3_default("test_btn");
-        let scene = view_button("Go", ButtonState::Idle, 0.0, true, &c, &style);
-        let Scene::Container(outer) = &scene else {
-            panic!("button must be a Container");
-        };
-        let border = outer.style.border.expect("focused button carries a ring");
-        assert_eq!(
-            border.color, c.focus_ring,
-            "ring uses the focus_ring colour"
-        );
-        assert_eq!(border.width, super::FOCUS_RING_WIDTH);
-    }
-
-    #[test]
-    fn r694_focus_ring_orthogonal_to_state() {
-        // The ring is a focus indicator, independent of the fill state:
-        // a focused Hover button keeps its Hover fill *and* gains a ring.
-        let c = explicit_colors();
-        let style = ButtonStyle::m3_default("b");
-        let scene = view_button("Go", ButtonState::Hover, 1.0, true, &c, &style);
-        let Scene::Container(outer) = &scene else {
-            panic!("button must be a Container");
-        };
-        assert_eq!(
-            outer.style.fill,
-            m3_button_fill(&c, ButtonState::Hover, 1.0),
-            "focus does not alter the hover fill",
-        );
-        assert!(outer.style.border.is_some(), "focused button still rings");
+        let style = ButtonStyle::m3_default("b").with_corner_radius(20);
+        for (state, hover) in [
+            (ButtonState::Idle, 0.0),
+            (ButtonState::Hover, 1.0),
+            (ButtonState::Pressed, 0.0),
+            (ButtonState::Disabled, 0.0),
+        ] {
+            let scene = view_button("Go", state, hover, &c, &style);
+            let Scene::Container(outer) = &scene else {
+                panic!("button must be a Container");
+            };
+            assert!(
+                outer.style.border.is_none(),
+                "{state:?} button must declare no border; the shell overlay owns \
+                 the focus indicator"
+            );
+            assert_eq!(
+                outer.style.fill,
+                m3_button_fill(&c, state, hover),
+                "{state:?} keeps its state-layer fill",
+            );
+        }
     }
 
     #[test]

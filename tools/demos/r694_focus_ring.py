@@ -7,8 +7,24 @@ keyboard-focused control draws a visible focus ring — the cross-widget
 rounds deferred. The substrate threads the External's focus posture
 (mirrored by the shell via `External::on_focus_change`) through the
 `focused` introspect slot into the binding's `read_state`, the same
-channel hover / pressed already use; `view_button` (width-3 ring) and
-`view_toolbar` (width-2 roving ring) paint a `Border` when focused.
+channel hover / pressed already use.
+
+R1511 — the BUTTON half of this demo was rewritten. R694 painted a button's
+ring as a `Border` on the button's own container; R705 §5.39 then built the
+shell overlay ring, the offset-capable primitive R694's doc said pinion lacked,
+and applied it to every focused tag. The two coexisted only because a
+container's border never reached pixels: the vello adapter stroked a border in
+the `Scene::Box` arm alone. Once R1511 made the adapter honour the
+declaration, a focused button would have painted BOTH — an accent band inside
+its edge under a blue ring outside it — so the widget-local vestige was
+retired. This half now reads the overlay ring (`assert_focus_ring_concentric`,
+the shared substrate) and asserts it frames the focused action.
+
+The TOOLBAR half is unchanged and still reads `view_toolbar`'s own width-2
+roving border, which was NOT retired: it marks which control inside the strip
+the roving cursor sits on, and four of the six toolbar consumers report no
+`active_descendant`, so the shell overlay rings the whole strip and cannot
+carry that information.
 
 The ring is a paint detail, but it is RPC-observable: `scene/snapshot`
 serialises each container's `style.border` (null when absent), so an AI
@@ -25,8 +41,9 @@ deterministic whatever the machine load.
 Atomic verification scope (>=30 assertions):
 
   hello-dialog (Button-based action buttons — the named 3rd consumer):
-    (A) open + auto-focus Cancel paints a ring on Cancel only.
-    (B) the ring is the M3 width-3 indicator (FOCUS_RING_WIDTH).
+    (A) open + auto-focus Cancel frames Cancel with the overlay ring.
+    (B) the ring is the §5.39 overlay stroke, and the button declares
+        no border of its own.
     (C) focus/next moves the ring Cancel -> Delete (and back).
     (D) the trigger behind the scrim never rings.
     (E) closing clears every ring.
@@ -48,6 +65,8 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    FOCUS_RING_TAG,
+    assert_focus_ring_concentric,
     find_by_tag,
     run_demo,
     wait_until,
@@ -62,7 +81,9 @@ CANCEL = "dialog_cancel"
 PANEL = "dialog_panel"
 
 TOOLBAR = "toolbar"
-BUTTON_RING_WIDTH = 3
+# `FocusRingStyle::new()` — the shell overlay's stroke. The button no longer
+# carries a ring of its own (R1511), so this is the only button-side width.
+OVERLAY_RING_WIDTH = 2
 TOOLBAR_RING_WIDTH = 2
 
 
@@ -77,6 +98,11 @@ def _border(snap, tag):
 
 def _has_ring(snap, tag) -> bool:
     return _border(snap, tag) is not None
+
+
+def _ringed(snap):
+    """The tag the §5.39 overlay ring frames, or None when nothing rings."""
+    return assert_focus_ring_concentric(snap)
 
 
 def _ring_width(snap, tag):
@@ -108,36 +134,33 @@ def _dialog() -> None:
         tf.click(path=TRIGGER)
         wait_until(lambda: _focused(tf) == CANCEL, desc="open auto-focuses Cancel")
         assert_eq(_focused(tf), CANCEL, "open auto-focuses Cancel")
-        snap = snap_when(lambda s: _has_ring(s, CANCEL), "focused Cancel paints a ring")
-        assert _has_ring(snap, CANCEL), "focused Cancel paints a focus ring"
-        assert not _has_ring(snap, OK), "unfocused Delete has no ring"
+        snap = snap_when(lambda s: _ringed(s) == CANCEL, "the ring frames Cancel")
+        assert_eq(_ringed(snap), CANCEL, "focused Cancel is framed by the overlay ring")
 
-        # ── (B) ring is the M3 width-3 indicator ────────────────────
-        assert_eq(_ring_width(snap, CANCEL), BUTTON_RING_WIDTH, "M3 button ring width")
-        cancel_border = _border(snap, CANCEL)
-        assert cancel_border.get("color") is not None, "ring carries a colour"
+        # ── (B) the ring is the overlay's, and the button has none ──
+        ring_border = _border(snap, FOCUS_RING_TAG)
+        assert ring_border is not None, "the overlay ring node carries the stroke"
+        assert_eq(ring_border.get("width"), OVERLAY_RING_WIDTH, "overlay ring width")
+        assert ring_border.get("color") is not None, "ring carries a colour"
+        assert not _has_ring(snap, CANCEL), (
+            "R1511 — the focused button declares NO border of its own; the "
+            "overlay owns the indicator"
+        )
+        assert not _has_ring(snap, OK), "the unfocused action has no border either"
 
         # ── (C) focus/next moves the ring Cancel -> Delete ──────────
         assert_eq(tf.request("focus/next").result.get("focused"), OK, "Tab -> Delete")
-        snap = snap_when(
-            lambda s: _has_ring(s, OK) and not _has_ring(s, CANCEL),
-            "ring follows focus to Delete",
-        )
-        assert _has_ring(snap, OK), "ring follows focus to Delete"
-        assert not _has_ring(snap, CANCEL), "ring left Cancel"
-        assert_eq(_ring_width(snap, OK), BUTTON_RING_WIDTH, "Delete ring width")
+        snap = snap_when(lambda s: _ringed(s) == OK, "ring follows focus to Delete")
+        assert_eq(_ringed(snap), OK, "ring follows focus to Delete")
+        assert not _has_ring(snap, OK), "Delete still declares no border of its own"
 
         # back to Cancel (wrap)
         assert_eq(tf.request("focus/next").result.get("focused"), CANCEL, "wrap -> Cancel")
-        snap = snap_when(
-            lambda s: _has_ring(s, CANCEL) and not _has_ring(s, OK),
-            "ring back on Cancel after wrap",
-        )
-        assert _has_ring(snap, CANCEL), "ring back on Cancel after wrap"
-        assert not _has_ring(snap, OK), "Delete ring cleared on wrap"
+        snap = snap_when(lambda s: _ringed(s) == CANCEL, "ring back on Cancel after wrap")
+        assert_eq(_ringed(snap), CANCEL, "ring back on Cancel after wrap")
 
         # ── (D) the trigger behind the scrim never rings ────────────
-        assert not _has_ring(snap, TRIGGER), "trigger behind scrim shows no ring"
+        assert _ringed(snap) != TRIGGER, "trigger behind scrim is not framed"
         raised = False
         try:
             tf.request("focus/set", {"tag": TRIGGER})
@@ -145,7 +168,7 @@ def _dialog() -> None:
             raised = True
         assert raised, "focus cannot escape the modal trap to the trigger"
         snap = tf.snapshot(source="paint", viewport=DIALOG_VIEWPORT)
-        assert not _has_ring(snap, TRIGGER), "trigger still ringless after rejected set"
+        assert _ringed(snap) != TRIGGER, "trigger still unframed after rejected set"
 
         # ── (E) closing clears the action rings; focus + ring return
         #        to the trigger (a standalone button rings when focused
@@ -153,14 +176,14 @@ def _dialog() -> None:
         tf.key(path=PANEL, name="Escape")
         wait_until(lambda: _focused(tf) == TRIGGER, desc="focus restored to the trigger")
         snap = snap_when(
-            lambda s: find_by_tag(s, CANCEL) is None and _has_ring(s, TRIGGER),
+            lambda s: find_by_tag(s, CANCEL) is None and _ringed(s) == TRIGGER,
             "close clears the dialog and re-rings the trigger",
         )
         assert find_by_tag(snap, CANCEL) is None, "Cancel button gone after close"
         assert find_by_tag(snap, OK) is None, "Delete button gone after close"
         assert_eq(_focused(tf), TRIGGER, "focus restored to the trigger")
-        assert _has_ring(snap, TRIGGER), "the re-focused trigger paints a ring"
-        assert_eq(_ring_width(snap, TRIGGER), BUTTON_RING_WIDTH, "trigger ring width")
+        assert_eq(_ringed(snap), TRIGGER, "the re-focused trigger is framed")
+        assert not _has_ring(snap, TRIGGER), "the trigger declares no border of its own"
 
 
 def _toolbar() -> None:

@@ -235,14 +235,12 @@ fn toolbar_button(
     tag: &'static str,
     label: &str,
     state: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     theme: &Theme,
 ) -> Scene {
     button_scene(
         label,
         state,
-        focused,
         hover_key,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
@@ -284,16 +282,10 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
         newfile_state,
         rename_state_btn,
         delete_state,
-        focus,
+        _focus,
         tf_interaction,
         tf_caret,
     ) = state;
-    let [
-        newdir_focused,
-        newfile_focused,
-        rename_focused,
-        delete_focused,
-    ] = focus;
     let theme = use_theme(THEME_TAG).theme_animated();
     let dir = directory();
     let scroll = use_scroll_state(SCROLL_KEY);
@@ -306,7 +298,6 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
         NEWDIR_TAG,
         "New Folder",
         newdir_state,
-        newdir_focused,
         NEWDIR_HOVER_KEY,
         &theme,
     );
@@ -314,7 +305,6 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
         NEWFILE_TAG,
         "New File",
         newfile_state,
-        newfile_focused,
         NEWFILE_HOVER_KEY,
         &theme,
     );
@@ -328,7 +318,6 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
         RENAME_TAG,
         "Rename",
         rename_posture,
-        rename_focused,
         RENAME_HOVER_KEY,
         &theme,
     );
@@ -341,7 +330,6 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
         DELETE_TAG,
         "Delete",
         delete_posture,
-        delete_focused,
         DELETE_HOVER_KEY,
         &theme,
     );

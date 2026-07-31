@@ -249,7 +249,7 @@ fn column(children: Vec<Scene>, theme: &Theme) -> Scene {
 
 /// The main window: the two triggers, and the title editor while it is open.
 fn view_main(state: RefocusState, theme: &Theme) -> Scene {
-    let (postures, focused) = state;
+    let (postures, _focused) = state;
     let editing_now = editing().get();
     let trigger = |i: usize, label: &str| {
         surface_action_scene(
@@ -257,7 +257,6 @@ fn view_main(state: RefocusState, theme: &Theme) -> Scene {
                 tag: TAGS[i],
                 label,
                 state: postures[i],
-                focused: focused[i],
                 hover_key: HOVER_KEYS[i],
                 size: Size::px(BTN_W, BTN_H),
                 focusable: true,

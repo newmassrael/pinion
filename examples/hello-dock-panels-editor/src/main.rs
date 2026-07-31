@@ -879,7 +879,6 @@ fn view_toolbar_content(theme: &Theme) -> Scene {
         policy_toggle_label(policy),
         ButtonState::Idle,
         0.0,
-        false,
         &ButtonColors::accent(theme),
         &ButtonStyle::m3_default(POLICY_BTN_TAG)
             .with_size(Size::px(210, 28))
@@ -896,7 +895,6 @@ fn view_toolbar_content(theme: &Theme) -> Scene {
             "Undock tab",
             ButtonState::Idle,
             0.0,
-            false,
             &ButtonColors::accent(theme),
             &ButtonStyle::m3_default(UNDOCK_BTN_TAG)
                 .with_size(Size::px(110, 28))
@@ -1044,10 +1042,6 @@ fn view_viewport_button(state: ButtonState, theme: &Theme) -> Scene {
         VIEWPORT_BTN_LABEL,
         state,
         hover_progress,
-        // R694 §5.39 — the viewport action button is pointer-driven and
-        // is not the focus-ring debt target (Dialog / Toolbar / Tabs are);
-        // pass `false` until the editor threads per-control focus posture.
-        false,
         &ButtonColors::accent(theme),
         &ButtonStyle::m3_default(VIEWPORT_BTN_TAG)
             .with_size(Size::px(180, 40))

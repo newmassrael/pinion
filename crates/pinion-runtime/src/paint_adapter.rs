@@ -181,8 +181,7 @@ fn to_vello_inner<F>(
 {
     match scene {
         Scene::Container(c) => {
-            paint_box_shadows(out, c.rect, &c.style, transform);
-            fill_box_bg(out, c.rect, &c.style, c.style.fill, transform);
+            paint_box_decoration(out, c.rect, &c.style, c.style.fill, transform);
             for child in &c.children {
                 to_vello_inner(
                     child,
@@ -196,12 +195,8 @@ fn to_vello_inner<F>(
             }
         }
         Scene::Box(b) => {
-            paint_box_shadows(out, b.rect, &b.style, transform);
             let fill = fill_hook(b).unwrap_or(b.style.fill);
-            fill_box_bg(out, b.rect, &b.style, fill, transform);
-            if let Some(border) = b.style.border {
-                stroke_rect(out, b.rect, border, transform);
-            }
+            paint_box_decoration(out, b.rect, &b.style, fill, transform);
         }
         Scene::Text(t) => paint_text(out, t, text_cache, engine, transform),
         Scene::Scroll(s) => {
@@ -791,8 +786,7 @@ fn to_vello_cached_inner<F>(
         // Cache miss: encode the entire subtree into a fresh sub-scene
         // under IDENTITY transform, then append + cache.
         let mut sub = VelloScene::new();
-        paint_box_shadows(&mut sub, c.rect, &c.style, Affine::IDENTITY);
-        fill_box_bg(&mut sub, c.rect, &c.style, c.style.fill, Affine::IDENTITY);
+        paint_box_decoration(&mut sub, c.rect, &c.style, c.style.fill, Affine::IDENTITY);
         for child in &c.children {
             to_vello_cached_inner(
                 child,
@@ -835,8 +829,7 @@ fn to_vello_cached_inner<F>(
     let mut sub = VelloScene::new();
     match scene {
         Scene::Container(c) => {
-            paint_box_shadows(&mut sub, c.rect, &c.style, transform);
-            fill_box_bg(&mut sub, c.rect, &c.style, c.style.fill, transform);
+            paint_box_decoration(&mut sub, c.rect, &c.style, c.style.fill, transform);
             for child in &c.children {
                 to_vello_cached_inner(
                     child,
@@ -852,12 +845,8 @@ fn to_vello_cached_inner<F>(
             }
         }
         Scene::Box(b) => {
-            paint_box_shadows(&mut sub, b.rect, &b.style, transform);
             let fill = fill_hook(b).unwrap_or(b.style.fill);
-            fill_box_bg(&mut sub, b.rect, &b.style, fill, transform);
-            if let Some(border) = b.style.border {
-                stroke_rect(&mut sub, b.rect, border, transform);
-            }
+            paint_box_decoration(&mut sub, b.rect, &b.style, fill, transform);
         }
         Scene::Text(t) => paint_text(&mut sub, t, text_cache, engine, transform),
         Scene::Scroll(s) => {
@@ -2778,6 +2767,38 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
     }
 }
 
+/// R1511 §5.16 §2 #6 — paint everything a [`BoxStyle`] says about the rect
+/// it decorates, in stacking order: the [`BoxStyle::shadows`] behind it, the
+/// background ([`fill_box_bg`]), then the [`BoxStyle::border`] stroke on top.
+/// `solid` is the caller-resolved fill (see [`fill_box_bg`]).
+///
+/// Both the `Scene::Box` and the `Scene::Container` arms of BOTH walkers
+/// ([`to_vello_inner`] and [`to_vello_cached_inner`]) route through here, so
+/// the two node types cannot disagree about what a `BoxStyle` means. Until
+/// R1511 the four arms open-coded this sequence and only the two `Box` ones
+/// stroked the border, so a border declared on a container reached the TUI
+/// (`pinion_tui::paint::paint_container`) and the PDF projector but never the
+/// GUI — a §2 #6 divergence across renderers of one canonical scene, and one
+/// that no test could see because the drop was silent.
+///
+/// A container strokes its border BEFORE recursing into children, so a child
+/// laid out over the edge paints on top of it. That is the order the TUI
+/// walker documents and the PDF walker emits, and it is what CSS does with a
+/// border and in-flow content.
+fn paint_box_decoration(
+    out: &mut VelloScene,
+    r: Rect,
+    style: &BoxStyle,
+    solid: Color,
+    transform: Affine,
+) {
+    paint_box_shadows(out, r, style, transform);
+    fill_box_bg(out, r, style, solid, transform);
+    if let Some(border) = style.border {
+        stroke_rect(out, r, border, transform);
+    }
+}
+
 /// R708 §5.50 — paint a Box / Container background: the
 /// [`BoxStyle::gradient`] overlay when present, otherwise the solid
 /// `solid` colour. `solid` is the caller-resolved fill (a `Box`'s
@@ -3547,6 +3568,134 @@ mod tests {
         );
         assert_eq!(overrides.get(), 1);
         assert_eq!(passthroughs.get(), 1);
+    }
+
+    /// R1511 §5.16 §2 #6 — a `Scene::Container` paints the
+    /// [`BoxStyle::border`](pinion_core::style::BoxStyle::border) it declares,
+    /// exactly as a `Scene::Box` carrying the same rect and style does.
+    ///
+    /// Both node types hang the same sidecar `BoxStyle` off the same `rect`,
+    /// and the two other backends already read it that way: the TUI walker
+    /// (`pinion_tui::paint::paint_container`) draws a container's border as
+    /// box-drawing cells, and the PDF projector (`pinion_pdf`) routes
+    /// `Scene::Container` through the same `paint_box` that strokes it. Only
+    /// the vello adapter used to stroke a border in the `Scene::Box` arm
+    /// alone, so a container's declaration reached two of the three renderers
+    /// — the divergence §2 #6 exists to forbid. The TUI walker's own doc
+    /// asserted the parity ("the order matches the Vello paint adapter ... so
+    /// the visual stack is identical across the two backends") that did not
+    /// hold.
+    ///
+    /// The assertion is byte equality of the geometry streams rather than a
+    /// count: a stroke that lands with different geometry on the two node
+    /// types is the same class of defect as one that never lands, and the
+    /// count alone cannot see it. No GPU, so it gates every ordinary `cargo
+    /// test`; the pixel witness for the same claim is
+    /// `r1511_container_border_reaches_pixels` in
+    /// `pinion_shell::headless_screenshot`.
+    ///
+    /// BOTH walkers are measured, and that is load-bearing rather than
+    /// thorough: the first draft asserted only `to_vello` and passed while the
+    /// CACHED walker still dropped the stroke, because a cacheable container
+    /// at identity transform takes a fast path that open-coded the
+    /// shadows+fill sequence a THIRD time. The pixel guard is what caught it.
+    /// An entry point a guard does not enter is an arm the guard cannot see.
+    #[test]
+    fn r1511_container_paints_the_border_it_declares() {
+        use crate::image_cache::ImageCache;
+        use pinion_core::style::{Border, BoxStyle};
+        let rect = Rect::new(12, 8, 120, 64);
+        let style = BoxStyle::filled(Color::rgb(0x20, 0x20, 0x20))
+            .with_border(Border::new(Color::rgb(0xff, 0, 0), 3));
+
+        let encode = |scene: &Scene| -> (Vec<u32>, u32, u32) {
+            let mut vello = VelloScene::new();
+            let mut cache = LayoutCache::new();
+            to_vello(scene, &|_: &BoxNode| None, &mut cache, &mut vello);
+            let mut cached = VelloScene::new();
+            let mut text_cache = LayoutCache::new();
+            let mut image_cache = ImageCache::new();
+            let mut fragments = FragmentCache::new();
+            to_vello_cached(
+                scene,
+                &|_: &BoxNode| None,
+                &mut text_cache,
+                &mut image_cache,
+                &mut fragments,
+                &mut cached,
+            );
+            assert_eq!(
+                (
+                    cached.encoding().n_paths,
+                    cached.encoding().n_path_segments,
+                    cached.encoding().path_data.clone(),
+                ),
+                (
+                    vello.encoding().n_paths,
+                    vello.encoding().n_path_segments,
+                    vello.encoding().path_data.clone(),
+                ),
+                "the cached walker must encode what the direct one does"
+            );
+            let enc = vello.encoding();
+            (enc.path_data.clone(), enc.n_paths, enc.n_path_segments)
+        };
+
+        let boxed = Scene::Box(BoxNode::new(rect, style.clone()));
+        let mut node = ContainerNode::new(vec![]).with_style(style.clone());
+        node.rect = rect;
+        let contained = Scene::Container(node);
+
+        let (box_data, box_paths, box_segs) = encode(&boxed);
+        let (c_data, c_paths, c_segs) = encode(&contained);
+        assert_eq!(
+            (c_paths, c_segs),
+            (box_paths, box_segs),
+            "a childless Container with a bordered style must encode the same \
+             paths as the equivalent Box; the border stroke is the difference"
+        );
+        assert_eq!(
+            c_data, box_data,
+            "the container's border must land with the SAME geometry as the \
+             box's, not merely the same path count"
+        );
+
+        // The container strokes its border BEFORE recursing, so a child's
+        // geometry can only ever be APPENDED to what the childless container
+        // encodes. Prefix equality states that order without reaching into
+        // vello's stream layout: paint the border after the children and the
+        // child's segments land first, breaking the prefix.
+        let child = Scene::Box(BoxNode::new(
+            Rect::new(rect.x + 20, rect.y + 20, 24, 16),
+            BoxStyle::filled(Color::rgb(0, 0x80, 0)),
+        ));
+        let mut parent = ContainerNode::new(vec![child]).with_style(style.clone());
+        parent.rect = rect;
+        let (with_child, child_paths, _) = encode(&Scene::Container(parent));
+        assert!(
+            with_child.starts_with(&c_data),
+            "the container's own decoration must be encoded before its \
+             children ({} words with a child vs {} without)",
+            with_child.len(),
+            c_data.len()
+        );
+        assert!(
+            child_paths > c_paths,
+            "the child contributes its own path on top"
+        );
+
+        // Non-vacuous in both directions: dropping the border from BOTH node
+        // types must move the shared encoding, so the equality above is
+        // asserting the presence of a stroke and not comparing two empties.
+        let bare = BoxStyle::filled(Color::rgb(0x20, 0x20, 0x20));
+        let mut bare_node = ContainerNode::new(vec![]).with_style(bare.clone());
+        bare_node.rect = rect;
+        let (bare_data, bare_paths, _) = encode(&Scene::Container(bare_node));
+        assert!(
+            c_paths > bare_paths && c_data != bare_data,
+            "a bordered container must encode more than an unbordered one \
+             (bordered {c_paths} paths, bare {bare_paths})"
+        );
     }
 
     #[test]

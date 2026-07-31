@@ -235,7 +235,7 @@ fn status_line(points: &[DataPoint], window: (f64, f64)) -> String {
 /// producer thread is spawned in `create_extra_externals`).
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: LiveChartState, _frame: &Frame) -> Scene {
-    let (posture, focused) = state;
+    let (posture, _focused) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -277,7 +277,6 @@ fn view(state: LiveChartState, _frame: &Frame) -> Scene {
     let button = pinion_widget_paint::button::button_scene(
         "Tick",
         posture,
-        focused,
         TICK_HOVER_KEY,
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default(TICK_TAG)

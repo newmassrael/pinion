@@ -199,14 +199,12 @@ fn button_scene(
     tag: &'static str,
     label: &str,
     state: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     theme: &pinion_core::theme::Theme,
 ) -> Scene {
     pinion_widget_paint::button::button_scene(
         label,
         state,
-        focused,
         hover_key,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
@@ -224,7 +222,7 @@ type FileDialogViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 /// reading the reactive [`Resource`] for the status line.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: FileDialogViewState, _frame: &Frame) -> Scene {
-    let (open_state, save_state, pick_state, [open_focused, save_focused, pick_focused]) = state;
+    let (open_state, save_state, pick_state, _focus) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
 
     let title = Scene::Text(TextNode::styled(
@@ -237,30 +235,9 @@ fn view(state: FileDialogViewState, _frame: &Frame) -> Scene {
 
     let buttons = Scene::Container(
         ContainerNode::new(vec![
-            button_scene(
-                OPEN_TAG,
-                "Open",
-                open_state,
-                open_focused,
-                OPEN_HOVER_KEY,
-                &theme,
-            ),
-            button_scene(
-                SAVE_TAG,
-                "Save",
-                save_state,
-                save_focused,
-                SAVE_HOVER_KEY,
-                &theme,
-            ),
-            button_scene(
-                PICK_TAG,
-                "Pick folder",
-                pick_state,
-                pick_focused,
-                PICK_HOVER_KEY,
-                &theme,
-            ),
+            button_scene(OPEN_TAG, "Open", open_state, OPEN_HOVER_KEY, &theme),
+            button_scene(SAVE_TAG, "Save", save_state, SAVE_HOVER_KEY, &theme),
+            button_scene(PICK_TAG, "Pick folder", pick_state, PICK_HOVER_KEY, &theme),
         ])
         .with_layout(
             LayoutStyle::new()

@@ -675,6 +675,108 @@ mod tests {
         );
     }
 
+    /// R1511 §5.16 §2 #6 — the pixel witness that a `Scene::Container`'s
+    /// declared border reaches the framebuffer. Its structural twin
+    /// (`pinion_runtime::paint_adapter::tests::
+    /// r1511_container_paints_the_border_it_declares`) proves the two node
+    /// types encode the same stroke; this proves the stroke rasterises, on the
+    /// same `to_vello_cached` the live window uses.
+    ///
+    /// Before R1511 the adapter stroked a border only in the `Scene::Box` arm,
+    /// so 45 container-borne declarations across the workspace — the checkbox
+    /// outline, the table's cell-selection box, the menu / tooltip surfaces,
+    /// `DevTools`' `wrap_with_highlight` — painted nothing in the GUI while the
+    /// TUI and PDF backends drew them.
+    ///
+    /// Falsifiable in both directions: with the border dropped from the arm
+    /// the edge probe reads the FILL (the first assertion fails); with the
+    /// border widened past its declaration the centre probe reads the STROKE
+    /// (the second fails). The third probe pins the placement — `Inside`
+    /// keeps the whole stroke within the rect, so the pixel just outside the
+    /// rect stays the page colour.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`. The `gpu-tests` CI job does exactly that.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1511_container_border_reaches_pixels() {
+        use pinion_core::scene::{ContainerNode, Rect, Scene};
+        use pinion_core::style::{Border, BoxStyle, Color};
+        use pinion_runtime::image_cache::ImageCache;
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const W: u32 = 200;
+        const H: u32 = 140;
+        const BW: u32 = 6;
+        let rect = Rect::new(40, 30, 120, 80);
+        let fill = Color::rgb(0x20, 0x20, 0x20);
+        let stroke = Color::rgb(0xff, 0x30, 0x30);
+
+        let render = |border: Option<Border>| -> Vec<u8> {
+            let mut style = BoxStyle::filled(fill);
+            if let Some(b) = border {
+                style = style.with_border(b);
+            }
+            let mut node = ContainerNode::new(vec![]).with_style(style);
+            node.rect = rect;
+            let mut text_cache = LayoutCache::new();
+            let mut image_cache = ImageCache::new();
+            let mut cache = FragmentCache::new();
+            let mut vello = VelloScene::new();
+            to_vello_cached(
+                &Scene::Container(node),
+                &|_| None,
+                &mut text_cache,
+                &mut image_cache,
+                &mut cache,
+                &mut vello,
+            );
+            let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+            shot.render_to_rgba8(&vello, W, H, PenikoColor::WHITE)
+                .expect("render")
+        };
+        let at = |rgba: &[u8], x: u32, y: u32| -> (u8, u8, u8) {
+            let i = ((y * W + x) * 4) as usize;
+            (rgba[i], rgba[i + 1], rgba[i + 2])
+        };
+        let is_stroke = |p: (u8, u8, u8)| p.0 > 150 && p.1 < 110 && p.2 < 110;
+        let is_fill = |p: (u8, u8, u8)| p.0 < 80 && p.1 < 80 && p.2 < 80;
+
+        let mid_x = rect.x + rect.w / 2;
+        let bordered = render(Some(Border::new(stroke, BW)));
+
+        // (1) The declared stroke is on the rect's top edge band.
+        let edge = at(&bordered, mid_x, rect.y + BW / 2);
+        assert!(
+            is_stroke(edge),
+            "a container's declared border must paint on its edge; the top \
+             band read {edge:?}"
+        );
+        // (2) It stays a border: the interior is still the fill.
+        let centre = at(&bordered, mid_x, rect.y + rect.h / 2);
+        assert!(
+            is_fill(centre),
+            "the border must not flood the interior; the centre read {centre:?}"
+        );
+        // (3) `Inside` placement keeps the whole stroke within the rect.
+        let outside = at(&bordered, mid_x, rect.y - 2);
+        assert!(
+            outside.0 > 200 && outside.1 > 200 && outside.2 > 200,
+            "an Inside border draws no ink outside the rect; 2px above the \
+             edge read {outside:?}"
+        );
+        // (4) Non-vacuous: the SAME container without the declaration reads
+        // fill where the stroke was, so the probes track the declaration and
+        // not the geometry.
+        let bare = at(&render(None), mid_x, rect.y + BW / 2);
+        assert!(
+            is_fill(bare),
+            "without a declared border the edge band is the plain fill, got \
+             {bare:?}"
+        );
+    }
+
     /// R1027 §5.16 — the shell lays the scene out in LOGICAL pixels and, on
     /// a `HiDPI` window, rasterizes it by appending into a scratch scene under
     /// `Affine::scale(scale)` before submit (the `render_window` `HiDPI` path).

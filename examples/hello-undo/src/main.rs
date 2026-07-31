@@ -95,14 +95,12 @@ fn button_scene(
     tag: &'static str,
     label: &str,
     state: ButtonState,
-    focused: bool,
     hover_key: &'static str,
     colors: &ButtonColors,
 ) -> Scene {
     pinion_widget_paint::button::button_scene(
         label,
         state,
-        focused,
         hover_key,
         colors,
         // (R1020 §5.39) All four buttons are Tab stops — each marked
@@ -127,7 +125,7 @@ type UndoViewState = ([ButtonState; 4], [bool; 4]);
 /// the reactive counter + the [`UndoStack`]'s history boundaries.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: UndoViewState, _frame: &Frame) -> Scene {
-    let ([dec_s, inc_s, undo_s, redo_s], [dec_f, inc_f, undo_f, redo_f]) = state;
+    let ([dec_s, inc_s, undo_s, redo_s], _focus) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let value = counter().get();
     let st = stack();
@@ -179,24 +177,10 @@ fn view(state: UndoViewState, _frame: &Frame) -> Scene {
 
     let buttons = Scene::Container(
         ContainerNode::new(vec![
-            button_scene(DEC_TAG, "\u{2212}", dec_s, dec_f, DEC_HOVER_KEY, &tonal),
-            button_scene(INC_TAG, "+", inc_s, inc_f, INC_HOVER_KEY, &tonal),
-            button_scene(
-                UNDO_TAG,
-                "Undo",
-                undo_state,
-                undo_f,
-                UNDO_HOVER_KEY,
-                &accent,
-            ),
-            button_scene(
-                REDO_TAG,
-                "Redo",
-                redo_state,
-                redo_f,
-                REDO_HOVER_KEY,
-                &accent,
-            ),
+            button_scene(DEC_TAG, "\u{2212}", dec_s, DEC_HOVER_KEY, &tonal),
+            button_scene(INC_TAG, "+", inc_s, INC_HOVER_KEY, &tonal),
+            button_scene(UNDO_TAG, "Undo", undo_state, UNDO_HOVER_KEY, &accent),
+            button_scene(REDO_TAG, "Redo", redo_state, REDO_HOVER_KEY, &accent),
         ])
         .with_layout(
             LayoutStyle::new()
