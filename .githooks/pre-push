@@ -186,10 +186,13 @@ enforce_target_budget "$repo_root" "pre-push"
 # self-estimate is not a reason to refuse a push. The value is that the number
 # is spoken every time, so its going stale is visible the round it happens
 # rather than 587 rounds later.
-if [ -f "$repo_root/tools/phase_b_tally.py" ] && command -v python3 >/dev/null 2>&1; then
-    python3 "$repo_root/tools/phase_b_tally.py" 2>/dev/null \
-        | grep -E "^(weighted|STALE|UNCLASSIFIED)" \
-        | sed 's/^/pre-push: /' || true
-fi
+#
+# R1522 lifted this out of the hook body, because the inline form ran the
+# tool's report while never running the tool's own `--selftest`, and swallowed
+# stderr and the exit code so a broken tally printed nothing at all. See
+# lib/phase-b-tally.sh; it is covered by tools/test_hooks.sh above.
+# shellcheck source=SCRIPTDIR/lib/phase-b-tally.sh
+source "$hook_dir/lib/phase-b-tally.sh"
+report_phase_b_tally "$repo_root"
 
 exit 0

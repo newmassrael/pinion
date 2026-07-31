@@ -30,9 +30,28 @@ source "$repo_root/.githooks/lib/commit-msg-lint.sh"
 source "$repo_root/.githooks/lib/mnemosyne-tool.sh"
 # shellcheck source=SCRIPTDIR/../.githooks/lib/target-budget.sh
 source "$repo_root/.githooks/lib/target-budget.sh"
+# shellcheck source=SCRIPTDIR/../.githooks/lib/phase-b-tally.sh
+source "$repo_root/.githooks/lib/phase-b-tally.sh"
 
 pass=0
 fail=0
+
+# Every temp tree this suite creates lives under ONE root, removed by ONE exit
+# trap (R1522). Two things forced this shape, both measured rather than guessed:
+#
+#   * `trap ... EXIT` REPLACES the handler instead of adding to it, so a trap
+#     per section silently orphans the earlier sections' trees;
+#   * a registry of paths does not work either, because `stub_gh` is called
+#     inside `$(...)` — the append lands in a subshell's copy of the array and
+#     the parent's trap never learns the path. Counting /tmp across a run is
+#     what showed this: the registry version still leaked exactly one directory
+#     per `stub_gh` call, as it had since R1495.
+#
+# Containment survives subshells; bookkeeping does not.
+_tmp_root="$(mktemp -d)"
+trap 'rm -rf "$_tmp_root"' EXIT
+
+mktemp_tracked() { mktemp -d -p "$_tmp_root"; }
 
 ok() {
     local desc="$1" got="$2" want="$3"
@@ -133,7 +152,7 @@ done
 # instead of in production.
 stub_gh() {
     local listing="$1"
-    _stub_dir="$(mktemp -d)"
+    _stub_dir="$(mktemp_tracked)"
     {
         echo '#!/usr/bin/env bash'
         # SC2016 is the point: these are the STUB's parameters, written into
@@ -296,8 +315,7 @@ ok "an indented continuation line is rejected" \
 # revision, and the resolver has to notice.
 # ---------------------------------------------------------------------------
 
-mn_tmp="$(mktemp -d)"
-trap 'rm -rf "$mn_tmp"' EXIT
+mn_tmp="$(mktemp_tracked)"
 
 # A stand-in `mnemosyne-cli` that reports `$1` as its build revision, in the
 # real binary's `--version` format. It answers ONLY `--version`, because that is
@@ -711,6 +729,104 @@ ok "a non-numeric vendored budget is rejected, not silently defaulted" \
 ok "no vendored cache at all is silent" \
    "$( { report_vendored_cache "$mn_tmp/no-such-repo" test >/dev/null; } 2>&1 | wc -c )" \
    "0"
+
+# ---------------------------------------------------------------------------
+# lib/phase-b-tally.sh (R1522)
+#
+# The reporter this replaces could not fail, and that was the problem: it piped
+# through `2>/dev/null … || true`, so a broken tally printed nothing and nothing
+# is what a tree with no drift also prints. Every case below is therefore about
+# what gets SAID, and the fakes model a tool that is broken in each of the ways
+# the real one can break.
+
+tally_tmp="$(mktemp_tracked)"
+
+# A tally tool that works: distinct answers for --selftest and the report.
+mkdir -p "$tally_tmp/good/tools"
+cat >"$tally_tmp/good/tools/phase_b_tally.py" <<'PY'
+import sys
+if "--selftest" in sys.argv:
+    print("selftest: PASS (0 failure(s))")
+else:
+    print("Phase B tally - 1 examples, 1 demos")
+    print("weighted (all axes)   100   42%")
+PY
+
+ok "a working tally speaks its selftest verdict, not only its numbers" \
+   "$(report_phase_b_tally "$tally_tmp/good" | grep -c 'tally selftest: PASS')" \
+   "1"
+
+ok "a working tally still prints the weighted figure" \
+   "$(report_phase_b_tally "$tally_tmp/good" | grep -c 'pre-push: weighted (all axes)')" \
+   "1"
+
+# A tally whose own logic is broken. The numbers must be WITHHELD: a tool that
+# failed its own check has not earned having its figures quoted.
+mkdir -p "$tally_tmp/badlogic/tools"
+cat >"$tally_tmp/badlogic/tools/phase_b_tally.py" <<'PY'
+import sys
+if "--selftest" in sys.argv:
+    print("SELFTEST FAIL: the perf axis counts no hot-path optimisation")
+    print("selftest: FAIL (1 failure(s))")
+    sys.exit(1)
+print("weighted (all axes)   100   42%")
+PY
+
+ok "a failing selftest is reported verbatim" \
+   "$(report_phase_b_tally "$tally_tmp/badlogic" | grep -c 'SELFTEST FAIL: the perf axis')" \
+   "1"
+
+ok "a failing selftest withholds the numbers it could not vouch for" \
+   "$(report_phase_b_tally "$tally_tmp/badlogic" | grep -c 'pre-push: weighted')" \
+   "0"
+
+ok "a failing selftest says why the numbers are missing" \
+   "$(report_phase_b_tally "$tally_tmp/badlogic" | grep -c 'numbers withheld')" \
+   "1"
+
+# A tally that crashes, printing nothing anywhere. This is the case the R1519
+# call could not distinguish from a healthy tree, and the only one that matters:
+# the check would have stopped happening with no trace.
+mkdir -p "$tally_tmp/mute/tools"
+cat >"$tally_tmp/mute/tools/phase_b_tally.py" <<'PY'
+import sys
+sys.exit(3)
+PY
+
+ok "a mute broken tally is loud, not silent" \
+   "$(report_phase_b_tally "$tally_tmp/mute" | grep -c 'the selftest printed nothing at all')" \
+   "1"
+
+ok "a mute broken tally reports its exit status" \
+   "$(report_phase_b_tally "$tally_tmp/mute" | grep -c 'selftest FAILED (exit 3)')" \
+   "1"
+
+# A tally that passes its selftest but whose report no longer emits a summary
+# line — a renamed heading, a refactor that drops the totals. The grep miss must
+# surface the raw output instead of eating it.
+mkdir -p "$tally_tmp/nosummary/tools"
+cat >"$tally_tmp/nosummary/tools/phase_b_tally.py" <<'PY'
+import sys
+if "--selftest" in sys.argv:
+    print("selftest: PASS (0 failure(s))")
+else:
+    print("total across axes: 42%")
+PY
+
+ok "a report with no recognised summary line prints its raw output" \
+   "$(report_phase_b_tally "$tally_tmp/nosummary" \
+        | grep -cE 'produced no summary line|total across axes')" \
+   "2"
+
+# The one correct silence: no tool in the tree at all.
+ok "an absent tally tool is silent" \
+   "$(report_phase_b_tally "$tally_tmp/no-such-repo" | wc -c)" \
+   "0"
+
+# And the real tool in this repo must pass its own check, every push.
+ok "this repo's tally passes its own selftest" \
+   "$(report_phase_b_tally "$repo_root" | grep -c 'tally selftest: PASS')" \
+   "1"
 
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]
