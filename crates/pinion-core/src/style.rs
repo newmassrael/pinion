@@ -1641,6 +1641,111 @@ impl BoxStyle {
         self.shadows = shadows;
         self
     }
+
+    /// R1514 §5.16 — every facet of this style, paired with whether it is
+    /// declared (differs from [`BoxStyle::default`]).
+    ///
+    /// This is the one place the field list is written down, and the
+    /// destructure below has no `..`: a field added to `BoxStyle` stops
+    /// compiling here. The repair is a [`BoxFacet`] variant — which changes
+    /// this array's length — and not a spare binding, because the array is
+    /// pinned to the census.
+    ///
+    /// The `deny` closes the escape hatch that measurement found open:
+    /// writing the new field as `field: _` compiled clean and *warning-free*,
+    /// which is the repair someone in a hurry reaches for. Note the lint's
+    /// own suggestion — "consider using `..`" — is the one thing that must
+    /// not be done here; `..` is still accepted by the compiler and remains
+    /// the deliberate bypass. What is closed is the accidental one.
+    #[deny(clippy::unneeded_field_pattern)]
+    fn facets(&self) -> [(BoxFacet, bool); BoxFacet::ALL.len()] {
+        let Self {
+            fill,
+            border,
+            corner_radius,
+            gradient,
+            shadows,
+        } = self;
+        let bare = Self::default();
+        [
+            (BoxFacet::Fill, *fill != bare.fill),
+            (BoxFacet::Border, *border != bare.border),
+            (BoxFacet::CornerRadius, *corner_radius != bare.corner_radius),
+            (BoxFacet::Gradient, *gradient != bare.gradient),
+            (BoxFacet::Shadows, *shadows != bare.shadows),
+        ]
+    }
+}
+
+/// R1514 §5.16 — the visual facets a [`BoxStyle`] can declare.
+///
+/// [`BoxStyle`] is `#[non_exhaustive]`, so **no downstream crate can
+/// destructure it exhaustively**. Anything that must handle "every facet" —
+/// the §2 #7 wire projection, a cross-renderer conformance matrix — is
+/// therefore forced to keep a hand copy of the field list, and a facet added
+/// later is silently carried by nobody. That is the R1511 shape exactly: a
+/// declaration that reaches no consumer, with nothing to notice.
+///
+/// Only this crate can compute the list, so this crate publishes it, and the
+/// two links are each a compile error:
+///
+/// 1. a new `BoxStyle` field fails `BoxStyle::facets`'s destructure here,
+///    and the repair is a variant below;
+/// 2. a new variant fails every downstream `match` on `BoxFacet`, where the
+///    consumer must say what it does with the facet.
+///
+/// Deliberately **not** `#[non_exhaustive]`, against the prevailing habit in
+/// this module: link 2 *is* the point, and `#[non_exhaustive]` would force
+/// downstream wildcards that swallow exactly what this exists to surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BoxFacet {
+    /// [`BoxStyle::fill`] — the solid background colour.
+    Fill,
+    /// [`BoxStyle::border`] — the outline.
+    Border,
+    /// [`BoxStyle::corner_radius`] — corner rounding, in pixels.
+    CornerRadius,
+    /// [`BoxStyle::gradient`] — the gradient overlay that supersedes `fill`.
+    Gradient,
+    /// [`BoxStyle::shadows`] — drop-shadows painted behind the box.
+    Shadows,
+}
+
+impl BoxFacet {
+    /// The census. Consumers iterate this instead of re-deriving a field
+    /// list they cannot see.
+    pub const ALL: [Self; 5] = [
+        Self::Fill,
+        Self::Border,
+        Self::CornerRadius,
+        Self::Gradient,
+        Self::Shadows,
+    ];
+
+    /// Stable identity — the `BoxStyle` field name, which is also the §2 #7
+    /// wire key (`scene/query` style objects are keyed by these).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Fill => "fill",
+            Self::Border => "border",
+            Self::CornerRadius => "corner_radius",
+            Self::Gradient => "gradient",
+            Self::Shadows => "shadows",
+        }
+    }
+
+    /// Whether `style` declares this facet — i.e. carries a value that
+    /// differs from [`BoxStyle::default`]. Answered through
+    /// `BoxStyle::facets`, so it cannot drift from the field list.
+    #[must_use]
+    pub fn is_declared(self, style: &BoxStyle) -> bool {
+        style
+            .facets()
+            .into_iter()
+            .find_map(|(facet, declared)| (facet == self).then_some(declared))
+            .unwrap_or(false)
+    }
 }
 
 /// CSS / OpenType font-weight axis value (§5.36 R47.5 Figma-fidelity).
@@ -3052,6 +3157,101 @@ impl core::hash::Hash for LayoutStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The census and the destructure are two lists, and `is_declared` looks
+    /// one up in the other. If a facet were missing from `BoxStyle::facets`
+    /// the lookup would answer `false` for it forever — a facet nobody
+    /// observes, which is the whole failure this type exists to prevent —
+    /// so the correspondence is asserted rather than assumed.
+    #[test]
+    fn r1514_every_facet_appears_exactly_once_in_the_field_walk() {
+        let walked: Vec<BoxFacet> = BoxStyle::default()
+            .facets()
+            .into_iter()
+            .map(|(facet, _)| facet)
+            .collect();
+        assert_eq!(
+            walked.len(),
+            BoxFacet::ALL.len(),
+            "the field walk and the census must be the same length"
+        );
+        for facet in BoxFacet::ALL {
+            assert_eq!(
+                walked.iter().filter(|w| **w == facet).count(),
+                1,
+                "{} appears in `BoxStyle::facets` exactly once",
+                facet.name()
+            );
+        }
+    }
+
+    /// A default style declares nothing: `is_declared` measures divergence
+    /// from the default, so this is the zero the other assertions read
+    /// against.
+    #[test]
+    fn r1514_a_default_style_declares_no_facet() {
+        let bare = BoxStyle::default();
+        for facet in BoxFacet::ALL {
+            assert!(
+                !facet.is_declared(&bare),
+                "a default BoxStyle declares no {}",
+                facet.name()
+            );
+        }
+    }
+
+    /// Each builder touches exactly the facet it names. Without this, a
+    /// builder that set two fields (or the wrong one) would still satisfy
+    /// "something changed", and the census would report a facet that no
+    /// caller can actually reach on its own.
+    #[test]
+    fn r1514_each_builder_declares_exactly_its_own_facet() {
+        let bare = BoxStyle::default();
+        let cases: [(BoxFacet, BoxStyle); BoxFacet::ALL.len()] = [
+            (BoxFacet::Fill, bare.clone().with_fill(Color::rgb(1, 2, 3))),
+            (
+                BoxFacet::Border,
+                bare.clone()
+                    .with_border(Border::new(Color::rgb(4, 5, 6), 2)),
+            ),
+            (BoxFacet::CornerRadius, bare.clone().with_corner_radius(7)),
+            (
+                BoxFacet::Gradient,
+                bare.clone().with_gradient(
+                    Gradient::horizontal()
+                        .with_stop(0.0, Color::rgb(8, 9, 10))
+                        .with_stop(1.0, Color::rgb(11, 12, 13)),
+                ),
+            ),
+            (
+                BoxFacet::Shadows,
+                bare.clone()
+                    .with_shadows(vec![BoxShadow::new(Color::rgb(14, 15, 16))]),
+            ),
+        ];
+        for (declared, style) in cases {
+            for facet in BoxFacet::ALL {
+                assert_eq!(
+                    facet.is_declared(&style),
+                    facet == declared,
+                    "the {} builder must leave {} alone",
+                    declared.name(),
+                    facet.name()
+                );
+            }
+        }
+    }
+
+    /// The wire keys are these names (`box_style_to_json` builds its object
+    /// from them), so they are identity, not prose — pinned here because a
+    /// rename would silently move an AI client's key.
+    #[test]
+    fn r1514_facet_names_are_the_box_style_field_names() {
+        assert_eq!(
+            BoxFacet::ALL.map(BoxFacet::name),
+            ["fill", "border", "corner_radius", "gradient", "shadows"]
+        );
+    }
 
     #[test]
     fn rgba_constructor_preserves_channels() {

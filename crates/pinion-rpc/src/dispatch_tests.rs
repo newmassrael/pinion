@@ -7393,6 +7393,44 @@ fn dispatch_with_runtime_owner_and_revision(
     dispatch(&mut ctx, req)
 }
 
+// R1514 §2 #7 — the wire carries every facet the style can declare.
+//
+// The exhaustive `match` in `box_style_to_json` makes a NEW `BoxFacet` a
+// compile error there, which is the half the type system can enforce. This
+// is the other half: that the emitted keys really are the census and not a
+// parallel hand list that happens to agree today. Every fixture in this file
+// was written from that hand list, so none of them could have noticed a
+// missing key — an assertion about the whole key SET is the only shape that
+// can.
+#[test]
+fn r1514_the_wire_object_carries_exactly_the_declared_facets() {
+    use pinion_core::style::{BoxFacet, BoxStyle, Color};
+
+    let json = box_style_to_json(&BoxStyle::filled(Color::rgb(1, 2, 3)));
+    let obj = json.as_object().expect("a box style is a wire object");
+
+    let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    let mut census: Vec<&str> = BoxFacet::ALL.iter().map(|f| f.name()).collect();
+    census.sort_unstable();
+    assert_eq!(
+        keys, census,
+        "the style object's keys are exactly `BoxFacet::ALL`; a facet missing \
+         here is one an AI client cannot read at all (§2 #7)"
+    );
+
+    // And every key carries something — a facet present as a key but always
+    // absent as a value would satisfy the set comparison while surfacing
+    // nothing.
+    for facet in BoxFacet::ALL {
+        assert!(
+            obj.contains_key(facet.name()),
+            "{} is present by name",
+            facet.name()
+        );
+    }
+}
+
 // R708 §5.50 — gradient-fill wire serialization. `box_style_to_json`
 // must surface the optional `Gradient` overlay so AI clients can read a
 // box's gradient ramp as data (§2 #7 scene-as-data); `null` when absent.

@@ -5057,28 +5057,31 @@ fn shadow_to_json(shadow: &pinion_core::style::BoxShadow) -> Value {
 /// `shadows` list (empty array when none) so AI clients can introspect
 /// the rendered look of any `BoxNode` or `ContainerNode` without OCR
 /// (§2 #7 scene-as-data).
+///
+/// R1514 — the key set is [`BoxFacet::ALL`](pinion_core::style::BoxFacet::ALL),
+/// not a hand list. `BoxStyle` is `#[non_exhaustive]`, so this crate cannot
+/// see when a facet is added to it;
+/// before, a new one simply never reached the wire and no test could tell,
+/// since every fixture here was written from the same hand list. Iterating
+/// the census and matching it exhaustively turns that silence into a compile
+/// error at the arm below. The emitted object is unchanged — the facet names
+/// *are* the wire keys.
 fn box_style_to_json(style: &pinion_core::style::BoxStyle) -> Value {
+    use pinion_core::style::BoxFacet;
     let mut obj = serde_json::Map::new();
-    obj.insert("fill".to_string(), color_to_json(style.fill));
-    obj.insert(
-        "border".to_string(),
-        style.border.map_or(Value::Null, border_to_json),
-    );
-    obj.insert(
-        "corner_radius".to_string(),
-        Value::Number(style.corner_radius.into()),
-    );
-    obj.insert(
-        "gradient".to_string(),
-        style
-            .gradient
-            .as_ref()
-            .map_or(Value::Null, gradient_to_json),
-    );
-    obj.insert(
-        "shadows".to_string(),
-        Value::Array(style.shadows.iter().map(shadow_to_json).collect()),
-    );
+    for facet in BoxFacet::ALL {
+        let value = match facet {
+            BoxFacet::Fill => color_to_json(style.fill),
+            BoxFacet::Border => style.border.map_or(Value::Null, border_to_json),
+            BoxFacet::CornerRadius => Value::Number(style.corner_radius.into()),
+            BoxFacet::Gradient => style
+                .gradient
+                .as_ref()
+                .map_or(Value::Null, gradient_to_json),
+            BoxFacet::Shadows => Value::Array(style.shadows.iter().map(shadow_to_json).collect()),
+        };
+        obj.insert(facet.name().to_string(), value);
+    }
     Value::Object(obj)
 }
 

@@ -75,10 +75,18 @@ use crate::text_layout::CELL;
 // only ASCII codepoints; the actual glyph lives in this comment only.
 // Set: ─ │ ┌ ┐ └ ┘ (horizontal, vertical, top-left, top-right,
 // bottom-left, bottom-right). The light weight is intentional —
-// heavy / double / rounded variants would mis-match the single-cell
-// border thickness the paint walker draws (TUI cells are discrete;
-// `BoxStyle::border.width` and `corner_radius` have no sub-cell
-// resolution to map onto).
+// heavy / double variants would mis-match the single-cell border
+// thickness the paint walker draws, since `BoxStyle::border.width` has
+// no sub-cell resolution to map onto.
+//
+// R1514 corrects the rest of what this comment used to say. It filed
+// `rounded` with heavy and double, and reported `corner_radius` as
+// having nothing to map onto — but the light ARC set (U+256D..U+2570)
+// is the same weight as the corners above, so the medium does carry a
+// rounded corner and only this walker does not. That is a gap, not a
+// property of the terminal, and it is recorded as one in
+// `pinion-shell/tests/backend_parity.rs`. A reason that is not true is
+// worse than no reason: it retires the question.
 const BOX_HORIZONTAL: &str = "\u{2500}";
 const BOX_VERTICAL: &str = "\u{2502}";
 const BOX_TOP_LEFT: &str = "\u{250C}";
@@ -317,11 +325,13 @@ fn paint_box(b: &BoxNode, buf: &mut Buffer, clip: CellClip, offset_px: (i32, i32
 /// R51.115 / R51.189 §5.41 §5.45 — apply a [`BoxStyle`] over
 /// `rect`'s cell-space projection: background fill first (cell
 /// `bg`), then a single-cell Unicode box-drawing border on the
-/// rect's edge cells (`corner_radius` and pixel-`width` are
-/// intentionally ignored — TUI cells are discrete, no sub-cell
-/// border thickness or rounded corners exist at this resolution;
-/// the `placement` axis is also flat because there's no sub-cell
-/// offset).
+/// rect's edge cells. Pixel-`width` is intentionally ignored — a cell
+/// is discrete, so no sub-cell border thickness exists at this
+/// resolution, and the `placement` axis is flat for the same reason.
+/// `corner_radius` is ignored too, but that one is a GAP rather than a
+/// limit of the medium (R1514: the light arc glyphs U+256D..U+2570
+/// carry a rounded corner at exactly the weight drawn here); see
+/// `pinion-shell/tests/backend_parity.rs`, which records it as such.
 ///
 /// R51.189 R55.E.2 — `offset_px` shifts the rect into screen
 /// pixels before the cell projection, and every cell write is
