@@ -295,20 +295,21 @@ fn to_vello_inner<F>(
 /// Stores encoded [`VelloScene`] fragments keyed off the
 /// [`pinion_core::scene::ContainerNode::paint_hash`] structural hash.
 /// The cache is consulted by [`to_vello_cached`] at every cacheable
-/// [`Scene::Container`] boundary encountered with [`Affine::IDENTITY`]
-/// accumulated transform:
+/// [`Scene::Container`] boundary, whatever transform the walk inherited
+/// (R1520 — see "Fragments are transform-free" below):
 ///
-/// - **Hit** — copy the cached fragment via
-///   [`VelloScene::append`] into the destination scene with no
-///   transform pre-multiplication (the cached fragment already encodes
-///   absolute coords because it was built under `IDENTITY`). The
-///   recursive walk into the container's children is skipped entirely:
-///   the cache replay covers them.
+/// - **Hit** — place the cached fragment via [`VelloScene::append`]
+///   into the destination scene, pre-multiplying the inherited
+///   `transform` (`None` at [`Affine::IDENTITY`], so the common case
+///   encodes exactly as it did pre-R1520). The recursive walk into the
+///   container's children is skipped entirely: the cache replay covers
+///   them.
 /// - **Miss** — encode this container's contribution into a fresh
 ///   sub-scene under `IDENTITY`, recursively encode children (which
 ///   may themselves hit the cache for nested Containers), append the
-///   sub-scene to the destination, and insert it into the cache under
-///   the container's hash.
+///   sub-scene to the destination under the inherited transform, and
+///   insert the `IDENTITY`-encoded sub-scene into the cache under the
+///   container's hash.
 ///
 /// ## Eviction (mark-and-sweep)
 ///
@@ -319,18 +320,40 @@ fn to_vello_inner<F>(
 /// bounds itself to the set of cacheable Containers actually painted
 /// in the most recent frame — no LRU heuristic, no fixed cap.
 ///
-/// ## Cache-key non-axes (atomic 1 first-cut)
+/// ## Fragments are transform-free (R1520 — closes the R682+1 carry)
 ///
-/// The cache key is the container's `paint_hash` ALONE. The inherited
-/// `transform` is constrained to [`Affine::IDENTITY`] at the cache
-/// boundary so two different transform chains never alias the same
-/// key. Practical consequence: cacheable subtrees inside a
-/// [`Scene::Scroll`] (whose content carries a non-identity scroll
-/// translation) skip the cache because their inherited transform is
-/// never identity. A follow-up round (R682+1 carry) can lift this by
-/// either hashing the transform into the cache key or encoding
-/// fragments in container-local coordinates and re-applying the
-/// inherited transform on append.
+/// The cache key is the container's `paint_hash` ALONE, and that is a
+/// *complete* key because **a stored fragment never contains the
+/// transform it was placed under**: the miss arm always encodes at
+/// [`Affine::IDENTITY`] and the inherited transform is applied by
+/// [`VelloScene::append`], which pre-multiplies every transform in the
+/// appended encoding (including glyph-run transforms — see
+/// `vello_encoding::Encoding::append`). Placing an `IDENTITY`-encoded
+/// fragment under `T` is therefore *identical* to threading `T` through
+/// the walk, because every paint site composes the inherited transform
+/// on the left (`T * local`) and `T * (IDENTITY * local) == T * local`.
+/// That left-composition is the invariant the equivalence rests on;
+/// R1520 verified it holds at every paint site in this module.
+///
+/// R682 shipped the first cut with the boundary constrained to
+/// `IDENTITY` — sound, because it made the transform a non-axis by
+/// forbidding it, and its own doc registered the lift as a carry. What
+/// the constraint cost was never measured until R1520: a
+/// [`Scene::Scroll`]'s content carries a non-identity translation, so
+/// **every scrolled subtree re-encoded from scratch every frame**.
+/// Measured on a 4,681-node box tree, one paint of unchanged content:
+/// 22µs bare, **1,360µs wrapped in a `Scroll` at a non-zero offset** —
+/// and identical whether the cache was warm or cold, i.e. the cache was
+/// inoperative. The shape of that cliff is what makes it worth closing:
+/// caching worked while the list sat at offset 0 and stopped at the
+/// first scrolled pixel, so it was absent from exactly the frames a
+/// pro-tool workload spends its time in (`virtual_list` — asset
+/// browser, scene outliner, data grid, log view — is a `ScrollNode`).
+///
+/// Two fragments with equal `paint_hash` under different transforms now
+/// legitimately *share* one entry, which is a dedup rather than an
+/// alias: they encode the same content and each placement supplies its
+/// own transform at append time.
 ///
 /// ## Cache-poisoning guards
 ///
@@ -537,18 +560,19 @@ impl FragmentCache {
         }
     }
 
-    /// Probe + replay path. When `hash` is in the cache, append the
-    /// stored fragment into `out` (without pre-multiplication: the
-    /// cached fragment is already encoded under [`Affine::IDENTITY`]
-    /// because the encoder only caches at identity-transform
-    /// boundaries) and mark the hash as seen.
+    /// Probe + replay path. When `hash` is in the cache, place the
+    /// stored fragment into `out` under `transform` (R1520) and mark the
+    /// hash as seen. Every stored fragment is encoded under
+    /// [`Affine::IDENTITY`], so the inherited transform is supplied here
+    /// rather than baked in — see the type doc's "Fragments are
+    /// transform-free".
     ///
     /// Returns `true` on hit, `false` on miss. Bumps the hit counter
     /// on hit; the miss counter is bumped by [`Self::insert_miss`]
     /// to keep the increment paired with the actual cache install.
-    fn try_hit(&mut self, hash: u64, out: &mut VelloScene) -> bool {
+    fn try_hit(&mut self, hash: u64, out: &mut VelloScene, transform: Affine) -> bool {
         if let Some(fragment) = self.fragments.get(&hash) {
-            out.append(fragment, None);
+            append_placed(out, fragment, transform);
             self.seen_this_paint.insert(hash);
             self.hits = self.hits.saturating_add(1);
             true
@@ -563,26 +587,154 @@ impl FragmentCache {
     /// contributes to the per-paint damage accumulator (R682 atomic 2):
     /// a missed Container's bounds is where the painted output may
     /// differ from the previous frame.
-    fn insert_miss(&mut self, hash: u64, fragment: VelloScene, rect: pinion_core::scene::Rect) {
+    ///
+    /// R1520 — `rect` arrives in the container's own frame and the
+    /// accumulator publishes *screen* space, so `transform` is applied
+    /// here: a consumer of [`Self::last_damage_region`] uploads pixels,
+    /// and a scrolled container's own rect is not where its pixels land.
+    /// The mapping lives with the accumulator rather than at the call
+    /// site so the two cannot drift into different coordinate spaces.
+    ///
+    /// The transform is the container's **screen placement**, not the
+    /// transform its fragment was encoded under: inside a cached fragment
+    /// the encode transform is `IDENTITY` while the fragment as a whole is
+    /// still going to land somewhere, and a nested container's damage has
+    /// to say where its pixels are, not where they are stored.
+    ///
+    /// `clip` is the accumulated clip the walk reached this container under
+    /// (`None` = unclipped), and the placed rect is intersected with it. A
+    /// clipped container paints nothing outside its clip, so nothing outside
+    /// it can differ — the intersection is unconditionally correct and
+    /// strictly tighter, with no policy for a consumer to choose.
+    ///
+    /// It is also what keeps letting the cache reach scrolled subtrees from
+    /// making this field WORSE than R682 left it. A scrolled container's own
+    /// rect is its full *content* extent, so an unclipped 10,000-row list
+    /// reported a 320,000px-tall damage region inside a 460px window. Clipped,
+    /// it is bounded by the viewport — tighter than the whole-window rect R682
+    /// published, rather than 700x looser.
+    ///
+    /// What remains over-covers and is meant to: a missed container reports
+    /// its whole clipped rect, not the sub-area whose pixels actually moved.
+    /// A damage region that under-covers is a stale-pixel bug; one that
+    /// over-covers is a wasted upload.
+    fn insert_miss(
+        &mut self,
+        hash: u64,
+        fragment: VelloScene,
+        rect: pinion_core::scene::Rect,
+        placement: Affine,
+        clip: Option<pinion_core::scene::Rect>,
+    ) {
         self.fragments.insert(hash, fragment);
         self.seen_this_paint.insert(hash);
         self.misses = self.misses.saturating_add(1);
+        let placed = match clip {
+            Some(c) => intersection(screen_bounds(rect, placement), c),
+            None => screen_bounds(rect, placement),
+        };
         self.damage_acc_this_paint = Some(match self.damage_acc_this_paint {
-            Some(acc) => acc.union(rect),
-            None => rect,
+            Some(acc) => acc.union(placed),
+            None => placed,
         });
     }
+}
+
+/// (R1520 §5.16) Place an `IDENTITY`-encoded fragment into `out` under
+/// `transform`.
+///
+/// `None` is passed at [`Affine::IDENTITY`] rather than
+/// `Some(Affine::IDENTITY)`: `vello_encoding::Encoding::append` takes a
+/// `map`-over-every-transform branch when a transform is supplied and a
+/// flat `extend_from_slice` when it is not, so the identity case stays on
+/// the byte-for-byte pre-R1520 path instead of paying a multiply per
+/// transform-stream entry to arrive at the same numbers.
+fn append_placed(out: &mut VelloScene, fragment: &VelloScene, transform: Affine) {
+    if transform == Affine::IDENTITY {
+        out.append(fragment, None);
+    } else {
+        out.append(fragment, Some(transform));
+    }
+}
+
+/// (R1520 §5.16) The overlap of two rects; empty (`w == 0 || h == 0`) when
+/// they do not meet.
+///
+/// A local peer of [`pinion_core::scene::Rect::union`] rather than an addition
+/// to `Rect`'s surface: the damage accumulator is the only caller, and
+/// `pinion-core` already carries the intersection *predicate*
+/// (`rects_intersect`) that hit-testing wants. A second consumer is what would
+/// make this a `Rect` method.
+fn intersection(
+    a: pinion_core::scene::Rect,
+    b: pinion_core::scene::Rect,
+) -> pinion_core::scene::Rect {
+    let lx = a.x.max(b.x);
+    let ty = a.y.max(b.y);
+    let rx = a.x.saturating_add(a.w).min(b.x.saturating_add(b.w));
+    let by = a.y.saturating_add(a.h).min(b.y.saturating_add(b.h));
+    pinion_core::scene::Rect::new(lx, ty, rx.saturating_sub(lx), by.saturating_sub(ty))
+}
+
+/// (R1520 §5.16) `rect`'s axis-aligned bounding box after `transform`,
+/// clamped into the unsigned [`pinion_core::scene::Rect`] space.
+///
+/// All four corners are mapped, not just the origin: an
+/// [`Affine`] may rotate or skew, and the bounding box of the mapped
+/// corners is the only answer that stays *conservative* (a damage region
+/// that under-covers is a stale-pixel bug, one that over-covers is only
+/// wasted upload). Pure translation — every transform the current walk
+/// produces — reduces to the exact translated rect.
+///
+/// Negative coordinates clamp to `0` while the far edge is preserved, so
+/// a container scrolled above the viewport keeps reporting the part that
+/// is still on screen. `Rect` is unsigned by §5.2, so the off-screen
+/// half cannot be represented and is not needed: it paints nowhere.
+fn screen_bounds(rect: pinion_core::scene::Rect, transform: Affine) -> pinion_core::scene::Rect {
+    let x0 = f64::from(rect.x);
+    let y0 = f64::from(rect.y);
+    let x1 = x0 + f64::from(rect.w);
+    let y1 = y0 + f64::from(rect.h);
+    let corners =
+        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].map(|(x, y)| transform * KurboPoint::new(x, y));
+    let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+    let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in corners {
+        min_x = min_x.min(p.x);
+        min_y = min_y.min(p.y);
+        max_x = max_x.max(p.x);
+        max_y = max_y.max(p.y);
+    }
+    let clamp = |v: f64| -> u32 {
+        // `as` on a f64 → u32 saturates at both ends in Rust, and NaN maps
+        // to 0; the explicit floor / max keeps the intent readable.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to the u32 range on both ends immediately below"
+        )]
+        {
+            v.max(0.0).min(f64::from(u32::MAX)).floor() as u32
+        }
+    };
+    let (lx, ly) = (clamp(min_x), clamp(min_y));
+    pinion_core::scene::Rect::new(
+        lx,
+        ly,
+        clamp(max_x).saturating_sub(lx),
+        clamp(max_y).saturating_sub(ly),
+    )
 }
 
 /// R682 §5.16 — cached counterpart to [`to_vello`].
 ///
 /// Walks the [`Scene`] tree like [`to_vello`] but consults the
 /// supplied [`FragmentCache`] at every cacheable
-/// [`Scene::Container`] boundary it reaches with [`Affine::IDENTITY`]
-/// accumulated transform — a cache hit appends the previously encoded
-/// `vello::Scene` fragment into `out` and skips the recursive walk
-/// into children; a miss encodes the subtree fresh into a sub-scene,
-/// appends it to `out`, and stores it in the cache for the next
+/// [`Scene::Container`] boundary it reaches, at any accumulated
+/// transform (R1520) — a cache hit places the previously encoded
+/// `vello::Scene` fragment into `out` under that transform and skips the
+/// recursive walk into children; a miss encodes the subtree fresh into a
+/// sub-scene, places it in `out`, and stores it in the cache for the next
 /// paint.
 ///
 /// Brackets the encoder walk with [`FragmentCache::begin_paint`] /
@@ -718,6 +870,8 @@ pub fn to_vello_cached_with_text_engine<F>(
         engine,
         out,
         Affine::IDENTITY,
+        Affine::IDENTITY,
+        None,
         CursorPaintFlags {
             blink_on: cursor_blink_on,
             focused: cursor_focused,
@@ -729,14 +883,14 @@ pub fn to_vello_cached_with_text_engine<F>(
 /// Transform-carrying recursive walker for [`to_vello_cached`].
 ///
 /// Mirrors [`to_vello_inner`]'s match shape but adds a cache check
-/// at the top of the [`Scene::Container`] arm: when the accumulated
-/// transform is [`Affine::IDENTITY`] AND the subtree is cacheable
-/// per [`Scene::is_cacheable_for_paint`], probe the cache first.
-/// Hit → append fragment, return. Miss → encode the entire subtree
-/// into a fresh `VelloScene`, append it to `out`, install in cache.
+/// at the top of the [`Scene::Container`] arm: when the subtree is
+/// cacheable per [`Scene::is_cacheable_for_paint`], probe the cache
+/// first. Hit → place the fragment under the accumulated transform,
+/// return. Miss → encode the entire subtree into a fresh `VelloScene`
+/// **at [`Affine::IDENTITY`]**, place it in `out` under the accumulated
+/// transform, install in cache.
 ///
-/// Non-cacheable Containers (and all Containers reached under a
-/// non-identity transform) take the direct encode path: paint the
+/// Non-cacheable Containers take the direct encode path: paint the
 /// container's own fill into `out`, recurse into children with the
 /// same transform. Recursion stays inside this function so that
 /// cacheable descendant Containers (e.g. a stable widget subtree
@@ -750,11 +904,27 @@ pub fn to_vello_cached_with_text_engine<F>(
 /// [`to_vello_inner`] — same `fill_rect` / `paint_text` /
 /// `paint_path` / `paint_immediate_mode_node` helpers.
 /// [`Scene::Scroll`] threads
-/// the inherited transform exactly like [`to_vello_inner`]; the
-/// recursion into `content` is via this function so the eventual
-/// `IDENTITY`-resumed descendant Containers (extremely rare — would
-/// require a parent that itself cancels the scroll translation) can
-/// participate in caching.
+/// the inherited transform exactly like [`to_vello_inner`]; since R1520
+/// the recursion into `content` reaches a cacheable Container that caches
+/// **under the scroll translation**, so a scrolled subtree is encoded once
+/// and re-placed at each subsequent offset instead of re-encoded per frame.
+///
+/// ## Two transforms (R1520)
+///
+/// * `transform` — the **encoding** frame. Reset to [`Affine::IDENTITY`]
+///   on entering a cached fragment, which is what makes the fragment
+///   re-placeable; every paint primitive uses this one.
+/// * `placement` — the **screen** frame this subtree's pixels land in.
+///   Never reset. Pre-R1520 the two were the same value and one parameter
+///   carried both meanings; splitting the cache boundary off `IDENTITY`
+///   is what separated them.
+///
+/// The distinction is load-bearing exactly once, and invisibly: a
+/// container nested inside a scrolled fragment recurses with `transform ==
+/// IDENTITY`, so reporting its damage against `transform` would place it
+/// at its content coordinates — inside the fragment, correct; on the
+/// screen, off by the whole scroll offset. `placement` is what
+/// [`FragmentCache::insert_miss`] is given.
 #[allow(clippy::too_many_arguments)]
 fn to_vello_cached_inner<F>(
     scene: &Scene,
@@ -765,26 +935,35 @@ fn to_vello_cached_inner<F>(
     engine: Option<&SelfHostedTextEngine>,
     out: &mut VelloScene,
     transform: Affine,
+    placement: Affine,
+    clip: Option<pinion_core::scene::Rect>,
     cursor: CursorPaintFlags,
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
-    // Cacheable-container fast path — only at identity transform AND
-    // when the subtree contains no immediate-mode / external
-    // descendants. A hit appends the stored fragment; a miss encodes
-    // the subtree into a fresh sub-scene and appends + caches it. Either
-    // way `out` receives an `append`, never a direct draw (see the
-    // R706 invariant below).
+    // Cacheable-container fast path — taken whenever the subtree
+    // contains no immediate-mode / external descendants, at ANY
+    // inherited transform (R1520; R682 required IDENTITY here). A hit
+    // places the stored fragment; a miss encodes the subtree into a
+    // fresh sub-scene and places + caches it. Either way `out` receives
+    // an `append`, never a direct draw (see the R706 invariant below).
+    //
+    // The fragment is always encoded under IDENTITY and the inherited
+    // `transform` is applied at placement, which is what keeps
+    // `paint_hash` a complete cache key — see `FragmentCache`'s
+    // "Fragments are transform-free". Because the recursion below re-enters
+    // with IDENTITY, a nested Container inside a scrolled subtree caches
+    // in the same frame as its ancestor: the scroll translation is applied
+    // once, at the outermost cached boundary.
     if let Scene::Container(c) = scene
-        && transform == Affine::IDENTITY
         && scene.is_cacheable_for_paint()
     {
         let hash = c.paint_hash();
-        if fragment_cache.try_hit(hash, out) {
+        if fragment_cache.try_hit(hash, out, transform) {
             return;
         }
         // Cache miss: encode the entire subtree into a fresh sub-scene
-        // under IDENTITY transform, then append + cache.
+        // under IDENTITY transform, then place + cache.
         let mut sub = VelloScene::new();
         paint_box_decoration(&mut sub, c.rect, &c.style, c.style.fill, Affine::IDENTITY);
         for child in &c.children {
@@ -797,11 +976,13 @@ fn to_vello_cached_inner<F>(
                 engine,
                 &mut sub,
                 Affine::IDENTITY,
+                placement,
+                clip,
                 cursor,
             );
         }
-        out.append(&sub, None);
-        fragment_cache.insert_miss(hash, sub, c.rect);
+        append_placed(out, &sub, transform);
+        fragment_cache.insert_miss(hash, sub, c.rect, placement, clip);
         return;
     }
 
@@ -840,6 +1021,8 @@ fn to_vello_cached_inner<F>(
                     engine,
                     &mut sub,
                     transform,
+                    placement,
+                    clip,
                     cursor,
                 );
             }
@@ -859,7 +1042,17 @@ fn to_vello_cached_inner<F>(
             sub.push_clip_layer(Fill::NonZero, transform, &viewport_clip);
             let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
             let dy = f64::from(s.viewport.y) - f64::from(s.offset_y);
-            let child_transform = transform * Affine::translate((dx, dy));
+            let shift = Affine::translate((dx, dy));
+            // The viewport is expressed in the PARENT's frame, so `placement`
+            // (the parent's screen transform) is what maps it to screen space,
+            // and the result narrows whatever clip an outer scroll already
+            // imposed. `transform` would be wrong here for the same reason it
+            // is wrong for damage: inside a cached fragment it is IDENTITY.
+            let viewport_clip_screen = screen_bounds(s.viewport, placement);
+            let inner_clip = Some(match clip {
+                Some(outer) => intersection(outer, viewport_clip_screen),
+                None => viewport_clip_screen,
+            });
             to_vello_cached_inner(
                 &s.content,
                 fill_hook,
@@ -868,7 +1061,9 @@ fn to_vello_cached_inner<F>(
                 fragment_cache,
                 engine,
                 &mut sub,
-                child_transform,
+                transform * shift,
+                placement * shift,
+                inner_clip,
                 cursor,
             );
             sub.pop_layer();
@@ -4682,6 +4877,307 @@ mod tests {
         // installed exactly one fragment (the root Container).
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.entries(), 1);
+    }
+
+    /// (R1520 §5.16) A scrolled subtree caches, and keeps hitting when the
+    /// offset moves — the R682+1 carry, closed.
+    ///
+    /// This is the discriminating test for the change: R682's cache boundary
+    /// required `Affine::IDENTITY`, and a `Scene::Scroll` hands its content a
+    /// translation, so before R1520 the second paint below reported `hits ==
+    /// 0` and `entries == 0` — a scrolled list re-encoded every node every
+    /// frame. Both assertions fail on a revert.
+    ///
+    /// The offsets differ between the two paints on purpose. Equal offsets
+    /// would also hit with the transform *baked into* the key, so they cannot
+    /// tell "the cache learned about scrolling" from "the cache is keyed on
+    /// the offset too". A hit at a *different* offset is only possible if the
+    /// stored fragment is transform-free.
+    #[test]
+    fn r1520_scrolled_content_hits_the_cache_after_the_offset_moves() {
+        let content = || {
+            Scene::Container(ContainerNode::new(vec![
+                Scene::Box(BoxNode::filled(
+                    Rect::new(0, 0, 80, 20),
+                    Color::rgb(9, 9, 9),
+                )),
+                Scene::Box(BoxNode::filled(
+                    Rect::new(0, 30, 80, 20),
+                    Color::rgb(7, 7, 7),
+                )),
+            ]))
+        };
+        let at_offset = |dy: i32| {
+            use pinion_core::scene::ScrollNode;
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 40), content()).with_offset(0, dy))
+        };
+
+        let mut text = LayoutCache::new();
+        let mut images = ImageCache::new();
+        let mut cache = FragmentCache::new();
+
+        let mut first = VelloScene::new();
+        to_vello_cached(
+            &at_offset(10),
+            &null_hook(),
+            &mut text,
+            &mut images,
+            &mut cache,
+            &mut first,
+        );
+        assert_eq!(
+            (cache.hits(), cache.misses(), cache.entries()),
+            (0, 1, 1),
+            "the first scrolled paint encodes the content container once and stores it"
+        );
+
+        let mut second = VelloScene::new();
+        to_vello_cached(
+            &at_offset(25),
+            &null_hook(),
+            &mut text,
+            &mut images,
+            &mut cache,
+            &mut second,
+        );
+        assert_eq!(
+            (cache.hits(), cache.misses(), cache.entries()),
+            (1, 1, 1),
+            "scrolling to a new offset re-places the SAME fragment: one hit, no new encode"
+        );
+    }
+
+    /// (R1520 §5.16) The same content painted bare and inside a scroll shares
+    /// one cache entry.
+    ///
+    /// The positive statement of "fragments are transform-free": if a stored
+    /// fragment carried the transform it was placed under, these two would
+    /// have to be separate entries. One entry + one hit is the evidence that
+    /// the transform lives at the placement, not in the fragment. It also
+    /// makes the dedup itself explicit, so a future round that adds the
+    /// transform to the cache key has to delete this test on purpose.
+    #[test]
+    fn r1520_bare_and_scrolled_placements_share_one_fragment() {
+        use pinion_core::scene::ScrollNode;
+
+        let content = || {
+            Scene::Container(ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 60, 24),
+                Color::rgb(3, 4, 5),
+            ))]))
+        };
+        let mut text = LayoutCache::new();
+        let mut images = ImageCache::new();
+        let mut cache = FragmentCache::new();
+
+        let mut bare = VelloScene::new();
+        to_vello_cached(
+            &content(),
+            &null_hook(),
+            &mut text,
+            &mut images,
+            &mut cache,
+            &mut bare,
+        );
+        assert_eq!((cache.misses(), cache.entries()), (1, 1));
+
+        let scrolled =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 60, 24), content()).with_offset(0, 12));
+        let mut placed = VelloScene::new();
+        to_vello_cached(
+            &scrolled,
+            &null_hook(),
+            &mut text,
+            &mut images,
+            &mut cache,
+            &mut placed,
+        );
+        assert_eq!(
+            (cache.hits(), cache.misses(), cache.entries()),
+            (1, 1, 1),
+            "the scrolled placement re-uses the bare paint's fragment"
+        );
+    }
+
+    /// (R1520 §5.16 R682 atomic 2) A scrolled miss reports damage where its
+    /// pixels land, not where its own rect says.
+    ///
+    /// `last_damage_region` exists for a consumer that uploads pixels, so it
+    /// is in screen space, and this pins BOTH steps of getting there. The
+    /// content container sits at its own `(0, 0)` and is placed at `y = 30`
+    /// (viewport 40 minus offset 10), so it spans screen `30..50` — and the
+    /// viewport starts at 40, so its top 10px are clipped away and cannot
+    /// differ. `40..50` is the answer; `30..50` (placed, unclipped) and
+    /// `0..20` (unplaced) are the two ways to get it wrong, and both look
+    /// perfectly plausible written down.
+    #[test]
+    fn r1520_scrolled_damage_region_is_in_screen_space() {
+        use pinion_core::scene::ScrollNode;
+
+        // The container carries its own rect: `insert_miss` reports the
+        // *container's* bounds (R682 atomic 2), so a default zero rect would
+        // make the region zero-sized regardless of the transform.
+        let mut container = ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 50, 20),
+            Color::rgb(1, 2, 3),
+        ))]);
+        container.rect = Rect::new(0, 0, 50, 20);
+        let content = Scene::Container(container);
+        let scene =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 40, 50, 20), content).with_offset(0, 10));
+        let mut cache = FragmentCache::new();
+        let mut out = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut LayoutCache::new(),
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut out,
+        );
+        // viewport.y (40) - offset_y (10) = +30 on the content's own y = 0.
+        assert_eq!(
+            cache.stats().last_damage_region,
+            Some(Rect::new(0, 40, 50, 10)),
+            "the damage rect is the container's rect placed by the scroll AND clipped to the viewport"
+        );
+    }
+
+    /// (R1520 §5.16 R682 atomic 2) A container nested inside a scrolled
+    /// fragment reports damage on the SCREEN, not in its fragment.
+    ///
+    /// The trap R1520's own mechanism sets: inside a cached fragment the
+    /// children recurse with the encoding transform reset to `IDENTITY`, so a
+    /// nested miss reported against that transform lands at the content's own
+    /// coordinates — off by the entire scroll offset, and plausible-looking.
+    /// The walk carries a second, never-reset `placement` transform for this.
+    ///
+    /// The shape is the real virtual-list one: the scroll content is the
+    /// outer cached fragment and a row is a nested cacheable container
+    /// inside it.
+    #[test]
+    fn r1520_nested_damage_inside_a_scrolled_fragment_is_placed() {
+        use pinion_core::scene::ScrollNode;
+
+        let mut row = ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+            Rect::new(0, 100, 40, 10),
+            Color::rgb(2, 2, 2),
+        ))]);
+        row.rect = Rect::new(0, 100, 40, 10);
+        let mut outer = ContainerNode::new(vec![Scene::Container(row)]);
+        // Deliberately SHORTER than the row's position: the union's far edge
+        // then comes from the nested row alone, so the assertion below reads
+        // the row's placement and not the outer container's.
+        outer.rect = Rect::new(0, 60, 40, 10);
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 40, 50), Scene::Container(outer)).with_offset(0, 60),
+        );
+
+        let mut cache = FragmentCache::new();
+        let mut out = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut LayoutCache::new(),
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut out,
+        );
+
+        // Both containers missed. The union runs from the outer container
+        // placed at 60 - 60 = 0 to the nested row's placed bottom,
+        // 100 + 10 - 60 = 50. Reported against the fragment's own IDENTITY
+        // the row would contribute 100..110 and stretch the union to 110 —
+        // the value this test exists to exclude.
+        assert_eq!(cache.misses(), 2, "outer container + nested row both miss");
+        let dmg = cache
+            .stats()
+            .last_damage_region
+            .expect("a miss publishes damage");
+        assert_eq!(
+            dmg.y.saturating_add(dmg.h),
+            50,
+            "the nested row's damage is placed by the scroll translation, got {dmg:?}"
+        );
+    }
+
+    /// (R1520 §5.16 R682 atomic 2) A scrolled container's damage is bounded by
+    /// the viewport it is scrolled inside, not by its content extent.
+    ///
+    /// This is the number letting the cache into scrolled subtrees would
+    /// otherwise have wrecked. The content container below is 400px of rows
+    /// inside a 50px viewport — the virtual-list shape, where the real ratio is
+    /// 320,000px of rows inside a 460px window. Its own rect is the honest
+    /// answer to "how tall is this container" and the wrong answer to "which
+    /// pixels changed", because everything outside the viewport is clipped away
+    /// and cannot differ.
+    #[test]
+    fn r1520_scrolled_damage_is_bounded_by_the_viewport() {
+        use pinion_core::scene::ScrollNode;
+
+        let mut content = ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 40, 400),
+            Color::rgb(4, 4, 4),
+        ))]);
+        content.rect = Rect::new(0, 0, 40, 400);
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 10, 40, 50), Scene::Container(content)).with_offset(0, 0),
+        );
+
+        let mut cache = FragmentCache::new();
+        let mut out = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut LayoutCache::new(),
+            &mut ImageCache::new(),
+            &mut cache,
+            &mut out,
+        );
+
+        assert_eq!(
+            cache.stats().last_damage_region,
+            Some(Rect::new(0, 10, 40, 50)),
+            "the damage region is the viewport, not the 400px content extent"
+        );
+    }
+
+    /// (R1520 §5.16) `screen_bounds` maps the whole rect, not the origin.
+    #[test]
+    fn r1520_screen_bounds_covers_the_transformed_rect() {
+        let r = Rect::new(10, 20, 30, 40);
+
+        assert_eq!(
+            screen_bounds(r, Affine::IDENTITY),
+            r,
+            "identity is the rect itself"
+        );
+        assert_eq!(
+            screen_bounds(r, Affine::translate((5.0, -6.0))),
+            Rect::new(15, 14, 30, 40),
+            "a pure translation is exact"
+        );
+        // Scrolled far enough that the top-left leaves the framebuffer. `Rect`
+        // is unsigned (§5.2), so the origin clamps to 0 — and the FAR edge has
+        // to be preserved, or the reported region under-covers the part still
+        // on screen. `w` shrinks to `x1 - 0` rather than staying 30.
+        assert_eq!(
+            screen_bounds(r, Affine::translate((-25.0, -100.0))),
+            Rect::new(0, 0, 15, 0),
+            "off-screen halves clamp at 0 while the on-screen far edge survives"
+        );
+        // A rotation maps the rect to a parallelogram; the answer is the
+        // bounding box of the four mapped corners. A quarter turn about the
+        // origin sends (10..40, 20..60) to (-60..-20, 10..40), whose visible
+        // part is empty in x — the point being that all four corners are
+        // consulted, not just the origin.
+        let quarter = Affine::rotate(std::f64::consts::FRAC_PI_2);
+        let rotated = screen_bounds(r, quarter);
+        assert_eq!(
+            (rotated.y, rotated.h),
+            (10, 30),
+            "the mapped y-extent comes from the corners, got {rotated:?}"
+        );
     }
 
     #[test]

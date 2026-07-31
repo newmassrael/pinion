@@ -498,6 +498,146 @@ mod tests {
         assert_eq!(rgba8.len(), 64 * 32 * 4);
     }
 
+    /// (R1520 §5.16 §2 #6) The scrolled paint cache places its fragments
+    /// where the uncached reference walk paints them.
+    ///
+    /// R1520 let the §5.16 fragment cache take its fast path under a
+    /// non-identity transform, storing the fragment encoded at `IDENTITY` and
+    /// supplying the transform to `vello::Scene::append`. The equivalence
+    /// argument is structural (`append` pre-multiplies every transform in the
+    /// appended encoding, and every paint site composes the inherited
+    /// transform on the left), but a structural argument about a rasteriser
+    /// wants a raster witness: nothing in the runtime's counter assertions can
+    /// see a fragment that is placed at the WRONG offset. Dropping the
+    /// transform at placement keeps `hits`, `misses` and `entries` exactly as
+    /// they are and moves the pixels.
+    ///
+    /// Three rasters, all of the same scrolled scene, compared whole-frame:
+    /// * the uncached walker (`to_vello`) — the reference,
+    /// * the cached walker's FIRST paint (encode + place),
+    /// * the cached walker's SECOND paint (replay from cache).
+    ///
+    /// The third is the one that only this test can see. It is a cache *hit*,
+    /// so it is the frame a live scroll actually shows, and it never touches
+    /// the encode path that the first two share.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`. The `gpu-tests` CI job does exactly that.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1520_scrolled_cache_placement_matches_the_uncached_walk() {
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, ScrollNode};
+        use pinion_core::style::{BoxStyle, Color};
+        use pinion_runtime::image_cache::ImageCache;
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const W: u32 = 96;
+        const H: u32 = 64;
+        const OFFSET_Y: i32 = 17;
+
+        // Rows in content-intrinsic coordinates, inside a container that the
+        // cache is allowed to store. A border on each row puts strokes in the
+        // encoding too, not only fills: a stroke's transform travels the same
+        // `append` path as a fill's, and a mis-scaled placement shows up in
+        // stroke width before it shows up anywhere else.
+        let scene = || {
+            let rows = (0..6u32)
+                .map(|i| {
+                    Scene::Box(BoxNode::new(
+                        Rect::new(4, i * 12, 80, 9),
+                        BoxStyle::filled(Color::rgb(
+                            0x30,
+                            0x80 + u8::try_from(i * 8).unwrap(),
+                            0x40,
+                        ))
+                        .with_border(pinion_core::style::Border::new(
+                            Color::rgb(0xf0, 0xf0, 0xf0),
+                            1,
+                        )),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            let mut content = ContainerNode::new(rows);
+            content.rect = Rect::new(0, 0, 88, 72);
+            Scene::Scroll(
+                ScrollNode::new(Rect::new(4, 6, 88, 52), Scene::Container(content))
+                    .with_offset(0, OFFSET_Y),
+            )
+        };
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let render = |shot: &mut HeadlessScreenshot, vello: &VelloScene| -> Vec<u8> {
+            shot.render_to_rgba8(vello, W, H, PenikoColor::BLACK)
+                .expect("render")
+        };
+
+        let mut text = LayoutCache::new();
+        let mut reference = VelloScene::new();
+        to_vello(&scene(), &|_| None, &mut text, &mut reference);
+        let reference_px = render(&mut shot, &reference);
+
+        let mut cache = FragmentCache::new();
+        let mut images = ImageCache::new();
+        let mut first = VelloScene::new();
+        to_vello_cached(
+            &scene(),
+            &|_| None,
+            &mut text,
+            &mut images,
+            &mut cache,
+            &mut first,
+        );
+        assert_eq!(
+            (cache.hits(), cache.misses()),
+            (0, 1),
+            "the first cached paint encodes the scrolled container"
+        );
+        let first_px = render(&mut shot, &first);
+
+        let mut second = VelloScene::new();
+        to_vello_cached(
+            &scene(),
+            &|_| None,
+            &mut text,
+            &mut images,
+            &mut cache,
+            &mut second,
+        );
+        assert_eq!(
+            (cache.hits(), cache.misses()),
+            (1, 1),
+            "the second cached paint replays the stored fragment"
+        );
+        let second_px = render(&mut shot, &second);
+
+        // A scrolled row must actually be ON screen, or all three frames could
+        // agree by being uniformly blank. `ink_pixel_count` counts non-base
+        // pixels across the whole framebuffer.
+        let ink = ink_pixel_count(&reference_px, W, H);
+        assert!(
+            ink > 200,
+            "the reference frame must contain the scrolled rows, got {ink} inked px"
+        );
+
+        // Whole-frame comparison (R1514): a probe at one coordinate cannot
+        // distinguish "placed correctly" from "placed one row off".
+        let diff =
+            |a: &[u8], b: &[u8]| -> usize { a.iter().zip(b).filter(|(x, y)| x != y).count() };
+        assert_eq!(
+            diff(&reference_px, &first_px),
+            0,
+            "cached first paint differs from the uncached reference in {} bytes",
+            diff(&reference_px, &first_px)
+        );
+        assert_eq!(
+            diff(&reference_px, &second_px),
+            0,
+            "cache REPLAY differs from the uncached reference in {} bytes",
+            diff(&reference_px, &second_px)
+        );
+    }
+
     /// R1358 §5.3 §5.16 — a `Scene::Path`'s commands are relative to its own
     /// `rect`, and `paint_path` carries the rect origin in the paint
     /// transform. This is the CI-gated pin for that translate: it is the ONE
