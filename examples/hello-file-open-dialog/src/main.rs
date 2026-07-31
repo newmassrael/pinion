@@ -98,8 +98,7 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{DirEntry, Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use pinion_widget_paint::file_browser::{FileBrowserMetrics, file_browser_pane};
@@ -308,7 +307,7 @@ fn action_button(
 /// keyboard-focus flag (`[trigger, ok, cancel]`). `open` / `chosen` /
 /// browse state live in signals the owner-scoped view + access_node read
 /// directly.
-type FileOpenViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
+type FileOpenViewState = (ButtonState, ButtonState, ButtonState);
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`, reading
 /// the reactive `modal` open flag, `chosen` path, and the browse state.
@@ -316,7 +315,7 @@ type FileOpenViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 /// **last** so it paints over (and hit-tests above) the trigger content.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: FileOpenViewState, _frame: &Frame) -> Scene {
-    let (trigger_state, ok_state, cancel_state, _focus) = state;
+    let (trigger_state, ok_state, cancel_state) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
 
     let trigger = button_scene(
@@ -439,11 +438,6 @@ impl WidgetCore for FileOpenView {
             read_button_state(scene, TRIGGER_TAG),
             read_button_state(scene, OK_TAG),
             read_button_state(scene, CANCEL_TAG),
-            [
-                read_button_focused(scene, TRIGGER_TAG),
-                read_button_focused(scene, OK_TAG),
-                read_button_focused(scene, CANCEL_TAG),
-            ],
         )
     }
 
@@ -637,12 +631,7 @@ mod tests {
     use pinion_core::modal_scope_request::{self, ModalRequest};
 
     fn idle() -> FileOpenViewState {
-        (
-            ButtonState::Idle,
-            ButtonState::Idle,
-            ButtonState::Idle,
-            [false; 3],
-        )
+        (ButtonState::Idle, ButtonState::Idle, ButtonState::Idle)
     }
 
     fn intent(tag: &str) -> pinion_core::Intent {

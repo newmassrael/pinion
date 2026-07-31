@@ -80,7 +80,7 @@ use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_mod
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    SurfaceAction, button_a11y_state, read_button_focused, read_button_state, surface_action_scene,
+    SurfaceAction, button_a11y_state, read_button_state, surface_action_scene,
 };
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use std::rc::Rc;
@@ -179,7 +179,7 @@ fn close_dialog(accepted: bool) {
 /// `result` are *not* here — they live in signals the owner-scoped view +
 /// access_node read directly ([`read_state`](DialogView::read_state) is
 /// not owner-wrapped).
-type DialogViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
+type DialogViewState = (ButtonState, ButtonState, ButtonState);
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`,
 /// reading the reactive `dialog_open` + `dialog_result` signals. When
@@ -187,7 +187,7 @@ type DialogViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 /// hit-tests above) the trigger content.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: DialogViewState, _frame: &Frame) -> Scene {
-    let (trigger_state, ok_state, cancel_state, _focus) = state;
+    let (trigger_state, ok_state, cancel_state) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let open = modal().is_open();
     let result = use_dialog_result().get();
@@ -311,11 +311,6 @@ impl WidgetCore for DialogView {
             read_button_state(scene, TRIGGER_TAG),
             read_button_state(scene, OK_TAG),
             read_button_state(scene, CANCEL_TAG),
-            [
-                read_button_focused(scene, TRIGGER_TAG),
-                read_button_focused(scene, OK_TAG),
-                read_button_focused(scene, CANCEL_TAG),
-            ],
         )
     }
 
@@ -444,12 +439,7 @@ mod tests {
     use super::*;
 
     fn idle() -> DialogViewState {
-        (
-            ButtonState::Idle,
-            ButtonState::Idle,
-            ButtonState::Idle,
-            [false; 3],
-        )
+        (ButtonState::Idle, ButtonState::Idle, ButtonState::Idle)
     }
 
     // ----- a11y -----
@@ -528,25 +518,28 @@ mod tests {
         None
     }
 
+    /// R1512 — the R694 test this replaces asserted that a focused action
+    /// button painted its OWN border. R1511 retired that ring (the shell's
+    /// §5.39 overlay is the focus indicator, and once the vello adapter began
+    /// honouring a container's border the widget-local one would have painted
+    /// a second ring underneath it), so the property to pin is the inverse:
+    /// no action button declares a border in any posture. The overlay ring
+    /// itself is asserted end-to-end by `tools/demos/r694_focus_ring.py`,
+    /// which reads it from the paint scene where the shell injects it — this
+    /// view-fn never sees it.
     #[test]
-    fn r694_focused_action_button_paints_ring_others_do_not() {
+    fn r1512_action_buttons_declare_no_border_of_their_own() {
         Owner::new().run(|| {
             modal().open(dialog_members());
-            // Cancel focused (the auto-focus default); ok + trigger not.
-            let state = (
-                ButtonState::Idle,
-                ButtonState::Idle,
-                ButtonState::Idle,
-                [false, false, true],
-            );
-            let scene = view(state, &Frame::new());
-            let cancel = find_tagged(&scene, CANCEL_TAG).expect("cancel button painted");
-            assert!(
-                cancel.style.border.is_some(),
-                "focused Cancel paints the keyboard focus ring",
-            );
-            let ok = find_tagged(&scene, OK_TAG).expect("ok button painted");
-            assert!(ok.style.border.is_none(), "unfocused Delete has no ring");
+            let scene = view(idle(), &Frame::new());
+            for tag in [CANCEL_TAG, OK_TAG] {
+                let btn = find_tagged(&scene, tag).expect("button painted");
+                assert!(
+                    btn.style.border.is_none(),
+                    "{tag} must declare no border; the shell overlay owns the \
+                     focus indicator",
+                );
+            }
         });
     }
 

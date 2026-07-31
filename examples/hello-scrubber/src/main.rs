@@ -58,8 +58,7 @@ use pinion_core::widgets::transport::{TransportClock, use_transport_clock};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 use pinion_widget_paint::slider::read_slider_state;
 
@@ -148,7 +147,7 @@ fn toggle_button(label: &str, posture: ButtonState, theme: &Theme) -> Scene {
 /// interaction posture (for the a11y node), the toggle button's posture, and
 /// whether the toggle is focused (for its focus ring). The playhead itself
 /// lives in the animation-driven [`TransportClock`] the view reads directly.
-type ScrubState = (SliderState, ButtonState, bool);
+type ScrubState = (SliderState, ButtonState);
 
 /// view-fn (§6.3): pure sync `ScrubState -> Scene`, reading the animation-driven
 /// clock for the playhead + status. No side-effects — the clock only *advances*
@@ -158,7 +157,7 @@ type ScrubState = (SliderState, ButtonState, bool);
     reason = "the WidgetCore::view trait hands the frame by reference"
 )]
 fn view(state: ScrubState, _frame: &Frame) -> Scene {
-    let (scrub_state, toggle_posture, _toggle_focused) = state;
+    let (scrub_state, toggle_posture) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -290,11 +289,7 @@ impl WidgetCore for ScrubberView {
     fn read_state(scene: &Scene) -> ScrubState {
         let scrub =
             read_slider_state(scene, SCRUB_TAG).map_or(SliderState::Idle, |(state, _value)| state);
-        (
-            scrub,
-            read_button_state(scene, TOGGLE_TAG),
-            read_button_focused(scene, TOGGLE_TAG),
-        )
+        (scrub, read_button_state(scene, TOGGLE_TAG))
     }
 
     fn view(state: ScrubState, frame: &Frame) -> Scene {
@@ -385,7 +380,7 @@ impl WidgetA11y for ScrubberView {
     /// Slider's stale internal value), and the play/pause toggle `button`. The
     /// bar geometry itself is read as data via `scene/snapshot`.
     fn access_node(state: &ScrubState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (scrub_state, toggle_posture, _toggle_focused) = *state;
+        let (scrub_state, toggle_posture) = *state;
         let clock = use_transport_clock(CLOCK_KEY, DURATION_SECS);
         let status = status_line(&clock);
         vec![
@@ -432,7 +427,7 @@ mod tests {
     use pinion_core::widgets::transport::TransportStatus;
 
     fn idle() -> ScrubState {
-        (SliderState::Idle, ButtonState::Idle, false)
+        (SliderState::Idle, ButtonState::Idle)
     }
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {

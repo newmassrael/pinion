@@ -82,8 +82,7 @@ use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, p
 use pinion_core::{Frame, Scene, WidgetCore, use_local_task_pump};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_virtual_list;
@@ -574,14 +573,14 @@ fn toolbar_button(
 /// Cached postures of the two toolbar buttons + their focus flags
 /// (`[sort, filter]`). The query params + async data live in the reactive layer
 /// the owner-scoped view + `access_node` read directly.
-type AssetBrowserState = (ButtonState, ButtonState, [bool; 2]);
+type AssetBrowserState = (ButtonState, ButtonState);
 
 /// view-fn (§6.3): pure sync `(button postures) -> Scene`. Reads the sort/filter
 /// query Signals, the count `Resource`, the scroll offset, and each visible
 /// page's state; the data is virtual, out-of-memory, and source-side ordered.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: AssetBrowserState, _frame: &Frame) -> Scene {
-    let (sort_posture, filter_posture, _focus) = state;
+    let (sort_posture, filter_posture) = state;
     let scroll = use_scroll_state(SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
     let cache = page_cache();
@@ -721,10 +720,6 @@ impl WidgetCore for AssetBrowserView {
         (
             read_button_state(scene, SORT_TAG),
             read_button_state(scene, FILTER_TAG),
-            [
-                read_button_focused(scene, SORT_TAG),
-                read_button_focused(scene, FILTER_TAG),
-            ],
         )
     }
 
@@ -793,7 +788,7 @@ impl WidgetA11y for AssetBrowserView {
     /// painted row text via `enrich_names_from_scene` (the windowed-list
     /// convention shared with `hello-lazy-list`).
     fn access_node(state: &AssetBrowserState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (sort_posture, filter_posture, _focus) = *state;
+        let (sort_posture, filter_posture) = *state;
         let scroll = use_scroll_state(SCROLL_KEY);
         let filter = filter_signal().get();
         let count_state = count_resource().state();
@@ -850,7 +845,7 @@ mod tests {
     use super::*;
 
     fn idle() -> AssetBrowserState {
-        (ButtonState::Idle, ButtonState::Idle, [false, false])
+        (ButtonState::Idle, ButtonState::Idle)
     }
 
     /// Drive the owner-scoped `LocalTaskPump` to completion — what the shell

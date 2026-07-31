@@ -98,8 +98,7 @@ use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_text::CaretRect;
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use pinion_widget_paint::file_browser::{FileBrowserMetrics, file_browser_pane};
@@ -400,14 +399,7 @@ fn action_button(
 /// filename field's interaction state + caret byte offset. `open` /
 /// `saved` / browse state / field text live in signals the owner-scoped
 /// view + access_node read directly.
-type FileSaveViewState = (
-    ButtonState,
-    ButtonState,
-    ButtonState,
-    [bool; 3],
-    TextFieldState,
-    u32,
-);
+type FileSaveViewState = (ButtonState, ButtonState, ButtonState, TextFieldState, u32);
 
 /// view-fn (§6.3): pure sync mapping `(postures) -> Scene`, reading the
 /// reactive `modal` open flag, `saved` path, browse state, and filename
@@ -415,7 +407,7 @@ type FileSaveViewState = (
 /// filename field) is pushed **last** so it paints over the trigger.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: FileSaveViewState, _frame: &Frame) -> Scene {
-    let (trigger_state, save_state, cancel_state, _focus, fname_interaction, fname_caret) = state;
+    let (trigger_state, save_state, cancel_state, fname_interaction, fname_caret) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
 
     let trigger = button_scene(
@@ -559,11 +551,6 @@ impl WidgetCore for FileSaveView {
             read_button_state(scene, TRIGGER_TAG),
             read_button_state(scene, SAVE_TAG),
             read_button_state(scene, CANCEL_TAG),
-            [
-                read_button_focused(scene, TRIGGER_TAG),
-                read_button_focused(scene, SAVE_TAG),
-                read_button_focused(scene, CANCEL_TAG),
-            ],
             fname_interaction,
             fname_caret,
         )
@@ -682,7 +669,7 @@ impl WidgetCore for FileSaveView {
             state.0,
             state.1,
             state.2,
-            state.4.as_name(),
+            state.3.as_name(),
         )
     }
 }
@@ -727,7 +714,7 @@ impl WidgetA11y for FileSaveView {
         nodes.push(tf_paint::text_field_a11y_node(
             FILENAME_TAG,
             name,
-            state.4,
+            state.3,
             focused == Some(FILENAME_TAG),
         ));
         // Save reflects the name gate (aria-disabled until a name typed).
@@ -774,7 +761,7 @@ impl WidgetView for FileSaveView {
         if focused != Some(FILENAME_TAG) {
             return None;
         }
-        let (interaction, caret_byte) = (state.4, state.5);
+        let (interaction, caret_byte) = (state.3, state.4);
         let field_rect = pinion_shell::rect_for_tag(scene, FILENAME_TAG)?;
         let theme = use_theme(THEME_TAG).theme_animated();
         Some(tf_paint::ime_caret_rect_for(
@@ -803,7 +790,6 @@ mod tests {
             ButtonState::Idle,
             ButtonState::Idle,
             ButtonState::Idle,
-            [false; 3],
             TextFieldState::Idle,
             0,
         )

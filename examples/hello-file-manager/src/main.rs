@@ -76,8 +76,7 @@ use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_text::CaretRect;
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 use pinion_widget_paint::file_browser::{EditingRow, FileBrowserMetrics, file_browser_pane};
 use pinion_widget_paint::text_field as tf_paint;
@@ -260,13 +259,12 @@ fn rename_field_style(width: u32, pitch: u32) -> tf_paint::TextFieldStyle {
 }
 
 /// Cached posture for the paint fn: `[newdir, newfile, rename, delete]`
-/// states + focus flags, then the rename field's interaction + caret.
+/// states, then the rename field's interaction + caret.
 type FmViewState = (
     ButtonState,
     ButtonState,
     ButtonState,
     ButtonState,
-    [bool; 4],
     TextFieldState,
     u32,
 );
@@ -277,15 +275,8 @@ type FmViewState = (
 // R1026 — rustfmt's reflow pushed this example view past too_many_lines (100).
 #[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
 fn view(state: FmViewState, _frame: &Frame) -> Scene {
-    let (
-        newdir_state,
-        newfile_state,
-        rename_state_btn,
-        delete_state,
-        _focus,
-        tf_interaction,
-        tf_caret,
-    ) = state;
+    let (newdir_state, newfile_state, rename_state_btn, delete_state, tf_interaction, tf_caret) =
+        state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let dir = directory();
     let scroll = use_scroll_state(SCROLL_KEY);
@@ -444,12 +435,6 @@ impl WidgetCore for FileManagerView {
             read_button_state(scene, NEWFILE_TAG),
             read_button_state(scene, RENAME_TAG),
             read_button_state(scene, DELETE_TAG),
-            [
-                read_button_focused(scene, NEWDIR_TAG),
-                read_button_focused(scene, NEWFILE_TAG),
-                read_button_focused(scene, RENAME_TAG),
-                read_button_focused(scene, DELETE_TAG),
-            ],
             tf_interaction,
             tf_caret,
         )
@@ -640,7 +625,7 @@ impl WidgetA11y for FileManagerView {
             nodes.push(tf_paint::text_field_a11y_node(
                 RENAME_TF_TAG,
                 rename_state().text(),
-                state.5,
+                state.4,
                 focused == Some(RENAME_TF_TAG),
             ));
         }
@@ -724,8 +709,8 @@ impl WidgetView for FileManagerView {
         // The field fills a list row; mirror the paint style's row sizing.
         Some(tf_paint::ime_caret_rect_for(
             RENAME_TF_TAG,
+            state.4,
             state.5,
-            state.6,
             field_rect,
             &theme,
             &rename_field_style(LIST_W, ROW_PITCH),
@@ -748,7 +733,6 @@ mod tests {
             ButtonState::Idle,
             ButtonState::Idle,
             ButtonState::Idle,
-            [false; 4],
             TextFieldState::Idle,
             0,
         )

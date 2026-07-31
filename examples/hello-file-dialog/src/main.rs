@@ -52,7 +52,7 @@ use pinion_core::{
 };
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_state,
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -216,13 +216,13 @@ fn button_scene(
 /// Cached posture of the three buttons + their focus flags
 /// (`[open, save, pick]`). The dialog result lives in the [`Resource`]
 /// the owner-scoped view + `access_node` read directly.
-type FileDialogViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
+type FileDialogViewState = (ButtonState, ButtonState, ButtonState);
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`,
 /// reading the reactive [`Resource`] for the status line.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: FileDialogViewState, _frame: &Frame) -> Scene {
-    let (open_state, save_state, pick_state, _focus) = state;
+    let (open_state, save_state, pick_state) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
 
     let title = Scene::Text(TextNode::styled(
@@ -304,11 +304,6 @@ impl WidgetCore for FileDialogView {
             read_button_state(scene, OPEN_TAG),
             read_button_state(scene, SAVE_TAG),
             read_button_state(scene, PICK_TAG),
-            [
-                read_button_focused(scene, OPEN_TAG),
-                read_button_focused(scene, SAVE_TAG),
-                read_button_focused(scene, PICK_TAG),
-            ],
         )
     }
 
@@ -365,7 +360,7 @@ impl WidgetA11y for FileDialogView {
     fn access_node(state: &FileDialogViewState, focused: Option<&str>) -> Vec<AccessNode> {
         // The `[bool; 3]` focus array drives the painted ring in `view`;
         // a11y focus comes from the `focused` param (mirrors hello-snackbar).
-        let (open_state, save_state, pick_state, _focus) = *state;
+        let (open_state, save_state, pick_state) = *state;
         vec![
             AccessNode::new(OPEN_TAG, AriaRole::Button)
                 .with_state(button_a11y_state(open_state, focused == Some(OPEN_TAG))),
@@ -398,12 +393,7 @@ mod tests {
     use super::*;
 
     fn idle() -> FileDialogViewState {
-        (
-            ButtonState::Idle,
-            ButtonState::Idle,
-            ButtonState::Idle,
-            [false, false, false],
-        )
+        (ButtonState::Idle, ButtonState::Idle, ButtonState::Idle)
     }
 
     fn find_container<'a>(scene: &'a Scene, tag: &str) -> Option<&'a ContainerNode> {

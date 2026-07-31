@@ -82,7 +82,7 @@ use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_mod
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    SurfaceAction, button_a11y_state, read_button_focused, read_button_state, surface_action_scene,
+    SurfaceAction, button_a11y_state, read_button_state, surface_action_scene,
 };
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use std::rc::Rc;
@@ -221,7 +221,7 @@ fn back_to_editor() {
 
 /// `[trigger, field, result, back, row_field, row_results]` postures plus
 /// their R694 keyboard-focus flags, read back from the state scene.
-type RefocusState = ([ButtonState; 6], [bool; 6]);
+type RefocusState = [ButtonState; 6];
 
 const TAGS: [&str; 6] = [
     TRIGGER_TAG,
@@ -236,7 +236,7 @@ const TAGS: [&str; 6] = [
 /// the two views is painted, and the palette overlays whichever is up.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: RefocusState, _frame: &Frame) -> Scene {
-    let (postures, _focus) = state;
+    let postures = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let palette_open = palette().is_open();
     let results = results_open().get();
@@ -352,10 +352,7 @@ impl WidgetCore for RefocusView {
     }
 
     fn read_state(scene: &Scene) -> RefocusState {
-        (
-            TAGS.map(|t| read_button_state(scene, t)),
-            TAGS.map(|t| read_button_focused(scene, t)),
-        )
+        TAGS.map(|t| read_button_state(scene, t))
     }
 
     fn view(state: RefocusState, frame: &Frame) -> Scene {
@@ -414,7 +411,7 @@ impl WidgetCore for RefocusView {
     }
 
     fn fmt_state_log(state: &RefocusState) -> String {
-        format!("postures={:?}", state.0)
+        format!("postures={state:?}")
     }
 }
 
@@ -424,7 +421,7 @@ impl WidgetA11y for RefocusView {
     /// — an AT user is never told about a control the current view does
     /// not show.
     fn access_node(state: &RefocusState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (postures, _) = state;
+        let postures = state;
         let button = |i: usize| {
             AccessNode::new(TAGS[i], AriaRole::Button)
                 .with_state(button_a11y_state(postures[i], focused == Some(TAGS[i])))
@@ -467,7 +464,7 @@ mod tests {
     use pinion_core::modal_scope_request::{self, ModalRequest};
 
     fn idle() -> RefocusState {
-        ([ButtonState::Idle; 6], [false; 6])
+        [ButtonState::Idle; 6]
     }
 
     fn intent(tag: &str) -> pinion_core::Intent {

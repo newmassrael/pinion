@@ -70,9 +70,7 @@ use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, WindowSpec, vello_renderer_impl};
-use pinion_widget_paint::button::{
-    SurfaceAction, read_button_focused, read_button_state, surface_action_scene,
-};
+use pinion_widget_paint::button::{SurfaceAction, read_button_state, surface_action_scene};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -218,7 +216,7 @@ fn editor_panel(tag: &'static str, label: &str, theme: &Theme) -> Scene {
 /// `[edit_title, edit_note]` postures plus their R694 keyboard-focus flags,
 /// read back from the state scene. Both triggers live in the main window, so
 /// the single-window state read covers them.
-type RefocusState = ([ButtonState; 2], [bool; 2]);
+type RefocusState = [ButtonState; 2];
 
 fn status_line(editing_now: Editing, window_id: &str, theme: &Theme) -> Scene {
     Scene::Text(
@@ -249,7 +247,7 @@ fn column(children: Vec<Scene>, theme: &Theme) -> Scene {
 
 /// The main window: the two triggers, and the title editor while it is open.
 fn view_main(state: RefocusState, theme: &Theme) -> Scene {
-    let (postures, _focused) = state;
+    let postures = state;
     let editing_now = editing().get();
     let trigger = |i: usize, label: &str| {
         surface_action_scene(
@@ -330,10 +328,7 @@ impl WidgetCore for WindowRefocusView {
     }
 
     fn read_state(scene: &Scene) -> RefocusState {
-        (
-            TAGS.map(|t| read_button_state(scene, t)),
-            TAGS.map(|t| read_button_focused(scene, t)),
-        )
+        TAGS.map(|t| read_button_state(scene, t))
     }
 
     fn view(state: RefocusState, _frame: &Frame) -> Scene {
@@ -389,7 +384,7 @@ impl WidgetCore for WindowRefocusView {
     }
 
     fn fmt_state_log(state: &RefocusState) -> String {
-        format!("triggers={:?}", state.0)
+        format!("triggers={state:?}")
     }
 }
 
@@ -451,7 +446,7 @@ mod tests {
     use pinion_shell::ShellCore;
 
     fn idle() -> RefocusState {
-        ([ButtonState::Idle; 2], [false; 2])
+        [ButtonState::Idle; 2]
     }
 
     /// Drive an intent the way a real click does — through

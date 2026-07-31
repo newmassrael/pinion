@@ -43,7 +43,7 @@ use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_state,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -119,13 +119,13 @@ fn button_scene(
 /// redo]`. The counter value + the stack's reactive history live in the
 /// `Signal` / [`UndoStack`] the owner-scoped view + `access_node` read
 /// directly (the snackbar pattern).
-type UndoViewState = ([ButtonState; 4], [bool; 4]);
+type UndoViewState = [ButtonState; 4];
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`, reading
 /// the reactive counter + the [`UndoStack`]'s history boundaries.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: UndoViewState, _frame: &Frame) -> Scene {
-    let ([dec_s, inc_s, undo_s, redo_s], _focus) = state;
+    let [dec_s, inc_s, undo_s, redo_s] = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let value = counter().get();
     let st = stack();
@@ -243,20 +243,12 @@ impl WidgetCore for UndoView {
     }
 
     fn read_state(scene: &Scene) -> UndoViewState {
-        (
-            [
-                read_button_state(scene, DEC_TAG),
-                read_button_state(scene, INC_TAG),
-                read_button_state(scene, UNDO_TAG),
-                read_button_state(scene, REDO_TAG),
-            ],
-            [
-                read_button_focused(scene, DEC_TAG),
-                read_button_focused(scene, INC_TAG),
-                read_button_focused(scene, UNDO_TAG),
-                read_button_focused(scene, REDO_TAG),
-            ],
-        )
+        [
+            read_button_state(scene, DEC_TAG),
+            read_button_state(scene, INC_TAG),
+            read_button_state(scene, UNDO_TAG),
+            read_button_state(scene, REDO_TAG),
+        ]
     }
 
     fn view(state: UndoViewState, frame: &Frame) -> Scene {
@@ -319,7 +311,7 @@ impl WidgetA11y for UndoView {
     /// Four [`AriaRole::Button`]s; `Undo` / `Redo` carry `disabled` at the
     /// history boundaries (the same posture the view paints).
     fn access_node(state: &UndoViewState, focused: Option<&str>) -> Vec<AccessNode> {
-        let ([dec_s, inc_s, undo_s, redo_s], _) = *state;
+        let [dec_s, inc_s, undo_s, redo_s] = *state;
         let st = stack();
         let undo_state = if st.can_undo() {
             undo_s
@@ -377,7 +369,7 @@ mod tests {
                     (*tag).to_string(),
                     pinion_core::external::IntrospectValue::Null,
                 );
-                let _ = UndoView::update(([ButtonState::Idle; 4], [false; 4]), &intent);
+                let _ = UndoView::update([ButtonState::Idle; 4], &intent);
             }
             let st = stack();
             (counter().get(), st.index(), st.len())
@@ -422,8 +414,8 @@ mod tests {
     /// first because `tag() == INC_TAG`; tree order = tab order now).
     #[test]
     fn r1020_focusable_enumeration_is_tree_order() {
-        let scene = Owner::new()
-            .run(|| UndoView::view(([ButtonState::Idle; 4], [false; 4]), &Frame::with_dt(0.0)));
+        let scene =
+            Owner::new().run(|| UndoView::view([ButtonState::Idle; 4], &Frame::with_dt(0.0)));
         assert_eq!(
             scene.collect_focusable_tags(),
             vec![

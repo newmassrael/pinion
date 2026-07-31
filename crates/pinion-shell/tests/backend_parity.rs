@@ -11,14 +11,26 @@
 //! This is that comparison, and it is deliberately BACKEND-NEUTRAL. The three
 //! renderers emit incomparable artifacts — a vello `Encoding`, a ratatui cell
 //! `Buffer`, a PDF content stream — so the property asserted is not "they draw
-//! the same thing" (they cannot) but the one thing they must all do:
+//! the same thing" (they cannot) but whether each one OBSERVES a declaration:
 //!
-//!   for every renderer R and every node type N,
-//!     render(R, N with a declared border) != render(R, N without one)
+//!   render(R, N with the declaration) != render(R, N without it)
 //!
-//! The R1511 defect is precisely one cell of that matrix — vello × Container —
-//! having been EQUAL. A future edit that drops the declaration in any renderer,
-//! for either node type, fails here rather than in nothing.
+//! The R1511 defect is precisely one cell of that matrix — vello × Container ×
+//! border — having been EQUAL.
+//!
+//! # Ignoring is also a claim
+//!
+//! Not every renderer must honour every declaration, and R1512's first draft
+//! covered only `border`, where all three must. A TUI cell is discrete: the
+//! walker's own doc says "no border thickness or rounded corners exist at this
+//! resolution", so it MUST ignore `corner_radius`. That is a contract too, and
+//! an unchecked one is how the R1511 class starts — "this backend does not do
+//! that" was exactly the shape of the silence.
+//!
+//! So each declaration carries the set of renderers that must observe it, and
+//! the rest are asserted to be BYTE-IDENTICAL with and without it. A renderer
+//! that quietly starts honouring something fails here just as loudly as one
+//! that stops.
 //!
 //! Determinism is asserted first and is load-bearing: an inequality between two
 //! renders means nothing if a renderer is not stable for a fixed scene, so each
@@ -40,7 +52,7 @@
 //! (corner radius, shadows, clip — each is the same shape) that is the signal.
 
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
-use pinion_core::style::{Border, BoxStyle, Color, TextStyle};
+use pinion_core::style::{Border, BoxShadow, BoxStyle, Color, TextStyle};
 use pinion_runtime::paint_adapter::to_vello;
 use pinion_text::LayoutCache;
 use pinion_tui::ratatui::buffer::Buffer;
@@ -53,6 +65,49 @@ fn rect() -> Rect {
 const FILL: Color = Color::rgb(0x20, 0x20, 0x20);
 const STROKE: Color = Color::rgb(0xff, 0x30, 0x30);
 const BORDER_W: u32 = 3;
+
+/// One thing a `BoxStyle` can declare, plus the renderers that must observe
+/// it. Renderers absent from `observers` are required to be indifferent.
+struct Declaration {
+    name: &'static str,
+    apply: fn(BoxStyle) -> BoxStyle,
+    observers: &'static [&'static str],
+    /// Why the non-observers are right to ignore it — stated so the table is
+    /// a contract and not a record of current behaviour.
+    #[allow(dead_code)]
+    why: &'static str,
+}
+
+const DECLARATIONS: [Declaration; 3] = [
+    Declaration {
+        name: "border",
+        apply: |s| s.with_border(Border::new(STROKE, BORDER_W)),
+        observers: &["vello", "tui", "pdf"],
+        why: "an outline is expressible in every medium — box-drawing glyphs \
+              in cells, a stroked path in vector output",
+    },
+    Declaration {
+        name: "corner_radius",
+        apply: |s| s.with_corner_radius(12),
+        observers: &["vello", "pdf"],
+        why: "a TUI cell is discrete; `pinion_tui::paint` documents that no \
+              rounded corners exist at that resolution",
+    },
+    Declaration {
+        name: "shadows",
+        apply: |s| {
+            s.with_shadows(vec![
+                BoxShadow::new(Color::rgb(0, 0, 0))
+                    .with_offset(0.0, 2.0)
+                    .with_blur(4.0),
+            ])
+        },
+        observers: &["vello"],
+        why: "a blurred penumbra has no cell representation, and the PDF \
+              projector paints fill + border only (its module doc lists what \
+              it handles)",
+    },
+];
 
 /// The two node types that carry a `BoxStyle`. Both must observe it.
 #[derive(Clone, Copy, Debug)]
@@ -70,10 +125,10 @@ impl NodeKind {
     /// a border is absent — without it the no-border container renders a blank
     /// buffer and the inequality would be trivially satisfied for the wrong
     /// reason.
-    fn scene(self, border: Option<Border>) -> Scene {
+    fn scene(self, decl: Option<&Declaration>) -> Scene {
         let mut style = BoxStyle::filled(FILL);
-        if let Some(b) = border {
-            style = style.with_border(b);
+        if let Some(d) = decl {
+            style = (d.apply)(style);
         }
         match self {
             Self::Box => Scene::Box(BoxNode::new(rect(), style)),
@@ -143,32 +198,44 @@ const RENDERERS: [Renderer; 3] = [
 ];
 
 #[test]
-fn r1512_every_renderer_observes_a_declared_border() {
-    let border = Border::new(STROKE, BORDER_W);
-    for renderer in &RENDERERS {
-        for kind in NodeKind::ALL {
-            let with = kind.scene(Some(border));
-            let without = kind.scene(None);
+fn r1512_every_renderer_answers_each_declaration_the_same_way_for_both_nodes() {
+    for decl in &DECLARATIONS {
+        for renderer in &RENDERERS {
+            for kind in NodeKind::ALL {
+                let with = kind.scene(Some(decl));
+                let without = kind.scene(None);
 
-            // Determinism first: an inequality between two renders is evidence
-            // only if the renderer is stable for a fixed scene.
-            let a = (renderer.render)(&with);
-            let b = (renderer.render)(&with);
-            assert_eq!(
-                a, b,
-                "{} is not deterministic for {kind:?}; every comparison below \
-                 would be noise",
-                renderer.name
-            );
+                // Determinism first: an inequality between two renders is
+                // evidence only if the renderer is stable for a fixed scene.
+                let a = (renderer.render)(&with);
+                let b = (renderer.render)(&with);
+                assert_eq!(
+                    a, b,
+                    "{} is not deterministic for {kind:?}; every comparison \
+                     below would be noise",
+                    renderer.name
+                );
 
-            let bare = (renderer.render)(&without);
-            assert_ne!(
-                a, bare,
-                "{} ignores the border declared on a Scene::{kind:?} — the \
-                 §2 #6 divergence R1511 found, in the cell for this renderer \
-                 and node type",
-                renderer.name
-            );
+                let bare = (renderer.render)(&without);
+                if decl.observers.contains(&renderer.name) {
+                    assert_ne!(
+                        a, bare,
+                        "{} ignores `{}` declared on a Scene::{kind:?} — the \
+                         §2 #6 divergence R1511 found, in this cell",
+                        renderer.name, decl.name
+                    );
+                } else {
+                    assert_eq!(
+                        a, bare,
+                        "{} started honouring `{}` on a Scene::{kind:?}. That \
+                         may be an improvement, but the table says it does \
+                         not, and an unstated change of medium is how the \
+                         R1511 silence began — move it into `observers` with \
+                         a reason",
+                        renderer.name, decl.name
+                    );
+                }
+            }
         }
     }
 }
@@ -184,7 +251,7 @@ fn r1512_every_renderer_observes_a_declared_border() {
 /// this file a second, competing source of truth for three backends at once.
 #[test]
 fn r1512_each_renderer_draws_a_border_in_its_own_vocabulary() {
-    let border = Border::new(STROKE, BORDER_W);
+    let border = &DECLARATIONS[0];
     for kind in NodeKind::ALL {
         let with = kind.scene(Some(border));
         let without = kind.scene(None);

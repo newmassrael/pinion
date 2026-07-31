@@ -54,7 +54,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::use_scene_revision;
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_state,
 };
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
@@ -235,7 +235,7 @@ fn status_line(points: &[DataPoint], window: (f64, f64)) -> String {
 /// producer thread is spawned in `create_extra_externals`).
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: LiveChartState, _frame: &Frame) -> Scene {
-    let (posture, _focused) = state;
+    let posture = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -297,7 +297,7 @@ fn view(state: LiveChartState, _frame: &Frame) -> Scene {
 
 /// Cached posture of the Tick button + its focus flag. The samples live in the
 /// producer-authoritative ring the owner-scoped view reads directly.
-type LiveChartState = (ButtonState, bool);
+type LiveChartState = ButtonState;
 
 struct LiveChartView;
 
@@ -321,10 +321,7 @@ impl WidgetCore for LiveChartView {
     }
 
     fn read_state(scene: &Scene) -> LiveChartState {
-        (
-            read_button_state(scene, TICK_TAG),
-            read_button_focused(scene, TICK_TAG),
-        )
+        read_button_state(scene, TICK_TAG)
     }
 
     fn view(state: LiveChartState, frame: &Frame) -> Scene {
@@ -372,7 +369,7 @@ impl WidgetA11y for LiveChartView {
     /// screen reader hears each streamed update), plus the Tick `button`. The
     /// chart geometry itself is read as data via `scene/snapshot`.
     fn access_node(state: &LiveChartState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (posture, _focused) = *state;
+        let posture = *state;
         let points = samples(&use_live_samples());
         let window = window_domain(&points, WINDOW_SPAN);
         vec![
@@ -405,7 +402,7 @@ mod tests {
     use super::*;
 
     fn idle() -> LiveChartState {
-        (ButtonState::Idle, false)
+        ButtonState::Idle
     }
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {

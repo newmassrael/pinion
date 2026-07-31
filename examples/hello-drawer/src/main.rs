@@ -81,7 +81,7 @@ use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_mod
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    SurfaceAction, button_a11y_state, read_button_focused, read_button_state, surface_action_scene,
+    SurfaceAction, button_a11y_state, read_button_state, surface_action_scene,
 };
 use pinion_widget_paint::drawer::{DrawerStyle, view_drawer};
 use std::rc::Rc;
@@ -195,8 +195,6 @@ fn select(index: usize) {
 struct DrawerViewState {
     trigger: ButtonState,
     items: [ButtonState; NAV_N],
-    trigger_focused: bool,
-    items_focused: [bool; NAV_N],
 }
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`,
@@ -319,16 +317,12 @@ impl WidgetCore for DrawerView {
 
     fn read_state(scene: &Scene) -> DrawerViewState {
         let mut items = [ButtonState::Idle; NAV_N];
-        let mut items_focused = [false; NAV_N];
         for (i, tag) in NAV_TAGS.iter().enumerate() {
             items[i] = read_button_state(scene, tag);
-            items_focused[i] = read_button_focused(scene, tag);
         }
         DrawerViewState {
             trigger: read_button_state(scene, TRIGGER_TAG),
             items,
-            trigger_focused: read_button_focused(scene, TRIGGER_TAG),
-            items_focused,
         }
     }
 
@@ -464,8 +458,6 @@ mod tests {
         DrawerViewState {
             trigger: ButtonState::Idle,
             items: [ButtonState::Idle; NAV_N],
-            trigger_focused: false,
-            items_focused: [false; NAV_N],
         }
     }
 

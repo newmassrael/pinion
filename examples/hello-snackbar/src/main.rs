@@ -53,7 +53,7 @@ use pinion_core::widgets::snackbar::{
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_state,
 };
 use std::rc::Rc;
 
@@ -188,13 +188,13 @@ fn snackbar_overlay(undo_state: ButtonState, theme: &pinion_core::theme::Theme) 
 /// Cached posture of the two buttons + their focus flags
 /// (`[show, undo]`). The snackbar visibility + undo count live in the
 /// timer / Signal the owner-scoped view + `access_node` read directly.
-type SnackbarViewState = (ButtonState, ButtonState, [bool; 2]);
+type SnackbarViewState = (ButtonState, ButtonState);
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`,
 /// reading the reactive `SnackbarTimer` + undo-count signal.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: SnackbarViewState, _frame: &Frame) -> Scene {
-    let (show_state, undo_state, _focus) = state;
+    let (show_state, undo_state) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let visible = snackbar().visible();
     let undos = undo_count().get();
@@ -273,10 +273,6 @@ impl WidgetCore for SnackbarView {
         (
             read_button_state(scene, SHOW_TAG),
             read_button_state(scene, UNDO_TAG),
-            [
-                read_button_focused(scene, SHOW_TAG),
-                read_button_focused(scene, UNDO_TAG),
-            ],
         )
     }
 
@@ -367,7 +363,7 @@ mod tests {
     use super::*;
 
     fn idle() -> SnackbarViewState {
-        (ButtonState::Idle, ButtonState::Idle, [false, false])
+        (ButtonState::Idle, ButtonState::Idle)
     }
 
     fn rendered() -> Scene {

@@ -75792,6 +75792,54 @@
         "R1511's own sweep carry is unchanged: ~30 files' pixels moved and only CI's full sweep has seen them."
       ]
     },
+    "Round 1513": {
+      "decision_summary": "The dead half is removed where it is dead, and kept where it is read — verified per binding, not swept",
+      "changes_bullets": [
+        "The dead focus half is REMOVED from 17 bindings — the R1512 carry that said \"measured but not removed\". `read_state` walked the paint scene once per button per frame with `read_button_focused` to fill a state element that `view` ignored and `access_node` never read (it takes the shell's own `focused` argument and compares `focused == Some(TAG)`). The ViewState tuples narrow with it: `([ButtonState; 4], [bool; 4])` becomes `[ButtonState; 4]`, and positional accesses, test fixtures and `fmt_state_log` follow.",
+        "TWO bindings keep theirs, and both were found by verification rather than assumed. `hello-combobox` reads `state.trigger_focused` to choose a border colour — paint, not a11y. `hello-property-grid` builds `button_a11y_state(cancel_state, cancel_focused)` from its own state rather than from the shell's argument, which is the very thing that makes the other seventeen dead. Its comment now says so, so the next sweep does not have to rediscover it.",
+        "`hello-dialog` carried a test asserting the retired R694 widget-local ring (`cancel.style.border.is_some()`). R1511 broke it and did not notice: that round ran the three crates it changed and never the example suites, and `clippy --all-targets` compiles a test without running it. Replaced by its inverse — no action button declares a border in any posture.",
+        "The R1512 parity matrix grows a second and third contract item, which its own doc named as the signal to revisit the home decision. `corner_radius` and `shadows` are NOT observed by every renderer, so the matrix now carries, per declaration, the set of renderers that must observe it — and asserts the REST are byte-identical with and without it. A TUI cell is discrete and its walker documents that no rounded corners exist at that resolution; that is a contract, and an unchecked one is the shape the R1511 silence had."
+      ],
+      "verification_bullets": [
+        "The observer table is load-bearing in BOTH directions, measured: claim the TUI rounds corners and the test dies \"tui ignores `corner_radius`\"; drop vello from the shadow observers and it dies \"vello started honouring `shadows` ... the table says it does not\". So neither half of the table is decorative.",
+        "The removal is verified per binding, not by sweep: `cargo check --workspace --keep-going` to convergence, then the test suites of every touched example, then 20 demos — r693 dialog, r702 drawer, r694 focus ring, r725 snackbar, r748 undo, r761/r788/r789/r790 file dialogs, r836 property grid, r1413/r1414/r1415 transport-replay-scrubber, r1445 transcript, r1456/r1462/r1463 modal + window refocus, r923 async data, r927 asset browser, r1458 tail reveal — all PASS.",
+        "The mechanical patch was NOT trusted: auditing the diff line by line found two `state.0 -> state` substitutions inside `fmt_state_log`'s `format!` that COMPILED (a tuple is `Debug` too) and would have silently logged the whole state where one field belonged. Both restored. This is the second time this round a bulk edit produced a change that type-checked and was wrong, which is why the audit ran at all.",
+        "Gates: fmt / clippy `-D pedantic` / `cargo doc` clean; pinion-shell 213 + parity 2 + its other suites, and every touched example's tests green."
+      ],
+      "impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Three contract items are covered (border, corner_radius, shadows); `gradient` and `clip` are not, and the same table would take them.",
+        "A FOURTH renderer is still not forced into the matrix — it enumerates three by name. That is the standing cost of putting the test in a participant crate, and it is what a conformance crate would fix; three items did not change the judgement, because the file is still one file.",
+        "`hello-combobox` and `hello-property-grid` now diverge from the other seventeen in where they read focus from. That is honest — they genuinely consume it — but the framework offers two ways to answer \"is this button focused\" and nothing says which is canonical.",
+        "R1511's sweep carry is unchanged: ~30 files' pixels moved and only CI's full sweep has seen them. This round adds 17 bindings whose state type changed, and while their own tests and 20 demos pass locally, the rest of the sweep is still CI's."
+      ],
+      "publishable_decision_summary": "The dead half is removed where it is dead, and kept where it is read — verified per binding, not swept",
+      "publishable_changes_bullets": [
+        "The dead focus half is REMOVED from 17 bindings — the R1512 carry that said \"measured but not removed\". `read_state` walked the paint scene once per button per frame with `read_button_focused` to fill a state element that `view` ignored and `access_node` never read (it takes the shell's own `focused` argument and compares `focused == Some(TAG)`). The ViewState tuples narrow with it: `([ButtonState; 4], [bool; 4])` becomes `[ButtonState; 4]`, and positional accesses, test fixtures and `fmt_state_log` follow.",
+        "TWO bindings keep theirs, and both were found by verification rather than assumed. `hello-combobox` reads `state.trigger_focused` to choose a border colour — paint, not a11y. `hello-property-grid` builds `button_a11y_state(cancel_state, cancel_focused)` from its own state rather than from the shell's argument, which is the very thing that makes the other seventeen dead. Its comment now says so, so the next sweep does not have to rediscover it.",
+        "`hello-dialog` carried a test asserting the retired R694 widget-local ring (`cancel.style.border.is_some()`). R1511 broke it and did not notice: that round ran the three crates it changed and never the example suites, and `clippy --all-targets` compiles a test without running it. Replaced by its inverse — no action button declares a border in any posture.",
+        "The R1512 parity matrix grows a second and third contract item, which its own doc named as the signal to revisit the home decision. `corner_radius` and `shadows` are NOT observed by every renderer, so the matrix now carries, per declaration, the set of renderers that must observe it — and asserts the REST are byte-identical with and without it. A TUI cell is discrete and its walker documents that no rounded corners exist at that resolution; that is a contract, and an unchecked one is the shape the R1511 silence had."
+      ],
+      "publishable_verification_bullets": [
+        "The observer table is load-bearing in BOTH directions, measured: claim the TUI rounds corners and the test dies \"tui ignores `corner_radius`\"; drop vello from the shadow observers and it dies \"vello started honouring `shadows` ... the table says it does not\". So neither half of the table is decorative.",
+        "The removal is verified per binding, not by sweep: `cargo check --workspace --keep-going` to convergence, then the test suites of every touched example, then 20 demos — r693 dialog, r702 drawer, r694 focus ring, r725 snackbar, r748 undo, r761/r788/r789/r790 file dialogs, r836 property grid, r1413/r1414/r1415 transport-replay-scrubber, r1445 transcript, r1456/r1462/r1463 modal + window refocus, r923 async data, r927 asset browser, r1458 tail reveal — all PASS.",
+        "The mechanical patch was NOT trusted: auditing the diff line by line found two `state.0 -> state` substitutions inside `fmt_state_log`'s `format!` that COMPILED (a tuple is `Debug` too) and would have silently logged the whole state where one field belonged. Both restored. This is the second time this round a bulk edit produced a change that type-checked and was wrong, which is why the audit ran at all.",
+        "Gates: fmt / clippy `-D pedantic` / `cargo doc` clean; pinion-shell 213 + parity 2 + its other suites, and every touched example's tests green."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Three contract items are covered (border, corner_radius, shadows); `gradient` and `clip` are not, and the same table would take them.",
+        "A FOURTH renderer is still not forced into the matrix — it enumerates three by name. That is the standing cost of putting the test in a participant crate, and it is what a conformance crate would fix; three items did not change the judgement, because the file is still one file.",
+        "`hello-combobox` and `hello-property-grid` now diverge from the other seventeen in where they read focus from. That is honest — they genuinely consume it — but the framework offers two ways to answer \"is this button focused\" and nothing says which is canonical.",
+        "R1511's sweep carry is unchanged: ~30 files' pixels moved and only CI's full sweep has seen them. This round adds 17 bindings whose state type changed, and while their own tests and 20 demos pass locally, the rest of the sweep is still CI's."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

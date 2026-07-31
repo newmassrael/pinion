@@ -73,7 +73,7 @@ use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene, WidgetCore, use_local_task_pump};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_state,
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -402,14 +402,14 @@ fn clamped(posture: ButtonState, disabled: bool) -> ButtonState {
 /// Cached posture of the three nav buttons + their focus flags
 /// (`[prev, next, reload]`). The page index + async result live in the
 /// reactive layer the owner-scoped view + `access_node` read directly.
-type AsyncDataViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
+type AsyncDataViewState = (ButtonState, ButtonState, ButtonState);
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`, reading the
 /// reactive `page` Signal + `Resource` for the status line / rows. No
 /// side-effects (the refetch Effect is installed in `create_extra_externals`).
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: AsyncDataViewState, _frame: &Frame) -> Scene {
-    let (prev_posture, next_posture, reload_posture, _focus) = state;
+    let (prev_posture, next_posture, reload_posture) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let page = page_signal().get();
     let res = result().state();
@@ -507,11 +507,6 @@ impl WidgetCore for AsyncDataView {
             read_button_state(scene, PREV_TAG),
             read_button_state(scene, NEXT_TAG),
             read_button_state(scene, RELOAD_TAG),
-            [
-                read_button_focused(scene, PREV_TAG),
-                read_button_focused(scene, NEXT_TAG),
-                read_button_focused(scene, RELOAD_TAG),
-            ],
         )
     }
 
@@ -578,7 +573,7 @@ impl WidgetA11y for AsyncDataView {
     /// content must be created *and named* in the a11y tree, not left to
     /// enrich).
     fn access_node(state: &AsyncDataViewState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (prev_posture, next_posture, reload_posture, _focus) = *state;
+        let (prev_posture, next_posture, reload_posture) = *state;
         let page = page_signal().get();
         let res = result().state();
 
@@ -645,12 +640,7 @@ mod tests {
     use super::*;
 
     fn idle() -> AsyncDataViewState {
-        (
-            ButtonState::Idle,
-            ButtonState::Idle,
-            ButtonState::Idle,
-            [false, false, false],
-        )
+        (ButtonState::Idle, ButtonState::Idle, ButtonState::Idle)
     }
 
     fn find_container<'a>(scene: &'a Scene, tag: &str) -> Option<&'a ContainerNode> {

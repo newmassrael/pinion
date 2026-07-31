@@ -49,8 +49,7 @@ use pinion_core::widgets::transport::{TransportClock, use_transport_clock};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -184,7 +183,7 @@ fn transport_button(
 
 /// Cached posture + focus of the three transport buttons (`[play, pause,
 /// stop]`). The playhead lives in the animation-driven [`TransportClock`].
-type ReplayState = ([ButtonState; 3], [bool; 3]);
+type ReplayState = [ButtonState; 3];
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`, reading the
 /// animation-driven clock for the reveal cursor. No side-effects.
@@ -193,7 +192,7 @@ type ReplayState = ([ButtonState; 3], [bool; 3]);
     reason = "the WidgetCore::view trait hands the frame by reference"
 )]
 fn view(state: ReplayState, _frame: &Frame) -> Scene {
-    let (postures, _focused) = state;
+    let postures = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -284,18 +283,11 @@ impl WidgetCore for ReplayView {
     }
 
     fn read_state(scene: &Scene) -> ReplayState {
-        (
-            [
-                read_button_state(scene, PLAY_TAG),
-                read_button_state(scene, PAUSE_TAG),
-                read_button_state(scene, STOP_TAG),
-            ],
-            [
-                read_button_focused(scene, PLAY_TAG),
-                read_button_focused(scene, PAUSE_TAG),
-                read_button_focused(scene, STOP_TAG),
-            ],
-        )
+        [
+            read_button_state(scene, PLAY_TAG),
+            read_button_state(scene, PAUSE_TAG),
+            read_button_state(scene, STOP_TAG),
+        ]
     }
 
     fn view(state: ReplayState, frame: &Frame) -> Scene {
@@ -347,7 +339,7 @@ impl WidgetA11y for ReplayView {
     /// and latest value (so a screen reader hears the replay), plus the three
     /// transport `button`s. The chart geometry itself is read via `scene/snapshot`.
     fn access_node(state: &ReplayState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (postures, _focus) = state;
+        let postures = state;
         let clock = use_transport_clock(CLOCK_KEY, DURATION_SECS);
         let all = recorded();
         let revealed = &all[..revealed_count(clock.position())];
@@ -389,7 +381,7 @@ mod tests {
     use pinion_core::widgets::transport::TransportStatus;
 
     fn idle() -> ReplayState {
-        ([ButtonState::Idle; 3], [false; 3])
+        [ButtonState::Idle; 3]
     }
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {

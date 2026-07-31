@@ -64,7 +64,7 @@ use pinion_core::widgets::modal::{ModalState, modal_introspection_extra, use_mod
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    SurfaceAction, button_a11y_state, read_button_focused, read_button_state, surface_action_scene,
+    SurfaceAction, button_a11y_state, read_button_state, surface_action_scene,
 };
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
 use std::rc::Rc;
@@ -191,7 +191,7 @@ fn close_confirm(accepted: bool) {
 
 /// `[trigger, rename, delete, cancel, ok]` postures + their R694
 /// keyboard-focus flags, read back from the state scene.
-type HandoffState = ([ButtonState; 5], [bool; 5]);
+type HandoffState = [ButtonState; 5];
 
 const TAGS: [&str; 5] = [
     TRIGGER_TAG,
@@ -206,7 +206,7 @@ const TAGS: [&str; 5] = [
 /// other, so the menu and the confirm are never both painted.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: HandoffState, _frame: &Frame) -> Scene {
-    let (postures, _focus) = state;
+    let postures = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let menu_open = menu().is_open();
     let confirm_open = confirm().is_open();
@@ -325,10 +325,7 @@ impl WidgetCore for HandoffView {
     }
 
     fn read_state(scene: &Scene) -> HandoffState {
-        (
-            TAGS.map(|t| read_button_state(scene, t)),
-            TAGS.map(|t| read_button_focused(scene, t)),
-        )
+        TAGS.map(|t| read_button_state(scene, t))
     }
 
     fn view(state: HandoffState, frame: &Frame) -> Scene {
@@ -390,7 +387,7 @@ impl WidgetCore for HandoffView {
     }
 
     fn fmt_state_log(state: &HandoffState) -> String {
-        format!("postures={:?}", state.0)
+        format!("postures={state:?}")
     }
 }
 
@@ -400,7 +397,7 @@ impl WidgetA11y for HandoffView {
     /// The two never coexist, which is the handoff's whole point — an AT
     /// user is never told two modals are open at once.
     fn access_node(state: &HandoffState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (postures, _) = state;
+        let postures = state;
         let surface = if menu().is_open() {
             Some((MENU_PANEL_TAG, [1_usize, 2_usize]))
         } else if confirm().is_open() {
@@ -459,7 +456,7 @@ mod tests {
     use pinion_core::modal_scope_request::{self, ModalRequest};
 
     fn idle() -> HandoffState {
-        ([ButtonState::Idle; 5], [false; 5])
+        [ButtonState::Idle; 5]
     }
 
     fn intent(tag: &str) -> pinion_core::Intent {

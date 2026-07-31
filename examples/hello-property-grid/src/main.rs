@@ -4235,6 +4235,9 @@ impl WidgetCore for PropertyGridView {
             tf_paint::read_text_field_state(scene, SEARCH_TF_TAG),
             // R1177 — the asset dialog buttons' live posture (state + focus), so
             // paint reads the same source a11y does (no static-`false` divergence).
+            // R1512 KEPT the focus half here: unlike the sixteen bindings whose
+            // half was dead, this one's `access_node` builds `button_a11y_state`
+            // from it rather than from the shell's `focused` argument.
             (
                 read_button_state(scene, ASSET_OK_TAG),
                 read_button_state(scene, ASSET_CANCEL_TAG),

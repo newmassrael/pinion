@@ -58,7 +58,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::use_scene_revision;
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, read_button_focused, read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, read_button_state,
 };
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
@@ -256,14 +256,14 @@ fn log_list_scene(lines: &[String], theme: &Theme) -> Scene {
 
 /// Cached posture of the Tick button + its focus flag. The log lines live in
 /// the producer-authoritative buffer the owner-scoped view reads directly.
-type LiveDataViewState = (ButtonState, bool);
+type LiveDataViewState = ButtonState;
 
 /// view-fn (§6.3): pure sync mapping `(button posture) -> Scene`, reading the
 /// producer-authoritative buffer for the status line / rows. No side-effects
 /// (the producer thread is spawned in `create_extra_externals`).
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: LiveDataViewState, _frame: &Frame) -> Scene {
-    let (posture, _focused) = state;
+    let posture = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let lines = log_lines(&use_live_log());
 
@@ -340,10 +340,7 @@ impl WidgetCore for LiveDataView {
     }
 
     fn read_state(scene: &Scene) -> LiveDataViewState {
-        (
-            read_button_state(scene, TICK_TAG),
-            read_button_focused(scene, TICK_TAG),
-        )
+        read_button_state(scene, TICK_TAG)
     }
 
     fn view(state: LiveDataViewState, frame: &Frame) -> Scene {
@@ -391,7 +388,7 @@ impl WidgetA11y for LiveDataView {
     /// named from the same SSOT the paint uses), a `role=status` live region
     /// for the count, and the Tick `button`.
     fn access_node(state: &LiveDataViewState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (posture, _focused) = *state;
+        let posture = *state;
         let lines = log_lines(&use_live_log());
 
         let mut list = AccessNode::new(LIST_TAG, AriaRole::List).with_name("Event log");
@@ -441,7 +438,7 @@ mod tests {
     use super::*;
 
     fn idle() -> LiveDataViewState {
-        (ButtonState::Idle, false)
+        ButtonState::Idle
     }
 
     fn find_container<'a>(scene: &'a Scene, tag: &str) -> Option<&'a ContainerNode> {

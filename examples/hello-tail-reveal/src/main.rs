@@ -66,8 +66,7 @@ use pinion_core::widgets::virtual_list::compute_visible_range_variable;
 use pinion_core::{Command, Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 use pinion_widget_paint::virtual_list::view_measured_list;
 use std::cell::RefCell;
@@ -262,7 +261,6 @@ fn control(label: &str, state: ButtonState, theme: &Theme) -> Scene {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Controls {
     reply: ButtonState,
-    reply_focused: bool,
 }
 
 /// view-fn (§6.3): pure sync `(Controls) -> Scene`. Subscribes to the entry
@@ -466,7 +464,6 @@ impl WidgetCore for TailRevealView {
     fn read_state(scene: &Scene) -> Controls {
         Controls {
             reply: read_button_state(scene, REPLY_TAG),
-            reply_focused: read_button_focused(scene, REPLY_TAG),
         }
     }
 

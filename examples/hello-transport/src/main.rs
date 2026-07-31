@@ -61,8 +61,7 @@ use pinion_core::widgets::transport::{TransportClock, use_transport_clock};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -190,7 +189,7 @@ fn transport_button(
 /// Cached posture + focus of the three transport buttons (`[play, pause,
 /// stop]`). The playhead itself lives in the animation-driven [`TransportClock`]
 /// the owner-scoped view reads directly.
-type TransportState = ([ButtonState; 3], [bool; 3]);
+type TransportState = [ButtonState; 3];
 
 /// view-fn (§6.3): pure sync mapping `(button postures) -> Scene`, reading the
 /// animation-driven clock for the playhead + status. No side-effects — the
@@ -200,7 +199,7 @@ type TransportState = ([ButtonState; 3], [bool; 3]);
     reason = "the WidgetCore::view trait hands the frame by reference"
 )]
 fn view(state: TransportState, _frame: &Frame) -> Scene {
-    let (postures, _focused) = state;
+    let postures = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -285,18 +284,11 @@ impl WidgetCore for TransportView {
     }
 
     fn read_state(scene: &Scene) -> TransportState {
-        (
-            [
-                read_button_state(scene, PLAY_TAG),
-                read_button_state(scene, PAUSE_TAG),
-                read_button_state(scene, STOP_TAG),
-            ],
-            [
-                read_button_focused(scene, PLAY_TAG),
-                read_button_focused(scene, PAUSE_TAG),
-                read_button_focused(scene, STOP_TAG),
-            ],
-        )
+        [
+            read_button_state(scene, PLAY_TAG),
+            read_button_state(scene, PAUSE_TAG),
+            read_button_state(scene, STOP_TAG),
+        ]
     }
 
     fn view(state: TransportState, frame: &Frame) -> Scene {
@@ -349,7 +341,7 @@ impl WidgetA11y for TransportView {
     /// transport `button`s. The timeline geometry itself is read as data via
     /// `scene/snapshot`.
     fn access_node(state: &TransportState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (postures, _focus) = state;
+        let postures = state;
         let clock = use_transport_clock(CLOCK_KEY, DURATION_SECS);
         let status = status_line(&clock);
         let mut nodes = vec![
@@ -389,7 +381,7 @@ mod tests {
     use pinion_core::widgets::transport::TransportStatus;
 
     fn idle() -> TransportState {
-        ([ButtonState::Idle; 3], [false; 3])
+        [ButtonState::Idle; 3]
     }
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
