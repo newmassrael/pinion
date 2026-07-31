@@ -189,21 +189,24 @@ pub fn inject_focus_ring(
 /// Depth-first walk for the focused node's corner radius (space-
 /// invariant, so no translation needed — the rect comes from
 /// [`pinion_core::scene::Scene::rect_for_tag_absolute`] separately).
-/// `Box` / `Container` carry an explicit `corner_radius`; every other
-/// variant has no rounding concept and reports `0` (sharp ring). Mirrors
-/// the scroll-descending walk shape so a rounded day-cell inside a
-/// scrolled grid still gets a concentric rounded ring.
+/// A node with no [`BoxStyle`] declares no
+/// rounding and reports `0` (sharp ring). Mirrors the scroll-descending
+/// walk shape so a rounded day-cell inside a scrolled grid still gets a
+/// concentric rounded ring.
+///
+/// R1516 — which kinds carry a style is
+/// [`Scene::box_style`](pinion_core::scene::Scene::box_style)'s answer, not
+/// this walk's. It used to be spelled `Box | Container | _ => 0` here, and
+/// the wildcard was a standing answer for a styled variant that does not
+/// exist yet: a rounded node of a future kind would have been ringed square
+/// with nothing to notice.
 fn corner_radius_for_tag(scene: &Scene, target: &str) -> u32 {
     radius_opt(scene, target).unwrap_or(0)
 }
 
 fn radius_opt(scene: &Scene, target: &str) -> Option<u32> {
     if scene.tag() == Some(target) {
-        return Some(match scene {
-            Scene::Box(n) => n.style.corner_radius,
-            Scene::Container(n) => n.style.corner_radius,
-            _ => 0,
-        });
+        return Some(scene.box_style().map_or(0, |s| s.corner_radius));
     }
     match scene {
         Scene::Container(c) => c.children.iter().find_map(|s| radius_opt(s, target)),
@@ -528,6 +531,31 @@ mod tests {
         let out = inject_focus_ring(scene, Some("day#15"), FocusRingStyle::default(), None);
         let ring = ring_child(&out);
         assert_eq!(ring.style.corner_radius, 22, "concentric rounded ring");
+    }
+
+    /// R1516 — the same claim for the other styled node kind.
+    ///
+    /// Every radius test above targets a `Scene::Box`, and the walk has always
+    /// had a `Container` arm because a container carries a `BoxStyle` too —
+    /// which is how this workspace draws most of its rounded surfaces (menu,
+    /// tooltip, card, dialog: R1511 counted 45 container border declarations).
+    /// Measured while migrating the walk to `Scene::box_style`: blinding that
+    /// accessor to containers broke nothing in this crate's 72 tests, so the
+    /// arm a rounded surface actually goes through was the untested one.
+    #[test]
+    fn r1516_ring_radius_tracks_a_rounded_container_target() {
+        let style = BoxStyle::filled(Color::rgb(10, 10, 10)).with_corner_radius(12);
+        let mut target = ContainerNode::new(vec![]).with_style(style);
+        target.rect = Rect::new(0, 0, 40, 40);
+        target.tag = Some("card".into());
+        let scene = container(vec![Scene::Container(target)]);
+        let out = inject_focus_ring(scene, Some("card"), FocusRingStyle::default(), None);
+        let ring = ring_child(&out);
+        assert_eq!(
+            ring.style.corner_radius, 14,
+            "a rounded container is ringed concentrically (12 + the 2px \
+             offset), exactly as a rounded box is"
+        );
     }
 
     #[test]

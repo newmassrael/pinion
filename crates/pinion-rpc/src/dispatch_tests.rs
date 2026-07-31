@@ -1,6 +1,6 @@
 use super::*;
 use pinion_core::external::{CountedExternal, StubExternal};
-use pinion_core::scene::ExternalNode;
+use pinion_core::scene::{ExternalNode, SceneNodeKind};
 use serde_json::json;
 
 fn counted_scene(n: i64) -> Scene {
@@ -8664,5 +8664,76 @@ fn r1485_not_asking_costs_the_existing_refusal_shape_nothing() {
                 "path {path} params {params}",
             );
         }
+    }
+}
+
+/// R1516 §2 #7 — every node kind a scene can hold reaches the wire under
+/// its own name.
+///
+/// Two hand lists stand between a `Scene` variant and an AI client:
+/// [`snapshot`] ends in `_ => SnapshotNode::Unknown`, and
+/// [`snapshot_node_to_json`] ends in `_ => "Unknown"`. Both wildcards are
+/// required — `Scene` is `#[non_exhaustive]`, so this crate cannot match it
+/// without one — and both are right for the version-skewed client their
+/// docs describe. Inside this workspace, where `pinion-core` and
+/// `pinion-rpc` ship as one version, they mean something else: a variant
+/// added to `Scene` would arrive on the introspection path pinion tells AI
+/// clients to use (§2 #2) as `"Unknown"`, painted on screen and absent from
+/// the wire, with nothing failing.
+///
+/// The census closes that in two steps, neither of which is a wildcard. A
+/// new `Scene` variant is a compile error in `Scene::node_kind`; the census
+/// kind it forces is then a compile error in
+/// [`scene_of_kind`](pinion_core::test_fixtures::scene_of_kind); and this
+/// assertion fails — naming the kind that reaches the wire as `"Unknown"` —
+/// until both hand lists above have learned it.
+#[test]
+fn r1516_every_census_kind_reaches_the_wire_under_its_own_name() {
+    for kind in SceneNodeKind::ALL {
+        let scene = pinion_core::test_fixtures::scene_of_kind(kind);
+        let node = snapshot(&scene, "")
+            .unwrap_or_else(|e| panic!("scene/snapshot rejected a Scene::{}: {e:?}", kind.name()));
+        assert_eq!(
+            census_kind_of(&node),
+            Some(kind),
+            "the snapshot mirror answers a Scene::{} with a node that \
+             carries no census kind — `snapshot`'s wildcard swallowed it",
+            kind.name()
+        );
+        let json = snapshot_node_to_json(node);
+        assert_eq!(
+            json.get("type").and_then(Value::as_str),
+            Some(kind.name()),
+            "a Scene::{} reaches the §2 #7 wire as {:?} — the snapshot \
+             mirror or its JSON type tag has not been taught this kind, so \
+             an AI client sees a node it cannot name",
+            kind.name(),
+            json.get("type")
+        );
+    }
+}
+
+/// The other direction: which census kind a [`SnapshotNode`] mirrors.
+///
+/// The test above walks census → wire and would still pass if the mirror
+/// grew a variant no scene node produces. This crate owns `SnapshotNode`,
+/// so unlike `Scene` it can be matched exhaustively here — a variant added
+/// to the mirror lands as a compile error and must name the census kind it
+/// carries. `Unknown` names none by construction: it is the wire's word for
+/// a kind the census does not have, which is the state this whole test pair
+/// exists to make unreachable.
+fn census_kind_of(node: &SnapshotNode) -> Option<SceneNodeKind> {
+    match node {
+        SnapshotNode::Box(_) => Some(SceneNodeKind::Box),
+        SnapshotNode::Text(_) => Some(SceneNodeKind::Text),
+        SnapshotNode::Path(_) => Some(SceneNodeKind::Path),
+        SnapshotNode::Image(_) => Some(SceneNodeKind::Image),
+        SnapshotNode::Container(_) => Some(SceneNodeKind::Container),
+        SnapshotNode::Effect => Some(SceneNodeKind::Effect),
+        SnapshotNode::External(_) => Some(SceneNodeKind::External),
+        SnapshotNode::Scroll(_) => Some(SceneNodeKind::Scroll),
+        SnapshotNode::ImmediateModeNode(_) => Some(SceneNodeKind::ImmediateModeNode),
+        SnapshotNode::TextGrid(_) => Some(SceneNodeKind::TextGrid),
+        SnapshotNode::Unknown => None,
     }
 }

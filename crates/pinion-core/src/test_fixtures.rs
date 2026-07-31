@@ -24,12 +24,17 @@
 use std::borrow::Cow;
 
 use crate::Frame;
+use crate::cell_metric::CellMetric;
 use crate::command::Command;
-use crate::external::{External, IntrospectValue};
+use crate::external::{External, IntrospectValue, StubExternal};
 use crate::intent::Intent;
 use crate::reactive::Owner;
-use crate::scene::{ContainerNode, Rect, Scene, TextNode};
-use crate::style::Color;
+use crate::scene::{
+    BoxNode, ContainerNode, EffectNode, ExternalNode, ImageNode, ImmediateModeNode, PathCommand,
+    PathNode, PathPoint, Rect, Scene, SceneNodeKind, ScrollNode, StubImmediateMode, TextGridNode,
+    TextNode,
+};
+use crate::style::{BoxStyle, Color, PathStyle};
 use crate::term_grid::{
     CellAttrs, CellWidth, CursorShape, GridBuffer, GridCursor, TermCell, TermColor,
 };
@@ -301,6 +306,46 @@ impl BindableCacheSlot for crate::widgets::caret_blink::CaretBlink {
 #[must_use]
 pub fn bind_cache_slot<S: BindableCacheSlot>(owner: &Owner, tag: &'static str) -> std::rc::Rc<S> {
     owner.run(|| S::use_in_scope(tag))
+}
+
+/// R1516 §5.2 — one node of every [`SceneNodeKind`], so a consumer that
+/// must answer for *all* of them can be run over all of them.
+///
+/// The `match` is exhaustive: a kind added to the census arrives here as a
+/// compile error, and until it is built no test that iterates
+/// [`SceneNodeKind::ALL`] can be written to skip it. That is the point —
+/// "a variant joined and nobody noticed" is the failure the census exists
+/// to prevent, and a census whose own fixtures lagged behind it would
+/// reproduce that failure one level up.
+///
+/// Lives here rather than in either caller because both `pinion-core`'s
+/// census tests and `pinion-rpc`'s §2 #7 wire test need the same set, and
+/// two copies of an exhaustive match are two places for a new kind to be
+/// filled in lazily.
+#[must_use]
+pub fn scene_of_kind(kind: SceneNodeKind) -> Scene {
+    let rect = Rect::new(1, 2, 30, 40);
+    match kind {
+        SceneNodeKind::Box => Scene::Box(BoxNode::new(rect, BoxStyle::default())),
+        SceneNodeKind::Text => Scene::Text(TextNode::new("ab".to_string(), rect)),
+        SceneNodeKind::Path => Scene::Path(PathNode::new(
+            rect,
+            vec![PathCommand::MoveTo(PathPoint::new(0.0, 0.0))],
+            PathStyle::default(),
+        )),
+        SceneNodeKind::Image => Scene::Image(ImageNode::new("file:///x.png", rect)),
+        SceneNodeKind::Container => Scene::Container(ContainerNode::new(vec![])),
+        SceneNodeKind::Effect => Scene::Effect(EffectNode::new()),
+        SceneNodeKind::External => Scene::External(ExternalNode::new(Box::new(StubExternal))),
+        SceneNodeKind::Scroll => Scene::Scroll(ScrollNode::new(
+            rect,
+            Scene::Container(ContainerNode::new(vec![])),
+        )),
+        SceneNodeKind::ImmediateModeNode => Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), rect),
+        ),
+        SceneNodeKind::TextGrid => Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT)),
+    }
 }
 
 /// Minimal Button binding for substrate-level tests.

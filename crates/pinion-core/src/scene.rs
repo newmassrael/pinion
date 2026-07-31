@@ -104,6 +104,139 @@ pub enum Scene {
     TextGrid(TextGridNode),
 }
 
+/// (R1516 §5.2 §2 #6 §2 #7) The census of [`Scene`] variants.
+///
+/// [`Scene`] is `#[non_exhaustive]` — deliberately, so the game-engine
+/// variants this module's header names (`Mesh` / `Camera` / `Light`) can
+/// land without a major bump. The cost is that no other crate can
+/// enumerate the variants, or match them without a wildcard, and a
+/// wildcard is where a new node kind goes to be forgotten: a consumer
+/// that must reason about *every* kind keeps a hand list instead, and a
+/// hand list cannot be told that it is short.
+///
+/// Measured when this was written, three of them were:
+/// the §2 #6 backend-parity matrix asserted over "the two node types that
+/// carry a [`BoxStyle`]" as a comment; the focus-ring walk answered `0` for
+/// the corner radius of anything outside `Box | Container`; and the §2 #7
+/// wire mapped an unrecognised node to `"Unknown"`. Each is the R1511
+/// shape — a declaration reaching no consumer, with nothing to notice.
+///
+/// Only this crate can compute the list, so this crate publishes it, and
+/// the two links are each a compile error:
+///
+/// 1. a new [`Scene`] variant fails [`Scene::node_kind`]'s match here, and
+///    the repair is a variant below;
+/// 2. a new variant below fails every downstream `match` on
+///    `SceneNodeKind`, where the consumer must say what it does with the
+///    kind.
+///
+/// Deliberately **not** `#[non_exhaustive]`, for the reason
+/// [`BoxFacet`](crate::style::BoxFacet) is not: link 2 *is* the point, and
+/// `#[non_exhaustive]` would force downstream wildcards that swallow
+/// exactly what this exists to surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SceneNodeKind {
+    /// [`Scene::Box`].
+    Box,
+    /// [`Scene::Text`].
+    Text,
+    /// [`Scene::Path`].
+    Path,
+    /// [`Scene::Image`].
+    Image,
+    /// [`Scene::Container`].
+    Container,
+    /// [`Scene::Effect`] — a §3 opaque escape.
+    Effect,
+    /// [`Scene::External`] — a §3 opaque escape.
+    External,
+    /// [`Scene::Scroll`].
+    Scroll,
+    /// [`Scene::ImmediateModeNode`].
+    ImmediateModeNode,
+    /// [`Scene::TextGrid`].
+    TextGrid,
+}
+
+impl SceneNodeKind {
+    /// The census. Consumers iterate this instead of re-deriving a variant
+    /// list they cannot see.
+    pub const ALL: [Self; 10] = [
+        Self::Box,
+        Self::Text,
+        Self::Path,
+        Self::Image,
+        Self::Container,
+        Self::Effect,
+        Self::External,
+        Self::Scroll,
+        Self::ImmediateModeNode,
+        Self::TextGrid,
+    ];
+
+    /// Stable identity — the variant name, which is also the §2 #7 wire
+    /// `"type"` tag a `scene/snapshot` node carries.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Box => "Box",
+            Self::Text => "Text",
+            Self::Path => "Path",
+            Self::Image => "Image",
+            Self::Container => "Container",
+            Self::Effect => "Effect",
+            Self::External => "External",
+            Self::Scroll => "Scroll",
+            Self::ImmediateModeNode => "ImmediateModeNode",
+            Self::TextGrid => "TextGrid",
+        }
+    }
+
+    /// Whether nodes of this kind carry a [`BoxStyle`] — i.e. whether the
+    /// [`BoxFacet`](crate::style::BoxFacet) census applies to them at all.
+    /// Cross-checked against [`Scene::box_style`] over a fixture of every
+    /// kind, so the two cannot drift.
+    #[must_use]
+    pub const fn carries_box_style(self) -> bool {
+        match self {
+            Self::Box | Self::Container => true,
+            Self::Text
+            | Self::Path
+            | Self::Image
+            | Self::Effect
+            | Self::External
+            | Self::Scroll
+            | Self::ImmediateModeNode
+            | Self::TextGrid => false,
+        }
+    }
+
+    /// Whether this kind clips a *child subtree* to a window of its own —
+    /// the declaration every renderer must observe, since ink the scene
+    /// says is hidden must not reach the surface on any backend.
+    ///
+    /// Only [`Scene::Scroll`] does (to its `viewport`). A [`Scene::Text`],
+    /// [`Scene::Image`] or [`Scene::TextGrid`] confines its *own* glyphs or
+    /// pixels to its rect, which is leaf rasterisation rather than a clip
+    /// declared over other nodes; a [`Scene::Container`] does not clip at
+    /// all, which is precisely why `Scroll` exists.
+    #[must_use]
+    pub const fn clips_subtree(self) -> bool {
+        match self {
+            Self::Scroll => true,
+            Self::Box
+            | Self::Text
+            | Self::Path
+            | Self::Image
+            | Self::Container
+            | Self::Effect
+            | Self::External
+            | Self::ImmediateModeNode
+            | Self::TextGrid => false,
+        }
+    }
+}
+
 impl Scene {
     /// Outermost rect of this primitive. [`EffectNode`] has no
     /// geometry of its own and returns [`Rect::default`].
@@ -146,6 +279,52 @@ impl Scene {
             Scene::Scroll(n) => n.tag.as_deref(),
             Scene::ImmediateModeNode(n) => n.tag.as_deref(),
             Scene::TextGrid(n) => n.tag.as_deref(),
+        }
+    }
+
+    /// (R1516 §5.2) Which [`SceneNodeKind`] this node is — link 1 of the
+    /// census. The match is exhaustive and this crate owns [`Scene`], so a
+    /// variant added above lands here as a compile error, where it must be
+    /// given a census entry rather than joining silently.
+    #[must_use]
+    pub const fn node_kind(&self) -> SceneNodeKind {
+        match self {
+            Scene::Box(_) => SceneNodeKind::Box,
+            Scene::Text(_) => SceneNodeKind::Text,
+            Scene::Path(_) => SceneNodeKind::Path,
+            Scene::Image(_) => SceneNodeKind::Image,
+            Scene::Container(_) => SceneNodeKind::Container,
+            Scene::Effect(_) => SceneNodeKind::Effect,
+            Scene::External(_) => SceneNodeKind::External,
+            Scene::Scroll(_) => SceneNodeKind::Scroll,
+            Scene::ImmediateModeNode(_) => SceneNodeKind::ImmediateModeNode,
+            Scene::TextGrid(_) => SceneNodeKind::TextGrid,
+        }
+    }
+
+    /// (R1516 §5.3 §5.16) The [`BoxStyle`] this node carries, or `None` for
+    /// the kinds that carry none — the read behind every "what did this node
+    /// declare visually" question.
+    ///
+    /// Before this existed, callers asked it as `match { Box(n) => n.style,
+    /// Container(n) => n.style, _ => <a made-up default> }`, and the
+    /// wildcard answered for a third styled variant that does not exist
+    /// *yet*: [`Scene`] is `#[non_exhaustive]` for exactly that future. Here
+    /// the match is exhaustive, so the future arrives as a compile error in
+    /// this crate instead of as a default somewhere else.
+    #[must_use]
+    pub const fn box_style(&self) -> Option<&BoxStyle> {
+        match self {
+            Scene::Box(n) => Some(&n.style),
+            Scene::Container(n) => Some(&n.style),
+            Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::External(_)
+            | Scene::Scroll(_)
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => None,
         }
     }
 
@@ -6196,5 +6375,89 @@ mod tests {
         let a = Scene::Path(path_a);
         let b = Scene::Path(path_b);
         assert_ne!(a.paint_hash(), b.paint_hash());
+    }
+
+    /// R1516 — the census and the accessors are three separate statements
+    /// about one set of variants: [`Scene::node_kind`] matches on the node,
+    /// [`SceneNodeKind::carries_box_style`] matches on the kind, and
+    /// [`Scene::box_style`] matches on the node again. Nothing but a
+    /// fixture of every kind makes them meet, and if they disagree the
+    /// census is worse than no census — consumers would iterate a list that
+    /// lies about what it names.
+    #[test]
+    fn r1516_the_census_agrees_with_the_node_it_names() {
+        for kind in SceneNodeKind::ALL {
+            let scene = crate::test_fixtures::scene_of_kind(kind);
+            assert_eq!(
+                scene.node_kind(),
+                kind,
+                "the fixture for {} builds a {:?}",
+                kind.name(),
+                scene.node_kind()
+            );
+            assert_eq!(
+                scene.box_style().is_some(),
+                kind.carries_box_style(),
+                "`{}` says carries_box_style = {}, and its node answers \
+                 `box_style` = {:?} — one of the two matches is wrong",
+                kind.name(),
+                kind.carries_box_style(),
+                scene.box_style().is_some()
+            );
+        }
+    }
+
+    /// Every kind is in `ALL` exactly once. `ALL` is hand-ordered (the
+    /// compiler checks the arms of a `match`, not the members of an array),
+    /// so a copy-paste that repeated one kind and dropped another would
+    /// leave the dropped one uniterated by every consumer — silently, which
+    /// is the shape being prevented, not a shape to reproduce.
+    #[test]
+    fn r1516_the_census_lists_each_kind_exactly_once() {
+        for kind in SceneNodeKind::ALL {
+            assert_eq!(
+                SceneNodeKind::ALL.iter().filter(|k| **k == kind).count(),
+                1,
+                "{} appears in `SceneNodeKind::ALL` exactly once",
+                kind.name()
+            );
+        }
+    }
+
+    /// The names are the §2 #7 wire `"type"` tag an AI client reads off a
+    /// `scene/snapshot` node, so they are identity rather than prose: a
+    /// rename here silently moves every client's discriminator. Pinned
+    /// against the literal list, which is what the wire emitted before the
+    /// census existed.
+    #[test]
+    fn r1516_census_names_are_the_wire_type_tags() {
+        assert_eq!(
+            SceneNodeKind::ALL.map(SceneNodeKind::name),
+            [
+                "Box",
+                "Text",
+                "Path",
+                "Image",
+                "Container",
+                "Effect",
+                "External",
+                "Scroll",
+                "ImmediateModeNode",
+                "TextGrid",
+            ]
+        );
+    }
+
+    /// `Scene::box_style` returns the style the node actually carries, not
+    /// merely *a* style. Without this the accessor could answer
+    /// `Some(&BoxStyle::default())` for everything and every assertion
+    /// above would still pass.
+    #[test]
+    fn r1516_box_style_returns_the_nodes_own_style() {
+        let style = BoxStyle::filled(Color::rgb(0x12, 0x34, 0x56)).with_corner_radius(9);
+        let boxed = Scene::Box(BoxNode::new(Rect::default(), style.clone()));
+        assert_eq!(boxed.box_style(), Some(&style));
+        let container = Scene::Container(ContainerNode::new(vec![]).with_style(style.clone()));
+        assert_eq!(container.box_style(), Some(&style));
     }
 }

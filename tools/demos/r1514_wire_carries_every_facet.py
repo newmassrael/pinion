@@ -34,14 +34,13 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     run_demo,
+    walk_nodes,
 )
 
 # The census, restated from the client's side.
@@ -62,15 +61,6 @@ BINDINGS = {
 }
 
 BOX_NODES = ("Box", "Container")
-
-
-def walk(node: Any, out: list[tuple[str, str, Any]], path: str = "/") -> None:
-    """Every node of a paint snapshot, with its path and declared style."""
-    if not isinstance(node, dict):
-        return
-    out.append((path, node.get("type"), node.get("style")))
-    for i, child in enumerate(node.get("children") or []):
-        walk(child, out, f"{path}{i}/")
 
 
 def is_declared(facet: str, style: dict) -> bool:
@@ -95,8 +85,10 @@ def body() -> None:
 
     for example, expected_facets in BINDINGS.items():
         with RpcSubprocess(example, boot_grace=1.5) as tf:
-            nodes: list[tuple[str, str, Any]] = []
-            walk(tf.snapshot(source="paint"), nodes)
+            nodes = [
+                (path, node.get("type"), node.get("style"))
+                for path, node in walk_nodes(tf.snapshot(source="paint"))
+            ]
 
             boxes = [
                 (path, style)

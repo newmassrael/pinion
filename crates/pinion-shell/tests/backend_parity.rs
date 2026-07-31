@@ -91,11 +91,13 @@
 //! (`r1514_every_declaration_names_every_renderer`), so it cannot join and sit
 //! unverified.
 
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
+use pinion_core::scene::{
+    BoxNode, ContainerNode, Rect, Scene, SceneNodeKind, ScrollNode, TextNode,
+};
 use pinion_core::style::{Border, BoxFacet, BoxShadow, BoxStyle, Color, Gradient, TextStyle};
 use pinion_runtime::paint_adapter::to_vello;
 use pinion_text::LayoutCache;
-use pinion_tui::ratatui::buffer::Buffer;
+use pinion_tui::ratatui::buffer::{Buffer, Cell};
 use pinion_tui::ratatui::layout::Rect as TuiRect;
 use vello::Scene as VelloScene;
 
@@ -265,45 +267,70 @@ impl Declaration {
     }
 }
 
-/// The two node types that carry a `BoxStyle`. Both must observe it.
-#[derive(Clone, Copy, Debug)]
-enum NodeKind {
-    Box,
-    Container,
+/// R1516 — the node axis, from the census.
+///
+/// This used to be a local `enum NodeKind { Box, Container }` whose doc said
+/// "the two node types that carry a `BoxStyle`". `Scene` is
+/// `#[non_exhaustive]` and its own header names the variants meant to land
+/// later (`Mesh` / `Camera` / `Light`), so that sentence was a claim this
+/// crate had no way to check — the same shape as R1512's three-row facet
+/// table, one axis over.
+///
+/// [`SceneNodeKind::carries_box_style`] is the claim now, and this match is
+/// exhaustive: a kind added to the census arrives here as a compile error,
+/// where the fixture that makes it testable has to be written. `None` marks
+/// the kinds that carry no style, cross-checked against the census in
+/// [`r1516_the_node_axis_is_the_census`] so a styled kind whose fixture was
+/// skipped cannot shrink the matrix in silence.
+///
+/// The rect and style are the same for every kind, so the ONLY difference
+/// between two scenes a renderer sees is which variant carries them. A label
+/// child rides along on the container so the TUI walk has ink to place even
+/// where a border is absent — without it the no-border container renders a
+/// blank buffer and the inequality would be trivially satisfied for the
+/// wrong reason.
+fn styled_scene(kind: SceneNodeKind, style: BoxStyle) -> Option<Scene> {
+    match kind {
+        SceneNodeKind::Box => Some(Scene::Box(BoxNode::new(rect(), style))),
+        SceneNodeKind::Container => {
+            let label = Scene::Text(TextNode::styled(
+                "ab".to_string(),
+                Rect::new(rect().x + 8, rect().y + 8, 40, 16),
+                TextStyle::new().with_fg(Color::rgb(0xf0, 0xf0, 0xf0)),
+            ));
+            let mut node = ContainerNode::new(vec![label]).with_style(style);
+            node.rect = rect();
+            Some(Scene::Container(node))
+        }
+        SceneNodeKind::Text
+        | SceneNodeKind::Path
+        | SceneNodeKind::Image
+        | SceneNodeKind::Effect
+        | SceneNodeKind::External
+        | SceneNodeKind::Scroll
+        | SceneNodeKind::ImmediateModeNode
+        | SceneNodeKind::TextGrid => None,
+    }
 }
 
-impl NodeKind {
-    const ALL: [Self; 2] = [Self::Box, Self::Container];
+/// The kinds the [`BoxFacet`] matrix runs over — the census, filtered by the
+/// census's own answer, never by a list kept here.
+fn styled_kinds() -> impl Iterator<Item = SceneNodeKind> {
+    SceneNodeKind::ALL
+        .into_iter()
+        .filter(|k| k.carries_box_style())
+}
 
-    /// The same rect and style either way, so the ONLY difference between the
-    /// two scenes a renderer sees is which variant carries them. A label child
-    /// rides along on the container so the TUI walk has ink to place even where
-    /// a border is absent — without it the no-border container renders a blank
-    /// buffer and the inequality would be trivially satisfied for the wrong
-    /// reason.
-    fn scene(self, style: BoxStyle) -> Scene {
-        match self {
-            Self::Box => Scene::Box(BoxNode::new(rect(), style)),
-            Self::Container => {
-                let label = Scene::Text(TextNode::styled(
-                    "ab".to_string(),
-                    Rect::new(rect().x + 8, rect().y + 8, 40, 16),
-                    TextStyle::new().with_fg(Color::rgb(0xf0, 0xf0, 0xf0)),
-                ));
-                let mut node = ContainerNode::new(vec![label]).with_style(style);
-                node.rect = rect();
-                Scene::Container(node)
-            }
-        }
-    }
+fn fixture(kind: SceneNodeKind, style: BoxStyle) -> Scene {
+    styled_scene(kind, style).unwrap_or_else(|| panic!("`{}` carries a BoxStyle", kind.name()))
+}
 
-    fn declaring(self, decl: &Declaration) -> Scene {
-        self.scene((decl.apply)(BoxStyle::filled(FILL)))
-    }
+fn declaring(kind: SceneNodeKind, decl: &Declaration) -> Scene {
+    fixture(kind, (decl.apply)(BoxStyle::filled(FILL)))
+}
 
-    fn bare(self) -> Scene {
-        self.scene(BoxStyle::filled(FILL))
-    }
+fn bare(kind: SceneNodeKind) -> Scene {
+    fixture(kind, BoxStyle::filled(FILL))
 }
 
 /// One renderer, reduced to "turn a scene into bytes".
@@ -467,46 +494,50 @@ fn r1514_every_declaration_names_every_renderer() {
 }
 
 #[test]
-fn r1512_every_renderer_answers_each_declaration_the_same_way_for_both_nodes() {
+fn r1512_every_renderer_answers_each_declaration_the_same_way_for_every_styled_node() {
     for facet in BoxFacet::ALL {
         let decl = declaration(facet);
         for renderer in &RENDERERS {
             let verdict = decl.verdict(renderer.name);
-            for kind in NodeKind::ALL {
-                let with = kind.declaring(&decl);
-                let without = kind.bare();
+            for kind in styled_kinds() {
+                let with = declaring(kind, &decl);
+                let without = bare(kind);
 
                 // Determinism first: an inequality between two renders is
                 // evidence only if the renderer is stable for a fixed scene.
                 let a = (renderer.render)(&with);
                 let b = (renderer.render)(&with);
                 assert_eq!(
-                    a, b,
-                    "{} is not deterministic for {kind:?}; every comparison \
-                     below would be noise",
-                    renderer.name
+                    a,
+                    b,
+                    "{} is not deterministic for a Scene::{}; every \
+                     comparison below would be noise",
+                    renderer.name,
+                    kind.name()
                 );
 
-                let bare = (renderer.render)(&without);
+                let undeclared = (renderer.render)(&without);
                 if verdict.must_observe() {
                     assert_ne!(
                         a,
-                        bare,
-                        "{} ignores `{}` declared on a Scene::{kind:?} — the \
-                         §2 #6 divergence R1511 found, in this cell",
+                        undeclared,
+                        "{} ignores `{}` declared on a Scene::{} — the §2 #6 \
+                         divergence R1511 found, in this cell",
                         renderer.name,
-                        facet.name()
+                        facet.name(),
+                        kind.name()
                     );
                 } else {
                     assert_eq!(
                         a,
-                        bare,
-                        "{} started honouring `{}` on a Scene::{kind:?}. That \
-                         may well be an improvement — the table records that \
-                         it {} ({}) — but an unstated change of medium is how \
+                        undeclared,
+                        "{} started honouring `{}` on a Scene::{}. That may \
+                         well be an improvement — the table records that it \
+                         {} ({}) — but an unstated change of medium is how \
                          the R1511 silence began. Move it to `Observes`.",
                         renderer.name,
                         facet.name(),
+                        kind.name(),
                         verdict.label(),
                         verdict.reason()
                     );
@@ -528,9 +559,9 @@ fn r1512_every_renderer_answers_each_declaration_the_same_way_for_both_nodes() {
 #[test]
 fn r1512_each_renderer_draws_a_border_in_its_own_vocabulary() {
     let border = declaration(BoxFacet::Border);
-    for kind in NodeKind::ALL {
-        let with = kind.declaring(&border);
-        let without = kind.bare();
+    for kind in styled_kinds() {
+        let with = declaring(kind, &border);
+        let without = bare(kind);
 
         // vello: the stroke is one more encoded path than the bare scene.
         let paths = |s: &Scene| -> u32 {
@@ -543,7 +574,8 @@ fn r1512_each_renderer_draws_a_border_in_its_own_vocabulary() {
             paths(&with),
             paths(&without) + 1,
             "vello encodes exactly one extra path — the stroke — for a \
-             bordered Scene::{kind:?}"
+             bordered Scene::{}",
+            kind.name()
         );
 
         // TUI: cells are discrete, so the border is box-drawing glyphs.
@@ -553,11 +585,13 @@ fn r1512_each_renderer_draws_a_border_in_its_own_vocabulary() {
         assert!(
             corners.iter().all(|c| tui_with.contains(*c)),
             "the TUI walk draws all four box-drawing corners for a bordered \
-             Scene::{kind:?}"
+             Scene::{}",
+            kind.name()
         );
         assert!(
             !corners.iter().any(|c| tui_without.contains(*c)),
-            "and none of them without the declaration (Scene::{kind:?})"
+            "and none of them without the declaration (Scene::{})",
+            kind.name()
         );
 
         // PDF: a stroke is the `S` operator, which the bare scene never emits.
@@ -565,8 +599,182 @@ fn r1512_each_renderer_draws_a_border_in_its_own_vocabulary() {
         let pdf_without = render_pdf(&without);
         assert!(
             pdf_with.len() > pdf_without.len(),
-            "the PDF projector emits more content for a bordered \
-             Scene::{kind:?}"
+            "the PDF projector emits more content for a bordered Scene::{}",
+            kind.name()
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// R1516 §5.45 — the clip axis
+// ---------------------------------------------------------------------------
+
+/// Content big enough to overflow [`NARROW`], in the content-intrinsic frame
+/// a scroll node paints its child in.
+fn clipped_content() -> Scene {
+    Scene::Box(BoxNode::new(
+        Rect::new(0, 0, 100, 50),
+        BoxStyle::filled(STROKE),
+    ))
+}
+
+/// A viewport that hides most of [`clipped_content`], and one that hides
+/// none of it. Same origin, so the content lands in the same place under
+/// both and the only difference a renderer sees is how much is visible — a
+/// renderer that dropped the clip would emit identical bytes for the pair.
+const NARROW: Rect = Rect::new(4, 2, 12, 8);
+const WIDE: Rect = Rect::new(4, 2, 200, 120);
+
+/// R1516 — the clip axis, from the same census as the styled-node axis.
+///
+/// A [`BoxFacet`] is ADDITIVE: declaring it adds ink, so "the renderer
+/// observed it" reads as an inequality against the scene without it. A clip
+/// is subtractive, and the two are not mirror images — measured, vello and
+/// the PDF projector both ENCODE the hidden content and leave the dropping
+/// to the rasteriser, so no reduction of their pre-raster artifact can show
+/// absence of ink. Only the TUI walk culls at walk time. What all three must
+/// do is carry the clip itself, and that is what the matrix below asserts;
+/// what each does with it is the vocabulary test after it.
+///
+/// There is no [`Observation::Ignores`] here. A medium may genuinely be
+/// unable to carry a blurred penumbra; painting content the scene declares
+/// hidden is a §2 #6 divergence in any medium, so the clip row has no
+/// exceptions to state.
+fn clipping_scene(kind: SceneNodeKind, viewport: Rect) -> Option<Scene> {
+    match kind {
+        SceneNodeKind::Scroll => Some(Scene::Scroll(ScrollNode::new(viewport, clipped_content()))),
+        SceneNodeKind::Box
+        | SceneNodeKind::Text
+        | SceneNodeKind::Path
+        | SceneNodeKind::Image
+        | SceneNodeKind::Container
+        | SceneNodeKind::Effect
+        | SceneNodeKind::External
+        | SceneNodeKind::ImmediateModeNode
+        | SceneNodeKind::TextGrid => None,
+    }
+}
+
+/// Both node axes are the census's answer, and a fixture is what makes an
+/// answer testable. If the two disagree — a kind the census calls styled or
+/// clipping that no fixture builds — the matrices above run over a quietly
+/// smaller set, which is the R1511 silence with the census in place to have
+/// prevented it.
+#[test]
+fn r1516_the_node_axis_is_the_census() {
+    let mut styled = 0;
+    let mut clipping = 0;
+    for kind in SceneNodeKind::ALL {
+        assert_eq!(
+            styled_scene(kind, BoxStyle::filled(FILL)).is_some(),
+            kind.carries_box_style(),
+            "the census says Scene::{} carries a BoxStyle = {}; this file's \
+             fixtures say otherwise",
+            kind.name(),
+            kind.carries_box_style()
+        );
+        assert_eq!(
+            clipping_scene(kind, NARROW).is_some(),
+            kind.clips_subtree(),
+            "the census says Scene::{} clips its subtree = {}; this file's \
+             fixtures say otherwise",
+            kind.name(),
+            kind.clips_subtree()
+        );
+        styled += usize::from(kind.carries_box_style());
+        clipping += usize::from(kind.clips_subtree());
+    }
+    // The axes are non-empty: a census filtered down to nothing would let
+    // every matrix below pass by iterating zero cells.
+    assert!(styled > 0, "the styled-node axis has members");
+    assert!(clipping > 0, "the clip axis has members");
+}
+
+/// Every renderer carries the clip declaration into its artifact.
+#[test]
+fn r1516_every_renderer_carries_the_clip_declaration() {
+    for kind in SceneNodeKind::ALL.into_iter().filter(|k| k.clips_subtree()) {
+        let narrow = clipping_scene(kind, NARROW).expect("the census says this kind clips");
+        let wide = clipping_scene(kind, WIDE).expect("the census says this kind clips");
+        for renderer in &RENDERERS {
+            // Determinism first, for the reason the facet matrix asserts it.
+            let a = (renderer.render)(&narrow);
+            let b = (renderer.render)(&narrow);
+            assert_eq!(
+                a,
+                b,
+                "{} is not deterministic for a Scene::{}; the comparison \
+                 below would be noise",
+                renderer.name,
+                kind.name()
+            );
+            assert_ne!(
+                a,
+                (renderer.render)(&wide),
+                "{} renders a Scene::{} that hides its content and one that \
+                 hides none of it identically — the viewport never reached \
+                 the artifact, so whatever the rasteriser does with it is \
+                 not this scene's clip",
+                renderer.name,
+                kind.name()
+            );
+        }
+    }
+}
+
+/// What each renderer does with the clip, in its own vocabulary, against a
+/// control that declares no clip at all — so a failure names the missing
+/// artifact instead of reporting that two blobs differed.
+#[test]
+fn r1516_each_renderer_clips_in_its_own_vocabulary() {
+    let unclipped = Scene::Container(ContainerNode::new(vec![clipped_content()]));
+    let clipped = clipping_scene(SceneNodeKind::Scroll, NARROW).expect("Scroll clips");
+
+    // vello: a clip layer, which the encoding counts.
+    let clips = |s: &Scene| -> u32 {
+        let mut out = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        to_vello(s, &|_: &BoxNode| None, &mut cache, &mut out);
+        out.encoding().n_clips
+    };
+    assert_eq!(
+        clips(&unclipped),
+        0,
+        "no clip layer without a clipping node"
+    );
+    assert!(
+        clips(&clipped) > 0,
+        "vello pushes a clip layer for the scroll viewport"
+    );
+
+    // TUI: cells are the artifact, so the clip is a cull — strictly fewer
+    // of them carry ink once the viewport hides most of the content.
+    let ink = |s: &Scene| -> usize {
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 60, 20));
+        pinion_tui::paint::to_buffer(s, &mut buf);
+        buf.content()
+            .iter()
+            .filter(|c| **c != Cell::default())
+            .count()
+    };
+    let unclipped_ink = ink(&unclipped);
+    assert!(unclipped_ink > 0, "the content paints cells when unclipped");
+    assert!(
+        ink(&clipped) < unclipped_ink,
+        "the TUI walk culls the cells the viewport hides ({} clipped vs {} \
+         unclipped)",
+        ink(&clipped),
+        unclipped_ink
+    );
+
+    // PDF: `re W n` — build a rect path, intersect the clip, no paint.
+    let pdf = |s: &Scene| String::from_utf8(render_pdf(s)).expect("the stream is utf-8");
+    assert!(
+        pdf(&clipped).contains("re W n"),
+        "the PDF projector emits the clip operator for the scroll viewport"
+    );
+    assert!(
+        !pdf(&unclipped).contains("re W n"),
+        "and none without a clipping node"
+    );
 }

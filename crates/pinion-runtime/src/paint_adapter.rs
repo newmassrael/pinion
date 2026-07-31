@@ -4264,8 +4264,8 @@ mod tests {
             Color::rgb(0xff, 0, 0),
         ));
         assert_eq!(
-            <Scene as MatchBoxStyle>::corner_radius(&scene),
-            0,
+            scene.box_style().map(|s| s.corner_radius),
+            Some(0),
             "default BoxStyle radius is 0",
         );
         let mut vello = VelloScene::new();
@@ -4315,21 +4315,14 @@ mod tests {
         );
     }
 
-    // Internal helper to extract `corner_radius` from a `Scene` arm
-    // for the R639 zero-path sanity assertion. Lives inside the test
-    // module to keep the production surface free of one-off accessors.
-    trait MatchBoxStyle {
-        fn corner_radius(&self) -> u32;
-    }
-    impl MatchBoxStyle for Scene {
-        fn corner_radius(&self) -> u32 {
-            match self {
-                Scene::Container(c) => c.style.corner_radius,
-                Scene::Box(b) => b.style.corner_radius,
-                _ => 0,
-            }
-        }
-    }
+    // R1516 — the R639 assertion above used to reach its `corner_radius`
+    // through a local `MatchBoxStyle` trait whose comment said it lived in
+    // the test module "to keep the production surface free of one-off
+    // accessors". It was not one-off: the same `Box | Container | _ => 0`
+    // match existed in `pinion-overlay`'s focus-ring walk, and a third copy
+    // was about to be written for the backend-parity matrix.
+    // `Scene::box_style` is that accessor, published where the variant list
+    // is knowable, so the local trait is gone.
 
     #[test]
     fn r55_e1_scroll_arm_survives_offset_overshoot() {

@@ -38,29 +38,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Iterator
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo
-
-
-def walk(node: Any) -> Iterator[dict]:
-    """Depth-first walk yielding every node dict in the snapshot tree.
-
-    Container / Scroll descend via `children` / `content`; leaf
-    primitives yield only themselves. R51.198 §5.49 shape.
-    """
-    if not isinstance(node, dict):
-        return
-    yield node
-    children = node.get("children")
-    if isinstance(children, list):
-        for child in children:
-            yield from walk(child)
-    content = node.get("content")
-    if isinstance(content, dict):
-        yield from walk(content)
+from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo, walk_nodes
 
 
 def body() -> None:
@@ -112,7 +92,7 @@ def body() -> None:
         #    binds to `#1A1A1A` (Material 3 onSurface, 18.5:1 contrast
         #    on the white surface).
         first_text = next(
-            (n for n in walk(snap) if n.get("type") == "Text"),
+            (n for _, n in walk_nodes(snap) if n.get("type") == "Text"),
             None,
         )
         if first_text is None:

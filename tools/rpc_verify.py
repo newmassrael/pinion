@@ -1777,6 +1777,39 @@ def texts_of(node: Any) -> list[str]:
     return out
 
 
+def walk_nodes(tree: Any, path: str = "/") -> Iterator[tuple[str, dict]]:
+    """Every node of a snapshot tree, depth-first, with its positional path.
+
+    The traversal `find_by_tag` and `texts_of` each make for their own
+    question, for a demo that needs the nodes themselves: descends
+    `Container.children` and `Scroll.content`, and ignores a string `content`
+    (which is a `Text`'s own text, not a child) — the wire-shape distinction
+    those two already draw.
+
+    The path is `/`-rooted with a child index per level (`/2/0/`), and a
+    `Scroll`'s subtree appears under `content/`. It is for failure messages:
+    "this node" is unlocatable in a 40-node tree without one.
+
+    R1516 obligation-3b lift: five demos carried a private copy (measured —
+    `hello_toggle_style`, `r1467`, `r1468`, `r1514`, and this round's). Purely
+    mechanical tree walking with no per-demo opinion, so it is shared, like
+    `texts_of` before it (R1478). What each demo does with the nodes stays
+    local. The two that walk a `scene/layout` tree rather than a snapshot are
+    left alone: that is a different wire shape, and folding them in would put
+    one helper in charge of two formats.
+    """
+    if not isinstance(tree, dict):
+        return
+    yield path, tree
+    children = tree.get("children")
+    if isinstance(children, list):
+        for i, child in enumerate(children):
+            yield from walk_nodes(child, f"{path}{i}/")
+    content = tree.get("content")
+    if isinstance(content, dict):
+        yield from walk_nodes(content, f"{path}content/")
+
+
 def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
     """Depth-first walk of a snapshot tree for the first node with this `tag`.
 
