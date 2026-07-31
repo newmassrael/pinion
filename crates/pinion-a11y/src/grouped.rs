@@ -78,10 +78,7 @@ pub fn grouped_focus_target(
     let cursor_tag = cursor
         .and_then(|pos| groups.row_at(pos))
         .map(|row| row.composite_tag(group_prefix, tag));
-    Some(cursor_tag.map_or_else(
-        || AccessFocus::atomic(tag),
-        |t| AccessFocus::composite(tag, t),
-    ))
+    Some(AccessFocus::addressing(tag, cursor_tag))
 }
 
 /// The addressing config of a grouped **list** (`tree`) a11y tree. The labels

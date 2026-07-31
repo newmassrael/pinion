@@ -79,7 +79,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    AccessNode, AccessValue, AriaRole, ListOption, WidgetA11y, listbox_option_nodes,
+    AccessFocus, AccessNode, AccessValue, AriaRole, ListOption, WidgetA11y, listbox_option_nodes,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::command::Command;
@@ -132,6 +132,17 @@ const OBJECTS_TAG: &str = "inspector_objects";
 /// recovers true pixel travel). One tag: the view, the a11y group node, and the
 /// scrub basis cannot drift.
 const DETAIL_TAG: &str = "detail_panel";
+
+/// Tag namespace of the Details property rows — row `i` is `"prop_<i>"`. The
+/// paint container, the a11y node, the AT-action parse, and (R1518) the
+/// `aria-activedescendant` the focus target names all address the same row, so
+/// the spelling lives here once rather than in four `format!`s.
+const PROP_PREFIX: &str = "prop_";
+
+/// The [`PROP_PREFIX`] tag of Details property row `index`.
+fn prop_tag(index: usize) -> String {
+    format!("{PROP_PREFIX}{index}")
+}
 const THEME_TAG: &str = "app";
 
 /// R1249 — the ONE shared inline numeric type-in editor hosted as an extra
@@ -1949,6 +1960,23 @@ impl InspectorState {
         self.region == FocusRegion::Objects && self.cursor == Some(i)
     }
 
+    /// R1518 §5.40 — the tag of the row this binding's internal keyboard cursor
+    /// addresses, whichever region owns it: the `aria-activedescendant` of the
+    /// one focus stop the shell sees.
+    ///
+    /// The "which row" peer of the per-row
+    /// [`is_object_cursor`](Self::is_object_cursor) /
+    /// [`is_prop_cursor`](Self::is_prop_cursor) gates, over the same two fields
+    /// — so a screen reader is told the cell those gates paint a ring around.
+    /// Before R1518 this binding reported no descendant at all, and an AT heard
+    /// only "the inspector is focused" while the RPC tree already named the row.
+    fn access_cursor_tag(&self) -> Option<String> {
+        match self.region {
+            FocusRegion::Objects => self.cursor.map(|i| format!("{INSPECTOR_TAG}#{i}")),
+            FocusRegion::Details => self.prop_cursor.map(prop_tag),
+        }
+    }
+
     fn is_selected(&self, index: usize) -> bool {
         self.selected.get(index).copied().unwrap_or(false)
     }
@@ -2271,7 +2299,7 @@ fn property_row(
     }
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("prop_{index}"))
+            .with_tag(prop_tag(index))
             .with_style(style)
             .with_layout(
                 LayoutStyle::new()
@@ -2565,7 +2593,7 @@ impl InspectorView {
         // this gate is AT-exclusive. The AT-targeted row is also focused, so the
         // paint ring + a11y active-descendant follow the AT action.
         if let Some(idx) = focused
-            .and_then(|t| t.strip_prefix("prop_"))
+            .and_then(|t| t.strip_prefix(PROP_PREFIX))
             .and_then(|s| s.parse::<usize>().ok())
         {
             let kind = node.handle.introspect().and_then(|i| read_kind_at(i, idx));
@@ -2850,6 +2878,18 @@ impl WidgetA11y for InspectorView {
         }
         nodes
     }
+
+    /// R1518 §5.40 — the shell sees one stop; name the row the internal cursor
+    /// addresses so the AT hears it as this stop's `aria-activedescendant`.
+    fn access_focus_target(state: &InspectorState, focused: Option<&str>) -> Option<AccessFocus> {
+        if focused != Some(INSPECTOR_TAG) {
+            return focused.map(AccessFocus::atomic);
+        }
+        Some(AccessFocus::addressing(
+            INSPECTOR_TAG,
+            state.access_cursor_tag(),
+        ))
+    }
 }
 
 /// R1224 — the a11y node for one Details property row, its operable WAI-ARIA
@@ -2894,7 +2934,7 @@ fn detail_access_node(
         return tf_paint::text_field_a11y_node(EDIT_TF_TAG, text, posture, focused)
             .with_name(prop.name.clone());
     }
-    let tag = format!("prop_{index}");
+    let tag = prop_tag(index);
     match prop.value {
         CellValue::Bool(b) => {
             // R1229 — a multi-object boolean is a tri-state `checkbox`, NOT a
@@ -3888,6 +3928,49 @@ mod tests {
         assert!(
             has_text(&scene, "Multiple Values"),
             "mixed property shows the placeholder"
+        );
+    }
+
+    /// R1518 — the binding's internal region split is invisible to the shell
+    /// (one focus stop), so the row each region's cursor addresses has to be
+    /// published as this stop's `aria-activedescendant`. It never was: an AT
+    /// heard "inspector" and nothing else, while `access_node` had flagged the
+    /// row for the `scene/access` wire the whole time.
+    #[test]
+    fn r1518_the_region_cursor_is_the_reported_active_descendant() {
+        let objects = InspectorState::from_parts(&[0], Some(2));
+        let target = InspectorView::access_focus_target(&objects, Some(INSPECTOR_TAG))
+            .expect("the inspector owns focus");
+        assert_eq!(target.focus_tag, INSPECTOR_TAG, "AT focus is the stop");
+        assert_eq!(
+            target.active_descendant.as_deref(),
+            Some(format!("{INSPECTOR_TAG}#2").as_str()),
+            "the Objects region names its object row",
+        );
+
+        let details = objects.with_focus(FocusRegion::Details, Some(1));
+        let target = InspectorView::access_focus_target(&details, Some(INSPECTOR_TAG))
+            .expect("the inspector owns focus");
+        assert_eq!(
+            target.active_descendant.as_deref(),
+            Some(prop_tag(1).as_str()),
+            "the Details region names its property row instead",
+        );
+    }
+
+    #[test]
+    fn r1518_a_sibling_focus_and_no_focus_claim_no_descendant() {
+        let state = InspectorState::from_parts(&[0], Some(2));
+        let target = InspectorView::access_focus_target(&state, Some("some_button"))
+            .expect("a sibling owns focus");
+        assert_eq!(target.focus_tag, "some_button");
+        assert!(
+            target.active_descendant.is_none(),
+            "another widget's focus is passed through atomically",
+        );
+        assert!(
+            InspectorView::access_focus_target(&state, None).is_none(),
+            "no focus anywhere → no target, so no node bears the flag",
         );
     }
 

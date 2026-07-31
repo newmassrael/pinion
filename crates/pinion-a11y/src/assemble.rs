@@ -11,7 +11,8 @@
 //!
 //! Two steps are backend-agnostic and live here:
 //!   1. run the binding's node + focus projection in the reactive owner scope,
-//!      enriching accessible names from the paint scene ([`build_access_tree`]);
+//!      enriching accessible names from the paint scene, and stamping the
+//!      per-node focus flag from the focus target ([`build_access_tree`]);
 //!   2. resolve each node's pixel [`bounds`](AccessNode::bounds) from a
 //!      caller-supplied tag -> rect resolver ([`resolve_access_bounds`]).
 //!
@@ -37,6 +38,9 @@ use crate::{AccessFocus, AccessNode, enrich_names_from_scene};
 /// The two closures (rather than a `WidgetA11y` bound) let a multi-window GUI
 /// shell pass `access_node_for_window` and a single-window TUI shell pass
 /// `access_node` through the same assembler.
+///
+/// R1518 — the per-node focus flag is stamped here (`stamp_focus_flag`) from
+/// the focus target, so the tree cannot state focus two ways.
 pub fn build_access_tree(
     owner: &Owner,
     paint_scene: Option<&Scene>,
@@ -48,7 +52,44 @@ pub fn build_access_tree(
         enrich_names_from_scene(&mut nodes, paint);
     }
     let focus = owner.run(focus_fn);
+    stamp_focus_flag(&mut nodes, focus.as_ref());
     (nodes, focus)
+}
+
+/// R1518 §5.40 §2 #7 — set [`AccessState::focused`](crate::AccessState::focused)
+/// on the one node the AT reports as focused, and clear it everywhere else.
+///
+/// The bearer is the focused composite's `active_descendant` when it names one
+/// (the `aria-activedescendant` roving-cursor model) and otherwise the
+/// [`focus_tag`](AccessFocus::focus_tag) itself; no focus target means no node
+/// carries the flag.
+///
+/// **Why the assembler owns this.** The flag never reaches a screen reader —
+/// `lower_access_node` carries `checked` / `mixed` / `disabled` to AccessKit and
+/// the AT learns focus solely from [`AccessFocus`], which the shell's focus
+/// manager sources. The flag exists on the `scene/access` wire, where it is the
+/// AI client's spelling of that same fact (§2 #7). Two spellings of one fact are
+/// not two sources: deriving it from the target here means a binding cannot
+/// claim focus the shell did not grant, drop one it did, or place it on a
+/// different node than the AT was told about.
+///
+/// Measured across 188 examples before it was written (940 observations: boot
+/// plus four `focus/next` stops each), 144 disagreed with the target the same
+/// tree published — 130 a focused element whose own node stayed silent, 11 a
+/// roving cell flagged for the AI while the AT was told only the container
+/// (`hello-data-grid`'s current cell was unannounceable), and 3 a flag with no
+/// focus anywhere (`hello-tree-view` at boot). R1517 removed that class in the
+/// five bindings a demo walked; a binding outside the walk could still spell it
+/// any way it liked, which is what those 144 are.
+fn stamp_focus_flag(nodes: &mut [AccessNode], focus: Option<&AccessFocus>) {
+    let bearer = focus.map(|f| {
+        f.active_descendant
+            .as_deref()
+            .unwrap_or(f.focus_tag.as_str())
+    });
+    for node in nodes {
+        node.state.focused = bearer == Some(node.tag.as_str());
+    }
 }
 
 /// Resolve each node's pixel [`bounds`](AccessNode::bounds) from `resolver`, a
@@ -73,7 +114,7 @@ pub fn resolve_access_bounds(nodes: &mut [AccessNode], resolver: impl Fn(&str) -
 #[cfg(test)]
 mod tests {
     use super::{build_access_tree, resolve_access_bounds};
-    use crate::{AccessNode, AriaRole};
+    use crate::{AccessFocus, AccessNode, AriaRole};
     use pinion_core::Owner;
     use pinion_core::scene::Rect;
 
@@ -149,5 +190,111 @@ mod tests {
             nodes[2].bounds, None,
             "a tag the resolver cannot place stays unresolved"
         );
+    }
+
+    // ----- R1518 §5.40 §2 #7 — the focus flag is stamped, not claimed -----
+
+    /// The three tags every stamping test addresses: a composite container, the
+    /// child its roving cursor sits on, and an unrelated sibling.
+    fn trio() -> Vec<AccessNode> {
+        vec![
+            AccessNode::new("grid", AriaRole::Grid),
+            AccessNode::new("grid#0_0", AriaRole::GridCell),
+            AccessNode::new("sibling", AriaRole::Button),
+        ]
+    }
+
+    fn stamped(focus: Option<AccessFocus>) -> Vec<(String, bool)> {
+        let owner = Owner::new();
+        let (nodes, _) = build_access_tree(&owner, None, trio, || focus);
+        nodes
+            .into_iter()
+            .map(|n| (n.tag, n.state.focused))
+            .collect()
+    }
+
+    #[test]
+    fn r1518_an_atomic_target_flags_the_focused_element() {
+        assert_eq!(
+            stamped(Some(AccessFocus::atomic("sibling"))),
+            vec![
+                ("grid".to_owned(), false),
+                ("grid#0_0".to_owned(), false),
+                ("sibling".to_owned(), true),
+            ],
+            "the focused element carries the flag even though it never set it — \
+             the 130 observations that had a focus target no node echoed",
+        );
+    }
+
+    #[test]
+    fn r1518_a_composite_target_flags_the_active_descendant_not_the_container() {
+        assert_eq!(
+            stamped(Some(AccessFocus::composite("grid", "grid#0_0"))),
+            vec![
+                ("grid".to_owned(), false),
+                ("grid#0_0".to_owned(), true),
+                ("sibling".to_owned(), false),
+            ],
+            "the AT reports the addressed child as focused, so the wire does too",
+        );
+    }
+
+    #[test]
+    fn r1518_no_focus_target_leaves_every_node_unflagged() {
+        // `hello-tree-view` at boot claimed `file_tree#src` with `focus/get`
+        // answering `None`. Nothing the binding does can reach that state now.
+        let owner = Owner::new();
+        let (nodes, _) = build_access_tree(
+            &owner,
+            None,
+            || vec![AccessNode::new("row", AriaRole::TreeItem).with_focused(true)],
+            || None,
+        );
+        assert!(
+            !nodes[0].state.focused,
+            "a claim with no focus anywhere is cleared",
+        );
+    }
+
+    #[test]
+    fn r1518_a_claim_the_target_does_not_name_is_cleared() {
+        let owner = Owner::new();
+        let (nodes, _) = build_access_tree(
+            &owner,
+            None,
+            || {
+                vec![
+                    AccessNode::new("grid", AriaRole::Grid),
+                    AccessNode::new("grid#9_9", AriaRole::GridCell).with_focused(true),
+                ]
+            },
+            || Some(AccessFocus::composite("grid", "grid#0_0")),
+        );
+        assert_eq!(
+            nodes.iter().filter(|n| n.state.focused).count(),
+            0,
+            "the named descendant is absent from the tree, so nobody bears the \
+             flag — a stale cell cannot inherit it",
+        );
+    }
+
+    #[test]
+    fn r1518_the_stamp_is_the_only_source_whatever_the_binding_said() {
+        // Every node claims focus; the target names one. The stamp is not a
+        // filter over what the binding proposed — it replaces it.
+        let owner = Owner::new();
+        let (nodes, _) = build_access_tree(
+            &owner,
+            None,
+            || trio().into_iter().map(|n| n.with_focused(true)).collect(),
+            || Some(AccessFocus::atomic("grid")),
+        );
+        let flagged: Vec<&str> = nodes
+            .iter()
+            .filter(|n| n.state.focused)
+            .map(|n| n.tag.as_str())
+            .collect();
+        assert_eq!(flagged, vec!["grid"], "at most one, and it is the target's");
     }
 }

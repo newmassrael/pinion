@@ -56,7 +56,7 @@
 //! tests below pin the same behaviour through the real `CoreShell` +
 //! `compute_layout` + `publish_pane_viewports` pipeline.
 
-use pinion_a11y::{AccessNode, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y};
 use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle};
@@ -66,7 +66,7 @@ use pinion_core::{External, Frame, Owner, Scene, Signal, WidgetCore, use_pane_vi
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::dock::{
     DockNode, DockReorganizer, DockSplitState, DockTopology, TabWellExternal,
-    dock_tablist_access_nodes, view_dock_surface,
+    dock_tablist_access_nodes, dock_tablist_focus_target, view_dock_surface,
 };
 use pinion_widget_paint::splitter::{SplitterExternal, SplitterOrientation};
 use std::borrow::Cow;
@@ -443,6 +443,16 @@ impl WidgetA11y for TabbedChartView {
             .as_ref()
             .map(|topology| dock_tablist_access_nodes(topology, focused))
             .unwrap_or_default()
+    }
+
+    /// R1518 §5.40 — publish the focus-target half of the same walk, so a strip
+    /// that owns focus names its active tab as the `aria-activedescendant`
+    /// instead of being reported atomically.
+    fn access_focus_target(_state: &Self::State, focused: Option<&str>) -> Option<AccessFocus> {
+        use_topology_signal()
+            .get()
+            .as_ref()
+            .and_then(|topology| dock_tablist_focus_target(topology, focused))
     }
 }
 

@@ -212,10 +212,20 @@ def body() -> None:
         made += check_stop(tf, "D reopened", reopened)
         assert_eq(reopened, ASSET_DIR, "D: the re-opened modal focuses its file list")
         made += 1
-        stale = access_focus_flags(access(tf)) - {reopened}
-        assert_eq(
-            sorted(stale), [], "D: no flag survived from the modal's previous life"
-        )
+        # R1518 — "stale" is a claim the reopened stop does not ACCOUNT FOR, not
+        # merely one that is not the stop itself. This line used to subtract
+        # `{reopened}`, which passed only because the re-opened list's cursor row
+        # was in the MISSING class: `access_focus_target` named
+        # `asset_fb#0` as the active descendant and no node echoed it. Now the
+        # assembler stamps the bearer the target names, so the cursor row carries
+        # the flag — authorised, and exactly what this demo's own
+        # `accounted_for` has always allowed.
+        stale = [
+            tag
+            for tag in sorted(access_focus_flags(access(tf)))
+            if not accounted_for(tag, reopened)
+        ]
+        assert_eq(stale, [], "D: no flag survived from the modal's previous life")
         made += 1
 
     # ── (E) a roving cursor does not outlive the focus that authorised it ────

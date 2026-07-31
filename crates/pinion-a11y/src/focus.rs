@@ -73,11 +73,36 @@ impl AccessFocus {
             active_descendant: Some(child.into()),
         }
     }
+
+    /// R1518 §5.40 — `parent`, addressing `child` if it addresses one.
+    ///
+    /// The mechanical pairing of the two constructors above for the shape every
+    /// roving composite has: a cursor that MAY rest on a descendant. Lifted at
+    /// the 4th identical site (`grouped_focus_target`, the dock tab strip, the
+    /// inspector's region cursor, the property grid's tree cursor) — the
+    /// `map_or_else(atomic, composite)` each spelled out carries no policy, only
+    /// wiring.
+    #[must_use]
+    pub fn addressing(parent: impl Into<String>, child: Option<String>) -> Self {
+        let parent = parent.into();
+        child.map_or_else(
+            || Self::atomic(parent.clone()),
+            |child| Self::composite(parent.clone(), child),
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn r1518_addressing_is_composite_with_a_cursor_and_atomic_without() {
+        let with = AccessFocus::addressing("grid", Some("grid#0_0".to_owned()));
+        assert_eq!(with, AccessFocus::composite("grid", "grid#0_0"));
+        let without = AccessFocus::addressing("grid", None);
+        assert_eq!(without, AccessFocus::atomic("grid"));
+    }
 
     #[test]
     fn atomic_has_no_active_descendant() {

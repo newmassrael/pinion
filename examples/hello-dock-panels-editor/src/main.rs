@@ -42,7 +42,7 @@
 //! * `floating_window_id(prefix, panel_id)` + `DEFAULT_FLOATING_WINDOW_PREFIX` —
 //!   `"torn-{panel_id}"` convention.
 
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, AriaRole, WidgetA11y};
 use pinion_core::command::Command;
 use pinion_core::external::OUTER_DOCK_ZONE_TAG;
 use pinion_core::external::{DropPoint, IntrospectValue};
@@ -71,8 +71,9 @@ use pinion_widget_paint::dock::{
     TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT, TabWellExternal, WINDOW_MOVE_EVENT,
     WindowControlTags, dock_drop_preview_overlay, dock_outer_preview_overlay,
     dock_outer_zone_highlight, dock_redock_preview_tint, dock_tablist_access_nodes,
-    floating_window_id as dock_floating_window_id, resolve_drop, view_dock_panel_with_actions,
-    view_dock_surface_chrome, view_floating_placeholder, view_window_controls,
+    dock_tablist_focus_target, floating_window_id as dock_floating_window_id, resolve_drop,
+    view_dock_panel_with_actions, view_dock_surface_chrome, view_floating_placeholder,
+    view_window_controls,
 };
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::borrow::Cow;
@@ -1725,6 +1726,18 @@ impl WidgetA11y for DockPanelsEditorView {
                 .with_focused(focused == Some(*body))
         }));
         nodes
+    }
+
+    /// R1518 §5.40 — a tab strip owning focus names its active tab as the
+    /// `aria-activedescendant`; any other focused tag (a pane, a chrome button)
+    /// passes through atomically. The peer of the
+    /// [`dock_tablist_access_nodes`] walk above, so the AT and the
+    /// `scene/access` wire state one focus, not two.
+    fn access_focus_target(_state: &Self::State, focused: Option<&str>) -> Option<AccessFocus> {
+        use_editor_topology()
+            .get()
+            .as_ref()
+            .and_then(|topology| dock_tablist_focus_target(topology, focused))
     }
 }
 

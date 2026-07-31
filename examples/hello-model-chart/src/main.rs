@@ -65,7 +65,7 @@
 //! scene-as-data, no pixels.
 
 use pinion_a11y::{
-    AccessNode, RadioCell, ToggleSegment, WidgetA11y, radiogroup_radio_nodes,
+    AccessFocus, AccessNode, RadioCell, ToggleSegment, WidgetA11y, radiogroup_radio_nodes,
     toggle_button_group_nodes,
 };
 use pinion_chart::{CellTable, ChartStyle, Field, LineChart, Mapped, ModelMapper, numeric};
@@ -827,6 +827,19 @@ impl WidgetA11y for ModelChartView {
         );
         nodes
     }
+
+    /// R1518 §5.40 — the x group is one tab stop with a roving cursor, so name
+    /// the radio that cursor addresses as the `aria-activedescendant`. The
+    /// default target is atomic, which told a screen reader only "radiogroup
+    /// focused" while [`access_node`](Self::access_node) had already flagged the
+    /// cell for the RPC wire — one fact reaching one of its two consumers.
+    fn access_focus_target(state: &PickerState, focused: Option<&str>) -> Option<AccessFocus> {
+        rc::composite_focus_target(
+            X_TAG,
+            focused,
+            rc::active_index(&state.x_rows, state.x_focused),
+        )
+    }
 }
 
 impl WidgetView for ModelChartView {
@@ -1097,6 +1110,32 @@ mod tests {
         assert!(!is_measure(&cells, 0), "the Month column is text");
         assert!(is_measure(&cells, 1), "the Revenue column is numeric");
         assert!(is_measure(&cells, 3), "an Int column is a measure");
+    }
+
+    /// R1518 — the x group is a roving composite, so the radio its cursor sits
+    /// on is the group's `aria-activedescendant`. `access_node` flagged that
+    /// radio and the default target reported the group atomically, so the AT
+    /// was told a radiogroup had focus and never which radio.
+    #[test]
+    fn r1518_the_x_group_names_its_active_radio() {
+        let owner = Owner::new();
+        let state = state_with(2, [true, false, false, false]);
+        let target = owner
+            .run(|| ModelChartView::access_focus_target(&state, Some(X_TAG)))
+            .expect("the x group owns focus");
+        assert_eq!(target.focus_tag, X_TAG);
+        assert_eq!(
+            target.active_descendant.as_deref(),
+            Some(format!("{X_TAG}#2").as_str()),
+            "the selected radio is the active descendant",
+        );
+        let flagged: Vec<String> = owner
+            .run(|| ModelChartView::access_node(&state, Some(X_TAG)))
+            .into_iter()
+            .filter(|n| n.state.focused)
+            .map(|n| n.tag)
+            .collect();
+        assert_eq!(flagged, vec![format!("{X_TAG}#2")], "one fact, both halves");
     }
 
     #[test]

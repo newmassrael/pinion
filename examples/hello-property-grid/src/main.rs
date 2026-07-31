@@ -4605,9 +4605,11 @@ impl WidgetA11y for PropertyGridView {
         // value-index id or a branch `cat.` / `struct.` id), ringing its row tag
         // via the `tree_row_tag` SSOT (so it matches what `tree_access_nodes`
         // emitted — R921.1 use-substrate); the grid atomically when no cursor yet.
-        Some(use_property_cursor().get().map_or_else(
-            || AccessFocus::atomic(GRID_TAG),
-            |id| AccessFocus::composite(GRID_TAG, tree_row_tag(GRID_TAG, &id)),
+        Some(AccessFocus::addressing(
+            GRID_TAG,
+            use_property_cursor()
+                .get()
+                .map(|id| tree_row_tag(GRID_TAG, &id)),
         ))
     }
 

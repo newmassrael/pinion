@@ -5311,9 +5311,16 @@ impl WidgetA11y for DataGridView {
     /// is open while the grid holds focus, the active descendant is the cursor
     /// OPTION (the combobox a11y shape: the grid keeps focus, the popup is its
     /// roving descendant), gated on the same [`popup_pos_live`] visibility the
-    /// paint and `access_node` use. Otherwise the default — ring `focused`
-    /// atomically (the focused gridcell's own `focused` flag in `access_node`
-    /// marks the cell active descendant, the pre-R940 behaviour).
+    /// paint and `access_node` use.
+    ///
+    /// R1518 — otherwise it is the 2-D roving cursor's gridcell, addressed
+    /// through the same [`cell_tag`] the nodes are built with. This doc used to
+    /// say the cell's own `focused` flag in `access_node` "marks the cell active
+    /// descendant"; it does not. That flag is not lowered to AccessKit
+    /// (`lower_access_node` carries `checked` / `mixed` / `disabled` only) — the
+    /// AT learns focus from this target alone, so it heard "Asset table focused"
+    /// and never which cell, while the `scene/access` wire named the cell all
+    /// along. Measured: `data_grid#0_0` flagged, `{"tag": "data_grid"}` reported.
     fn access_focus_target(_state: &RootState, focused: Option<&str>) -> Option<AccessFocus> {
         if focused == Some(GRID_TAG)
             && let Some((_, col, _)) = popup_pos_live()
@@ -5332,6 +5339,12 @@ impl WidgetA11y for DataGridView {
             return Some(AccessFocus::composite(
                 GRID_TAG,
                 format!("{GRID_TAG}#{prefix}{cur}"),
+            ));
+        }
+        if focused == Some(GRID_TAG) {
+            return Some(AccessFocus::composite(
+                GRID_TAG,
+                cell_tag(use_focused_row().get(), use_focused_col().get()),
             ));
         }
         focused.map(AccessFocus::atomic)
@@ -9506,6 +9519,38 @@ mod tests {
                     .expect("focus");
             assert_eq!(focus.focus_tag, GRID_TAG);
             assert_eq!(focus.active_descendant.as_deref(), Some("data_grid#opt0"));
+        });
+    }
+
+    /// R1518 — with no popup open the 2-D roving cursor's gridcell is the
+    /// reported active descendant, and it is the SAME cell `access_node` flags.
+    /// Before this round the target was atomic here: the cell was named on the
+    /// `scene/access` wire and never to AccessKit, so a screen reader heard
+    /// "Asset table" and never which cell the cursor was on.
+    #[test]
+    fn r1518_the_roving_cell_is_reported_not_only_flagged() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let focus =
+                DataGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
+                    .expect("the grid owns focus");
+            assert_eq!(focus.focus_tag, GRID_TAG, "AT focus rests on the grid");
+            assert_eq!(
+                focus.active_descendant.as_deref(),
+                Some(cell_tag(0, 0).as_str()),
+                "and names the cursor cell",
+            );
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            let flagged: Vec<&str> = nodes
+                .iter()
+                .filter(|n| n.state.focused)
+                .map(|n| n.tag.as_str())
+                .collect();
+            assert_eq!(
+                flagged,
+                vec![cell_tag(0, 0).as_str()],
+                "the two halves name one cell",
+            );
         });
     }
 

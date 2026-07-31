@@ -87,7 +87,7 @@ use pinion_core::undo::{SignalEdit, UndoStack};
 
 use crate::splitter::{SplitterOrientation, SplitterStyle, apply_flex_main, view_splitter};
 use crate::tabs::{TabsStyle, composite_tab_tag, view_tabs};
-use pinion_a11y::{AccessNode, TabCell, tablist_tab_nodes};
+use pinion_a11y::{AccessFocus, AccessNode, TabCell, tablist_tab_nodes};
 
 // ─────────────────────────────────────────────────────────────────────
 // R685 §5.16 §5.49 — DockSurface topology composition substrate.
@@ -6307,6 +6307,47 @@ pub fn dock_tablist_access_nodes(
     out
 }
 
+/// R1518 §5.40 — the focus-target half of [`dock_tablist_access_nodes`].
+///
+/// A tab strip owning shell focus makes its ACTIVE tab the strip's
+/// `aria-activedescendant` — the same `group_focused && i == *active` rule the
+/// node walker stamps on [`TabCell::focused`]. A `focused` tag that is not a
+/// strip (a panel body, a button) passes through atomically.
+///
+/// The walker shipped without this peer, so both consumers fell back to the
+/// [`WidgetA11y`](pinion_a11y::WidgetA11y) default atomic target: a screen
+/// reader was told "tab list focused" and never which tab, while the
+/// `scene/access` wire named it all along (measured on `hello-tabbed-chart`:
+/// `left_well#0` flagged against a `{"tag": "left_well"}` target). The flag does
+/// not reach AccessKit on its own — `lower_access_node` carries `checked` /
+/// `mixed` / `disabled` — so the two halves have to be published together.
+#[must_use]
+pub fn dock_tablist_focus_target(
+    topology: &DockTopology,
+    focused: Option<&str>,
+) -> Option<AccessFocus> {
+    let tag = focused?;
+    Some(AccessFocus::addressing(
+        tag,
+        active_tab_tag(topology.root(), tag),
+    ))
+}
+
+/// Recursive lookup for [`dock_tablist_focus_target`]: the composite tag of the
+/// active tab of the strip identified by `strip`, or `None` when no `Tabs` node
+/// carries that id.
+fn active_tab_tag(node: &DockNode, strip: &str) -> Option<String> {
+    match node {
+        DockNode::Tabs { id, active, .. } if id.as_ref() == strip => {
+            Some(composite_tab_tag(strip, *active))
+        }
+        DockNode::Split { first, second, .. } => {
+            active_tab_tag(first, strip).or_else(|| active_tab_tag(second, strip))
+        }
+        DockNode::Tabs { .. } | DockNode::Leaf { .. } => None,
+    }
+}
+
 /// Recursive walk for [`dock_tablist_access_nodes`].
 fn collect_dock_tablist_nodes(node: &DockNode, focused: Option<&str>, out: &mut Vec<AccessNode>) {
     match node {
@@ -7933,8 +7974,8 @@ mod tests {
         FloatPolicy, FloatingPlaceholderStyle, HEADER_TAG_SUFFIX, PLACEHOLDER_TAG_SUFFIX,
         TEAR_OFF_EVENT, TEAR_OFF_FOLLOW_EVENT, TEAR_OFF_REDOCK_AT_EVENT, TEAR_OFF_REDOCK_EVENT,
         WINDOW_MOVE_EVENT, composite_tag, dock_drop_preview_overlay, dock_drop_zone_highlight,
-        dock_tablist_access_nodes, view_dock_panel, view_dock_surface, view_dock_surface_chrome,
-        view_floating_placeholder,
+        dock_tablist_access_nodes, dock_tablist_focus_target, view_dock_panel, view_dock_surface,
+        view_dock_surface_chrome, view_floating_placeholder,
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::{AccessNode, AriaRole};
@@ -10657,6 +10698,58 @@ mod tests {
             .find(|n| n.tag == composite_tab_tag("well-1", 1))
             .expect("active tab");
         assert!(!a.state.focused, "no strip focus → no roving descendant");
+    }
+
+    /// R1518 — the focus-target half of the walk above. The node test asserts
+    /// which tab carries the flag; this asserts the AT is TOLD, which is the
+    /// half that was missing (the flag alone never reaches AccessKit).
+    #[test]
+    fn r1518_focused_strip_names_its_active_tab_as_active_descendant() {
+        let topo = DockTopology::new(DockNode::tabs("well-1", vec!["a".into(), "b".into()], 1));
+        let target = dock_tablist_focus_target(&topo, Some("well-1")).expect("strip focused");
+        assert_eq!(target.focus_tag, "well-1", "AT focus rests on the strip");
+        assert_eq!(
+            target.active_descendant.as_deref(),
+            Some(composite_tab_tag("well-1", 1).as_str()),
+            "and names the active tab — the same tab the walk flags",
+        );
+    }
+
+    #[test]
+    fn r1518_a_non_strip_tag_passes_through_atomically() {
+        let topo = DockTopology::new(DockNode::tabs("well-1", vec!["a".into(), "b".into()], 0));
+        let target = dock_tablist_focus_target(&topo, Some("some_button")).expect("focused");
+        assert_eq!(target.focus_tag, "some_button");
+        assert!(
+            target.active_descendant.is_none(),
+            "a tag that is not a strip has no active descendant",
+        );
+        assert!(
+            dock_tablist_focus_target(&topo, None).is_none(),
+            "no focus anywhere → no target",
+        );
+    }
+
+    /// A well nested under splits is still found — the walk and the lookup must
+    /// agree on reachability, or a nested strip announces a tab the tree has.
+    #[test]
+    fn r1518_a_nested_strip_is_reached_through_the_splits() {
+        let topo = DockTopology::new(DockNode::split_horizontal(
+            "outer",
+            0.4,
+            DockNode::leaf("side"),
+            DockNode::split_vertical(
+                "inner",
+                0.5,
+                DockNode::leaf("top"),
+                DockNode::tabs("deep", vec!["x".into(), "y".into(), "z".into()], 2),
+            ),
+        ));
+        let target = dock_tablist_focus_target(&topo, Some("deep")).expect("nested strip focused");
+        assert_eq!(
+            target.active_descendant.as_deref(),
+            Some(composite_tab_tag("deep", 2).as_str()),
+        );
     }
 
     #[test]
