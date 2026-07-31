@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    access_node_by_tag,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -52,12 +53,6 @@ def access(tf):
     return tf.request("scene/access").result
 
 
-def node_by_tag(result, tag):
-    for n in result["nodes"]:
-        if n.get("tag") == tag:
-            return n
-    return None
-
 
 def buttons(result):
     return [n for n in result["nodes"] if n.get("role") == "button"]
@@ -65,11 +60,11 @@ def buttons(result):
 
 def child_button_named(result, host_tag, name_prefix):
     """The button child of `host_tag` whose name starts with `name_prefix`."""
-    host = node_by_tag(result, host_tag)
+    host = access_node_by_tag(result, host_tag)
     if host is None:
         return None
     for c in host.get("children", []):
-        btn = node_by_tag(result, c)
+        btn = access_node_by_tag(result, c)
         if btn and btn.get("role") == "button" and btn.get("name", "").startswith(name_prefix):
             return btn
     return None
@@ -128,7 +123,7 @@ def body() -> None:
         assert_eq(gq(tf, "elem_count"), 2, "one element removed via the AT wire")
         # Add brings it back; the add button is always present.
         acc = access(tf)
-        add_sub = node_by_tag(acc, f"{GRID}#addelem")["tag"].split("#", 1)[1]  # "addelem"
+        add_sub = access_node_by_tag(acc, f"{GRID}#addelem")["tag"].split("#", 1)[1]  # "addelem"
         tf.invoke(f"{EXT}/send", f"{add_sub}:PointerUp")
         wait_until(lambda: gq(tf, "elem_count") == 3,
                    timeout=4.0, interval=0.03, desc="the AT Add grew the array back to 3")

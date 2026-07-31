@@ -2773,8 +2773,14 @@ impl WidgetA11y for InspectorView {
     ///
     /// The root `Group` references both regions; keyboard focus roves between
     /// them (R1224), so at most one pane shows an active descendant at a time.
-    fn access_node(state: &InspectorState, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(state: &InspectorState, focused: Option<&str>) -> Vec<AccessNode> {
         let objects = use_objects().get();
+        // R1517 §5.39 §5.40 — the pane regions below are the binding's INTERNAL
+        // keyboard split; the shell sees one focus stop. `aria-activedescendant`
+        // is defined only while that stop owns focus, so both roving cursors are
+        // gated on it. Ungated (measured before this round) object row 0 claimed
+        // AT focus at boot, with the focus manager holding nothing at all.
+        let composite_focused = focused == Some(INSPECTOR_TAG);
         let selection = state.selection_set();
         let tags: Vec<String> = (0..objects.len())
             .map(|i| format!("{INSPECTOR_TAG}#{i}"))
@@ -2788,8 +2794,9 @@ impl WidgetA11y for InspectorView {
                 state: ListboxItemState::Idle,
                 selected: state.is_selected(i),
                 // R1224 — the object list's active-descendant shows only while
-                // the Objects pane owns the keyboard (region-gated roving focus).
-                focused: state.is_object_cursor(i),
+                // the Objects pane owns the keyboard (region-gated roving focus),
+                // and R1517 — only while the binding owns the shell's focus.
+                focused: composite_focused && state.is_object_cursor(i),
             })
             .collect();
 
@@ -2837,7 +2844,7 @@ impl WidgetA11y for InspectorView {
             nodes.push(detail_access_node(
                 i,
                 prop,
-                state.is_prop_cursor(i),
+                composite_focused && state.is_prop_cursor(i),
                 editing,
             ));
         }
@@ -3889,7 +3896,7 @@ mod tests {
         let nodes = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
                 &InspectorState::from_parts(&[0, 2], Some(2)),
-                None,
+                Some(INSPECTOR_TAG),
             )
         });
         // [root Group, listbox, option_0, option_1, option_2]
@@ -4022,7 +4029,7 @@ mod tests {
         let nodes = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
                 &InspectorState::from_parts(&[0, 1, 2], Some(2)),
-                None,
+                Some(INSPECTOR_TAG),
             )
         });
         assert!(
@@ -4145,7 +4152,7 @@ mod tests {
             <InspectorView as WidgetA11y>::access_node(
                 &InspectorState::from_parts(&[0], Some(0))
                     .with_focus(FocusRegion::Details, Some(0)),
-                None,
+                Some(INSPECTOR_TAG),
             )
         });
         let row = |tag: &str| nodes.iter().find(|n| n.tag == tag).unwrap();
@@ -4191,7 +4198,7 @@ mod tests {
             <InspectorView as WidgetA11y>::access_node(
                 &InspectorState::from_parts(&[0, 1], Some(1))
                     .with_focus(FocusRegion::Objects, Some(0)),
-                None,
+                Some(INSPECTOR_TAG),
             )
         });
         assert!(obj_focused(&objects), "Objects pane: object cursor focused");
@@ -4206,7 +4213,7 @@ mod tests {
             <InspectorView as WidgetA11y>::access_node(
                 &InspectorState::from_parts(&[0, 1], Some(1))
                     .with_focus(FocusRegion::Details, Some(0)),
-                None,
+                Some(INSPECTOR_TAG),
             )
         });
         assert!(
@@ -4411,7 +4418,7 @@ mod tests {
             <InspectorView as WidgetA11y>::access_node(
                 &InspectorState::from_parts(&[0], Some(0))
                     .with_focus(FocusRegion::Details, Some(5)),
-                None,
+                Some(INSPECTOR_TAG),
             )
         });
         let team = nodes

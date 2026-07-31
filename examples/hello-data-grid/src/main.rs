@@ -4756,10 +4756,16 @@ fn view_choice_overlay(
 /// for a popup the screen does not show. The property-grid `popup_listbox_nodes`
 /// shape; the choice + colour palettes are both `listbox` + `option`s, so they
 /// share the builder and diverge only in the per-item tag / label / selection.
+///
+/// R1517 — `grid_focused` is the caller's `focused == Some(GRID_TAG)`: the
+/// cursor option is the `aria-activedescendant`, which WAI-ARIA defines only
+/// while the composite owns focus, and `access_focus_target` already gates the
+/// target it points at on the same condition.
 fn popup_listbox_nodes(
     model: &[CellValue],
     vis_rows: &[GroupRow],
     editing: Option<(usize, usize)>,
+    grid_focused: bool,
 ) -> Vec<AccessNode> {
     let Some((row, col, _)) = popup_pos(editing, vis_rows) else {
         return Vec::new();
@@ -4783,7 +4789,7 @@ fn popup_listbox_nodes(
                         ListboxItemState::Idle
                     },
                     selected: *selected == i,
-                    focused: cursor == i,
+                    focused: grid_focused && cursor == i,
                 })
                 .collect();
             let name = format!("{} options", COL_NAMES[col]);
@@ -4806,7 +4812,7 @@ fn popup_listbox_nodes(
                         ListboxItemState::Idle
                     },
                     selected: color == *current,
-                    focused: cursor == i,
+                    focused: grid_focused && cursor == i,
                 })
                 .collect();
             let name = format!("{} swatches", COL_NAMES[col]);
@@ -5148,15 +5154,21 @@ impl WidgetA11y for DataGridView {
     /// [`grouped_grid_access_nodes`] SSOT (R895 — the editable grid is the
     /// substrate's cell-focus + bespoke-row-tag consumer, replacing the
     /// R892 hand-roll). The columns (with `aria-sort`) are shared.
-    fn access_node(_state: &RootState, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(_state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
         let model = use_data_model().get();
         // R940 — while a choice dropdown is open + visible, the active descendant
         // is the popup OPTION (the option carries `focused`, and
         // `access_focus_target` rings it), NOT a grid cell; suppress the cell
         // focus so the AT has exactly ONE active descendant (the R873 paint + a11y
         // one-gate discipline — `usize::MAX` matches no valid row / col).
+        //
+        // R1517 §5.39 — and the whole roving cursor is gated on the GRID owning
+        // shell focus, the WAI-ARIA precondition for `aria-activedescendant`.
+        // Ungated (measured before this round) cell `0_0` claimed AT focus at
+        // boot, while the focus manager held nothing at all.
         let popup_active = popup_pos_live().is_some();
-        let (focused_row, focused_col) = if popup_active {
+        let grid_focused = focused == Some(GRID_TAG);
+        let (focused_row, focused_col) = if popup_active || !grid_focused {
             (usize::MAX, usize::MAX)
         } else {
             (use_focused_row().get(), use_focused_col().get())
@@ -5232,7 +5244,7 @@ impl WidgetA11y for DataGridView {
                 .iter()
                 .map(|&source| GroupRow::Data { source })
                 .collect();
-            nodes.extend(popup_listbox_nodes(&model, &vis, editing));
+            nodes.extend(popup_listbox_nodes(&model, &vis, editing, grid_focused));
             return nodes;
         };
 
@@ -5291,7 +5303,7 @@ impl WidgetA11y for DataGridView {
         stamp_cell_selection(&mut nodes, &visible_sources, (focused_row, focused_col));
         // R940 — the open dropdown's `listbox` nodes (gated on the editing row
         // being present in this same grouped flatten — a collapsed group hides it).
-        nodes.extend(popup_listbox_nodes(&model, &rows, editing));
+        nodes.extend(popup_listbox_nodes(&model, &rows, editing, grid_focused));
         nodes
     }
 

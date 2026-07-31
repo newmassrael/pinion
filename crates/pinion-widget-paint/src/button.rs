@@ -548,6 +548,27 @@ pub fn read_button_state(scene: &Scene, tag: &str) -> ButtonState {
 /// so a composite binding paints the focus ring on whichever button
 /// holds shell focus. `false` when the tag is absent. R703 SSOT lift —
 /// see [`read_button_state`].
+///
+/// # Which focus channel to use (R1517)
+///
+/// pinion answers "is this focused" on three channels, and they are not
+/// interchangeable. This one is the **paint** channel:
+///
+/// * **This function** — the per-External boolean of
+///   [`External::on_focus_change`](pinion_core::external::External), surfaced
+///   through the scene. Answers "*am I* focused" for a composite binding
+///   painting its own focus ring, on the paint's own cadence. `hello-combobox`
+///   is the reference consumer (its trigger border).
+/// * **The `focused: Option<&str>` argument** of `access_node` /
+///   `access_focus_target` / `apply_key` — the shell's live focused tag, handed
+///   in at call time. This is the **canonical source for the a11y tree**: every
+///   `AccessState::focused` in the workspace derives from it. Do not re-derive
+///   an AT focus flag from this function — a flag on the paint's cadence is
+///   fresh only by an ordering coincidence the a11y builder does not control,
+///   and it makes "who is focused" answerable two ways within one tree.
+/// * [`focus_state::focused()`](pinion_core::focus_state::focused) — the
+///   reactive binding-wide focused *tag*, for display state DERIVED from focus
+///   (a window title naming the active pane). Answers "*who* is focused".
 #[must_use]
 pub fn read_button_focused(scene: &Scene, tag: &str) -> bool {
     scene

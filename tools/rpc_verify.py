@@ -1837,6 +1837,46 @@ def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
     return None
 
 
+def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:
+    """The `scene/access` node carrying this `tag`, or `None` when absent.
+
+    The a11y peer of `find_by_tag`: an access tree is a FLAT `nodes` list (the
+    parent/child relation is by tag reference, not nesting), so it is a scan
+    rather than a descent — a distinction worth keeping visible, which is why
+    this is its own name instead of an argument to `find_by_tag`.
+
+    R1517 obligation-3b lift: five demos carried a byte-identical private copy
+    (measured — r979, r980, r981, r982, r983). Mechanical, no per-demo opinion,
+    so it is shared, following `texts_of` (R1478) and `walk_nodes` (R1516).
+    """
+    if not isinstance(result, dict):
+        return None
+    for node in result.get("nodes") or ():
+        if isinstance(node, dict) and node.get("tag") == tag:
+            return node
+    return None
+
+
+def access_focus_flags(result: Any) -> set[str]:
+    """Every `scene/access` tag whose `state.focused` is `true`.
+
+    The wire form omits default-valued fields, so an unfocused node carries no
+    `focused` key at all — "the set of tags claiming focus" is the honest read,
+    and it is a SET so a caller can assert what is *not* in it. The AT tree's
+    focus flag is single-sourced from the shell's focused tag (R1517), so this
+    set is expected to hold at most the one tag `focus/get` reports.
+    """
+    if not isinstance(result, dict):
+        return set()
+    return {
+        node["tag"]
+        for node in result.get("nodes") or ()
+        if isinstance(node, dict)
+        and isinstance(node.get("tag"), str)
+        and (node.get("state") or {}).get("focused") is True
+    }
+
+
 def count_indexed_tags(snap: Any, prefix: str, suffix: str = "") -> int:
     """Count consecutive `{prefix}{k}{suffix}` tags (k = 0, 1, 2, …) present in
     `snap`, stopping at the first gap. The mechanical counter the chart demos share

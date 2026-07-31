@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    access_node_by_tag,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -54,12 +55,6 @@ NROWS = 4
 def access(tf):
     return tf.request("scene/access").result
 
-
-def node_by_tag(result, tag):
-    for n in result["nodes"]:
-        if n.get("tag") == tag:
-            return n
-    return None
 
 
 def body() -> None:
@@ -85,7 +80,7 @@ def body() -> None:
         assert_eq(len(data_rows), NROWS, "there are NROWS data rows")
         for r in data_rows:
             first = r["children"][0]
-            fh = node_by_tag(acc, first)
+            fh = access_node_by_tag(acc, first)
             assert fh is not None and fh["role"] == "rowheader", \
                 f"data row {r['tag']} leads with a rowheader (got {first})"
 
@@ -93,7 +88,7 @@ def body() -> None:
         rh1 = next(h for h in rowheaders if h["name"] == "Row 1")
         reset_tag = next((c for c in rh1.get("children", []) if "#resetrow" in c), None)
         assert reset_tag is not None, "the modified row's rowheader hosts a reset button child"
-        reset_btn = node_by_tag(acc, reset_tag)
+        reset_btn = access_node_by_tag(acc, reset_tag)
         assert_eq(reset_btn["role"], "button", "the row reset affordance is a button (AT-reachable)")
         assert_eq(reset_btn["name"], "Reset row 1 to default", "the row reset button is named")
         # the button is NOT a direct child of the row (it hangs off the rowheader)
@@ -108,10 +103,10 @@ def body() -> None:
         wait_until(lambda: tf.query(f"{EXT}/row_modified.{src}") is False,
                    timeout=4.0, interval=0.03, desc="the AT row reset cleared the whole row")
         acc = access(tf)
-        assert node_by_tag(acc, reset_tag) is None, "the row reset button leaves the tree once the row is default"
+        assert access_node_by_tag(acc, reset_tag) is None, "the row reset button leaves the tree once the row is default"
         # the rowheader cell itself persists (structural, not modified-gated)
-        assert node_by_tag(acc, rh1["tag"]) is not None, "the rowheader cell persists after reset"
-        assert node_by_tag(acc, rh1["tag"])["role"] == "rowheader", "still a rowheader"
+        assert access_node_by_tag(acc, rh1["tag"]) is not None, "the rowheader cell persists after reset"
+        assert access_node_by_tag(acc, rh1["tag"])["role"] == "rowheader", "still a rowheader"
         # the other rows keep their reset buttons (only the addressed row cleared)
         other_resets = [n for n in acc["nodes"]
                         if n.get("role") == "button" and "#resetrow" in n.get("tag", "")]

@@ -153,8 +153,7 @@ use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::anchor::{AnchorSide, flip_y};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::button::{
-    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_focused,
-    read_button_state,
+    ButtonColors, ButtonStyle, button_a11y_state, button_scene, read_button_state,
 };
 use pinion_widget_paint::checkbox::{CheckboxStyle, view_checkbox_box};
 use pinion_widget_paint::dialog::{DialogContent, DialogStyle, view_dialog};
@@ -3832,7 +3831,7 @@ fn view_asset_dialog(theme: &Theme, buttons: AssetButtons) -> Vec<Scene> {
     let dir = asset_directory();
     let scroll = use_scroll_state(ASSET_SCROLL_KEY);
     let has_selection = dir.selected().is_some();
-    let (ok_state, cancel_state, _ok_focused, _cancel_focused) = buttons;
+    let (ok_state, cancel_state) = buttons;
     let pane = file_browser_pane(
         ASSET_DIR_TAG,
         &dir,
@@ -3886,7 +3885,12 @@ fn view_asset_dialog(theme: &Theme, buttons: AssetButtons) -> Vec<Scene> {
 /// closed): an aria-modal `Dialog` owning the file `list` (the lifted
 /// windowed-list SSOT) + the two action buttons, OK aria-disabled until a file
 /// is selected. A free helper so `access_node` stays under the line cap.
-fn asset_dialog_access_nodes(buttons: AssetButtons) -> Vec<AccessNode> {
+///
+/// R1517 — `focused` is the caller's (`access_node`'s) shell-focus argument, the
+/// same source the search box's node reads two dozen lines below it. Before this
+/// round these two buttons were the workspace's only AT nodes whose focus flag
+/// came from a paint-cadence snapshot instead.
+fn asset_dialog_access_nodes(buttons: AssetButtons, focused: Option<&str>) -> Vec<AccessNode> {
     if !asset_modal().is_open() {
         return Vec::new();
     }
@@ -3903,7 +3907,11 @@ fn asset_dialog_access_nodes(buttons: AssetButtons) -> Vec<AccessNode> {
     // R1177 — the SAME live postures the paint reads (`read_state`), with the
     // SAME OK selection gate, so the AT tree never advertises a posture the
     // painted button contradicts.
-    let (ok_state, cancel_state, ok_focused, cancel_focused) = buttons;
+    let (ok_state, cancel_state) = buttons;
+    let (ok_focused, cancel_focused) = (
+        focused == Some(ASSET_OK_TAG),
+        focused == Some(ASSET_CANCEL_TAG),
+    );
     let mut nodes = vec![
         AccessNode::new(ASSET_PANEL_TAG, AriaRole::Dialog)
             .with_modal()
@@ -4126,12 +4134,17 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
 
 // ─── WidgetCore impl ──────────────────────────────────────────────
 
-/// R1177 — the two asset-dialog action buttons' live posture read from the
-/// painted scene — `(ok_state, cancel_state, ok_focused, cancel_focused)`. So
-/// the dialog buttons' PAINT and a11y read one source (the R1176 static-posture
-/// cut painted `focused = false` while a11y reported live focus — a paint↔a11y
-/// divergence; this threads the live posture to both).
-type AssetButtons = (ButtonState, ButtonState, bool, bool);
+/// R1177 — the two asset-dialog action buttons' live interaction posture read
+/// from the painted scene — `(ok_state, cancel_state)`. Paint and a11y read this
+/// one source, so the AT tree never advertises a posture the painted button
+/// contradicts (the R1176 static-posture cut had them diverge).
+///
+/// R1517 — the **focus** halves are deliberately NOT here. Posture (hover /
+/// pressed / disabled) is the widget's own and belongs on the paint's cadence;
+/// focus is the shell's, and the AT tree reads it from the `access_node`
+/// argument like every other binding. See [`focus_state`](pinion_core::focus_state)
+/// for which channel answers which question.
+type AssetButtons = (ButtonState, ButtonState);
 
 /// Cached paint posture for the two text fields — `(inline-cell-editor,
 /// search-box)`, each `(interaction-state, caret)` — plus the asset dialog's
@@ -4233,16 +4246,15 @@ impl WidgetCore for PropertyGridView {
         (
             tf_paint::read_text_field_state(scene, EDIT_TF_TAG),
             tf_paint::read_text_field_state(scene, SEARCH_TF_TAG),
-            // R1177 — the asset dialog buttons' live posture (state + focus), so
+            // R1177 — the asset dialog buttons' live interaction posture, so
             // paint reads the same source a11y does (no static-`false` divergence).
-            // R1512 KEPT the focus half here: unlike the sixteen bindings whose
-            // half was dead, this one's `access_node` builds `button_a11y_state`
-            // from it rather than from the shell's `focused` argument.
+            // R1517 dropped the focus halves: they fed the AT tree alone (the
+            // paint discarded them), and the AT tree's focus source is the
+            // shell's `focused` argument, so re-deriving it here walked the whole
+            // scene twice a frame to answer a question the shell already answers.
             (
                 read_button_state(scene, ASSET_OK_TAG),
                 read_button_state(scene, ASSET_CANCEL_TAG),
-                read_button_focused(scene, ASSET_OK_TAG),
-                read_button_focused(scene, ASSET_CANCEL_TAG),
             ),
         )
     }
@@ -4415,7 +4427,16 @@ impl WidgetA11y for PropertyGridView {
         let array_defaults = use_array_defaults();
         let tree_nodes = use_property_tree().get();
         let rows = visible_property_rows(&tree_nodes, &current_search_query());
-        let cursor = use_property_cursor().get();
+        // R1517 §5.39 §5.40 — the roving cursor is the `aria-activedescendant`,
+        // which WAI-ARIA defines only while the COMPOSITE owns focus, so the row
+        // flag is gated on the shell's focused tag exactly as
+        // `access_focus_target` below already gates the target it points at.
+        // Ungated (measured before this round) the cursor row kept claiming
+        // focus after Tab moved to the search box, so two nodes claimed it at
+        // once and the tree contradicted its own focus target.
+        let cursor = use_property_cursor()
+            .get()
+            .filter(|_| focused == Some(GRID_TAG));
         // The single-column tree names each row with its value folded in. The
         // row tags (`{GRID_TAG}#{id}`) match the painted rows, so bounds resolve.
         let labelled: Vec<VisibleRow> = rows
@@ -4529,7 +4550,7 @@ impl WidgetA11y for PropertyGridView {
         // never advertises an unpainted popup — R873).
         nodes.extend(popup_listbox_nodes(&model));
         // R1176 — when the asset picker is open, append its modal dialog tree.
-        nodes.extend(asset_dialog_access_nodes(state.2));
+        nodes.extend(asset_dialog_access_nodes(state.2, focused));
         nodes
     }
 
@@ -6451,6 +6472,49 @@ mod tests {
         });
     }
 
+    /// R1517 §5.39 §5.40 — the dialog buttons' AT focus flag is sourced from the
+    /// **shell's** focus (the `access_node` argument), not from a posture the
+    /// paint path snapshotted. Both sources agree in every reachable dispatch
+    /// today (measured over the wire in `r1517_at_focus_one_source.py`), so this
+    /// pins the SOURCE rather than repairing an observed wrong announcement:
+    /// which of the two the tree speaks was unstated, and a stop whose flag is
+    /// re-derived on the paint's cadence is only fresh by an ordering
+    /// coincidence the a11y builder does not control.
+    #[test]
+    fn r1517_dialog_button_at_focus_comes_from_the_shell_argument() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            open_choice(&mut scene, MESH_SLOT);
+            let state = PropertyGridView::read_state(&scene);
+            let nodes = PropertyGridView::access_node(&state, Some(ASSET_CANCEL_TAG));
+            let node = |tag: &str| {
+                nodes
+                    .iter()
+                    .find(|n| n.tag == tag)
+                    .unwrap_or_else(|| panic!("{tag} is in the open picker's AT tree"))
+            };
+            assert!(
+                node(ASSET_CANCEL_TAG).state.focused,
+                "the AT tree reports the shell's focused stop",
+            );
+            assert!(
+                !node(ASSET_OK_TAG).state.focused,
+                "and only that stop carries the flag",
+            );
+            // The mirror direction: move the shell's focus, keep the same
+            // snapshot. A flag that tracked the snapshot would not move.
+            let moved = PropertyGridView::access_node(&state, Some(ASSET_OK_TAG));
+            let moved_node = |tag: &str| {
+                moved
+                    .iter()
+                    .find(|n| n.tag == tag)
+                    .unwrap_or_else(|| panic!("{tag} is in the open picker's AT tree"))
+            };
+            assert!(moved_node(ASSET_OK_TAG).state.focused);
+            assert!(!moved_node(ASSET_CANCEL_TAG).state.focused);
+        });
+    }
+
     #[test]
     fn r867_choice_boot_taxonomy() {
         Owner::new().run(|| {
@@ -7148,13 +7212,14 @@ mod tests {
 
     // ----- R873 audit remediation (a11y) -----
 
-    /// A neutral RootState (both text fields + both dialog buttons idle, no
-    /// focus) for view / a11y assertions.
+    /// A neutral RootState (both text fields + both dialog buttons idle) for
+    /// view / a11y assertions. Focus is not part of it — R1517 made the shell's
+    /// `focused` argument the AT tree's only focus source.
     fn idle_state() -> RootState {
         (
             (TextFieldState::Idle, 0),
             (TextFieldState::Idle, 0),
-            (ButtonState::Idle, ButtonState::Idle, false, false),
+            (ButtonState::Idle, ButtonState::Idle),
         )
     }
 

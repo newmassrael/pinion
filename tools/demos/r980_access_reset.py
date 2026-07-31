@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    access_node_by_tag,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -55,12 +56,6 @@ ASSET_COL = 0  # Text column, leftmost — its header + cells sit in the viewpor
 def access(tf):
     return tf.request("scene/access").result
 
-
-def node_by_tag(result, tag):
-    for n in result["nodes"]:
-        if n.get("tag") == tag:
-            return n
-    return None
 
 
 def reset_child_of(node):
@@ -87,12 +82,12 @@ def body() -> None:
         assert acc["count"] > 0, "the access tree is non-empty"
 
         # ── (A) the modified cell (0, Asset) advertises a reset button child ──
-        cell = node_by_tag(acc, f"{GRID}#0_{ASSET_COL}")
+        cell = access_node_by_tag(acc, f"{GRID}#0_{ASSET_COL}")
         assert cell is not None, "the (0, Asset) gridcell is in the access tree"
         assert_eq(cell["role"], "gridcell", "it is a gridcell")
         cell_reset_tag = reset_child_of(cell)
         assert cell_reset_tag is not None, "the modified cell advertises a reset button child"
-        cell_btn = node_by_tag(acc, cell_reset_tag)
+        cell_btn = access_node_by_tag(acc, cell_reset_tag)
         assert cell_btn is not None, "the reset button node is in the tree"
         assert_eq(cell_btn["role"], "button", "the reset affordance is a button (AT-reachable)")
         assert_eq(cell_btn["name"], "Reset Asset to default", "the cell reset button is named")
@@ -103,7 +98,7 @@ def body() -> None:
         asset_header = next((h for h in headers if reset_child_of(h)), None)
         assert asset_header is not None, "a modified column's header carries a reset button child"
         col_reset_tag = reset_child_of(asset_header)
-        col_btn = node_by_tag(acc, col_reset_tag)
+        col_btn = access_node_by_tag(acc, col_reset_tag)
         assert_eq(col_btn["role"], "button", "the column reset is a button")
         assert col_btn["name"].startswith("Reset ") and col_btn["name"].endswith(" column to default"), \
             f"the column reset button is named for its column (got {col_btn['name']!r})"
@@ -121,17 +116,17 @@ def body() -> None:
         tf.invoke(f"{EXT}/send", f"{cell_sub}:PointerUp")
         assert_eq(tf.query(f"{EXT}/value.0.{ASSET_COL}"), "", "the AT-wire reset cleared the cell to its default")
         wait_until(
-            lambda: node_by_tag(access(tf), cell_reset_tag) is None,
+            lambda: access_node_by_tag(access(tf), cell_reset_tag) is None,
             timeout=4.0, interval=0.03,
             desc="the cell reset button leaves the access tree once the cell is default",
         )
         # The (0,Asset) gridcell no longer lists a reset child.
         acc = access(tf)
-        assert reset_child_of(node_by_tag(acc, f"{GRID}#0_{ASSET_COL}")) is None, \
+        assert reset_child_of(access_node_by_tag(acc, f"{GRID}#0_{ASSET_COL}")) is None, \
             "the cleaned cell advertises no reset child"
         # ...but its column is still modified (other rows), so the header keeps its button.
         assert_eq(tf.query(f"{EXT}/col_modified.{ASSET_COL}"), True, "the Asset column is still modified")
-        assert reset_child_of(node_by_tag(acc, asset_header["tag"])) is not None, \
+        assert reset_child_of(access_node_by_tag(acc, asset_header["tag"])) is not None, \
             "the column header still advertises its reset button"
 
         # ── (C) reset the whole Asset column via its header button's AT wire ──
@@ -145,12 +140,12 @@ def body() -> None:
         for row in range(4):
             assert_eq(tf.query(f"{EXT}/value.{row}.{ASSET_COL}"), "", f"Asset row {row} is the column default")
         acc = access(tf)
-        assert node_by_tag(acc, col_reset_tag) is None, "the column reset button is gone once the column is clean"
-        assert reset_child_of(node_by_tag(acc, f"{GRID}#0_{ASSET_COL}")) is None, \
+        assert access_node_by_tag(acc, col_reset_tag) is None, "the column reset button is gone once the column is clean"
+        assert reset_child_of(access_node_by_tag(acc, f"{GRID}#0_{ASSET_COL}")) is None, \
             "no cell reset child remains in the cleaned column"
 
         # ── out-of-range gridcell tag resolves to no node (graceful) ──
-        assert node_by_tag(acc, f"{GRID}#99_99") is None, "an out-of-range cell tag has no node"
+        assert access_node_by_tag(acc, f"{GRID}#99_99") is None, "an out-of-range cell tag has no node"
 
 
 if __name__ == "__main__":

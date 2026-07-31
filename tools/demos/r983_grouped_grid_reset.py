@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    access_node_by_tag,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -61,12 +62,6 @@ SPRITE_SOURCES = (0, 2)
 def access(tf) -> dict:
     return tf.request("scene/access").result
 
-
-def node_by_tag(result, tag):
-    for n in result["nodes"]:
-        if n.get("tag") == tag:
-            return n
-    return None
 
 
 def buttons(result, predicate):
@@ -111,7 +106,7 @@ def body() -> None:
         acc = access(tf)
 
         # ── (A) treegrid + a named rowheader per visible data row ────────
-        root = node_by_tag(acc, GRID)
+        root = access_node_by_tag(acc, GRID)
         assert root is not None, "the grid root is in the access tree"
         assert_eq(root["role"], "treegrid", "the grouped grid is a treegrid")
         rowheaders = [n for n in acc["nodes"] if n.get("role") == "rowheader"]
@@ -121,7 +116,7 @@ def body() -> None:
         data_rows = [n for n in acc["nodes"] if n.get("role") == "row" and n.get("level") == 2]
         assert_eq(len(data_rows), 4, "4 level-2 data rows (2 per group)")
         for r in data_rows:
-            first = node_by_tag(acc, r["children"][0])
+            first = access_node_by_tag(acc, r["children"][0])
             assert first is not None and first["role"] == "rowheader", \
                 f"data row {r['tag']} leads with a rowheader (the row-reset host)"
 
@@ -181,7 +176,7 @@ def body() -> None:
             lambda: tf.query(f"{EXT}/modified.{r}.{c}") is False,
             timeout=4.0, interval=0.03, desc="the AT cell reset cleared the cell",
         )
-        assert node_by_tag(access(tf), cb["tag"]) is None, "the cleared cell's reset button leaves the tree"
+        assert access_node_by_tag(access(tf), cb["tag"]) is None, "the cleared cell's reset button leaves the tree"
 
         # A column reset clears the whole column.
         acc = access(tf)
@@ -207,9 +202,9 @@ def body() -> None:
             timeout=4.0, interval=0.03, desc="the AT row reset cleared the whole row",
         )
         acc = access(tf)
-        assert node_by_tag(acc, rb["tag"]) is None, "the cleared row's reset button leaves the tree"
-        assert node_by_tag(acc, host["tag"]) is not None, "the rowheader cell persists after reset"
-        assert_eq(node_by_tag(acc, host["tag"])["role"], "rowheader", "still a rowheader")
+        assert access_node_by_tag(acc, rb["tag"]) is None, "the cleared row's reset button leaves the tree"
+        assert access_node_by_tag(acc, host["tag"]) is not None, "the rowheader cell persists after reset"
+        assert_eq(access_node_by_tag(acc, host["tag"])["role"], "rowheader", "still a rowheader")
 
 
 if __name__ == "__main__":

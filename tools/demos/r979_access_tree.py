@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    access_node_by_tag,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -73,12 +74,6 @@ def access_nodes(tf):
     """`scene/access` -> the node list (the enriched a11y tree)."""
     return tf.request("scene/access").result
 
-
-def node_by_tag(result, tag):
-    for n in result["nodes"]:
-        if n.get("tag") == tag:
-            return n
-    return None
 
 
 def pg_query(tf, slot):
@@ -114,12 +109,12 @@ def property_grid_body() -> None:
         assert len(treeitems) >= 20, "the inspector advertises its many rows as treeitems"
 
         # Levels: a category is aria-level 1, a struct field is level 3.
-        identity = node_by_tag(acc, f"{GRID}#{IDENTITY}")
+        identity = access_node_by_tag(acc, f"{GRID}#{IDENTITY}")
         assert identity is not None, "the Identity category row is in the tree"
         assert_eq(identity["role"], "treeitem", "a category is a treeitem")
         assert_eq(identity["level"], 1, "a category is aria-level 1")
 
-        pos_x = node_by_tag(acc, f"{GRID}#{POS_X}")
+        pos_x = access_node_by_tag(acc, f"{GRID}#{POS_X}")
         assert pos_x is not None, "the Position X leaf row is in the tree"
         assert_eq(pos_x["level"], 3, "a struct field is aria-level 3 (category > struct > field)")
 
@@ -131,37 +126,37 @@ def property_grid_body() -> None:
                   "access level == tree introspect level for Position X")
 
         # The live search box is a named textbox; the filter count is a status.
-        search = node_by_tag(acc, SEARCH_TF)
+        search = access_node_by_tag(acc, SEARCH_TF)
         assert search is not None, "the search box is in the a11y tree"
         assert_eq(search["role"], "textbox", "the search box is a textbox")
         assert_eq(search["name"], "Filter properties", "the search box is named")
-        status = node_by_tag(acc, "pg_search_status")
+        status = access_node_by_tag(acc, "pg_search_status")
         assert status is not None, "the live filter-count region is present"
         assert_eq(status["role"], "status", "the count is an aria-live status")
         assert status["name"].endswith("properties"), "the status names the property count"
 
         # ── (B) THE HEADLINE: a reset button becomes RPC-visible ─────
         reset_tag = f"{GRID}#reset{POS_X}"
-        assert node_by_tag(acc, reset_tag) is None, "a clean row advertises no reset button"
+        assert access_node_by_tag(acc, reset_tag) is None, "a clean row advertises no reset button"
 
         boot_val = pg_query(tf, f"value.{POS_X}")
         pg_name = pg_query(tf, f"name.{POS_X}")
         tf.intervene(f"/{GRID}/external/value.{POS_X}", 99.0)
         assert_eq(pg_query(tf, f"value.{POS_X}"), 99.0, "the field edit applied")
 
-        wait_until(lambda: node_by_tag(access_nodes(tf), reset_tag) is not None,
+        wait_until(lambda: access_node_by_tag(access_nodes(tf), reset_tag) is not None,
                    timeout=4.0, interval=0.03,
                    desc="the modified row's reset button appears in the access tree")
         acc = access_nodes(tf)
-        reset = node_by_tag(acc, reset_tag)
+        reset = access_node_by_tag(acc, reset_tag)
         assert_eq(reset["role"], "button", "the reset affordance is a button (AT-reachable)")
         assert_eq(reset["name"], f"Reset {pg_name} to default", "the button is named for the property")
-        row = node_by_tag(acc, f"{GRID}#{POS_X}")
+        row = access_node_by_tag(acc, f"{GRID}#{POS_X}")
         assert reset_tag in row.get("children", []), "the reset button is the row's child"
 
         # Restoring the default removes the reset button (one gate: paint + a11y).
         tf.intervene(f"/{GRID}/external/value.{POS_X}", boot_val)
-        wait_until(lambda: node_by_tag(access_nodes(tf), reset_tag) is None,
+        wait_until(lambda: access_node_by_tag(access_nodes(tf), reset_tag) is None,
                    timeout=4.0, interval=0.03,
                    desc="the reset button disappears once the row is default again")
         assert_eq(pg_query(tf, f"value.{POS_X}"), boot_val, "the field restored to default")
@@ -172,7 +167,7 @@ def slider_body() -> None:
         # Force a paint, then dump the a11y tree.
         tf.snapshot(source="paint", viewport=SLIDER_VIEWPORT)
         acc = access_nodes(tf)
-        slider = node_by_tag(acc, SLIDER_TAG)
+        slider = access_node_by_tag(acc, SLIDER_TAG)
         assert slider is not None, "the slider is in the access tree"
         assert_eq(slider["role"], "slider", "the node is a slider")
 
@@ -191,7 +186,7 @@ def slider_body() -> None:
         # It tracks an intervene through the same set_value funnel.
         tf.intervene("/external/value", 0.25)
         wait_until(
-            lambda: abs(node_by_tag(access_nodes(tf), SLIDER_TAG)["value"]["float"]["value"] - 0.25) < 1e-6,
+            lambda: abs(access_node_by_tag(access_nodes(tf), SLIDER_TAG)["value"]["float"]["value"] - 0.25) < 1e-6,
             timeout=4.0, interval=0.03,
             desc="aria-valuenow tracks the new slider value over scene/access",
         )
