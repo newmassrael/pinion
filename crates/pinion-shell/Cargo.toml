@@ -122,6 +122,12 @@ pinion-widget-paint = { path = "../pinion-widget-paint", version = "0.0.1" }
 # blits it via `pinion_runtime::paint_adapter::draw_coverage` and reads back the
 # pixels. Dev-only: production paint is still the §5.36 parley/swash bridge.
 pinion-text-font = { path = "../pinion-text-font", version = "0.0.1" }
+# R1512 — `tests/backend_parity.rs` compares what the THREE renderers do with
+# one declaration; this crate is the cheapest place that can see all three (it
+# already enables `pinion-runtime/vello`). Neither is a cycle: `pinion-pdf`
+# depends only on `pinion-core`, and nothing depends on `pinion-shell`.
+pinion-tui = { path = "../pinion-tui", version = "0.0.1" }
+pinion-pdf = { path = "../pinion-pdf", version = "0.0.1" }
 
 [lints]
 workspace = true

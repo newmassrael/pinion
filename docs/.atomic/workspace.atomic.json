@@ -75740,6 +75740,58 @@
         "`SurfaceAction`'s callers still compute focus flags that the view path no longer consumes; eight bindings now destructure them as `_focus`. The state tuples themselves were left alone — narrowing them reaches into the `#[widget]` derive plumbing."
       ]
     },
+    "Round 1512": {
+      "decision_summary": "The renderers are compared where they can diverge — one backend-neutral property, three cells, each with teeth",
+      "changes_bullets": [
+        "`crates/pinion-shell/tests/backend_parity.rs` — the cross-renderer contract test R1511 recorded as absent. The three renderers emit incomparable artifacts (a vello `Encoding`, a ratatui cell `Buffer`, a PDF content stream), so the asserted property is backend-neutral: for every renderer and every node type, rendering a scene WITH a declared border must differ from rendering it WITHOUT. R1511's defect is exactly one cell of that matrix — vello x Container — having been equal.",
+        "Determinism is asserted first and is load-bearing: each probe renders the same scene twice and requires the bytes to match, because an inequality between two renders is evidence only if the renderer is stable for a fixed scene.",
+        "A second test says what each renderer does in its OWN vocabulary (one extra vello path, four box-drawing corners, a longer PDF stream), so a failure names the missing artifact instead of reporting that two blobs matched. Deliberately the weakest specific claims — tighter geometry belongs in each renderer's own suite, and duplicating it here would make this file a competing source of truth for three backends.",
+        "`pinion-shell` is the home because it is the cheapest crate that can see all three: it already enables `pinion-runtime/vello` unconditionally, so the GPU-free `to_vello` walk needs no new wgpu dependency anywhere, and it already hosts the cross-cutting render proofs. `pinion-tui` + `pinion-pdf` join as dev-dependencies; neither is a cycle. A crate whose only purpose is cross-renderer conformance is the alternative, and one contract item does not justify it — the second one landing here is the signal."
+      ],
+      "verification_bullets": [
+        "Three counterfactuals, one per renderer, all dead and each naming its own cell: drop the border from vello's Container arm = 2 kills, \"vello ignores the border declared on a Scene::Container\"; disable the TUI walker's border draw = 2, \"the TUI walk draws all four box-drawing corners\"; disable the PDF stroke = 2, \"the PDF projector emits more content\". So no cell is decorative.",
+        "The R1511 carry item (d) was MEASURED rather than assumed, and the measurement changed what should be done about it. `access_node` takes the shell's live `focused` parameter and compares `focused == Some(TAG)`; it never reads the focus half of the binding's own state tuple. So that half is not merely unused by the view — it is a dead per-frame computation, `read_button_focused` walking the scene once per button.",
+        "Removing it is safe: with the focus half deleted from `hello-dialog`'s state, `r694_focus_ring` and `r693_dialog` both pass, AND — the load-bearing check, because those demos read the RPC produce mirror rather than the live window — `scene/frame_timings.frame_count` still advances on a focus change with nothing forcing a paint (41 -> 49 with the half removed, 42 -> 50 with it present). The shell repaints on focus of its own accord.",
+        "But a blanket removal would be WRONG, which is the second thing the measurement found: `hello-combobox` reads `state.trigger_focused` to choose a border colour. At least one binding genuinely consumes the value, so the removal is per-file with verification, not a sweep. The probe was reverted; no binding changed this round.",
+        "Gates: fmt / clippy `-D pedantic` / `cargo doc` clean; pinion-shell 213 + the 2 new parity tests + the rest of its suites green."
+      ],
+      "impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The parity matrix covers ONE contract item (border). Corner radius, shadows, gradient and clip are the same shape and are asserted only inside each renderer's own suite, so the divergence R1511 found is now impossible for borders and still possible for those.",
+        "A FOURTH renderer would not be covered: the matrix enumerates three by name. Nothing forces a new backend to enter it, which is the residue of putting the test in a participant crate rather than in a conformance crate that a backend must register with.",
+        "The dead focus half is measured but not removed: ~16 bindings still compute it every frame. The removal is per-file (hello-combobox proves a blanket sweep is wrong) and is the next round's first item.",
+        "The toolbar still carries two indicators for the 2-of-6 consumers that report an `active_descendant`. Both point at the same control, so it reads as emphasis; the textbook resolution is that a roving CURRENT-item affordance is not a focus ring and should not be styled as one, which is a pixel-changing design round of its own.",
+        "R1511's own sweep carry is unchanged: ~30 files' pixels moved and only CI's full sweep has seen them."
+      ],
+      "publishable_decision_summary": "The renderers are compared where they can diverge — one backend-neutral property, three cells, each with teeth",
+      "publishable_changes_bullets": [
+        "`crates/pinion-shell/tests/backend_parity.rs` — the cross-renderer contract test R1511 recorded as absent. The three renderers emit incomparable artifacts (a vello `Encoding`, a ratatui cell `Buffer`, a PDF content stream), so the asserted property is backend-neutral: for every renderer and every node type, rendering a scene WITH a declared border must differ from rendering it WITHOUT. R1511's defect is exactly one cell of that matrix — vello x Container — having been equal.",
+        "Determinism is asserted first and is load-bearing: each probe renders the same scene twice and requires the bytes to match, because an inequality between two renders is evidence only if the renderer is stable for a fixed scene.",
+        "A second test says what each renderer does in its OWN vocabulary (one extra vello path, four box-drawing corners, a longer PDF stream), so a failure names the missing artifact instead of reporting that two blobs matched. Deliberately the weakest specific claims — tighter geometry belongs in each renderer's own suite, and duplicating it here would make this file a competing source of truth for three backends.",
+        "`pinion-shell` is the home because it is the cheapest crate that can see all three: it already enables `pinion-runtime/vello` unconditionally, so the GPU-free `to_vello` walk needs no new wgpu dependency anywhere, and it already hosts the cross-cutting render proofs. `pinion-tui` + `pinion-pdf` join as dev-dependencies; neither is a cycle. A crate whose only purpose is cross-renderer conformance is the alternative, and one contract item does not justify it — the second one landing here is the signal."
+      ],
+      "publishable_verification_bullets": [
+        "Three counterfactuals, one per renderer, all dead and each naming its own cell: drop the border from vello's Container arm = 2 kills, \"vello ignores the border declared on a Scene::Container\"; disable the TUI walker's border draw = 2, \"the TUI walk draws all four box-drawing corners\"; disable the PDF stroke = 2, \"the PDF projector emits more content\". So no cell is decorative.",
+        "The R1511 carry item (d) was MEASURED rather than assumed, and the measurement changed what should be done about it. `access_node` takes the shell's live `focused` parameter and compares `focused == Some(TAG)`; it never reads the focus half of the binding's own state tuple. So that half is not merely unused by the view — it is a dead per-frame computation, `read_button_focused` walking the scene once per button.",
+        "Removing it is safe: with the focus half deleted from `hello-dialog`'s state, `r694_focus_ring` and `r693_dialog` both pass, AND — the load-bearing check, because those demos read the RPC produce mirror rather than the live window — `scene/frame_timings.frame_count` still advances on a focus change with nothing forcing a paint (41 -> 49 with the half removed, 42 -> 50 with it present). The shell repaints on focus of its own accord.",
+        "But a blanket removal would be WRONG, which is the second thing the measurement found: `hello-combobox` reads `state.trigger_focused` to choose a border colour. At least one binding genuinely consumes the value, so the removal is per-file with verification, not a sweep. The probe was reverted; no binding changed this round.",
+        "Gates: fmt / clippy `-D pedantic` / `cargo doc` clean; pinion-shell 213 + the 2 new parity tests + the rest of its suites green."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The parity matrix covers ONE contract item (border). Corner radius, shadows, gradient and clip are the same shape and are asserted only inside each renderer's own suite, so the divergence R1511 found is now impossible for borders and still possible for those.",
+        "A FOURTH renderer would not be covered: the matrix enumerates three by name. Nothing forces a new backend to enter it, which is the residue of putting the test in a participant crate rather than in a conformance crate that a backend must register with.",
+        "The dead focus half is measured but not removed: ~16 bindings still compute it every frame. The removal is per-file (hello-combobox proves a blanket sweep is wrong) and is the next round's first item.",
+        "The toolbar still carries two indicators for the 2-of-6 consumers that report an `active_descendant`. Both point at the same control, so it reads as emphasis; the textbook resolution is that a roving CURRENT-item affordance is not a focus ring and should not be styled as one, which is a pixel-changing design round of its own.",
+        "R1511's own sweep carry is unchanged: ~30 files' pixels moved and only CI's full sweep has seen them."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
