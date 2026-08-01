@@ -352,13 +352,35 @@ AXES = [
         # round's own first hypothesis (the lookup allocates an owned key per
         # call, and is not the dominant term).
         #
-        # Still absent, and why this is 65 and not higher: no GPU-timestamp
-        # render time, no large-scene 60fps end-to-end measurement, and the
-        # per-leaf encode cost is now attributed but NOT reduced — a
-        # cache-miss frame still walks and encodes at ~0.9us per text leaf.
-        "judged_at": 1527,
-        "completion": 65,
-        "evidence_snapshot": {"example-name": 4, "demo-body": 8, "round-axis": 3},
+        # R1531 re-judgment, demanded by this axis's round count going 3 -> 4.
+        # R1527 named three things absent at 65%, and R1531 closes the third
+        # of them OUTRIGHT rather than partially: the per-leaf paint cost is
+        # no longer merely attributed. The parley walk that positions a
+        # shaped layout's glyphs — 37% of a warm-cache frame, and the half of
+        # it that is pinion's own code — now runs once per shaped layout
+        # instead of once per paint, because the draw list is cached in the
+        # entry that already holds the layout (Skia's SkTextBlob, Qt's
+        # QGlyphRun). Measured before and after on the same box, same probe,
+        # same steady state: 1,200 text leaves 1,489us -> 480us a frame, 3.1x.
+        # It is the fourth measured optimisation on this axis and the first
+        # whose saving lands on EVERY re-encoding frame rather than on a
+        # gesture (scroll, R1520) or a capacity cliff (R1521).
+        #
+        # Only +4, because what remains is larger than what was closed and is
+        # the axis's own NAME — "60fps with large scenes; profiling":
+        #
+        #  - no GPU-timestamp render time. `render_us` is CPU submit cost
+        #    with the vsync block split out (R1361.1); what the GPU actually
+        #    took is unmeasured, and a pro tool states it (Unreal `stat gpu`).
+        #  - no large-scene 60fps end-to-end measurement. Every number this
+        #    axis holds is a component measured in isolation.
+        #
+        # And R1531 leaves one of its own: the draw lists are held per cache
+        # entry at ~12 bytes a glyph, so MAX_CAPACITY's stated ~26 MB is now
+        # an understatement by an amount nobody has measured.
+        "judged_at": 1531,
+        "completion": 69,
+        "evidence_snapshot": {"example-name": 4, "demo-body": 9, "round-axis": 4},
     },
     {
         "key": "osnative",
