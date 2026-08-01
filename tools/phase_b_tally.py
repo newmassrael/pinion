@@ -262,9 +262,45 @@ AXES = [
                 "crosshair", "settings-panel", "todomvc", "figma-",
             ]),
         ],
-        "judged_at": 1519,
-        "completion": 82,
-        "evidence_snapshot": {"example-name": 73, "round-axis": 0},
+        # R1533 re-judgment, 82 -> 84, demanded by the tool: the round ledger
+        # took this axis 0 -> 1, which `drift` reads as movement whatever the
+        # count. What the re-judgment mostly buys is the JUDGMENT ITSELF —
+        # this axis reached the top of the leverage order carrying a bare
+        # number with NO recorded rationale and NO stated remaining gap, while
+        # every other axis held its gap list right here. R1528 and R1532 each
+        # found a stated gap describing finished work; an axis with nothing
+        # stated cannot even be caught that way.
+        #
+        # R1533 gave the two stepped value widgets `External::wheel` (Qt
+        # `QAbstractSlider::wheelEvent` / `QAbstractSpinBox::wheelEvent`) plus
+        # the `WheelStepper` sub-notch carry they need. The hook had existed
+        # since R877 and a census found ONE implementor in the repo (the node
+        # canvas' zoom), so no widget in the catalog answered a wheel.
+        #
+        # Only +2, because the audit that produced the gap list below found
+        # MORE absent surface than the round filled — the R1528 pattern, where
+        # naming a dimension for the first time grows the stated gap:
+        #
+        #   * Mnemonics / accelerators. `menu.rs` defers "accelerator /
+        #     mnemonic keys" as "additive axes once a real consumer needs
+        #     them" — a no-consumer defer that [[qt-parity-over-yagni]]
+        #     invalidates outright, since Qt puts `&File` on every menu and
+        #     `QLabel::setBuddy` on every form label.
+        #   * Press-and-hold auto-repeat (`QAbstractButton::setAutoRepeat`):
+        #     holding a spin arrow or a scrollbar arrow steps ONCE here. No
+        #     repeat timer exists anywhere in the tree (the `auto_repeat`
+        #     hits are all about OS *key* repeat, a different thing).
+        #   * Qt also has `wheelEvent` on `QComboBox` and `QTabBar`; this
+        #     round covered value arithmetic, not index arithmetic.
+        #   * Absent widget kinds, in rough order of how much a pro tool
+        #     misses them: `QGroupBox` (especially checkable — no titled
+        #     group frame exists), `QDial`, a paged container
+        #     (`QStackedWidget` / `QWizard`), `QKeySequenceEdit`,
+        #     `QFontComboBox`, and the standard `QMessageBox` /
+        #     `QInputDialog` canned dialogs.
+        "judged_at": 1533,
+        "completion": 84,
+        "evidence_snapshot": {"example-name": 73, "round-axis": 1},
     },
     {
         "key": "dataviz",
