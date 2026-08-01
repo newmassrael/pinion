@@ -188,14 +188,29 @@ AXES = [
         # the row axis (200 -> 5 cells a row), R1524 makes the contract per-cell
         # rather than per-row (`data(QModelIndex)`; 2400 -> 84 cells asked a
         # frame), R1525 makes the painted string the one the ordering read.
-        # Deliberately NOT higher: header data is still per-slice — the binding
-        # takes `headers: &[&str]` for all 200 columns where Qt's `headerData`
-        # is per-section — and `cell` returns a String with no role dimension
-        # (Qt's Display/Edit/Decoration/ToolTip roles). Unified data layer stays
-        # out by the R780/R821 fourth-consumer gate, not by omission.
-        "judged_at": 1526,
-        "completion": 80,
-        "evidence_snapshot": {"example-name": 37, "round-axis": 3},
+        # R1530 re-judgment, demanded by the tool: the round ledger took this
+        # axis 3 -> 4, past the 25% band. R1526 named exactly two remaining
+        # gaps and R1530 closed the first of them — header data was per-slice
+        # (`headers: &[&str]` for all 200 columns where Qt's `headerData` is
+        # per-section) because `VirtualTableData` read its column count off
+        # that slice's length; `column_count` + `GridModel::header` split the
+        # two the way `columnCount()` / `headerData()` are split, and the a11y
+        # builder takes the window rather than the table.
+        #
+        # +3 and not more, because the gap that is left is the LARGER of the
+        # two R1526 named: `cell` and `header` both return a String with no
+        # role dimension (Qt's Display/Edit/Decoration/ToolTip), which is a
+        # whole axis of the contract rather than one accessor's shape — it is
+        # what a decorated cell, an edit-vs-display value and a tooltip all
+        # need. R1530 also surfaced three smaller ones: the eager `view_table`
+        # still takes a header slice (two header contracts in one tree), five
+        # of the six a11y grid builders still take every label, and a binding
+        # still states its column window twice (paint + a11y).
+        # Unified data layer stays out by the R780/R821 fourth-consumer gate,
+        # not by omission.
+        "judged_at": 1530,
+        "completion": 83,
+        "evidence_snapshot": {"example-name": 37, "round-axis": 4},
     },
     {
         "key": "catalog",
