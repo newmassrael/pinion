@@ -37,16 +37,18 @@
 
 use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes};
 use pinion_core::external::{External, StubExternal};
-use pinion_core::scene::ContainerNode;
-use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
+use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    view_virtual_table,
+    CellIndex, CellPainter, CellRender, GridModel, GridScroll, TableStyle, VirtualTableData,
+    header_from_slice, view_virtual_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -63,15 +65,21 @@ const THEME_TAG: &str = "app";
 /// and tracks the window height.
 const N: usize = 10_000;
 /// Column count (matches `HEADERS.len()`).
-const NCOLS: usize = 3;
-/// Uniform column width; `NCOLS × COL_W = 330 < WIN_W` so no h-scroll.
-const COL_W: u32 = 110;
+const NCOLS: usize = 4;
+/// Uniform column width; `NCOLS × COL_W = 360 < WIN_W` so no h-scroll.
+const COL_W: u32 = 90;
 /// Data-row height (must match the windowing pitch used in `access_node`).
 const ROW_H: u32 = 36;
 /// Rows built beyond the strict window on each side.
 const OVERSCAN: usize = 3;
-/// Column header labels.
-const HEADERS: [&str; NCOLS] = ["Index", "Name", "Status"];
+/// Column header labels. `Load` is the R1532 **delegated** column.
+const HEADERS: [&str; NCOLS] = ["Index", "Name", "Status", "Load"];
+/// R1532 — the absolute index of the column whose cells are painted by a
+/// delegate rather than as a label.
+const LOAD_COL: usize = 3;
+/// R1532 — the load bar's track height; the rest of the row is padding, so
+/// the bar reads as a gauge inside the cell rather than as a filled cell.
+const BAR_H: u32 = 10;
 /// Paint-root + a11y `grid` tag, and the [`StubExternal`] anchor tag.
 const TABLE_TAG: &str = "vtbl";
 /// Cache key for the body scroll container's reactive `ScrollState`.
@@ -102,8 +110,82 @@ fn cell_text(c: CellIndex) -> String {
     match c.col {
         0 => format!("{:05}", c.row),
         1 => CATEGORIES[c.row % CATEGORIES.len()].to_string(),
+        LOAD_COL => format!("{}%", load_percent(c.row)),
         _ => STATUS[c.row % STATUS.len()].to_string(),
     }
+}
+
+/// R1532 — the `Load` column's datum, `0..=100`. Synthetic but not uniform,
+/// so a delegated cell's fill width is visibly a function of its row.
+fn load_percent(row: usize) -> u32 {
+    u32::try_from((row * 7) % 101).unwrap_or(0)
+}
+
+/// R1532 §5.27 — the `Load` column's paint delegate (Qt
+/// `QStyledItemDelegate::paint`): a proportionally filled track instead of a
+/// label.
+///
+/// This is the column a text-only grid cannot have, and the reason the
+/// delegate seam exists. Before R1532 a binding wanting it had to stop using
+/// the grid's cell path and build the row itself — which is exactly what
+/// `hello-property-grid`'s `ranged_slider_cell` does.
+///
+/// **The model's string is still painted.** A bar encodes the value in pixels
+/// and `scene/snapshot` reads text, so a delegate that dropped the label would
+/// make the column invisible to §2 #7 introspection and to a screen reader —
+/// the same reason Qt's `QProgressBar` carries `text()`. `c.text` is the
+/// model's own answer, so the number beside the bar cannot disagree with the
+/// number the bar is drawn from.
+fn load_bar(c: &CellRender<'_>) -> Scene {
+    let pct = c.text.trim_end_matches('%').parse::<u32>().unwrap_or(0);
+    let inner = c.width.saturating_sub(2 * c.style.cell_pad_x);
+    // Half the interior is the track, the rest carries the label.
+    let track_w = inner / 2;
+    let fill_w = track_w * pct.min(100) / 100;
+    let bar = |w: u32, fill| {
+        Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_style(BoxStyle::filled(fill).with_corner_radius(BAR_H / 2))
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_size(Size::px(w, BAR_H))
+                        .with_absolute_position(0, 0)
+                        .with_pointer_transparent(true),
+                ),
+        )
+    };
+    Scene::Container(
+        ContainerNode::new(vec![
+            Scene::Container(
+                ContainerNode::new(vec![
+                    bar(track_w, c.theme.resolve(ColorRole::SurfaceContainerHighest)),
+                    bar(fill_w, c.theme.resolve(ColorRole::Accent)),
+                ])
+                .with_layout(LayoutStyle::new().with_size(Size::px(track_w, BAR_H))),
+            ),
+            Scene::Text(
+                TextNode::styled(
+                    c.text.to_string(),
+                    Rect::default(),
+                    TextStyle::new()
+                        .with_size_px(c.style.label_size_px)
+                        .with_fg(c.fg),
+                )
+                .with_role(TextRole::Presentational),
+            ),
+        ])
+        // R1532 — the cell's own tag. A painter that omits it drops the cell
+        // out of pointer routing and out of every tag-addressed RPC.
+        .with_tag(c.tag.to_string())
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Start)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(c.width, c.height))
+                .with_padding(Rect::new(c.style.cell_pad_x, 0, c.style.cell_pad_x, 0)),
+        ),
+    )
 }
 
 /// view-fn (§6.3): pure sync `() -> Scene`. The dataset is virtual —
@@ -133,6 +215,9 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             resizable: false,
             frozen_cols: 0,
             row_style: None,
+            // R1532 — Qt `setItemDelegateForColumn`: one column paints as a
+            // gauge, every other takes the built-in text painter.
+            delegate: Some(&|col| (col == LOAD_COL).then_some(&load_bar as CellPainter<'_>)),
         },
         &theme,
         &style,
@@ -282,8 +367,151 @@ mod tests {
 
     #[test]
     fn cells_are_indexed_and_categorized() {
-        assert_eq!(row_of(0), vec!["00000", "Alpha", "Idle"]);
-        assert_eq!(row_of(42), vec!["00042", "Charlie", "Idle"]);
+        assert_eq!(row_of(0), vec!["00000", "Alpha", "Idle", "0%"]);
+        assert_eq!(row_of(42), vec!["00042", "Charlie", "Idle", "92%"]);
+    }
+
+    /// R1532 — the delegated column's cells are painted by [`load_bar`] and
+    /// every other column's by the grid's built-in text painter.
+    ///
+    /// The negative half is the load-bearing one: a delegate wired for one
+    /// column that captured all of them would paint a plausible-looking grid
+    /// and fail only here.
+    #[test]
+    fn r1532_only_the_load_column_paints_through_the_delegate() {
+        let scene = run_view(360);
+        let gauges = count_tag_prefix(&scene, &format!("{TABLE_TAG}#"));
+        assert!(gauges > 0, "premise: the grid painted cells");
+        // The bar's track + fill are the two empty containers a text cell
+        // never has, and they exist only under the delegated column.
+        let bars = count_bar_tracks(&scene);
+        let rows = count_tag_prefix(&scene, &format!("{TABLE_TAG}_row"));
+        assert!(rows > 1, "premise: more than one row painted, got {rows}");
+        assert_eq!(
+            bars,
+            rows * 2,
+            "one track + one fill per painted row, in the one delegated \
+             column — a delegate claiming every column would report {}",
+            rows * 2 * NCOLS,
+        );
+    }
+
+    /// R1532 — the delegated cell keeps the composite tag a text cell has, so
+    /// it stays addressable by pointer routing and by every tag-addressed RPC.
+    ///
+    /// Written because a counterfactual found the gap: deleting
+    /// `.with_tag(c.tag)` from [`load_bar`] left every other test in this file
+    /// green and was caught only by the demo. The contract has exactly one
+    /// rule a painter must follow, and nothing here was checking it.
+    #[test]
+    fn r1532_the_delegated_cell_keeps_its_hit_tag() {
+        let scene = run_view(360);
+        let per_column = |col: usize| {
+            let mut n = 0;
+            count_col(&scene, col, &mut n);
+            n
+        };
+        let text_col = per_column(0);
+        assert!(
+            text_col > 1,
+            "premise: the body windowed rows, got {text_col}"
+        );
+        assert_eq!(
+            per_column(LOAD_COL),
+            text_col,
+            "the delegated column carries one tagged cell per row, exactly as \
+             an undelegated one does",
+        );
+    }
+
+    /// R1532 — the model's own string is painted beside the bar, so the
+    /// value a sighted user reads off the pixels and the value
+    /// `scene/snapshot` reports cannot disagree.
+    #[test]
+    fn r1532_the_delegated_cell_still_carries_its_text() {
+        let scene = run_view(360);
+        let mut texts = Vec::new();
+        collect_text(&scene, &mut texts);
+        assert!(
+            texts.iter().any(|t| t.ends_with('%')),
+            "the load column's percentage is in the scene, got {texts:?}",
+        );
+    }
+
+    /// R1532 — paint the view with a measured viewport, the state the runtime
+    /// is always in when it paints. Without it the body windows nothing (the
+    /// correct pre-measurement boot state, and useless as a fixture).
+    fn run_view(measured_h: u32) -> Scene {
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, measured_h);
+            use_scroll_state(H_SCROLL_KEY).set_measured_viewport(WIN_W, 0);
+            view((), &Frame::default())
+        })
+    }
+
+    /// R1532 — how many cells the scene carries for one absolute column,
+    /// counted off the composite `vtbl#<row>_<col>` tags.
+    fn count_col(scene: &Scene, col: usize, n: &mut usize) {
+        match scene {
+            Scene::Container(c) => {
+                if let Some(t) = c.tag.as_deref()
+                    && let Some(sub) = t.strip_prefix(&format!("{TABLE_TAG}#"))
+                    && sub.split('_').nth(1) == Some(&col.to_string())
+                {
+                    *n += 1;
+                }
+                for ch in &c.children {
+                    count_col(ch, col, n);
+                }
+            }
+            Scene::Scroll(s) => count_col(&s.content, col, n),
+            _ => {}
+        }
+    }
+
+    fn collect_text(scene: &Scene, out: &mut Vec<String>) {
+        match scene {
+            Scene::Text(t) => out.push(t.content.clone()),
+            Scene::Container(c) => {
+                for child in &c.children {
+                    collect_text(child, out);
+                }
+            }
+            Scene::Scroll(s) => collect_text(&s.content, out),
+            _ => {}
+        }
+    }
+
+    fn count_tag_prefix(scene: &Scene, prefix: &str) -> usize {
+        match scene {
+            Scene::Container(c) => {
+                let here = usize::from(c.tag.as_deref().is_some_and(|t| t.starts_with(prefix)));
+                here + c
+                    .children
+                    .iter()
+                    .map(|ch| count_tag_prefix(ch, prefix))
+                    .sum::<usize>()
+            }
+            Scene::Scroll(s) => count_tag_prefix(&s.content, prefix),
+            _ => 0,
+        }
+    }
+
+    /// Untagged, childless containers with an explicit `BAR_H` height: the
+    /// two bars [`load_bar`] draws, and nothing the built-in painter makes.
+    fn count_bar_tracks(scene: &Scene) -> usize {
+        match scene {
+            Scene::Container(c) => {
+                let here = usize::from(
+                    c.tag.is_none()
+                        && c.children.is_empty()
+                        && c.layout.size.height == pinion_core::style::SizeValue::Px(BAR_H),
+                );
+                here + c.children.iter().map(count_bar_tracks).sum::<usize>()
+            }
+            Scene::Scroll(s) => count_bar_tracks(&s.content),
+            _ => 0,
+        }
     }
 
     /// R1524 — data row `id` across every column, assembled from the per-cell

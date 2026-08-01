@@ -167,6 +167,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             // scroll horizontally under the shared `h_scroll`.
             frozen_cols: FROZEN_COLS,
             row_style: None,
+            delegate: None,
         },
         &theme,
         &style,

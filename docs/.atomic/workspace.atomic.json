@@ -78688,6 +78688,64 @@
         "The derivation runs on the first PAINT of an entry rather than on its shape, so the first frame that shows new content pays both. That is the right place for it, but it means a scroll into cold content has a cost profile this round did not measure."
       ]
     },
+    "Round 1532": {
+      "decision_summary": "A column declares how its cells are painted. GridModel::cell answers with a String, so every column of every pinion grid was a label: a size column could not be a bar, a visibility column could not be a mark, a swatch column could not be a swatch. That is the extension point of every Model/View framework — Qt's QStyledItemDelegate, whose documented purpose is precisely a column that is not text — and a DCC/IDE grid is mostly made of such columns. The gap was already being paid for: hello-property-grid draws a gauge inside a cell by not using the grid's cell path at all, building its own row tree instead, which is what a missing extension point looks like from the consumer side.",
+      "changes_bullets": [
+        "`VirtualTableData::delegate` is Qt `setItemDelegateForColumn`: a lookup from column to `CellPainter`, resolved once per painted COLUMN (a column's delegate cannot vary by row, so resolving per cell repeats one answer once per row — the per-section discipline R1530 gave the header axis).",
+        "`CellRender` carries what Qt hands a delegate as `(painter, option, index)`, minus the painter: §2 #1 forbids an opaque paint callback, so a painter RETURNS a `Scene`. That is what keeps a custom column as introspectable through `scene/snapshot` as a text one, and is why the demo asserts everything it asserts with no pixels.",
+        "The built-in `text_cell_painter` is reached through the same call a custom painter is, so an undelegated column is not a second path that can drift from the delegated one; it is also public, so a painter that only decorates the default composes with it.",
+        "`hello-virtual-table` gains a delegated `Load` column painted as a gauge. It still paints the model's own string beside the bar — a bar encodes in pixels, and a delegate that dropped the label would take the column out of §2 #7 introspection and away from a screen reader (Qt's `QProgressBar::text` for the same reason).",
+        "New demo r1532_cell_delegate (69 assertions, sections A-F) with a negative control (the undelegated columns must be unchanged) and a virtualization pass (scrolling re-paints delegated cells for the new window, with no leftovers)."
+      ],
+      "verification_bullets": [
+        "Three counterfactuals, one at a time, each rebuilt and run. Ignore the delegate: the two paint tests fail. Make the lookup claim every column: the paint test and the per-column-resolution test fail, and the demo fails at its negative control. Drop `CellRender::tag` from the binding's painter: the demo fails at section B.",
+        "The third counterfactual found a discrimination gap and it was closed rather than recorded: every unit test in `hello-virtual-table` passed with the tag deleted, so the contract's one rule for a painter was guarded only by the demo. `r1532_the_delegated_cell_keeps_its_hit_tag` now fails there, alone.",
+        "Measured on the binding: one tagged cell per column per windowed row for all four columns; the delegated column's cells carry the gauge geometry and the other three carry none; the delegate lookup runs once per painted column against `rows x cols` painted cells.",
+        "Local gates: pinion-widget-paint 749 tests, hello-virtual-table 8, all pass; clippy -D pedantic clean on both; cargo fmt clean; workspace check clean. Demos r1532, r1523, r1524 and r1530 (the other grid-contract rounds) pass.",
+        "`data_row` crossed the argument budget as the seam went in; `painters` and the `Theme` they need moved onto `RowPane`, the bundle this file already uses for exactly that reason.",
+        "Doc-to-code ratio on the round's added Rust: 0.48x, inside the R661 1.5x baseline."
+      ],
+      "impact_refs": [
+        "5.27",
+        "2",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "The eager `view_table` exposes no delegate on its own surface, so the tree holds two cell-paint contracts — the shape R1530 left on the header axis, recorded rather than fixed.",
+        "The delegate covers PAINT only. Qt's `QStyledItemDelegate` also owns editing (`createEditor` / `setEditorData` / `setModelData`), and every editable grid here still hand-rolls its own edit latch.",
+        "The framework ships one painter, the text default. Qt's default additionally renders `Qt::CheckStateRole` and `Qt::DecorationRole`, which belongs with the role dimension the Model/View axis still lacks rather than with this seam.",
+        "Six example bindings build cell subtrees outside the grid's cell path (`hello-property-grid`'s `ranged_slider_cell` is the clearest); none was migrated, so the seam has one consumer.",
+        "`VirtualTableData` is now invariant in its lifetime because the delegate names it in a `Fn` return type. `GridRender` took a second lifetime parameter to absorb that; any future caller holding a `VirtualTableData` across differing borrows will meet the same constraint."
+      ],
+      "publishable_decision_summary": "A column declares how its cells are painted. GridModel::cell answers with a String, so every column of every pinion grid was a label: a size column could not be a bar, a visibility column could not be a mark, a swatch column could not be a swatch. That is the extension point of every Model/View framework — Qt's QStyledItemDelegate, whose documented purpose is precisely a column that is not text — and a DCC/IDE grid is mostly made of such columns. The gap was already being paid for: hello-property-grid draws a gauge inside a cell by not using the grid's cell path at all, building its own row tree instead, which is what a missing extension point looks like from the consumer side.",
+      "publishable_changes_bullets": [
+        "`VirtualTableData::delegate` is Qt `setItemDelegateForColumn`: a lookup from column to `CellPainter`, resolved once per painted COLUMN (a column's delegate cannot vary by row, so resolving per cell repeats one answer once per row — the per-section discipline R1530 gave the header axis).",
+        "`CellRender` carries what Qt hands a delegate as `(painter, option, index)`, minus the painter: §2 #1 forbids an opaque paint callback, so a painter RETURNS a `Scene`. That is what keeps a custom column as introspectable through `scene/snapshot` as a text one, and is why the demo asserts everything it asserts with no pixels.",
+        "The built-in `text_cell_painter` is reached through the same call a custom painter is, so an undelegated column is not a second path that can drift from the delegated one; it is also public, so a painter that only decorates the default composes with it.",
+        "`hello-virtual-table` gains a delegated `Load` column painted as a gauge. It still paints the model's own string beside the bar — a bar encodes in pixels, and a delegate that dropped the label would take the column out of §2 #7 introspection and away from a screen reader (Qt's `QProgressBar::text` for the same reason).",
+        "New demo r1532_cell_delegate (69 assertions, sections A-F) with a negative control (the undelegated columns must be unchanged) and a virtualization pass (scrolling re-paints delegated cells for the new window, with no leftovers)."
+      ],
+      "publishable_verification_bullets": [
+        "Three counterfactuals, one at a time, each rebuilt and run. Ignore the delegate: the two paint tests fail. Make the lookup claim every column: the paint test and the per-column-resolution test fail, and the demo fails at its negative control. Drop `CellRender::tag` from the binding's painter: the demo fails at section B.",
+        "The third counterfactual found a discrimination gap and it was closed rather than recorded: every unit test in `hello-virtual-table` passed with the tag deleted, so the contract's one rule for a painter was guarded only by the demo. `r1532_the_delegated_cell_keeps_its_hit_tag` now fails there, alone.",
+        "Measured on the binding: one tagged cell per column per windowed row for all four columns; the delegated column's cells carry the gauge geometry and the other three carry none; the delegate lookup runs once per painted column against `rows x cols` painted cells.",
+        "Local gates: pinion-widget-paint 749 tests, hello-virtual-table 8, all pass; clippy -D pedantic clean on both; cargo fmt clean; workspace check clean. Demos r1532, r1523, r1524 and r1530 (the other grid-contract rounds) pass.",
+        "`data_row` crossed the argument budget as the seam went in; `painters` and the `Theme` they need moved onto `RowPane`, the bundle this file already uses for exactly that reason.",
+        "Doc-to-code ratio on the round's added Rust: 0.48x, inside the R661 1.5x baseline."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "2",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The eager `view_table` exposes no delegate on its own surface, so the tree holds two cell-paint contracts — the shape R1530 left on the header axis, recorded rather than fixed.",
+        "The delegate covers PAINT only. Qt's `QStyledItemDelegate` also owns editing (`createEditor` / `setEditorData` / `setModelData`), and every editable grid here still hand-rolls its own edit latch.",
+        "The framework ships one painter, the text default. Qt's default additionally renders `Qt::CheckStateRole` and `Qt::DecorationRole`, which belongs with the role dimension the Model/View axis still lacks rather than with this seam.",
+        "Six example bindings build cell subtrees outside the grid's cell path (`hello-property-grid`'s `ranged_slider_cell` is the clearest); none was migrated, so the seam has one consumer.",
+        "`VirtualTableData` is now invariant in its lifetime because the delegate names it in a `Fn` return type. `GridRender` took a second lifetime parameter to absorb that; any future caller holding a `VirtualTableData` across differing borrows will meet the same constraint."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

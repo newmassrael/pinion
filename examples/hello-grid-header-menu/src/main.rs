@@ -351,6 +351,7 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
             resizable: false,
             frozen_cols: 0,
             row_style: None,
+            delegate: None,
         },
         &theme,
         &tstyle,

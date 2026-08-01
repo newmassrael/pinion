@@ -585,6 +585,17 @@ struct RowPane<'a> {
     widths: &'a [u32],
     /// R1523 — the extent of the columns this pane windowed out.
     pad: ColumnPad,
+    /// R1532 — this pane's per-column paint delegates, aligned with
+    /// [`Self::widths`] (so index `j` is absolute column `col_base + j`).
+    /// `None` at a position takes the built-in [`text_cell_painter`].
+    /// Resolved once per pane by `GridRender::painters`, because a column's
+    /// delegate cannot vary by row.
+    painters: &'a [Option<CellPainter<'a>>],
+    /// R1532 — the palette, for a delegate that resolves its own roles. It
+    /// travels with [`Self::painters`] rather than as its own argument
+    /// because it exists here *for* them: the built-in painter takes its
+    /// colour from the row's already-resolved `fg`.
+    theme: &'a Theme,
 }
 
 /// The header band: one clickable `columnheader` cell per column ([
@@ -664,17 +675,26 @@ fn data_row(
     let cells: Vec<Scene> = (0..cols)
         .map(|j| {
             let col = pane.col_base + j;
-            let text = cells_text.get(j).copied().unwrap_or("");
-            cell(
-                // R777.1 — the cell sub-key via the GridSendKey SSOT.
-                &format!("{tag}#{}", GridSendKey::Cell { row: data_id, col }.encode()),
-                text,
+            // R1532 — the render context this column's painter is given. The
+            // built-in `text_cell_painter` is reached through the same call as
+            // a custom one, so an undelegated column is not a separate path
+            // that could drift from the delegated one.
+            let render = CellRender {
+                index: CellIndex { row: data_id, col },
+                text: cells_text.get(j).copied().unwrap_or(""),
+                width: pane.widths.get(j).copied().unwrap_or(style.col_width),
+                height: style.row_height,
                 fg,
-                style.label_size_px,
+                theme: pane.theme,
                 style,
-                pane.widths.get(j).copied().unwrap_or(style.col_width),
-                style.row_height,
-            )
+                // R777.1 — the cell sub-key via the GridSendKey SSOT.
+                tag: &format!("{tag}#{}", GridSendKey::Cell { row: data_id, col }.encode()),
+            };
+            pane.painters
+                .get(j)
+                .copied()
+                .flatten()
+                .map_or_else(|| text_cell_painter(&render), |paint| paint(&render))
         })
         .collect();
     Scene::Container(
@@ -795,6 +815,13 @@ pub fn view_table(
                 col_base: 0,
                 widths: &widths,
                 pad: ColumnPad::NONE,
+                // R1532 — the eager `view_table` exposes no delegate on its
+                // own surface (`VirtualTableData` is the virtualized grid's
+                // carrier), so every column takes the built-in text painter.
+                // Recorded as carry: this leaves two cell-paint surfaces in
+                // one tree, the shape R1530 left on the header axis.
+                painters: &[],
+                theme,
             },
             style,
         ));
@@ -919,6 +946,98 @@ pub struct VirtualTableData<'a> {
     /// re-sort; selection still wins the highlight (precedence: selection >
     /// rule > zebra). `None` (every pre-R998 caller) renders byte-identically.
     pub row_style: Option<&'a dyn Fn(usize) -> Option<(Color, Color)>>,
+    /// R1532 §5.27 — per-**column** paint delegates (Qt
+    /// `QAbstractItemView::setItemDelegateForColumn`): `delegate(col)` returns
+    /// the [`CellPainter`] that draws that column's cells, or `None` for the
+    /// built-in text painter.
+    ///
+    /// The column axis's answer to what [`Self::row_style`] is on the row
+    /// axis, and the reason it exists is that the grid could paint exactly one
+    /// thing. [`GridModel::cell`] answers with a `String`, so every column was
+    /// a label: a size column could not be a bar, a visibility column could not
+    /// be a mark, a swatch column could not be a swatch. That is the extension
+    /// point of every Model/View framework — Qt's `QStyledItemDelegate`, whose
+    /// documented purpose is precisely "a column that is not text" — and a
+    /// DCC/IDE grid is mostly made of such columns.
+    ///
+    /// **Asked once per painted column, not per cell.** The delegate for a
+    /// column is a property of the column, so resolving it per cell would ask
+    /// the same question once per row for an answer that cannot change — the
+    /// per-section discipline R1530 gave the header axis. A column outside the
+    /// painted window is never asked at all.
+    ///
+    /// `None` (every pre-R1532 caller) paints byte-identically: the built-in
+    /// painter *is* the previous code, reached through the same call the
+    /// delegate is, so the default is not a special case that could drift from
+    /// the delegated path.
+    pub delegate: Option<&'a dyn Fn(usize) -> Option<CellPainter<'a>>>,
+}
+
+/// R1532 §5.27 — what a [`CellPainter`] is given: everything about the one
+/// cell it draws.
+///
+/// Qt hands its delegate `(painter, styleOption, index)`; this carries the
+/// same three things in the shape a structured-scene framework can use. There
+/// is no painter — §2 #1 forbids an opaque paint callback — so a delegate
+/// *returns* a [`Scene`] instead of drawing into one, which is what keeps a
+/// custom column as introspectable through `scene/snapshot` as a text one.
+///
+/// [`Self::text`] is the model's answer for this cell, already fetched. A
+/// delegate that wants the raw datum parses it, or closes over its own model —
+/// the same choice Qt's delegate has between `index.data()` and reaching past
+/// it. Handing it over rather than making the delegate re-ask keeps
+/// [`GridModel::cell`] invoked exactly once per painted cell, which is the
+/// R1524 guarantee.
+pub struct CellRender<'a> {
+    /// Which cell (Qt's `QModelIndex`), with the **absolute** column.
+    pub index: CellIndex,
+    /// The model's text for this cell (Qt `Qt::DisplayRole`).
+    pub text: &'a str,
+    /// The cell's box width in logical px — this column's resolved width.
+    pub width: u32,
+    /// The cell's box height in logical px (the row height).
+    pub height: u32,
+    /// The row's resolved foreground colour, after its interaction state and
+    /// any [`VirtualTableData::row_style`] rule. A delegate that inks anything
+    /// should start here so a disabled or rule-coloured row stays consistent.
+    pub fg: Color,
+    /// The palette, for a delegate that resolves its own roles.
+    pub theme: &'a Theme,
+    /// The grid's dimensions, for a delegate that wants the same paddings and
+    /// label size as the built-in painter.
+    pub style: &'a TableStyle,
+    /// The cell's composite hit-test tag (`"<root>#<row>_<col>"`). A delegate
+    /// **must** put this on the container it returns, or the cell stops being
+    /// addressable by pointer input and by RPC; [`text_cell_painter`] shows the
+    /// shape.
+    pub tag: &'a str,
+}
+
+/// R1532 §5.27 — how one column's cells are painted (Qt
+/// `QStyledItemDelegate::paint`), wired per column through
+/// [`VirtualTableData::delegate`].
+pub type CellPainter<'a> = &'a dyn Fn(&CellRender<'_>) -> Scene;
+
+/// R1532 §5.27 — the built-in painter: a left-aligned label in the row's
+/// foreground colour. Qt's `QStyledItemDelegate` for a plain
+/// `Qt::DisplayRole`.
+///
+/// Public because a delegate that only *decorates* the default — a column that
+/// paints a mark beside its text — should compose with it rather than
+/// re-derive a cell's padding, size and tag placement, and because it is the
+/// worked example of the one rule a painter must follow (the container carries
+/// [`CellRender::tag`]).
+#[must_use]
+pub fn text_cell_painter(c: &CellRender<'_>) -> Scene {
+    cell(
+        c.tag,
+        c.text,
+        c.fg,
+        c.style.label_size_px,
+        c.style,
+        c.width,
+        c.height,
+    )
 }
 
 impl core::fmt::Debug for VirtualTableData<'_> {
@@ -934,6 +1053,7 @@ impl core::fmt::Debug for VirtualTableData<'_> {
             .field("resizable", &self.resizable)
             .field("frozen_cols", &self.frozen_cols)
             .field("row_style", &self.row_style.map(|_| "<fn>"))
+            .field("delegate", &self.delegate.map(|_| "<fn>"))
             .finish()
     }
 }
@@ -1254,10 +1374,15 @@ pub fn view_virtual_grid_body(
 /// method under the argument + line budgets while sharing the window /
 /// widths / theme exactly (a divergence between the two would be a paint
 /// bug, not a style choice).
-struct GridRender<'a> {
+struct GridRender<'a, 'd> {
     tag: &'a str,
     click_tag: &'a str,
-    data: &'a VirtualTableData<'a>,
+    /// R1532 — the data's own lifetime is a **second** parameter, not `'a`.
+    /// [`VirtualTableData::delegate`] names its lifetime in a `Fn` return
+    /// type, which makes `VirtualTableData<'d>` invariant in `'d`; welding it
+    /// to the borrow of the struct would then require the caller's `data`
+    /// local to outlive its own parameters.
+    data: &'a VirtualTableData<'d>,
     theme: &'a Theme,
     style: &'a TableStyle,
     widths: &'a [u32],
@@ -1351,7 +1476,7 @@ pub(crate) fn frozen_split_panes(
     )
 }
 
-impl GridRender<'_> {
+impl<'d> GridRender<'_, 'd> {
     /// Visual position -> source data row (identity when unsorted) — the
     /// R778 sort-permutation resolution shared by both bodies.
     fn source_of(&self, view_pos: usize) -> usize {
@@ -1454,6 +1579,21 @@ impl GridRender<'_> {
     /// window rather than with the table. R1530 — `header` likewise, so the
     /// header band costs one label per painted column instead of one per
     /// column in the table.
+    /// R1532 §5.27 — resolve `span`'s per-column painters, once per pane.
+    ///
+    /// Aligned with the pane's `widths` slice, so index `j` is absolute column
+    /// `span.start + j` — the same indexing `data_row` uses. Asked once per
+    /// **painted column** rather than once per painted cell: a column's
+    /// delegate cannot vary by row, so resolving it per cell would repeat one
+    /// answer `window.len()` times (the per-section discipline R1530 gave the
+    /// header axis). A grid with no delegate wired allocates the vector and
+    /// fills it with `None`, which is one allocation per pane per frame
+    /// against the branch it replaces.
+    fn painters(&self, span: core::ops::Range<usize>) -> Vec<Option<CellPainter<'d>>> {
+        span.map(|col| self.data.delegate.and_then(|d| d(col)))
+            .collect()
+    }
+
     fn render_unsplit(
         &self,
         scroll: GridScroll<'_>,
@@ -1483,6 +1623,7 @@ impl GridRender<'_> {
                 container_tag: &hrow_tag,
             },
         );
+        let painters = self.painters(span.clone());
         // R897 — the windowing + nested single-axis scroll machinery is the
         // shared `view_virtual_grid_body` SSOT (`top = view_pos · row_height`,
         // R775.1); only the row *content* (a multi-cell `data_row`) is built
@@ -1511,6 +1652,8 @@ impl GridRender<'_> {
                         col_base: cols.first,
                         widths: &self.widths[span.clone()],
                         pad,
+                        painters: &painters,
+                        theme: self.theme,
                     },
                     self.style,
                 )
@@ -1559,6 +1702,10 @@ impl GridRender<'_> {
         let rel = cols.first..cols.first + cols.count;
         let abs = frozen_cols + rel.start..frozen_cols + rel.end;
         let scroll_pad = ColumnPad::around(scrolled, &cols);
+        // R1532 — each pane resolves its own columns' painters, in absolute
+        // coordinates, exactly as it asks for its own labels and texts.
+        let frozen_painters = self.painters(0..frozen_cols);
+        let scroll_painters = self.painters(abs.clone());
 
         let frozen_slots = uniform_slots(self.window, frozen_w, row_pitch, |view_pos| {
             let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
@@ -1581,6 +1728,8 @@ impl GridRender<'_> {
                     widths: &self.widths[..frozen_cols],
                     // Pinned columns are never windowed out.
                     pad: ColumnPad::NONE,
+                    painters: &frozen_painters,
+                    theme: self.theme,
                 },
                 self.style,
             )
@@ -1604,6 +1753,8 @@ impl GridRender<'_> {
                     col_base: abs.start,
                     widths: &scrolled[rel.clone()],
                     pad: scroll_pad,
+                    painters: &scroll_painters,
+                    theme: self.theme,
                 },
                 self.style,
             )
@@ -1957,6 +2108,186 @@ mod tests {
         run_vtable_h(measured_h, offset_y, 0)
     }
 
+    // ── R1532 §5.27 — a column declares how its cells are painted ───
+
+    /// R1532 — a test painter: a container tagged as the contract requires,
+    /// holding one marker text so a walk can tell a delegated cell from a
+    /// text one, and one empty child so a structural assertion has something
+    /// to count that the built-in painter never produces.
+    use core::cell::Cell;
+
+    fn marker_painter(c: &CellRender<'_>) -> Scene {
+        Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Text(TextNode::styled(
+                    format!("<{}>", c.text),
+                    Rect::default(),
+                    TextStyle::new(),
+                )),
+                Scene::Container(
+                    ContainerNode::new(Vec::new())
+                        .with_tag(format!("gauge{}_{}", c.index.row, c.index.col)),
+                ),
+            ])
+            .with_tag(c.tag.to_string()),
+        )
+    }
+
+    /// R1532 — render the virtual table with `col` delegated to
+    /// [`marker_painter`], counting how many times the delegate LOOKUP ran.
+    fn run_vtable_delegated(col: usize, lookups: &Cell<usize>) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, 200);
+        let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
+        state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
+        let h_state = vt_hscroll(0);
+        let theme = light();
+        let style = TableStyle::m3();
+        let pick = |c: usize| {
+            lookups.set(lookups.get() + 1);
+            (c == col).then_some(&marker_painter as CellPainter<'_>)
+        };
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
+                VirtualTableData {
+                    column_count: VT_HEADERS.len(),
+                    item_count: VT_N,
+                    overscan: 2,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                    col_widths: None,
+                    resizable: false,
+                    frozen_cols: 0,
+                    row_style: None,
+                    delegate: Some(&pick),
+                },
+                &theme,
+                &style,
+                |_| false,
+                GridModel {
+                    cell: vt_cell,
+                    header: vt_header,
+                },
+            )
+        })
+    }
+
+    /// The seam itself: the delegated column's cells come from the painter,
+    /// and every other column's from the built-in one.
+    ///
+    /// Both halves are load-bearing. Without the second, a delegate that
+    /// captured *every* column would pass — and that is the plausible defect,
+    /// since the lookup and the paint are separate steps and only the paint
+    /// consults the column.
+    #[test]
+    fn r1532_a_delegated_column_paints_through_its_painter() {
+        let lookups = Cell::new(0);
+        let scene = run_vtable_delegated(1, &lookups);
+        let mut texts = Vec::new();
+        collect_text(&scene, &mut texts);
+        assert!(
+            texts.iter().any(|t| t == "<Row 0>"),
+            "column 1 painted through the delegate, got {texts:?}",
+        );
+        assert!(
+            !texts.iter().any(|t| t == "Row 0"),
+            "and NOT also through the built-in painter — one cell, one painter",
+        );
+        assert!(
+            texts.iter().any(|t| t == "v0"),
+            "column 2 is undelegated and keeps the built-in text painter",
+        );
+        assert!(
+            !texts.iter().any(|t| t == "<v0>"),
+            "the delegate is asked per column, so column 2 never reaches it",
+        );
+    }
+
+    /// The delegated cell keeps its composite tag, so it is still addressable
+    /// by pointer routing and by every tag-addressed RPC. A custom column that
+    /// silently stopped being clickable is the failure this contract's one
+    /// rule exists to prevent.
+    #[test]
+    fn r1532_a_delegated_cell_keeps_its_hit_tag() {
+        let lookups = Cell::new(0);
+        let scene = run_vtable_delegated(1, &lookups);
+        assert!(
+            scene.contains_tag("vtbl#0_1"),
+            "the delegated cell carries the same composite tag a text cell does",
+        );
+        assert!(
+            scene.contains_tag("gauge0_1"),
+            "and the painter's own children are in the tree beneath it",
+        );
+    }
+
+    /// The delegate is resolved once per painted **column**, not once per
+    /// painted cell — the per-section discipline R1530 gave the header axis.
+    ///
+    /// Stated as a comparison against the number of painted cells rather than
+    /// as a constant, so it keeps its meaning when the fixture's window size
+    /// changes. A per-cell resolution would make these two equal.
+    #[test]
+    fn r1532_the_delegate_is_resolved_per_column_not_per_cell() {
+        let lookups = Cell::new(0);
+        let scene = run_vtable_delegated(1, &lookups);
+        let rows = tags_with_prefix(&scene, "vtbl_row").len();
+        let cells = rows * VT_HEADERS.len();
+        assert!(rows > 1, "premise: more than one row painted, got {rows}");
+        assert_eq!(
+            lookups.get(),
+            VT_HEADERS.len(),
+            "one lookup per painted column ({cells} cells painted)",
+        );
+    }
+
+    /// A grid with no delegate wired paints exactly what it painted before
+    /// R1532 — the built-in painter is reached through the same call as a
+    /// custom one, so the default cannot drift into a separate path.
+    #[test]
+    fn r1532_an_undelegated_grid_is_unchanged() {
+        let before = run_vtable(200, 0);
+        let mut texts = Vec::new();
+        collect_text(&before, &mut texts);
+        assert!(
+            texts.iter().any(|t| t == "Row 0") && texts.iter().any(|t| t == "v0"),
+            "every column takes the built-in text painter, got {texts:?}",
+        );
+        assert!(
+            !texts.iter().any(|t| t.starts_with('<')),
+            "and nothing was delegated",
+        );
+    }
+
+    /// A delegate whose lookup answers `None` for every column is the same
+    /// grid as no delegate at all. Discriminating because the two reach the
+    /// paint through different code — one resolves and finds nothing, the
+    /// other never resolves — and a contract where those differ would make
+    /// "wire a delegate for one column" silently restyle the rest.
+    #[test]
+    fn r1532_a_delegate_that_claims_nothing_changes_nothing() {
+        let lookups = Cell::new(0);
+        let claimed_none = run_vtable_delegated(VT_HEADERS.len(), &lookups);
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        collect_text(&claimed_none, &mut a);
+        collect_text(&run_vtable(200, 0), &mut b);
+        assert_eq!(
+            a, b,
+            "a delegate that claims no column paints what no delegate paints",
+        );
+        assert_eq!(
+            lookups.get(),
+            VT_HEADERS.len(),
+            "and it really was asked — otherwise this proves nothing",
+        );
+    }
+
     /// R784 — render the virtual table with an explicit horizontal
     /// offset so the frozen-header / h-scroll tests can drive the outer
     /// horizontal scroll.
@@ -1987,6 +2318,7 @@ mod tests {
                     resizable: false,
                     frozen_cols: 0,
                     row_style: None,
+                    delegate: None,
                 },
                 &theme,
                 &style,
@@ -2077,6 +2409,7 @@ mod tests {
                     resizable: false,
                     frozen_cols,
                     row_style: None,
+                    delegate: None,
                 },
                 &theme,
                 &style,
@@ -2333,6 +2666,7 @@ mod tests {
                     resizable: false,
                     frozen_cols: 0,
                     row_style: None,
+                    delegate: None,
                 },
                 &light(),
                 &TableStyle::m3(),
@@ -2400,6 +2734,7 @@ mod tests {
                     resizable,
                     frozen_cols: 0,
                     row_style: None,
+                    delegate: None,
                 },
                 &light(),
                 &TableStyle::m3(),
@@ -2555,6 +2890,7 @@ mod tests {
                     resizable: false,
                     frozen_cols: 0,
                     row_style: None,
+                    delegate: None,
                 },
                 &theme,
                 &style,
@@ -2696,6 +3032,7 @@ mod tests {
                     resizable: false,
                     frozen_cols,
                     row_style: None,
+                    delegate: None,
                 },
                 &light(),
                 &TableStyle::m3(),

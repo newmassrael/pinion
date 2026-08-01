@@ -236,6 +236,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             resizable: false,
             frozen_cols: 0,
             row_style: None,
+            delegate: None,
         },
         &theme,
         &style,
