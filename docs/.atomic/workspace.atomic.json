@@ -78946,6 +78946,64 @@
         "The eager `view_table` answers no decoration role (`decorations: &[]`), so the tree still holds two cell-paint surfaces — the shape R1530 left on the header axis and R1532 on the delegate axis."
       ]
     },
+    "Round 1536": {
+      "decision_summary": "A decoration states what it means, and the name walk enters a scroll. Qt's decoration role is appearance only — what a mark MEANS is a separate role its item view does not wire to the decoration, so a colour-only status column is an empty cell to a Qt screen-reader user. Here the two travel in one answer and cannot drift. Wiring it and then ASKING the running app what the AT tree said found two stacked defects underneath: the name derivation's walker did not descend a ScrollNode (so no virtualized list, grid or tree could name anything), and the grid marked each cell's own label presentational (a role meant for glyphs a walk must skip past). Qt names its cells; pinion did not. Qt is the floor, not the target.",
+      "changes_bullets": [
+        "`CellDecoration::Swatch` carries a `meaning` beside its `color` — empty is the DECORATIVE answer (HTML `alt=\"\"`, correct when the mark restates the cell's text), non-empty joins the cell's accessible name ahead of the label.",
+        "The mark is ADDRESSABLE: `GridTag::cell_decoration` (the `'_'` presentational family, so it never enters the click-router namespace) — R1535 left it anonymous on the reasoning that a tag would shadow the cell, which `pinion_overlay`'s tagged pointer-transparent focus ring disproves.",
+        "`find_container_by_tag` descends `Scene::Scroll` — the transparency `rect_for_tag_with_offset` and `lookup_path_ref` already had. Without it nothing painted inside a `ScrollNode` could be named at all.",
+        "The grid's cell label is no longer `TextRole::Presentational`: that role is for decoration glyphs a name walk must skip past, and a data cell has no other label — meanwhile `pinion_a11y::tree_view` documented the opposite contract in words.",
+        "The mark keeps its declared size in a tight cell (`min_size`); the flex pass was shrinking a 10px swatch to 6px against its sibling label.",
+        "`hello-virtual-table` gains a mark-only `Flag` column, so one grid now carries plain text, a decorative mark, a meaningful mark and a delegated gauge."
+      ],
+      "verification_bullets": [
+        "Measured on the running app, before -> after: `hello-virtual-table` 0 of 75 `gridcell`s named -> 75 of 75. The reach is not the grid's: `hello-virtual-list` 1/16 -> 16/16, `hello-listbox` 1/13 -> 13/13, `hello-file-browser` 1/6 -> 6/6, `hello-lazy-list` -> 17/17.",
+        "7 new tests (4 in `pinion-widget-paint`, 2 in `pinion-a11y`, 1 in the example) + `tools/demos/r1536_decoration_states_its_meaning.py`; 761 widget-paint, 244 a11y, 18 grid example crates and 14 demos green.",
+        "6 counterfactuals one at a time: decorative arm ignored, trailing-space join, per-column instead of per-cell address, meaning/label order reversed, and each scroll arm removed separately. Each failed exactly one test.",
+        "The shrink defect was found by the DEMO, not by a unit test — the in-crate fixture used a 90px column where nothing shrank. An in-crate test now pins it.",
+        "The a11y regression hid for ~760 rounds because the BOUNDS walker descends a scroll: the AT tree was structurally correct and pointed at the right pixels while announcing nothing, so no structural assertion could see it."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "A `row` is now named after its first cell (name-from-contents reaching the row container). Not wrong — the first column is usually the row header — but it is a behaviour change nothing asked for and no test states the intent.",
+        "`TextRole::Presentational` was audited and corrected in the grid's cell path only. Whether other widgets mark their own content presentational is an unrun census, and the same defect would look identical there.",
+        "`flex_shrink` does not exist in `LayoutStyle`; the mark is pinned with `min_size`, which is the same clamp for a fixed square and not the same thing in general.",
+        "The decoration's meaning has one consumer shape (a colour swatch). `CellDecoration` still has one arm, so the `QIcon` axis and its `alt` are both untested.",
+        "The eager `view_table` still answers no decoration role, so the two cell-paint surfaces remain.",
+        "`enrich_names_from_scene` walks the whole scene per node, so the grid's 75 cells are 75 full-tree walks a frame; nobody has measured it and this round made it reach further."
+      ],
+      "publishable_decision_summary": "A decoration states what it means, and the name walk enters a scroll. Qt's decoration role is appearance only — what a mark MEANS is a separate role its item view does not wire to the decoration, so a colour-only status column is an empty cell to a Qt screen-reader user. Here the two travel in one answer and cannot drift. Wiring it and then ASKING the running app what the AT tree said found two stacked defects underneath: the name derivation's walker did not descend a ScrollNode (so no virtualized list, grid or tree could name anything), and the grid marked each cell's own label presentational (a role meant for glyphs a walk must skip past). Qt names its cells; pinion did not. Qt is the floor, not the target.",
+      "publishable_changes_bullets": [
+        "`CellDecoration::Swatch` carries a `meaning` beside its `color` — empty is the DECORATIVE answer (HTML `alt=\"\"`, correct when the mark restates the cell's text), non-empty joins the cell's accessible name ahead of the label.",
+        "The mark is ADDRESSABLE: `GridTag::cell_decoration` (the `'_'` presentational family, so it never enters the click-router namespace) — R1535 left it anonymous on the reasoning that a tag would shadow the cell, which `pinion_overlay`'s tagged pointer-transparent focus ring disproves.",
+        "`find_container_by_tag` descends `Scene::Scroll` — the transparency `rect_for_tag_with_offset` and `lookup_path_ref` already had. Without it nothing painted inside a `ScrollNode` could be named at all.",
+        "The grid's cell label is no longer `TextRole::Presentational`: that role is for decoration glyphs a name walk must skip past, and a data cell has no other label — meanwhile `pinion_a11y::tree_view` documented the opposite contract in words.",
+        "The mark keeps its declared size in a tight cell (`min_size`); the flex pass was shrinking a 10px swatch to 6px against its sibling label.",
+        "`hello-virtual-table` gains a mark-only `Flag` column, so one grid now carries plain text, a decorative mark, a meaningful mark and a delegated gauge."
+      ],
+      "publishable_verification_bullets": [
+        "Measured on the running app, before -> after: `hello-virtual-table` 0 of 75 `gridcell`s named -> 75 of 75. The reach is not the grid's: `hello-virtual-list` 1/16 -> 16/16, `hello-listbox` 1/13 -> 13/13, `hello-file-browser` 1/6 -> 6/6, `hello-lazy-list` -> 17/17.",
+        "7 new tests (4 in `pinion-widget-paint`, 2 in `pinion-a11y`, 1 in the example) + `tools/demos/r1536_decoration_states_its_meaning.py`; 761 widget-paint, 244 a11y, 18 grid example crates and 14 demos green.",
+        "6 counterfactuals one at a time: decorative arm ignored, trailing-space join, per-column instead of per-cell address, meaning/label order reversed, and each scroll arm removed separately. Each failed exactly one test.",
+        "The shrink defect was found by the DEMO, not by a unit test — the in-crate fixture used a 90px column where nothing shrank. An in-crate test now pins it.",
+        "The a11y regression hid for ~760 rounds because the BOUNDS walker descends a scroll: the AT tree was structurally correct and pointed at the right pixels while announcing nothing, so no structural assertion could see it."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "A `row` is now named after its first cell (name-from-contents reaching the row container). Not wrong — the first column is usually the row header — but it is a behaviour change nothing asked for and no test states the intent.",
+        "`TextRole::Presentational` was audited and corrected in the grid's cell path only. Whether other widgets mark their own content presentational is an unrun census, and the same defect would look identical there.",
+        "`flex_shrink` does not exist in `LayoutStyle`; the mark is pinned with `min_size`, which is the same clamp for a fixed square and not the same thing in general.",
+        "The decoration's meaning has one consumer shape (a colour swatch). `CellDecoration` still has one arm, so the `QIcon` axis and its `alt` are both untested.",
+        "The eager `view_table` still answers no decoration role, so the two cell-paint surfaces remain.",
+        "`enrich_names_from_scene` walks the whole scene per node, so the grid's 75 cells are 75 full-tree walks a frame; nobody has measured it and this round made it reach further."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -105,6 +105,15 @@ fn find_container_by_tag<'s>(
             }
             None
         }
+        // R1536 §5.40 §5.45 — a scroll is **transparent** to a tag walk, the
+        // same rule `Scene::rect_for_tag_with_offset` and
+        // `Scene::lookup_path_ref` already follow. Without this arm every
+        // widget painted inside a `ScrollNode` was unreachable to the name
+        // derivation: its `AccessNode` resolved *bounds* correctly (that walker
+        // descends) and pointed at the right pixels while announcing nothing,
+        // which is why the tree looked structurally right and no test noticed.
+        // Measured on `hello-virtual-table`: 75 of 75 `gridcell`s unnamed.
+        Scene::Scroll(s) => find_container_by_tag(&s.content, target),
         _ => None,
     }
 }
@@ -134,6 +143,10 @@ fn first_text_leaf(scene: &Scene) -> Option<String> {
             }
         }
         Scene::Container(c) => c.children.iter().find_map(first_text_leaf),
+        // R1536 — same transparency as `find_container_by_tag`: a nameable
+        // container whose label sits inside a nested scroll (a scrolling panel
+        // body) has that label as its name-from-contents, not nothing.
+        Scene::Scroll(s) => first_text_leaf(&s.content),
         _ => None,
     }
 }
@@ -261,6 +274,63 @@ mod tests {
         let filled = enrich_names_from_scene(&mut nodes, &scene);
         assert_eq!(filled, 0);
         assert!(nodes[0].name.is_none());
+    }
+
+    /// R1536 — a scroll is transparent to the tag walk.
+    ///
+    /// The defect this pins: `find_container_by_tag` stopped at any node that
+    /// was not a `Container`, so nothing painted inside a `ScrollNode` could be
+    /// named — every virtualized list / grid / tree in the tree. It went
+    /// unnoticed for ~760 rounds because the *bounds* walker
+    /// (`Scene::rect_for_tag_with_offset`) does descend, so the AT tree was
+    /// structurally correct and pointed at the right pixels while announcing
+    /// nothing. Measured on `hello-virtual-table` before the fix: **0 of 75
+    /// `gridcell`s named**; after: 75 of 75.
+    ///
+    /// Asserted through the public `enrich_names_from_scene` rather than the
+    /// private walker, so it is the contract that is pinned and not one
+    /// function's shape.
+    #[test]
+    fn r1536_a_scroll_is_transparent_to_the_name_walk() {
+        use pinion_core::scene::ScrollNode;
+        let inner = Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::new(
+                "Row 7".to_string(),
+                Rect::default(),
+            ))])
+            .with_tag("cell"),
+        );
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(ScrollNode::new(
+            Rect::default(),
+            inner,
+        ))]));
+        let mut nodes = vec![AccessNode::new("cell", AriaRole::GridCell)];
+        assert_eq!(enrich_names_from_scene(&mut nodes, &scene), 1);
+        assert_eq!(
+            nodes[0].name.as_deref(),
+            Some("Row 7"),
+            "a widget inside a scroll is named from its painted text",
+        );
+    }
+
+    /// R1536 — and the mirror on the *text* side: a nameable container whose
+    /// label sits inside a nested scroll is named by it, not left silent.
+    #[test]
+    fn r1536_text_is_found_through_a_nested_scroll() {
+        use pinion_core::scene::ScrollNode;
+        let scene = Scene::Container(
+            ContainerNode::new(vec![Scene::Scroll(ScrollNode::new(
+                Rect::default(),
+                Scene::Container(ContainerNode::new(vec![Scene::Text(TextNode::new(
+                    "Deep".to_string(),
+                    Rect::default(),
+                ))])),
+            ))])
+            .with_tag("panel"),
+        );
+        let mut nodes = vec![AccessNode::new("panel", AriaRole::Group)];
+        enrich_names_from_scene(&mut nodes, &scene);
+        assert_eq!(nodes[0].name.as_deref(), Some("Deep"));
     }
 
     #[test]

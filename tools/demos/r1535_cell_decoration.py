@@ -82,11 +82,11 @@ from rpc_verify import (  # noqa: E402
 
 EXAMPLE = "hello-virtual-table"
 TABLE_TAG = "vtbl"
-NCOLS = 4
+NCOLS = 5
 #: The decorated column's absolute index (`Status`).
 STATUS_COL = 2
 #: The delegated column's absolute index (`Load`, R1532).
-LOAD_COL = 3
+LOAD_COL = 4
 #: `TableStyle::decoration_px` — the swatch is this square.
 DECORATION_PX = 10
 #: How many statuses the fixture cycles through, mirrored here so the demo
@@ -147,19 +147,18 @@ def texts_under(node) -> list:
 def mark_of(cell) -> tuple | None:
     """The cell's decoration swatch as an `(r, g, b, a)` tuple, or `None`.
 
-    Identified by its **square declared size**, not merely by being an
-    untagged empty container: the gap spacer beside it is one too, and a
-    looser predicate reports the spacer's transparent fill as a mark
-    whenever the swatch is missing — exactly the case (D) exists to detect.
-    (Measured: the in-crate helper did precisely that until it was fixed.)
+    R1536 — found by the mark's own **address** (`GridTag::cell_decoration`).
+    This predicate used to be "an untagged empty container of the decoration
+    size", which had to be tightened twice in one round because the gap spacer
+    and the delegate's gauge bars are untagged empty containers too. An address
+    cannot be accidentally satisfied.
     """
     if cell is None:
         return None
+    # `vtbl#3_2` -> `vtbl_deco3_2`
+    want = f"{TABLE_TAG}_deco{cell['tag'].split('#', 1)[1]}"
     for ch in cell.get("children") or []:
-        if ch.get("type") != "Container" or ch.get("tag") or ch.get("children"):
-            continue
-        rect = ch.get("rect") or {}
-        if rect.get("w") != DECORATION_PX or rect.get("h") != DECORATION_PX:
+        if ch.get("tag") != want:
             continue
         f = (ch.get("style") or {}).get("fill") or {}
         return (f.get("r"), f.get("g"), f.get("b"), f.get("a"))

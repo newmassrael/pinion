@@ -376,6 +376,25 @@ impl GridTag {
         format!("{tag}_dcell{id}_{col}")
     }
 
+    /// (R1536) One cell's **decoration** mark — `"{tag}_deco{row}_{col}"`, the
+    /// `Qt::DecorationRole` answer painted inside cell `(row, col)`.
+    ///
+    /// Stays in the `'_'` presentational family (no `'#'`) so it never enters
+    /// the composite click-router namespace: the addressable *target* of a
+    /// click on a mark is still the cell, exactly as it was while the mark was
+    /// untagged. Tagging it is the R863 [`Self::metadata_cell`] move — a
+    /// painted thing with no tag cannot be asked about, so the mark was
+    /// reachable only by walking a cell's children **by position**, which is a
+    /// layout detail no client should have to know.
+    ///
+    /// A tag and hit-testability are independent axes (`pinion_overlay`'s focus
+    /// ring is tagged *and* pointer-transparent); R1535 conflated them and left
+    /// the mark anonymous for a reason that does not hold.
+    #[must_use]
+    pub fn cell_decoration(tag: &str, row: impl core::fmt::Display, col: usize) -> String {
+        format!("{tag}_deco{row}_{col}")
+    }
+
     /// (R863) The tree-grid's **name**-column header cell — `"{tag}_chtree"`.
     /// The frozen tree column's `columnheader` (the metadata columns reuse
     /// the numeric [`Self::col_header`]); a dedicated tag keeps the

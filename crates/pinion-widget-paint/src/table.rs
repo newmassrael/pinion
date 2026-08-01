@@ -227,17 +227,30 @@ pub fn row_fill(theme: &Theme, state: RadioState, selected: bool, row_index: usi
 /// R1535 §5.27 — the [`CellDecoration::Swatch`] node: a filled square of
 /// [`TableStyle::decoration_px`] a side, laid out before the cell's label.
 ///
-/// Pointer-transparent, because the addressable thing here is the **cell** —
-/// its container carries [`CellRender::tag`], and a hit-testable child would
-/// shadow it for a click that landed on the swatch (the rule
-/// [`VirtualTableData::delegate`]'s own bars follow).
-fn swatch_node(color: Color, side: u32) -> Scene {
+/// **Tagged and pointer-transparent**, which are independent axes (R1536): the
+/// tag makes the mark *addressable* — `scene/snapshot` can be asked for cell
+/// `(r, c)`'s decoration by name instead of walking the cell's children by
+/// position — while pointer-transparency keeps the click *target* the cell, as
+/// [`VirtualTableData::delegate`]'s own bars do. R1535 gave it neither, on the
+/// reasoning that a tag would shadow the cell; `pinion_overlay`'s focus ring is
+/// tagged and pointer-transparent, so that reasoning was wrong.
+fn swatch_node(color: Color, side: u32, tag: &str) -> Scene {
     Scene::Container(
         ContainerNode::new(Vec::new())
+            .with_tag(tag.to_string())
             .with_style(BoxStyle::filled(color).with_corner_radius(SWATCH_RADIUS))
             .with_layout(
                 LayoutStyle::new()
                     .with_size(Size::px(side, side))
+                    // R1536 — a decoration keeps its declared size in a tight
+                    // cell; the *text* is what gives way, which is what Qt does
+                    // (the icon is drawn at `iconSize` and the label elides).
+                    // Without this the flex pass shrinks the mark against its
+                    // sibling label — measured at a 75px column: a 10px swatch
+                    // painted 6px. `min_size` rather than a `flex-shrink: 0`
+                    // the substrate does not have; for a fixed square the
+                    // clamp is the same one CSS `min-width` gives.
+                    .with_min_size(Size::px(side, side))
                     .with_pointer_transparent(true),
             ),
     )
@@ -712,7 +725,8 @@ fn data_row(
                 // R1535 — an out-of-range index is the undecorated answer, the
                 // same fallback the text takes; the eager caller's empty slice
                 // reaches it for every column.
-                decoration: pane.decorations.get(j).copied().flatten(),
+                decoration: pane.decorations.get(j).and_then(Option::as_ref),
+                root: tag,
                 width: pane.widths.get(j).copied().unwrap_or(style.col_width),
                 height: style.row_height,
                 fg,
@@ -1033,7 +1047,10 @@ pub struct CellRender<'a> {
     /// Fetched by the same rule [`Self::text`] is — [`GridModel::decoration`]
     /// asked once per painted cell — so a delegate that wants to place the mark
     /// itself gets the model's answer rather than re-asking for it.
-    pub decoration: Option<CellDecoration>,
+    /// R1536 — borrowed, not owned: the answer now carries a `String`, and a
+    /// cell that is painted is a cell whose row was just fetched, so the
+    /// painter reads the fetched answer instead of cloning it per frame.
+    pub decoration: Option<&'a CellDecoration>,
     /// The cell's box width in logical px — this column's resolved width.
     pub width: u32,
     /// The cell's box height in logical px (the row height).
@@ -1052,6 +1069,15 @@ pub struct CellRender<'a> {
     /// addressable by pointer input and by RPC; [`text_cell_painter`] shows the
     /// shape.
     pub tag: &'a str,
+    /// R1536 — the grid's paint-root tag, the base every
+    /// [`GridTag`] address is built from.
+    ///
+    /// Carried separately from [`Self::tag`] rather than parsed back out of it:
+    /// a delegate that wants to address a part of the cell it draws should ask
+    /// the same SSOT the grid does, not re-derive the root by splitting a
+    /// composite tag on `'#'` (which is decoding, and the encode SSOT exists so
+    /// nobody does that).
+    pub root: &'a str,
 }
 
 /// R1532 §5.27 — how one column's cells are painted (Qt
@@ -1079,11 +1105,42 @@ pub type CellPainter<'a> = &'a dyn Fn(&CellRender<'_>) -> Scene;
 /// reachable (`Scene::Image` exists and the shell caches image sources), and it
 /// is deliberately not added here: it would ship an arm no consumer paints, and
 /// the round that adds it should be the round that has one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// # Why the answer carries a meaning (R1536)
+///
+/// Qt's decoration role is **appearance only** — a colour or an icon. What the
+/// mark *means* is a different role (`Qt::AccessibleTextRole`), which the item
+/// view does not wire to the decoration, so a rendered Qt cell cannot be asked
+/// what its mark stands for: `QAccessibleTableCell::text(Name)` returns the
+/// display string and the decoration contributes nothing. A status column that
+/// is only a colour is, to a Qt screen-reader user, an empty cell.
+///
+/// Here the two travel together, so they cannot drift and a client that can see
+/// the mark can also read it. That is not Qt parity; Qt is the floor.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CellDecoration {
     /// Qt's `QColor` decoration — a filled square in the cell's leading edge,
     /// [`TableStyle::decoration_px`] a side.
-    Swatch(Color),
+    Swatch {
+        /// The ink.
+        color: Color,
+        /// What the mark **means** — HTML's `alt`, and read by exactly its
+        /// rule.
+        ///
+        /// **Empty is the decorative answer**, not a missing one: when the mark
+        /// restates something the cell's own text already says, announcing it
+        /// makes a screen reader say the status twice, so `alt=""` is the
+        /// *correct* markup and this is its equivalent. A mark that carries
+        /// information the text does not — a colour-only status column — gives
+        /// it here, and the cell's accessible name composes
+        /// `"<meaning> <text>"`, which is what the browser does for
+        /// `<td><img alt="Overdue"> 3 days</td>`.
+        ///
+        /// So the model states which of the two it is, because the model is the
+        /// only thing that knows. A framework guessing (always announce / never
+        /// announce) would be wrong for half its consumers.
+        meaning: String,
+    },
 }
 
 /// R1532 §5.27 — the built-in painter: a left-aligned label in the row's
@@ -1106,35 +1163,71 @@ pub enum CellDecoration {
 #[must_use]
 pub fn text_cell_painter(c: &CellRender<'_>) -> Scene {
     let mut children = Vec::with_capacity(3);
-    if let Some(CellDecoration::Swatch(color)) = c.decoration {
-        children.push(swatch_node(color, c.style.decoration_px));
+    let mut meaning = "";
+    if let Some(CellDecoration::Swatch { color, meaning: m }) = c.decoration {
+        children.push(swatch_node(
+            *color,
+            c.style.decoration_px,
+            &GridTag::cell_decoration(c.root, c.index.row, c.index.col),
+        ));
         // The gap is a spacer rather than padding on the swatch so the
         // undecorated cell keeps its node shape unchanged — see `pad_node`,
         // the same "emit nothing when it would be a zero-width box" rule.
         children.extend(pad_node(c.style.decoration_gap_px, c.height));
+        meaning = m.as_str();
     }
-    children.push(Scene::Text(
-        TextNode::styled(
-            c.text.to_string(),
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(c.style.label_size_px)
-                .with_fg(c.fg),
-        )
-        .with_role(TextRole::Presentational),
-    ));
-    Scene::Container(
-        ContainerNode::new(children)
-            .with_tag(c.tag.to_string())
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Start)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(c.width, c.height))
-                    .with_padding(Rect::new(c.style.cell_pad_x, 0, c.style.cell_pad_x, 0)),
-            ),
-    )
+    // R1536 §5.40 — the cell's label is the cell's **content**, so it is NOT
+    // presentational. `TextRole::Presentational` exists (R51.81) for decoration
+    // glyphs a name derivation must skip past to reach the linguistic label —
+    // a checkbox's tick, a slider's caret. A data cell has no such label to
+    // reach: this text is the only thing it says.
+    //
+    // Marking it presentational made every `gridcell` unnameable, while
+    // `pinion_a11y::tree_view` documented the opposite contract in so many
+    // words ("gridcell name comes from the painted text, not the builder").
+    // The write path and the read path disagreed, and the AT tree took the
+    // paint's answer: silence.
+    children.push(Scene::Text(TextNode::styled(
+        c.text.to_string(),
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(c.style.label_size_px)
+            .with_fg(c.fg),
+    )));
+    let mut cell = ContainerNode::new(children)
+        .with_tag(c.tag.to_string())
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Start)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(c.width, c.height))
+                .with_padding(Rect::new(c.style.cell_pad_x, 0, c.style.cell_pad_x, 0)),
+        );
+    // R1536 — a mark that carries meaning joins the cell's accessible name,
+    // ahead of the label, exactly as a browser names
+    // `<td><img alt="Overdue"> 3 days</td>`. Set only when there is something
+    // to add: the derivation's own name-from-contents path already produces the
+    // label, so a decorative (`alt=""`) mark leaves the AT tree byte-identical
+    // and cannot make a screen reader say the status twice.
+    if !meaning.is_empty() {
+        cell = cell.with_aria_label(compose_cell_name(meaning, c.text));
+    }
+    Scene::Container(cell)
+}
+
+/// R1536 §5.40 — the accessible name of a cell whose mark means something:
+/// `"<meaning> <text>"`, or just the meaning when the cell has no text.
+///
+/// Split out because the join is the part with a rule in it — a mark-only cell
+/// must not be named `"Flagged "` with a trailing space, and a client that
+/// string-matches an announced name would not notice.
+fn compose_cell_name(meaning: &str, text: &str) -> String {
+    if text.is_empty() {
+        meaning.to_string()
+    } else {
+        format!("{meaning} {text}")
+    }
 }
 
 impl core::fmt::Debug for VirtualTableData<'_> {
@@ -2483,22 +2576,42 @@ mod tests {
         find_tagged(scene, tag).map_or(0, |c| c.children.len())
     }
 
-    fn cell_swatch(scene: &Scene, tag: &str) -> Option<Color> {
-        let side = pinion_core::style::SizeValue::Px(TableStyle::m3().decoration_px);
-        find_tagged(scene, tag)?
-            .children
-            .iter()
-            .find_map(|ch| match ch {
-                Scene::Container(c)
-                    if c.children.is_empty()
-                        && c.tag.is_none()
-                        && c.layout.size.width == side
-                        && c.layout.size.height == side =>
-                {
-                    Some(c.style.fill)
-                }
-                _ => None,
-            })
+    /// R1536 — found by its **address**, `GridTag::cell_decoration`, rather
+    /// than by a structural predicate over the cell's children.
+    ///
+    /// This is the point of the tag. R1535's version matched "an untagged empty
+    /// container of the decoration size", which had to be tightened twice in
+    /// one round because the gap spacer and the delegate's gauge bars are also
+    /// untagged empty containers — every such predicate names a node by
+    /// properties some other node kind can grow. An address cannot be
+    /// accidentally satisfied.
+    fn cell_swatch(scene: &Scene, root: &str, row: usize, col: usize) -> Option<Color> {
+        find_tagged(scene, &GridTag::cell_decoration(root, row, col)).map(|c| c.style.fill)
+    }
+
+    /// R1536 — the accessible name the §5.40 derivation would give this cell:
+    /// its `aria_label` when set, else its first descendant text. The same
+    /// precedence `pinion_a11y::enrich_names_from_scene` applies, read here
+    /// from the paint scene the shell hands it.
+    fn cell_access_name(scene: &Scene, tag: &str) -> Option<String> {
+        let cell = find_tagged(scene, tag)?;
+        if let Some(label) = cell.aria_label.as_deref() {
+            return Some(label.to_string());
+        }
+        cell.children.iter().find_map(|ch| match ch {
+            Scene::Text(t) => Some(t.content.clone()),
+            _ => None,
+        })
+    }
+
+    /// R1536 — a decorative test mark keyed to `n`, so an assertion can name
+    /// which cell's answer it is looking at. `meaning` empty = the `alt=""`
+    /// arm; the tests that exercise the meaningful arm spell it out.
+    fn test_swatch(n: u8) -> CellDecoration {
+        CellDecoration::Swatch {
+            color: Color::rgb(n, 0, 0),
+            meaning: String::new(),
+        }
     }
 
     /// R1535 — total nodes in a painted scene, so an "additive" claim can be
@@ -2529,9 +2642,7 @@ mod tests {
         let style = TableStyle::m3();
         let decoration = |c: CellIndex| {
             asks.set(asks.get() + 1);
-            (c.col == col).then(|| {
-                CellDecoration::Swatch(Color::rgb(u8::try_from(c.row).unwrap_or(255), 0, 0))
-            })
+            (c.col == col).then(|| test_swatch(u8::try_from(c.row).unwrap_or(255)))
         };
         Owner::new().run(|| {
             view_virtual_table(
@@ -2575,12 +2686,12 @@ mod tests {
         let asks = Cell::new(0);
         let scene = run_vtable_decorated(1, &asks);
         assert_eq!(
-            cell_swatch(&scene, "vtbl#0_1"),
+            cell_swatch(&scene, "vtbl", 0, 1),
             Some(Color::rgb(0, 0, 0)),
             "the decorated cell carries the colour the model answered with",
         );
         assert_eq!(
-            cell_swatch(&scene, "vtbl#0_2"),
+            cell_swatch(&scene, "vtbl", 0, 2),
             None,
             "and a cell whose role answered `None` carries no mark at all",
         );
@@ -2608,8 +2719,8 @@ mod tests {
         let asks = Cell::new(0);
         let scene = run_vtable_decorated(1, &asks);
         let (r0, r1) = (
-            cell_swatch(&scene, "vtbl#0_1"),
-            cell_swatch(&scene, "vtbl#1_1"),
+            cell_swatch(&scene, "vtbl", 0, 1),
+            cell_swatch(&scene, "vtbl", 1, 1),
         );
         assert_eq!(r0, Some(Color::rgb(0, 0, 0)), "row 0's own answer");
         assert_eq!(r1, Some(Color::rgb(1, 0, 0)), "row 1's own answer");
@@ -2653,22 +2764,23 @@ mod tests {
         // `swatch_node`: a guard that constructs its own copy of the subject
         // tests the copy, and would keep passing if the paint path stopped
         // using the constructor.
-        let cell = find_tagged(&scene, "vtbl#0_1").expect("the decorated cell is in the tree");
-        let side = pinion_core::style::SizeValue::Px(TableStyle::m3().decoration_px);
-        let Some(Scene::Container(mark)) = cell
-            .children
-            .iter()
-            .find(|ch| matches!(ch, Scene::Container(c) if c.layout.size.width == side))
-        else {
-            panic!("the painted cell carries a swatch")
-        };
+        let mark = find_tagged(&scene, &GridTag::cell_decoration("vtbl", 0, 1))
+            .expect("the painted cell carries a swatch");
         assert!(
             mark.layout.pointer_transparent,
             "and the mark is inert to hit routing",
         );
+        // R1536 corrects this test's own reasoning. It used to assert the mark
+        // carried NO tag, "to be hit by" — but a tag and hit-testability are
+        // independent axes: `pinion_overlay::focus_ring` is tagged and
+        // pointer-transparent. Being addressable is what makes the mark
+        // answerable over RPC; being pointer-transparent is what keeps the cell
+        // the click target. The mark is both, and the second is what this test
+        // is actually about.
         assert!(
-            mark.tag.is_none(),
-            "and carries no tag of its own to be hit by",
+            !mark.tag.as_deref().unwrap_or_default().contains('#'),
+            "and its address stays in the '_' presentational family, so it \
+             never enters the composite click-router namespace",
         );
     }
 
@@ -2690,7 +2802,7 @@ mod tests {
         collect_text(&plain, &mut b);
         assert_eq!(a, b, "same text");
         assert_eq!(
-            cell_swatch(&claimed_none, "vtbl#0_1"),
+            cell_swatch(&claimed_none, "vtbl", 0, 1),
             None,
             "and no cell grew a mark",
         );
@@ -2724,11 +2836,7 @@ mod tests {
         let asks = Cell::new(0);
         let deco = |c: CellIndex| {
             asks.set(asks.get() + 1);
-            Some(CellDecoration::Swatch(Color::rgb(
-                u8::try_from(c.col).unwrap_or(255),
-                0,
-                0,
-            )))
+            Some(test_swatch(u8::try_from(c.col).unwrap_or(255)))
         };
         let scene = run_vtable_wide_with(
             600,
@@ -2741,12 +2849,12 @@ mod tests {
             },
         );
         assert_eq!(
-            cell_swatch(&scene, "vtbl#0_0"),
+            cell_swatch(&scene, "vtbl", 0, 0),
             Some(Color::rgb(0, 0, 0)),
             "the pinned pane's cell is decorated",
         );
         assert_eq!(
-            cell_swatch(&scene, "vtbl#0_2"),
+            cell_swatch(&scene, "vtbl", 0, 2),
             Some(Color::rgb(2, 0, 0)),
             "and so is the scrolling pane's, with its own absolute column's answer",
         );
@@ -2771,11 +2879,7 @@ mod tests {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
                 header: wide_header,
                 decoration: |c: CellIndex| {
-                    Some(CellDecoration::Swatch(Color::rgb(
-                        u8::try_from(c.col % 256).unwrap_or(0),
-                        0,
-                        0,
-                    )))
+                    Some(test_swatch(u8::try_from(c.col % 256).unwrap_or(0)))
                 },
             },
         );
@@ -2788,7 +2892,7 @@ mod tests {
         for tag in &cells {
             let col: usize = tag.rsplit('_').next().unwrap().parse().unwrap();
             assert_eq!(
-                cell_swatch(&scene, tag),
+                cell_swatch(&scene, "vtbl", 0, col),
                 Some(Color::rgb(u8::try_from(col % 256).unwrap_or(0), 0, 0)),
                 "cell {tag} carries column {col}'s own answer",
             );
@@ -2801,6 +2905,170 @@ mod tests {
              cannot tell absolute from relative (first painted column {first})",
         );
         assert!(checked > 1, "premise: more than one column checked");
+    }
+
+    // ── R1536 §5.27 §5.40 — a decoration states what it means ───────
+
+    /// R1536 — render the virtual table with column 1 decorated by a mark whose
+    /// `meaning` is `meaning`, and column 1's display text set to `text`.
+    ///
+    /// Both are parameters because the contract's two arms are exactly the two
+    /// combinations: a mark beside text that restates it (decorative), and a
+    /// mark that is the only thing in its cell (meaningful).
+    fn run_vtable_meaning(meaning: &str, text: &'static str) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, 200);
+        let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
+        state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
+        let h_state = vt_hscroll(0);
+        let theme = light();
+        let style = TableStyle::m3();
+        let owned = meaning.to_string();
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
+                VirtualTableData {
+                    column_count: VT_HEADERS.len(),
+                    item_count: VT_N,
+                    overscan: 2,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                    col_widths: None,
+                    resizable: false,
+                    frozen_cols: 0,
+                    row_style: None,
+                    delegate: None,
+                },
+                &theme,
+                &style,
+                |_| false,
+                GridModel {
+                    cell: |c: CellIndex| {
+                        if c.col == 1 {
+                            text.to_string()
+                        } else {
+                            vt_cell(c)
+                        }
+                    },
+                    header: vt_header,
+                    decoration: |c: CellIndex| {
+                        (c.col == 1).then(|| CellDecoration::Swatch {
+                            color: Color::rgb(0, 0, 0),
+                            meaning: owned.clone(),
+                        })
+                    },
+                },
+            )
+        })
+    }
+
+    /// The mark is **addressable**: a client asks for cell `(r, c)`'s
+    /// decoration by name instead of walking the cell's children by position.
+    ///
+    /// The address is per cell, so the negative half — a cell whose role
+    /// answered `None` has no such node — is what proves the name is not
+    /// emitted unconditionally.
+    #[test]
+    fn r1536_the_mark_has_an_address() {
+        let asks = Cell::new(0);
+        let scene = run_vtable_decorated(1, &asks);
+        assert!(
+            scene.contains_tag(&GridTag::cell_decoration("vtbl", 0, 1)),
+            "the decorated cell's mark is addressable",
+        );
+        assert!(
+            scene.contains_tag(&GridTag::cell_decoration("vtbl", 1, 1)),
+            "and so is the next row's, at its own address",
+        );
+        assert!(
+            !scene.contains_tag(&GridTag::cell_decoration("vtbl", 0, 2)),
+            "an undecorated cell has no decoration node to address",
+        );
+    }
+
+    /// R1536 — the mark keeps its declared size when the cell is tight.
+    ///
+    /// Found by the demo, not by a unit test: at a 75px column the flex pass
+    /// shrank a 10px swatch to 6px against its sibling label. Qt draws the
+    /// decoration at `iconSize` and elides the *text*; a mark that silently
+    /// resizes is a mark whose colour area — the only thing it encodes — is a
+    /// function of the column width.
+    #[test]
+    fn r1536_the_mark_does_not_shrink() {
+        let side = TableStyle::m3().decoration_px;
+        let Scene::Container(mark) = swatch_node(Color::rgb(1, 2, 3), side, "t") else {
+            panic!("a swatch is a container")
+        };
+        let px = pinion_core::style::SizeValue::Px(side);
+        assert_eq!(mark.layout.size.width, px, "declared width");
+        assert_eq!(
+            mark.layout.min_size.width, px,
+            "and a MINIMUM equal to it, so the flex pass cannot take it back",
+        );
+        assert_eq!(mark.layout.min_size.height, px, "on both axes");
+    }
+
+    /// A mark that **restates the cell's text** is decorative: it contributes
+    /// nothing to the accessible name, so a screen reader says the status once.
+    /// HTML's `alt=""`, and the reason `meaning` is a model answer rather than
+    /// something the framework guesses.
+    #[test]
+    fn r1536_a_decorative_mark_is_silent() {
+        let scene = run_vtable_meaning("", "Active");
+        assert_eq!(
+            cell_access_name(&scene, "vtbl#0_1").as_deref(),
+            Some("Active"),
+            "the cell names itself from its own label, exactly as before R1535",
+        );
+        assert!(
+            find_tagged(&scene, "vtbl#0_1").is_some_and(|c| c.aria_label.is_none()),
+            "and no override was written at all — a decorative mark leaves the \
+             AT tree byte-identical",
+        );
+    }
+
+    /// A mark that carries information the text does not **joins the cell's
+    /// accessible name**, ahead of the label — what a browser does for
+    /// `<td><img alt="Overdue"> 3 days</td>`.
+    ///
+    /// This is the arm Qt has no answer for: `QAccessibleTableCell::text(Name)`
+    /// returns the display role, and the decoration contributes nothing, so a
+    /// colour-only status column is an empty cell to a screen-reader user.
+    #[test]
+    fn r1536_a_meaningful_mark_is_announced() {
+        let scene = run_vtable_meaning("Overdue", "3 days");
+        assert_eq!(
+            cell_access_name(&scene, "vtbl#0_1").as_deref(),
+            Some("Overdue 3 days"),
+            "the mark's meaning precedes the label in the composed name",
+        );
+    }
+
+    /// A **mark-only** cell — no display text — is named by its mark alone, with
+    /// no trailing separator. Without this the cell is silent, which is the
+    /// whole failure the meaning field exists to prevent.
+    #[test]
+    fn r1536_a_mark_only_cell_is_named_by_its_mark() {
+        let scene = run_vtable_meaning("Flagged", "");
+        assert_eq!(
+            cell_access_name(&scene, "vtbl#0_1").as_deref(),
+            Some("Flagged"),
+            "named by the mark alone, and NOT `\"Flagged \"` — a client that \
+             string-matches an announced name would not notice the space",
+        );
+        // The negative control: without the meaning this exact cell is silent.
+        let silent = run_vtable_meaning("", "");
+        assert_eq!(
+            cell_access_name(&silent, "vtbl#0_1").as_deref(),
+            Some(""),
+            "premise: the same mark-only cell with a decorative mark has no \
+             name to give — which is what makes the assertion above load-bearing",
+        );
     }
 
     /// R784 — render the virtual table with an explicit horizontal

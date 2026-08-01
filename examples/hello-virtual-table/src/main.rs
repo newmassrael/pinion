@@ -37,7 +37,7 @@
 
 use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes};
 use pinion_core::external::{External, StubExternal};
-use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -65,22 +65,25 @@ const THEME_TAG: &str = "app";
 /// and tracks the window height.
 const N: usize = 10_000;
 /// Column count (matches `HEADERS.len()`).
-const NCOLS: usize = 4;
-/// Uniform column width; `NCOLS × COL_W = 360 < WIN_W` so no h-scroll.
-const COL_W: u32 = 90;
+const NCOLS: usize = 5;
+/// Uniform column width; `NCOLS × COL_W = 375 < WIN_W` so no h-scroll.
+const COL_W: u32 = 75;
 /// Data-row height (must match the windowing pitch used in `access_node`).
 const ROW_H: u32 = 36;
 /// Rows built beyond the strict window on each side.
 const OVERSCAN: usize = 3;
 /// Column header labels. `Load` is the R1532 **delegated** column, `Status`
 /// the R1535 **decorated** one.
-const HEADERS: [&str; NCOLS] = ["Index", "Name", "Status", "Load"];
+const HEADERS: [&str; NCOLS] = ["Index", "Name", "Status", "Flag", "Load"];
 /// R1535 — the absolute index of the column whose cells answer the
 /// `Qt::DecorationRole` with a colour keyed to the row's status.
 const STATUS_COL: usize = 2;
+/// R1536 — the absolute index of the **mark-only** column: no display text,
+/// so its mark is the cell's whole content and must carry its own meaning.
+const FLAG_COL: usize = 3;
 /// R1532 — the absolute index of the column whose cells are painted by a
 /// delegate rather than as a label.
-const LOAD_COL: usize = 3;
+const LOAD_COL: usize = 4;
 /// R1532 — the load bar's track height; the rest of the row is padding, so
 /// the bar reads as a gauge inside the cell rather than as a filled cell.
 const BAR_H: u32 = 10;
@@ -120,8 +123,17 @@ fn cell_text(c: CellIndex) -> String {
         0 => format!("{:05}", c.row),
         1 => CATEGORIES[c.row % CATEGORIES.len()].to_string(),
         LOAD_COL => format!("{}%", load_percent(c.row)),
+        // R1536 — the mark-only column has NO text. Its cell is its mark, which
+        // is why that mark has to say what it means.
+        FLAG_COL => String::new(),
         _ => STATUS[c.row % STATUS_KINDS].to_string(),
     }
+}
+
+/// R1536 — whether a row is flagged. Every third row, so a snapshot shows both
+/// the marked and the unmarked case in one window.
+fn is_flagged(row: usize) -> bool {
+    row % 3 == 1
 }
 
 /// R1535 §5.27 — the grid's `Qt::DecorationRole`: a colour swatch on every
@@ -136,15 +148,34 @@ fn cell_text(c: CellIndex) -> String {
 /// The colour comes from the same `row % STATUS_KINDS` the label does, so the
 /// swatch and the word can never disagree.
 fn cell_decoration(c: CellIndex, theme: &Theme) -> Option<CellDecoration> {
-    if c.col != STATUS_COL {
-        return None;
+    match c.col {
+        // R1536 — DECORATIVE. The swatch restates what the cell's own label
+        // already says, so announcing it would make a screen reader read the
+        // status twice; `meaning` is empty for the same reason `alt=""` is the
+        // correct markup for an icon beside its own caption.
+        STATUS_COL => {
+            let role = match c.row % STATUS_KINDS {
+                0 => ColorRole::OnSurfaceMuted,
+                1 => ColorRole::Accent,
+                _ => ColorRole::Outline,
+            };
+            Some(CellDecoration::Swatch {
+                color: theme.resolve(role),
+                meaning: String::new(),
+            })
+        }
+        // R1536 — MEANINGFUL. This column has no text at all, so the mark is
+        // the only thing in the cell and carries the whole datum. Without a
+        // meaning the column is, to a screen-reader user, five blank cells —
+        // which is exactly what a Qt `DecorationRole` column is, because Qt's
+        // decoration is appearance and its accessible text is a different role
+        // the item view does not wire to it.
+        FLAG_COL if is_flagged(c.row) => Some(CellDecoration::Swatch {
+            color: theme.resolve(ColorRole::Accent),
+            meaning: "Flagged".to_string(),
+        }),
+        _ => None,
     }
-    let role = match c.row % STATUS_KINDS {
-        0 => ColorRole::OnSurfaceMuted,
-        1 => ColorRole::Accent,
-        _ => ColorRole::Outline,
-    };
-    Some(CellDecoration::Swatch(theme.resolve(role)))
 }
 
 /// R1532 — the `Load` column's datum, `0..=100`. Synthetic but not uniform,
@@ -195,16 +226,17 @@ fn load_bar(c: &CellRender<'_>) -> Scene {
                 ])
                 .with_layout(LayoutStyle::new().with_size(Size::px(track_w, BAR_H))),
             ),
-            Scene::Text(
-                TextNode::styled(
-                    c.text.to_string(),
-                    Rect::default(),
-                    TextStyle::new()
-                        .with_size_px(c.style.label_size_px)
-                        .with_fg(c.fg),
-                )
-                .with_role(TextRole::Presentational),
-            ),
+            // R1536 — NOT presentational. This label is the cell's content,
+            // and R1532's own rationale for keeping it was that a bar encodes
+            // in pixels and a screen reader needs the number — which the
+            // presentational marking then prevented it from ever hearing.
+            Scene::Text(TextNode::styled(
+                c.text.to_string(),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(c.style.label_size_px)
+                    .with_fg(c.fg),
+            )),
         ])
         // R1532 — the cell's own tag. A painter that omits it drops the cell
         // out of pointer routing and out of every tag-addressed RPC.
@@ -403,8 +435,10 @@ mod tests {
 
     #[test]
     fn cells_are_indexed_and_categorized() {
-        assert_eq!(row_of(0), vec!["00000", "Alpha", "Idle", "0%"]);
-        assert_eq!(row_of(42), vec!["00042", "Charlie", "Idle", "92%"]);
+        // R1536 — the empty slot is the mark-only `Flag` column: its cell
+        // has no text by design, so its content is its decoration.
+        assert_eq!(row_of(0), vec!["00000", "Alpha", "Idle", "", "0%"]);
+        assert_eq!(row_of(42), vec!["00042", "Charlie", "Idle", "", "92%"]);
     }
 
     /// R1532 — the delegated column's cells are painted by [`load_bar`] and
@@ -477,15 +511,70 @@ mod tests {
             mark(STATUS_KINDS),
             "premise: the fixture's statuses really do cycle",
         );
-        // Every other column answers the role with nothing.
+        // Every column but the two decorated ones answers the role with
+        // nothing (R1536 added the mark-only `Flag` column).
         for col in 0..NCOLS {
-            if col != STATUS_COL {
+            if col != STATUS_COL && col != FLAG_COL {
                 assert_eq!(
                     cell_decoration(CellIndex { row: 1, col }, &theme),
                     None,
                     "column {col} carries no mark",
                 );
             }
+        }
+    }
+
+    /// R1536 — this grid carries **both** arms of the decoration's meaning, and
+    /// which arm a column takes is a property of the column, not a preference.
+    ///
+    /// `Status` restates its own label, so its mark is decorative (`alt=""`).
+    /// `Flag` has no label at all, so its mark carries the whole datum and must
+    /// say so — a mark-only column with an empty meaning is a column of blank
+    /// cells to a screen-reader user, which is precisely what the same column
+    /// built on Qt's `DecorationRole` would be.
+    #[test]
+    fn r1536_the_mark_only_column_states_its_meaning() {
+        let theme = pinion_core::theme::Theme::light();
+        let mark = |row: usize, col: usize| cell_decoration(CellIndex { row, col }, &theme);
+        let meaning_of = |row: usize, col: usize| {
+            mark(row, col).map(|CellDecoration::Swatch { meaning, .. }| meaning)
+        };
+        // The decorative arm: a mark beside text that already says it.
+        for row in 0..STATUS_KINDS {
+            assert_eq!(
+                meaning_of(row, STATUS_COL).as_deref(),
+                Some(""),
+                "row {row}'s status mark restates its label, so it is silent",
+            );
+            assert!(
+                !cell_text(CellIndex {
+                    row,
+                    col: STATUS_COL
+                })
+                .is_empty(),
+                "premise: and that label really is there to restate",
+            );
+        }
+        // The meaningful arm: a mark that IS the cell.
+        let flagged = (0..12).filter(|&r| is_flagged(r)).collect::<Vec<_>>();
+        assert!(flagged.len() > 1, "premise: some rows are flagged");
+        for &row in &flagged {
+            assert_eq!(
+                meaning_of(row, FLAG_COL).as_deref(),
+                Some("Flagged"),
+                "row {row}'s flag mark says what it means",
+            );
+            assert_eq!(
+                cell_text(CellIndex { row, col: FLAG_COL }),
+                "",
+                "premise: and it is the ONLY thing in the cell — without the \
+                 meaning this cell is silent",
+            );
+        }
+        let unflagged = (0..12).filter(|&r| !is_flagged(r)).collect::<Vec<_>>();
+        assert!(!unflagged.is_empty(), "premise: some rows are not flagged");
+        for &row in &unflagged {
+            assert_eq!(mark(row, FLAG_COL), None, "row {row} carries no flag");
         }
     }
 

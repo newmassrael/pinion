@@ -69,9 +69,9 @@ from rpc_verify import (  # noqa: E402
 
 EXAMPLE = "hello-virtual-table"
 TABLE_TAG = "vtbl"
-NCOLS = 4
+NCOLS = 5
 #: The delegated column's absolute index (`Load`).
-LOAD_COL = 3
+LOAD_COL = 4
 #: `load_bar`'s track height — the gauge wrapper is this tall, which is how
 #: this demo tells a bar from R1535's decoration mark (both are untagged
 #: empty containers, and `TableStyle::decoration_px` is also 10).
