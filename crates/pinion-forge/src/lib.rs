@@ -1341,7 +1341,7 @@ mod tests {
 
         // The accessors the shell reads the clock through.
         assert!(rust.contains("pub fn gpu_clock(&mut self) -> ::pinion_gpu::GpuFrameClock {"));
-        assert!(rust.contains("pub fn gpu_timing_counts(&self) -> (u64, u64) {"));
+        assert!(rust.contains("pub fn gpu_dropped_samples(&self) -> u64 {"));
         // The unsupported case is the ABSENT timer, mapped explicitly —
         // not a zero, and not a panic.
         assert!(rust.contains("::pinion_gpu::GpuFrameClock::Unsupported"));

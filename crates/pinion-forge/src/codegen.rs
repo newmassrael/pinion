@@ -357,17 +357,18 @@ impl __NAME__ {
             .map_or(::pinion_gpu::GpuFrameClock::Unsupported, ::pinion_gpu::FrameTimer::clock)
     }
 
-    /// R1537 §5.16 — how many GPU timings have been harvested, and how
-    /// many were taken but discarded.
+    /// R1537 §5.16 — GPU measurements taken and then discarded, cumulative
+    /// since boot.
     ///
-    /// `(0, 0)` on a host with no timestamp support; ask
-    /// [`Self::gpu_clock`] to tell that apart from a host that has simply
-    /// not settled yet.
+    /// `0` on a host with no timestamp support — the same value a healthy
+    /// host reports, which is why it is read WITH [`Self::gpu_clock`]:
+    /// together they separate "cannot measure", "has not measured yet",
+    /// and "measures and throws the result away".
     #[must_use]
-    pub fn gpu_timing_counts(&self) -> (u64, u64) {
+    pub fn gpu_dropped_samples(&self) -> u64 {
         self.frame_timer
             .as_ref()
-            .map_or((0, 0), |t| (t.samples(), t.dropped()))
+            .map_or(0, ::pinion_gpu::FrameTimer::dropped)
     }
 
     /// R1361.1 §5.16 — µs the last [`Self::render`] spent blocked in the

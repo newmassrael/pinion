@@ -114,14 +114,6 @@ impl GpuSurface {
         &self.target_view
     }
 
-    /// The intermediate texture behind [`Self::target_view`] — the source
-    /// a readback copies from when it wants the rasterized frame rather
-    /// than the presented one.
-    #[must_use]
-    pub fn target_texture(&self) -> &wgpu::Texture {
-        &self.target_texture
-    }
-
     /// Acquire the next presentable image.
     ///
     /// Returned raw (`wgpu`'s status enum, not a `Result`) because every
@@ -160,13 +152,6 @@ impl GpuSurface {
     #[must_use]
     pub fn format(&self) -> wgpu::TextureFormat {
         self.format
-    }
-
-    /// Whether the swapchain image can be the source of a copy — i.e.
-    /// whether a present-stage readback is possible on this host.
-    #[must_use]
-    pub fn can_copy_from_surface(&self) -> bool {
-        self.config.usage.contains(wgpu::TextureUsages::COPY_SRC)
     }
 
     pub(crate) fn configure(&self, device: &wgpu::Device) {

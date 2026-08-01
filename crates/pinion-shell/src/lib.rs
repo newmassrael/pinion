@@ -531,7 +531,7 @@ macro_rules! vello_renderer_impl {
             }
 
             fn gpu_dropped_samples(&self) -> u64 {
-                <$name>::gpu_timing_counts(self).1
+                <$name>::gpu_dropped_samples(self)
             }
 
             async fn new<W>(

@@ -79114,6 +79114,48 @@
         "The three-state clock is consumed by exactly one caller. `FrameTimer::last_gpu_us` (the persisting level) now has no production consumer, kept because it is what a HUD would read; a second consumer would settle whether it earns its place."
       ]
     },
+    "Round 1537.1": {
+      "decision_summary": "The R1537 carry list is closed rather than carried: the unpriced cost is measured and bounded, seven accessors with no consumer are removed, and the sample-discard branch is made testable without a GPU.",
+      "changes_bullets": [
+        "Carry ⓒ (the extra command buffer was unpriced) CLOSED by measurement. Interleaved with/without pairs, 60 steady-state frames each, timer disabled at construction: median `render_us` without = 634 / 629 / 668 µs, with = 634 / 726 / 674 µs. The between-configuration difference (~34µs median) is smaller than the within-configuration spread (39µs without, 92µs with), so the extra submit is NOT resolvable in `render_us` at n=60 on this host — bounded under ~5% of the CPU submit phase rather than shown to be zero.",
+        "Carry ⓕ (accessors with no consumer) CLOSED by removal. A census found seven: `FrameTimer::last_gpu_us` / `samples` / `period_ns`, `GpuContext::adapter` / `gpu_timing`, `GpuSurface::target_texture` / `can_copy_from_surface`. `last_gpu_us` was the worst of them — a persisting *level* beside the consumed `fresh` reading, two stored sources for one question, and the windowed level a caller actually wants is the ring fold (`mean_gpu_us` / `max_gpu_us`). `GpuContext` no longer stores whether the timestamp request succeeded either; `FrameTimer::new` reads it back off the device, so there is one source rather than two that can disagree.",
+        "The emitted renderer's `gpu_timing_counts() -> (u64, u64)` becomes `gpu_dropped_samples() -> u64`. Its one consumer read `.1` and discarded `.0`, which is an accessor with no consumer wearing a tuple.",
+        "Carry ⓓ (the discard branch was reasoned, not tested) CLOSED for the half that can be: `span_us_from(start, end, period_ns)` is now a free function, so the branch that DISCARDS an out-of-order tick pair is testable without a GPU. The map-failure half stays reasoned — no host has produced one."
+      ],
+      "verification_bullets": [
+        "Counterfactual: replace the discard with `wrapping_sub` — the naive form, which would report ~18 million seconds of GPU time as a hitch — and `r1537_out_of_order_ticks_are_discarded_not_reported` fails. Restored, and the restore verified by grep rather than assumed.",
+        "`pinion-gpu` unit tests 2 -> 5; the new three cover the discard, integral-microsecond truncation (`Some(0)` for a sub-microsecond frame is a MEASUREMENT, not an absence), and that a device's `timestampPeriod` actually scales the span.",
+        "Local gates re-run green after the trim: clippy `-D pedantic` and tests on pinion-gpu / pinion-runtime / pinion-rpc / pinion-forge / pinion-shell, `cargo check --workspace --all-targets`, and `tools/demos/r1537_gpu_frame_clock.py` PASS."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Present latency is still unmeasured. The span covers rasterize + blit; what the compositor does after `present()` is outside any queue timestamp pinion can write. External: it needs a presentation-timestamp extension `wgpu` does not expose.",
+        "The map-failure path deliberately does not `unmap` (an `unmap` on a never-mapped buffer raises a wgpu validation error, i.e. a second fault reported for a non-existent problem). No host has produced a failure, so that recovery is reasoned rather than observed — and `gpu_dropped_total` is what would make it visible.",
+        "`GpuSurface` is per-`GpuContext` with one adapter. A discrete/integrated split or a second X screen needs a second context; nothing in-tree exercises it. A scope statement, not a defect."
+      ],
+      "publishable_decision_summary": "The R1537 carry list is closed rather than carried: the unpriced cost is measured and bounded, seven accessors with no consumer are removed, and the sample-discard branch is made testable without a GPU.",
+      "publishable_changes_bullets": [
+        "Carry ⓒ (the extra command buffer was unpriced) CLOSED by measurement. Interleaved with/without pairs, 60 steady-state frames each, timer disabled at construction: median `render_us` without = 634 / 629 / 668 µs, with = 634 / 726 / 674 µs. The between-configuration difference (~34µs median) is smaller than the within-configuration spread (39µs without, 92µs with), so the extra submit is NOT resolvable in `render_us` at n=60 on this host — bounded under ~5% of the CPU submit phase rather than shown to be zero.",
+        "Carry ⓕ (accessors with no consumer) CLOSED by removal. A census found seven: `FrameTimer::last_gpu_us` / `samples` / `period_ns`, `GpuContext::adapter` / `gpu_timing`, `GpuSurface::target_texture` / `can_copy_from_surface`. `last_gpu_us` was the worst of them — a persisting *level* beside the consumed `fresh` reading, two stored sources for one question, and the windowed level a caller actually wants is the ring fold (`mean_gpu_us` / `max_gpu_us`). `GpuContext` no longer stores whether the timestamp request succeeded either; `FrameTimer::new` reads it back off the device, so there is one source rather than two that can disagree.",
+        "The emitted renderer's `gpu_timing_counts() -> (u64, u64)` becomes `gpu_dropped_samples() -> u64`. Its one consumer read `.1` and discarded `.0`, which is an accessor with no consumer wearing a tuple.",
+        "Carry ⓓ (the discard branch was reasoned, not tested) CLOSED for the half that can be: `span_us_from(start, end, period_ns)` is now a free function, so the branch that DISCARDS an out-of-order tick pair is testable without a GPU. The map-failure half stays reasoned — no host has produced one."
+      ],
+      "publishable_verification_bullets": [
+        "Counterfactual: replace the discard with `wrapping_sub` — the naive form, which would report ~18 million seconds of GPU time as a hitch — and `r1537_out_of_order_ticks_are_discarded_not_reported` fails. Restored, and the restore verified by grep rather than assumed.",
+        "`pinion-gpu` unit tests 2 -> 5; the new three cover the discard, integral-microsecond truncation (`Some(0)` for a sub-microsecond frame is a MEASUREMENT, not an absence), and that a device's `timestampPeriod` actually scales the span.",
+        "Local gates re-run green after the trim: clippy `-D pedantic` and tests on pinion-gpu / pinion-runtime / pinion-rpc / pinion-forge / pinion-shell, `cargo check --workspace --all-targets`, and `tools/demos/r1537_gpu_frame_clock.py` PASS."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Present latency is still unmeasured. The span covers rasterize + blit; what the compositor does after `present()` is outside any queue timestamp pinion can write. External: it needs a presentation-timestamp extension `wgpu` does not expose.",
+        "The map-failure path deliberately does not `unmap` (an `unmap` on a never-mapped buffer raises a wgpu validation error, i.e. a second fault reported for a non-existent problem). No host has produced a failure, so that recovery is reasoned rather than observed — and `gpu_dropped_total` is what would make it visible.",
+        "`GpuSurface` is per-`GpuContext` with one adapter. A discrete/integrated split or a second X screen needs a second context; nothing in-tree exercises it. A scope statement, not a defect."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

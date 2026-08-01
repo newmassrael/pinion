@@ -53,7 +53,7 @@
 //! bearing: an adapter without `TIMESTAMP_QUERY` (WebGL, some mobile
 //! tiles, a driver with the feature disabled) reports *no GPU time*, which
 //! is a different claim from *zero GPU time*. A zero would be a lie that
-//! reads as a fast frame. See [`FrameTimer::last_gpu_us`].
+//! reads as a fast frame. See [`GpuFrameClock`].
 
 mod context;
 mod frame_timer;

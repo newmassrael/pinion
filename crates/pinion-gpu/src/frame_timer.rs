@@ -85,7 +85,7 @@ impl GpuFrameClock {
 /// and GPU — the exact stall a profiler exists to find, introduced by the
 /// profiler. So the read is *polled*: the frame that writes the queries
 /// submits and moves on, and a later frame harvests the result when it
-/// happens to be ready. [`Self::last_gpu_us`] therefore describes a recent
+/// happens to be ready. A harvested reading therefore describes a recent
 /// frame, not the one just painted. Every GPU profiler works this way
 /// (Unreal's `stat gpu` included); the alternative is not "fresher
 /// numbers" but "different numbers", because the measurement would have
@@ -95,7 +95,9 @@ impl GpuFrameClock {
 /// measurement — the query set and staging buffer are single-slot, and
 /// overwriting them mid-flight would resolve a frame against another
 /// frame's start. So under a backlog, samples are *skipped*, never
-/// blended. [`Self::samples`] counts the ones that landed.
+/// blended. A caller counts the ones that landed by counting the frame
+/// samples that carry a reading, which is the same question asked where the
+/// answer is already kept.
 ///
 /// # Cost
 ///
@@ -126,19 +128,21 @@ pub struct FrameTimer {
     /// A map is outstanding: the buffers belong to a frame in flight and
     /// no new measurement may start.
     map_in_flight: bool,
-    last_gpu_us: Option<u64>,
     /// A measurement harvested since the last [`FrameTimer::clock`] call,
     /// waiting to be reported exactly once.
     ///
-    /// Separate from [`Self::last_gpu_us`] — which is a *level* that
-    /// persists — because the two answer different questions and a caller
-    /// stamping frame samples needs the first. Reporting the level once
-    /// per frame would put the SAME measurement on every sample in the
-    /// ring, which makes a mean over those samples a mean of one number
-    /// repeated, and makes "how many samples carry a timing" count frames
-    /// instead of measurements.
+    /// A *delta*, not a level, and that is the whole point: reporting a
+    /// persisting level once per frame would put the SAME measurement on
+    /// every sample in the ring, which makes a mean over those samples a
+    /// mean of one number repeated and makes "how many samples carry a
+    /// timing" count frames instead of measurements.
+    ///
+    /// The only stored reading. An earlier draft also kept a persisting
+    /// *level* beside it, which is two sources for one question and had no
+    /// consumer: the windowed level a caller actually wants is the fold
+    /// over the frame ring (`mean_gpu_us` / `max_gpu_us`), not a field
+    /// here.
     fresh: Option<u64>,
-    samples: u64,
     dropped: u64,
 }
 
@@ -146,9 +150,7 @@ impl core::fmt::Debug for FrameTimer {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("FrameTimer")
             .field("period_ns", &self.period_ns)
-            .field("last_gpu_us", &self.last_gpu_us)
             .field("fresh", &self.fresh)
-            .field("samples", &self.samples)
             .field("dropped", &self.dropped)
             .field("in_flight", &self.map_in_flight)
             // Query set and buffers are opaque; the counters are the state
@@ -165,8 +167,9 @@ impl FrameTimer {
     /// `None` is returned rather than an error because a host without
     /// timestamp support is not a broken host — it is one where this
     /// measurement does not exist. Callers keep rendering and report no
-    /// GPU time. See [`GpuContext::gpu_timing`](crate::GpuContext::gpu_timing),
-    /// which answers the same question before a timer is attempted.
+    /// GPU time, and the absence of a timer is the one source for that
+    /// fact — [`crate::GpuContext`] deliberately does not keep a second
+    /// copy of it that could disagree.
     #[must_use]
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
         let needed =
@@ -200,9 +203,7 @@ impl FrameTimer {
             armed: false,
             awaiting_submit: false,
             map_in_flight: false,
-            last_gpu_us: None,
             fresh: None,
-            samples: 0,
             dropped: 0,
         })
     }
@@ -298,11 +299,7 @@ impl FrameTimer {
                 self.staging.unmap();
                 self.map_in_flight = false;
                 match self.span_us(ticks[0], ticks[1]) {
-                    Some(us) => {
-                        self.last_gpu_us = Some(us);
-                        self.fresh = Some(us);
-                        self.samples = self.samples.saturating_add(1);
-                    }
+                    Some(us) => self.fresh = Some(us),
                     None => self.dropped = self.dropped.saturating_add(1),
                 }
             }
@@ -321,23 +318,6 @@ impl FrameTimer {
         }
     }
 
-    /// GPU microseconds for the most recently harvested frame, or `None`
-    /// when none has been harvested yet.
-    ///
-    /// A *level*: it persists across calls and does not consume anything.
-    /// [`Self::clock`] is the delta, and is what a per-frame sample wants.
-    ///
-    /// **`None` is not zero.** A host that cannot time the GPU, and a
-    /// window in its first frames, both report `None`; a frame that really
-    /// took no measurable GPU time reports `Some(0)`. Collapsing those
-    /// into a single `0` would publish "the GPU did nothing" for a host
-    /// that merely cannot say — the failure mode where an absent
-    /// measurement reads as a good result.
-    #[must_use]
-    pub fn last_gpu_us(&self) -> Option<u64> {
-        self.last_gpu_us
-    }
-
     /// Take the measurement harvested since the last call, as a
     /// [`GpuFrameClock`].
     ///
@@ -353,7 +333,8 @@ impl FrameTimer {
     /// last asked* — which covers a timer that has never produced one and
     /// a frame that arrived faster than the GPU could report. Neither is
     /// an error, and a caller that needs the persisting level rather than
-    /// the delta reads [`Self::last_gpu_us`].
+    /// the persisting level reads the ring fold a caller already keeps
+    /// (`mean_gpu_us` / `max_gpu_us`), not a field here.
     ///
     /// A live timer is never [`GpuFrameClock::Unsupported`] — the type
     /// cannot be constructed on a device without timestamp queries — so
@@ -365,32 +346,17 @@ impl FrameTimer {
             .map_or(GpuFrameClock::Pending, GpuFrameClock::Measured)
     }
 
-    /// How many measurements have been harvested over this timer's life.
-    ///
-    /// The evidence that the timer is *running*: a caller can distinguish
-    /// "GPU time is not moving because the scene is static" from "GPU time
-    /// is not moving because nothing has been sampled since boot", which
-    /// [`Self::last_gpu_us`] alone cannot express.
-    #[must_use]
-    pub fn samples(&self) -> u64 {
-        self.samples
-    }
-
     /// Measurements that were taken but discarded — a failed map, or a
     /// tick pair the device reported out of order.
     ///
-    /// Published rather than swallowed because a timer that silently drops
-    /// everything and a timer on an idle window look identical from
-    /// [`Self::samples`] alone.
+    /// Published rather than swallowed because a timer that discards
+    /// everything and one on a window that simply has not sampled yet are
+    /// otherwise the same two values forever ([`GpuFrameClock::Pending`]
+    /// with nothing on the wire), and the documented advice for that pair
+    /// is "read again in a frame".
     #[must_use]
     pub fn dropped(&self) -> u64 {
         self.dropped
-    }
-
-    /// Nanoseconds per GPU tick on this device.
-    #[must_use]
-    pub fn period_ns(&self) -> f32 {
-        self.period_ns
     }
 
     /// Convert a resolved tick pair to microseconds, or `None` when the
@@ -403,25 +369,77 @@ impl FrameTimer {
     /// fictional jank into exactly the statistic someone is using to hunt
     /// jank, so the sample is dropped instead.
     fn span_us(&self, start: u64, end: u64) -> Option<u64> {
-        let ticks = end.checked_sub(start)?;
-        // Precision: `f64` holds a u64 exactly below 2^53 ticks, which at
-        // sub-nanosecond periods is over a month of continuous GPU time in
-        // a single frame. Truncation to `u64` microseconds is the intended
-        // rounding — the field is integral microseconds.
-        #[expect(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "see the precision note above; ticks < 2^53 and the result is integral us"
-        )]
-        let us = (ticks as f64 * f64::from(self.period_ns) / 1000.0) as u64;
-        Some(us)
+        span_us_from(start, end, self.period_ns)
     }
+}
+
+/// Convert a resolved tick pair to microseconds, or `None` when the pair is
+/// not physically meaningful.
+///
+/// A free function so it can be tested without a GPU. The device-dependent
+/// part is one `f32`, and the branch worth testing is the one that DISCARDS
+/// a sample — which is otherwise reachable only by finding a driver that
+/// misbehaves.
+fn span_us_from(start: u64, end: u64, period_ns: f32) -> Option<u64> {
+    let ticks = end.checked_sub(start)?;
+    // Precision: `f64` holds a u64 exactly below 2^53 ticks, which at
+    // sub-nanosecond periods is over a month of continuous GPU time in a
+    // single frame. Truncation to `u64` microseconds is the intended
+    // rounding — the value is integral microseconds.
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "see the precision note above; ticks < 2^53 and the result is integral us"
+    )]
+    let us = (f64::from(period_ns) * ticks as f64 / 1000.0) as u64;
+    Some(us)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::GpuFrameClock;
+    use super::{GpuFrameClock, span_us_from};
+
+    /// A common `timestampPeriod`: 1ns per tick.
+    const NS: f32 = 1.0;
+
+    #[test]
+    fn r1537_out_of_order_ticks_are_discarded_not_reported() {
+        // Both timestamps go into ONE queue, whose execution wgpu orders, so
+        // `end < start` cannot describe a real frame — it is a driver
+        // artifact (an unsynchronised timestamp domain, a reset counter).
+        //
+        // The failure this guards is not "a wrong number": a wrapping
+        // subtraction would report ~18 million seconds of GPU time, which is
+        // fictional jank injected into the exact statistic someone is using
+        // to hunt jank. Dropping the sample is the only honest answer, and
+        // `gpu_dropped_total` is where it becomes visible.
+        assert_eq!(span_us_from(10_000, 9_000, NS), None);
+        assert_eq!(span_us_from(1, 0, NS), None);
+        assert_eq!(span_us_from(u64::MAX, 0, NS), None);
+    }
+
+    #[test]
+    fn r1537_a_span_converts_ticks_to_integral_microseconds() {
+        assert_eq!(span_us_from(0, 1_000, NS), Some(1));
+        assert_eq!(span_us_from(5_000, 1_005_000, NS), Some(1_000));
+        // Equal timestamps are a real frame below the timer's resolution —
+        // `Some(0)`, which is a measurement, not the absence of one.
+        assert_eq!(span_us_from(42, 42, NS), Some(0));
+        // Sub-microsecond spans truncate toward zero rather than vanishing
+        // into `None`: the frame WAS measured.
+        assert_eq!(span_us_from(0, 999, NS), Some(0));
+    }
+
+    #[test]
+    fn r1537_the_device_period_scales_the_span() {
+        // A device reporting 38.4ns/tick (a common AMD value) must not be
+        // read as if it reported 1ns/tick — the tick count alone is
+        // meaningless, which is why the period is captured from the queue
+        // rather than assumed.
+        assert_eq!(span_us_from(0, 1_000, 38.4), Some(38));
+        assert_ne!(span_us_from(0, 1_000, 38.4), span_us_from(0, 1_000, NS));
+    }
 
     #[test]
     fn r1537_absent_and_pending_are_not_the_same_answer() {

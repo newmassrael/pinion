@@ -71,16 +71,19 @@ impl core::error::Error for GpuError {}
 ///   writes have to sit on the encoder itself.
 ///
 /// Intersecting rather than requiring means an adapter without timestamps
-/// still boots — it just reports no GPU time. See [`Self::gpu_timing`].
+/// still boots — it just reports no GPU time, which
+/// [`crate::FrameTimer::new`] discovers by reading the device back.
 pub struct GpuContext {
     /// Held because dropping the instance invalidates every surface
     /// created from it, and because a future multi-window path creates
     /// further surfaces from this same instance.
     _instance: wgpu::Instance,
+    /// Kept for [`GpuContext`]'s `Debug`, which answers the one question a
+    /// log line about a GPU wants: WHICH one. `wgpu` keeps the adapter
+    /// alive behind the device regardless, so this is not a lifetime prop.
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    gpu_timing: bool,
 }
 
 impl core::fmt::Debug for GpuContext {
@@ -90,7 +93,13 @@ impl core::fmt::Debug for GpuContext {
             .field("adapter", &info.name)
             .field("backend", &info.backend)
             .field("device_type", &info.device_type)
-            .field("gpu_timing", &self.gpu_timing)
+            .field(
+                "timestamps",
+                &self
+                    .device
+                    .features()
+                    .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
+            )
             // The wgpu handles themselves have no readable Debug and no
             // identity a log line could act on; what a reader wants from a
             // context is which GPU it is.
@@ -141,18 +150,18 @@ impl GpuContext {
             .await
             .map_err(|_| GpuError::NoAdapter)?;
 
-        let offered = adapter.features();
-        let wanted = wgpu::Features::CLEAR_TEXTURE
-            | wgpu::Features::PIPELINE_CACHE
-            | wgpu::Features::TIMESTAMP_QUERY
-            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
-        let required_features = offered & wanted;
-        // Both, not either: `TIMESTAMP_QUERY` alone cannot express what is
-        // being measured here (see the type doc), so treating it as
-        // sufficient would create a query set that no write can target.
-        let gpu_timing = required_features.contains(
-            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
-        );
+        // Both timestamp features or neither: `TIMESTAMP_QUERY` alone cannot
+        // express what is being measured here (see the type doc), so asking
+        // for it on its own would yield a device that can create a query set
+        // no write can target. Whether the request succeeded is not stored —
+        // `FrameTimer::new` reads it back off the device, so there is one
+        // source for "can this host time the GPU" rather than two that can
+        // disagree.
+        let required_features = adapter.features()
+            & (wgpu::Features::CLEAR_TEXTURE
+                | wgpu::Features::PIPELINE_CACHE
+                | wgpu::Features::TIMESTAMP_QUERY
+                | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -171,7 +180,6 @@ impl GpuContext {
                 adapter,
                 device,
                 queue,
-                gpu_timing,
             },
             surface,
         ))
@@ -193,24 +201,6 @@ impl GpuContext {
     #[must_use]
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
-    }
-
-    /// The adapter the device came from — needed to ask a surface what
-    /// formats and usages it supports.
-    #[must_use]
-    pub fn adapter(&self) -> &wgpu::Adapter {
-        &self.adapter
-    }
-
-    /// Whether this device can time the GPU, i.e. whether
-    /// [`crate::FrameTimer::new`] will succeed on it.
-    ///
-    /// Published so a caller can distinguish "the timer has not produced a
-    /// sample yet" from "this host will never produce one", which is a
-    /// question `Option<u64>` alone cannot answer on the first frame.
-    #[must_use]
-    pub fn gpu_timing(&self) -> bool {
-        self.gpu_timing
     }
 
     /// Install a handler for `wgpu` errors that reach no `Result`.
