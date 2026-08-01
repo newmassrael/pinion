@@ -20,6 +20,9 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
 # A `Signal<T>` payload is persistable, so the view-mode enum derives serde.
 serde = { workspace = true }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

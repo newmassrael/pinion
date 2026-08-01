@@ -31,6 +31,9 @@ pinion-audio = { path = "../../crates/pinion-audio", version = "0.0.1", features
     "cpal-backend",
 ] }
 # The forge codegen emits `::vello::*`-qualified paths, so the include names it.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

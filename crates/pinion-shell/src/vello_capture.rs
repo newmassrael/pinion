@@ -38,8 +38,8 @@
 //! change (e.g. a future R1049-class surface-recovery fix) MUST land in
 //! BOTH `codegen.rs::render` and `capture_surface_rgba8` or they drift.
 
+use pinion_gpu::{FrameTimer, GpuContext, GpuSurface};
 use vello::peniko::Color as PenikoColor;
-use vello::util::RenderContext;
 use vello::wgpu::{
     self, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Device, Extent3d, MapMode,
     Origin3d, PollType, Queue, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
@@ -238,21 +238,37 @@ pub struct CapturedFrame {
 /// reconfigure the surface (R1049) and fail this capture; the next
 /// frame acquires a fresh texture.
 pub fn capture_surface_rgba8(
-    context: &RenderContext,
-    surface: &mut vello::util::RenderSurface<'static>,
+    context: &GpuContext,
+    surface: &mut GpuSurface,
     renderer: &mut Renderer,
+    mut timer: Option<&mut FrameTimer>,
     scene: &vello::Scene,
     base_color: PenikoColor,
 ) -> Result<CapturedFrame, SurfaceCaptureError> {
-    let width = surface.config.width;
-    let height = surface.config.height;
+    let width = surface.width();
+    let height = surface.height();
     if width == 0 || height == 0 {
         return Err(SurfaceCaptureError::ZeroDimension);
     }
 
-    let device_handle = &context.devices[surface.dev_id];
-    let device = &device_handle.device;
-    let queue = &device_handle.queue;
+    let device = context.device();
+    let queue = context.queue();
+
+    // R1537 §5.16 — a captured frame is a real GPU frame: it rasterizes
+    // and blits exactly as `render()` does, and an agent driving the window
+    // over `scene/screenshot` gets no other paints. So it is timed here
+    // too, in the same order and for the same reason — the module doc's
+    // mirror-not-lift obligation, which this is the first change to
+    // exercise since it was written.
+    if let Some(t) = timer.as_mut() {
+        t.collect(device);
+        let mut open = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("pinion frame timer open (capture)"),
+        });
+        if t.begin(&mut open) {
+            queue.submit([open.finish()]);
+        }
+    }
 
     // Rasterize into the surface's intermediate target (same as the
     // forge template `render()` first step).
@@ -261,7 +277,7 @@ pub fn capture_surface_rgba8(
             device,
             queue,
             scene,
-            &surface.target_view,
+            surface.target_view(),
             &RenderParams {
                 base_color,
                 width,
@@ -280,7 +296,7 @@ pub fn capture_surface_rgba8(
     // which this path never makes). Bound at the acquire itself, so every
     // path that reaches the `Ok` below carries THIS frame's block.
     let __acquire_start = std::time::Instant::now();
-    let __acquired = surface.surface.get_current_texture();
+    let __acquired = surface.acquire();
     let acquire_us = u64::try_from(__acquire_start.elapsed().as_micros()).unwrap_or(u64::MAX);
     let surface_texture = match __acquired {
         wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -310,15 +326,24 @@ pub fn capture_surface_rgba8(
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
         label: Some("pinion-shell::vello_capture present blit"),
     });
-    surface.blitter.copy(
+    surface.blit(
         device,
         &mut encoder,
-        &surface.target_view,
         &surface_texture
             .texture
             .create_view(&TextureViewDescriptor::default()),
     );
+    // R1537 — close the span on the blit encoder, before it is finished.
+    // The readback below is deliberately OUTSIDE the span: it is the cost
+    // of introspecting the frame, not the cost of drawing it, and billing
+    // it to `gpu_us` would make every screenshot look like a slow frame.
+    if let Some(t) = timer.as_mut() {
+        t.end(&mut encoder);
+    }
     queue.submit([encoder.finish()]);
+    if let Some(t) = timer.as_mut() {
+        t.after_submit();
+    }
 
     let rgba8 = texture_to_rgba8(
         device,
@@ -326,7 +351,7 @@ pub fn capture_surface_rgba8(
         &surface_texture.texture,
         width,
         height,
-        surface.format,
+        surface.format(),
     )?;
     surface_texture.present();
 

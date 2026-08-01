@@ -1,0 +1,20 @@
+[package]
+name = "pinion-gpu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1537 §5.16 — the wgpu device, swapchain surface and GPU frame timer pinion owns. Replaces `vello::util::RenderContext`, whose device is created behind a private constructor with a fixed feature set, so no consumer can ask for TIMESTAMP_QUERY and no frame can state what the GPU took."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The only dependency, and deliberately not `vello`: this crate answers
+# "what device, what surface, how long did the GPU take", none of which is
+# a 2D-rasterizer question. Pinned `29` at the workspace root against
+# vello 0.9's own transitive so the `Device` / `Queue` / `TextureView`
+# handed to `vello::Renderer` are the same types vello compiled against.
+wgpu = { workspace = true }

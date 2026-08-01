@@ -79054,6 +79054,66 @@
         "None. Every item this round opened was closed in it; the carry list is empty by intent, not by omission."
       ]
     },
+    "Round 1537": {
+      "decision_summary": "The frame states what the GPU took: pinion owns the wgpu device so it can ask for TIMESTAMP_QUERY, and brackets each frame with two timestamp queries. Recorded as an upstream blocker, it was ours — vello::Renderer::new takes a device the caller owns.",
+      "changes_bullets": [
+        "New leaf crate `pinion-gpu`: `GpuContext` owns the wgpu instance / adapter / device / queue and `GpuSurface` the swapchain plus the intermediate storage target and blitter, replacing `vello::util::RenderContext`, whose private `new_device` fixes the feature set so no device it returns can carry `TIMESTAMP_QUERY`. The device is asked for the intersection of what the adapter offers with `CLEAR_TEXTURE | PIPELINE_CACHE` (vello's own request, kept identical) plus `TIMESTAMP_QUERY | TIMESTAMP_QUERY_INSIDE_ENCODERS`; an adapter without them still boots and reports no GPU time.",
+        "`pinion_gpu::FrameTimer` brackets one frame's GPU work with two timestamp queries, resolves them and reads the result back WITHOUT blocking the frame that wrote it. The opening stamp is submitted in its own near-empty command buffer because it must be ordered before the rasterizer's internal submit and `render_to_texture` records into no caller encoder; the closing stamp rides the blit encoder. A frame whose predecessor is still in flight is SKIPPED, never blended.",
+        "`GpuFrameClock` is three states, not `Option<u64>`: `Unsupported` (this machine never will) / `Pending` (nothing new since you last asked) / `Measured(us)`. `clock()` takes `&mut self` and CONSUMES the reading, so each measurement is stamped onto exactly one frame sample — reporting the persisting level instead put the same number on every sample in the ring, which made `mean_gpu_us` a mean of one value repeated and made `gpu_sample_count` count frames.",
+        "The forge `backend=\"vello\"` template is built on the owned device, gains `gpu_clock()` / `gpu_timing_counts()` and a `Gpu(GpuError)` error arm; every timing site is gated on the timer existing, so a host that cannot measure creates no encoder and submits no extra command buffer. 192 example manifests gain the dep.",
+        "`pinion_runtime::FrameTiming::gpu_us: Option<u64>` (builder `with_gpu`), and the window fold gains `mean_gpu_us` / `max_gpu_us` / `gpu_sample_count` / `gpu_timing_supported` / `gpu_dropped_total`. The mean divides by the TIMED sample count, not the frame count. `scene/frame_timings` publishes all of it, omitting the three durations rather than zeroing them.",
+        "The `scene/screenshot` capture path is timed by the same clock. It is a real rasterize + blit, and it is the only paint an agent driving the window over RPC gets — this is the first change to exercise `vello_capture`'s stated mirror-not-lift obligation."
+      ],
+      "verification_bullets": [
+        "Adapter probe (built, read, deleted): `TIMESTAMP_QUERY` + `TIMESTAMP_QUERY_INSIDE_ENCODERS` present on all three adapters this project builds against — NVIDIA RTX 4070/Vulkan, llvmpipe/Vulkan (what CI uses), NVIDIA/GL. The round's premise is measured, not assumed.",
+        "`tools/demos/r1537_gpu_frame_clock.py` PASS on two bindings: `gpu_us` present and > 0, values distinct across frames, `gpu_sample_count == frame_count - 1` exactly on every driven frame, `gpu_dropped_total == 0`, the CPU partition `total >= build+encode+acquire+render` still exact, and every GPU aggregate omitted rather than zeroed before the first sample.",
+        "Five counterfactuals, one at a time, each restored and the restore VERIFIED: (1) close the span before the blit -> template order guard fails; (2) ungate the timing cost -> the `pays_nothing` guard fails; (3) divide the GPU mean by `window_len` -> `r1537_gpu_mean_is_over_timed_samples_not_over_frames` fails; (4) report a constant 1234us -> the demo's not-a-constant assertion fails; (5) never map the staging buffer -> the per-frame sample-count assertion fails.",
+        "Counterfactual (5) is also how the consumed-reading defect was found: an incomplete restore left the capture path unmapped, and with the level being re-stamped every frame the wire still looked healthy at one real measurement per 14 frames. Only one sample had ever landed.",
+        "Local gates green: clippy `-D pedantic` and tests on pinion-gpu / pinion-runtime / pinion-rpc / pinion-forge / pinion-shell, `cargo check --workspace --all-targets`, `cargo doc --workspace --no-deps --document-private-items`.",
+        "No regression in the four existing frame-timing demos (r907, r925, r1460, r1389), all PASS."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "The GPU span covers rasterize + blit, not present. What the compositor does after `present()` is outside any queue timestamp pinion can write, so a frame's true screen latency is still unmeasured. External: it needs a presentation-timestamp extension wgpu does not expose.",
+        "No large-scene 60fps END-TO-END measurement. This round makes the GPU number exist; the perf axis's other named gap — a scale-invariance claim over a large scene — is untouched, and a wall-clock assertion would collide with the zero-flake rule, so it needs deterministic counters.",
+        "The extra command buffer per timed frame is unmeasured. It is one near-empty submit, gated on timing being possible, but this round did not price it — and the axis's own standing rule is that an unmeasured cost is a cost nobody revisits.",
+        "`FrameTimer::dropped` counts a failed staging map without unmapping, because `unmap` on a never-mapped buffer raises a wgpu validation error. If that path is ever hit repeatedly the buffer state is untested — no host has produced one, so the recovery is reasoned rather than observed.",
+        "`GpuSurface` is per-`GpuContext` with one adapter. A discrete/integrated split or a second X screen needs a second context, which multi-window would want; nothing in-tree exercises it.",
+        "The three-state clock is consumed by exactly one caller. `FrameTimer::last_gpu_us` (the persisting level) now has no production consumer, kept because it is what a HUD would read; a second consumer would settle whether it earns its place."
+      ],
+      "publishable_decision_summary": "The frame states what the GPU took: pinion owns the wgpu device so it can ask for TIMESTAMP_QUERY, and brackets each frame with two timestamp queries. Recorded as an upstream blocker, it was ours — vello::Renderer::new takes a device the caller owns.",
+      "publishable_changes_bullets": [
+        "New leaf crate `pinion-gpu`: `GpuContext` owns the wgpu instance / adapter / device / queue and `GpuSurface` the swapchain plus the intermediate storage target and blitter, replacing `vello::util::RenderContext`, whose private `new_device` fixes the feature set so no device it returns can carry `TIMESTAMP_QUERY`. The device is asked for the intersection of what the adapter offers with `CLEAR_TEXTURE | PIPELINE_CACHE` (vello's own request, kept identical) plus `TIMESTAMP_QUERY | TIMESTAMP_QUERY_INSIDE_ENCODERS`; an adapter without them still boots and reports no GPU time.",
+        "`pinion_gpu::FrameTimer` brackets one frame's GPU work with two timestamp queries, resolves them and reads the result back WITHOUT blocking the frame that wrote it. The opening stamp is submitted in its own near-empty command buffer because it must be ordered before the rasterizer's internal submit and `render_to_texture` records into no caller encoder; the closing stamp rides the blit encoder. A frame whose predecessor is still in flight is SKIPPED, never blended.",
+        "`GpuFrameClock` is three states, not `Option<u64>`: `Unsupported` (this machine never will) / `Pending` (nothing new since you last asked) / `Measured(us)`. `clock()` takes `&mut self` and CONSUMES the reading, so each measurement is stamped onto exactly one frame sample — reporting the persisting level instead put the same number on every sample in the ring, which made `mean_gpu_us` a mean of one value repeated and made `gpu_sample_count` count frames.",
+        "The forge `backend=\"vello\"` template is built on the owned device, gains `gpu_clock()` / `gpu_timing_counts()` and a `Gpu(GpuError)` error arm; every timing site is gated on the timer existing, so a host that cannot measure creates no encoder and submits no extra command buffer. 192 example manifests gain the dep.",
+        "`pinion_runtime::FrameTiming::gpu_us: Option<u64>` (builder `with_gpu`), and the window fold gains `mean_gpu_us` / `max_gpu_us` / `gpu_sample_count` / `gpu_timing_supported` / `gpu_dropped_total`. The mean divides by the TIMED sample count, not the frame count. `scene/frame_timings` publishes all of it, omitting the three durations rather than zeroing them.",
+        "The `scene/screenshot` capture path is timed by the same clock. It is a real rasterize + blit, and it is the only paint an agent driving the window over RPC gets — this is the first change to exercise `vello_capture`'s stated mirror-not-lift obligation."
+      ],
+      "publishable_verification_bullets": [
+        "Adapter probe (built, read, deleted): `TIMESTAMP_QUERY` + `TIMESTAMP_QUERY_INSIDE_ENCODERS` present on all three adapters this project builds against — NVIDIA RTX 4070/Vulkan, llvmpipe/Vulkan (what CI uses), NVIDIA/GL. The round's premise is measured, not assumed.",
+        "`tools/demos/r1537_gpu_frame_clock.py` PASS on two bindings: `gpu_us` present and > 0, values distinct across frames, `gpu_sample_count == frame_count - 1` exactly on every driven frame, `gpu_dropped_total == 0`, the CPU partition `total >= build+encode+acquire+render` still exact, and every GPU aggregate omitted rather than zeroed before the first sample.",
+        "Five counterfactuals, one at a time, each restored and the restore VERIFIED: (1) close the span before the blit -> template order guard fails; (2) ungate the timing cost -> the `pays_nothing` guard fails; (3) divide the GPU mean by `window_len` -> `r1537_gpu_mean_is_over_timed_samples_not_over_frames` fails; (4) report a constant 1234us -> the demo's not-a-constant assertion fails; (5) never map the staging buffer -> the per-frame sample-count assertion fails.",
+        "Counterfactual (5) is also how the consumed-reading defect was found: an incomplete restore left the capture path unmapped, and with the level being re-stamped every frame the wire still looked healthy at one real measurement per 14 frames. Only one sample had ever landed.",
+        "Local gates green: clippy `-D pedantic` and tests on pinion-gpu / pinion-runtime / pinion-rpc / pinion-forge / pinion-shell, `cargo check --workspace --all-targets`, `cargo doc --workspace --no-deps --document-private-items`.",
+        "No regression in the four existing frame-timing demos (r907, r925, r1460, r1389), all PASS."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The GPU span covers rasterize + blit, not present. What the compositor does after `present()` is outside any queue timestamp pinion can write, so a frame's true screen latency is still unmeasured. External: it needs a presentation-timestamp extension wgpu does not expose.",
+        "No large-scene 60fps END-TO-END measurement. This round makes the GPU number exist; the perf axis's other named gap — a scale-invariance claim over a large scene — is untouched, and a wall-clock assertion would collide with the zero-flake rule, so it needs deterministic counters.",
+        "The extra command buffer per timed frame is unmeasured. It is one near-empty submit, gated on timing being possible, but this round did not price it — and the axis's own standing rule is that an unmeasured cost is a cost nobody revisits.",
+        "`FrameTimer::dropped` counts a failed staging map without unmapping, because `unmap` on a never-mapped buffer raises a wgpu validation error. If that path is ever hit repeatedly the buffer state is untested — no host has produced one, so the recovery is reasoned rather than observed.",
+        "`GpuSurface` is per-`GpuContext` with one adapter. A discrete/integrated split or a second X screen needs a second context, which multi-window would want; nothing in-tree exercises it.",
+        "The three-state clock is consumed by exactly one caller. `FrameTimer::last_gpu_us` (the persisting level) now has no production consumer, kept because it is what a HUD would read; a second consumer would settle whether it earns its place."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

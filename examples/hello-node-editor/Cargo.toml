@@ -20,6 +20,9 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R1442 — the layered (Sugiyama) layout the `auto_layout` verb runs, lifted out
 # of this example when the live topology view became its second consumer.
 pinion-graph = { path = "../../crates/pinion-graph", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 # R838 — the graph model lives in reactive `Signal`s, which require their
 # payloads to be (de)serializable for the §2 #7 scene-as-data snapshot path.

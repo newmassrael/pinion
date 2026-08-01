@@ -27,6 +27,9 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R46.5 §5.16: the `HelloRichTextRenderer` struct emitted by `build.rs`
 # names `::vello::*` directly; the `vello_renderer_impl!` expansion also
 # names `::vello::Scene` / `::vello::peniko::Color`.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

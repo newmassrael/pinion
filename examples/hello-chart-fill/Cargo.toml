@@ -20,6 +20,9 @@ pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # The forge renderer template emits `::vello::*` paths, so the codegen'd
 # `HelloChartFillRenderer` needs vello in scope (same as every sibling).
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

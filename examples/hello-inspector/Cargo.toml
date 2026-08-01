@@ -31,6 +31,9 @@ pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R46.5 §5.16: the `HelloInspectorRenderer` struct emitted by `build.rs`
 # names `::vello::*` directly.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 # Signal<Vec<ObjectData>> requires the model derive Serialize/Deserialize.
 serde = { workspace = true }

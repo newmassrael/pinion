@@ -2288,9 +2288,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     handle_scene_text_cache_stats(text_cache_stats),
                     HandlerKind::Read,
                 ),
-                "scene/frame_timings" => {
-                    (handle_scene_frame_timings(frame_timings), HandlerKind::Read)
-                }
+                "scene/frame_timings" => (
+                    handle_scene_frame_timings(frame_timings.as_ref()),
+                    HandlerKind::Read,
+                ),
                 "scene/render_fidelity" => {
                     let producer = paint_producer.as_deref_mut();
                     (
@@ -6039,16 +6040,21 @@ fn handle_scene_text_cache_stats(
 /// embedder-resolved [`pinion_runtime::FrameTimingsSnapshot`] onto the
 /// nested wire shape (last frame + window aggregates + cumulative
 /// count); `None` surfaces `FrameTimingsUnavailable`.
+///
+/// R1537 — taken and passed by REFERENCE. The snapshot crossed clippy's
+/// `large_types_passed_by_value` threshold when the GPU-clock fields landed
+/// on it, and a `Copy` type quietly memcpying ~300 bytes per read is worth
+/// the reference even at AI-paced call rates. Nothing here mutates it.
 fn handle_scene_frame_timings(
-    snapshot: Option<pinion_runtime::FrameTimingsSnapshot>,
+    snapshot: Option<&pinion_runtime::FrameTimingsSnapshot>,
 ) -> Result<Value, RpcError> {
-    match frame_timings(snapshot) {
-        Ok(outcome) => frame_timings_outcome_to_json(outcome),
+    match frame_timings(snapshot.copied()) {
+        Ok(outcome) => frame_timings_outcome_to_json(&outcome),
         Err(err) => Err(frame_timings_error_to_rpc(&err)),
     }
 }
 
-fn frame_timings_outcome_to_json(out: FrameTimingsOutcome) -> Result<Value, RpcError> {
+fn frame_timings_outcome_to_json(out: &FrameTimingsOutcome) -> Result<Value, RpcError> {
     serde_json::to_value(out).map_err(|e| {
         RpcError::internal_error(format!(
             "scene/frame_timings: failed to serialize outcome: {e}",

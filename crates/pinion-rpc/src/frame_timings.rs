@@ -42,7 +42,8 @@
 //!       "build_us": 320, "encode_us": 110, "acquire_us": 8200,
 //!       "render_us": 80, "total_us": 8740, "other_us": 30,
 //!       "work_us": 510,
-//!       "settle_passes": 1, "settled": true, "shape_misses": 0
+//!       "settle_passes": 1, "settled": true, "shape_misses": 0,
+//!       "gpu_us": 640
 //!     },
 //!     "produce": { "passes_total": 9, "shape_misses_total": 130 },
 //!     "focus": { "derivations_total": 6, "retries_total": 3 },
@@ -53,7 +54,10 @@
 //!     "window": {
 //!       "min_total_us": 8100, "mean_total_us": 8600, "max_total_us": 9800,
 //!       "mean_build_us": 310, "mean_encode_us": 105,
-//!       "mean_acquire_us": 8100, "mean_render_us": 78
+//!       "mean_acquire_us": 8100, "mean_render_us": 78,
+//!       "mean_gpu_us": 655, "max_gpu_us": 1180,
+//!       "gpu_sample_count": 118, "gpu_timing_supported": true,
+//!       "gpu_dropped_total": 0
 //!     },
 //!     "mean_fps": 116.3,
 //!     "budget_us": 8333,
@@ -83,9 +87,31 @@
 //!   frame". Before R1361.1 the block was billed to `render_us`, which
 //!   made an idle vsync-blocked window read as GPU-bound.
 //! - `render_us` is **CPU-side GPU-submit cost** with the acquire
-//!   excluded, not GPU execution wall-clock (queue submission returns
-//!   before the GPU finishes); true GPU timing needs timestamp queries
-//!   (a deferred axis).
+//!   excluded, not GPU execution wall-clock: queue submission returns
+//!   before the GPU has run any of it. **`gpu_us` is that wall-clock**
+//!   (R1537) — the rasterizer's compute passes plus the blit, taken with
+//!   `wgpu` timestamp queries on the device pinion now owns. The two are
+//!   independent: a window can be entirely GPU-bound with every CPU phase
+//!   reading fast, which is precisely what nothing on this wire could say
+//!   before.
+//! - **`gpu_us` is not a phase of `last` and does not enter `total_us`.**
+//!   A timestamp is readable only once the GPU has executed the commands
+//!   that wrote it, so reading it inside the frame would stall the
+//!   pipeline the measurement describes. It is polled, and therefore
+//!   reports a frame a step or two back — sound as a level, unsound to add
+//!   to the `last` row. Unreal's `stat gpu` has the same latency for the
+//!   same reason.
+//! - **`gpu_us` / `mean_gpu_us` / `max_gpu_us` are OMITTED, never zeroed,**
+//!   when the host has no `TIMESTAMP_QUERY` adapter or no sample has landed
+//!   yet. A `0` would assert the GPU did nothing, which reads as an
+//!   excellent frame. Read the omission through
+//!   `window.gpu_timing_supported`, which is ALWAYS present: `false` means
+//!   this machine will never report one (stop waiting), `true` with
+//!   `gpu_sample_count == 0` means the first sample is still in flight
+//!   (read again in a frame) — unless `gpu_dropped_total` is rising, which
+//!   means the timer is running and discarding every result. `gpu_sample_count` is also the denominator
+//!   of `mean_gpu_us`, which is averaged over timed samples rather than
+//!   over `window_len` — GPU samples are sparser than frames.
 //! - `budget_us` is the per-frame budget the window is judged against
 //!   (`1e6 / target_fps`, set via `scene/set_fps`). **Omitted entirely**
 //!   (`null`) for an unpaced window — an idle retained window has no
@@ -178,6 +204,23 @@ pub struct FrameTimingsLast {
     /// GPU command-buffer record + submit (CPU-side only, acquire
     /// excluded).
     pub render_us: u64,
+    /// R1537 — GPU wall-clock µs for a recent frame: the rasterizer's
+    /// compute passes plus the blit, measured by the GPU's own clock.
+    ///
+    /// **Not a phase of this frame, and not part of `total_us`.** Every
+    /// other duration here is CPU time about *this* frame; a GPU timestamp
+    /// is readable only after the GPU has run the commands that wrote it,
+    /// so reading it in-frame would stall the pipeline the measurement
+    /// exists to describe. It is polled instead, and therefore describes a
+    /// frame a step or two back — sound to read as a level, unsound to add
+    /// to this row.
+    ///
+    /// Omitted from the wire (`null`) on a host whose adapter has no
+    /// timestamp queries, and while the first samples are still in flight.
+    /// **Absent is not `0`**: a `0` would say the GPU did nothing, which
+    /// reads as an excellent frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_us: Option<u64>,
     /// Whole productive frame.
     pub total_us: u64,
     /// `total - (build + encode + acquire + render)`: post-paint
@@ -293,6 +336,43 @@ pub struct FrameTimingsWindow {
     pub mean_acquire_us: u64,
     /// Mean render-phase µs over the window (acquire excluded).
     pub mean_render_us: u64,
+    /// R1537 — mean GPU µs over the window samples that carry one.
+    ///
+    /// Averaged over [`Self::gpu_sample_count`], not over `window_len`:
+    /// GPU timings are sparser than frames, so dividing by the frame count
+    /// would understate the GPU by whatever fraction went unmeasured.
+    /// Omitted (`null`) when no sample in the window carries one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_gpu_us: Option<u64>,
+    /// R1537 — largest GPU µs in the window. The peer of `max_total_us`,
+    /// and the field a hitch hunt reads: a mean hides the one frame that
+    /// cost 40ms, and that frame is the whole complaint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_gpu_us: Option<u64>,
+    /// R1537 — how many samples in this window carry a GPU timing, i.e.
+    /// the denominator of `mean_gpu_us`. Always present, including `0`.
+    pub gpu_sample_count: u32,
+    /// R1537 — whether this window's render backend can time the GPU at
+    /// all.
+    ///
+    /// The field that makes an omitted `gpu_us` *readable*. Without it a
+    /// client sees a missing key and cannot tell a machine that will never
+    /// report one (`false` — stop waiting, profile on the CPU side) from a
+    /// window whose first sample is still in flight (`true` with
+    /// `gpu_sample_count == 0` — read again in a frame). Always present,
+    /// including `false`, because "the answer is no" is an answer and an
+    /// omitted key is not.
+    pub gpu_timing_supported: bool,
+    /// R1537 — GPU measurements taken and discarded since boot (a failed
+    /// staging map, or a tick pair the driver reported out of order).
+    ///
+    /// The field that keeps `gpu_timing_supported: true` with
+    /// `gpu_sample_count: 0` honest. That pair reads as "the first sample
+    /// is in flight, read again in a frame" — correct for a young window,
+    /// and wrong forever on a host where every measurement fails. A rising
+    /// value here says the timer is running and throwing results away,
+    /// which is a different problem with a different fix.
+    pub gpu_dropped_total: u64,
 }
 
 /// Snapshot returned by [`frame_timings`]. Projects
@@ -367,6 +447,7 @@ pub fn frame_timings(
             settle_passes: s.last.settle_passes,
             settled: s.last.settled,
             shape_misses: s.last.shape_misses,
+            gpu_us: s.last.gpu_us,
         },
         produce: FrameTimingsProduce {
             passes_total: s.produce.passes,
@@ -390,6 +471,11 @@ pub fn frame_timings(
             mean_encode_us: s.mean_encode_us,
             mean_acquire_us: s.mean_acquire_us,
             mean_render_us: s.mean_render_us,
+            mean_gpu_us: s.mean_gpu_us,
+            max_gpu_us: s.max_gpu_us,
+            gpu_sample_count: s.gpu_sample_count,
+            gpu_timing_supported: s.gpu_timing_supported,
+            gpu_dropped_total: s.gpu_dropped_total,
         },
         mean_fps: s.mean_fps,
         budget_us: s.budget_us,

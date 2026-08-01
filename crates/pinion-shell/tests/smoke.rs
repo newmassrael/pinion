@@ -140,6 +140,20 @@ impl VelloRenderer for SmokeRenderer {
         0
     }
 
+    /// R1537 — `Unsupported`, which is the literal truth: this stub holds
+    /// no device, so no waiting will ever produce a timing. `Pending`
+    /// would promise one that never arrives, and a `Some(0)` would let a
+    /// test assert a GPU measurement no GPU produced.
+    fn gpu_clock(&mut self) -> pinion_gpu::GpuFrameClock {
+        pinion_gpu::GpuFrameClock::Unsupported
+    }
+
+    /// R1537 — a stub with no device takes no measurements, so it discards
+    /// none. `0` here is a measured zero, not a stand-in for absence.
+    fn gpu_dropped_samples(&self) -> u64 {
+        0
+    }
+
     async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, SmokeRendererError>
     where
         W: Into<vello::wgpu::SurfaceTarget<'static>>,

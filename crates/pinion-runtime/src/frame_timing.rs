@@ -215,6 +215,39 @@ pub struct FrameTiming {
     /// and multiplies by this — which is exactly the shape of a measurement it
     /// can defend, and nothing in-tree does that multiplication on its behalf.
     pub shape_misses: u64,
+    /// (R1537 §5.16) GPU wall-clock microseconds for a recent frame —
+    /// the rasterizer's compute passes plus the blit — or `None` when the
+    /// host cannot time the GPU or has not produced a sample yet.
+    ///
+    /// # Why this is not just another duration beside `render_us`
+    ///
+    /// Every other field on this struct is CPU time, measured by the CPU,
+    /// about this frame. This one is GPU time, measured by the GPU, about
+    /// *a* frame. [`Self::render_us`] is the cost of recording the frame
+    /// and handing it to the driver, and `wgpu` returns from `submit` long
+    /// before the GPU executes any of it — so a window can be entirely
+    /// GPU-bound while every CPU phase reads fast, and nothing here could
+    /// say so. That was the pro-tool-performance axis's largest stated
+    /// gap, and it is the first number on this struct that a pro tool
+    /// states first (Unreal's `stat gpu`).
+    ///
+    /// # Why it is one frame behind
+    ///
+    /// A timestamp is readable only once the GPU has run the commands that
+    /// wrote it. Waiting for that inside the frame would serialise CPU and
+    /// GPU — the exact stall a profiler exists to find, caused by the
+    /// profiler — so the value is polled and lands on a later sample.
+    /// It is therefore sound to read across a window, and unsound to pair
+    /// with *this* sample's [`Self::build_us`] as though the two described
+    /// one frame.
+    ///
+    /// # Why `Option` and not `0`
+    ///
+    /// `None` means *no measurement*; `Some(0)` means *measured, and below
+    /// the timer's resolution*. A host without `TIMESTAMP_QUERY` reports
+    /// the former, and collapsing it to `0` would publish "the GPU did
+    /// nothing" — an absent measurement that reads as an excellent result.
+    pub gpu_us: Option<u64>,
 }
 
 impl FrameTiming {
@@ -237,7 +270,22 @@ impl FrameTiming {
             settle_passes: 0,
             settled: false,
             shape_misses: 0,
+            gpu_us: None,
         }
+    }
+
+    /// (R1537 §5.16) Attach the backend's GPU frame clock to a sample
+    /// built by [`Self::new`].
+    ///
+    /// Its own builder rather than a sixth positional `u64` on `new`, for
+    /// the reason [`Self::with_work`] gives — and more strongly here,
+    /// because the argument is an `Option<u64>` whose `None` is load
+    /// bearing. A backend with no GPU clock must be unable to express that
+    /// as a duration.
+    #[must_use]
+    pub fn with_gpu(mut self, gpu_us: Option<u64>) -> Self {
+        self.gpu_us = gpu_us;
+        self
     }
 
     /// (R1459 §5.16) Attach the frame's **work counts** to a sample built by
@@ -405,6 +453,9 @@ impl FrameTimingStats {
             (0u64, 0u64, 0u64, 0u64, 0u64);
         let mut over_budget_frames: u32 = 0;
         let mut worst_overrun_us: u64 = 0;
+        // R1537 — folded over the samples that HAVE a GPU timing, with its
+        // own count. See `mean_gpu_us`: the GPU denominator is not `len`.
+        let (mut sum_gpu, mut max_gpu, mut gpu_sample_count) = (0u64, 0u64, 0u32);
         for s in &self.samples {
             min_total = min_total.min(s.total_us);
             max_total = max_total.max(s.total_us);
@@ -413,6 +464,11 @@ impl FrameTimingStats {
             sum_encode = sum_encode.saturating_add(s.encode_us);
             sum_acquire = sum_acquire.saturating_add(s.acquire_us);
             sum_render = sum_render.saturating_add(s.render_us);
+            if let Some(gpu) = s.gpu_us {
+                sum_gpu = sum_gpu.saturating_add(gpu);
+                max_gpu = max_gpu.max(gpu);
+                gpu_sample_count = gpu_sample_count.saturating_add(1);
+            }
             if let Some(budget) = budget_us {
                 if s.total_us > budget {
                     over_budget_frames = over_budget_frames.saturating_add(1);
@@ -443,6 +499,12 @@ impl FrameTimingStats {
             mean_encode_us: sum_encode / len,
             mean_acquire_us: sum_acquire / len,
             mean_render_us: sum_render / len,
+            mean_gpu_us: (gpu_sample_count > 0).then(|| sum_gpu / u64::from(gpu_sample_count)),
+            max_gpu_us: (gpu_sample_count > 0).then_some(max_gpu),
+            gpu_sample_count,
+            // Filled by the backend after projection — see the field doc.
+            gpu_timing_supported: false,
+            gpu_dropped_total: 0,
             mean_fps: fps_from_mean_total_us(mean_total),
             budget_us,
             over_budget_frames,
@@ -686,6 +748,54 @@ pub struct FrameTimingsSnapshot {
     pub mean_acquire_us: u64,
     /// Mean render-phase µs over the window (work only, acquire excluded).
     pub mean_render_us: u64,
+    /// (R1537 §5.16) Mean GPU µs over the samples in this window that
+    /// carry one, or `None` when none of them does.
+    ///
+    /// The mean is over [`Self::gpu_sample_count`], **not** over
+    /// [`Self::window_len`]: GPU timings are sparser than frames (each is
+    /// read back a frame or more after it was written, and a frame whose
+    /// predecessor has not been harvested is skipped rather than blended),
+    /// so dividing by the frame count would systematically understate the
+    /// GPU by whatever fraction of frames went unmeasured.
+    pub mean_gpu_us: Option<u64>,
+    /// (R1537 §5.16) Largest GPU µs among the samples in this window that
+    /// carry one, or `None` when none does.
+    ///
+    /// The peer of [`Self::max_total_us`], and the one a hitch hunt reads:
+    /// a mean hides a single frame that cost 40ms, and a single frame that
+    /// costs 40ms is the whole complaint.
+    pub max_gpu_us: Option<u64>,
+    /// (R1537 §5.16) How many samples in this window carry a GPU timing.
+    ///
+    /// Published rather than implied because it is the *denominator* of
+    /// [`Self::mean_gpu_us`], and a mean with an unstated sample count is
+    /// a number nobody can weigh.
+    pub gpu_sample_count: u32,
+    /// (R1537 §5.16) Whether the backend that painted this window can time
+    /// the GPU at all.
+    ///
+    /// **Filled by the backend after projection**, like [`Self::produce`] /
+    /// [`Self::focus`] / [`Self::mirror`]: the ring holds frames, and a
+    /// device capability is not one. `false` from the pure fold, which is
+    /// correct for every consumer that never sets it — a TUI backend has
+    /// no GPU to time.
+    ///
+    /// This is what makes an absent GPU reading *readable*. With only
+    /// [`Self::gpu_sample_count`], `0` means both "this machine cannot
+    /// measure" and "this window has not measured yet" — permanently
+    /// impossible versus resolves-next-frame, which want opposite
+    /// responses from a client.
+    pub gpu_timing_supported: bool,
+    /// (R1537 §5.16) GPU measurements the backend took and discarded,
+    /// cumulative since boot. **Filled by the backend after projection**,
+    /// like [`Self::gpu_timing_supported`].
+    ///
+    /// The third state a client needs. `gpu_timing_supported == true` with
+    /// `gpu_sample_count == 0` reads as "the first sample is still in
+    /// flight" — true for a healthy young window, and false forever on a
+    /// host where every measurement fails. This separates them: a rising
+    /// count here says the timer is running and throwing the results away.
+    pub gpu_dropped_total: u64,
     /// `1e6 / mean_total_us`, `0.0` for a zero mean.
     pub mean_fps: f32,
     /// (R1460 §5.16 §2 #2) Cumulative work the RPC **scene producer** has done
@@ -1080,6 +1190,98 @@ mod seam_tests {
 #[cfg(test)]
 mod tests {
     use super::{FRAME_TIMING_WINDOW, FrameTiming, FrameTimingStats};
+
+    #[test]
+    fn r1537_gpu_mean_is_over_timed_samples_not_over_frames() {
+        // R1537 §5.16 — GPU timings are SPARSER than frames: each is read
+        // back a frame or more after it was written, and a frame whose
+        // predecessor has not been harvested yet is skipped rather than
+        // blended. So the mean must divide by the number of samples that
+        // carry a timing, not by the window length.
+        //
+        // This is the whole discriminating case: four frames, two timed at
+        // 1000µs each. Over timed samples the mean is 1000 — the truth
+        // about what the GPU costs when it runs. Over frames it would be
+        // 500, which is not a smaller estimate of the same thing, it is an
+        // answer to a different question ("GPU µs amortised per frame")
+        // that nobody asked and that halves as the timer skips more.
+        let mut stats = FrameTimingStats::new();
+        stats.record(FrameTiming::new(1, 1, 1, 1, 10).with_gpu(Some(1000)));
+        stats.record(FrameTiming::new(1, 1, 1, 1, 10));
+        stats.record(FrameTiming::new(1, 1, 1, 1, 10).with_gpu(Some(1000)));
+        stats.record(FrameTiming::new(1, 1, 1, 1, 10));
+        let snap = stats.snapshot(None).expect("four samples");
+        assert_eq!(snap.window_len, 4);
+        assert_eq!(snap.gpu_sample_count, 2);
+        assert_eq!(
+            snap.mean_gpu_us,
+            Some(1000),
+            "mean over the TIMED samples; dividing by window_len would give 500",
+        );
+        assert_eq!(snap.max_gpu_us, Some(1000));
+    }
+
+    #[test]
+    fn r1537_gpu_max_survives_a_mean_that_hides_it() {
+        // The peer of `max_total_us`, and the reason it exists: one 40ms
+        // frame among cheap ones IS the complaint, and the mean erases it.
+        let mut stats = FrameTimingStats::new();
+        for _ in 0..9 {
+            stats.record(FrameTiming::new(1, 1, 1, 1, 10).with_gpu(Some(100)));
+        }
+        stats.record(FrameTiming::new(1, 1, 1, 1, 10).with_gpu(Some(40_000)));
+        let snap = stats.snapshot(None).expect("ten samples");
+        assert_eq!(snap.gpu_sample_count, 10);
+        assert_eq!(snap.mean_gpu_us, Some(4090));
+        assert_eq!(
+            snap.max_gpu_us,
+            Some(40_000),
+            "the hitch must survive the fold that averages it away",
+        );
+    }
+
+    #[test]
+    fn r1537_untimed_window_reports_absence_not_zero() {
+        // A host with no `TIMESTAMP_QUERY` adapter records real frames with
+        // no GPU clock. Every GPU field must be ABSENT — a `Some(0)` would
+        // assert the GPU did nothing, which reads as an excellent result,
+        // and `gpu_sample_count` is what lets a reader tell "cannot
+        // measure" from "has not measured yet".
+        let mut stats = FrameTimingStats::new();
+        stats.record(FrameTiming::new(300, 100, 0, 80, 540));
+        let snap = stats.snapshot(None).expect("one sample");
+        assert_eq!(snap.last.gpu_us, None);
+        assert_eq!(snap.mean_gpu_us, None);
+        assert_eq!(snap.max_gpu_us, None);
+        assert_eq!(snap.gpu_sample_count, 0);
+        // ...and a genuinely instant GPU frame is a DIFFERENT observation.
+        let mut timed = FrameTimingStats::new();
+        timed.record(FrameTiming::new(300, 100, 0, 80, 540).with_gpu(Some(0)));
+        let tsnap = timed.snapshot(None).expect("one sample");
+        assert_eq!(tsnap.mean_gpu_us, Some(0));
+        assert_eq!(tsnap.gpu_sample_count, 1);
+        assert_ne!(
+            snap.mean_gpu_us, tsnap.mean_gpu_us,
+            "`no measurement` and `measured zero` must not be the same value",
+        );
+    }
+
+    #[test]
+    fn r1537_gpu_is_not_a_phase_of_the_frame_it_rides_on() {
+        // `gpu_us` is measured by a different clock, on a different device,
+        // about a frame a step or two back. It must NOT enter the
+        // `total >= build + encode + acquire + render` partition the wire
+        // documents, or a client asserting that partition would break the
+        // moment a GPU timing landed.
+        let sample = FrameTiming::new(300, 100, 200, 80, 1000).with_gpu(Some(999_999));
+        assert_eq!(sample.phase_sum_us(), 680);
+        assert_eq!(sample.work_us(), 480);
+        assert_eq!(sample.other_us(), 320);
+        assert_eq!(
+            sample.total_us, 1000,
+            "an enormous GPU reading changes no CPU-side accounting",
+        );
+    }
 
     #[test]
     fn r907_empty_window_has_no_snapshot() {

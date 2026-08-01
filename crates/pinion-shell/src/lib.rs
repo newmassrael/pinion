@@ -396,6 +396,50 @@ pub trait VelloRenderer:
     #[must_use]
     fn last_acquire_us(&self) -> u64;
 
+    /// R1537 §5.16 — GPU wall-clock microseconds for the most recent frame
+    /// the backend managed to time, or `None` when it cannot time the GPU
+    /// or has not produced a sample yet.
+    ///
+    /// The peer of [`Self::last_acquire_us`], and the number
+    /// [`pinion_runtime::FrameTiming::render_us`] has never been:
+    /// `render_us` is the CPU cost of *recording and submitting* the
+    /// frame, and `wgpu` returns from `submit` long before the GPU has
+    /// executed any of it. So a window could be entirely GPU-bound and
+    /// every published phase would still read as fast.
+    ///
+    /// **Three states, not an `Option<u64>`.** A host whose adapter has no
+    /// timestamp queries (`Unsupported`) and a window whose first
+    /// measurement is still in flight (`Pending`) are different facts,
+    /// and one `None` cannot carry both — the first is permanent, the
+    /// second resolves in a frame or two. `Measured(0)` is a third thing
+    /// again: measured, and below the timer's resolution. Publishing a
+    /// bare `0` for any of the others would assert the GPU did nothing,
+    /// which reads as an excellent frame.
+    ///
+    /// Sampled one frame behind by construction: reading a timestamp
+    /// inside the frame that wrote it means waiting for the GPU to drain,
+    /// which is the stall a profiler exists to find. See
+    /// `pinion_gpu::FrameTimer`.
+    fn gpu_clock(&mut self) -> pinion_gpu::GpuFrameClock;
+
+    /// R1537 §5.16 — GPU measurements this backend took and then
+    /// discarded, cumulative since boot. `0` for a backend that cannot
+    /// time the GPU at all.
+    ///
+    /// Without this, a host where *every* measurement fails reports
+    /// `gpu_clock() == Pending` forever, which is exactly what a healthy
+    /// window reports for its first frames — so the documented advice
+    /// ("read again in a frame") would be wrong permanently and silently.
+    /// A timer that quietly discards everything is the same defect class
+    /// as a zero standing in for an absent measurement.
+    ///
+    /// Non-zero causes: a staging-buffer map that failed (a lost device),
+    /// or a tick pair the driver reported out of order (impossible for a
+    /// single queue, so an artifact rather than a slow frame). Both are
+    /// worth seeing; neither is worth blending into a duration.
+    #[must_use]
+    fn gpu_dropped_samples(&self) -> u64;
+
     /// Initialize the Vello renderer against a wgpu surface target.
     /// Async because wgpu adapter + device acquisition is async; the
     /// shell wraps the future in `pollster::block_on` at the §6.3
@@ -481,6 +525,15 @@ macro_rules! vello_renderer_impl {
                 <$name>::last_acquire_us(self)
             }
 
+            // R1537 §5.16 — forward the template's GPU frame clock.
+            fn gpu_clock(&mut self) -> ::pinion_gpu::GpuFrameClock {
+                <$name>::gpu_clock(self)
+            }
+
+            fn gpu_dropped_samples(&self) -> u64 {
+                <$name>::gpu_timing_counts(self).1
+            }
+
             async fn new<W>(
                 target: W,
                 width: u32,
@@ -524,6 +577,12 @@ macro_rules! vello_renderer_impl {
                     &self.context,
                     &mut self.surface,
                     &mut self.renderer,
+                    // R1537 §5.16 — the capture path is a real GPU frame and
+                    // is timed by the same clock, so an agent that drives the
+                    // window entirely over `scene/screenshot` still gets
+                    // `gpu_us`. Without this the timer would report nothing
+                    // on the §2 #2 primary path.
+                    self.frame_timer.as_mut(),
                     scene,
                     base_color,
                 );

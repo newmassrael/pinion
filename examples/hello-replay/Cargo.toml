@@ -24,6 +24,9 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R727 §5.49 — button paint SSOT (`button_scene` / `read_button_state`).
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 # §5.16 — the `HelloReplayRenderer` struct emitted by build.rs names `::vello::*`.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

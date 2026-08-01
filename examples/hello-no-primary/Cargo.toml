@@ -24,6 +24,9 @@ pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # The concrete VelloRenderer the forge codegen (app.pinion.xml) emits is
 # `::vello::*`-qualified, so the include names the vello crate directly.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [build-dependencies]

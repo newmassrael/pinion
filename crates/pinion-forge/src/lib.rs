@@ -1113,13 +1113,17 @@ mod tests {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="MainScene" backend="vello"/>"#;
         let rust = compile_str(xml, "scene.pinion.xml").expect("compile");
         // R46.2: the renderer kind emits a concrete Rust type wrapping
-        // vello::Renderer + RenderSurface (no virtual dispatch). R46.3.3:
-        // all Vello types reference fully-qualified `::vello::*` paths
-        // so include!() is namespace-safe at any consumer scope.
+        // vello::Renderer + the owned GPU device/surface (no virtual
+        // dispatch). R46.3.3: all Vello types reference fully-qualified
+        // `::vello::*` paths so include!() is namespace-safe at any
+        // consumer scope. R1537 moved the device out of vello's
+        // `RenderContext` — see
+        // `emits_renderer_vello_uses_canonical_vello_api_surface`.
         assert!(rust.contains("pub struct MainScene {"));
-        assert!(rust.contains("context: ::vello::util::RenderContext"));
-        assert!(rust.contains("surface: ::vello::util::RenderSurface<'static>"));
+        assert!(rust.contains("context: ::pinion_gpu::GpuContext"));
+        assert!(rust.contains("surface: ::pinion_gpu::GpuSurface"));
         assert!(rust.contains("renderer: ::vello::Renderer"));
+        assert!(rust.contains("frame_timer: ::std::option::Option<::pinion_gpu::FrameTimer>"));
         // async new<W: Into<::vello::wgpu::SurfaceTarget<'static>>>(...) -> Result<Self, MainSceneError>
         assert!(rust.contains("pub async fn new<W>(target: W, width: u32, height: u32) -> ::std::result::Result<Self, MainSceneError>"));
         assert!(rust.contains("W: ::std::convert::Into<::vello::wgpu::SurfaceTarget<'static>>"));
@@ -1145,6 +1149,10 @@ mod tests {
         assert!(rust.contains("pub enum DemoError {"));
         assert!(rust.contains("Vello(::vello::Error),"));
         assert!(rust.contains("Surface(&'static str),"));
+        // R1537 — device/surface establishment fails before a rasterizer
+        // exists, so it cannot be reported as a vello error.
+        assert!(rust.contains("Gpu(::pinion_gpu::GpuError),"));
+        assert!(rust.contains("impl ::std::convert::From<::pinion_gpu::GpuError> for DemoError"));
         // std::error::Error + Display impls (fully-qualified)
         assert!(rust.contains("impl ::std::fmt::Display for DemoError"));
         assert!(rust.contains("impl ::std::error::Error for DemoError"));
@@ -1158,11 +1166,17 @@ mod tests {
 
     #[test]
     fn emits_renderer_vello_uses_canonical_vello_api_surface() {
-        // The template must use Vello 0.9 canonical surface helpers
-        // (RenderContext, RenderSurface, util re-exports) and the
-        // render_to_texture + blitter.copy + present pattern — not a
-        // hand-rolled wgpu pipeline. R46.3.3: fully-qualified paths
-        // (no `use vello::*` items in the emitted file).
+        // The template must use Vello 0.9's canonical *rendering* API —
+        // render_to_texture into an intermediate target, blit, present —
+        // and not a hand-rolled compute pipeline. R46.3.3: fully-qualified
+        // paths (no `use vello::*` items in the emitted file).
+        //
+        // R1537 — the canonical *device* helper (`vello::util::RenderContext`)
+        // is deliberately NOT used. Its `new_device` is private and requests
+        // a fixed feature set, so a device it creates can never carry
+        // TIMESTAMP_QUERY and no frame drawn on it can state what the GPU
+        // took. `vello::Renderer::new` takes a `&Device` the caller owns,
+        // which is the seam this template uses instead.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello"/>"#;
         let rust = compile_str(xml, "x.pinion.xml").expect("compile");
         // No `use vello::*` items — R46.3.3 namespace contract.
@@ -1171,11 +1185,16 @@ mod tests {
             "R46.3.3: no `use vello::*` imports in emitted code"
         );
         // Vello 0.9 canonical pattern markers (fully-qualified)
-        assert!(rust.contains("::vello::util::RenderContext::new()"));
+        assert!(
+            !rust.contains("::vello::util::RenderContext"),
+            "R1537: the emitted renderer must own its device, not delegate \
+             to vello's fixed-feature RenderContext"
+        );
+        assert!(rust.contains("::pinion_gpu::GpuContext::new("));
         assert!(rust.contains("render_to_texture("));
-        assert!(rust.contains("self.surface.blitter.copy("));
+        assert!(rust.contains("self.surface.blit("));
         assert!(rust.contains("surface_texture.present();"));
-        // RenderContext::create_surface with AutoVsync (textbook default, fully-qualified)
+        // AutoVsync (textbook default, fully-qualified)
         assert!(rust.contains("::vello::wgpu::PresentMode::AutoVsync"));
         // R46.2.1 + R46.3.3: AaSupport struct literal matches AaConfig variant
         // (default = Area). Both placeholders fully-qualified.
@@ -1244,13 +1263,118 @@ mod tests {
         // The block must be measured around the acquire ALONE — if the call
         // moved back inside the match scrutinee the span would be lost.
         assert!(
-            render_body.contains("let __acquired = self.surface.surface.get_current_texture();"),
-            "get_current_texture is called on its own line inside the timed span",
+            render_body.contains("let __acquired = self.surface.acquire();"),
+            "the acquire is called on its own line inside the timed span",
         );
         // And the accessor the shell reads it through exists.
         assert!(
             rust.contains("pub fn last_acquire_us(&self) -> u64 {"),
             "the template exposes the block so the shell can subtract it",
+        );
+    }
+
+    #[test]
+    fn emits_renderer_vello_brackets_the_frame_with_gpu_timestamps_in_order() {
+        // R1537 §5.16 — `render_us` is CPU submit cost: `wgpu` returns from
+        // `submit` before the GPU has run anything, so a fully GPU-bound
+        // window reports fast CPU phases and nothing on the wire disagrees.
+        // The template now brackets the frame with two timestamp queries.
+        //
+        // ORDER is the whole contract, and it is what this asserts. A pair
+        // of timestamps that compiles but sits in the wrong places still
+        // produces a plausible number — one that measures the blit alone,
+        // or spans two frames — and no type can catch that. Specifically:
+        //
+        //   open  < render_to_texture   the opening stamp must be SUBMITTED
+        //                               before the rasterizer's own internal
+        //                               submit, or the compute passes fall
+        //                               outside the span;
+        //   blit  < end                 the closing stamp rides the blit
+        //                               encoder, after the blit is recorded;
+        //   end   < submit < after_submit
+        //                               a map can only be asked for once the
+        //                               commands it waits on are submitted.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="T" backend="vello"/>"#;
+        let rust = compile_str(xml, "t.pinion.xml").expect("compile");
+        let body_at = rust.find("pub fn render(").expect("render fn");
+        let body = &rust[body_at..];
+        let at = |needle: &str| -> usize {
+            body.find(needle)
+                .unwrap_or_else(|| panic!("render body is missing `{needle}`"))
+        };
+
+        let collect_at = at("timer.collect(self.context.device());");
+        let begin_at = at("if timer.begin(&mut open) {");
+        let open_submit_at = at("self.context.queue().submit([open.finish()]);");
+        let raster_at = at("self.renderer.render_to_texture(");
+        let blit_at = at("self.surface.blit(");
+        let end_at = at("timer.end(&mut encoder);");
+        let submit_at = at("self.context.queue().submit([encoder.finish()]);");
+        let after_at = at("timer.after_submit();");
+        let present_at = at("surface_texture.present();");
+
+        assert!(
+            collect_at < begin_at,
+            "harvest the previous measurement before starting a new one, or \
+             the timer never frees its single slot: collect={collect_at} \
+             begin={begin_at}",
+        );
+        assert!(
+            begin_at < open_submit_at && open_submit_at < raster_at,
+            "the opening timestamp must be SUBMITTED before the rasterizer \
+             submits its own work, or the compute passes fall outside the \
+             measured span: begin={begin_at} submit={open_submit_at} \
+             raster={raster_at}",
+        );
+        assert!(
+            blit_at < end_at && end_at < submit_at,
+            "the closing timestamp rides the blit encoder, recorded after \
+             the blit and before that encoder is finished: blit={blit_at} \
+             end={end_at} submit={submit_at}",
+        );
+        assert!(
+            submit_at < after_at && after_at < present_at,
+            "the staging map is asked for only after the commands it waits \
+             on are submitted: submit={submit_at} after={after_at} \
+             present={present_at}",
+        );
+
+        // The accessors the shell reads the clock through.
+        assert!(rust.contains("pub fn gpu_clock(&mut self) -> ::pinion_gpu::GpuFrameClock {"));
+        assert!(rust.contains("pub fn gpu_timing_counts(&self) -> (u64, u64) {"));
+        // The unsupported case is the ABSENT timer, mapped explicitly —
+        // not a zero, and not a panic.
+        assert!(rust.contains("::pinion_gpu::GpuFrameClock::Unsupported"));
+    }
+
+    #[test]
+    fn emits_renderer_vello_pays_nothing_for_timing_it_cannot_do() {
+        // R1537 — the extra command buffer is the entire cost of the
+        // measurement, and a host without timestamp queries must not pay
+        // it. `frame_timer` is `None` there, so every timing site sits
+        // inside an `if let Some(timer)` and the encoder is never created.
+        //
+        // Asserted on the emitted text because there is no other way to
+        // observe it: on a host that DOES support timestamps the branch is
+        // always taken, so a test that runs the code cannot distinguish
+        // "gated" from "unconditional".
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="G" backend="vello"/>"#;
+        let rust = compile_str(xml, "g.pinion.xml").expect("compile");
+        let body = &rust[rust.find("pub fn render(").expect("render fn")..];
+        let gate = "if let ::std::option::Option::Some(timer) = self.frame_timer.as_mut() {";
+        assert_eq!(
+            body.matches(gate).count(),
+            3,
+            "every timing site — open, close, map — is gated on the timer \
+             existing, so a host that cannot time the GPU creates no \
+             encoder and submits no extra command buffer",
+        );
+        // And the field really can be absent: the template must not
+        // `unwrap` or `expect` its way past the option.
+        assert!(
+            !body.contains("frame_timer.as_mut().unwrap()")
+                && !body.contains("frame_timer.as_mut().expect("),
+            "a host without timestamp queries is a supported host, not a panic",
         );
     }
 
@@ -1284,7 +1408,7 @@ mod tests {
         // Uncaptured-error handler installed at device creation (wgpu 29
         // takes an Arc).
         assert!(
-            rust.contains("on_uncaptured_error(::std::sync::Arc::new("),
+            rust.contains("context.on_uncaptured_error(|error| {"),
             "device installs an uncaptured-error handler to absorb transient validation errors",
         );
     }

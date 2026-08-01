@@ -27,6 +27,9 @@ pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", feat
 # R51.30 paint-side AppShell + R51.159 `run_with_handlers` entry point.
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R46.5 §5.16 — forge codegen output references `::vello::*` directly.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 # R51.165 §5.23 — `tokio::time::sleep` for the async delay demo
 # inside `echo_handler`. The handler runs on the tokio worker thread

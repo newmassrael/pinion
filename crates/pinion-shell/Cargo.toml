@@ -41,6 +41,9 @@ winit = { workspace = true }
 # §5.16 R46.5 Vello backend (paint scene submission + peniko Color for
 # `RenderParams.base_color`). AppShell is Vello-only by design — TUI /
 # headless paths go through a different shell (or no shell at all).
+# R1537 §5.16 — the owned wgpu device / surface / frame timer the emitted
+# renderer is built on; `vello_capture` reads the same pair.
+pinion-gpu = { path = "../pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 # Block on Vello's async `RenderContext::create_surface` at app boot.
 # pinion-core / runtime / shell logic is sync (§6.3); pollster wraps

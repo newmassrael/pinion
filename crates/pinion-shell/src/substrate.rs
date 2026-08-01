@@ -100,6 +100,31 @@ struct WindowScopedRpcReads {
     unknown_window: Option<String>,
 }
 
+/// R1537 §5.16 — what a window's render backend can say about the GPU
+/// clock, as of its last paint.
+///
+/// Two states, not a `bool` plus a counter: a backend with no clock has no
+/// discarded measurements either, and the enum makes that pair
+/// unrepresentable instead of merely conventional.
+///
+/// [`Self::Untimed`] is also the pre-paint default, and that is
+/// unobservable rather than a claim: `frame_timings_for_window` returns
+/// `None` until the ring holds a sample, and the sample and this field are
+/// written by the same paint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum WindowGpuTiming {
+    /// The backend cannot time the GPU (or has not painted yet).
+    #[default]
+    Untimed,
+    /// The backend times the GPU. `dropped` measurements were taken and
+    /// discarded since boot — a failed staging map, or a tick pair the
+    /// driver reported out of order.
+    Timed {
+        /// Cumulative discarded measurements.
+        dropped: u64,
+    },
+}
+
 /// R51.76 §5.40 — framework-side dispatch substrate, decoupled from
 /// winit / wgpu / `accesskit_winit`.
 ///
@@ -171,6 +196,18 @@ struct WindowState {
     /// R907 — rolling frame-timing profiler ring; `None` until the first
     /// recorded frame (the bootstrap `FrameTimingsUnavailable`).
     frame_timings: Option<FrameTimingStats>,
+    /// R1537 — what THIS window's render backend last reported about the
+    /// GPU clock.
+    ///
+    /// Per-window rather than binding-wide because the backend is: a
+    /// second window on a second adapter can differ, and the wire answers
+    /// per window.
+    ///
+    /// One field rather than a `bool` beside a counter, because they are
+    /// one observation written by one paint — and because the counter is
+    /// meaningless for a backend that has no clock, which the enum makes
+    /// unrepresentable rather than merely unlikely.
+    gpu_timing: WindowGpuTiming,
     /// R1036 — last presented-frame render-fidelity record (PR-17); `None`
     /// before the first present.
     render_fidelity: Option<pinion_runtime::RenderFidelity>,
@@ -1860,6 +1897,22 @@ impl<V: WidgetView> ShellCore<V> {
             .record(timing);
     }
 
+    /// R1537 §5.16 — record whether the backend that painted `window_id`
+    /// can time the GPU.
+    ///
+    /// Separate from [`Self::record_frame_timing`] because it is not a
+    /// property of a frame: it does not change from frame to frame, it
+    /// belongs to the device, and a per-sample copy would be the same bit
+    /// repeated `FRAME_TIMING_WINDOW` times with no way to read it before
+    /// the first paint.
+    pub fn set_gpu_timing_state(&mut self, window_id: &str, supported: bool, dropped: u64) {
+        self.window_state_mut(window_id).gpu_timing = if supported {
+            WindowGpuTiming::Timed { dropped }
+        } else {
+            WindowGpuTiming::Untimed
+        };
+    }
+
     /// R1036 §5.16 §5.7 §2 #7 — record the render-fidelity fingerprint of the
     /// frame `AppShell::render_window` just ENCODED + presented for `window_id`
     /// (PR-17). `present_ok` is the `renderer.render` outcome; `viewport` is the
@@ -2040,6 +2093,15 @@ impl<V: WidgetView> ShellCore<V> {
                 // rather than folded into the ring.
                 snap.focus = self.focus_work.get();
                 snap.mirror = self.mirror_work;
+                // R1537 §5.16 — the backend's timing capability. Attached
+                // at the read for the same reason as the three above: it
+                // is not a property of any one frame in the ring.
+                if let Some(WindowGpuTiming::Timed { dropped }) =
+                    self.window_state(window_id).map(|w| w.gpu_timing)
+                {
+                    snap.gpu_timing_supported = true;
+                    snap.gpu_dropped_total = dropped;
+                }
                 snap
             })
     }

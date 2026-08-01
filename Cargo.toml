@@ -8,6 +8,7 @@ members = [
     "crates/pinion-rpc-transport",
     "crates/pinion-cli",
     "crates/pinion-forge",
+    "crates/pinion-gpu",
     "crates/pinion-overlay",
     "crates/pinion-a11y",
     "crates/pinion-text",

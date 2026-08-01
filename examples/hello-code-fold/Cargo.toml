@@ -32,6 +32,9 @@ pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.
 # R46.5 §5.16: the `HelloCodeFoldRenderer` struct emitted by `build.rs`
 # references `::vello::*` directly (R46.3.3 fully-qualified codegen path);
 # the `vello_renderer_impl!` macro expansion also names `::vello::Scene`.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

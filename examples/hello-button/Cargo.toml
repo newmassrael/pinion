@@ -43,6 +43,9 @@ pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.
 # fully-qualified codegen path); the `vello_renderer_impl!` macro
 # expansion also names `::vello::Scene` and `::vello::peniko::Color`.
 # Either dependency makes vello a direct dep.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

@@ -27,6 +27,9 @@ pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R46.5 §5.16: the codegen renderer emitted by build.rs references
 # `::vello::*` directly; the macro expansion also names `::vello::*`.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

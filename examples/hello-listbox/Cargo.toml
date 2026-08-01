@@ -20,6 +20,9 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # pre-R659 `build_scrollbar_visual` (2nd consumer signal triggered by
 # the R659 todomvc scrollbar peer wire).
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

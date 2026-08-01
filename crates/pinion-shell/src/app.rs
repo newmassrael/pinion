@@ -1344,10 +1344,26 @@ impl<V: WidgetView> AppShell<V> {
     /// `build_us` is the whole settle loop, so a 4ms frame that ran one heavy
     /// pass and a 4ms frame whose four cheap passes disagree are identical by
     /// time alone — and they want opposite fixes.
-    fn record_frame_sample(&mut self, window: &str, timing: pinion_runtime::FrameTiming) {
+    ///
+    /// R1537 — the GPU report lands here too, and in one call, because its
+    /// two halves belong in different places: the fresh measurement is a
+    /// per-frame value that rides the ring sample, while the capability and
+    /// the drop count are properties of the backend that ride the read.
+    /// Splitting the call site would let a future paint record one without
+    /// the other.
+    fn record_frame_sample(
+        &mut self,
+        window: &str,
+        timing: pinion_runtime::FrameTiming,
+        gpu: GpuFrameReport,
+    ) {
         let (passes, settled, shapes) = self.core.last_frame_work_for_window(window);
+        self.core.record_frame_timing(
+            window,
+            timing.with_work(passes, settled, shapes).with_gpu(gpu.us),
+        );
         self.core
-            .record_frame_timing(window, timing.with_work(passes, settled, shapes));
+            .set_gpu_timing_state(window, gpu.supported, gpu.dropped);
     }
 
     fn capture_window_screenshot(
@@ -1590,9 +1606,12 @@ impl<V: WidgetView> AppShell<V> {
         // Assigned exactly once inside the paint scope below; the
         // scope's `else { return; }` arms diverge, so the fall-through
         // path that reaches `record_frame_timing` always assigns both.
-        let encode_us;
-        let acquire_us;
-        let render_us;
+        //
+        // R1537 §5.16 — `gpu` (what this paint learned about the GPU's own
+        // clock) joins them, and is declared WITH them because it obeys the
+        // same rule: one assignment, inside that scope, on every path that
+        // reaches the sample below.
+        let (encode_us, acquire_us, render_us, gpu);
         // R1036 PR-17 — the `renderer.render` outcome for this frame, fed into
         // the per-window render-fidelity record so `scene/render_fidelity`
         // surfaces a failed present (the present-staleness signature).
@@ -1701,6 +1720,13 @@ impl<V: WidgetView> AppShell<V> {
             let render_span_us = instant_delta_us(render_start, Instant::now());
             acquire_us = renderer.last_acquire_us().min(render_span_us);
             render_us = render_span_us.saturating_sub(acquire_us);
+            // R1537 §5.16 — and what the GPU took, which none of the above
+            // can be. Every span here is CPU wall-clock around a `submit`
+            // that returns before the GPU has started, so a window can be
+            // entirely GPU-bound with all three of these reading fast.
+            // Read HERE because this is the only scope that holds a
+            // renderer, which is also why the capability rides along.
+            gpu = GpuFrameReport::read(&mut **renderer);
         };
         // R1036 PR-17 §2 #7 — record the uncontaminated fidelity fingerprint of
         // the frame just ENCODED + presented for this window (per-TextGrid
@@ -1797,6 +1823,7 @@ impl<V: WidgetView> AppShell<V> {
         self.record_frame_sample(
             target_window,
             pinion_runtime::FrameTiming::new(build_us, encode_us, acquire_us, render_us, total_us),
+            gpu,
         );
         // R1361 §5.16 §5.22 — hand the freshly-recorded history to any
         // in-app profiler HUD (`use_frame_timings`). Immediately after
@@ -3885,6 +3912,39 @@ fn scale_is_non_identity(scale: f64) -> bool {
 /// [`AppShell::render_window`] so that paint method stays under the
 /// workspace `clippy::too_many_lines` ceiling; the normal (`capture ==
 /// false`) path is byte-identical to the pre-R1060 inline present.
+/// R1537 §5.16 — what one paint learned about the GPU's own clock.
+///
+/// Three values read from the renderer in one place because only one scope
+/// in `render_window` holds a renderer at all, and because they are easy
+/// to record partially: the fresh measurement belongs on the frame sample,
+/// while the capability and the drop count belong to the backend and ride
+/// the read. A struct makes "all three, or none" the only shape a call
+/// site can express.
+#[derive(Debug, Clone, Copy, Default)]
+struct GpuFrameReport {
+    /// A measurement harvested for this frame, if one arrived. `None` is
+    /// *no measurement* — never a zero, which would read as a free frame.
+    us: Option<u64>,
+    /// Whether this backend can time the GPU at all.
+    supported: bool,
+    /// Measurements taken and discarded since boot.
+    dropped: u64,
+}
+
+impl GpuFrameReport {
+    /// Read the backend's clock. Consuming on the renderer's side — each
+    /// measurement is reported to exactly one frame sample, so the ring
+    /// holds distinct measurements rather than one value re-stamped.
+    fn read<R: VelloRenderer>(renderer: &mut R) -> Self {
+        let clock = renderer.gpu_clock();
+        Self {
+            us: clock.measured(),
+            supported: clock.is_supported(),
+            dropped: renderer.gpu_dropped_samples(),
+        }
+    }
+}
+
 fn submit_frame<R: VelloRenderer>(
     renderer: &mut R,
     target: &VelloScene,

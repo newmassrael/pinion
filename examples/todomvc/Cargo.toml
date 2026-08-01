@@ -56,6 +56,9 @@ pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.
 # references `::vello::*` and `::vello::wgpu::*` directly
 # (R46.3.3 fully-qualified codegen path); the `vello_renderer_impl!`
 # macro expansion also names `::vello::Scene` and `::vello::peniko::Color`.
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 # R56.2.a §5.13 §5.38 — `WidgetView::apply_composition` formats the
 # R56.1.g.2 invoke wire-shape `Json{action, data?}` via the
