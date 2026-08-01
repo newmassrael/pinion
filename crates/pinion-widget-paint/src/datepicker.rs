@@ -311,14 +311,18 @@ fn weekday_header_row(tag: &str, theme: &Theme, style: &DatePickerStyle) -> Scen
                 .map(|col| {
                     Scene::Container(
                         ContainerNode::new(vec![Scene::Text(
+                            // R1536 — `Su`..`Sa` is the weekday header's
+                            // CONTENT. It reads as named today only because
+                            // the binding also sets an explicit name; the
+                            // marking made the derivation path dead, which is
+                            // the Band-Aid R51.81's own doc warns about.
                             TextNode::styled(
                                 WEEKDAY_SHORT[col],
                                 Rect::default(),
                                 TextStyle::new()
                                     .with_size_px(style.label_size_px)
                                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-                            )
-                            .with_role(TextRole::Presentational),
+                            ),
                         )])
                         .with_tag(format!("{tag}_wh{col}"))
                         .with_layout(

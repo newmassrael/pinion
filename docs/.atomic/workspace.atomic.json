@@ -79004,6 +79004,56 @@
         "`enrich_names_from_scene` walks the whole scene per node, so the grid's 75 cells are 75 full-tree walks a frame; nobody has measured it and this round made it reach further."
       ]
     },
+    "Round 1536.1": {
+      "decision_summary": "R1536's carry list is closed rather than carried. The operating principle already said only an external dependency justifies a carry, and six rounds running had ignored it — 'honest carry' had become a licence to defer. Two of the six were the dangerous kind: a census not yet run (so the round's claim about the defect's extent was unverified) and a cost this round had just made worse. The census found two more instances of the very defect R1536 fixed, in the grid's own header and in the date picker.",
+      "changes_bullets": [
+        "`TextRole::Presentational` census RUN (21 sites, read not grepped): two marked CONTENT as decoration — the grid's column-header label and the date picker's `Su..Sa` weekday header. Both corrected; the rest (checkbox tick, twisty, star, sort glyph, date arrow) are genuine glyphs.",
+        "`enrich_names_from_scene` indexes the scene ONCE instead of searching it per node — `O(nodes x scene)` to `O(scene + nodes)`. Making the walk succeed is what made the quadratic term real.",
+        "`LayoutStyle::flex_shrink` added and lowered to taffy (CSS / taffy default 1.0, so every pre-R1536 binding lowers bit-identically); the decoration is pinned with it instead of the `min_size` clamp, which is the same only for a fixed square.",
+        "`CellDecoration::Icon { source, meaning }` — Qt's `QIcon` arm, drawn `Fit::Contain` at the same square with the same address / shrink / hit rules, shared through `decoration_layout`.",
+        "`TableData::decoration` — the EAGER `view_table` answers the role too, so the tree no longer holds two cell-paint contracts that disagree about whether it exists.",
+        "`hello-table` consumes the icon arm: two theme-coloured discs registered under R1404 `memory://` sources, no vendored asset; the mark is decorative because it restates its own cell's label."
+      ],
+      "verification_bullets": [
+        "Every R1536 carry is closed; none was deferred. The round ends with carry 0 except nothing — there is no external dependency left open here.",
+        "Census read all 21 `TextRole::Presentational` sites rather than counting greps; the two defects it found were confirmed by probe (`hello-table` 35/36 -> 36/36 named, `hello-datepicker` 41/41 with the marking's derivation path now live rather than masked by an explicit name).",
+        "`flex_shrink` counterfactual: removing it repaints the 10px mark at 6px and fails both the unit test and the demo. The `CellDecoration::Icon` arm's addition broke a consumer's `match` at compile time, which is why the painter reads through `CellDecoration::meaning()`.",
+        "Eager-path counterfactual: a decoration accessor that answers `None` everywhere drops the demo's icon section, and the plain-table tree is byte-shape identical (label alone).",
+        "Local gate: pinion-core 2870, pinion-runtime 474, pinion-widget-paint 764, pinion-a11y 246, 11 example crates, 11 demos, workspace clippy + fmt."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.21"
+      ],
+      "carry_forward_bullets": [
+        "None. Every item this round opened was closed in it; the carry list is empty by intent, not by omission."
+      ],
+      "publishable_decision_summary": "R1536's carry list is closed rather than carried. The operating principle already said only an external dependency justifies a carry, and six rounds running had ignored it — 'honest carry' had become a licence to defer. Two of the six were the dangerous kind: a census not yet run (so the round's claim about the defect's extent was unverified) and a cost this round had just made worse. The census found two more instances of the very defect R1536 fixed, in the grid's own header and in the date picker.",
+      "publishable_changes_bullets": [
+        "`TextRole::Presentational` census RUN (21 sites, read not grepped): two marked CONTENT as decoration — the grid's column-header label and the date picker's `Su..Sa` weekday header. Both corrected; the rest (checkbox tick, twisty, star, sort glyph, date arrow) are genuine glyphs.",
+        "`enrich_names_from_scene` indexes the scene ONCE instead of searching it per node — `O(nodes x scene)` to `O(scene + nodes)`. Making the walk succeed is what made the quadratic term real.",
+        "`LayoutStyle::flex_shrink` added and lowered to taffy (CSS / taffy default 1.0, so every pre-R1536 binding lowers bit-identically); the decoration is pinned with it instead of the `min_size` clamp, which is the same only for a fixed square.",
+        "`CellDecoration::Icon { source, meaning }` — Qt's `QIcon` arm, drawn `Fit::Contain` at the same square with the same address / shrink / hit rules, shared through `decoration_layout`.",
+        "`TableData::decoration` — the EAGER `view_table` answers the role too, so the tree no longer holds two cell-paint contracts that disagree about whether it exists.",
+        "`hello-table` consumes the icon arm: two theme-coloured discs registered under R1404 `memory://` sources, no vendored asset; the mark is decorative because it restates its own cell's label."
+      ],
+      "publishable_verification_bullets": [
+        "Every R1536 carry is closed; none was deferred. The round ends with carry 0 except nothing — there is no external dependency left open here.",
+        "Census read all 21 `TextRole::Presentational` sites rather than counting greps; the two defects it found were confirmed by probe (`hello-table` 35/36 -> 36/36 named, `hello-datepicker` 41/41 with the marking's derivation path now live rather than masked by an explicit name).",
+        "`flex_shrink` counterfactual: removing it repaints the 10px mark at 6px and fails both the unit test and the demo. The `CellDecoration::Icon` arm's addition broke a consumer's `match` at compile time, which is why the painter reads through `CellDecoration::meaning()`.",
+        "Eager-path counterfactual: a decoration accessor that answers `None` everywhere drops the demo's icon section, and the plain-table tree is byte-shape identical (label alone).",
+        "Local gate: pinion-core 2870, pinion-runtime 474, pinion-widget-paint 764, pinion-a11y 246, 11 example crates, 11 demos, workspace clippy + fmt."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.21"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None. Every item this round opened was closed in it; the carry list is empty by intent, not by omission."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -78,8 +78,11 @@ use pinion_core::widgets::table::{
     TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
 };
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
+use pinion_runtime::{DecodedImage, use_image_store};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::table::{TableData, TableSelection, TableStyle, view_table};
+use pinion_widget_paint::table::{
+    CellDecoration, CellIndex, TableData, TableSelection, TableStyle, view_table,
+};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTableRenderer, HelloTableRendererError);
@@ -99,6 +102,62 @@ const PRIMARY_TAG: &str = "table";
 /// Column headers for the fixed dataset (the pinion widget catalog
 /// itself — a self-referential table).
 const HEADERS: [&str; 4] = ["Widget", "Round", "Status", "Role"];
+
+/// R1536 §5.27 — the absolute index of the `Status` column, the one that
+/// answers the `Qt::DecorationRole` with an **icon**.
+const STATUS_COL: usize = 2;
+/// R1536 — side of the registered status icons, in device-independent pixels.
+/// Small on purpose: this is a decoded RGBA buffer, not a file, and the
+/// decoration slot draws it `Fit::Contain` at `TableStyle::decoration_px`.
+const ICON_SIDE: u32 = 12;
+/// R1536 — the R1404 `memory://` sources the two status icons are registered
+/// under. No filesystem, no vendored asset: the binding hands the shell decoded
+/// pixels at boot.
+const ICON_DONE: &str = "memory://status-done";
+const ICON_ACTIVE: &str = "memory://status-active";
+
+/// R1536 — a filled disc of `color` on a transparent field, the minimum honest
+/// status glyph. Built rather than loaded so the example carries no asset (a
+/// vendored icon font is a standing prohibition) and so the demo can assert the
+/// pixels' provenance.
+fn disc_icon(color: pinion_core::style::Color) -> DecodedImage {
+    let r = f64::from(ICON_SIDE) / 2.0;
+    let mut px = Vec::with_capacity((ICON_SIDE * ICON_SIDE * 4) as usize);
+    for y in 0..ICON_SIDE {
+        for x in 0..ICON_SIDE {
+            let (dx, dy) = (f64::from(x) + 0.5 - r, f64::from(y) + 0.5 - r);
+            let inside = dx.mul_add(dx, dy * dy) <= r * r;
+            if inside {
+                px.extend_from_slice(&[color.r, color.g, color.b, 0xff]);
+            } else {
+                px.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+    DecodedImage::from_rgba8(ICON_SIDE, ICON_SIDE, px).expect("a full RGBA buffer")
+}
+
+/// R1536 §5.27 — the grid's `Qt::DecorationRole`, the **icon** arm: a status
+/// disc beside the status word.
+///
+/// `meaning` is empty — DECORATIVE. The icon restates the label in the same
+/// cell, so announcing it would make a screen reader read the status twice;
+/// `alt=""` is the correct markup for exactly this. The peer case, a mark that
+/// carries what no text says, is `hello-virtual-table`'s mark-only column.
+fn cell_decoration(c: CellIndex) -> Option<CellDecoration> {
+    if c.col != STATUS_COL {
+        return None;
+    }
+    let source = if ROWS[c.row][STATUS_COL] == "Done" {
+        ICON_DONE
+    } else {
+        ICON_ACTIVE
+    };
+    Some(CellDecoration::Icon {
+        source: source.to_string(),
+        meaning: String::new(),
+    })
+}
 
 /// Immutable demo dataset: one row per recently-landed catalog widget.
 /// The data is a `const` (the single source of truth) so [`TableState`]
@@ -285,6 +344,19 @@ fn set_col(intro: &mut dyn pinion_core::external::ExternalIntrospect, col: usize
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &TableState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
+    // R1536 — register the two status icons under their `memory://` sources.
+    // Idempotent (`insert` replaces), and cheap: two 12x12 buffers. Done in the
+    // view because the icons are theme-coloured — a boot-time registration
+    // would paint the old palette after a theme change.
+    let store = use_image_store();
+    store.insert(
+        "status-done",
+        &disc_icon(theme.resolve(ColorRole::OnSurfaceMuted)),
+    );
+    store.insert(
+        "status-active",
+        &disc_icon(theme.resolve(ColorRole::Accent)),
+    );
     // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
     // scene-derived focus enumeration so its PRIMARY_TAG is collected.
     let style = TableStyle::m3();
@@ -302,6 +374,8 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
             headers: &HEADERS,
             rows: &rows,
             row_ids: &state.order,
+            // R1536 — Qt `data(index, Qt::DecorationRole)`, the icon arm.
+            decoration: Some(&cell_decoration),
         },
         // Single-row selection only; the spreadsheet cell range selection is
         // the dedicated `hello-cell-select` grid's model (R953 — one selection

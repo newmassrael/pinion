@@ -33,10 +33,12 @@ use std::rc::Rc;
 
 use pinion_core::Scene;
 use pinion_core::composite_tag::{GridSendKey, GridTag};
-use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole};
+use pinion_core::scene::{
+    ContainerNode, ImageNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole,
+};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
-    TextStyle,
+    AlignItems, Border, BoxStyle, Color, Fit, FlexDirection, ImageStyle, JustifyContent,
+    LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::column_widths::{columns_width_before, visible_columns};
@@ -160,7 +162,7 @@ impl Default for TableStyle {
 /// so the paint signature stays under the readable argument budget
 /// (mirror of [`crate::datepicker::DisplayedMonth`]). Cell text is
 /// borrowed: the binding owns an immutable dataset and forwards slices.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct TableData<'a> {
     /// Column header labels; `headers.len()` is the column count.
     pub headers: &'a [&'a str],
@@ -176,6 +178,31 @@ pub struct TableData<'a> {
     /// too-short one) falls back to identity (`row_ids[v] == v`) — the
     /// unsorted R707 behaviour.
     pub row_ids: &'a [usize],
+    /// R1536 §5.27 — the `Qt::DecorationRole` accessor, the eager surface's
+    /// peer of [`GridModel::decoration`]: `decoration(index)` returns the mark
+    /// beside that cell's text, or `None`.
+    ///
+    /// It is an accessor here — not a matrix beside `rows` — because a
+    /// decoration is a per-cell answer and the virtualized grid already asks
+    /// for it that way; two shapes for one role would be the divergence class,
+    /// not a style choice. `None` (the field's `Default`) is every pre-R1536
+    /// caller, painting byte-identically.
+    ///
+    /// Until R1536 this surface answered the role with nothing at all, which
+    /// left two cell-paint contracts in one tree — the shape R1530 left on the
+    /// header axis and R1532 on the delegate axis.
+    pub decoration: Option<&'a dyn Fn(CellIndex) -> Option<CellDecoration>>,
+}
+
+impl core::fmt::Debug for TableData<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TableData")
+            .field("headers", &self.headers)
+            .field("rows", &self.rows)
+            .field("row_ids", &self.row_ids)
+            .field("decoration", &self.decoration.map(|_| "<fn>"))
+            .finish()
+    }
 }
 
 /// R952 §5.38 — the selection inputs for [`view_table`], bundled to keep it
@@ -224,6 +251,41 @@ pub fn row_fill(theme: &Theme, state: RadioState, selected: bool, row_index: usi
     crate::state_layer::state_layer(base, state, theme)
 }
 
+/// R1536 §5.27 — the [`CellDecoration::Icon`] node: the source drawn at the
+/// same square a [`CellDecoration::Swatch`] occupies.
+///
+/// `Fit::Contain` rather than the [`ImageStyle`]
+/// default `Fill`: an icon that is not square must keep its aspect, because a
+/// stretched glyph is a different glyph.
+fn icon_node(source: &str, side: u32, tag: &str) -> Scene {
+    Scene::Image(
+        ImageNode::styled(
+            source.to_string(),
+            Rect::default(),
+            ImageStyle::default().with_fit(Fit::Contain),
+        )
+        .with_tag(tag.to_string())
+        .with_layout(decoration_layout(side)),
+    )
+}
+
+/// R1536 §5.27 — the layout every decoration node takes, whichever
+/// [`CellDecoration`] arm produced it.
+///
+/// One function because the three rules are the contract, not per-arm taste:
+/// the declared square; **`flex-shrink: 0`**, so a decoration keeps its size in
+/// a tight cell and the *text* is what gives way (Qt draws at `iconSize` and
+/// elides the label — measured before this: a 10px swatch painted 6px in a 75px
+/// column); and **pointer-transparency**, so the click target stays the cell
+/// even though the mark carries a tag (independent axes — `pinion_overlay`'s
+/// focus ring is both).
+fn decoration_layout(side: u32) -> LayoutStyle {
+    LayoutStyle::new()
+        .with_size(Size::px(side, side))
+        .with_flex_shrink(0.0)
+        .with_pointer_transparent(true)
+}
+
 /// R1535 §5.27 — the [`CellDecoration::Swatch`] node: a filled square of
 /// [`TableStyle::decoration_px`] a side, laid out before the cell's label.
 ///
@@ -239,20 +301,7 @@ fn swatch_node(color: Color, side: u32, tag: &str) -> Scene {
         ContainerNode::new(Vec::new())
             .with_tag(tag.to_string())
             .with_style(BoxStyle::filled(color).with_corner_radius(SWATCH_RADIUS))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_size(Size::px(side, side))
-                    // R1536 — a decoration keeps its declared size in a tight
-                    // cell; the *text* is what gives way, which is what Qt does
-                    // (the icon is drawn at `iconSize` and the label elides).
-                    // Without this the flex pass shrinks the mark against its
-                    // sibling label — measured at a 75px column: a 10px swatch
-                    // painted 6px. `min_size` rather than a `flex-shrink: 0`
-                    // the substrate does not have; for a fixed square the
-                    // clamp is the same one CSS `min-width` gives.
-                    .with_min_size(Size::px(side, side))
-                    .with_pointer_transparent(true),
-            ),
+            .with_layout(decoration_layout(side)),
     )
 }
 
@@ -406,16 +455,17 @@ fn header_cell(
     } else {
         width
     };
-    let label_node = Scene::Text(
-        TextNode::styled(
-            label.to_string(),
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(style.header_size_px)
-                .with_fg(fg),
-        )
-        .with_role(TextRole::Presentational),
-    );
+    // R1536 — a column header's label is the header's CONTENT, not decoration,
+    // by the same rule the data cell's is. The sort glyph beside it IS
+    // decoration and keeps its presentational role, which is exactly the
+    // distinction `TextRole` was introduced (R51.81) to draw.
+    let label_node = Scene::Text(TextNode::styled(
+        label.to_string(),
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(style.header_size_px)
+            .with_fg(fg),
+    ));
     let mut inner_children = vec![label_node];
     // R886.1 — active-column decision + glyph through the two SSOTs
     // (`col_sort_dir` / `glyph::sort_glyph`); this site was one of the
@@ -849,6 +899,14 @@ pub fn view_table(
         let fill = row_fill(theme, state, selected, visual);
         let fg = row_fg(theme, state);
         let row_tag = GridTag::data_row(tag, data_id);
+        let decorations: Vec<Option<CellDecoration>> = data.decoration.map_or_else(
+            || vec![None; widths.len()],
+            |ask| {
+                (0..widths.len())
+                    .map(|col| ask(CellIndex { row: data_id, col }))
+                    .collect()
+            },
+        );
         children.push(data_row(
             tag,
             data_id,
@@ -866,9 +924,12 @@ pub fn view_table(
                 // Recorded as carry: this leaves two cell-paint surfaces in
                 // one tree, the shape R1530 left on the header axis.
                 painters: &[],
-                // R1535 — likewise no decoration model on the eager surface:
-                // every cell answers the role with `None`.
-                decorations: &[],
+                // R1536 — the eager surface answers the decoration role too,
+                // through `TableData::decoration`. Asked once per painted cell
+                // of this row, the same rule the virtualized grid follows, so
+                // the two surfaces cannot disagree about when the role is
+                // consulted.
+                decorations: &decorations,
                 theme,
             },
             style,
@@ -1121,6 +1182,22 @@ pub type CellPainter<'a> = &'a dyn Fn(&CellRender<'_>) -> Scene;
 pub enum CellDecoration {
     /// Qt's `QColor` decoration — a filled square in the cell's leading edge,
     /// [`TableStyle::decoration_px`] a side.
+    /// Qt's `QIcon` / `QPixmap` decoration — an image drawn at the same square,
+    /// resolved through the shell's image cache
+    /// like any other [`Scene::Image`] source (a filesystem path, or the R1404
+    /// `memory://<key>` scheme for a producer-registered RGBA buffer).
+    ///
+    /// The peer arm, not a replacement: Qt's decoration role accepts a colour
+    /// **or** an icon, and a grid wants both — a layer colour is a swatch, a
+    /// file type is an icon. `meaning` is read by exactly the same rule as
+    /// [`Self::Swatch::meaning`]; an icon that restates its cell's text is as
+    /// decorative as a colour that does.
+    Icon {
+        /// The image source, e.g. `"memory://type-folder"`.
+        source: String,
+        /// What the icon means — see [`Self::Swatch::meaning`].
+        meaning: String,
+    },
     Swatch {
         /// The ink.
         color: Color,
@@ -1141,6 +1218,22 @@ pub enum CellDecoration {
         /// announce) would be wrong for half its consumers.
         meaning: String,
     },
+}
+
+impl CellDecoration {
+    /// R1536 — what this mark means, whichever arm it is. Empty is the
+    /// decorative answer (HTML `alt=""`); see [`Self::Swatch::meaning`].
+    ///
+    /// Exists so the painter reads the meaning without matching the arm: the
+    /// meaning is a property of the ROLE's answer, not of how it is drawn, and
+    /// a `match` at the read site would have to grow an arm every time the
+    /// variant list does — which is exactly how one arm gets forgotten.
+    #[must_use]
+    pub fn meaning(&self) -> &str {
+        match self {
+            Self::Swatch { meaning, .. } | Self::Icon { meaning, .. } => meaning,
+        }
+    }
 }
 
 /// R1532 §5.27 — the built-in painter: a left-aligned label in the row's
@@ -1164,17 +1257,18 @@ pub enum CellDecoration {
 pub fn text_cell_painter(c: &CellRender<'_>) -> Scene {
     let mut children = Vec::with_capacity(3);
     let mut meaning = "";
-    if let Some(CellDecoration::Swatch { color, meaning: m }) = c.decoration {
-        children.push(swatch_node(
-            *color,
-            c.style.decoration_px,
-            &GridTag::cell_decoration(c.root, c.index.row, c.index.col),
-        ));
-        // The gap is a spacer rather than padding on the swatch so the
+    if let Some(decoration) = c.decoration {
+        let tag = GridTag::cell_decoration(c.root, c.index.row, c.index.col);
+        let side = c.style.decoration_px;
+        children.push(match decoration {
+            CellDecoration::Swatch { color, .. } => swatch_node(*color, side, &tag),
+            CellDecoration::Icon { source, .. } => icon_node(source, side, &tag),
+        });
+        // The gap is a spacer rather than padding on the mark so the
         // undecorated cell keeps its node shape unchanged — see `pad_node`,
         // the same "emit nothing when it would be a zero-width box" rule.
         children.extend(pad_node(c.style.decoration_gap_px, c.height));
-        meaning = m.as_str();
+        meaning = decoration.meaning();
     }
     // R1536 §5.40 — the cell's label is the cell's **content**, so it is NOT
     // presentational. `TextRole::Presentational` exists (R51.81) for decoration
@@ -2106,6 +2200,7 @@ mod tests {
                     headers: &headers,
                     rows: &rows,
                     row_ids: &[],
+                    decoration: None,
                 },
                 TableSelection {
                     rows: &[],
@@ -2172,6 +2267,7 @@ mod tests {
                     headers: &headers,
                     rows: &rows,
                     row_ids: &[],
+                    decoration: None,
                 },
                 TableSelection {
                     rows: &[],
@@ -2198,6 +2294,7 @@ mod tests {
                     headers: &headers,
                     rows: &rows,
                     row_ids: &[],
+                    decoration: None,
                 },
                 TableSelection {
                     rows: &[],
@@ -2238,6 +2335,7 @@ mod tests {
                     headers: &headers,
                     rows: &reordered,
                     row_ids: &[2, 0, 1],
+                    decoration: None,
                 },
                 TableSelection {
                     rows: &[],
@@ -2991,6 +3089,162 @@ mod tests {
         );
     }
 
+    /// R1536 — the `QIcon` arm paints an image at the decoration square, with
+    /// the same address, meaning and layout rules the colour arm has.
+    ///
+    /// Both halves matter: an icon that lost the shared rules would be a second
+    /// decoration contract, which is what having two arms is supposed to avoid.
+    #[test]
+    fn r1536_the_icon_arm_paints_an_image() {
+        let side = TableStyle::m3().decoration_px;
+        let node = icon_node("memory://k", side, "t_deco0_1");
+        let Scene::Image(img) = &node else {
+            panic!("the icon arm is an Image node, not a filled box")
+        };
+        assert_eq!(img.source, "memory://k", "the model's source reaches paint");
+        assert_eq!(
+            img.style.fit,
+            Fit::Contain,
+            "aspect preserved — a stretched glyph is a different glyph",
+        );
+        assert_eq!(img.tag.as_deref(), Some("t_deco0_1"), "same address rule");
+        // `abs() < f32::EPSILON` rather than `== 0.0`: the value is a
+        // literal here, but clippy rejects float equality on principle and the
+        // principle is right — a computed shrink factor would compare wrong.
+        assert!(
+            img.layout.flex_shrink.abs() < f32::EPSILON,
+            "same no-shrink rule"
+        );
+        assert!(img.layout.pointer_transparent, "same hit-transparency rule");
+        let px = pinion_core::style::SizeValue::Px(side);
+        assert_eq!(img.layout.size.width, px, "same declared square");
+        // And the meaning accessor answers for both arms, so the painter never
+        // has to match on which one it got.
+        assert_eq!(
+            CellDecoration::Icon {
+                source: "s".into(),
+                meaning: "Folder".into()
+            }
+            .meaning(),
+            "Folder",
+        );
+        assert_eq!(
+            CellDecoration::Swatch {
+                color: Color::rgb(0, 0, 0),
+                meaning: String::new()
+            }
+            .meaning(),
+            "",
+        );
+    }
+
+    /// R1536 — the EAGER `view_table` answers the decoration role too, so the
+    /// tree no longer holds two cell-paint contracts that disagree about
+    /// whether the role exists.
+    #[test]
+    fn r1536_the_eager_table_answers_the_decoration_role() {
+        let (headers, rows) = data();
+        let theme = light();
+        let ask = |c: CellIndex| {
+            (c.col == 1).then(|| CellDecoration::Swatch {
+                color: Color::rgb(u8::try_from(c.row).unwrap_or(0), 0, 0),
+                meaning: "Marked".to_string(),
+            })
+        };
+        let render = |deco: Option<&dyn Fn(CellIndex) -> Option<CellDecoration>>| {
+            Owner::new().run(|| {
+                view_table(
+                    "table",
+                    TableData {
+                        headers: &headers,
+                        rows: &rows,
+                        row_ids: &[],
+                        decoration: deco,
+                    },
+                    TableSelection {
+                        rows: &[],
+                        cells: None,
+                    },
+                    &all_idle(),
+                    None,
+                    &theme,
+                    &TableStyle::m3(),
+                )
+            })
+        };
+        let decorated = render(Some(&ask));
+        assert_eq!(
+            cell_swatch(&decorated, "table", 0, 1),
+            Some(Color::rgb(0, 0, 0)),
+            "the eager grid paints the model's mark, at the same address",
+        );
+        assert_eq!(
+            cell_swatch(&decorated, "table", 1, 1),
+            Some(Color::rgb(1, 0, 0)),
+            "and per ROW, the axis that makes it a role",
+        );
+        assert_eq!(
+            cell_swatch(&decorated, "table", 0, 0),
+            None,
+            "an undecorated column has no mark",
+        );
+        // Derived from the fixture, not spelled: the claim is that the meaning
+        // precedes THIS cell's own text, and a literal would state the fixture.
+        assert_eq!(
+            cell_access_name(&decorated, "table#0_1").as_deref(),
+            Some(format!("Marked {}", rows[0][1]).as_str()),
+            "and the meaning joins the accessible name here too",
+        );
+        // The negative control: `None` is the pre-R1536 tree.
+        let plain = render(None);
+        assert_eq!(cell_swatch(&plain, "table", 0, 1), None);
+        assert_eq!(cell_children(&plain, "table#0_1"), 1, "label alone");
+    }
+
+    /// R1536 — a data row is named from its cells, and that is intended.
+    ///
+    /// R1536 made the derivation reach inside a scroll, which gave every
+    /// `AccessNode` in a grid a name — including the `row` containers, which had
+    /// none before. That is a behaviour change nothing asked for, so it is
+    /// stated here rather than left to be discovered: WAI-ARIA 1.2 lists `row`
+    /// among the roles that support **name from content**, so a row taking its
+    /// cells' text is conformant, not a leak. pinion's name-from-content is the
+    /// FIRST text leaf rather than the concatenation of all of them (the
+    /// long-standing `walk_for_text` rule), so the name is the row's leading
+    /// cell — which for a data grid is the row header column.
+    ///
+    /// The load-bearing half is the second assertion: the row is named from a
+    /// CELL and not from the grid or a neighbour.
+    #[test]
+    fn r1536_a_row_is_named_from_its_leading_cell() {
+        let scene = run_vtable(200, 0);
+        let row = find_tagged(&scene, "vtbl_row0").expect("row 0 is in the tree");
+        assert!(
+            row.aria_label.is_none(),
+            "no override — the name comes from content, the ARIA rung this row \
+             is entitled to",
+        );
+        let first_text = |c: &ContainerNode| -> Option<String> {
+            fn dfs(s: &Scene) -> Option<String> {
+                match s {
+                    Scene::Text(t) => Some(t.content.clone()),
+                    Scene::Container(c) => c.children.iter().find_map(dfs),
+                    Scene::Scroll(s) => dfs(&s.content),
+                    _ => None,
+                }
+            }
+            c.children.iter().find_map(dfs)
+        };
+        let want = find_tagged(&scene, "vtbl#0_0")
+            .and_then(first_text)
+            .expect("the leading cell has text");
+        assert_eq!(
+            first_text(row).as_deref(),
+            Some(want.as_str()),
+            "the row names itself from its LEADING CELL's text",
+        );
+    }
+
     /// R1536 — the mark keeps its declared size when the cell is tight.
     ///
     /// Found by the demo, not by a unit test: at a 75px column the flex pass
@@ -3006,11 +3260,10 @@ mod tests {
         };
         let px = pinion_core::style::SizeValue::Px(side);
         assert_eq!(mark.layout.size.width, px, "declared width");
-        assert_eq!(
-            mark.layout.min_size.width, px,
-            "and a MINIMUM equal to it, so the flex pass cannot take it back",
+        assert!(
+            mark.layout.flex_shrink.abs() < f32::EPSILON,
+            "and a flex-shrink of 0, so the flex pass cannot take it back",
         );
-        assert_eq!(mark.layout.min_size.height, px, "on both axes");
     }
 
     /// A mark that **restates the cell's text** is decorative: it contributes

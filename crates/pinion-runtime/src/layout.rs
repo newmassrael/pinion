@@ -1052,6 +1052,9 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         height: to_dimension(layout.min_size.height),
     };
     s.flex_grow = layout.flex_grow;
+    // (R1536 §5.21) `flex-shrink`. Defaults to `1.0` on both sides, so every
+    // pre-R1536 binding lowers bit-identically.
+    s.flex_shrink = layout.flex_shrink;
     // (R684 §5.21) `LayoutStyle::flex_basis` lowering. `None` maps to
     // `Dimension::Auto` (taffy's default — intrinsic content drives
     // the basis); `Some(v)` reuses `to_dimension` so `SizeValue::Px`,

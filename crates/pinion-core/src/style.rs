@@ -2741,6 +2741,19 @@ pub struct LayoutStyle {
     /// [`AlignItems::Stretch`] still fills it.
     pub min_size: Size,
     pub flex_grow: f32,
+    /// (R1536 §5.21) Flex `flex-shrink` — how much of a deficit this child
+    /// absorbs when the line overflows. `1.0` (the default, and taffy's and
+    /// CSS's) lets the child give up space; `0.0` pins it at its
+    /// [`Self::size`].
+    ///
+    /// The peer [`Self::flex_grow`] has had since R684, and its absence was
+    /// paid for: a fixed-size decoration in a tight row (a grid cell's colour
+    /// swatch) was silently shrunk by the flex pass — measured, a 10px mark
+    /// painted 6px — and the only way to pin it was [`Self::min_size`], which
+    /// clamps the same way for a fixed square and NOT in general (a percentage
+    /// or intrinsic child has a minimum that is not its size). Mirrors CSS
+    /// `flex-shrink` and Slint's `horizontal-stretch` inverse.
+    pub flex_shrink: f32,
     pub padding: crate::scene::Rect,
     pub margin: crate::scene::Rect,
     /// (R55.D.6 §5.45 §5.21) Absolute positioning override. When
@@ -2935,6 +2948,8 @@ impl LayoutStyle {
             // the CSS automatic flex minimum (pre-R1086 behaviour).
             min_size: Size::auto(),
             flex_grow: 0.0,
+            // CSS / taffy default: a child gives up space under pressure.
+            flex_shrink: 1.0,
             padding: crate::scene::Rect::new(0, 0, 0, 0),
             margin: crate::scene::Rect::new(0, 0, 0, 0),
             // (R55.D.6 §5.45 §5.21) `None` = normal flow, default.
@@ -3077,6 +3092,15 @@ impl LayoutStyle {
     #[must_use]
     pub const fn with_min_size(mut self, min_size: Size) -> Self {
         self.min_size = min_size;
+        self
+    }
+
+    /// (R1536 §5.21) Builder: flex-shrink factor. `0.0` pins the child at its
+    /// [`Self::size`] when the line overflows; `1.0` (the default) lets it give
+    /// up space. See [`Self::flex_shrink`].
+    #[must_use]
+    pub const fn with_flex_shrink(mut self, shrink: f32) -> Self {
+        self.flex_shrink = shrink;
         self
     }
 

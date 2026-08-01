@@ -537,7 +537,9 @@ mod tests {
         let theme = pinion_core::theme::Theme::light();
         let mark = |row: usize, col: usize| cell_decoration(CellIndex { row, col }, &theme);
         let meaning_of = |row: usize, col: usize| {
-            mark(row, col).map(|CellDecoration::Swatch { meaning, .. }| meaning)
+            // R1536 — through the role's own accessor, so a new arm cannot
+            // silently leave this read site behind.
+            mark(row, col).map(|d| d.meaning().to_string())
         };
         // The decorative arm: a mark beside text that already says it.
         for row in 0..STATUS_KINDS {

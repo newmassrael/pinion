@@ -291,5 +291,56 @@ def body() -> None:
             )
 
 
+def icon_arm() -> None:
+    """(G) The `QIcon` arm, driven on `hello-table` (the eager grid).
+
+    Two things at once, both of which R1536 added: the decoration role reaches
+    the EAGER `view_table` (until now only the virtualized grid answered it, so
+    the tree held two cell-paint contracts that disagreed about whether the
+    role exists), and the icon arm paints a `Scene::Image` from a `memory://`
+    source rather than a filled box.
+    """
+    with RpcSubprocess("hello-table", boot_grace=1.5) as tf:
+        for _ in range(3):
+            tf.tick(0.016)
+        res = tf.snapshot(source="paint", viewport=(560, 420))
+        assert res, "paint snapshot returned no result"
+        ns: list = []
+        walk(res, ns)
+        marks = [n for n in ns if str(n.get("tag") or "").startswith("table_deco")]
+        assert marks, "the eager grid paints decorations at their own addresses"
+        rows = len({str(n["tag"]).removeprefix("table_deco").split("_")[0] for n in marks})
+        assert_eq(len(marks), rows, "one mark per row, in the one decorated column")
+        for m in marks:
+            assert_eq(m.get("type"), "Image", f"{m['tag']} is an image, not a box")
+            assert str(m.get("source") or "").startswith("memory://"), (
+                f"{m['tag']} draws a producer-registered buffer, not a file: "
+                f"{m.get('source')!r}"
+            )
+            rect = m.get("rect") or {}
+            assert_eq(rect.get("w"), DECORATION_PX, f"{m['tag']} width")
+            assert_eq(rect.get("h"), DECORATION_PX, f"{m['tag']} height")
+        # The icon restates its cell's label, so it is decorative: the cell's
+        # name must not contain it twice.
+        a11y = access(tf)
+        cells = {n["tag"]: n for n in a11y if n.get("role") == "gridcell"}
+        assert cells, "the eager grid still has gridcells"
+        unnamed = [t for t, n in cells.items() if n.get("name") is None]
+        assert not unnamed, f"every eager cell is named too: {unnamed[:5]}"
+        status = cells["table#0_2"].get("name") or ""
+        assert status.count("Done") == 1, (
+            f"the status is announced ONCE — the icon restates the label, so it "
+            f"is decorative (alt=\"\"), got {status!r}"
+        )
+
+
+def all_sections() -> None:
+    """`run_demo` never returns (R1527 — it exits so a sweep cannot mistake a
+    failing demo for a passing one), so the two apps this round touches are
+    driven from ONE body rather than two calls."""
+    body()
+    icon_arm()
+
+
 if __name__ == "__main__":
-    run_demo("R1536 §5.27 §5.40 — a decoration states what it means", body)
+    run_demo("R1536 §5.27 §5.40 — a decoration states what it means", all_sections)

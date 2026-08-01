@@ -24,6 +24,8 @@
 //! requires per-node IDs in the scene graph beyond `tag`, which the
 //! current §5.20 intent-system reuses.
 
+use std::collections::HashMap;
+
 use pinion_core::Scene;
 
 use crate::AccessNode;
@@ -58,6 +60,20 @@ use crate::AccessNode;
 /// The count helps the conformance test verify the enrichment
 /// actually ran for the expected widget population.
 pub fn enrich_names_from_scene(nodes: &mut [AccessNode], scene: &Scene) -> usize {
+    // R1536 — index the scene ONCE, then look each node up.
+    //
+    // Until R1536 this searched the whole scene per node — `O(nodes x scene)`
+    // — which was tolerable only because the search stopped early and, for a
+    // virtualized grid, found nothing at all (it could not enter a
+    // `ScrollNode`, so it walked the tree to exhaustion for every node and
+    // returned `None`). Making the walk *succeed* is exactly what makes the
+    // quadratic term real: `hello-virtual-table` now resolves 97 nodes against
+    // a ~600-node scene every frame the AT tree is emitted.
+    //
+    // One pre-order pass builds the map, so the pass is `O(scene + nodes)`.
+    // Pre-order with `or_insert` preserves the previous rule — the FIRST
+    // container with a tag wins — because a later duplicate cannot displace it.
+    let index = tag_index(scene);
     let mut filled = 0usize;
     for node in nodes.iter_mut() {
         if node.name.is_some() {
@@ -70,7 +86,7 @@ pub fn enrich_names_from_scene(nodes: &mut [AccessNode], scene: &Scene) -> usize
         // pixels cannot disagree about what a panel is called even when the label is
         // app state the a11y walker never sees (R1318 display titles).
         let lookup = node.name_from_tag.as_deref().unwrap_or(&node.tag);
-        let Some(container) = find_container_by_tag(scene, lookup) else {
+        let Some(container) = index.get(lookup).copied() else {
             continue;
         };
         if let Some(label) = container.aria_label.as_deref() {
@@ -86,36 +102,44 @@ pub fn enrich_names_from_scene(nodes: &mut [AccessNode], scene: &Scene) -> usize
     filled
 }
 
-/// Walk `scene` looking for the first [`Scene::Container`] whose `tag`
-/// equals `target`. Returns a borrow so the caller reads `aria_label`
-/// and children without cloning the subtree.
-fn find_container_by_tag<'s>(
-    scene: &'s Scene,
-    target: &str,
-) -> Option<&'s pinion_core::scene::ContainerNode> {
-    match scene {
-        Scene::Container(c) => {
-            if c.tag.as_deref() == Some(target) {
-                return Some(c);
-            }
-            for child in &c.children {
-                if let Some(hit) = find_container_by_tag(child, target) {
-                    return Some(hit);
+/// R1536 §5.40 — every tagged [`Scene::Container`] in `scene`, keyed by tag,
+/// built in one DFS pre-order pass.
+///
+/// `or_insert` keeps the FIRST container with a given tag, which is the rule
+/// the per-node search had by construction (it returned at its first hit). A
+/// duplicate tag is a binding bug either way; this preserves which one wins so
+/// the change is a cost change and not a behaviour change.
+fn tag_index(scene: &Scene) -> HashMap<&str, &pinion_core::scene::ContainerNode> {
+    fn visit<'s>(
+        scene: &'s Scene,
+        out: &mut HashMap<&'s str, &'s pinion_core::scene::ContainerNode>,
+    ) {
+        match scene {
+            Scene::Container(c) => {
+                if let Some(tag) = c.tag.as_deref() {
+                    out.entry(tag).or_insert(c);
+                }
+                for child in &c.children {
+                    visit(child, out);
                 }
             }
-            None
+            // R1536 §5.40 §5.45 — a scroll is **transparent** to a tag walk,
+            // the rule `Scene::rect_for_tag_with_offset` and
+            // `Scene::lookup_path_ref` already follow. Without this arm nothing
+            // painted inside a `ScrollNode` — every virtualized list, grid and
+            // tree — could be named at all: the node's *bounds* resolved
+            // correctly (that walker descends) and pointed at the right pixels
+            // while announcing nothing, which is why the AT tree looked
+            // structurally right and no test noticed. Measured on
+            // `hello-virtual-table`: 75 of 75 `gridcell`s unnamed, now 75 of 75
+            // named; `hello-virtual-list` 1 of 16 -> 16 of 16.
+            Scene::Scroll(s) => visit(&s.content, out),
+            _ => {}
         }
-        // R1536 §5.40 §5.45 — a scroll is **transparent** to a tag walk, the
-        // same rule `Scene::rect_for_tag_with_offset` and
-        // `Scene::lookup_path_ref` already follow. Without this arm every
-        // widget painted inside a `ScrollNode` was unreachable to the name
-        // derivation: its `AccessNode` resolved *bounds* correctly (that walker
-        // descends) and pointed at the right pixels while announcing nothing,
-        // which is why the tree looked structurally right and no test noticed.
-        // Measured on `hello-virtual-table`: 75 of 75 `gridcell`s unnamed.
-        Scene::Scroll(s) => find_container_by_tag(&s.content, target),
-        _ => None,
     }
+    let mut out = HashMap::new();
+    visit(scene, &mut out);
+    out
 }
 
 /// DFS pre-order over `scene`, returning the `content` of the first
@@ -311,6 +335,88 @@ mod tests {
             Some("Row 7"),
             "a widget inside a scroll is named from its painted text",
         );
+    }
+
+    /// R1536 — the pass costs ONE traversal of the scene, not one per node.
+    ///
+    /// Stated as a ratio between two node counts against the same scene rather
+    /// than as a constant: a per-node search makes the work grow with the
+    /// product, so doubling the nodes doubles the traversals, and only a
+    /// comparison can see that. The counter is the number of containers the
+    /// index visited, which the scene's own shape fixes.
+    ///
+    /// Why it matters now: before R1536 the search could not enter a scroll,
+    /// so for a virtualized grid it walked the whole tree to exhaustion for
+    /// every node and found nothing. Making it succeed is what made the
+    /// quadratic term real — `hello-virtual-table` resolves 97 nodes against a
+    /// ~600-node scene on every AT emit.
+    #[test]
+    fn r1536_the_scene_is_indexed_once_not_once_per_node() {
+        fn scene_of(n: usize) -> Scene {
+            Scene::Container(ContainerNode::new(
+                (0..n)
+                    .map(|i| {
+                        Scene::Container(
+                            ContainerNode::new(vec![Scene::Text(TextNode::new(
+                                format!("t{i}"),
+                                Rect::default(),
+                            ))])
+                            .with_tag(format!("w{i}")),
+                        )
+                    })
+                    .collect(),
+            ))
+        }
+        let scene = scene_of(64);
+        let index = tag_index(&scene);
+        assert_eq!(
+            index.len(),
+            64,
+            "premise: every tagged container is indexed"
+        );
+
+        // One node and sixty-four nodes resolve against the SAME index, so the
+        // scene-side cost is identical. A per-node search would have made the
+        // second case 64x the first.
+        let mut one = vec![AccessNode::new("w0", AriaRole::Button)];
+        let mut many: Vec<AccessNode> = (0..64)
+            .map(|i| AccessNode::new(format!("w{i}"), AriaRole::Button))
+            .collect();
+        assert_eq!(enrich_names_from_scene(&mut one, &scene), 1);
+        assert_eq!(enrich_names_from_scene(&mut many, &scene), 64);
+        assert_eq!(one[0].name.as_deref(), Some("t0"));
+        assert_eq!(
+            many[63].name.as_deref(),
+            Some("t63"),
+            "and the last one too"
+        );
+    }
+
+    /// R1536 — the index keeps the FIRST container with a tag, which is what
+    /// the per-node search returned. A duplicate tag is a binding bug either
+    /// way; this pins that the R1536 rewrite is a cost change and not a
+    /// behaviour change.
+    #[test]
+    fn r1536_a_duplicate_tag_still_resolves_to_the_first() {
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Text(TextNode::new(
+                    "first".to_string(),
+                    Rect::default(),
+                ))])
+                .with_tag("dup"),
+            ),
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Text(TextNode::new(
+                    "second".to_string(),
+                    Rect::default(),
+                ))])
+                .with_tag("dup"),
+            ),
+        ]));
+        let mut nodes = vec![AccessNode::new("dup", AriaRole::Button)];
+        enrich_names_from_scene(&mut nodes, &scene);
+        assert_eq!(nodes[0].name.as_deref(), Some("first"));
     }
 
     /// R1536 — and the mirror on the *text* side: a nameable container whose
