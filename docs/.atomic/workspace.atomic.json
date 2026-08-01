@@ -78626,6 +78626,68 @@
         "A log axis snapping outward to whole decades can reserve a mostly empty decade: the 1600ms spike opens 1k..10k. This is the same trade nice_ticks already makes for round labels, and it is stated in the demo rather than tuned away by picking friendlier data."
       ]
     },
+    "Round 1531": {
+      "decision_summary": "The paint replays a glyph draw list it does not rebuild. The §5.36 cache held what parley SHAPED, not what a painter DRAWS, and those differ: putting a shaped layout on screen means walking lines/items/GlyphRun and running positioned_glyphs(), which accumulates every glyph's pen advance. That walk is a pure function of the layout, and it ran on every paint of every text leaf. Measured at 1200 leaves it cost 1489 us a frame against 480 us for encoding a pre-derived list — 3.1x, on exactly the frames a §5.16 fragment-cache miss produces and a §5.36 shape-cache hit hides. The list now lives in the entry that already owns the layout, which is the canonical shape: Skia's SkTextBlob, Qt's QGlyphRun.",
+      "changes_bullets": [
+        "`pinion_text::glyph_run::PositionedRun` is the draw list a painter replays: font, size, brush, layout-absolute glyphs, and each decoration resolved (font-metric fallback applied, parley's baseline-upward offset flipped into screen space). Renderer-agnostic by construction — `pinion-text` names no rasteriser.",
+        "`LayoutCache` entries become `CachedLayout { layout, runs: Option<..> }` and gain `positioned_runs()`. Same key, same entry, same eviction as the layout: the draw list is the second half of one derivation, not a second cache. Derivation is LAZY because this cache has callers that shape to MEASURE and never paint (text metrics, caret geometry, the TUI cell-grid measure arm).",
+        "`paint_text` and `draw_cell_glyph` replay the list instead of walking `lines() -> items() -> GlyphRun -> positioned_glyphs()` on every paint. Production census: zero glyph-run walks remain outside the derivation itself.",
+        "New counter `LayoutCache::run_builds()`, carried by `TextCacheStats` and published on `scene/text_cache_stats`. Nothing else distinguishes a replayed draw list from one rebuilt identically — same pixels, 3.1x apart in cost, and `shapes` is still across exactly those frames by construction.",
+        "New demo r1531_glyph_runs_replayed on hello-grid-nav (121 assertions, sections A-G) with a negative control (new content must shape AND derive) and a pixel witness (the replayed frame is byte-identical to the one that derived the list)."
+      ],
+      "verification_bullets": [
+        "Measured before and after on the same box, same probe, same steady state (release, 1200 text leaves, both caches warm; the \"before\" run is the stashed pre-change tree, not an estimate): steady-state text paint 1489.3 us -> 479.7 us, 3.1x, 1.33 us -> 0.40 us per leaf.",
+        "The round's first measurement was contaminated and was rejected: 1552 us with `shapes=3008`, `run_builds=1808` for 1200 distinct labels — the frames were taken while R1521's capacity was still growing. Warming to steady state first gives +0 shapes and +0 run_builds over the measured frames.",
+        "Interleaved decomposition that motivated the design: walking parley and encoding as we go 1596 us, encoding a pre-derived list 555 us, the walk measured standalone 709 us, cache lookups alone 84 us. The walk costs more interleaved than alone.",
+        "Four counterfactuals, one at a time, each rebuilt and run. Swap x/y in the derivation: exactly the parley-equivalence test fails. Derive on every call: the derived-once test and the runtime re-encode test fail, and the demo fails at section E. Paint locally instead of asking the cache: both runtime tests fail and the demo fails at section A. Drop the decoration sign flip: exactly the decoration test fails.",
+        "Measured on hello-grid-nav: one ArrowDown to a NEW row re-encodes 10 fragments, shapes 2 layouts and derives 1 draw list; stepping back over rows selected once before re-encodes 10 fragments, shapes 0 and derives 0.",
+        "Local gates: pinion-core 2848 tests, pinion-text 1019, pinion-runtime 592, pinion-rpc 80, pinion-shell and pinion-tui all pass; clippy -D pedantic clean over all six; cargo fmt clean. Demos r1531, r1527, r1521, r1505, r1506 (live pixels), r975 and r1402 (the TextGrid glyph path) all pass.",
+        "Doc-to-code ratio on the round's added Rust: 0.79x, inside the R661 1.5x baseline."
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.16",
+        "5.7",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The vello encode remains the dominant term of a cache-MISS frame and is untouched: it is inside vello, so the only way to not pay it is to not call it, which is what the R1520/R1527 fragment cache does.",
+        "`run_builds` climbing is now the wire signal for the R1521 debt that the selection COLOUR is part of `LayoutKey`: one ArrowDown derives a list for a label whose text did not change. Measured cost here is 1 derivation against 10 re-encoded fragments, and this counter is the instrument that debt lacked.",
+        "The eager `view_table` path and every other caller that only measures still shape through `layout_with_runs`, which is correct, but nothing asserts that a MEASURING caller stays lazy beyond the one unit test — a future caller could take the draw list by reflex.",
+        "`PositionedRun` holds an owned `Vec<PositionedGlyph>` per run, ~12 bytes a glyph. Measured LayoutCache entries were ~3.1 kB before this; the added term was not re-measured, so `MAX_CAPACITY`'s stated ~26 MB is now an understatement of unknown size.",
+        "The derivation runs on the first PAINT of an entry rather than on its shape, so the first frame that shows new content pays both. That is the right place for it, but it means a scroll into cold content has a cost profile this round did not measure."
+      ],
+      "publishable_decision_summary": "The paint replays a glyph draw list it does not rebuild. The §5.36 cache held what parley SHAPED, not what a painter DRAWS, and those differ: putting a shaped layout on screen means walking lines/items/GlyphRun and running positioned_glyphs(), which accumulates every glyph's pen advance. That walk is a pure function of the layout, and it ran on every paint of every text leaf. Measured at 1200 leaves it cost 1489 us a frame against 480 us for encoding a pre-derived list — 3.1x, on exactly the frames a §5.16 fragment-cache miss produces and a §5.36 shape-cache hit hides. The list now lives in the entry that already owns the layout, which is the canonical shape: Skia's SkTextBlob, Qt's QGlyphRun.",
+      "publishable_changes_bullets": [
+        "`pinion_text::glyph_run::PositionedRun` is the draw list a painter replays: font, size, brush, layout-absolute glyphs, and each decoration resolved (font-metric fallback applied, parley's baseline-upward offset flipped into screen space). Renderer-agnostic by construction — `pinion-text` names no rasteriser.",
+        "`LayoutCache` entries become `CachedLayout { layout, runs: Option<..> }` and gain `positioned_runs()`. Same key, same entry, same eviction as the layout: the draw list is the second half of one derivation, not a second cache. Derivation is LAZY because this cache has callers that shape to MEASURE and never paint (text metrics, caret geometry, the TUI cell-grid measure arm).",
+        "`paint_text` and `draw_cell_glyph` replay the list instead of walking `lines() -> items() -> GlyphRun -> positioned_glyphs()` on every paint. Production census: zero glyph-run walks remain outside the derivation itself.",
+        "New counter `LayoutCache::run_builds()`, carried by `TextCacheStats` and published on `scene/text_cache_stats`. Nothing else distinguishes a replayed draw list from one rebuilt identically — same pixels, 3.1x apart in cost, and `shapes` is still across exactly those frames by construction.",
+        "New demo r1531_glyph_runs_replayed on hello-grid-nav (121 assertions, sections A-G) with a negative control (new content must shape AND derive) and a pixel witness (the replayed frame is byte-identical to the one that derived the list)."
+      ],
+      "publishable_verification_bullets": [
+        "Measured before and after on the same box, same probe, same steady state (release, 1200 text leaves, both caches warm; the \"before\" run is the stashed pre-change tree, not an estimate): steady-state text paint 1489.3 us -> 479.7 us, 3.1x, 1.33 us -> 0.40 us per leaf.",
+        "The round's first measurement was contaminated and was rejected: 1552 us with `shapes=3008`, `run_builds=1808` for 1200 distinct labels — the frames were taken while R1521's capacity was still growing. Warming to steady state first gives +0 shapes and +0 run_builds over the measured frames.",
+        "Interleaved decomposition that motivated the design: walking parley and encoding as we go 1596 us, encoding a pre-derived list 555 us, the walk measured standalone 709 us, cache lookups alone 84 us. The walk costs more interleaved than alone.",
+        "Four counterfactuals, one at a time, each rebuilt and run. Swap x/y in the derivation: exactly the parley-equivalence test fails. Derive on every call: the derived-once test and the runtime re-encode test fail, and the demo fails at section E. Paint locally instead of asking the cache: both runtime tests fail and the demo fails at section A. Drop the decoration sign flip: exactly the decoration test fails.",
+        "Measured on hello-grid-nav: one ArrowDown to a NEW row re-encodes 10 fragments, shapes 2 layouts and derives 1 draw list; stepping back over rows selected once before re-encodes 10 fragments, shapes 0 and derives 0.",
+        "Local gates: pinion-core 2848 tests, pinion-text 1019, pinion-runtime 592, pinion-rpc 80, pinion-shell and pinion-tui all pass; clippy -D pedantic clean over all six; cargo fmt clean. Demos r1531, r1527, r1521, r1505, r1506 (live pixels), r975 and r1402 (the TextGrid glyph path) all pass.",
+        "Doc-to-code ratio on the round's added Rust: 0.79x, inside the R661 1.5x baseline."
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.16",
+        "5.7",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The vello encode remains the dominant term of a cache-MISS frame and is untouched: it is inside vello, so the only way to not pay it is to not call it, which is what the R1520/R1527 fragment cache does.",
+        "`run_builds` climbing is now the wire signal for the R1521 debt that the selection COLOUR is part of `LayoutKey`: one ArrowDown derives a list for a label whose text did not change. Measured cost here is 1 derivation against 10 re-encoded fragments, and this counter is the instrument that debt lacked.",
+        "The eager `view_table` path and every other caller that only measures still shape through `layout_with_runs`, which is correct, but nothing asserts that a MEASURING caller stays lazy beyond the one unit test — a future caller could take the draw list by reflex.",
+        "`PositionedRun` holds an owned `Vec<PositionedGlyph>` per run, ~12 bytes a glyph. Measured LayoutCache entries were ~3.1 kB before this; the added term was not re-measured, so `MAX_CAPACITY`'s stated ~26 MB is now an understatement of unknown size.",
+        "The derivation runs on the first PAINT of an entry rather than on its shape, so the first frame that shows new content pays both. That is the right place for it, but it means a scroll into cold content has a cost profile this round did not measure."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -55,7 +55,7 @@ use pinion_core::term_grid::{
     CellWidth, ColorTarget, CursorShape, GridBuffer, Palette, TermCell, TermColor, UnderlineStyle,
 };
 use pinion_text::LayoutCache;
-use pinion_text::parley::PositionedLayoutItem;
+use pinion_text::PositionedRun;
 use vello::Glyph;
 use vello::Scene as VelloScene;
 use vello::kurbo::{
@@ -1684,29 +1684,34 @@ pub fn draw_atlased_glyphs_styled(
     }
 }
 
-/// R991.1 §5.16 — emit one parley [`GlyphRun`](pinion_text::parley::GlyphRun)'s
-/// positioned glyphs into the Vello scene at `transform` in `brush`. The
-/// shared glyph-run emit extracted from [`paint_text`] (per-run styled brush +
-/// decorations) and [`paint_text_grid`] (per-cell solid brush). Decorations
-/// stay in the caller because the two callers derive them differently:
-/// [`paint_text`] reads parley's per-run font-metric underline / strikethrough
-/// (spanning the glyph-run advance), while [`paint_text_grid`] paints SGR
-/// rules spanning the full cell at cell-geometry offsets — both through the
-/// shared [`stroke_hrule`] primitive.
-fn draw_glyph_run(
+/// R991.1 §5.16 R1531 §5.36 — emit one [`PositionedRun`]'s glyphs into the
+/// Vello scene at `transform` in `brush`. The shared glyph emit behind
+/// [`paint_text`] (per-run styled brush + decorations) and [`paint_text_grid`]
+/// (per-cell solid brush). Decorations stay in the caller because the two
+/// derive them differently: [`paint_text`] strokes the run's own font-metric
+/// underline / strikethrough spanning its advance, while [`paint_text_grid`]
+/// paints SGR rules spanning the full cell at cell-geometry offsets — both
+/// through the shared [`stroke_hrule`] primitive.
+///
+/// R1531 — the run arrives already positioned. This used to take a parley
+/// `GlyphRun` and call `positioned_glyphs()`, re-deriving the pen positions on
+/// every paint of unchanged text; the derivation now happens once per shaped
+/// layout inside the cache that holds it. Mapping to `vello::Glyph` is a field
+/// copy over a slice, which is what makes the renderer-agnostic
+/// [`PositionedGlyph`](pinion_text::PositionedGlyph) free at this boundary.
+fn draw_positioned_run(
     out: &mut VelloScene,
-    run: &pinion_text::parley::GlyphRun<'_, Color>,
+    run: &PositionedRun,
     transform: Affine,
     brush: PenikoColor,
 ) {
-    let parley_run = run.run();
-    out.draw_glyphs(parley_run.font())
+    out.draw_glyphs(&run.font)
         .transform(transform)
-        .font_size(parley_run.font_size())
+        .font_size(run.font_size)
         .brush(brush)
         .draw(
             Fill::NonZero,
-            run.positioned_glyphs().map(|g| Glyph {
+            run.glyphs.iter().map(|g| Glyph {
                 id: g.id,
                 x: g.x,
                 y: g.y,
@@ -1861,7 +1866,7 @@ fn draw_cell_glyph(
     glyph_transform: Affine,
     brush: PenikoColor,
 ) {
-    let layout = if cell.attrs.bold || cell.attrs.italic {
+    let runs = if cell.attrs.bold || cell.attrs.italic {
         let mut styled = base_style.clone();
         if cell.attrs.bold {
             styled.font_weight = FontWeight::BOLD;
@@ -1869,16 +1874,15 @@ fn draw_cell_glyph(
         if cell.attrs.italic {
             styled.font_style = FontStyle::Italic;
         }
-        cache.layout(&cell.cluster, &styled, None)
+        cache.positioned_runs(&cell.cluster, &styled, &[], None)
     } else {
-        cache.layout(&cell.cluster, base_style, None)
+        cache.positioned_runs(&cell.cluster, base_style, &[], None)
     };
-    for line in layout.lines() {
-        for item in line.items() {
-            if let PositionedLayoutItem::GlyphRun(run) = item {
-                draw_glyph_run(out, &run, glyph_transform, brush);
-            }
-        }
+    // The cell's ink colour comes from the terminal palette (SGR + reverse +
+    // dim, resolved by the caller), not from the shaped style, so the run's
+    // own `brush` is ignored here — see [`PositionedRun::brush`].
+    for run in runs {
+        draw_positioned_run(out, run, glyph_transform, brush);
     }
 }
 
@@ -3529,7 +3533,10 @@ fn paint_text(
     // the single-style fast path (byte-identical to the pre-R713
     // `cache.layout` call). The per-run brush already flows here: the
     // glyph-run loop below reads `run.style().brush` per parley run.
-    let layout = cache.layout_with_runs(&t.content, &t.style, &t.runs, max_width);
+    // R1531 §5.36 — the draw list, not the layout: the walk over parley's runs
+    // is a pure function of the shaped layout, and this leaf's is derived once
+    // and replayed on every frame that re-encodes it.
+    let runs = cache.positioned_runs(&t.content, &t.style, &t.runs, max_width);
     // R51.188 §5.45 R55.E.1 — compose the inherited transform (e.g.
     // a parent `Scene::Scroll`'s shifted child transform) with the
     // text's own `(t.rect.x, t.rect.y)` translation. Pre-R51.188
@@ -3559,72 +3566,44 @@ fn paint_text(
         );
         out.push_clip_layer(Fill::NonZero, parent_transform, &clip_rect);
     }
-    for line in layout.lines() {
-        for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(run) = item else {
-                continue;
-            };
-            draw_glyph_run(out, &run, transform, to_peniko(run.style().brush));
-            // R47.6 — decoration strokes. parley emits `Some(Decoration)`
-            // on `style().underline / strikethrough` whenever the source
-            // TextStyle enabled them (see `LayoutCache::shape`'s
-            // `StyleProperty::Underline / Strikethrough` push). The
-            // offset / size are font-metric-defaulted (parley fills the
-            // Option with the run metric values); the brush defaults to
-            // the run's foreground brush.
-            paint_decorations(out, &run, transform);
-        }
+    for run in runs {
+        draw_positioned_run(out, run, transform, to_peniko(run.brush));
+        // R47.6 — decoration strokes. parley emits `Some(Decoration)`
+        // on a run's `underline / strikethrough` whenever the source
+        // TextStyle enabled them (see `LayoutCache::shape`'s
+        // `StyleProperty::Underline / Strikethrough` push). R1531 resolves
+        // the font-metric fallback and the baseline-relative sign into a
+        // `RunDecoration` at derivation time, so this is a stroke.
+        paint_decorations(out, run, transform);
     }
     if needs_clip {
         out.pop_layer();
     }
 }
 
-/// R47.6 — emit underline + strikethrough strokes for one parley
-/// [`GlyphRun`](pinion_text::parley::GlyphRun). Each decoration is a horizontal line at the
-/// font-metric-derived offset spanning the run advance; the brush is
-/// the run's foreground colour (matching parley's `Decoration.brush`
-/// default).
-fn paint_decorations(
-    out: &mut VelloScene,
-    run: &pinion_text::parley::GlyphRun<'_, Color>,
-    transform: Affine,
-) {
-    let parley_run = run.run();
-    let metrics = parley_run.metrics();
-    let baseline = run.baseline();
-    let start = f64::from(run.offset());
-    let end = f64::from(run.offset() + run.advance());
-    if let Some(deco) = run.style().underline.as_ref() {
-        let offset = deco.offset.unwrap_or(metrics.underline_offset);
-        let size = deco.size.unwrap_or(metrics.underline_size);
-        // parley's underline offset is measured upward from the baseline
-        // (positive = above); on screen Y the underline sits below the
-        // baseline, so subtract. The Y advances downward in our coord
-        // system, hence the `- offset`.
-        let y = f64::from(baseline - offset);
+/// R47.6 R1531 — emit underline + strikethrough strokes for one
+/// [`PositionedRun`]. Each decoration is a horizontal line spanning the run's
+/// advance at its resolved y, in its own brush (which parley defaults to the
+/// run's foreground).
+///
+/// The font-metric fallback and the baseline-relative sign flip that used to
+/// live here moved into [`pinion_text::glyph_run`] with the rest of the
+/// derivation — they are properties of the shaped run, not of the Vello
+/// backend, and deriving them here re-ran them on every frame.
+fn paint_decorations(out: &mut VelloScene, run: &PositionedRun, transform: Affine) {
+    let (start, end) = (f64::from(run.start_x), f64::from(run.end_x));
+    for deco in [run.underline.as_ref(), run.strikethrough.as_ref()]
+        .into_iter()
+        .flatten()
+    {
         stroke_hrule(
             out,
             transform,
             to_peniko(deco.brush),
             start,
             end,
-            y,
-            f64::from(size),
-        );
-    }
-    if let Some(deco) = run.style().strikethrough.as_ref() {
-        let offset = deco.offset.unwrap_or(metrics.strikethrough_offset);
-        let size = deco.size.unwrap_or(metrics.strikethrough_size);
-        let y = f64::from(baseline - offset);
-        stroke_hrule(
-            out,
-            transform,
-            to_peniko(deco.brush),
-            start,
-            end,
-            y,
-            f64::from(size),
+            f64::from(deco.y),
+            f64::from(deco.size),
         );
     }
 }
@@ -5516,6 +5495,83 @@ mod tests {
             1,
             "leaf fragments store no edge set (pre-R1527.1: one each)"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // R1531 §5.36 — the paint replays a draw list it does not rebuild.
+    // ---------------------------------------------------------------
+
+    /// A text row grid: the shape a Model/View binding paints, and the shape
+    /// whose re-encode cost R1531 is about. `sel` marks one row changed so a
+    /// frame can move a selection without changing a single string.
+    fn text_row_grid(rows: u32, sel: Option<u32>) -> Scene {
+        let children = (0..rows)
+            .map(|i| {
+                let fill = if Some(i) == sel {
+                    Color::rgb(0, 0, 255)
+                } else {
+                    Color::rgb(255, 255, 255)
+                };
+                Scene::Container(
+                    ContainerNode::new(vec![
+                        Scene::Box(BoxNode::filled(Rect::new(0, i * 20, 400, 20), fill)),
+                        Scene::Text(TextNode::new(
+                            format!("Row label {i}"),
+                            Rect::new(4, i * 20, 300, 20),
+                        )),
+                    ])
+                    .with_tag(format!("row_{i}")),
+                )
+            })
+            .collect();
+        Scene::Container(ContainerNode::new(children).with_tag("grid_root"))
+    }
+
+    /// The frame this round exists for: a §5.16 fragment-cache MISS that is
+    /// not a §5.36 shape-cache miss.
+    ///
+    /// Moving a selection changes one row's fill, so that row and its root
+    /// re-encode — every glyph in them goes back into the Vello stream — while
+    /// not one string changed. Before R1531 that frame re-walked parley for
+    /// every text leaf it re-encoded, at 3.1x the cost of the encode it fed
+    /// (measured, 1,200 leaves: 1,489 µs -> 480 µs).
+    ///
+    /// `shapes` alone cannot state this: it was already still across such a
+    /// frame, which is precisely why the cost was invisible.
+    #[test]
+    fn r1531_a_reencoding_frame_rebuilds_no_draw_list() {
+        let (mut frag, mut text) = (FragmentCache::new(), LayoutCache::new());
+        paint_frame(&text_row_grid(8, None), &mut frag, &mut text);
+        let (shapes, builds) = (text.shapes(), text.run_builds());
+        assert_eq!(
+            (shapes, builds),
+            (8, 8),
+            "premise: eight distinct labels, each shaped once and derived once",
+        );
+
+        // Move the selection down the grid. Every frame misses on the changed
+        // row and on the root above it; not one label changed.
+        for sel in 0..8 {
+            let (_, misses, _) = paint_frame(&text_row_grid(8, Some(sel)), &mut frag, &mut text);
+            assert!(misses > 0, "premise: frame {sel} really did re-encode");
+        }
+        assert_eq!(
+            text.run_builds(),
+            builds,
+            "eight re-encoding frames rebuilt no draw list — the walk is a \
+             function of the layout, and no layout changed",
+        );
+        assert_eq!(text.shapes(), shapes, "and nothing re-shaped either");
+    }
+
+    /// The counter reaches the wire unchanged, so an agent reading
+    /// `scene/text_cache_stats` sees what the in-process assertion above sees.
+    #[test]
+    fn r1531_the_snapshot_carries_the_derivation_count() {
+        let (mut frag, mut text) = (FragmentCache::new(), LayoutCache::new());
+        paint_frame(&text_row_grid(3, None), &mut frag, &mut text);
+        assert_eq!(text.stats().run_builds, text.run_builds());
+        assert_eq!(text.stats().run_builds, 3);
     }
 
     /// R1527.1 — the idle fast path skips the trace on a frame that

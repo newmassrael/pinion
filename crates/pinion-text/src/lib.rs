@@ -29,6 +29,7 @@ mod cache;
 mod caret;
 mod font_metrics;
 pub mod font_source;
+pub mod glyph_run;
 mod layout;
 
 pub use cache::LayoutCache;
@@ -38,6 +39,7 @@ pub use caret::{
     logical_line_span, selection_rects_for_range, visual_line_metrics,
 };
 pub use font_metrics::{LayoutCacheMonospaceMetrics, LayoutCacheTextMetrics};
+pub use glyph_run::{PositionedGlyph, PositionedRun, RunDecoration};
 pub use layout::Layout;
 
 // Re-export parley so consumers (`paint_adapter::Text` arm, R47.3+

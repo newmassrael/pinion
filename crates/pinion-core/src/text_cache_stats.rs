@@ -67,6 +67,21 @@ pub struct TextCacheStats {
     /// A miss costs ~18.5 us against ~118 ns for a hit (measured, release,
     /// short labels), so this is the field that turns into milliseconds.
     pub shapes: u64,
+    /// R1531 — cumulative derivations of a shaped layout's **draw list**: its
+    /// positioned glyph runs with every decoration resolved.
+    ///
+    /// The second half of the shaping cost, and the one that used to be paid
+    /// on every paint rather than every shape. Deriving it costs 2.9x the
+    /// encode it feeds (measured, 1,200 leaves: 1,596 µs of walk-and-encode
+    /// against 555 µs of encode-from-list), so a scene that re-encodes without
+    /// re-shaping — an ordinary keystroke or scroll, where the §5.16 fragment
+    /// cache misses and the shape cache hits — is exactly where this number
+    /// must stay still.
+    ///
+    /// Read it beside `shapes`: both climbing means the keys are churning;
+    /// this one climbing alone means a caller is asking for draw lists it
+    /// discards.
+    pub run_builds: u64,
     /// Cached layouts held right now.
     pub entries: u64,
     /// Current capacity in entries. Rises toward [`Self::max_capacity`] as the

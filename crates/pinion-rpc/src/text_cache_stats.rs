@@ -54,6 +54,7 @@
 //!   "id": 1,
 //!   "result": {
 //!     "shapes": 1200,
+//!     "run_builds": 1200,
 //!     "entries": 1200,
 //!     "capacity": 2048,
 //!     "max_capacity": 8192,
@@ -101,6 +102,16 @@ pub enum TextCacheStatsError {
 pub struct TextCacheStatsOutcome {
     /// Cumulative shaper runs (cache misses) over the cache's lifetime.
     pub shapes: u64,
+    /// R1531 — cumulative derivations of a shaped layout's positioned-glyph
+    /// draw list.
+    ///
+    /// The counter that distinguishes a frame which **replayed** its text from
+    /// one which rebuilt an identical draw list — indistinguishable in pixels,
+    /// 2.9x apart in cost, and invisible to every other field here. `shapes`
+    /// cannot answer it: a frame that re-encodes without re-shaping (a
+    /// keystroke, a scroll — the §5.16 fragment cache missing while the shape
+    /// cache hits) leaves `shapes` still by construction.
+    pub run_builds: u64,
     /// Cached layouts held right now.
     pub entries: u64,
     /// Current capacity in entries.
@@ -131,6 +142,7 @@ pub fn text_cache_stats(
     };
     Ok(TextCacheStatsOutcome {
         shapes: stats.shapes,
+        run_builds: stats.run_builds,
         entries: stats.entries,
         capacity: stats.capacity,
         max_capacity: stats.max_capacity,
@@ -154,6 +166,7 @@ mod tests {
     fn r1521_counters_mirror_input() {
         let stats = TextCacheStats {
             shapes: 1200,
+            run_builds: 900,
             entries: 1200,
             capacity: 2048,
             max_capacity: 8192,
@@ -162,6 +175,11 @@ mod tests {
         };
         let out = text_cache_stats(Some(stats)).unwrap();
         assert_eq!(out.shapes, 1200);
+        assert_eq!(
+            out.run_builds, 900,
+            "the two counters are independent — 300 of those layouts were \
+             shaped to be measured and never painted",
+        );
         assert_eq!(out.entries, 1200);
         assert_eq!(out.capacity, 2048);
         assert_eq!(out.max_capacity, 8192);
@@ -182,6 +200,7 @@ mod tests {
     fn r1521_at_ceiling_is_derived_not_carried() {
         let stats = TextCacheStats {
             shapes: 9000,
+            run_builds: 9000,
             entries: 8192,
             capacity: 8192,
             max_capacity: 8192,

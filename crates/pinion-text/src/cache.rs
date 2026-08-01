@@ -22,6 +22,7 @@
 //! earned" section: a fixed LRU bound smaller than a cyclic working set
 //! has a 0% hit rate, which is the one failure mode this cache can have.
 
+use crate::glyph_run::{self, PositionedRun};
 use crate::layout::Layout;
 use lru::LruCache;
 use parley::fontique::Blob;
@@ -107,6 +108,21 @@ struct LayoutKey {
     style: TextStyle,
     runs: Vec<StyleRun>,
     max_width: Option<u32>,
+}
+
+/// R1531 §5.36 — one cache entry: the shaped layout, plus the draw list
+/// derived from it once a painter asks for one.
+///
+/// `runs` is `None` until [`LayoutCache::positioned_runs`] is first called for
+/// this key, and that laziness is load-bearing rather than an optimisation
+/// reflex: this cache has callers that shape in order to **measure**
+/// ([`crate::LayoutCacheTextMetrics`], the caret geometry in
+/// [`crate::caret_rect_for_byte_offset`], `pinion_tui`'s cell-grid measure arm)
+/// and never paint what they shaped. Deriving eagerly on every miss would bill
+/// them for a list nobody replays.
+struct CachedLayout {
+    layout: Layout,
+    runs: Option<Vec<PositionedRun>>,
 }
 
 /// LRU-bounded cache over [`Layout`] values keyed by
@@ -204,7 +220,7 @@ struct LayoutKey {
 /// fixed-ceiling behaviour back, and it is now a decision rather than a
 /// default.
 pub struct LayoutCache {
-    inner: LruCache<LayoutKey, Layout>,
+    inner: LruCache<LayoutKey, CachedLayout>,
     /// R1521 — hashes of keys this cache evicted. A miss whose key hashes
     /// into here is the witness that [`Self::inner`] is too small for the
     /// caller's working set; see the type doc.
@@ -261,6 +277,17 @@ pub struct LayoutCache {
     /// working set larger than the cache's capacity re-shapes on every pass,
     /// and nothing else in the surface makes that visible.
     shapes: u64,
+    /// R1531 §5.36 — how many times a shaped layout's draw list has been
+    /// derived. Reported by [`Self::run_builds`].
+    ///
+    /// The counter that states the whole of R1531 as an assertion: the walk
+    /// over parley's runs is a pure function of the layout, so a scene that
+    /// paints the same text on 60 consecutive frames must move this by the
+    /// number of *distinct* layouts, not by 60 times that. Nothing else
+    /// distinguishes "the draw list was replayed" from "the draw list was
+    /// rebuilt and looked the same" — both paint identical pixels, and one of
+    /// them costs 2.9x (see [`crate::glyph_run`]).
+    run_builds: u64,
     /// R1448 — set when `font_cx` is built; `NotProbed` until then.
     font_status: SystemFontStatus,
     /// R1448 — families made selectable by [`Self::register_font_data`], in
@@ -271,6 +298,32 @@ pub struct LayoutCache {
     /// [`Self::set_default_font_family`].
     default_family: Option<PinFontFamily>,
     layout_cx: LayoutContext<Color>,
+}
+
+/// R1531 §5.36 — derive `key`'s draw list if it has none, counting the
+/// derivation, and return it.
+///
+/// A free function over the two fields rather than a `&mut self` method, the
+/// same shape (and for the same reason) as [`ensure_font_context`] below: the
+/// counter and the entry are disjoint parts of the cache, and a method taking
+/// `&mut self` would borrow both through one reference, so incrementing the
+/// counter would conflict with the borrow that returns the list.
+///
+/// `key` must already be present — [`LayoutCache::ensure_entry`] is the
+/// caller's precondition.
+fn ensure_runs<'a>(
+    inner: &'a mut LruCache<LayoutKey, CachedLayout>,
+    run_builds: &mut u64,
+    key: &LayoutKey,
+) -> &'a [PositionedRun] {
+    let entry = inner
+        .get_mut(key)
+        .expect("entry just inserted on cache miss");
+    if entry.runs.is_none() {
+        *run_builds += 1;
+        entry.runs = Some(glyph_run::positioned_runs(&entry.layout));
+    }
+    entry.runs.as_deref().expect("derived above if absent")
 }
 
 /// R1448 §5.36 — build `slot`'s [`FontContext`] if absent, recording the probe
@@ -349,6 +402,7 @@ impl LayoutCache {
             font_cx: None,
             font_scans: 0,
             shapes: 0,
+            run_builds: 0,
             font_status: SystemFontStatus::NotProbed,
             app_families: Vec::new(),
             default_family: None,
@@ -404,25 +458,85 @@ impl LayoutCache {
             runs: runs.to_vec(),
             max_width,
         };
-        if !self.inner.contains(&key) {
+        self.ensure_entry(&key, text, style, runs, max_width);
+        &self
+            .inner
+            .get(&key)
+            .expect("entry just inserted on cache miss")
+            .layout
+    }
+
+    /// R1531 §5.36 — the **draw list** for `text`: its shaped glyph runs,
+    /// positioned, with every decoration resolved. What a painter replays.
+    ///
+    /// Same key, same entry and same eviction as [`Self::layout_with_runs`] —
+    /// this is the second half of one derivation, not a second cache. Derived
+    /// on the first call for an entry and reused by every call after, which is
+    /// what [`Self::run_builds`] reports.
+    ///
+    /// A painter should prefer this to walking [`Self::layout_with_runs`]'s
+    /// [`Layout`] itself: the walk it replaces is 2.9x the cost of the encode
+    /// it feeds (measured — see [`crate::glyph_run`]), and re-running it per
+    /// frame produces a list identical to the one already held.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice — same `LruCache` invariant as
+    /// [`Self::layout`].
+    pub fn positioned_runs(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> &[PositionedRun] {
+        let key = LayoutKey {
+            text: text.to_owned(),
+            style: style.clone(),
+            runs: runs.to_vec(),
+            max_width,
+        };
+        self.ensure_entry(&key, text, style, runs, max_width);
+        ensure_runs(&mut self.inner, &mut self.run_builds, &key)
+    }
+
+    /// R1531 §5.36 — put `key`'s entry in the cache, shaping on a miss.
+    ///
+    /// The miss path shared by [`Self::layout_with_runs`] and
+    /// [`Self::positioned_runs`]. It is one function rather than two because
+    /// the growth rule below is stated once: a second copy would be a second
+    /// place for the ghost bookkeeping to drift.
+    ///
+    /// It returns nothing, and that is the point — a caller that got the entry
+    /// back would hold a borrow of the whole cache, which is exactly what
+    /// [`Self::positioned_runs`] cannot have while it counts a derivation.
+    /// Each caller takes the borrow it needs afterwards, at the cost of one
+    /// extra hash on the hit path and none on the miss path.
+    fn ensure_entry(
+        &mut self,
+        key: &LayoutKey,
+        text: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) {
+        if !self.inner.contains(key) {
             // R1521 §5.36 — the witness. This key missing is ordinary; this
             // key missing *after this cache evicted it* means the working set
             // did not fit, because the caller came back for something the
             // capacity forced out. Popping it also retires the evidence, so
             // one eviction can only justify one growth.
-            if self.ghosts.pop(&ghost_hash(&key)).is_some() {
+            if self.ghosts.pop(&ghost_hash(key)).is_some() {
                 self.grow();
             }
             let layout = self.shape(text, style, runs, max_width);
             // `push` reports what left. Reached only on a miss, so a returned
             // pair is always an eviction rather than a same-key replacement.
-            if let Some((evicted, _)) = self.inner.push(key.clone(), layout) {
+            let entry = CachedLayout { layout, runs: None };
+            if let Some((evicted, _)) = self.inner.push(key.clone(), entry) {
                 self.ghosts.put(ghost_hash(&evicted), ());
             }
         }
-        self.inner
-            .get(&key)
-            .expect("entry just inserted on cache miss")
     }
 
     /// R1521 §5.36 — double the capacity, bounded by [`Self::max_capacity`].
@@ -540,6 +654,21 @@ impl LayoutCache {
         self.shapes
     }
 
+    /// R1531 §5.36 — how many times a shaped layout's draw list has been
+    /// derived by [`Self::positioned_runs`].
+    ///
+    /// Bounded above by [`Self::shapes`] plus the entries a caller measured
+    /// before painting, and in a steady-state frame it should not move at all:
+    /// the list is a pure function of a layout that did not change. A profiler
+    /// seeing it climb frame after frame is seeing the same defect
+    /// [`Self::shapes`] climbing means, one derivation later — either the
+    /// working set does not fit, or the *keys* are churning (the classic case
+    /// being a colour crossfade, which is part of the cache key today).
+    #[must_use]
+    pub fn run_builds(&self) -> u64 {
+        self.run_builds
+    }
+
     /// R1521 §5.36 — the cache's current capacity in entries.
     ///
     /// Starts at what the constructor was given and rises toward
@@ -573,6 +702,7 @@ impl LayoutCache {
     pub fn stats(&self) -> TextCacheStats {
         TextCacheStats {
             shapes: self.shapes,
+            run_builds: self.run_builds,
             entries: self.inner.len() as u64,
             capacity: self.inner.cap().get() as u64,
             max_capacity: self.max_capacity.get() as u64,
@@ -1059,6 +1189,212 @@ mod tests {
         let mut s = TextStyle::new();
         s.font_size_px = size;
         s
+    }
+
+    // ---------------------------------------------------------------
+    // R1531 §5.36 — the draw list is derived once per shaped layout.
+    // ---------------------------------------------------------------
+
+    /// The whole of R1531 as an assertion: the walk over parley's runs is a
+    /// pure function of the layout, so painting the same text ten times must
+    /// run it once.
+    ///
+    /// A count, not a flag, for the reason `shapes` is a count: the defect
+    /// this replaces did not fail to derive, it derived every time, and only a
+    /// number separates "derived once" from "derived ten times identically".
+    /// The two produce the same pixels.
+    #[test]
+    fn r1531_the_draw_list_is_derived_once_and_replayed() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        for _ in 0..10 {
+            let runs = cache.positioned_runs("Row label", &st, &[], None);
+            assert!(!runs.is_empty(), "the text shaped to at least one run");
+        }
+        assert_eq!(
+            cache.run_builds(),
+            1,
+            "ten paints of unchanged text derive one draw list",
+        );
+        assert_eq!(cache.shapes(), 1, "and shape it once, as they always did");
+    }
+
+    /// The laziness is load-bearing, not a reflex: this cache has callers that
+    /// shape in order to *measure* and never paint what they shaped
+    /// ([`crate::LayoutCacheTextMetrics`], the caret geometry, `pinion_tui`'s
+    /// cell-grid measure arm). Deriving on the miss would bill them for a list
+    /// nobody replays.
+    #[test]
+    fn r1531_a_layout_that_is_only_measured_derives_no_draw_list() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        for _ in 0..10 {
+            let _ = cache.layout("Row label", &st, None);
+        }
+        assert_eq!(cache.shapes(), 1, "premise: it shaped, and cached");
+        assert_eq!(
+            cache.run_builds(),
+            0,
+            "a caller that never painted paid for no draw list",
+        );
+        // And asking for one afterwards derives it from the layout already
+        // held, rather than re-shaping.
+        let _ = cache.positioned_runs("Row label", &st, &[], None);
+        assert_eq!((cache.shapes(), cache.run_builds()), (1, 1));
+    }
+
+    /// The draw list shares its entry's key, so changed text derives again —
+    /// the property that makes it correct rather than merely cheap.
+    #[test]
+    fn r1531_changed_text_derives_its_own_draw_list() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        let first: Vec<u32> = cache
+            .positioned_runs("AAAA", &st, &[], None)
+            .iter()
+            .flat_map(|r| r.glyphs.iter().map(|g| g.id))
+            .collect();
+        let second: Vec<u32> = cache
+            .positioned_runs("BBBB", &st, &[], None)
+            .iter()
+            .flat_map(|r| r.glyphs.iter().map(|g| g.id))
+            .collect();
+        assert_eq!(cache.run_builds(), 2, "two texts, two draw lists");
+        assert_ne!(
+            first, second,
+            "and the second is the second text's glyphs, not the first's",
+        );
+    }
+
+    /// The draw list shares its entry's *lifetime* too: evicting the layout
+    /// evicts the list, and the entry that comes back derives again.
+    ///
+    /// Discriminating because a list held in a side table keyed the same way
+    /// would pass every assertion above and leak here — it would answer from a
+    /// map the LRU no longer bounds.
+    #[test]
+    fn r1531_an_evicted_entry_derives_again_when_it_returns() {
+        let one = NonZeroUsize::new(1).expect("1 is non-zero");
+        // Pinned capacity: the adaptive growth of R1521 exists to STOP this
+        // cycle from evicting, and here the eviction is the subject.
+        let mut cache = LayoutCache::with_max_capacity(one, one);
+        let st = style(16);
+        for _ in 0..3 {
+            let _ = cache.positioned_runs("AAAA", &st, &[], None);
+            let _ = cache.positioned_runs("BBBB", &st, &[], None);
+        }
+        assert_eq!(
+            cache.run_builds(),
+            6,
+            "each key evicts the other, so every ask is a fresh entry and a \
+             fresh draw list — a list outliving its layout would report 2",
+        );
+        assert_eq!(cache.shapes(), 6, "and the shaper ran the same number");
+    }
+
+    /// The derivation is *correct*, checked against an independent observation
+    /// of the same layout rather than against itself: every glyph id and
+    /// position the cached list carries is the one parley's own walk yields.
+    ///
+    /// This is the assertion that would have caught a transcription slip in
+    /// the derivation — a swapped `x`/`y`, a dropped run, a glyph list built
+    /// from `glyphs()` (run-relative) instead of `positioned_glyphs()`
+    /// (layout-absolute). Counting derivations cannot see any of those.
+    #[test]
+    fn r1531_the_draw_list_is_what_parley_positions() {
+        use parley::PositionedLayoutItem;
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        let text = "Row label 42 value";
+        let derived: Vec<(u32, f32, f32, f32)> = cache
+            .positioned_runs(text, &st, &[], None)
+            .iter()
+            .flat_map(|r| {
+                r.glyphs
+                    .iter()
+                    .map(|g| (g.id, g.x, g.y, r.font_size))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        let layout = cache.layout(text, &st, None);
+        let mut walked: Vec<(u32, f32, f32, f32)> = Vec::new();
+        for line in layout.lines() {
+            for item in line.items() {
+                if let PositionedLayoutItem::GlyphRun(run) = item {
+                    let size = run.run().font_size();
+                    walked.extend(run.positioned_glyphs().map(|g| (g.id, g.x, g.y, size)));
+                }
+            }
+        }
+        assert!(!walked.is_empty(), "premise: the text shaped to glyphs");
+        assert_eq!(
+            derived, walked,
+            "the cached draw list is the walk it replaces, glyph for glyph",
+        );
+    }
+
+    /// A styled run's own brush survives into the draw list, which is what
+    /// multi-colour text paints. The base run's brush is a distinct value in
+    /// the same list — one layout, two brushes.
+    #[test]
+    fn r1531_each_run_carries_its_own_brush() {
+        let mut cache = LayoutCache::new();
+        let base = TextStyle::new()
+            .with_size_px(16)
+            .with_fg(Color::rgb(0, 0, 0));
+        let red = TextStyle::new()
+            .with_size_px(16)
+            .with_fg(Color::rgb(255, 0, 0));
+        let runs = vec![StyleRun::new(0, 1, red.clone())];
+        let brushes: Vec<Color> = cache
+            .positioned_runs("AB", &base, &runs, None)
+            .iter()
+            .map(|r| r.brush)
+            .collect();
+        assert!(
+            brushes.contains(&red.fg_color),
+            "the styled run: {brushes:?}"
+        );
+        assert!(
+            brushes.contains(&base.fg_color),
+            "the base run: {brushes:?}"
+        );
+    }
+
+    /// A decoration is resolved at derivation time — the font-metric fallback
+    /// applied and parley's baseline-upward offset flipped into screen space.
+    ///
+    /// Both were painter-side arithmetic before R1531, re-run every frame. The
+    /// assertion is the sign: an underline sits *below* its baseline, so a
+    /// derivation that forgot the flip would place it above and this is what
+    /// says so.
+    #[test]
+    fn r1531_a_decoration_is_resolved_against_its_font_metrics() {
+        let mut cache = LayoutCache::new();
+        let mut st = style(16);
+        st.decoration.underline = true;
+        let baselines: Vec<f32> = {
+            let layout = cache.layout("Row", &st, None);
+            layout.lines().map(|l| l.metrics().baseline).collect()
+        };
+        let deco = cache
+            .positioned_runs("Row", &st, &[], None)
+            .iter()
+            .find_map(|r| r.underline)
+            .expect("the style enabled an underline, so parley reports one");
+        let baseline = *baselines.first().expect("one line");
+        assert!(
+            deco.y > baseline,
+            "an underline sits below its baseline ({} vs {baseline}) — screen \
+             y grows downward while parley measures the offset upward",
+            deco.y,
+        );
+        assert!(
+            deco.size > 0.0,
+            "the font metric supplied a pen width, got {}",
+            deco.size,
+        );
     }
 
     /// R1447 §5.36 — constructing a cache runs no system-font scan. The
