@@ -245,6 +245,27 @@ AXES = [
         # monitoring chart in the world has and whose absence makes x a bare
         # number today. So the axis moves three points and its stated gap
         # grows.
+        #
+        # R1529 re-judge, 68 -> 72, demanded by the same mechanism (a second
+        # declared round doubles a snapshot of 1). This closes the gap the
+        # R1528 re-judgment had just named as the largest one: the datetime
+        # axis (Qt `QDateTimeAxis`, d3 `scaleUtc`) on both cartesian axes of
+        # the two numeric-x charts plus the timeline ruler. Four points, one
+        # more than the log axis got, because a monitoring chart's x-channel
+        # is the commoner need — and only four, because it closes UTC and not
+        # local time.
+        #
+        # The dimension R1528 opened stays the useful one, and building the
+        # third kind sharpened what remains on it. Of QtCharts' axis classes
+        # the crate now has value, log and datetime as interchangeable
+        # `ValueScale` arms — but **category is not an axis kind here at
+        # all**: the bar chart's x is a `BarGeom` slot metric on a separate
+        # code path, so no chart can swap a category axis in the way it can
+        # now swap the other three. R1528 recorded that as "no category axis
+        # outside the bar chart's slots"; the shape of the gap is now
+        # structural rather than a missing variant. Untouched otherwise: no
+        # polar / candlestick / box-plot / spline / 3D-surface series, and no
+        # plot-level zoom or pan — which is the bulk of what is left.
         "evidence": [
             ("example-name", [
                 "chart", "scatter", "heatmap", "treemap", "donut", "histogram",
@@ -253,9 +274,9 @@ AXES = [
                 "cross-filter", "live-data", "deviation-grid",
             ]),
         ],
-        "judged_at": 1528,
-        "completion": 68,
-        "evidence_snapshot": {"example-name": 23, "round-axis": 1},
+        "judged_at": 1529,
+        "completion": 72,
+        "evidence_snapshot": {"example-name": 24, "round-axis": 2},
     },
     {
         "key": "text",
