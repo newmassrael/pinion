@@ -238,9 +238,41 @@ AXES = [
         # still states its column window twice (paint + a11y).
         # Unified data layer stays out by the R780/R821 fourth-consumer gate,
         # not by omission.
-        "judged_at": 1530,
-        "completion": 83,
-        "evidence_snapshot": {"example-name": 37, "round-axis": 4},
+        # R1536 re-judgment, demanded by the tool: the round ledger took this
+        # axis 4 -> 6, past the 25% band. R1530's judgment named the role
+        # dimension as the LARGER of the two gaps it left, and R1535 + R1536
+        # closed it on the CELL axis — not merely opened it. `GridModel` gained
+        # `decoration` as a third typed accessor (Qt `data(index,
+        # Qt::DecorationRole)`, asked per cell, which is the axis a per-column
+        # delegate cannot express); the answer carries a `meaning` beside its
+        # ink, which Qt does NOT (its decoration role is appearance and the
+        # accessible text is a separate role the item view never wires to it,
+        # so a colour-only status column is an empty cell to a Qt screen-reader
+        # user); the mark is addressable by `GridTag::cell_decoration`; it has
+        # both of Qt's arms (QColor, QIcon); and the EAGER `view_table` answers
+        # the same role, so the tree no longer holds two cell-paint contracts
+        # that disagree about whether it exists.
+        #
+        # R1536 also fixed what reaching for that found underneath, which is
+        # the larger part of this +4: the accessible-name derivation could not
+        # enter a `ScrollNode`, so NOTHING in any virtualized list, grid or
+        # tree was named to an AT — measured, `hello-virtual-table` 0 of 75
+        # gridcells, `hello-virtual-list` 1 of 16 — while the bounds walker
+        # descended fine and made the tree look correct. Qt names its cells;
+        # this axis did not.
+        #
+        # +4 and not more, because what is left is verified rather than
+        # assumed (checked at R1536, not carried from R1530): the HEADER axis
+        # has no role dimension at all — the largest item on this axis now —
+        # and two of Qt's four canonical roles stay unanswerable, `EditRole`
+        # behind the delegate's absent editing half and `ToolTipRole` behind a
+        # per-cell hover path. R1530's three smaller ones were re-checked and
+        # all three still hold: the eager `view_table` still takes a header
+        # slice, five of the six a11y grid builders still take every label, and
+        # a binding still states its column window twice (paint + a11y).
+        "judged_at": 1536,
+        "completion": 87,
+        "evidence_snapshot": {"example-name": 37, "round-axis": 6},
     },
     {
         "key": "catalog",
