@@ -63,7 +63,8 @@ use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected}
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridScroll, TableStyle, VirtualTableData, materialize_cells, view_virtual_table,
+    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
+    materialize_cells, view_virtual_table,
 };
 use std::rc::Rc;
 
@@ -225,7 +226,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             horizontal: &h_scroll,
         },
         VirtualTableData {
-            headers: &HEADERS,
+            column_count: NCOLS,
             item_count: N,
             overscan: OVERSCAN,
             sort,
@@ -239,8 +240,11 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         &theme,
         &style,
         |id| selected == Some(id),
-        // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
-        |c| grid.cell(c.row, c.col).to_string(),
+        GridModel {
+            // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
+            cell: |c: CellIndex| grid.cell(c.row, c.col).to_string(),
+            header: header_from_slice(&HEADERS),
+        },
     );
 
     Scene::Container(

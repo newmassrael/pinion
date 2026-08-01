@@ -65,7 +65,8 @@ use pinion_core::widgets::virtual_select::{
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridScroll, TableStyle, VirtualTableData, view_virtual_table,
+    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
+    view_virtual_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -182,7 +183,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             horizontal: &h_scroll,
         },
         VirtualTableData {
-            headers: &HEADERS,
+            column_count: NCOLS,
             item_count: N,
             overscan: OVERSCAN,
             sort: None,
@@ -196,7 +197,10 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         &theme,
         &style,
         |id| selected == Some(id),
-        cell_text,
+        GridModel {
+            cell: cell_text,
+            header: header_from_slice(&HEADERS),
+        },
     );
 
     Scene::Container(

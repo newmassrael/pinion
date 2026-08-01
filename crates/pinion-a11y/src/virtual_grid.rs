@@ -157,17 +157,19 @@ impl<'a> GridColumns<'a> {
         }
     }
 
-    /// The `window` slice of `labels`, keeping `labels.len()` as the extent.
-    /// A window past the end clamps, so a stale window cannot panic the a11y
-    /// walker (it would report fewer columns, which the `aria-colcount` still
-    /// contextualises).
-    fn windowed(labels: &'a [&'a str], window: &VisibleWindow) -> Self {
-        let first = window.first.min(labels.len());
-        let end = (window.first + window.count).min(labels.len());
+    /// R1530 — `labels` are **already** the window: the caller asked its model
+    /// for the sections it is describing and no others, so this only records
+    /// where the window starts and how wide the table is. Until R1530 this took
+    /// every label and sliced here, which required the caller to hold them all.
+    ///
+    /// `total` is stated rather than derived (`labels.len()` is the window's
+    /// width now, not the table's) — the same reason the paint side carries
+    /// `VirtualTableData::column_count`.
+    fn window(labels: &'a [&'a str], first: usize, total: usize) -> Self {
         Self {
-            labels: &labels[first..end],
+            labels,
             first,
-            total: labels.len(),
+            total,
         }
     }
 
@@ -288,16 +290,22 @@ fn grid_nodes(
 ///
 /// The row axis has conveyed "which of how many" since R775 through
 /// `aria-setsize` / `aria-posinset`. This is the same contract on the column
-/// axis: the grid carries `aria-colcount` = `headers.len()` (the **full**
+/// axis: the grid carries `aria-colcount` = `column_count` (the **full**
 /// extent) and every `columnheader` / `gridcell` carries its absolute
 /// `aria-colindex`, so an AT can place a cell whose 136 predecessors are not in
 /// the tree. Windowing an axis without its extent pair would leave the grid
 /// *less* readable than before it scaled — a 200-column table announced as five
 /// columns wide.
 ///
-/// - `headers` — labels for **every** column (not the windowed slice); the
-///   builder slices them, so the caller keeps one header list and cannot get the
-///   `aria-colcount` and the slice out of step.
+/// - `labels` — the labels of the columns `cols` selects, in column order, and
+///   **only** those. R1530: until then this took every column's label and
+///   sliced the window out here, which meant an AT pass over a 200-column grid
+///   materialized 200 strings to read five — the same defect the paint path
+///   carried, and the reason the two now share one per-section accessor
+///   (`GridModel::header`) instead of one whole-table slice.
+/// - `column_count` — the **full** column extent (`aria-colcount`). Passed
+///   rather than derived, because `labels` is now a window and its length is
+///   not the table's width. This is the column-axis peer of `set_size`.
 /// - `rows` — the row window (the same `compute_visible_range` the view painted
 ///   against).
 /// - `cols` — the column window, from
@@ -312,7 +320,8 @@ fn grid_nodes(
 pub fn windowed_grid_nodes_wide(
     grid_tag: &str,
     grid_name: &str,
-    headers: &[&str],
+    labels: &[&str],
+    column_count: usize,
     set_size: u32,
     rows: &VisibleWindow,
     cols: &VisibleWindow,
@@ -320,7 +329,7 @@ pub fn windowed_grid_nodes_wide(
     grid_nodes(
         grid_tag,
         grid_name,
-        GridColumns::windowed(headers, cols),
+        GridColumns::window(labels, cols.first, column_count),
         set_size,
         rows,
         GridSelection::Display,
@@ -522,24 +531,33 @@ mod tests {
 
     // ── R1523 column-axis windowing ─────────────────────────────────
 
-    /// 200 column labels, of which a windowed grid holds a handful.
-    fn wide_labels() -> Vec<String> {
-        (0..200).map(|c| format!("C{c:03}")).collect()
+    /// The 200-column table's width. Only a handful of its labels are ever
+    /// built — see [`wide_labels`].
+    const WIDE_NCOLS: usize = 200;
+
+    /// R1530 — the labels of the columns `cols` selects, and only those: what a
+    /// binding produces by asking its model per section. Before R1530 this
+    /// fixture built all 200 and the builder sliced, which is the shape the
+    /// round removed.
+    fn wide_labels(cols: &VisibleWindow) -> Vec<String> {
+        cols.indices().map(|c| format!("C{c:03}")).collect()
     }
 
     /// The two-axis contract: the tree holds the windowed columns, and says how
     /// many columns they were drawn from.
     #[test]
     fn r1523_wide_grid_windows_columns_and_declares_the_full_extent() {
-        let labels = wide_labels();
+        let cols = window(50, 5);
+        let labels = wide_labels(&cols);
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let nodes = windowed_grid_nodes_wide(
             "vcol",
             "Wide grid",
             &refs,
+            WIDE_NCOLS,
             10_000,
             &window(0, 2),
-            &window(50, 5),
+            &cols,
         );
         assert_eq!(nodes[0].role, AriaRole::Grid);
         assert_eq!(
@@ -569,10 +587,11 @@ mod tests {
     /// locatable although the 50 columns before it are not in the tree.
     #[test]
     fn r1523_colindex_is_one_based_and_absolute() {
-        let labels = wide_labels();
+        let cols = window(50, 3);
+        let labels = wide_labels(&cols);
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let nodes =
-            windowed_grid_nodes_wide("vcol", "G", &refs, 10_000, &window(0, 1), &window(50, 3));
+            windowed_grid_nodes_wide("vcol", "G", &refs, WIDE_NCOLS, 10_000, &window(0, 1), &cols);
         let cols: Vec<u32> = nodes
             .iter()
             .filter(|n| n.role == AriaRole::ColumnHeader)
@@ -598,10 +617,18 @@ mod tests {
     /// has since R775.
     #[test]
     fn r1523_row_axis_extent_is_unchanged_by_column_windowing() {
-        let labels = wide_labels();
+        let cols = window(50, 3);
+        let labels = wide_labels(&cols);
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let nodes =
-            windowed_grid_nodes_wide("vcol", "G", &refs, 10_000, &window(100, 2), &window(50, 3));
+        let nodes = windowed_grid_nodes_wide(
+            "vcol",
+            "G",
+            &refs,
+            WIDE_NCOLS,
+            10_000,
+            &window(100, 2),
+            &cols,
+        );
         assert_eq!(nodes[0].size_of_set, Some(10_000));
         let first_data = nodes
             .iter()
@@ -611,35 +638,47 @@ mod tests {
         assert_eq!(first_data.size_of_set, Some(10_000));
     }
 
-    /// A column window past the end clamps instead of panicking the a11y
-    /// walker: it reports fewer columns, which the `aria-colcount` still
-    /// contextualises. (The window and the header list come from two reads of
-    /// the same reactive state, so a frame that saw them disagree is
-    /// reachable.)
+    /// R1530 — the builder describes exactly the labels it is handed, and the
+    /// extent it is told, with no arithmetic between them.
+    ///
+    /// R1523 clamped a window that ran past the header list, because the two
+    /// arrived separately (two reads of the same reactive state, so a frame
+    /// that saw them disagree was reachable) and a bad slice would panic the
+    /// a11y walker. There is no slice left to get wrong: the labels ARE the
+    /// window. The out-of-range case is therefore not clamped here but simply
+    /// absent — a caller past the end asks its model for nothing and hands over
+    /// nothing — and the `aria-colcount` still contextualises whatever is left.
     #[test]
-    fn r1523_column_window_past_the_end_clamps() {
+    fn r1530_builder_describes_the_labels_it_is_given() {
+        let one = ["Value"];
         let nodes =
-            windowed_grid_nodes_wide("vcol", "G", &HEADERS, 10, &window(0, 1), &window(2, 50));
-        let columnheaders = nodes
+            windowed_grid_nodes_wide("vcol", "G", &one, 3, 10, &window(0, 1), &window(2, 1));
+        let columnheaders: Vec<&AccessNode> = nodes
             .iter()
             .filter(|n| n.role == AriaRole::ColumnHeader)
-            .count();
-        assert_eq!(columnheaders, 1, "clamped to the one real column left");
+            .collect();
+        assert_eq!(columnheaders.len(), 1, "one label in, one columnheader out");
+        assert_eq!(
+            columnheaders[0].column_index,
+            Some(3),
+            "placed at the section the window says, not at the label's offset",
+        );
         assert_eq!(
             nodes[0].column_count,
             Some(3),
-            "the extent is still the truth"
+            "the extent is stated, not counted from the labels"
         );
-        // Entirely out of range: no columns, still no panic.
-        let empty =
-            windowed_grid_nodes_wide("vcol", "G", &HEADERS, 10, &window(0, 1), &window(99, 5));
+        // Nothing in range: no columns, no panic, extent intact.
+        let empty: [&str; 0] = [];
+        let none =
+            windowed_grid_nodes_wide("vcol", "G", &empty, 3, 10, &window(0, 1), &window(99, 0));
         assert_eq!(
-            empty
-                .iter()
+            none.iter()
                 .filter(|n| n.role == AriaRole::ColumnHeader)
                 .count(),
             0,
         );
+        assert_eq!(none[0].column_count, Some(3));
     }
 
     /// Every grid declares its column count, windowed or not, so the two cases

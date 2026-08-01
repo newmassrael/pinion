@@ -530,6 +530,15 @@ fn pane_texts(
     span.map(|col| cell(CellIndex { row, col })).collect()
 }
 
+/// R1530 — one pane's header labels: [`GridModel::header`] asked once per
+/// column in `span`, in column order. The header-band peer of [`pane_texts`],
+/// and the single place the per-section contract meets the slice
+/// [`header_row`] paints, so neither the unsplit grid nor either frozen pane
+/// can ask for a section it will not paint.
+fn header_texts(header: &mut impl FnMut(usize) -> String, span: Range<usize>) -> Vec<String> {
+    span.map(header).collect()
+}
+
 /// The shared [`spacer`](crate::spacer::spacer), or **nothing** when `width` is
 /// 0 — so a grid whose columns fit its viewport emits no pad node at all and
 /// paints a byte-identical scene to the pre-R1523 one.
@@ -832,8 +841,18 @@ pub fn view_table(
 // `&dyn Fn`, which is `Copy` but not `Debug`.
 #[derive(Clone, Copy)]
 pub struct VirtualTableData<'a> {
-    /// Column header labels; `headers.len()` is the column count.
-    pub headers: &'a [&'a str],
+    /// R1530 — total column count (Qt `QAbstractItemModel::columnCount`),
+    /// decoupled from the rendered window count exactly as [`Self::item_count`]
+    /// is on the row axis.
+    ///
+    /// Until R1530 this was `headers: &[&str]`, and the count was that slice's
+    /// length. That welded the extent to the labels: a grid could only learn
+    /// how many columns it had by being handed every one of their names, so a
+    /// 200-column grid materialized 200 labels each frame to paint five. The
+    /// row axis never had the defect — `item_count` has always been a number
+    /// beside a windowed accessor — and the two axes now say the same thing the
+    /// same way. The labels come from [`GridModel::header`], asked per section.
+    pub column_count: usize,
     /// Total data-row count (decoupled from the rendered window count).
     pub item_count: usize,
     /// Rows built beyond the strict visible window on each side.
@@ -905,7 +924,7 @@ pub struct VirtualTableData<'a> {
 impl core::fmt::Debug for VirtualTableData<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("VirtualTableData")
-            .field("headers", &self.headers)
+            .field("column_count", &self.column_count)
             .field("item_count", &self.item_count)
             .field("overscan", &self.overscan)
             .field("sort", &self.sort)
@@ -961,6 +980,59 @@ pub struct CellIndex {
     /// whatever the column window or the frozen split. A consumer therefore
     /// answers for the column it was asked about with no knowledge of either.
     pub col: usize,
+}
+
+/// R1530 §5.27 — the two questions a virtualized grid asks its model, bundled
+/// as one parameter.
+///
+/// Qt answers both from a single `QAbstractItemModel` — `data(index)` for a
+/// cell and `headerData(section, orientation)` for a column label — and they
+/// travel together here for the same reason: they are the same kind of thing
+/// (an accessor the grid invokes once per painted unit), so a grid that
+/// windows one and not the other is asking its consumer to do work it will
+/// throw away. Before R1530 only `cell` was an accessor; the headers arrived as
+/// a slice of **every** column, because [`VirtualTableData`] read the column
+/// count off its length.
+///
+/// The counts stay in [`VirtualTableData`] (`column_count` beside
+/// `item_count`), where the extents of the two axes are stated together; this
+/// holds the two *accessors*. Selection is deliberately not here — Qt keeps it
+/// in a separate `QItemSelectionModel`, and so does `view_virtual_table`'s
+/// `is_selected`.
+pub struct GridModel<C, H> {
+    /// Invoked once per **painted cell** with that cell's [`CellIndex`],
+    /// returning its text (Qt `data(QModelIndex)`, Flutter `cellBuilder`).
+    pub cell: C,
+    /// R1530 — invoked once per **painted column header** with that column's
+    /// absolute section index, returning its label (Qt `headerData(section,
+    /// Qt::Horizontal, Qt::DisplayRole)`).
+    ///
+    /// A section outside the painted window is never asked, so the cost of the
+    /// header band scales with the column window rather than with the table —
+    /// the property the cell axis gained in R1524. A column with no label
+    /// returns an empty `String`.
+    pub header: H,
+}
+
+/// R1530 §5.27 — the [`GridModel::header`] accessor for a grid whose labels
+/// are a **fixed list**.
+///
+/// The adapter from the per-section contract to the shape most grids have:
+/// a `const HEADERS: [&str; N]`. Eleven bindings hold one, and each would
+/// otherwise spell the identical closure — mechanical wiring with no
+/// per-binding opinion in it, so obligation 3b lifts it here rather than
+/// leaving eleven copies to drift.
+///
+/// This does **not** reintroduce what R1530 removed. The defect was a grid
+/// that could only learn its extent by being handed every label, which forced
+/// the caller to *materialize* them; a `&'static` array is already there and
+/// costs nothing per frame. A grid whose labels are computed — the 200-column
+/// case — passes a closure that computes only the sections it is asked about.
+///
+/// A section past the list answers with an empty label, the contract's
+/// blank-label rule, rather than panicking a paint pass.
+pub fn header_from_slice<'a>(labels: &'a [&'a str]) -> impl Fn(usize) -> String + 'a {
+    move |col| labels.get(col).copied().unwrap_or_default().to_string()
 }
 
 /// R1524 §5.27 — the whole `rows x cols` matrix, materialized from a
@@ -1034,8 +1106,7 @@ pub fn materialize_cells(
 ///   whole column; `max_x` is the column total minus the viewport width
 ///   (0 when the columns fit, so a narrow grid is unaffected). Drive it
 ///   with `scene/set_scroll_offset` on its tag, or wheel / arrow input.
-/// - `data` — the [`VirtualTableData`] (column headers + total row count +
-///   overscan).
+/// - `data` — the [`VirtualTableData`] (both axes' extents + overscan).
 /// - `theme` / `style` — palette + [`TableStyle`] dimensions.
 /// - `is_selected` — a predicate over the **data-row** index: a `true` row's
 ///   strip is washed with the accent tint (the same `row_fill` selection
@@ -1045,16 +1116,19 @@ pub fn materialize_cells(
 ///   and a display-only grid passes `|_| false`. One virtualized-grid paint
 ///   path serves all three (no parallel `_multi` body to diverge from the
 ///   windowed-sizer geometry). It is invoked only for the windowed rows.
-/// - `cell` — R1524: invoked once per **painted cell**, with that cell's
-///   [`CellIndex`], and returns its text. This is the Model/View contract of a
-///   two-axis virtualized grid (Qt `data(index)`, Flutter `cellBuilder`): the
-///   grid asks for exactly the cells it paints, so a 200-column grid showing
-///   five columns asks for five per row rather than building 200 and keeping
-///   five. Until R1524 this was a per-*row* builder returning every column's
-///   text — which meant R1523 could window the scene tree but not the work of
-///   filling it, and left the frozen split asking each pane for the whole row.
-///   A cell with nothing to show returns an empty `String`; because the grid
-///   asks per cell there is no longer a "row came back short" case to define.
+/// - `model` — the [`GridModel`]: `cell` (R1524, once per painted cell) and
+///   `header` (R1530, once per painted column header). This is the Model/View
+///   contract of a two-axis virtualized grid (Qt `data(index)` /
+///   `headerData(section)`, Flutter `cellBuilder`): the grid asks for exactly
+///   what it paints, so a 200-column grid showing five columns asks for five
+///   cells per row and five labels rather than building 200 of each and
+///   keeping five. Until R1524 `cell` was a per-*row* builder returning every
+///   column's text — which meant R1523 could window the scene tree but not the
+///   work of filling it — and until R1530 the labels were not asked for at
+///   all: they arrived as a slice of the whole table, because the column count
+///   was that slice's length. Anything with nothing to show returns an empty
+///   `String`; because the grid asks per unit there is no "came back short"
+///   case to define.
 #[must_use]
 pub fn view_virtual_table(
     tag: &str,
@@ -1063,9 +1137,9 @@ pub fn view_virtual_table(
     theme: &Theme,
     style: &TableStyle,
     is_selected: impl Fn(usize) -> bool,
-    cell: impl FnMut(CellIndex) -> String,
+    model: GridModel<impl FnMut(CellIndex) -> String, impl FnMut(usize) -> String>,
 ) -> Scene {
-    let cols = data.headers.len();
+    let cols = data.column_count;
     // R785 — resolve the per-column widths once (uniform `style.col_width`
     // fallback when no width model is wired). Content width is their sum, so
     // widening a column grows the horizontal scroll extent (R784).
@@ -1105,12 +1179,12 @@ pub fn view_virtual_table(
     // stay scrollable for the freeze to mean anything. `0` (every pre-R859
     // caller) renders the single-scroll R784 grid byte-identically.
     let frozen_cols = data.frozen_cols.min(cols.saturating_sub(1));
-    // `cell` / `is_selected` are consumed by exactly one branch (an
+    // `model` / `is_selected` are consumed by exactly one branch (an
     // `if`/`else`), so each helper takes them by value without a re-move.
     let content = if frozen_cols == 0 {
-        render.render_unsplit(scroll, &is_selected, cell)
+        render.render_unsplit(scroll, &is_selected, model)
     } else {
-        render.render_frozen(scroll, frozen_cols, &is_selected, cell)
+        render.render_frozen(scroll, frozen_cols, &is_selected, model)
     };
 
     Scene::Container(
@@ -1314,6 +1388,38 @@ impl GridRender<'_> {
         (source, fill, fg)
     }
 
+    /// R1530 §5.27 — one pane's header band: the sections it lays out, asked
+    /// for and then painted.
+    ///
+    /// Shared by the three panes that paint a header band (the unsplit grid,
+    /// and the frozen split's pinned + scrolling panes), so none of them can
+    /// ask for a section it will not paint — the [`pane_texts`] discipline on
+    /// the header axis.
+    ///
+    /// The span is **derived** from `layout` rather than passed beside it:
+    /// every pane's sections are exactly `col_base .. col_base + widths.len()`,
+    /// so a second statement of it could only ever disagree — the shape R1524
+    /// removed from the cell axis when it made "row came back short"
+    /// inexpressible.
+    fn header_band(
+        &self,
+        header: &mut impl FnMut(usize) -> String,
+        layout: ColumnLayout<'_>,
+    ) -> Scene {
+        let span = layout.col_base..layout.col_base + layout.widths.len();
+        let labels = header_texts(header, span);
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        header_row(
+            self.tag,
+            self.click_tag,
+            &refs,
+            self.data.sort,
+            layout,
+            self.theme,
+            self.style,
+        )
+    }
+
     /// R1523 §5.27 §5.45 — the columns the horizontal viewport exposes within
     /// `widths`, on the [`visible_columns`] SSOT.
     ///
@@ -1345,13 +1451,19 @@ impl GridRender<'_> {
     ///
     /// R1524 — and the *asking* is windowed too: `cell` is invoked for the
     /// `span` columns only, so the consumer's per-cell work scales with the
-    /// window rather than with the table.
+    /// window rather than with the table. R1530 — `header` likewise, so the
+    /// header band costs one label per painted column instead of one per
+    /// column in the table.
     fn render_unsplit(
         &self,
         scroll: GridScroll<'_>,
         is_selected: &impl Fn(usize) -> bool,
-        mut cell: impl FnMut(CellIndex) -> String,
+        model: GridModel<impl FnMut(CellIndex) -> String, impl FnMut(usize) -> String>,
     ) -> Scene {
+        let GridModel {
+            mut cell,
+            mut header,
+        } = model;
         let total_w: u32 = self.widths.iter().copied().sum();
         let cols = self.column_window(scroll.horizontal, self.widths);
         let span = cols.first..cols.first + cols.count;
@@ -1361,11 +1473,8 @@ impl GridRender<'_> {
         // whole `total_w`-wide column slid by the outer horizontal scroll. No
         // surface fill here — the frame in `view_virtual_table` owns it so the
         // rounded block stays put while the content scrolls.
-        let header = header_row(
-            self.tag,
-            self.click_tag,
-            &self.data.headers[span.clone()],
-            self.data.sort,
+        let band = self.header_band(
+            &mut header,
             ColumnLayout {
                 widths: &self.widths[span.clone()],
                 resizable: self.data.resizable,
@@ -1373,8 +1482,6 @@ impl GridRender<'_> {
                 col_base: cols.first,
                 container_tag: &hrow_tag,
             },
-            self.theme,
-            self.style,
         );
         // R897 — the windowing + nested single-axis scroll machinery is the
         // shared `view_virtual_grid_body` SSOT (`top = view_pos · row_height`,
@@ -1387,7 +1494,7 @@ impl GridRender<'_> {
             total_w,
             self.total_h,
             self.style.row_height,
-            header,
+            band,
             |view_pos| {
                 let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
                 let cells_text = pane_texts(&mut cell, source, span.clone());
@@ -1436,8 +1543,12 @@ impl GridRender<'_> {
         scroll: GridScroll<'_>,
         frozen_cols: usize,
         is_selected: &impl Fn(usize) -> bool,
-        mut cell: impl FnMut(CellIndex) -> String,
+        model: GridModel<impl FnMut(CellIndex) -> String, impl FnMut(usize) -> String>,
     ) -> Scene {
+        let GridModel {
+            mut cell,
+            mut header,
+        } = model;
         let frozen_w: u32 = self.widths[..frozen_cols].iter().copied().sum();
         let scrolled = &self.widths[frozen_cols..];
         let scroll_w: u32 = scrolled.iter().copied().sum();
@@ -1502,11 +1613,11 @@ impl GridRender<'_> {
         // columns do not horizontally scroll, so a resize grabber (which
         // grows the horizontal extent) is moot — `resizable: false`.
         let fhrow_tag = GridTag::frozen_header_row(self.tag);
-        let frozen_header = header_row(
-            self.tag,
-            self.click_tag,
-            &self.data.headers[..frozen_cols],
-            self.data.sort,
+        // R1530 — each pane asks for its own sections: the pinned
+        // `0..frozen_cols` here, the window within `frozen_cols..` below, in
+        // absolute coordinates (the `pane_texts` split, one axis over).
+        let frozen_header = self.header_band(
+            &mut header,
             ColumnLayout {
                 widths: &self.widths[..frozen_cols],
                 resizable: false,
@@ -1514,16 +1625,11 @@ impl GridRender<'_> {
                 col_base: 0,
                 container_tag: &fhrow_tag,
             },
-            self.theme,
-            self.style,
         );
         // Scrolling pane header (right, the windowed slice of `frozen_cols..`).
         let hrow_tag = GridTag::header_row(self.tag);
-        let scroll_header = header_row(
-            self.tag,
-            self.click_tag,
-            &self.data.headers[abs.clone()],
-            self.data.sort,
+        let scroll_header = self.header_band(
+            &mut header,
             ColumnLayout {
                 widths: &scrolled[rel.clone()],
                 resizable: self.data.resizable,
@@ -1531,8 +1637,6 @@ impl GridRender<'_> {
                 col_base: abs.start,
                 container_tag: &hrow_tag,
             },
-            self.theme,
-            self.style,
         );
         // R859 — the shared frozen-split assembler (also the tree-grid's,
         // R860): frozen pane (follower V-body) beside the scrolling pane
@@ -1818,6 +1922,13 @@ mod tests {
         }
     }
 
+    /// R1530 — the fixture column labels, as the per-section contract asks for
+    /// them. A section past the fixture's three columns answers with an empty
+    /// label rather than panicking, which is the contract's blank-label rule.
+    fn vt_header(col: usize) -> String {
+        VT_HEADERS.get(col).copied().unwrap_or_default().to_string()
+    }
+
     /// R1523 — a **laid-out** horizontal scroll for the virtual-table fixtures.
     ///
     /// The layout pass publishes a measured viewport for every `Scene::Scroll`,
@@ -1866,7 +1977,7 @@ mod tests {
                     horizontal: &h_state,
                 },
                 VirtualTableData {
-                    headers: &VT_HEADERS,
+                    column_count: VT_HEADERS.len(),
                     item_count: VT_N,
                     overscan: 2,
                     sort: None,
@@ -1880,7 +1991,10 @@ mod tests {
                 &theme,
                 &style,
                 |_| false,
-                vt_cell,
+                GridModel {
+                    cell: vt_cell,
+                    header: vt_header,
+                },
             )
         })
     }
@@ -1953,7 +2067,7 @@ mod tests {
                     horizontal: &h_state,
                 },
                 VirtualTableData {
-                    headers: &VT_HEADERS,
+                    column_count: VT_HEADERS.len(),
                     item_count: VT_N,
                     overscan: 2,
                     sort: None,
@@ -1967,7 +2081,10 @@ mod tests {
                 &theme,
                 &style,
                 |_| false,
-                vt_cell,
+                GridModel {
+                    cell: vt_cell,
+                    header: vt_header,
+                },
             )
         })
     }
@@ -2206,7 +2323,7 @@ mod tests {
                     horizontal: &h_state,
                 },
                 VirtualTableData {
-                    headers: &VT_HEADERS,
+                    column_count: VT_HEADERS.len(),
                     item_count: 5,
                     overscan: 1,
                     sort: None,
@@ -2220,7 +2337,10 @@ mod tests {
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
-                vt_marker_cell,
+                GridModel {
+                    cell: vt_marker_cell,
+                    header: vt_header,
+                },
             )
         });
         assert_eq!(
@@ -2270,7 +2390,7 @@ mod tests {
                     horizontal: &h_state,
                 },
                 VirtualTableData {
-                    headers: &VT_HEADERS,
+                    column_count: VT_HEADERS.len(),
                     item_count: 5,
                     overscan: 1,
                     sort: None,
@@ -2284,7 +2404,10 @@ mod tests {
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
-                vt_marker_cell,
+                GridModel {
+                    cell: vt_marker_cell,
+                    header: vt_header,
+                },
             )
         })
     }
@@ -2422,7 +2545,7 @@ mod tests {
                     horizontal: &h_state,
                 },
                 VirtualTableData {
-                    headers: &VT_HEADERS,
+                    column_count: VT_HEADERS.len(),
                     item_count: order.len(),
                     overscan: 2,
                     sort,
@@ -2436,7 +2559,10 @@ mod tests {
                 &theme,
                 &style,
                 |_| false,
-                vt_cell,
+                GridModel {
+                    cell: vt_cell,
+                    header: vt_header,
+                },
             )
         })
     }
@@ -2517,29 +2643,34 @@ mod tests {
             .collect()
     }
 
-    fn wide_headers() -> Vec<String> {
-        (0..WIDE_NCOLS).map(|c| format!("C{c:03}")).collect()
+    fn wide_header(col: usize) -> String {
+        format!("C{col:03}")
     }
 
     /// Render the wide grid with a **narrow** horizontal viewport, so the
     /// column axis genuinely windows. `frozen_cols` exercises the split path.
     fn run_vtable_wide(viewport_w: u32, offset_x: i32, frozen_cols: usize) -> Scene {
-        run_vtable_wide_with(viewport_w, offset_x, frozen_cols, |c: CellIndex| {
-            format!("r{}c{}", c.row, c.col)
-        })
+        run_vtable_wide_with(
+            viewport_w,
+            offset_x,
+            frozen_cols,
+            GridModel {
+                cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
+                header: wide_header,
+            },
+        )
     }
 
-    /// [`run_vtable_wide`] with the caller's own cell builder, so an R1524 test
-    /// can observe **which** cells the grid asked for.
+    /// [`run_vtable_wide`] with the caller's own [`GridModel`], so an R1524 /
+    /// R1530 test can observe **which** cells and **which** header sections the
+    /// grid asked for.
     fn run_vtable_wide_with(
         viewport_w: u32,
         offset_x: i32,
         frozen_cols: usize,
-        cell: impl FnMut(CellIndex) -> String,
+        model: GridModel<impl FnMut(CellIndex) -> String, impl FnMut(usize) -> String>,
     ) -> Scene {
         let widths = wide_widths();
-        let labels = wide_headers();
-        let header_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let body = Rc::new(ScrollState::new());
         body.set_measured_viewport(viewport_w, 360);
         let h = Rc::new(ScrollState::with_tag("vtbl_h"));
@@ -2555,7 +2686,7 @@ mod tests {
                     horizontal: &h,
                 },
                 VirtualTableData {
-                    headers: &header_refs,
+                    column_count: WIDE_NCOLS,
                     item_count: VT_N,
                     overscan: 0,
                     sort: None,
@@ -2569,7 +2700,7 @@ mod tests {
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
-                cell,
+                model,
             )
         })
     }
@@ -2639,10 +2770,37 @@ mod tests {
     /// Every cell the grid asked for while rendering, in request order.
     fn asked_cells(viewport_w: u32, offset_x: i32, frozen_cols: usize) -> (Scene, Vec<CellIndex>) {
         let log = RefCell::new(Vec::new());
-        let scene = run_vtable_wide_with(viewport_w, offset_x, frozen_cols, |c: CellIndex| {
-            log.borrow_mut().push(c);
-            format!("r{}c{}", c.row, c.col)
-        });
+        let scene = run_vtable_wide_with(
+            viewport_w,
+            offset_x,
+            frozen_cols,
+            GridModel {
+                cell: |c: CellIndex| {
+                    log.borrow_mut().push(c);
+                    format!("r{}c{}", c.row, c.col)
+                },
+                header: wide_header,
+            },
+        );
+        (scene, log.into_inner())
+    }
+
+    /// R1530 — every header section the grid asked for while rendering, in
+    /// request order.
+    fn asked_sections(viewport_w: u32, offset_x: i32, frozen_cols: usize) -> (Scene, Vec<usize>) {
+        let log = RefCell::new(Vec::new());
+        let scene = run_vtable_wide_with(
+            viewport_w,
+            offset_x,
+            frozen_cols,
+            GridModel {
+                cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
+                header: |col: usize| {
+                    log.borrow_mut().push(col);
+                    wide_header(col)
+                },
+            },
+        );
         (scene, log.into_inner())
     }
 
@@ -2745,6 +2903,152 @@ mod tests {
             wide.len() / narrow.len() >= 40,
             "{}x fewer cell requests per frame",
             wide.len() / narrow.len(),
+        );
+    }
+
+    // ── R1530 per-section header contract ───────────────────────────
+
+    /// The text under the subtree tagged `tag`, or `None` if no such subtree.
+    fn subtree_text(scene: &Scene, tag: &str) -> Option<Vec<String>> {
+        if scene.tag() == Some(tag) {
+            let mut out = Vec::new();
+            collect_text(scene, &mut out);
+            return Some(out);
+        }
+        match scene {
+            Scene::Container(c) => c.children.iter().find_map(|ch| subtree_text(ch, tag)),
+            Scene::Scroll(s) => subtree_text(s.content.as_ref(), tag),
+            _ => None,
+        }
+    }
+
+    /// **The defect R1530 closes.** R1523 windowed which header cells reach the
+    /// scene tree, but the labels arrived as a slice of every column and the
+    /// substrate sliced the window out of it — because [`VirtualTableData`]
+    /// read its column count off that slice's length, so a grid could not learn
+    /// its own extent without being handed all 200 names.
+    ///
+    /// Set **equality** in both directions, like its R1524 cell peer: asking
+    /// for too few sections would pass an upper bound and paint blank headers.
+    #[test]
+    fn r1530_unsplit_asks_for_exactly_the_sections_it_paints() {
+        let (scene, asked) = asked_sections(560, 0, 0);
+        let painted = header_cols(&scene);
+        assert!(!painted.is_empty(), "the window holds header cells");
+        assert_eq!(
+            asked.len(),
+            painted.len(),
+            "one request per painted header: asked {}, painted {}",
+            asked.len(),
+            painted.len(),
+        );
+        let asked_set: BTreeSet<usize> = asked.iter().copied().collect();
+        assert_eq!(
+            asked_set.len(),
+            asked.len(),
+            "no section is asked for twice"
+        );
+        assert_eq!(
+            asked_set,
+            painted.into_iter().collect::<BTreeSet<_>>(),
+            "the asked-for sections and the painted ones are the same set",
+        );
+    }
+
+    /// The section index a pane asks about is **absolute**, so a consumer
+    /// answers with no knowledge of the window or the frozen split — the
+    /// property [`CellIndex::col`] states for cells.
+    ///
+    /// Counts alone cannot see this: a pane asking with its own pane-relative
+    /// index would ask for exactly as many sections as it paints and label
+    /// every scrolled column wrong. The painted label is therefore held against
+    /// the section it names.
+    #[test]
+    fn r1530_sections_are_absolute_across_the_window_and_the_split() {
+        for (offset, frozen) in [(0i32, 0usize), (6_000, 0), (700, 2), (6_000, 2)] {
+            let scene = run_vtable_wide(560, offset, frozen);
+            let cols = header_cols(&scene);
+            assert!(!cols.is_empty(), "offset {offset} paints headers");
+            for col in cols {
+                let label = subtree_text(&scene, &GridTag::col_header("vtbl", col))
+                    .unwrap_or_else(|| panic!("header {col} is in the tree"));
+                assert_eq!(
+                    label.first().map(String::as_str),
+                    Some(wide_header(col).as_str()),
+                    "header {col} (offset {offset}, frozen {frozen}) carries its own label",
+                );
+            }
+        }
+    }
+
+    /// The frozen split is where the per-slice contract cost the most: **both**
+    /// panes indexed the same whole-table slice, so the consumer had to hold
+    /// every label for a split that paints ~7. Each pane now asks for its own
+    /// sections — the pinned ones and the window — and no section twice.
+    #[test]
+    fn r1530_frozen_split_asks_each_painted_section_once() {
+        let (scene, asked) = asked_sections(560, 700, 2);
+        let painted = header_cols(&scene);
+        assert!(!painted.is_empty(), "the split paints headers");
+        let asked_set: BTreeSet<usize> = asked.iter().copied().collect();
+        assert_eq!(
+            asked_set.len(),
+            asked.len(),
+            "a split grid asks for each section once, not once per pane",
+        );
+        assert_eq!(
+            asked_set,
+            painted.into_iter().collect::<BTreeSet<_>>(),
+            "both panes together ask for exactly the sections they paint",
+        );
+        for col in 0..2 {
+            assert!(
+                asked.contains(&col),
+                "frozen section {col} is asked for (it is never windowed out)",
+            );
+        }
+    }
+
+    /// The magnitude, measured on the same fixture at two viewports rather than
+    /// recalled. The wide viewport is what the pre-R1530 binding built at
+    /// *every* viewport: one label per column in the table, whatever the window.
+    #[test]
+    fn r1530_section_requests_drop_by_the_window_ratio() {
+        let (_, wide) = asked_sections(24_000, 0, 0);
+        let (_, narrow) = asked_sections(560, 0, 0);
+        assert_eq!(wide.len(), WIDE_NCOLS, "un-windowed: one label per column");
+        assert_eq!(narrow.len(), 5, "windowed: one label per visible column");
+        assert!(
+            wide.len() / narrow.len() >= 40,
+            "{}x fewer header requests per frame",
+            wide.len() / narrow.len(),
+        );
+    }
+
+    /// The count is a number the grid is *told*, not one it derives from the
+    /// labels: `aria-colcount` and the horizontal scroll extent are both drawn
+    /// from `column_count`, and no label is asked for to establish it. A grid
+    /// whose sections all answer with an empty label still spans all 200.
+    #[test]
+    fn r1530_extent_is_independent_of_the_labels() {
+        let scene = run_vtable_wide_with(
+            560,
+            0,
+            0,
+            GridModel {
+                cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
+                header: |_: usize| String::new(),
+            },
+        );
+        assert_eq!(
+            header_cols(&scene),
+            row_cols(&scene, 0),
+            "the column window is unchanged by the labels being blank",
+        );
+        let last = *header_cols(&scene).last().expect("a window exists");
+        assert!(
+            last < WIDE_NCOLS - 1,
+            "and the window is a window: it ends at {last}, not at the table's edge",
         );
     }
 

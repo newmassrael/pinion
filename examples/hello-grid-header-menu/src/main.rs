@@ -81,7 +81,8 @@ use pinion_widget_paint::menu::{
     ContextMenuPlacement, MenuStyle, composite_item_tag, parse_item_sub_tag, view_context_menu,
 };
 use pinion_widget_paint::table::{
-    CellIndex, GridScroll, TableStyle, VirtualTableData, materialize_cells, view_virtual_table,
+    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
+    materialize_cells, view_virtual_table,
 };
 use std::rc::Rc;
 
@@ -340,7 +341,7 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
             horizontal: &h_scroll,
         },
         VirtualTableData {
-            headers: &HEADERS,
+            column_count: NCOLS,
             item_count: N,
             overscan: OVERSCAN,
             sort,
@@ -354,8 +355,11 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
         &theme,
         &tstyle,
         |_id| false,
-        // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
-        |c| grid_sort.cell(c.row, c.col).to_string(),
+        GridModel {
+            // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
+            cell: |c: CellIndex| grid_sort.cell(c.row, c.col).to_string(),
+            header: header_from_slice(&HEADERS),
+        },
     );
 
     let mut children = vec![status_bar(&theme, sort, target), grid];
