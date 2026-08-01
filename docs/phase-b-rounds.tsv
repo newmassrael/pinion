@@ -1,0 +1,50 @@
+# Phase B round ledger — which axis each round advanced.
+#
+# Why this file exists (R1526). `tools/phase_b_tally.py` measures an axis by
+# COUNTING artifacts, so it can only register work that CREATES one. Depth work
+# modifies what already exists: R1523, R1524 and R1525 each closed a named gap
+# in the Model/View contract by editing `hello-grid-*` examples the axis already
+# owned, and the axis's evidence moved by +0%, +0%, +0%. R1520 and R1521 had
+# done the same to the performance axis two rounds earlier. R1522 fixed that one
+# by giving perf a `demo-body` probe, which worked only because an optimisation
+# happens to leave a NEW demo behind — the cardinality blindness underneath was
+# untouched, and it resurfaced on the next axis three rounds later.
+#
+# R1522 also recorded why the tool cannot infer this: "a demo is named for the
+# round it served and EVERY round has one whatever axis it advanced, so which
+# axis owns this demo is frequently unanswerable". Unanswerable BY INFERENCE.
+# The round knows. So the round declares it here, and the tally counts
+# declarations instead of guessing — the same move as [[r1499]] decoration,
+# [[r1501]] surface domain and [[r1517]] focus source.
+#
+# Measured before choosing this shape: attributing rounds to axes from git paths
+# instead was tried and rejected. R1511 (declared border) and R1513 (dead focus
+# half) each touched ~40 examples spanning six axes, so path inference registers
+# a sweep round on every axis at once — and unlike a stable false positive in a
+# COUNT, which cancels between snapshot and today, that noise ACCUMULATES in a
+# rate. Total example bytes was tried too and rejected: it makes verbosity read
+# as progress, which the R661 LOC baseline exists to prevent.
+#
+# A declaration can be forgotten, which would be the fatal direction (R1522:
+# "a false negative on new work is fatal, a false positive cancels"). So git —
+# not this file — enumerates which rounds exist, and a round with no row here is
+# reported as UNDECLARED at every push. Forgetting is visible, not silent.
+#
+# `none` is a legal declaration and needs a reason, for the same reason
+# NOT_PHASE_B entries carry one: a documented exclusion can be argued with, a
+# silent one cannot.
+#
+# Rounds at or below R1519 cannot be declared — the tally was born in R1519 and
+# assigning axes to the 1500 rounds before it would be inventing history rather
+# than recording it. The floor is stated in the tool and printed in the report.
+#
+# Format: round<TAB>axis<TAB>note. Axis is a key from AXES, or `none`.
+#
+# round	axis	note
+1520	perf	scroll paint fragment cache survives a scroll: 1360us -> 42us
+1521	perf	shape cache grows into its working set: 27.4ms -> 1.59ms
+1522	none	the perf axis's own evidence model; no Phase B axis advanced
+1523	modelview	the data grid windows columns as well as rows: 200 -> 5 cells a row
+1524	modelview	cells asked for per cell, Qt data(index): 2400 -> 84 asked a frame
+1525	modelview	the grid paints the model it orders: one path from data to pixels
+1526	none	this ledger and the round-axis evidence kind; no axis advanced

@@ -53,6 +53,31 @@ ever compared with that axis's OWN snapshot — never between axes — so axes m
 legitimately count different artifacts; what the count must do is MOVE when work
 lands on the axis, and that is the property the perf axis lacked.
 
+**Rounds, declared (R1526).** R1522 fixed the perf axis and left the mechanism
+underneath it intact, so the same blindness came back on the next axis three
+rounds later: R1523, R1524 and R1525 each closed a named gap in the Model/View
+contract and each moved that axis's evidence by +0%. The cause is not which
+artifacts an axis counts — it is that evidence is a COUNT, so only work that
+CREATES an artifact can register. Depth work modifies what already exists; those
+three rounds edited `hello-grid-*` examples Model/View already owned. perf's
+`demo-body` probe worked only because an optimisation happens to leave a new
+demo behind.
+
+The unit that moves whether work creates or modifies is the project's own unit
+of work: the round (1 commit = 1 round). R1522 said the demo-to-axis question is
+"frequently unanswerable" — unanswerable by INFERENCE. The round knows, so the
+round declares it in `docs/phase-b-rounds.tsv` and this counts declarations. Git
+— not the ledger — enumerates which rounds exist, so a round that forgot to
+declare is reported rather than silently absent, which is the direction R1522's
+asymmetry says must never be silent.
+
+**Snapshots are per kind (R1526).** R1522 summed an axis's kinds into one count
+(perf reported `11` for 4 examples + 7 demos), which dilutes exactly the signal
+each kind was added to carry: one depth round against 37 examples is +2.7%, so
+nine of them would be needed to reach a 25% threshold that a single count of
+rounds crosses at once. Each kind is now snapshotted and drifted separately and
+an axis is STALE if ANY of its kinds has drifted.
+
 Usage:
     python3 tools/phase_b_tally.py            # report
     python3 tools/phase_b_tally.py --selftest # check the tool's own logic
@@ -60,6 +85,8 @@ Usage:
 
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -88,7 +115,25 @@ CENSUS, PROBE = "census", "probe"
 KINDS = {
     "example-name": CENSUS,  # examples/<name>/ — matched against the name
     "demo-body": PROBE,  # tools/demos/<name>.py — matched against the source
+    "round-axis": CENSUS,  # a round — matched against the axis it declared
 }
+
+#: Where a round declares the axis it advanced, and the round below which no
+#: declaration is possible. The floor is the round this tally was born in:
+#: assigning axes to the 1500 rounds before it would be inventing history rather
+#: than recording it, and a bound that is stated can be argued with.
+ROUND_LEDGER = ROOT / "docs" / "phase-b-rounds.tsv"
+LEDGER_FLOOR = 1519
+
+#: The declaration a round makes when it advanced no Phase B axis (a process,
+#: tooling or audit round). It needs a reason in the note column for the same
+#: reason NOT_PHASE_B entries do.
+NO_AXIS = "none"
+
+#: `<type>(<scope>): R<NNNN> <subject>` — the subject grammar `commit-msg`
+#: enforces. Anchored and first-match-only so a subject that CITES another round
+#: ("R1200 revisit R744") declares one round, not two.
+ROUND_SUBJECT = re.compile(r"^[a-z]+(?:\([^)]*\))?: R(\d+)")
 
 #: The axes, their weights in Phase B, the evidence each rests on, and the
 #: judgment last recorded for each.
@@ -117,7 +162,7 @@ AXES = [
         ],
         "judged_at": 1519,
         "completion": 85,
-        "evidence_snapshot": 26,
+        "evidence_snapshot": {"example-name": 26, "round-axis": 0},
     },
     {
         "key": "modelview",
@@ -132,9 +177,25 @@ AXES = [
                 "multi-select", "listbox", "flex-virtual",
             ]),
         ],
-        "judged_at": 1519,
-        "completion": 75,
-        "evidence_snapshot": 36,
+        # R1526 re-judgment, forced by this round's own change: introducing the
+        # `round-axis` kind takes this axis's declared rounds from a snapshot of
+        # 0 to 3, and R1522's rule is that changing the UNIT of evidence without
+        # re-judging leaves the number and the evidence in different units.
+        # R1519 said 75% on windowing (list/grid/tree) + three composable
+        # proxies + data-indexed selection + async/lazy + an LRU million-row
+        # source. The three rounds now declared closed the core of Qt's
+        # QAbstractItemModel data path: R1523 windows the column axis as well as
+        # the row axis (200 -> 5 cells a row), R1524 makes the contract per-cell
+        # rather than per-row (`data(QModelIndex)`; 2400 -> 84 cells asked a
+        # frame), R1525 makes the painted string the one the ordering read.
+        # Deliberately NOT higher: header data is still per-slice — the binding
+        # takes `headers: &[&str]` for all 200 columns where Qt's `headerData`
+        # is per-section — and `cell` returns a String with no role dimension
+        # (Qt's Display/Edit/Decoration/ToolTip roles). Unified data layer stays
+        # out by the R780/R821 fourth-consumer gate, not by omission.
+        "judged_at": 1526,
+        "completion": 80,
+        "evidence_snapshot": {"example-name": 37, "round-axis": 3},
     },
     {
         "key": "catalog",
@@ -158,7 +219,7 @@ AXES = [
         ],
         "judged_at": 1519,
         "completion": 82,
-        "evidence_snapshot": 73,
+        "evidence_snapshot": {"example-name": 73, "round-axis": 0},
     },
     {
         "key": "dataviz",
@@ -179,7 +240,7 @@ AXES = [
         ],
         "judged_at": 1519,
         "completion": 65,
-        "evidence_snapshot": 22,
+        "evidence_snapshot": {"example-name": 22, "round-axis": 0},
     },
     {
         "key": "text",
@@ -194,7 +255,7 @@ AXES = [
         ],
         "judged_at": 1519,
         "completion": 70,
-        "evidence_snapshot": 9,
+        "evidence_snapshot": {"example-name": 9, "round-axis": 0},
     },
     {
         "key": "perf",
@@ -233,7 +294,7 @@ AXES = [
         # left as the dominant term.
         "judged_at": 1522,
         "completion": 60,
-        "evidence_snapshot": 11,
+        "evidence_snapshot": {"example-name": 4, "demo-body": 7, "round-axis": 2},
     },
     {
         "key": "osnative",
@@ -250,7 +311,7 @@ AXES = [
         ],
         "judged_at": 1519,
         "completion": 58,
-        "evidence_snapshot": 13,
+        "evidence_snapshot": {"example-name": 13, "round-axis": 0},
     },
     {
         "key": "api",
@@ -266,7 +327,7 @@ AXES = [
         ],
         "judged_at": 1519,
         "completion": 30,
-        "evidence_snapshot": 7,
+        "evidence_snapshot": {"example-name": 7, "round-axis": 0},
     },
 ]
 
@@ -306,6 +367,79 @@ def demos() -> list[str]:
     return sorted(p.name for p in (ROOT / "tools" / "demos").glob("*.py"))
 
 
+def rounds_in(subjects: str) -> list[int]:
+    """Round numbers named by commit subjects, newest first. Pure in `subjects`.
+
+    Deduplicated: a round occasionally lands as `R1481` and `R1481.1`, and it is
+    one round either way.
+    """
+    seen: dict[int, None] = {}
+    for line in subjects.splitlines():
+        m = ROUND_SUBJECT.match(line)
+        if m:
+            seen.setdefault(int(m.group(1)), None)
+    return list(seen)
+
+
+def parse_ledger(text: str) -> dict[int, tuple[str, str]]:
+    """`docs/phase-b-rounds.tsv` as round -> (axis key or NO_AXIS, note).
+
+    Pure in `text`, and strict: a malformed row raises rather than being skipped.
+    A ledger that silently drops rows is a ledger that reports fewer declared
+    rounds than were declared, which is the false negative this file exists to
+    make impossible.
+    """
+    keys = {a["key"] for a in AXES} | {NO_AXIS}
+    rows: dict[int, tuple[str, str]] = {}
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        parts = raw.split("\t")
+        if len(parts) != 3:
+            raise ValueError(
+                f"{ROUND_LEDGER.name}:{lineno}: expected 3 tab-separated fields, "
+                f"got {len(parts)}: {raw!r}"
+            )
+        rnd, axis, note = (p.strip() for p in parts)
+        if not rnd.isdigit():
+            raise ValueError(f"{ROUND_LEDGER.name}:{lineno}: round {rnd!r} is not a number")
+        if axis not in keys:
+            raise ValueError(
+                f"{ROUND_LEDGER.name}:{lineno}: unknown axis {axis!r} "
+                f"(known: {', '.join(sorted(keys))})"
+            )
+        if not note:
+            raise ValueError(
+                f"{ROUND_LEDGER.name}:{lineno}: round {rnd} declares no reason; "
+                f"an exclusion that cannot be argued with is not documented"
+            )
+        if int(rnd) <= LEDGER_FLOOR:
+            raise ValueError(
+                f"{ROUND_LEDGER.name}:{lineno}: round {rnd} is at or below the "
+                f"floor R{LEDGER_FLOOR}; those rounds predate this tally"
+            )
+        rows[int(rnd)] = (axis, note)
+    return rows
+
+
+def ledger() -> dict[int, tuple[str, str]]:
+    return parse_ledger(ROUND_LEDGER.read_text(encoding="utf-8"))
+
+
+def git_rounds() -> list[int]:
+    """Rounds git knows about, above the floor. Git is the authority on which
+    rounds EXIST — if the ledger were also the census, a round that forgot to
+    declare would be invisible instead of reported."""
+    out = subprocess.run(
+        ["git", "log", "--format=%s", "--no-merges"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [r for r in rounds_in(out) if r > LEDGER_FLOOR]
+
+
 #: `demo-body` reads ~475 files, and the report consults each universe more than
 #: once. Cached because the tree does not change mid-run, and because this runs
 #: on every push: uncached it measured 3.0s, which is a cost a reporter has no
@@ -325,6 +459,19 @@ def universe(kind: str) -> dict[str, str]:
             for n in demos()
             if n not in NOT_EVIDENCE
         }
+    elif kind == "round-axis":
+        # Keyed by the round git has, valued by what the ledger declared for it.
+        # A round with no row gets "" — it matches no axis and so is REPORTED by
+        # the census, which is what makes a forgotten declaration visible.
+        # A round declaring NO_AXIS leaves the universe entirely, the same way
+        # NOT_PHASE_B examples do and for the same reason.
+        declared = ledger()
+        got = {}
+        for rnd in sorted(git_rounds()):
+            axis, _note = declared.get(rnd, ("", ""))
+            if axis == NO_AXIS:
+                continue
+            got[f"R{rnd}"] = axis
     else:
         raise KeyError(f"unknown evidence kind: {kind}")
     _UNIVERSE[kind] = got
@@ -332,6 +479,13 @@ def universe(kind: str) -> dict[str, str]:
 
 
 def patterns_for(axis: dict, kind: str) -> list[str]:
+    if kind == "round-axis":
+        # Structural rather than declared: an axis counts the rounds that named
+        # it, and its key IS the pattern. Derived here once instead of copied
+        # into all eight axes so that an axis unable to register depth work
+        # cannot be written — the eight copies would each be forgettable, and
+        # forgetting is the direction that goes silent.
+        return [axis["key"]]
     return [p for k, pats in axis["evidence"] if k == kind for p in pats]
 
 
@@ -353,17 +507,32 @@ def assign(kind: str, items: dict[str, str]) -> tuple[dict[str, list[str]], list
     return owned, unmatched
 
 
-def evidence() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Per-axis evidence names, and the unmatched artifacts of each census kind."""
-    counts: dict[str, list[str]] = {a["key"]: [] for a in AXES}
+def evidence() -> tuple[dict[str, dict[str, list[str]]], dict[str, list[str]]]:
+    """Per-axis, PER-KIND evidence names, and the unmatched artifacts of each
+    census kind.
+
+    Kept per kind rather than summed (R1526). R1522 reported perf as a single
+    `11` for 4 examples plus 7 demos, which buries a kind that moves inside a
+    kind that does not: against 37 examples one declared round is +2.7%, so nine
+    depth rounds would be needed to cross a threshold that the round count on
+    its own crosses at once.
+    """
+    counts: dict[str, dict[str, list[str]]] = {
+        a["key"]: {k: [] for k in KINDS} for a in AXES
+    }
     unmatched: dict[str, list[str]] = {}
     for kind, coverage in KINDS.items():
         owned, missed = assign(kind, universe(kind))
         for key, names in owned.items():
-            counts[key] += names
+            counts[key][kind] = names
         if coverage == CENSUS:
             unmatched[kind] = missed
     return counts, unmatched
+
+
+def kinds_of(axis: dict) -> list[str]:
+    """The kinds this axis actually draws on, in KINDS order."""
+    return [k for k in KINDS if patterns_for(axis, k)]
 
 
 def drift(now: int, snapshot: int | None) -> tuple[bool, str]:
@@ -375,11 +544,9 @@ def drift(now: int, snapshot: int | None) -> tuple[bool, str]:
     return abs(delta) > STALE_AT, f"{snapshot} -> {now} ({delta:+.0%})"
 
 
-def _sources(axis: dict) -> str:
-    """Which artifacts this axis's count is made of — the `ev` column is not
-    comparable between axes, so it must say what it counted."""
-    short = {"example-name": "ex", "demo-body": "dm"}
-    return "+".join(short.get(k, k) for k, _ in axis["evidence"])
+#: Short names for the evidence columns. The counts are not comparable between
+#: kinds any more than between axes, so every number printed says what it is of.
+SHORT = {"example-name": "ex", "demo-body": "dm", "round-axis": "rd"}
 
 
 def report() -> int:
@@ -390,18 +557,24 @@ def report() -> int:
     buildable_weighted = 0.0
     stale: list[str] = []
 
-    print(f"Phase B tally — {len(examples())} examples, {len(demos())} demos\n")
+    declared = ledger()
+    rounds = git_rounds()
     print(
-        f"{'axis':38s} {'w':>3s} {'ev':>4s} {'src':>6s} {'done':>5s} "
-        f"{'evidence drift':>22s}"
+        f"Phase B tally — {len(examples())} examples, {len(demos())} demos, "
+        f"{len(rounds)} rounds since the R{LEDGER_FLOOR} floor\n"
     )
-    print("-" * 84)
+    print(f"{'axis':38s} {'w':>3s} {'done':>5s}   evidence per kind (judged -> now)")
+    print("-" * 100)
     for axis in AXES:
-        n = len(counts[axis["key"]])
-        is_stale, how = drift(n, axis["evidence_snapshot"])
         done = axis["completion"]
-        if is_stale:
-            stale.append(axis["key"])
+        snapshot = axis["evidence_snapshot"]
+        cells = []
+        for kind in kinds_of(axis):
+            n = len(counts[axis["key"]][kind])
+            is_stale, how = drift(n, snapshot.get(kind))
+            if is_stale and axis["key"] not in stale:
+                stale.append(axis["key"])
+            cells.append(f"{SHORT[kind]} {how}")
         if done is not None:
             weighted += axis["weight"] * done / 100
             if not axis["gated"]:
@@ -410,16 +583,14 @@ def report() -> int:
         gate = " [gated]" if axis["gated"] else ""
         shown = f"{done}%" if done is not None else "  ?"
         print(
-            f"{axis['name'][:36] + gate:38s} {axis['weight']:3d} {n:4d} "
-            f"{_sources(axis):>6s} {shown:>5s} {how:>22s}"
+            f"{axis['name'][:36] + gate:38s} {axis['weight']:3d} {shown:>5s}   "
+            f"{' | '.join(cells)}"
         )
-    print("-" * 84)
-    print(
-        f"{'weighted (all axes)':38s} {total_w:3d} {'':4s} {'':6s} {weighted:4.0f}%"
-    )
+    print("-" * 100)
+    print(f"{'weighted (all axes)':38s} {total_w:3d} {weighted:4.0f}%")
     if buildable_w:
         print(
-            f"{'weighted (buildable only)':38s} {buildable_w:3d} {'':4s} {'':6s} "
+            f"{'weighted (buildable only)':38s} {buildable_w:3d} "
             f"{buildable_weighted / buildable_w * 100:4.0f}%"
         )
 
@@ -441,13 +612,37 @@ def report() -> int:
             print(f"  {score:5d}  {name}")
 
     for kind, missed in unmatched.items():
-        if missed:
+        if not missed:
+            continue
+        if kind == "round-axis":
+            # A round is not "unclassifiable" — it is undeclared, and the fix is
+            # a line rather than a judgment, so it gets its own wording and its
+            # own grep prefix in the push hook.
+            print(
+                f"\nUNDECLARED — {len(missed)} round(s) have no row in "
+                f"{ROUND_LEDGER.name}. Add one (axis key, or `{NO_AXIS}` with a "
+                f"reason); until then their work registers on no axis:"
+            )
+        else:
             print(
                 f"\nUNCLASSIFIED — {len(missed)} {kind} artifact(s) belong to no "
                 f"axis. Work with no axis is work this tally cannot see:"
             )
-            for name in missed:
-                print(f"  {name}")
+        for name in missed:
+            print(f"  {name}")
+
+    # A row for a round git has never seen is the round in progress: the ledger
+    # line is written with the change and the commit does not exist until it is
+    # made. Saying so is cheaper than leaving the reader to wonder, and a typo'd
+    # round number looks exactly the same and wants the same look.
+    ahead = sorted(r for r in declared if r not in set(rounds))
+    if ahead:
+        print(
+            f"\nDECLARED AHEAD — {len(ahead)} ledger row(s) name a round with no "
+            f"commit yet (the round in progress, or a mistyped number):"
+        )
+        for rnd in ahead:
+            print(f"  R{rnd:<5d} {declared[rnd][0]}: {declared[rnd][1]}")
 
     # A probe's reach has to be visible, or "no axis looked" is indistinguishable
     # from "nothing was there" — which is the failure this tool keeps finding.
@@ -456,7 +651,7 @@ def report() -> int:
             continue
         of_kind = set(universe(kind))
         total = len(of_kind)
-        drawn = sum(len(of_kind.intersection(counts[a["key"]])) for a in AXES)
+        drawn = sum(len(of_kind.intersection(counts[a["key"]][kind])) for a in AXES)
         readers = [a["name"] for a in AXES if patterns_for(a, kind)]
         print(
             f"\nPROBE — {kind}: {drawn} of {total} counted, read only by "
@@ -471,6 +666,14 @@ def report() -> int:
         print(f"\nEXCLUDED — {len(NOT_EVIDENCE)} demo(s) match a pattern spuriously:")
         for name, why in sorted(NOT_EVIDENCE.items()):
             print(f"  {name:32s} {why}")
+    no_axis = sorted(r for r, (a, _) in declared.items() if a == NO_AXIS)
+    if no_axis:
+        print(
+            f"\nEXCLUDED — {len(no_axis)} round(s) declare no Phase B axis, with "
+            f"the reason each gave:"
+        )
+        for rnd in no_axis:
+            print(f"  R{rnd:<5d} {declared[rnd][1]}")
 
     if stale:
         print(
@@ -520,12 +723,96 @@ def selftest() -> int:
     counts, _ = evidence()
     for landed in ("r1520_scrolled_paint_cache.py", "r1521_shape_cache_working_set.py"):
         check(
-            landed in counts["perf"],
+            landed in counts["perf"]["demo-body"],
             f"the perf axis counts {landed} (a measured hot-path optimisation)",
         )
     check(
         any(k == "demo-body" for k, _ in perf["evidence"]),
         "the perf axis draws on demo bodies, not only example names",
+    )
+
+    # R1526 — the property whose absence made THIS round necessary, stated so
+    # that it holds for work that has not happened yet. R1522's check above
+    # names two demos that already exist, which guards a regression but can
+    # never register anything new; this one is about the shape of the evidence,
+    # not about any round. A count of artifacts moves only when an artifact is
+    # CREATED, so an axis all of whose kinds are artifact counts is blind to a
+    # round that improves what it already owns.
+    unchanged = {"hello-grid-sort": "hello-grid-sort"}
+    before, _ = assign("example-name", unchanged)
+    after, _ = assign("example-name", unchanged)  # the round edited its contents
+    check(
+        len(before["modelview"]) == len(after["modelview"]),
+        "an artifact count cannot see a round that only modified an artifact",
+    )
+    depth, _ = assign("round-axis", {"R9001": "modelview"})
+    check(
+        depth["modelview"] == ["R9001"],
+        "a declared round registers on its axis, having created no artifact",
+    )
+    for a in AXES:
+        check(
+            any(k != "round-axis" for k in kinds_of(a)) and "round-axis" in kinds_of(a),
+            f"{a['key']} can register both new artifacts and depth work",
+        )
+
+    # round-axis matches an axis key against a declaration, and `assign` matches
+    # by substring — so the two agree only while no key is contained in another.
+    # Asserted rather than assumed: adding an axis keyed `text-grid` would
+    # silently hand every `text` round to it.
+    keys = [a["key"] for a in AXES]
+    check(
+        not any(x != y and x in y for x in keys for y in keys),
+        "no axis key contains another, so a declaration matches exactly one axis",
+    )
+
+    # per-kind drift: a kind that has not moved must not mask one that has.
+    # Summed (the R1522 shape) these are 40 against 36, +11%, and silent.
+    check(
+        drift(37, 36)[0] is False and drift(3, 0)[0] is True,
+        "a moved kind is stale even beside a kind of its own axis that has not",
+    )
+
+    # the ledger is strict: every way of writing a row wrong is a raise, because
+    # a skipped row is a declared round counted as undeclared (or worse, a round
+    # counted for an axis that a typo named).
+    def raises(text: str, why: str) -> None:
+        try:
+            parse_ledger(text)
+        except ValueError:
+            return
+        fails.append(f"ledger accepts {why}")
+
+    check(
+        parse_ledger("# note\n\n1600\tperf\twhy\n") == {1600: ("perf", "why")},
+        "a ledger row parses to its axis and reason, comments and blanks ignored",
+    )
+    raises("1600\tperf\n", "a row with a missing field")
+    raises("1600\tperfomance\twhy\n", "a row naming an axis that does not exist")
+    raises(f"{LEDGER_FLOOR}\tperf\twhy\n", "a row at or below the declarable floor")
+    raises("1600\tnone\t\n", "an exclusion with no reason")
+    check(
+        parse_ledger("1600\tnone\ta process round\n")[1600][0] == NO_AXIS,
+        f"`{NO_AXIS}` is a legal declaration when it carries a reason",
+    )
+
+    # git, not the ledger, is the census of which rounds exist — so the subject
+    # parse has to match what `commit-msg` enforces and nothing else.
+    check(
+        rounds_in("feat(core): R1524 the data grid asks for the cells\n") == [1524],
+        "a conforming subject declares its round",
+    )
+    check(
+        rounds_in("fix(rpc): R1481 revisit the R744 windowing decision\n") == [1481],
+        "a subject citing another round still declares only its own",
+    )
+    check(
+        rounds_in("fix(a): R1481 one\nfix(b): R1481.1 two\n") == [1481],
+        "a round that landed as two commits is one round",
+    )
+    check(
+        rounds_in("Merge branch 'main'\nchore: no round here\n") == [],
+        "a subject with no round tag declares nothing",
     )
 
     # demo-body matches the SOURCE, not the name — else it is a name proxy with

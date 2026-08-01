@@ -59,7 +59,13 @@ report_phase_b_tally() {
     # the OUTPUT is not, which is the difference from the R1519 call.
     local out lines
     out="$(python3 "$tool" 2>&1)" || true
-    lines="$(printf '%s\n' "$out" | grep -E '^(weighted|STALE|UNCLASSIFIED|PROBE)' || true)"
+    # R1526 adds two findings a push must not swallow: a round that landed with
+    # no ledger row (UNDECLARED — its work registers on no axis until someone
+    # writes the line) and a ledger row naming a round that does not exist
+    # (DECLARED AHEAD — the round in progress at commit time, a mistyped number
+    # by the time of a push). Both are only ever seen if they are spoken here.
+    lines="$(printf '%s\n' "$out" \
+        | grep -E '^(weighted|STALE|UNCLASSIFIED|UNDECLARED|DECLARED|PROBE)' || true)"
     if [[ -n "$lines" ]]; then
         printf '%s\n' "$lines" | sed 's/^/pre-push: /'
         return 0

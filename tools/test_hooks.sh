@@ -818,6 +818,29 @@ ok "a report with no recognised summary line prints its raw output" \
         | grep -cE 'produced no summary line|total across axes')" \
    "2"
 
+# R1526 — a finding this hook did not know how to speak. The round ledger's
+# whole defence against a forgotten declaration is that the omission is SAID at
+# every push; if the grep does not carry the line, forgetting is silent again
+# and the declaration is back to being prose someone has to remember.
+mkdir -p "$tally_tmp/undeclared/tools"
+cat >"$tally_tmp/undeclared/tools/phase_b_tally.py" <<'PY'
+import sys
+if "--selftest" in sys.argv:
+    print("selftest: PASS (0 failure(s))")
+else:
+    print("weighted (all axes)   100   42%")
+    print("UNDECLARED - 1 round(s) have no row in phase-b-rounds.tsv")
+    print("DECLARED AHEAD - 1 ledger row(s) name a round with no commit yet")
+PY
+
+ok "a round that landed without declaring an axis is spoken at the push" \
+   "$(report_phase_b_tally "$tally_tmp/undeclared" | grep -c 'pre-push: UNDECLARED')" \
+   "1"
+
+ok "a ledger row naming a round that does not exist is spoken too" \
+   "$(report_phase_b_tally "$tally_tmp/undeclared" | grep -c 'pre-push: DECLARED AHEAD')" \
+   "1"
+
 # The one correct silence: no tool in the tree at all.
 ok "an absent tally tool is silent" \
    "$(report_phase_b_tally "$tally_tmp/no-such-repo" | wc -c)" \
